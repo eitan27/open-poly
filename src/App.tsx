@@ -19,8 +19,31 @@ import { useHistory } from "./hooks/useHistory";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
 import { VariablesPanel } from "./ui/VariablesPanel";
-import { Viewport, type FeatureMesh } from "./viewport/Viewport";
+import {
+  Viewport,
+  type DatumId,
+  type FeatureMesh,
+  type ViewName,
+  type ViewportApi,
+} from "./viewport/Viewport";
 import "./App.css";
+
+const VIEW_BUTTONS: { name: ViewName; label: string }[] = [
+  { name: "top", label: "Top" },
+  { name: "front", label: "Front" },
+  { name: "right", label: "Right" },
+  { name: "back", label: "Back" },
+  { name: "left", label: "Left" },
+  { name: "bottom", label: "Bottom" },
+  { name: "iso", label: "Iso" },
+];
+
+const DATUM_LABELS: Record<DatumId, string> = {
+  origin: "Origin",
+  "plane-top": "Top plane",
+  "plane-front": "Front plane",
+  "plane-right": "Right plane",
+};
 
 function initialDocument(): Document {
   // Seed with one box so there is something on screen on first load.
@@ -40,6 +63,8 @@ export default function App() {
     canRedo,
   } = useHistory<Document>(initialDocument);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedDatum, setSelectedDatum] = useState<DatumId | null>(null);
+  const viewApiRef = useRef<ViewportApi | null>(null);
   const [meshes, setMeshes] = useState<FeatureMesh[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -62,6 +87,10 @@ export default function App() {
   // keeps working inside inputs.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSelectedDatum(null);
+        return;
+      }
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
@@ -198,7 +227,23 @@ export default function App() {
           />
         </aside>
         <main className="viewport">
-          <Viewport meshes={meshes} selectedId={selectedId} />
+          <Viewport
+            meshes={meshes}
+            selectedId={selectedId}
+            selectedDatum={selectedDatum}
+            onSelectDatum={setSelectedDatum}
+            apiRef={viewApiRef}
+          />
+          <div className="view-controls">
+            {VIEW_BUTTONS.map((v) => (
+              <button key={v.name} onClick={() => viewApiRef.current?.setView(v.name)}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+          {selectedDatum && (
+            <div className="datum-label">{DATUM_LABELS[selectedDatum]} selected</div>
+          )}
         </main>
       </div>
     </div>
