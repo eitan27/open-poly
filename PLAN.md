@@ -200,24 +200,47 @@ Each feature stores **references** (to sketches, faces, edges, axes, planes), it
 Ordered so each phase produces something runnable and demoable. Estimates are
 rough relative sizing, not calendar promises.
 
-### Phase 0 — Foundation spike *(prove the stack)*
+> **Progress (2026-06-17):** Phases 0 and 1 are complete and committed on `main`
+> (Phase 1 landed as chunks 1a/1b/1c). Phase 2 (sketching) is next, starting with
+> a navigation/datums prep step (2.0).
+
+### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
   bottom-right context panel.
 - `opencascade.js`/`replicad` running **in a Web Worker**.
 - Render a hard-coded box: tessellate in worker → transfer buffers → three.js.
-- Camera (orbit/pan/zoom), grid, origin triad, three base planes (XY/XZ/YZ).
-- **Exit criteria:** edit a number in the UI, see the box regenerate.
+- Camera (orbit/pan/zoom), grid, origin triad. *(Selectable base planes moved to
+  Phase 2.0 prep.)*
+- **Exit criteria:** edit a number in the UI, see the box regenerate. ✅
 
-### Phase 1 — Timeline + variables engine
+### Phase 1 — Timeline + variables engine — ✅ DONE
 - Document model, ordered feature list, regeneration pipeline, rollback bar.
-- Variable table + expression evaluator (with units).
-- Undo/redo via command history.
+- Variable table + expression evaluator. *(Units deferred.)*
+- Undo/redo via history with **edit coalescing** (typing in a field = one step).
 - Feature-tree UI: reorder, rename, suppress, edit, delete, error badges.
+- Stand-in features: box/cylinder/sphere **primitives** (independent bodies) until
+  sketch-based features arrive.
+
+### Phase 1.5 — Running-result regeneration model *(deferred, but needed soon)*
+The Phase 1 regen model builds N **independent** shapes and renders one mesh per
+feature, so feature→feature order is currently cosmetic (only variables couple
+things). Real CAD folds operations over a **running set of bodies**: a feature
+consumes the prior result (extrude ADD/CUT, boolean, fillet modify an existing
+body). This refactor — kernel facade from "build N shapes" to "fold ops over a
+running model", plus body-based (not feature-based) selection — is a prerequisite
+for Phase 3+ and is the point at which the timeline earns its purpose. Folded into
+Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
 
 ### Phase 2 — Sketching (geometry first, then constraints)
+- **2.0 — Navigation & datums prep** *(in progress)*: a clickable/snappable
+  **origin point**; the three standard datum **planes (Top=XY, Front=XZ,
+  Right=YZ)** rendered faintly and hover/click-selectable (selecting one will
+  later start a sketch); **standard view navigation** (Front/Back/Left/Right/Top/
+  Bottom/Iso/Home) — buttons/dropdown now, a true interactive ViewCube later.
+  Establishes the raycast hover/select infrastructure all sketching needs.
 - **2a:** Pick a base plane / planar face → enter sketch mode (camera normal-to,
   grid). Draw **line, rectangle, circle, arc, polygon**, point. Snapping
-  (endpoints, midpoints, grid, existing geometry). Trim/extend, delete.
+  (endpoints, midpoints, grid, origin, existing geometry). Trim/extend, delete.
 - **2b:** Dimensions (driven values, expression-backed) + constraints with
   **`planegcs`**. Show under/fully/over-constrained state with color, like
   Onshape. Drag-to-solve.
