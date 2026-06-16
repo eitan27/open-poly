@@ -2,12 +2,15 @@
 // new Document (immutable updates) so React state and undo/redo stay simple.
 import { FEATURE_DEFS } from "./featureDefs";
 import { evaluateExpression, type Scope } from "./expression";
-import type { Document, Feature, FeatureKind } from "./types";
+import type { SketchPlaneRef } from "./planes";
+import type { Document, Feature, FeatureKind, SketchEntity, SketchFeature } from "./types";
 import type { ResolvedFeature } from "../kernel/types";
 
 function uid(): string {
   return crypto.randomUUID();
 }
+
+export const genId = uid;
 
 export function createDocument(): Document {
   return { features: [], variables: [], rollbackIndex: 0 };
@@ -15,11 +18,13 @@ export function createDocument(): Document {
 
 export function makeFeature(kind: FeatureKind, existing: Feature[]): Feature {
   const def = FEATURE_DEFS[kind];
-  const ordinal = existing.filter((f) => f.kind === kind).length + 1;
+  const ordinal =
+    existing.filter((f) => f.type === "primitive" && f.kind === kind).length + 1;
   const params: Record<string, string> = {};
   for (const p of def.params) params[p.name] = String(p.default);
   return {
     id: uid(),
+    type: "primitive",
     kind,
     name: `${def.label} ${ordinal}`,
     suppressed: false,
@@ -27,15 +32,69 @@ export function makeFeature(kind: FeatureKind, existing: Feature[]): Feature {
   };
 }
 
-/** Insert a new feature at the rollback point (Onshape-style) and advance it. */
-export function addFeature(doc: Document, kind: FeatureKind): { doc: Document; id: string } {
-  const feature = makeFeature(kind, doc.features);
+/** Insert a feature at the rollback point (Onshape-style) and advance the bar. */
+function insertFeature(doc: Document, feature: Feature): { doc: Document; id: string } {
   const features = [...doc.features];
   features.splice(doc.rollbackIndex, 0, feature);
   return {
     doc: { ...doc, features, rollbackIndex: doc.rollbackIndex + 1 },
     id: feature.id,
   };
+}
+
+export function addFeature(doc: Document, kind: FeatureKind): { doc: Document; id: string } {
+  return insertFeature(doc, makeFeature(kind, doc.features));
+}
+
+export function addSketch(doc: Document, plane: SketchPlaneRef): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "sketch").length + 1;
+  const feature: SketchFeature = {
+    id: uid(),
+    type: "sketch",
+    name: `Sketch ${ordinal}`,
+    suppressed: false,
+    plane,
+    entities: [],
+  };
+  return insertFeature(doc, feature);
+}
+
+function mapSketch(
+  doc: Document,
+  id: string,
+  fn: (s: SketchFeature) => SketchFeature,
+): Document {
+  return {
+    ...doc,
+    features: doc.features.map((f) => (f.id === id && f.type === "sketch" ? fn(f) : f)),
+  };
+}
+
+export function addSketchEntity(
+  doc: Document,
+  sketchId: string,
+  entity: SketchEntity,
+): Document {
+  return mapSketch(doc, sketchId, (s) => ({ ...s, entities: [...s.entities, entity] }));
+}
+
+export function setSketchEntities(
+  doc: Document,
+  sketchId: string,
+  entities: SketchEntity[],
+): Document {
+  return mapSketch(doc, sketchId, (s) => ({ ...s, entities }));
+}
+
+export function removeSketchEntity(
+  doc: Document,
+  sketchId: string,
+  entityId: string,
+): Document {
+  return mapSketch(doc, sketchId, (s) => ({
+    ...s,
+    entities: s.entities.filter((e) => e.id !== entityId),
+  }));
 }
 
 export function removeFeature(doc: Document, id: string): Document {
@@ -69,7 +128,9 @@ export function updateParam(
   name: string,
   value: string,
 ): Document {
-  return mapFeature(doc, id, (f) => ({ ...f, params: { ...f.params, [name]: value } }));
+  return mapFeature(doc, id, (f) =>
+    f.type === "primitive" ? { ...f, params: { ...f.params, [name]: value } } : f,
+  );
 }
 
 export function setSuppressed(doc: Document, id: string, suppressed: boolean): Document {
@@ -167,6 +228,7 @@ export function resolveDocument(doc: Document): ResolveResult {
   const errors: Record<string, string> = {};
 
   for (const f of active) {
+    if (f.type !== "primitive") continue; // sketches produce no solid yet (Phase 3)
     try {
       const params: Record<string, number> = {};
       for (const [name, expr] of Object.entries(f.params)) {

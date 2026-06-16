@@ -397,10 +397,82 @@
   position: absolute;
   left: 12px;
   bottom: 12px;
-  padding: 5px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px 6px 14px;
   font-size: 12px;
   color: #ffd24a;
   background: rgba(24, 26, 32, 0.82);
   border: 1px solid #4a4326;
   border-radius: 6px;
+}
+
+.datum-label button,
+.sketch-banner button {
+  background: #4f8cff;
+  border: none;
+  color: #fff;
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.datum-label button:hover,
+.sketch-banner button:hover {
+  background: #3f7af0;
+}
+
+.sketch-banner {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 8px 6px 16px;
+  font-size: 13px;
+  color: #cfe0ff;
+  background: rgba(26, 32, 46, 0.92);
+  border: 1px solid #3a4a6a;
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+
+.sketch-banner.pick {
+  color: #ffe6b0;
+  background: rgba(46, 38, 22, 0.92);
+  border-color: #6a5a30;
+}
+
+.sketch-banner.pick button {
+  background: #6a5a30;
+}
+
+.sketch-banner.pick button:hover {
+  background: #7d6a3a;
+}
+
+.sketch-start {
+  width: 100%;
+  margin-bottom: 6px;
+  background: #2a3550;
+  border-color: #3a4a6a;
+}
+
+.sketch-start:hover {
+  background: #32406090;
+  border-color: #4f8cff;
+}
+
+.param-static {
+  font-size: 13px;
+  color: #e6e8ee;
+}
+
+.sketch-btn {
+  width: 100%;
+  margin-top: 8px;
 }

@@ -3,25 +3,25 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { syncGeometries } from "replicad-threejs-helper";
 import type { ShapeMeshPayload } from "../kernel/types";
+import {
+  deriveFaceFrame,
+  type PlaneFrameData,
+  type SketchPlaneId,
+  type SketchPlaneRef,
+} from "../document/planes";
 
 export interface FeatureMesh {
   id: string;
   mesh: ShapeMeshPayload;
 }
 
-export type DatumId = "origin" | "plane-top" | "plane-front" | "plane-right";
+export type DatumId = "origin" | SketchPlaneId;
 
-export type ViewName =
-  | "front"
-  | "back"
-  | "left"
-  | "right"
-  | "top"
-  | "bottom"
-  | "iso";
+export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
 
 export interface ViewportApi {
   setView(name: ViewName): void;
+  lookAtFrame(frame: PlaneFrameData): void;
 }
 
 interface DatumEntry {
@@ -41,6 +41,7 @@ interface SceneState {
   group: THREE.Group;
   faceMaterial: THREE.MeshStandardMaterial;
   selectedMaterial: THREE.MeshStandardMaterial;
+  hoverMaterial: THREE.MeshStandardMaterial;
   lineMaterial: THREE.LineBasicMaterial;
   datums: DatumEntry[];
   tween: { from: THREE.Vector3; to: THREE.Vector3; up: THREE.Vector3; t: number } | null;
@@ -48,8 +49,6 @@ interface SceneState {
 
 const VIEW_DISTANCE = 220;
 
-// Camera direction (from target toward camera) and up-vector per named view, in
-// the Z-up CAD world.
 const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, number, number] }> = {
   front: { dir: [0, -1, 0], up: [0, 0, 1] },
   back: { dir: [0, 1, 0], up: [0, 0, 1] },
@@ -63,24 +62,29 @@ const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, numb
 export function Viewport({
   meshes,
   selectedId,
-  selectedDatum,
-  onSelectDatum,
+  picking,
+  onPick,
+  activeSketch,
   apiRef,
 }: {
   meshes: FeatureMesh[];
   selectedId: string | null;
-  selectedDatum: DatumId | null;
-  onSelectDatum: (datum: DatumId | null) => void;
+  picking: boolean;
+  onPick: (ref: SketchPlaneRef) => void;
+  activeSketch: { datumId: SketchPlaneId | null } | null;
   apiRef: { current: ViewportApi | null };
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<SceneState | null>(null);
-  const hoveredRef = useRef<DatumId | null>(null);
-  const selectedDatumRef = useRef<DatumId | null>(selectedDatum);
-  const onSelectDatumRef = useRef(onSelectDatum);
-  onSelectDatumRef.current = onSelectDatum;
+  const pickingRef = useRef(picking);
+  pickingRef.current = picking;
+  const onPickRef = useRef(onPick);
+  onPickRef.current = onPick;
 
-  // One-time scene setup.
+  // hover bookkeeping (kept in refs so pointermove doesn't re-render React)
+  const hoverPlaneRef = useRef<DatumId | null>(null);
+  const hoverBodyRef = useRef<{ mesh: THREE.Mesh; prev: THREE.Material | THREE.Material[] } | null>(null);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -103,9 +107,9 @@ export function Viewport({
     controls.update();
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-    const key = new THREE.DirectionalLight(0xffffff, 1.6);
-    key.position.set(60, 100, 80);
-    scene.add(key);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+    keyLight.position.set(60, 100, 80);
+    scene.add(keyLight);
     const fill = new THREE.DirectionalLight(0xffffff, 0.5);
     fill.position.set(-80, -40, -60);
     scene.add(fill);
@@ -129,74 +133,111 @@ export function Viewport({
       });
     const faceMaterial = makeFaceMaterial(0x4f8cff);
     const selectedMaterial = makeFaceMaterial(0xff9d3c);
+    const hoverMaterial = makeFaceMaterial(0x36d6c3);
     const lineMaterial = new THREE.LineBasicMaterial({ color: 0x0d0f14 });
 
     const group = new THREE.Group();
     scene.add(group);
 
     const state: SceneState = {
-      renderer,
-      scene,
-      camera,
-      controls,
-      group,
-      faceMaterial,
-      selectedMaterial,
-      lineMaterial,
-      datums,
-      tween: null,
+      renderer, scene, camera, controls, group,
+      faceMaterial, selectedMaterial, hoverMaterial, lineMaterial,
+      datums, tween: null,
     };
     stateRef.current = state;
-    applyDatumAppearance(state, hoveredRef.current, selectedDatumRef.current);
+    applyDatumAppearance(state, null);
 
-    // Expose imperative view navigation.
     apiRef.current = {
       setView(name) {
         const v = VIEWS[name];
         const to = new THREE.Vector3(...v.dir).normalize().multiplyScalar(VIEW_DISTANCE);
-        state.tween = {
-          from: camera.position.clone(),
-          to,
-          up: new THREE.Vector3(...v.up),
-          t: 0,
-        };
+        state.tween = { from: camera.position.clone(), to, up: new THREE.Vector3(...v.up), t: 0 };
         controls.target.set(0, 0, 0);
+      },
+      lookAtFrame(frame) {
+        const origin = new THREE.Vector3(...frame.origin);
+        const normal = new THREE.Vector3(...frame.normal).normalize();
+        const to = origin.clone().add(normal.multiplyScalar(VIEW_DISTANCE));
+        state.tween = { from: camera.position.clone(), to, up: new THREE.Vector3(...frame.vAxis), t: 0 };
+        controls.target.copy(origin);
       },
     };
 
-    // --- Picking (hover + click) for datums ---
+    // --- Picking (planes + body faces), only while in pick mode ---
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    const datumObjects = datums.map((d) => d.object);
     let down: { x: number; y: number } | null = null;
 
-    const pick = (clientX: number, clientY: number): DatumId | null => {
+    type Pick =
+      | { kind: "datum"; id: DatumId }
+      | { kind: "face"; mesh: THREE.Mesh; point: THREE.Vector3; normal: THREE.Vector3 };
+
+    const planeObjects = datums.filter((d) => d.kind === "plane").map((d) => d.object);
+
+    const pick = (clientX: number, clientY: number): Pick | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
-      const hit = raycaster.intersectObjects(datumObjects, false)[0];
+      const bodies = group.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
+      const hit = raycaster.intersectObjects([...planeObjects, ...bodies], false)[0];
       if (!hit) return null;
-      return datums.find((d) => d.object === hit.object)?.id ?? null;
+      const datum = datums.find((d) => d.object === hit.object);
+      if (datum) return { kind: "datum", id: datum.id };
+      const mesh = hit.object as THREE.Mesh;
+      const normal = hit.face
+        ? hit.face.normal.clone().transformDirection(mesh.matrixWorld)
+        : new THREE.Vector3(0, 0, 1);
+      return { kind: "face", mesh, point: hit.point.clone(), normal };
+    };
+
+    const clearHover = () => {
+      if (hoverBodyRef.current) {
+        hoverBodyRef.current.mesh.material = hoverBodyRef.current.prev;
+        hoverBodyRef.current = null;
+      }
+      if (hoverPlaneRef.current) {
+        hoverPlaneRef.current = null;
+        applyDatumAppearance(state, null);
+      }
+      renderer.domElement.style.cursor = "";
     };
 
     const onMove = (e: PointerEvent) => {
-      const id = pick(e.clientX, e.clientY);
-      if (id !== hoveredRef.current) {
-        hoveredRef.current = id;
-        renderer.domElement.style.cursor = id ? "pointer" : "";
-        applyDatumAppearance(state, hoveredRef.current, selectedDatumRef.current);
+      if (!pickingRef.current) return;
+      const p = pick(e.clientX, e.clientY);
+      clearHover();
+      if (!p) return;
+      renderer.domElement.style.cursor = "pointer";
+      if (p.kind === "datum") {
+        hoverPlaneRef.current = p.id;
+        applyDatumAppearance(state, p.id);
+      } else {
+        hoverBodyRef.current = { mesh: p.mesh, prev: p.mesh.material };
+        p.mesh.material = hoverMaterial;
       }
     };
     const onDown = (e: PointerEvent) => {
       down = { x: e.clientX, y: e.clientY };
     };
     const onUp = (e: PointerEvent) => {
-      if (!down) return;
+      if (!pickingRef.current || !down) return;
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       down = null;
       if (moved > 5) return; // a drag (orbit/pan), not a click
-      onSelectDatumRef.current(pick(e.clientX, e.clientY));
+      const p = pick(e.clientX, e.clientY);
+      if (!p) return;
+      clearHover();
+      if (p.kind === "datum") {
+        if (p.id !== "origin") onPickRef.current({ kind: "datum", id: p.id });
+      } else {
+        const featureId = (p.mesh.userData.featureId as string) ?? "";
+        const frame = deriveFaceFrame(
+          [p.point.x, p.point.y, p.point.z],
+          [p.normal.x, p.normal.y, p.normal.z],
+        );
+        onPickRef.current({ kind: "face", featureId, frame });
+      }
     };
     renderer.domElement.addEventListener("pointermove", onMove);
     renderer.domElement.addEventListener("pointerdown", onDown);
@@ -240,6 +281,7 @@ export function Viewport({
       disposeGroup(group);
       faceMaterial.dispose();
       selectedMaterial.dispose();
+      hoverMaterial.dispose();
       lineMaterial.dispose();
       renderer.dispose();
       container.removeChild(renderer.domElement);
@@ -252,6 +294,7 @@ export function Viewport({
   useEffect(() => {
     const state = stateRef.current;
     if (!state) return;
+    hoverBodyRef.current = null;
     disposeGroup(state.group);
     for (const { id, mesh } of meshes) {
       const [geometry] = syncGeometries(
@@ -259,17 +302,30 @@ export function Viewport({
         [],
       );
       const material = id === selectedId ? state.selectedMaterial : state.faceMaterial;
-      state.group.add(new THREE.Mesh(geometry.faces, material));
+      const faceMesh = new THREE.Mesh(geometry.faces, material);
+      faceMesh.userData.featureId = id;
+      state.group.add(faceMesh);
       state.group.add(new THREE.LineSegments(geometry.lines, state.lineMaterial));
     }
   }, [meshes, selectedId]);
 
-  // Reflect datum selection coming from outside (e.g. cleared on Escape).
+  // Sketch mode: dim solids and hide the inactive datum planes.
   useEffect(() => {
-    selectedDatumRef.current = selectedDatum;
     const state = stateRef.current;
-    if (state) applyDatumAppearance(state, hoveredRef.current, selectedDatum);
-  }, [selectedDatum]);
+    if (!state) return;
+    const active = activeSketch !== null;
+    state.faceMaterial.transparent = active;
+    state.faceMaterial.opacity = active ? 0.16 : 1;
+    state.faceMaterial.needsUpdate = true;
+    for (const d of state.datums) {
+      if (d.kind !== "plane") continue;
+      const visible = !active || d.id === activeSketch?.datumId;
+      d.object.visible = visible;
+      if (d.outline) d.outline.visible = visible;
+      if (active && d.id === activeSketch?.datumId) d.material.opacity = 0.1;
+    }
+    if (!active) applyDatumAppearance(state, null);
+  }, [activeSketch]);
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
@@ -286,7 +342,6 @@ const PLANE_TINTS: Record<"plane-top" | "plane-front" | "plane-right", number> =
 function createDatums(scene: THREE.Scene): DatumEntry[] {
   const entries: DatumEntry[] = [];
 
-  // Clickable origin point — drawn on top so it is always visible.
   const originMat = new THREE.MeshBasicMaterial({
     color: 0xffd24a,
     depthTest: false,
@@ -302,9 +357,9 @@ function createDatums(scene: THREE.Scene): DatumEntry[] {
   const edgeGeo = new THREE.EdgesGeometry(planeGeo);
 
   const planes: { id: keyof typeof PLANE_TINTS; rot: [number, number, number] }[] = [
-    { id: "plane-top", rot: [0, 0, 0] }, // XY
-    { id: "plane-front", rot: [Math.PI / 2, 0, 0] }, // XZ
-    { id: "plane-right", rot: [0, Math.PI / 2, 0] }, // YZ
+    { id: "plane-top", rot: [0, 0, 0] },
+    { id: "plane-front", rot: [Math.PI / 2, 0, 0] },
+    { id: "plane-right", rot: [0, Math.PI / 2, 0] },
   ];
 
   for (const { id, rot } of planes) {
@@ -331,24 +386,17 @@ function createDatums(scene: THREE.Scene): DatumEntry[] {
   return entries;
 }
 
-function applyDatumAppearance(
-  state: SceneState,
-  hovered: DatumId | null,
-  selected: DatumId | null,
-): void {
+function applyDatumAppearance(state: SceneState, hovered: DatumId | null): void {
   for (const d of state.datums) {
-    const active = d.id === selected;
     const hot = d.id === hovered;
     if (d.kind === "plane") {
-      d.material.opacity = active ? 0.28 : hot ? 0.16 : d.baseOpacity;
+      d.material.opacity = hot ? 0.18 : d.baseOpacity;
       if (d.outline) {
-        (d.outline.material as THREE.LineBasicMaterial).opacity = active ? 1 : hot ? 0.7 : 0.35;
+        (d.outline.material as THREE.LineBasicMaterial).opacity = hot ? 0.8 : 0.35;
       }
     } else {
-      const scale = active ? 1.6 : hot ? 1.35 : 1;
-      d.object.scale.setScalar(scale);
-      d.material.opacity = active ? 0.95 : hot ? 0.8 : d.baseOpacity;
-      (d.material as THREE.MeshBasicMaterial).color.set(active || hot ? 0xffffff : 0xffd24a);
+      d.object.scale.setScalar(hot ? 1.35 : 1);
+      d.material.opacity = hot ? 0.85 : d.baseOpacity;
     }
   }
 }

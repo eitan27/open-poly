@@ -7,6 +7,7 @@ interface Props {
   errors: Record<string, string>;
   onSelect: (id: string) => void;
   onAdd: (kind: FeatureKind) => void;
+  onStartSketch: () => void;
   onDelete: (id: string) => void;
   onToggleSuppress: (id: string) => void;
   onSetRollback: (index: number) => void;
@@ -19,6 +20,7 @@ export function FeatureTree({
   errors,
   onSelect,
   onAdd,
+  onStartSketch,
   onDelete,
   onToggleSuppress,
   onSetRollback,
@@ -28,6 +30,9 @@ export function FeatureTree({
 
   return (
     <div className="tree">
+      <button className="add-btn sketch-start" onClick={onStartSketch}>
+        + Sketch
+      </button>
       <div className="tree-add">
         {FEATURE_KINDS.map((kind) => (
           <button key={kind} className="add-btn" onClick={() => onAdd(kind)}>
@@ -52,7 +57,11 @@ export function FeatureTree({
                 }
                 onClick={() => onSelect(feature.id)}
               >
-                <span className="row-kind">{FEATURE_DEFS[feature.kind].label}</span>
+                <span className="row-kind">
+                  {feature.type === "sketch"
+                    ? "Sketch"
+                    : FEATURE_DEFS[feature.kind].label}
+                </span>
                 <span className="row-name">{feature.name}</span>
                 {error && <span className="row-badge" title={error}>!</span>}
                 <button

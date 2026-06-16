@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
   addFeature,
+  addSketch,
   addVariable,
   createDocument,
   moveFeature,
@@ -15,13 +16,13 @@ import {
   updateVariable,
 } from "./document/document";
 import type { Document, FeatureKind } from "./document/types";
+import { frameOf, planeRefLabel, type SketchPlaneRef } from "./document/planes";
 import { useHistory } from "./hooks/useHistory";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
 import { VariablesPanel } from "./ui/VariablesPanel";
 import {
   Viewport,
-  type DatumId,
   type FeatureMesh,
   type ViewName,
   type ViewportApi,
@@ -37,13 +38,6 @@ const VIEW_BUTTONS: { name: ViewName; label: string }[] = [
   { name: "bottom", label: "Bottom" },
   { name: "iso", label: "Iso" },
 ];
-
-const DATUM_LABELS: Record<DatumId, string> = {
-  origin: "Origin",
-  "plane-top": "Top plane",
-  "plane-front": "Front plane",
-  "plane-right": "Right plane",
-};
 
 function initialDocument(): Document {
   // Seed with one box so there is something on screen on first load.
@@ -63,7 +57,8 @@ export default function App() {
     canRedo,
   } = useHistory<Document>(initialDocument);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedDatum, setSelectedDatum] = useState<DatumId | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const viewApiRef = useRef<ViewportApi | null>(null);
   const [meshes, setMeshes] = useState<FeatureMesh[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -88,7 +83,8 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setSelectedDatum(null);
+        setPicking(false);
+        setEditingSketchId(null);
         return;
       }
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -147,6 +143,28 @@ export default function App() {
     [doc, selectedId],
   );
 
+  const editingSketch = useMemo(() => {
+    const f = doc.features.find((x) => x.id === editingSketchId);
+    return f && f.type === "sketch" ? f : null;
+  }, [doc, editingSketchId]);
+
+  const startSketchOn = (ref: SketchPlaneRef) => {
+    const { doc: next, id } = addSketch(doc, ref);
+    setDoc(next);
+    setSelectedId(id);
+    setPicking(false);
+    setEditingSketchId(id);
+    viewApiRef.current?.lookAtFrame(frameOf(ref));
+  };
+
+  const editSketch = (id: string) => {
+    const f = doc.features.find((x) => x.id === id);
+    if (f?.type !== "sketch") return;
+    setEditingSketchId(id);
+    setSelectedId(id);
+    viewApiRef.current?.lookAtFrame(frameOf(f.plane));
+  };
+
   const errorCount =
     Object.keys(errors).length + Object.keys(resolved.variableErrors).length;
   const status = fatal
@@ -167,6 +185,7 @@ export default function App() {
   const handleDelete = (id: string) => {
     setDoc(removeFeature(doc, id));
     if (selectedId === id) setSelectedId(null);
+    if (editingSketchId === id) setEditingSketchId(null);
   };
 
   return (
@@ -209,6 +228,7 @@ export default function App() {
             errors={errors}
             onSelect={setSelectedId}
             onAdd={handleAdd}
+            onStartSketch={() => setPicking(true)}
             onDelete={handleDelete}
             onToggleSuppress={(id) =>
               setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
@@ -220,18 +240,26 @@ export default function App() {
           <ParamEditor
             feature={selected}
             error={selected ? (errors[selected.id] ?? null) : null}
+            editingSketchId={editingSketchId}
             onChangeParam={(id, name, value) =>
               setDoc(updateParam(doc, id, name, value), `param:${id}:${name}`)
             }
             onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}
+            onEditSketch={editSketch}
+            onFinishSketch={() => setEditingSketchId(null)}
           />
         </aside>
         <main className="viewport">
           <Viewport
             meshes={meshes}
             selectedId={selectedId}
-            selectedDatum={selectedDatum}
-            onSelectDatum={setSelectedDatum}
+            picking={picking}
+            onPick={startSketchOn}
+            activeSketch={
+              editingSketch
+                ? { datumId: editingSketch.plane.kind === "datum" ? editingSketch.plane.id : null }
+                : null
+            }
             apiRef={viewApiRef}
           />
           <div className="view-controls">
@@ -241,8 +269,21 @@ export default function App() {
               </button>
             ))}
           </div>
-          {selectedDatum && (
-            <div className="datum-label">{DATUM_LABELS[selectedDatum]} selected</div>
+          {editingSketch ? (
+            <div className="sketch-banner">
+              <span>
+                Editing <strong>{editingSketch.name}</strong> ·{" "}
+                {planeRefLabel(editingSketch.plane)}
+              </span>
+              <button onClick={() => setEditingSketchId(null)}>Finish sketch ⏎</button>
+            </div>
+          ) : (
+            picking && (
+              <div className="sketch-banner pick">
+                <span>Select a plane or planar face for the sketch</span>
+                <button onClick={() => setPicking(false)}>Cancel (Esc)</button>
+              </div>
+            )
           )}
         </main>
       </div>

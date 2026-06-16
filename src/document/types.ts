@@ -3,19 +3,40 @@
 // point. This is the backbone every later feature (sketches, extrude, …) plugs
 // into.
 import type { PrimitiveKind } from "../kernel/types";
+import type { SketchPlaneRef } from "./planes";
 
-// In Phase 1 a feature maps 1:1 to a kernel primitive; later kinds (sketch,
-// extrude, …) will map to richer kernel ops.
 export type FeatureKind = PrimitiveKind;
 
-export interface Feature {
+export type Vec2 = [number, number];
+
+export type SketchEntity =
+  | { type: "line"; id: string; a: Vec2; b: Vec2 }
+  | { type: "circle"; id: string; c: Vec2; r: number }
+  | { type: "arc"; id: string; c: Vec2; r: number; start: number; end: number }
+  | { type: "point"; id: string; p: Vec2 };
+
+interface FeatureBase {
   id: string;
-  kind: FeatureKind;
   name: string;
   suppressed: boolean;
-  /** param name -> expression string (e.g. "40", or later "width * 2"). */
+}
+
+/** A primitive solid (box/cylinder/sphere) — maps 1:1 to a kernel primitive. */
+export interface PrimitiveFeature extends FeatureBase {
+  type: "primitive";
+  kind: FeatureKind;
+  /** param name -> expression string (e.g. "40", or "width * 2"). */
   params: Record<string, string>;
 }
+
+/** A 2D sketch on a datum plane. Produces no solid yet (extrude is Phase 3). */
+export interface SketchFeature extends FeatureBase {
+  type: "sketch";
+  plane: SketchPlaneRef;
+  entities: SketchEntity[];
+}
+
+export type Feature = PrimitiveFeature | SketchFeature;
 
 export interface Variable {
   id: string;
