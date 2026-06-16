@@ -24,14 +24,23 @@ export interface ShapeMeshPayload {
   edges: MeshedEdges;
 }
 
-export interface BoxParams {
-  width: number;
-  height: number;
-  depth: number;
+/** Primitive solids the kernel knows how to build (Phase 1). */
+export type PrimitiveKind = "box" | "cylinder" | "sphere";
+
+/** A feature with all parameters already resolved to numbers (expressions
+ *  are evaluated in the app layer before reaching the kernel). */
+export interface ResolvedFeature {
+  id: string;
+  kind: PrimitiveKind;
+  params: Record<string, number>;
 }
+
+export type RegenFeatureResult =
+  | { id: string; ok: true; mesh: ShapeMeshPayload }
+  | { id: string; ok: false; error: string };
 
 /** The contract implemented by the worker-backed client. Grows per phase. */
 export interface Kernel {
-  buildBox(params: BoxParams): Promise<ShapeMeshPayload>;
+  regenerate(features: ResolvedFeature[]): Promise<RegenFeatureResult[]>;
   dispose(): void;
 }

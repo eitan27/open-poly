@@ -4,16 +4,29 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { syncGeometries } from "replicad-threejs-helper";
 import type { ShapeMeshPayload } from "../kernel/types";
 
+export interface FeatureMesh {
+  id: string;
+  mesh: ShapeMeshPayload;
+}
+
 interface SceneState {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
-  faceMesh: THREE.Mesh;
-  lineSegments: THREE.LineSegments;
+  group: THREE.Group;
+  faceMaterial: THREE.MeshStandardMaterial;
+  selectedMaterial: THREE.MeshStandardMaterial;
+  lineMaterial: THREE.LineBasicMaterial;
 }
 
-export function Viewport({ mesh }: { mesh: ShapeMeshPayload | null }) {
+export function Viewport({
+  meshes,
+  selectedId,
+}: {
+  meshes: FeatureMesh[];
+  selectedId: string | null;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<SceneState | null>(null);
 
@@ -38,7 +51,6 @@ export function Viewport({ mesh }: { mesh: ShapeMeshPayload | null }) {
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    // Frame the origin (centre of the coordinate system) by default.
     controls.target.set(0, 0, 0);
     controls.update();
 
@@ -57,42 +69,38 @@ export function Viewport({ mesh }: { mesh: ShapeMeshPayload | null }) {
     scene.add(grid);
     scene.add(new THREE.AxesHelper(45));
 
-    const faceMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4f8cff,
-      metalness: 0.1,
-      roughness: 0.55,
-      side: THREE.DoubleSide,
-      // Push faces back slightly so edge lines render cleanly on top.
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1,
-    });
-    const faceMesh = new THREE.Mesh(new THREE.BufferGeometry(), faceMaterial);
-    scene.add(faceMesh);
-
+    const makeFaceMaterial = (color: number) =>
+      new THREE.MeshStandardMaterial({
+        color,
+        metalness: 0.1,
+        roughness: 0.55,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
+      });
+    const faceMaterial = makeFaceMaterial(0x4f8cff);
+    const selectedMaterial = makeFaceMaterial(0xff9d3c);
     const lineMaterial = new THREE.LineBasicMaterial({ color: 0x0d0f14 });
-    const lineSegments = new THREE.LineSegments(
-      new THREE.BufferGeometry(),
-      lineMaterial,
-    );
-    scene.add(lineSegments);
+
+    const group = new THREE.Group();
+    scene.add(group);
 
     stateRef.current = {
       renderer,
       scene,
       camera,
       controls,
-      faceMesh,
-      lineSegments,
+      group,
+      faceMaterial,
+      selectedMaterial,
+      lineMaterial,
     };
 
     const resize = () => {
       const w = container.clientWidth;
       const h = container.clientHeight;
       if (w === 0 || h === 0) return;
-      // updateStyle (default) must stay on: it keeps the canvas CSS size equal
-      // to the container while the drawing buffer scales by devicePixelRatio.
-      // Passing `false` here makes the canvas overflow on Retina (DPR > 1).
       renderer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
@@ -113,9 +121,9 @@ export function Viewport({ mesh }: { mesh: ShapeMeshPayload | null }) {
       cancelAnimationFrame(frame);
       observer.disconnect();
       controls.dispose();
-      faceMesh.geometry.dispose();
-      lineSegments.geometry.dispose();
+      disposeGroup(group);
       faceMaterial.dispose();
+      selectedMaterial.dispose();
       lineMaterial.dispose();
       renderer.dispose();
       container.removeChild(renderer.domElement);
@@ -123,17 +131,32 @@ export function Viewport({ mesh }: { mesh: ShapeMeshPayload | null }) {
     };
   }, []);
 
-  // Upload new geometry whenever the meshed shape changes.
+  // Rebuild the rendered bodies whenever the meshes or selection change.
   useEffect(() => {
     const state = stateRef.current;
-    if (!state || !mesh) return;
-    const [geometry] = syncGeometries(
-      [{ name: mesh.name, faces: mesh.faces, edges: mesh.edges }],
-      [{ faces: state.faceMesh.geometry, lines: state.lineSegments.geometry }],
-    );
-    state.faceMesh.geometry = geometry.faces;
-    state.lineSegments.geometry = geometry.lines;
-  }, [mesh]);
+    if (!state) return;
+    disposeGroup(state.group);
+
+    for (const { id, mesh } of meshes) {
+      const [geometry] = syncGeometries(
+        [{ name: id, faces: mesh.faces, edges: mesh.edges }],
+        [],
+      );
+      const material = id === selectedId ? state.selectedMaterial : state.faceMaterial;
+      state.group.add(new THREE.Mesh(geometry.faces, material));
+      state.group.add(new THREE.LineSegments(geometry.lines, state.lineMaterial));
+    }
+  }, [meshes, selectedId]);
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+}
+
+/** Remove and dispose every child geometry of a group (materials are shared). */
+function disposeGroup(group: THREE.Group): void {
+  for (const child of group.children) {
+    if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
+      child.geometry.dispose();
+    }
+  }
+  group.clear();
 }

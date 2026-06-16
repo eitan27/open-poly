@@ -1,23 +1,36 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { KernelClient } from "./kernel/KernelClient";
-import type { BoxParams, ShapeMeshPayload } from "./kernel/types";
-import { Viewport } from "./viewport/Viewport";
+import {
+  addFeature,
+  createDocument,
+  removeFeature,
+  renameFeature,
+  resolveDocument,
+  setRollbackIndex,
+  setSuppressed,
+  updateParam,
+} from "./document/document";
+import type { Document, FeatureKind } from "./document/types";
+import { FeatureTree } from "./ui/FeatureTree";
+import { ParamEditor } from "./ui/ParamEditor";
+import { Viewport, type FeatureMesh } from "./viewport/Viewport";
 import "./App.css";
 
-const DIMS: (keyof BoxParams)[] = ["width", "height", "depth"];
+function initialDocument(): Document {
+  // Seed with one box so there is something on screen on first load.
+  return addFeature(createDocument(), "box").doc;
+}
 
 export default function App() {
   const kernelRef = useRef<KernelClient | null>(null);
   const [ready, setReady] = useState(false);
 
-  const [params, setParams] = useState<BoxParams>({
-    width: 40,
-    height: 30,
-    depth: 20,
-  });
-  const [mesh, setMesh] = useState<ShapeMeshPayload | null>(null);
+  const [doc, setDoc] = useState<Document>(initialDocument);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [meshes, setMeshes] = useState<FeatureMesh[]>([]);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [fatal, setFatal] = useState<string | null>(null);
 
   // Own the worker's lifecycle here so each mount cycle (incl. StrictMode's
   // mount/unmount/remount) gets a fresh, live kernel rather than a disposed one.
@@ -32,77 +45,102 @@ export default function App() {
     };
   }, []);
 
-  // Regenerate whenever a parameter changes — the kernel runs off-thread.
+  // Regenerate whenever the document changes — the kernel runs off-thread.
   useEffect(() => {
     const kernel = kernelRef.current;
     if (!ready || !kernel) return;
     let cancelled = false;
     setBusy(true);
+
+    const resolved = resolveDocument(doc);
     kernel
-      .buildBox(params)
-      .then((result) => {
+      .regenerate(resolved.features)
+      .then((results) => {
         if (cancelled) return;
-        setMesh(result);
-        setError(null);
+        const nextMeshes: FeatureMesh[] = [];
+        const regenErrors: Record<string, string> = { ...resolved.errors };
+        for (const r of results) {
+          if (r.ok) nextMeshes.push({ id: r.id, mesh: r.mesh });
+          else regenErrors[r.id] = r.error;
+        }
+        setMeshes(nextMeshes);
+        setErrors(regenErrors);
+        setFatal(null);
       })
       .catch((err) => {
         if (cancelled) return;
         console.error("regeneration failed:", err);
-        setError(String(err?.message ?? err));
+        setFatal(String(err?.message ?? err));
       })
       .finally(() => {
         if (!cancelled) setBusy(false);
       });
+
     return () => {
       cancelled = true;
     };
-  }, [params, ready]);
+  }, [doc, ready]);
 
-  const update = (key: keyof BoxParams) => (value: number) =>
-    setParams((prev) => ({ ...prev, [key]: value }));
+  const selected = useMemo(
+    () => doc.features.find((f) => f.id === selectedId) ?? null,
+    [doc, selectedId],
+  );
+
+  const errorCount = Object.keys(errors).length;
+  const status = fatal
+    ? "kernel error"
+    : busy
+      ? "regenerating…"
+      : errorCount > 0
+        ? `${errorCount} feature error${errorCount > 1 ? "s" : ""}`
+        : "up to date";
+  const statusClass = fatal || errorCount > 0 ? "err" : busy ? "busy" : "idle";
+
+  const handleAdd = (kind: FeatureKind) => {
+    const { doc: next, id } = addFeature(doc, kind);
+    setDoc(next);
+    setSelectedId(id);
+  };
+
+  const handleDelete = (id: string) => {
+    setDoc(removeFeature(doc, id));
+    if (selectedId === id) setSelectedId(null);
+  };
 
   return (
     <div className="app">
       <header className="topbar">
         <span className="logo">open-shape</span>
-        <span className="phase">Phase&nbsp;0 · foundation</span>
-        <span
-          className={`status ${error ? "err" : busy ? "busy" : "idle"}`}
-          title={error ?? undefined}
-        >
-          {error ? "kernel error" : busy ? "regenerating…" : "up to date"}
+        <span className="phase">Phase&nbsp;1 · timeline</span>
+        <span className={`status ${statusClass}`} title={fatal ?? undefined}>
+          {status}
         </span>
       </header>
       <div className="body">
         <aside className="panel">
-          <h2>Box</h2>
-          {DIMS.map((key) => (
-            <label className="field" key={key}>
-              <span className="field-name">{key}</span>
-              <input
-                type="range"
-                min={1}
-                max={120}
-                value={params[key]}
-                onChange={(e) => update(key)(Number(e.target.value))}
-              />
-              <input
-                className="num"
-                type="number"
-                min={1}
-                value={params[key]}
-                onChange={(e) => update(key)(Number(e.target.value))}
-              />
-            </label>
-          ))}
-          {error && <p className="error-box">{error}</p>}
-          <p className="hint">
-            Drag a slider — the box is rebuilt by the OCCT kernel in a worker and
-            re-tessellated into three.js.
-          </p>
+          <h2>Timeline</h2>
+          <FeatureTree
+            doc={doc}
+            selectedId={selectedId}
+            errors={errors}
+            onSelect={setSelectedId}
+            onAdd={handleAdd}
+            onDelete={handleDelete}
+            onToggleSuppress={(id) =>
+              setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
+            }
+            onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
+          />
+          <h2 className="params-heading">Parameters</h2>
+          <ParamEditor
+            feature={selected}
+            error={selected ? (errors[selected.id] ?? null) : null}
+            onChangeParam={(id, name, value) => setDoc(updateParam(doc, id, name, value))}
+            onRename={(id, name) => setDoc(renameFeature(doc, id, name))}
+          />
         </aside>
         <main className="viewport">
-          <Viewport mesh={mesh} />
+          <Viewport meshes={meshes} selectedId={selectedId} />
         </main>
       </div>
     </div>

@@ -1,13 +1,17 @@
 // The kernel Web Worker: hosts the heavy OCCT WASM module and replicad so the
-// UI thread never blocks on geometry regeneration. For now it implements a
-// single op (buildBox); future feature ops are added behind the same protocol.
+// UI thread never blocks on geometry regeneration. It builds each feature in a
+// document and returns tessellated meshes (or a per-feature error).
 
 import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
-import { setOC, makeBaseBox } from "replicad";
+import { setOC, makeBaseBox, makeCylinder, makeSphere } from "replicad";
 
 import type { KernelRequest, KernelResponse } from "./protocol";
-import type { BoxParams, ShapeMeshPayload } from "./types";
+import type {
+  RegenFeatureResult,
+  ResolvedFeature,
+  ShapeMeshPayload,
+} from "./types";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -25,39 +29,62 @@ function ensureOC(): Promise<void> {
   return ocReady;
 }
 
-function buildBox(params: BoxParams): ShapeMeshPayload {
-  const { width, height, depth } = params;
-  // makeBaseBox(x, y, z) extrudes along Z, which is "up" in the viewport.
-  // Map height -> Z (vertical) and depth -> Y (front-to-back) to match intuition.
-  const shape = makeBaseBox(width, depth, height);
+const MESH_OPTS = { tolerance: 0.05, angularTolerance: 30 };
+
+function buildFeature(feature: ResolvedFeature): ShapeMeshPayload {
+  const p = feature.params;
+  let shape;
+  switch (feature.kind) {
+    case "box":
+      shape = makeBaseBox(p.width, p.depth, p.height);
+      break;
+    case "cylinder":
+      shape = makeCylinder(p.radius, p.height);
+      break;
+    case "sphere":
+      shape = makeSphere(p.radius);
+      break;
+    default:
+      throw new Error(`Unknown feature kind: ${(feature as { kind: string }).kind}`);
+  }
+  // NB: replicad's 3D translate() deletes the original and returns a new shape,
+  // so reassign and only delete the final shape.
+  shape = shape.translate(p.x ?? 0, p.y ?? 0, p.z ?? 0);
   try {
     return {
-      name: "box",
-      faces: shape.mesh({ tolerance: 0.05, angularTolerance: 30 }),
-      edges: shape.meshEdges({ tolerance: 0.05, angularTolerance: 30 }),
+      name: feature.kind,
+      faces: shape.mesh(MESH_OPTS),
+      edges: shape.meshEdges(MESH_OPTS),
     };
   } finally {
-    // Discipline from day one: free the OCCT-heap object every regeneration.
     shape.delete();
   }
+}
+
+function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
+  return features.map((feature) => {
+    try {
+      return { id: feature.id, ok: true, mesh: buildFeature(feature) };
+    } catch (err) {
+      return { id: feature.id, ok: false, error: String(err) };
+    }
+  });
 }
 
 ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
   const req = event.data;
   try {
     await ensureOC();
-    let result: ShapeMeshPayload;
+    let res: KernelResponse;
     switch (req.op) {
-      case "buildBox":
-        result = buildBox(req.params);
+      case "regenerate":
+        res = { id: req.id, ok: true, results: regenerate(req.features) };
         break;
       default:
         throw new Error(`Unknown kernel op: ${(req as { op: string }).op}`);
     }
-    const res: KernelResponse = { id: req.id, ok: true, result };
     ctx.postMessage(res);
   } catch (err) {
-    const res: KernelResponse = { id: req.id, ok: false, error: String(err) };
-    ctx.postMessage(res);
+    ctx.postMessage({ id: req.id, ok: false, error: String(err) } as KernelResponse);
   }
 };

@@ -1,11 +1,11 @@
 // Main-thread implementation of the Kernel facade. Spawns the worker and
 // correlates request/response pairs by id, exposing a clean Promise API.
 
-import type { BoxParams, Kernel, ShapeMeshPayload } from "./types";
+import type { Kernel, RegenFeatureResult, ResolvedFeature } from "./types";
 import type { KernelRequest, KernelResponse } from "./protocol";
 
 type Pending = {
-  resolve: (value: ShapeMeshPayload) => void;
+  resolve: (value: RegenFeatureResult[]) => void;
   reject: (reason: Error) => void;
 };
 
@@ -23,7 +23,7 @@ export class KernelClient implements Kernel {
       const p = this.pending.get(res.id);
       if (!p) return;
       this.pending.delete(res.id);
-      if (res.ok) p.resolve(res.result);
+      if (res.ok) p.resolve(res.results);
       else p.reject(new Error(res.error));
     };
     // A failure while loading/evaluating the worker module (e.g. the WASM glue)
@@ -38,10 +38,10 @@ export class KernelClient implements Kernel {
     this.pending.clear();
   }
 
-  buildBox(params: BoxParams): Promise<ShapeMeshPayload> {
+  regenerate(features: ResolvedFeature[]): Promise<RegenFeatureResult[]> {
     const id = this.nextId++;
-    const req: KernelRequest = { id, op: "buildBox", params };
-    return new Promise<ShapeMeshPayload>((resolve, reject) => {
+    const req: KernelRequest = { id, op: "regenerate", features };
+    return new Promise<RegenFeatureResult[]>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       this.worker.postMessage(req);
     });
