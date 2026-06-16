@@ -1,6 +1,7 @@
 // Pure helpers for reading and updating the document. Every mutation returns a
 // new Document (immutable updates) so React state and undo/redo stay simple.
 import { FEATURE_DEFS } from "./featureDefs";
+import { evaluateExpression, type Scope } from "./expression";
 import type { Document, Feature, FeatureKind } from "./types";
 import type { ResolvedFeature } from "../kernel/types";
 
@@ -73,24 +74,81 @@ export function setRollbackIndex(doc: Document, index: number): Document {
   return { ...doc, rollbackIndex: Math.max(0, Math.min(index, doc.features.length)) };
 }
 
+// --- Variables ------------------------------------------------------------
+
+export function addVariable(doc: Document): { doc: Document; id: string } {
+  const id = uid();
+  const variable = { id, name: `var${doc.variables.length + 1}`, expression: "0" };
+  return { doc: { ...doc, variables: [...doc.variables, variable] }, id };
+}
+
+export function updateVariable(
+  doc: Document,
+  id: string,
+  field: "name" | "expression",
+  value: string,
+): Document {
+  return {
+    ...doc,
+    variables: doc.variables.map((v) => (v.id === id ? { ...v, [field]: value } : v)),
+  };
+}
+
+export function removeVariable(doc: Document, id: string): Document {
+  return { ...doc, variables: doc.variables.filter((v) => v.id !== id) };
+}
+
 // --- Resolution -----------------------------------------------------------
 
 export interface ResolveResult {
   features: ResolvedFeature[];
   /** featureId -> error message for features that failed to evaluate. */
   errors: Record<string, string>;
+  /** Evaluated variable values, available to the UI. */
+  scope: Scope;
+  /** variableId -> error message (cycle / unknown reference / bad expression). */
+  variableErrors: Record<string, string>;
 }
 
-// Phase 1a: parameters are plain numeric literals. Phase 1b replaces this with
-// a real expression evaluator over the variable scope.
-function evalNumber(expr: string): number {
-  const value = Number(expr.trim());
-  if (!Number.isFinite(value)) throw new Error(`"${expr}" is not a number`);
-  return value;
+/** Evaluate variables in dependency order via fixpoint iteration; whatever can't
+ *  resolve after no further progress is a cycle or an undefined reference. */
+function evaluateVariables(doc: Document): {
+  scope: Scope;
+  errors: Record<string, string>;
+} {
+  const scope: Scope = {};
+  const errors: Record<string, string> = {};
+  let remaining = doc.variables.filter((v) => v.name.trim() !== "");
+
+  let progressed = true;
+  while (remaining.length > 0 && progressed) {
+    progressed = false;
+    const next: typeof remaining = [];
+    for (const v of remaining) {
+      try {
+        scope[v.name] = evaluateExpression(v.expression, scope);
+        progressed = true;
+      } catch {
+        next.push(v); // maybe an as-yet-unresolved dependency; retry next round
+      }
+    }
+    remaining = next;
+  }
+  // Surface the real error for anything still unresolved.
+  for (const v of remaining) {
+    try {
+      evaluateExpression(v.expression, scope);
+    } catch (err) {
+      errors[v.id] = String((err as Error).message ?? err);
+    }
+  }
+  return { scope, errors };
 }
 
 /** Resolve the active (non-suppressed, pre-rollback) features to numeric params. */
 export function resolveDocument(doc: Document): ResolveResult {
+  const { scope, errors: variableErrors } = evaluateVariables(doc);
+
   const active = doc.features
     .slice(0, doc.rollbackIndex)
     .filter((f) => !f.suppressed);
@@ -102,7 +160,7 @@ export function resolveDocument(doc: Document): ResolveResult {
     try {
       const params: Record<string, number> = {};
       for (const [name, expr] of Object.entries(f.params)) {
-        params[name] = evalNumber(expr);
+        params[name] = evaluateExpression(expr, scope);
       }
       features.push({ id: f.id, kind: f.kind, params });
     } catch (err) {
@@ -110,5 +168,5 @@ export function resolveDocument(doc: Document): ResolveResult {
     }
   }
 
-  return { features, errors };
+  return { features, errors, scope, variableErrors };
 }

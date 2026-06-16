@@ -2,17 +2,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
   addFeature,
+  addVariable,
   createDocument,
   removeFeature,
+  removeVariable,
   renameFeature,
   resolveDocument,
   setRollbackIndex,
   setSuppressed,
   updateParam,
+  updateVariable,
 } from "./document/document";
 import type { Document, FeatureKind } from "./document/types";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
+import { VariablesPanel } from "./ui/VariablesPanel";
 import { Viewport, type FeatureMesh } from "./viewport/Viewport";
 import "./App.css";
 
@@ -45,14 +49,17 @@ export default function App() {
     };
   }, []);
 
-  // Regenerate whenever the document changes — the kernel runs off-thread.
+  // Resolution (variables + params -> numbers) is synchronous and pure; memoize
+  // it so the UI can read evaluated values without re-running the kernel.
+  const resolved = useMemo(() => resolveDocument(doc), [doc]);
+
+  // Regenerate whenever the resolved document changes — the kernel runs off-thread.
   useEffect(() => {
     const kernel = kernelRef.current;
     if (!ready || !kernel) return;
     let cancelled = false;
     setBusy(true);
 
-    const resolved = resolveDocument(doc);
     kernel
       .regenerate(resolved.features)
       .then((results) => {
@@ -79,20 +86,21 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [doc, ready]);
+  }, [resolved, ready]);
 
   const selected = useMemo(
     () => doc.features.find((f) => f.id === selectedId) ?? null,
     [doc, selectedId],
   );
 
-  const errorCount = Object.keys(errors).length;
+  const errorCount =
+    Object.keys(errors).length + Object.keys(resolved.variableErrors).length;
   const status = fatal
     ? "kernel error"
     : busy
       ? "regenerating…"
       : errorCount > 0
-        ? `${errorCount} feature error${errorCount > 1 ? "s" : ""}`
+        ? `${errorCount} error${errorCount > 1 ? "s" : ""}`
         : "up to date";
   const statusClass = fatal || errorCount > 0 ? "err" : busy ? "busy" : "idle";
 
@@ -118,7 +126,19 @@ export default function App() {
       </header>
       <div className="body">
         <aside className="panel">
-          <h2>Timeline</h2>
+          <h2>Variables</h2>
+          <VariablesPanel
+            variables={doc.variables}
+            scope={resolved.scope}
+            errors={resolved.variableErrors}
+            onAdd={() => {
+              const { doc: next } = addVariable(doc);
+              setDoc(next);
+            }}
+            onChange={(id, field, value) => setDoc(updateVariable(doc, id, field, value))}
+            onDelete={(id) => setDoc(removeVariable(doc, id))}
+          />
+          <h2 className="params-heading">Timeline</h2>
           <FeatureTree
             doc={doc}
             selectedId={selectedId}

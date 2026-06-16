@@ -74,6 +74,69 @@
   margin-top: 22px;
 }
 
+/* --- Variables --- */
+
+.var-row {
+  display: grid;
+  grid-template-columns: 78px 10px 1fr 36px 18px;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 5px;
+}
+
+.var-name {
+  background: #0f1115;
+  border: 1px solid #2a2d35;
+  color: #b9d0ff;
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  min-width: 0;
+}
+
+.var-eq {
+  color: #6f7480;
+  text-align: center;
+}
+
+.var-expr {
+  background: #0f1115;
+  border: 1px solid #2a2d35;
+  color: #e6e8ee;
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  min-width: 0;
+}
+
+.var-name:focus,
+.var-expr:focus {
+  outline: none;
+  border-color: #4f8cff;
+}
+
+.var-expr.invalid {
+  border-color: #b04545;
+}
+
+.var-value {
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: #6fcf97;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.var-add {
+  flex: none;
+  width: 100%;
+  margin-top: 3px;
+}
+
 /* --- Feature tree --- */
 
 .tree-add {
