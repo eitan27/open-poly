@@ -10,6 +10,7 @@ interface Props {
   onDelete: (id: string) => void;
   onToggleSuppress: (id: string) => void;
   onSetRollback: (index: number) => void;
+  onMove: (id: string, delta: -1 | 1) => void;
 }
 
 export function FeatureTree({
@@ -21,6 +22,7 @@ export function FeatureTree({
   onDelete,
   onToggleSuppress,
   onSetRollback,
+  onMove,
 }: Props) {
   const { features, rollbackIndex } = doc;
 
@@ -53,6 +55,28 @@ export function FeatureTree({
                 <span className="row-kind">{FEATURE_DEFS[feature.kind].label}</span>
                 <span className="row-name">{feature.name}</span>
                 {error && <span className="row-badge" title={error}>!</span>}
+                <button
+                  className="row-icon"
+                  title="Move up"
+                  disabled={i === 0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMove(feature.id, -1);
+                  }}
+                >
+                  ▲
+                </button>
+                <button
+                  className="row-icon"
+                  title="Move down"
+                  disabled={i === features.length - 1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMove(feature.id, 1);
+                  }}
+                >
+                  ▼
+                </button>
                 <button
                   className="row-icon"
                   title={feature.suppressed ? "Unsuppress" : "Suppress"}

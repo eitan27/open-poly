@@ -49,6 +49,16 @@ export function removeFeature(doc: Document, id: string): Document {
   return { ...doc, features, rollbackIndex };
 }
 
+/** Swap a feature with its neighbour in the timeline (delta -1 = up, +1 = down). */
+export function moveFeature(doc: Document, id: string, delta: -1 | 1): Document {
+  const idx = doc.features.findIndex((f) => f.id === id);
+  const j = idx + delta;
+  if (idx < 0 || j < 0 || j >= doc.features.length) return doc;
+  const features = [...doc.features];
+  [features[idx], features[j]] = [features[j], features[idx]];
+  return { ...doc, features };
+}
+
 function mapFeature(doc: Document, id: string, fn: (f: Feature) => Feature): Document {
   return { ...doc, features: doc.features.map((f) => (f.id === id ? fn(f) : f)) };
 }

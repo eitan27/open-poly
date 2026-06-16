@@ -4,6 +4,7 @@ import {
   addFeature,
   addVariable,
   createDocument,
+  moveFeature,
   removeFeature,
   removeVariable,
   renameFeature,
@@ -14,6 +15,7 @@ import {
   updateVariable,
 } from "./document/document";
 import type { Document, FeatureKind } from "./document/types";
+import { useHistory } from "./hooks/useHistory";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
 import { VariablesPanel } from "./ui/VariablesPanel";
@@ -29,7 +31,14 @@ export default function App() {
   const kernelRef = useRef<KernelClient | null>(null);
   const [ready, setReady] = useState(false);
 
-  const [doc, setDoc] = useState<Document>(initialDocument);
+  const {
+    state: doc,
+    set: setDoc,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+  } = useHistory<Document>(initialDocument);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [meshes, setMeshes] = useState<FeatureMesh[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -48,6 +57,22 @@ export default function App() {
       setReady(false);
     };
   }, []);
+
+  // Undo/redo keyboard shortcuts. Skip while typing so native text-field undo
+  // keeps working inside inputs.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
 
   // Resolution (variables + params -> numbers) is synchronous and pure; memoize
   // it so the UI can read evaluated values without re-running the kernel.
@@ -120,6 +145,14 @@ export default function App() {
       <header className="topbar">
         <span className="logo">open-shape</span>
         <span className="phase">Phase&nbsp;1 · timeline</span>
+        <div className="topbar-actions">
+          <button className="tool-btn" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">
+            ↶
+          </button>
+          <button className="tool-btn" onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)">
+            ↷
+          </button>
+        </div>
         <span className={`status ${statusClass}`} title={fatal ?? undefined}>
           {status}
         </span>
@@ -135,7 +168,9 @@ export default function App() {
               const { doc: next } = addVariable(doc);
               setDoc(next);
             }}
-            onChange={(id, field, value) => setDoc(updateVariable(doc, id, field, value))}
+            onChange={(id, field, value) =>
+              setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)
+            }
             onDelete={(id) => setDoc(removeVariable(doc, id))}
           />
           <h2 className="params-heading">Timeline</h2>
@@ -150,13 +185,16 @@ export default function App() {
               setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
             }
             onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
+            onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
           />
           <h2 className="params-heading">Parameters</h2>
           <ParamEditor
             feature={selected}
             error={selected ? (errors[selected.id] ?? null) : null}
-            onChangeParam={(id, name, value) => setDoc(updateParam(doc, id, name, value))}
-            onRename={(id, name) => setDoc(renameFeature(doc, id, name))}
+            onChangeParam={(id, name, value) =>
+              setDoc(updateParam(doc, id, name, value), `param:${id}:${name}`)
+            }
+            onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}
           />
         </aside>
         <main className="viewport">
