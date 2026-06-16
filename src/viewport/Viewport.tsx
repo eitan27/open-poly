@@ -291,12 +291,12 @@ function createDatums(scene: THREE.Scene): DatumEntry[] {
     color: 0xffd24a,
     depthTest: false,
     transparent: true,
-    opacity: 1,
+    opacity: 0.5,
   });
-  const origin = new THREE.Mesh(new THREE.SphereGeometry(1.8, 20, 20), originMat);
+  const origin = new THREE.Mesh(new THREE.SphereGeometry(1.0, 20, 20), originMat);
   origin.renderOrder = 10;
   scene.add(origin);
-  entries.push({ id: "origin", object: origin, kind: "point", material: originMat, baseOpacity: 1 });
+  entries.push({ id: "origin", object: origin, kind: "point", material: originMat, baseOpacity: 0.5 });
 
   const planeGeo = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
   const edgeGeo = new THREE.EdgesGeometry(planeGeo);
@@ -347,6 +347,7 @@ function applyDatumAppearance(
     } else {
       const scale = active ? 1.6 : hot ? 1.35 : 1;
       d.object.scale.setScalar(scale);
+      d.material.opacity = active ? 0.95 : hot ? 0.8 : d.baseOpacity;
       (d.material as THREE.MeshBasicMaterial).color.set(active || hot ? 0xffffff : 0xffd24a);
     }
   }
