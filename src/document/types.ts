@@ -15,6 +15,15 @@ export type SketchEntity =
   | { type: "arc"; id: string; c: Vec2; r: number; start: number; end: number }
   | { type: "point"; id: string; p: Vec2 };
 
+/** Dimensional/geometric constraints over sketch entities (solved by planegcs).
+ *  `entity`/`a`/`b` reference SketchEntity ids. */
+export type SketchConstraint =
+  | { id: string; type: "horizontal"; entity: string }
+  | { id: string; type: "vertical"; entity: string }
+  | { id: string; type: "parallel"; a: string; b: string }
+  | { id: string; type: "perpendicular"; a: string; b: string }
+  | { id: string; type: "distance"; entity: string; value: number };
+
 interface FeatureBase {
   id: string;
   name: string;
@@ -34,6 +43,7 @@ export interface SketchFeature extends FeatureBase {
   type: "sketch";
   plane: SketchPlaneRef;
   entities: SketchEntity[];
+  constraints: SketchConstraint[];
 }
 
 export type Feature = PrimitiveFeature | SketchFeature;

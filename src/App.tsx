@@ -3,6 +3,7 @@ import { KernelClient } from "./kernel/KernelClient";
 import {
   addFeature,
   addSketch,
+  addSketchConstraints,
   addSketchEntities,
   addVariable,
   createDocument,
@@ -13,6 +14,7 @@ import {
   renameFeature,
   resolveDocument,
   setRollbackIndex,
+  setSketchEntities,
   setSuppressed,
   updateParam,
   updateVariable,
@@ -24,6 +26,7 @@ import type {
   SketchFeature,
   Vec2,
 } from "./document/types";
+import { solveSketch } from "./sketch/solver";
 import { frameOf, planeRefLabel, type SketchPlaneRef } from "./document/planes";
 import {
   arcFrom3,
@@ -90,6 +93,7 @@ export default function App() {
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
   const [draft, setDraft] = useState<Vec2[]>([]);
   const [polygonSides, setPolygonSides] = useState(6);
+  const [fullyConstrained, setFullyConstrained] = useState(false);
   const viewApiRef = useRef<ViewportApi | null>(null);
 
   const setSketchTool = (t: SketchTool) => {
@@ -219,6 +223,7 @@ export default function App() {
     setPicking(false);
     setEditingSketchId(id);
     setSketchTool("line");
+    setFullyConstrained(false);
     viewApiRef.current?.lookAtFrame(frameOf(ref));
   };
 
@@ -228,6 +233,7 @@ export default function App() {
     setEditingSketchId(id);
     setSelectedId(id);
     setSketchTool("line");
+    setFullyConstrained(false);
     viewApiRef.current?.lookAtFrame(frameOf(f.plane));
   };
 
@@ -237,12 +243,14 @@ export default function App() {
   };
 
   // A snapped click on the sketch plane (already in uv coords). Drives the
-  // multi-click construction tools.
-  const handleSketchClick = (uv: Vec2) => {
+  // multi-click construction tools. `hv` records a horizontal/vertical inference
+  // (line tool) so it can be captured as a constraint.
+  const handleSketchClick = (uv: Vec2, hv?: "horizontal" | "vertical") => {
     if (!editingSketchId || sketchTool === "select") return;
     const sketchId = editingSketchId;
     const commit = (entities: SketchEntity[]) => {
       setDoc(addSketchEntities(doc, sketchId, entities));
+      setFullyConstrained(false); // geometry changed; constraint state unknown
     };
     const lineEntity = (a: Vec2, b: Vec2): SketchEntity => ({ type: "line", id: genId(), a, b });
     const loopLines = (pts: Vec2[]) => loopSegments(pts).map(([a, b]) => lineEntity(a, b));
@@ -251,7 +259,13 @@ export default function App() {
       case "line":
         if (draft.length === 0) setDraft([uv]);
         else {
-          commit([lineEntity(draft[0], uv)]);
+          const line = lineEntity(draft[0], uv);
+          let next = addSketchEntities(doc, sketchId, [line]);
+          if (hv) {
+            next = addSketchConstraints(next, sketchId, [{ id: genId(), type: hv, entity: line.id }]);
+          }
+          setDoc(next);
+          setFullyConstrained(false);
           setDraft([uv]); // chain
         }
         break;
@@ -300,6 +314,19 @@ export default function App() {
           setDraft([]);
         }
         break;
+    }
+  };
+
+  // Run the planegcs solver on the active sketch, apply the solution, and update
+  // the fully-constrained indicator.
+  const handleSolve = async () => {
+    if (!editingSketch) return;
+    try {
+      const res = await solveSketch(editingSketch.entities, editingSketch.constraints);
+      setDoc(setSketchEntities(doc, editingSketch.id, res.entities));
+      setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+    } catch (err) {
+      console.error("constraint solve failed:", err);
     }
   };
 
@@ -401,6 +428,7 @@ export default function App() {
             sketchTool={sketchTool}
             sketches={renderSketches}
             activeSketchId={editingSketchId}
+            sketchFullyConstrained={fullyConstrained}
             draft={draft}
             polygonSides={polygonSides}
             onSketchClick={handleSketchClick}
@@ -418,6 +446,9 @@ export default function App() {
                   {t.label}
                 </button>
               ))}
+              <button title="Solve constraints" onClick={handleSolve}>
+                ⛓
+              </button>
               {sketchTool === "polygon" && (
                 <label className="poly-sides" title="Polygon sides">
                   <span>n</span>
@@ -431,6 +462,14 @@ export default function App() {
                     }
                   />
                 </label>
+              )}
+              {editingSketch.constraints.length > 0 && (
+                <span
+                  className="constraint-count"
+                  title={`${editingSketch.constraints.length} constraints${fullyConstrained ? " · fully constrained" : ""}`}
+                >
+                  {fullyConstrained ? "✓" : editingSketch.constraints.length}
+                </span>
               )}
             </div>
           )}

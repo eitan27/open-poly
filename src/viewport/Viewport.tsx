@@ -99,6 +99,7 @@ export function Viewport({
   sketchTool,
   sketches,
   activeSketchId,
+  sketchFullyConstrained,
   draft,
   polygonSides,
   onSketchClick,
@@ -112,9 +113,10 @@ export function Viewport({
   sketchTool: SketchTool;
   sketches: RenderSketch[];
   activeSketchId: string | null;
+  sketchFullyConstrained: boolean;
   draft: Vec2[];
   polygonSides: number;
-  onSketchClick: (uv: Vec2) => void;
+  onSketchClick: (uv: Vec2, hv?: "horizontal" | "vertical") => void;
   apiRef: { current: ViewportApi | null };
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -130,6 +132,8 @@ export function Viewport({
   draftRef.current = draft;
   const polygonSidesRef = useRef(polygonSides);
   polygonSidesRef.current = polygonSides;
+  const sketchFullyConstrainedRef = useRef(sketchFullyConstrained);
+  sketchFullyConstrainedRef.current = sketchFullyConstrained;
   const onSketchClickRef = useRef(onSketchClick);
   onSketchClickRef.current = onSketchClick;
   // derived from sketches + activeSketchId in the render effect
@@ -260,7 +264,7 @@ export function Viewport({
     // Snap to inferences: points (origin, endpoints/midpoints of any coplanar
     // sketch or body edge), then nearest point on a coplanar edge, then
     // horizontal/vertical relative to the chain start. No grid snapping.
-    const snap = (raw: Vec2, clientX: number, clientY: number): { uv: Vec2; kind: "point" | "edge" | "free" } => {
+    const snap = (raw: Vec2, clientX: number, clientY: number): { uv: Vec2; kind: "point" | "edge" | "h" | "v" | "free" } => {
       const frame = activeFrameRef.current!;
       const distPx = (c: Vec2) => {
         const w = uvToWorld(frame, c[0], c[1]);
@@ -294,8 +298,8 @@ export function Viewport({
         const ang = Math.atan2(raw[1] - ref[1], raw[0] - ref[0]);
         const dH = Math.min(Math.abs(ang), Math.abs(Math.abs(ang) - Math.PI));
         const dV = Math.abs(Math.abs(ang) - Math.PI / 2);
-        if (dH < ANGLE_SNAP) return { uv: [raw[0], ref[1]], kind: "free" };
-        if (dV < ANGLE_SNAP) return { uv: [ref[0], raw[1]], kind: "free" };
+        if (dH < ANGLE_SNAP) return { uv: [raw[0], ref[1]], kind: "h" };
+        if (dV < ANGLE_SNAP) return { uv: [ref[0], raw[1]], kind: "v" };
       }
       return { uv: raw, kind: "free" };
     };
@@ -360,7 +364,7 @@ export function Viewport({
         } else {
           state.previewLine.visible = false;
         }
-        if (kind !== "free") {
+        if (kind === "point" || kind === "edge") {
           const w = uvToWorld(frame, uv[0], uv[1]);
           state.snapMarker.position.set(w[0], w[1], w[2]);
           (state.snapMarker.material as THREE.MeshBasicMaterial).color.set(kind === "edge" ? 0x36d6c3 : 0xffe14a);
@@ -395,7 +399,8 @@ export function Viewport({
       if (frame && sketchToolRef.current !== "select") {
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) return;
-        onSketchClickRef.current(snap(raw, e.clientX, e.clientY).uv);
+        const s = snap(raw, e.clientX, e.clientY);
+        onSketchClickRef.current(s.uv, s.kind === "h" ? "horizontal" : s.kind === "v" ? "vertical" : undefined);
       }
     };
     renderer.domElement.addEventListener("pointermove", onMove);
@@ -499,7 +504,12 @@ export function Viewport({
       const geom = new THREE.BufferGeometry();
       geom.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
       const mat = new THREE.LineBasicMaterial({
-        color: s.id === activeSketchId ? 0xeaf0ff : 0xaeb9e0,
+        // Fully-constrained active sketch turns green (Onshape-style).
+        color: s.id === activeSketchId
+          ? sketchFullyConstrainedRef.current
+            ? 0x4ad07a
+            : 0xeaf0ff
+          : 0xaeb9e0,
       });
       const seg = new THREE.LineSegments(geom, mat);
       seg.frustumCulled = false;
@@ -567,7 +577,7 @@ export function Viewport({
     for (const [aw, bw] of collectBodyEdges(state.group)) addSeg(aw, bw);
     snapPointsRef.current = points;
     snapLinesRef.current = lines;
-  }, [sketches, activeSketchId, meshes]);
+  }, [sketches, activeSketchId, meshes, sketchFullyConstrained]);
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
