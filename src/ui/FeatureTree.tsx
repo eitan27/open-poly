@@ -1,5 +1,6 @@
 import { FEATURE_DEFS, FEATURE_KINDS } from "../document/featureDefs";
 import type { Document, FeatureKind } from "../document/types";
+import { EyeIcon } from "./icons";
 
 interface Props {
   doc: Document;
@@ -88,13 +89,14 @@ export function FeatureTree({
                 </button>
                 <button
                   className="row-icon"
-                  title={feature.suppressed ? "Unsuppress" : "Suppress"}
+                  title={feature.suppressed ? "Unsuppress (show)" : "Suppress (hide)"}
+                  style={{ opacity: feature.suppressed ? 0.35 : 1 }}
                   onClick={(e) => {
                     e.stopPropagation();
                     onToggleSuppress(feature.id);
                   }}
                 >
-                  {feature.suppressed ? "○" : "●"}
+                  <EyeIcon />
                 </button>
                 <button
                   className="row-icon"

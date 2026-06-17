@@ -39,6 +39,7 @@ import {
   regularPolygon,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
+import { EyeIcon } from "./ui/icons";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
 import { VariablesPanel } from "./ui/VariablesPanel";
@@ -430,9 +431,10 @@ export default function App() {
                   <button
                     className="row-icon"
                     title={visible ? "Hide" : "Show"}
+                    style={{ opacity: visible ? 1 : 0.35 }}
                     onClick={() => setDatumVisibility((v) => ({ ...v, [d.id]: !v[d.id] }))}
                   >
-                    {visible ? "●" : "○"}
+                    <EyeIcon />
                   </button>
                 </div>
               );
