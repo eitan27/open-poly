@@ -43,6 +43,7 @@ import { ParamEditor } from "./ui/ParamEditor";
 import { VariablesPanel } from "./ui/VariablesPanel";
 import {
   Viewport,
+  type DatumId,
   type FeatureMesh,
   type Selection,
   type SketchTool,
@@ -50,6 +51,13 @@ import {
   type ViewportApi,
 } from "./viewport/Viewport";
 import "./App.css";
+
+const DATUM_ROWS: { id: DatumId; kind: string; label: string }[] = [
+  { id: "origin", kind: "Point", label: "Origin" },
+  { id: "plane-top", kind: "Plane", label: "Top" },
+  { id: "plane-front", kind: "Plane", label: "Front" },
+  { id: "plane-right", kind: "Plane", label: "Right" },
+];
 
 const SKETCH_TOOLS: { tool: SketchTool; label: string; title: string }[] = [
   { tool: "select", label: "↖", title: "Select (V)" },
@@ -106,6 +114,12 @@ export default function App() {
   const [draft, setDraft] = useState<Vec2[]>([]);
   const [polygonSides, setPolygonSides] = useState(6);
   const [fullyConstrained, setFullyConstrained] = useState(false);
+  const [datumVisibility, setDatumVisibility] = useState<Record<DatumId, boolean>>({
+    origin: true,
+    "plane-top": true,
+    "plane-front": true,
+    "plane-right": true,
+  });
   const viewApiRef = useRef<ViewportApi | null>(null);
 
   const setSketchTool = (t: SketchTool) => {
@@ -389,7 +403,26 @@ export default function App() {
       </header>
       <div className="body">
         <aside className="panel">
-          <h2>Variables</h2>
+          <h2>Datums</h2>
+          <div className="tree-list">
+            {DATUM_ROWS.map((d) => {
+              const visible = datumVisibility[d.id];
+              return (
+                <div className={"tree-row" + (visible ? "" : " dim")} key={d.id}>
+                  <span className="row-kind">{d.kind}</span>
+                  <span className="row-name">{d.label}</span>
+                  <button
+                    className="row-icon"
+                    title={visible ? "Hide" : "Show"}
+                    onClick={() => setDatumVisibility((v) => ({ ...v, [d.id]: !v[d.id] }))}
+                  >
+                    {visible ? "●" : "○"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <h2 className="params-heading">Variables</h2>
           <VariablesPanel
             variables={doc.variables}
             scope={resolved.scope}
@@ -436,6 +469,7 @@ export default function App() {
             meshes={meshes}
             selection={selection}
             onSelect={setSelection}
+            datumVisibility={datumVisibility}
             picking={picking}
             onPick={startSketchOn}
             activeSketch={

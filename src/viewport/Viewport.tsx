@@ -129,6 +129,7 @@ export function Viewport({
   meshes,
   selection,
   onSelect,
+  datumVisibility,
   picking,
   onPick,
   activeSketch,
@@ -144,6 +145,7 @@ export function Viewport({
   meshes: FeatureMesh[];
   selection: Selection | null;
   onSelect: (selection: Selection | null) => void;
+  datumVisibility: Record<DatumId, boolean>;
   picking: boolean;
   onPick: (ref: SketchPlaneRef) => void;
   activeSketch: { datumId: SketchPlaneId | null } | null;
@@ -773,7 +775,8 @@ export function Viewport({
     applyHighlightsRef.current();
   }, [selection]);
 
-  // Sketch mode: dim solids and hide the inactive datum planes.
+  // Datum visibility (user toggle) + sketch mode (dim solids, hide the inactive
+  // planes while editing).
   useEffect(() => {
     const state = stateRef.current;
     if (!state) return;
@@ -782,14 +785,18 @@ export function Viewport({
     state.faceMaterial.opacity = active ? 0.16 : 1;
     state.faceMaterial.needsUpdate = true;
     for (const d of state.datums) {
-      if (d.kind !== "plane") continue;
-      const visible = !active || d.id === activeSketch?.datumId;
-      d.object.visible = visible;
-      if (d.outline) d.outline.visible = visible;
-      if (active && d.id === activeSketch?.datumId) d.material.opacity = 0.1;
+      const userVisible = datumVisibility[d.id] ?? true;
+      if (d.kind === "plane") {
+        const visible = userVisible && (!active || d.id === activeSketch?.datumId);
+        d.object.visible = visible;
+        if (d.outline) d.outline.visible = visible;
+        if (active && d.id === activeSketch?.datumId) d.material.opacity = 0.1;
+      } else {
+        d.object.visible = userVisible; // origin point
+      }
     }
     if (!active) applyDatumAppearance(state, null);
-  }, [activeSketch]);
+  }, [activeSketch, datumVisibility]);
 
   // Render every sketch (so finished sketches stay visible); set the active
   // frame/entities used for drawing.
