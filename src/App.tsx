@@ -29,7 +29,8 @@ import type {
 } from "./document/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
-import { frameOf, planeRefLabel, type SketchPlaneRef } from "./document/planes";
+import { frameOf, planeRefLabel, uvToWorld, type SketchPlaneRef } from "./document/planes";
+import { evaluateExpression } from "./document/expression";
 import { detectSketchRegions } from "./document/regions";
 import {
   arcFrom3,
@@ -117,6 +118,21 @@ export default function App() {
   // Regular clicks accumulate into the set; clicking a selected element removes
   // it; clicking empty space clears.
   const handlePick = (picked: Selection | null) => {
+    // Dimension mode armed: the next picked line becomes the dimension target.
+    if (dimPending) {
+      const sk = doc.features.find((f) => f.id === editingSketchId);
+      const e =
+        picked?.kind === "sketchEntity" && picked.sketchId === editingSketchId && sk?.type === "sketch"
+          ? sk.entities.find((x) => x.id === picked.entityId)
+          : undefined;
+      if (e?.type === "line") {
+        setSelection([picked!]);
+        openDimensionFor(e);
+      } else {
+        setDimPending(false); // clicked empty / non-line → cancel
+      }
+      return;
+    }
     if (!picked) {
       setSelection([]);
       return;
@@ -133,9 +149,19 @@ export default function App() {
   const [draft, setDraft] = useState<Vec2[]>([]);
   const [polygonSides, setPolygonSides] = useState(6);
   const [fullyConstrained, setFullyConstrained] = useState(false);
-  // Length-dimension entry: the line being dimensioned + the in-progress text.
-  const [dimInput, setDimInput] = useState<{ entityId: string; value: string } | null>(null);
+  // Length-dimension entry: the line being dimensioned, the in-progress text,
+  // and the on-screen position (px, canvas-relative) to anchor the input box.
+  const [dimInput, setDimInput] = useState<
+    { entityId: string; value: string; x: number; y: number } | null
+  >(null);
+  // Armed dimension mode: D was pressed with nothing selected; the next picked
+  // line becomes the dimension target.
+  const [dimPending, setDimPending] = useState(false);
   const startDimensionRef = useRef<() => void>(() => {});
+  const dimPendingRef = useRef(dimPending);
+  dimPendingRef.current = dimPending;
+  const dimInputRef = useRef(dimInput);
+  dimInputRef.current = dimInput;
   const [datumVisibility, setDatumVisibility] = useState<Record<DatumId, boolean>>({
     origin: true,
     "plane-top": true,
@@ -179,7 +205,9 @@ export default function App() {
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (picking) setPicking(false);
+        if (dimInputRef.current) setDimInput(null);
+        else if (dimPendingRef.current) setDimPending(false);
+        else if (picking) setPicking(false);
         else if (draft.length > 0) setDraft([]); // cancel the in-progress shape
         else if (editingSketchId) finishSketch();
         return;
@@ -191,7 +219,10 @@ export default function App() {
         return;
       }
       // D dimensions the selected line (Onshape's dimension shortcut).
+      // preventDefault so the keystroke can't leak into the input that opening
+      // the dialog autofocuses synchronously.
       if (editingSketchId && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === "d") {
+        e.preventDefault();
         startDimensionRef.current();
         return;
       }
@@ -414,11 +445,30 @@ export default function App() {
     setDoc(await solveSketchIn(doc, editingSketch.id));
   };
 
-  // Open the length-dimension input for the currently selected sketch line,
-  // pre-filled with its present length (Onshape's "select a line, press D").
+  // Open the length-dimension input anchored next to the given line, pre-filled
+  // with its present length.
+  const openDimensionFor = (line: Extract<SketchEntity, { type: "line" }>) => {
+    if (!editingSketch) return;
+    const frame = frameOf(editingSketch.plane);
+    const world = uvToWorld(frame, (line.a[0] + line.b[0]) / 2, (line.a[1] + line.b[1]) / 2);
+    const s = viewApiRef.current?.worldToScreen(world) ?? { x: 240, y: 120 };
+    const length = Math.hypot(line.b[0] - line.a[0], line.b[1] - line.a[1]);
+    setDimPending(false);
+    setSelection([{ kind: "sketchEntity", sketchId: editingSketch.id, entityId: line.id }]);
+    setDimInput({ entityId: line.id, value: fmt(length), x: s.x, y: s.y });
+  };
+
+  // D (or the ↔ button): dimension the selected line if there is one, otherwise
+  // arm "pick a line to dimension" mode (forcing the Select tool so clicks pick).
   const startDimension = () => {
-    if (!dimLine) return;
-    setDimInput({ entityId: dimLine.entityId, value: fmt(dimLine.length) });
+    if (!editingSketch) return;
+    if (dimLine) {
+      const e = editingSketch.entities.find((x) => x.id === dimLine.entityId);
+      if (e?.type === "line") openDimensionFor(e);
+      return;
+    }
+    setSketchTool("select");
+    setDimPending(true);
   };
   startDimensionRef.current = startDimension;
 
@@ -427,7 +477,15 @@ export default function App() {
   const applyDimension = async () => {
     if (!dimInput || !editingSketch) return;
     const sketchId = editingSketch.id;
-    const value = Number(dimInput.value);
+    // Evaluate against the variable scope so a number, expression, or variable
+    // name all work. (Note: this resolves to a number now; a live expression
+    // link that re-evaluates on variable change is a deferred Phase-2 gap.)
+    let value = NaN;
+    try {
+      value = evaluateExpression(dimInput.value, resolved.scope);
+    } catch {
+      value = NaN;
+    }
     setDimInput(null);
     if (!Number.isFinite(value) || value <= 0) return;
     const kept = editingSketch.constraints.filter(
@@ -614,12 +672,16 @@ export default function App() {
               )}
             </div>
           )}
+          {dimPending && (
+            <div className="dim-hint">Pick a line to dimension · Esc to cancel</div>
+          )}
           {dimInput && (
-            <div className="dim-input">
+            <div
+              className="dim-input"
+              style={{ left: dimInput.x, top: dimInput.y }}
+            >
               <label>Length</label>
               <input
-                type="number"
-                step="any"
                 autoFocus
                 value={dimInput.value}
                 onChange={(e) => setDimInput((d) => (d ? { ...d, value: e.target.value } : d))}

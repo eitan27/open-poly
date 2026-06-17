@@ -83,6 +83,8 @@ export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | 
 export interface ViewportApi {
   setView(name: ViewName): void;
   lookAtFrame(frame: PlaneFrameData): void;
+  /** Project a world point to pixel coords relative to the canvas top-left. */
+  worldToScreen(p: [number, number, number]): { x: number; y: number };
 }
 
 interface DatumEntry {
@@ -518,6 +520,11 @@ export function Viewport({
         const origin = new THREE.Vector3(...frame.origin);
         const normal = new THREE.Vector3(...frame.normal).normalize();
         startTween(origin.clone().add(normal.multiplyScalar(VIEW_DISTANCE)), new THREE.Vector3(...frame.vAxis), origin);
+      },
+      worldToScreen(p) {
+        const v = new THREE.Vector3(p[0], p[1], p[2]).project(camera);
+        const rect = renderer.domElement.getBoundingClientRect();
+        return { x: (v.x * 0.5 + 0.5) * rect.width, y: (-v.y * 0.5 + 0.5) * rect.height };
       },
     };
 

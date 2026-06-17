@@ -255,9 +255,14 @@ Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
 > **2b status (2026-06-18):** the solver (`planegcs`) maps lines +
 > horizontal/vertical/parallel/perpendicular/distance. Auto H/V capture on line
 > draw, a manual ⛓ Solve button, and fully-constrained→green coloring are in.
-> **Length dimension is now interactive**: select a line, press **D** (or the ↔
-> toolbar button), type a length → it adds/replaces a `distance` constraint and
-> immediately re-solves so the whole sketch updates.
+> **Length dimension is now interactive**: press **D** (or the ↔ toolbar button)
+> with a line selected to open a length input anchored next to the line, or with
+> nothing selected to arm "pick a line to dimension" mode. The field accepts a
+> number, an arithmetic expression, or a variable name (evaluated against the
+> variable scope at entry). Submitting adds/replaces a `distance` constraint and
+> immediately re-solves so the whole sketch updates. (The value is stored as a
+> resolved number — a *live* expression link that re-evaluates when the variable
+> changes is still a deferred gap, below.)
 >
 > **Known gaps in Phase 2 sketch constraints (deferred):**
 > - **Dimensions:** only line *length*. No radius/diameter (circle), angle

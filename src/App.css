@@ -537,13 +537,28 @@
 
 .dim-input {
   position: absolute;
-  left: 50%;
-  top: 16px;
-  transform: translateX(-50%);
+  /* left/top set inline to the line's screen position; nudge up-right so the
+     box sits beside the line rather than on top of it. */
+  transform: translate(14px, -130%);
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
+  background: rgba(24, 26, 32, 0.92);
+  border: 1px solid #4f8cff;
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  z-index: 20;
+}
+
+.dim-hint {
+  position: absolute;
+  left: 50%;
+  top: 16px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #cfe0ff;
   background: rgba(24, 26, 32, 0.92);
   border: 1px solid #4f8cff;
   border-radius: 8px;
