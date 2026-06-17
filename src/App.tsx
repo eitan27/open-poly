@@ -29,6 +29,7 @@ import type {
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import { frameOf, planeRefLabel, type SketchPlaneRef } from "./document/planes";
+import { detectSketchRegions } from "./document/regions";
 import {
   arcFrom3,
   circleFrom3,
@@ -253,7 +254,12 @@ export default function App() {
       doc.features
         .slice(0, doc.rollbackIndex)
         .filter((f): f is SketchFeature => f.type === "sketch" && !f.suppressed)
-        .map((f) => ({ id: f.id, frame: frameOf(f.plane), entities: f.entities })),
+        .map((f) => ({
+          id: f.id,
+          frame: frameOf(f.plane),
+          entities: f.entities,
+          regions: detectSketchRegions(f.entities),
+        })),
     [doc],
   );
 
@@ -479,6 +485,7 @@ export default function App() {
             meshes={meshes}
             selection={selection}
             onSelect={handlePick}
+            onSketchDoubleClick={selectFeature}
             datumVisibility={datumVisibility}
             picking={picking}
             onPick={startSketchOn}

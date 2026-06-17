@@ -1,6 +1,7 @@
 // Derives readable measurements for the current selection (length / radius /
 // area / coordinates), used by the bottom-right info pane.
 import type { Document } from "../document/types";
+import { detectSketchRegions } from "../document/regions";
 import type { MeshedEdges, MeshedFaces } from "../kernel/types";
 import type { FeatureMesh, Selection } from "../viewport/Viewport";
 
@@ -114,6 +115,13 @@ function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[]):
       };
     }
     return null;
+  }
+
+  if (selection.kind === "sketchFace") {
+    const sk = doc.features.find((f) => f.id === selection.sketchId);
+    if (sk?.type !== "sketch") return null;
+    const region = detectSketchRegions(sk.entities).find((r) => r.id === selection.regionId);
+    return region ? { title: "Sketch face", rows: [{ label: "Area", value: fmt(region.area) }] } : null;
   }
 
   if (selection.kind === "sketchPoint") {

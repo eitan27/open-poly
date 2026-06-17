@@ -7,6 +7,7 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { getEdgeId, getFaceId, syncGeometries } from "replicad-threejs-helper";
 import type { ShapeMeshPayload } from "../kernel/types";
 import type { SketchEntity, Vec2 } from "../document/types";
+import type { SketchRegion } from "../document/regions";
 import {
   deriveFaceFrame,
   uvToWorld,
@@ -33,6 +34,7 @@ export interface RenderSketch {
   id: string;
   frame: PlaneFrameData;
   entities: SketchEntity[];
+  regions: SketchRegion[];
 }
 
 /** What is currently selected in the viewport: a whole feature (sketch or body),
@@ -44,7 +46,8 @@ export type Selection =
   | { kind: "edge"; featureId: string; edgeId: number }
   | { kind: "vertex"; featureId: string; point: [number, number, number] }
   | { kind: "sketchEntity"; sketchId: string; entityId: string }
-  | { kind: "sketchPoint"; sketchId: string; point: [number, number] };
+  | { kind: "sketchPoint"; sketchId: string; point: [number, number] }
+  | { kind: "sketchFace"; sketchId: string; regionId: string };
 
 export function sameSelection(a: Selection | null, b: Selection | null): boolean {
   if (a === b) return true;
@@ -60,6 +63,8 @@ export function sameSelection(a: Selection | null, b: Selection | null): boolean
     return a.sketchId === b.sketchId && a.entityId === b.entityId;
   if (a.kind === "sketchPoint" && b.kind === "sketchPoint")
     return a.sketchId === b.sketchId && a.point.every((v, i) => v === b.point[i]);
+  if (a.kind === "sketchFace" && b.kind === "sketchFace")
+    return a.sketchId === b.sketchId && a.regionId === b.regionId;
   return false;
 }
 
@@ -134,6 +139,7 @@ export function Viewport({
   meshes,
   selection,
   onSelect,
+  onSketchDoubleClick,
   datumVisibility,
   picking,
   onPick,
@@ -150,6 +156,7 @@ export function Viewport({
   meshes: FeatureMesh[];
   selection: Selection[];
   onSelect: (picked: Selection | null) => void;
+  onSketchDoubleClick: (sketchId: string) => void;
   datumVisibility: Record<DatumId, boolean>;
   picking: boolean;
   onPick: (ref: SketchPlaneRef) => void;
@@ -170,6 +177,8 @@ export function Viewport({
   selectionRef.current = selection;
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const onSketchDoubleClickRef = useRef(onSketchDoubleClick);
+  onSketchDoubleClickRef.current = onSketchDoubleClick;
   const hoverSelRef = useRef<Selection | null>(null);
   const applyHighlightsRef = useRef<() => void>(() => {});
 
@@ -402,17 +411,23 @@ export function Viewport({
         pointMarkers.visible = false;
       }
 
-      // Sketch base colours (per-sketch active/constrained state).
+      // Sketch base colours (lines) + region fill highlight (faces).
       for (const child of sketchGroup.children) {
-        if (!(child instanceof THREE.LineSegments)) continue;
-        const sid = child.userData.sketchId as string;
-        const isActive = sid === activeSketchIdRef.current;
-        const color = isActive
-          ? sketchFullyConstrainedRef.current
-            ? 0x4ad07a
-            : 0xeaf0ff
-          : 0xaeb9e0;
-        (child.material as THREE.LineBasicMaterial).color.set(color);
+        if (child instanceof THREE.LineSegments) {
+          const sid = child.userData.sketchId as string;
+          const isActive = sid === activeSketchIdRef.current;
+          (child.material as THREE.LineBasicMaterial).color.set(
+            isActive ? (sketchFullyConstrainedRef.current ? 0x4ad07a : 0xeaf0ff) : 0xaeb9e0,
+          );
+        } else if (child instanceof THREE.Mesh && child.userData.isRegion) {
+          const sid = child.userData.sketchId as string;
+          const rid = child.userData.regionId as string;
+          const isSel = sels.some((s) => s.kind === "sketchFace" && s.sketchId === sid && s.regionId === rid);
+          const isHov = hovered?.kind === "sketchFace" && hovered.sketchId === sid && hovered.regionId === rid;
+          const mat = child.material as THREE.MeshBasicMaterial;
+          mat.opacity = isSel ? 0.32 : isHov ? 0.16 : 0;
+          mat.color.set(isSel ? 0xff9d3c : 0x36d6c3);
+        }
       }
     };
     applyHighlightsRef.current = applyHighlights;
@@ -534,9 +549,13 @@ export function Viewport({
       const sketchSegs = sketchGroup.children.filter(
         (c): c is THREE.LineSegments => c instanceof THREE.LineSegments,
       );
+      const regionMeshes = sketchGroup.children.filter(
+        (c): c is THREE.Mesh => c instanceof THREE.Mesh && c.userData.isRegion === true,
+      );
       const faceHit = raycaster.intersectObjects(faceMeshes, false)[0];
       const edgeHit = raycaster.intersectObjects(bodyEdges, false)[0];
       const sketchHit = raycaster.intersectObjects(sketchSegs, false)[0];
+      const regionHit = raycaster.intersectObjects(regionMeshes, false)[0];
 
       // Thin elements (body edges, sketch lines) take priority over a face when
       // the cursor is near them and they're not behind that face. Pick the nearer.
@@ -584,6 +603,12 @@ export function Viewport({
           }
           return { kind: "feature", id: sid };
         }
+      }
+      // Enclosed sketch region (face) — below sketch lines, above body faces.
+      if (regionHit && regionHit.distance <= faceDist + 1) {
+        const sid = regionHit.object.userData.sketchId as string | undefined;
+        const rid = regionHit.object.userData.regionId as string | undefined;
+        if (sid && rid) return { kind: "sketchFace", sketchId: sid, regionId: rid };
       }
       if (faceHit && faceHit.faceIndex != null) {
         const mesh = faceHit.object as THREE.Mesh;
@@ -705,9 +730,23 @@ export function Viewport({
       // set and toggles the element off if it is already selected.
       onSelectRef.current(pickSelection(e.clientX, e.clientY));
     };
+    // Double-click a sketch element to select the whole sketch (all its lines).
+    const onDblClick = (e: MouseEvent) => {
+      if (pickingRef.current || activeFrameRef.current) return;
+      const picked = pickSelection(e.clientX, e.clientY);
+      if (!picked) return;
+      const sid =
+        picked.kind === "sketchEntity" || picked.kind === "sketchPoint" || picked.kind === "sketchFace"
+          ? picked.sketchId
+          : picked.kind === "feature" && sketchGroup.children.some((c) => c.userData.sketchId === picked.id)
+            ? picked.id
+            : null;
+      if (sid) onSketchDoubleClickRef.current(sid);
+    };
     renderer.domElement.addEventListener("pointermove", onMove);
     renderer.domElement.addEventListener("pointerdown", onDown);
     renderer.domElement.addEventListener("pointerup", onUp);
+    renderer.domElement.addEventListener("dblclick", onDblClick);
 
     const resize = () => {
       const w = container.clientWidth;
@@ -744,6 +783,7 @@ export function Viewport({
       renderer.domElement.removeEventListener("pointermove", onMove);
       renderer.domElement.removeEventListener("pointerdown", onDown);
       renderer.domElement.removeEventListener("pointerup", onUp);
+      renderer.domElement.removeEventListener("dblclick", onDblClick);
       controls.dispose();
       disposeGroup(group);
       disposeSketchGroup(sketchGroup);
@@ -853,6 +893,33 @@ export function Viewport({
       seg.userData.sketchId = s.id;
       seg.userData.frame = s.frame;
       state.sketchGroup.add(seg);
+
+      // Enclosed regions ("sketch faces"): a transparent, pickable fill that
+      // only shows on hover/selection.
+      for (const region of s.regions) {
+        const shape = new THREE.Shape(region.outline.map((p) => new THREE.Vector2(p[0], p[1])));
+        const geom2d = new THREE.ShapeGeometry(shape);
+        const flat = geom2d.getAttribute("position");
+        const world = new Float32Array(flat.count * 3);
+        for (let i = 0; i < flat.count; i++) {
+          const w = uvToWorld(s.frame, flat.getX(i), flat.getY(i));
+          world[i * 3] = w[0];
+          world[i * 3 + 1] = w[1];
+          world[i * 3 + 2] = w[2];
+        }
+        const fillGeom = new THREE.BufferGeometry();
+        fillGeom.setAttribute("position", new THREE.BufferAttribute(world, 3));
+        fillGeom.setIndex(geom2d.getIndex());
+        geom2d.dispose();
+        const fill = new THREE.Mesh(
+          fillGeom,
+          new THREE.MeshBasicMaterial({ color: 0x36d6c3, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }),
+        );
+        fill.userData.sketchId = s.id;
+        fill.userData.regionId = region.id;
+        fill.userData.isRegion = true;
+        state.sketchGroup.add(fill);
+      }
     }
     applyHighlightsRef.current(); // re-apply selection/hover colors
     const active = sketches.find((s) => s.id === activeSketchId) ?? null;
@@ -1092,13 +1159,9 @@ function disposeGroup(group: THREE.Group): void {
 
 function disposeSketchGroup(group: THREE.Group): void {
   for (const child of group.children) {
-    if (child instanceof THREE.LineSegments) {
+    if (child instanceof THREE.LineSegments || (child instanceof THREE.Mesh && child.userData.isRegion)) {
       child.geometry.dispose();
-      const m = child.material;
-      // Only the per-sketch base material (index 0) is owned here; hover/selected
-      // materials are shared and disposed with the scene.
-      if (Array.isArray(m)) m[0].dispose();
-      else m.dispose();
+      (child.material as THREE.Material).dispose();
     }
   }
   group.clear();
