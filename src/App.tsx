@@ -3,6 +3,7 @@ import { KernelClient } from "./kernel/KernelClient";
 import {
   addFeature,
   addSketch,
+  addSketchConstraints,
   addSketchEntity,
   addVariable,
   createDocument,
@@ -13,10 +14,12 @@ import {
   renameFeature,
   resolveDocument,
   setRollbackIndex,
+  setSketchEntities,
   setSuppressed,
   updateParam,
   updateVariable,
 } from "./document/document";
+import { solveSketch } from "./sketch/solver";
 import type { Document, FeatureKind, SketchFeature, Vec2 } from "./document/types";
 import { frameOf, planeRefLabel, type SketchPlaneRef } from "./document/planes";
 import { useHistory } from "./hooks/useHistory";
@@ -64,6 +67,7 @@ export default function App() {
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchTool] = useState<SketchTool>("line");
   const [lineStart, setLineStart] = useState<Vec2 | null>(null);
+  const [fullyConstrained, setFullyConstrained] = useState(false);
   const viewApiRef = useRef<ViewportApi | null>(null);
   const [meshes, setMeshes] = useState<FeatureMesh[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -186,6 +190,7 @@ export default function App() {
     setEditingSketchId(id);
     setSketchTool("line");
     setLineStart(null);
+    setFullyConstrained(false);
     viewApiRef.current?.lookAtFrame(frameOf(ref));
   };
 
@@ -196,6 +201,7 @@ export default function App() {
     setSelectedId(id);
     setSketchTool("line");
     setLineStart(null);
+    setFullyConstrained(false);
     viewApiRef.current?.lookAtFrame(frameOf(f.plane));
   };
 
@@ -204,15 +210,35 @@ export default function App() {
     setLineStart(null);
   };
 
-  // A snapped click on the sketch plane (already in uv coords).
-  const handleSketchClick = (uv: Vec2) => {
+  // A snapped click on the sketch plane (already in uv coords). `hv` records a
+  // horizontal/vertical inference so it can be captured as a constraint.
+  const handleSketchClick = (uv: Vec2, hv?: "horizontal" | "vertical") => {
     if (!editingSketchId || sketchTool !== "line") return;
     if (!lineStart) {
       setLineStart(uv);
       return;
     }
-    setDoc(addSketchEntity(doc, editingSketchId, { type: "line", id: genId(), a: lineStart, b: uv }));
+    const lineId = genId();
+    let next = addSketchEntity(doc, editingSketchId, { type: "line", id: lineId, a: lineStart, b: uv });
+    if (hv) {
+      next = addSketchConstraints(next, editingSketchId, [{ id: genId(), type: hv, entity: lineId }]);
+    }
+    setDoc(next);
     setLineStart(uv); // chain: continue from this point
+    setFullyConstrained(false); // geometry changed; constraint state unknown
+  };
+
+  // Run the planegcs solver on the active sketch, apply the solution, and update
+  // the fully-constrained indicator.
+  const handleSolve = async () => {
+    if (!editingSketch) return;
+    try {
+      const res = await solveSketch(editingSketch.entities, editingSketch.constraints);
+      setDoc(setSketchEntities(doc, editingSketch.id, res.entities));
+      setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+    } catch (err) {
+      console.error("constraint solve failed:", err);
+    }
   };
 
   const errorCount =
@@ -313,6 +339,7 @@ export default function App() {
             sketchTool={sketchTool}
             sketches={renderSketches}
             activeSketchId={editingSketchId}
+            sketchFullyConstrained={fullyConstrained}
             lineStart={lineStart}
             onSketchClick={handleSketchClick}
             apiRef={viewApiRef}
@@ -336,6 +363,17 @@ export default function App() {
               >
                 ╱
               </button>
+              <button title="Solve constraints" onClick={handleSolve}>
+                ⛓
+              </button>
+              {editingSketch.constraints.length > 0 && (
+                <span
+                  className="constraint-count"
+                  title={`${editingSketch.constraints.length} constraints${fullyConstrained ? " · fully constrained" : ""}`}
+                >
+                  {fullyConstrained ? "✓" : editingSketch.constraints.length}
+                </span>
+              )}
             </div>
           )}
           <div className="view-controls">

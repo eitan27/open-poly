@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@salusoft89/planegcs": "^1.1.7",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "replicad": "^0.23.1",

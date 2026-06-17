@@ -3,7 +3,14 @@
 import { FEATURE_DEFS } from "./featureDefs";
 import { evaluateExpression, type Scope } from "./expression";
 import type { SketchPlaneRef } from "./planes";
-import type { Document, Feature, FeatureKind, SketchEntity, SketchFeature } from "./types";
+import type {
+  Document,
+  Feature,
+  FeatureKind,
+  SketchConstraint,
+  SketchEntity,
+  SketchFeature,
+} from "./types";
 import type { ResolvedFeature } from "../kernel/types";
 
 function uid(): string {
@@ -55,6 +62,7 @@ export function addSketch(doc: Document, plane: SketchPlaneRef): { doc: Document
     suppressed: false,
     plane,
     entities: [],
+    constraints: [],
   };
   return insertFeature(doc, feature);
 }
@@ -84,6 +92,29 @@ export function setSketchEntities(
   entities: SketchEntity[],
 ): Document {
   return mapSketch(doc, sketchId, (s) => ({ ...s, entities }));
+}
+
+export function addSketchConstraints(
+  doc: Document,
+  sketchId: string,
+  constraints: SketchConstraint[],
+): Document {
+  if (constraints.length === 0) return doc;
+  return mapSketch(doc, sketchId, (s) => ({
+    ...s,
+    constraints: [...s.constraints, ...constraints],
+  }));
+}
+
+export function removeSketchConstraint(
+  doc: Document,
+  sketchId: string,
+  constraintId: string,
+): Document {
+  return mapSketch(doc, sketchId, (s) => ({
+    ...s,
+    constraints: s.constraints.filter((c) => c.id !== constraintId),
+  }));
 }
 
 export function removeSketchEntity(
