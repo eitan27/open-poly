@@ -1,6 +1,9 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
+import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { getEdgeId, getFaceId, syncGeometries } from "replicad-threejs-helper";
 import type { ShapeMeshPayload } from "../kernel/types";
 import type { SketchEntity, Vec2 } from "../document/types";
@@ -96,10 +99,11 @@ interface SceneState {
   selectedMaterial: THREE.MeshStandardMaterial;
   hoverMaterial: THREE.MeshStandardMaterial;
   lineMaterial: THREE.LineBasicMaterial;
-  edgeHoverMaterial: THREE.LineBasicMaterial;
-  edgeSelectedMaterial: THREE.LineBasicMaterial;
   sketchHoverMaterial: THREE.LineBasicMaterial;
   sketchSelectedMaterial: THREE.LineBasicMaterial;
+  // Fat-line overlay that draws the currently highlighted body edge(s) on top.
+  highlightMaterial: LineMaterial;
+  highlightOverlay: LineSegments2;
   vertexMarker: THREE.Mesh;
   datums: DatumEntry[];
   sketchGroup: THREE.Group;
@@ -111,6 +115,8 @@ interface SceneState {
 const VIEW_DISTANCE = 220;
 const TWEEN_MS = 300;
 const SNAP_PX = 12;
+const EDGE_SEL_COLOR = new THREE.Color(0xff9d3c);
+const EDGE_HOV_COLOR = new THREE.Color(0x36d6c3);
 const EDGE_PICK_WORLD = 1.6; // ray-distance threshold for grabbing an edge
 const VERTEX_PICK_WORLD = 3; // proximity to an edge endpoint that grabs the vertex
 const ANGLE_SNAP = 0.06; // ~3.4° — horizontal/vertical inference window
@@ -242,13 +248,24 @@ export function Viewport({
     const selectedMaterial = makeFaceMaterial(0xff9d3c);
     const hoverMaterial = makeFaceMaterial(0x36d6c3);
     const lineMaterial = new THREE.LineBasicMaterial({ color: 0x0d0f14 });
-    // Edges drawn on top (depthTest off) so a highlighted edge reads clearly.
-    const edgeHoverMaterial = new THREE.LineBasicMaterial({ color: 0x36d6c3, depthTest: false });
-    const edgeSelectedMaterial = new THREE.LineBasicMaterial({ color: 0xff9d3c, depthTest: false });
     // Shared sketch entity highlight materials (per-entity geometry groups flip
     // to these; index 0 is the per-sketch base material set in the render effect).
     const sketchHoverMaterial = new THREE.LineBasicMaterial({ color: 0x36d6c3 });
     const sketchSelectedMaterial = new THREE.LineBasicMaterial({ color: 0xff9d3c });
+
+    // Fat-line overlay (real line width) for the highlighted body edge.
+    const highlightMaterial = new LineMaterial({
+      vertexColors: true,
+      linewidth: 3,
+      worldUnits: false,
+      depthTest: false,
+      transparent: true,
+    });
+    const highlightOverlay = new LineSegments2(new LineSegmentsGeometry(), highlightMaterial);
+    highlightOverlay.renderOrder = 11;
+    highlightOverlay.frustumCulled = false;
+    highlightOverlay.visible = false;
+    scene.add(highlightOverlay);
 
     const vertexMarker = new THREE.Mesh(
       new THREE.SphereGeometry(2.2, 16, 16),
@@ -279,7 +296,7 @@ export function Viewport({
     const state: SceneState = {
       renderer, scene, camera, controls, group,
       faceMaterial, selectedMaterial, hoverMaterial, lineMaterial,
-      edgeHoverMaterial, edgeSelectedMaterial, sketchHoverMaterial, sketchSelectedMaterial,
+      sketchHoverMaterial, sketchSelectedMaterial, highlightMaterial, highlightOverlay,
       vertexMarker, datums, sketchGroup, previewLine, snapMarker, tween: null,
     };
     stateRef.current = state;
@@ -311,25 +328,35 @@ export function Viewport({
         });
         if (dirty) (geom as THREE.BufferGeometry & { groupsNeedUpdate: boolean }).groupsNeedUpdate = true;
       }
-      // Body edges: per-edge material index.
-      for (const child of group.children) {
-        if (!(child instanceof THREE.LineSegments) || !child.userData.isBodyEdges) continue;
-        const fid = child.userData.featureId as string;
-        const geom = child.geometry;
-        const eg = geom.userData.edgeGroups as { edgeId: number }[] | undefined;
-        if (!eg) continue;
-        const selEdge = sel?.kind === "edge" && sel.featureId === fid ? sel.edgeId : null;
-        const hovEdge = hov?.kind === "edge" && hov.featureId === fid ? hov.edgeId : null;
-        let dirty = false;
-        geom.groups.forEach((g: { materialIndex?: number }, i: number) => {
-          const edgeId = eg[i]?.edgeId;
-          const idx = selEdge === edgeId ? 2 : hovEdge === edgeId ? 1 : 0;
-          if (g.materialIndex !== idx) {
-            g.materialIndex = idx;
-            dirty = true;
+      // Body edges: draw the highlighted edge(s) into the fat-line overlay.
+      const overlayPos: number[] = [];
+      const overlayCol: number[] = [];
+      const addEdge = (featureId: string, edgeId: number, color: THREE.Color) => {
+        for (const child of group.children) {
+          if (!(child instanceof THREE.LineSegments) || !child.userData.isBodyEdges) continue;
+          if (child.userData.featureId !== featureId) continue;
+          const eg = child.geometry.userData.edgeGroups as
+            | { start: number; count: number; edgeId: number }[]
+            | undefined;
+          const g = eg?.find((x) => x.edgeId === edgeId);
+          if (!g) return;
+          const pos = child.geometry.getAttribute("position");
+          for (let v = g.start; v < g.start + g.count; v++) {
+            overlayPos.push(pos.getX(v), pos.getY(v), pos.getZ(v));
+            overlayCol.push(color.r, color.g, color.b);
           }
-        });
-        if (dirty) (geom as THREE.BufferGeometry & { groupsNeedUpdate: boolean }).groupsNeedUpdate = true;
+          return;
+        }
+      };
+      if (sel?.kind === "edge") addEdge(sel.featureId, sel.edgeId, EDGE_SEL_COLOR);
+      if (hov?.kind === "edge" && !sameSelection(hov, sel)) addEdge(hov.featureId, hov.edgeId, EDGE_HOV_COLOR);
+      if (overlayPos.length >= 6) {
+        const og = highlightOverlay.geometry as LineSegmentsGeometry;
+        og.setPositions(overlayPos);
+        og.setColors(overlayCol);
+        highlightOverlay.visible = true;
+      } else {
+        highlightOverlay.visible = false;
       }
       // Point marker for a selected/hovered vertex or sketch point.
       const pickPt =
@@ -691,6 +718,7 @@ export function Viewport({
       renderer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      highlightMaterial.resolution.set(w, h); // fat-line width is in screen pixels
     };
     resize();
     const observer = new ResizeObserver(resize);
@@ -728,10 +756,10 @@ export function Viewport({
       selectedMaterial.dispose();
       hoverMaterial.dispose();
       lineMaterial.dispose();
-      edgeHoverMaterial.dispose();
-      edgeSelectedMaterial.dispose();
       sketchHoverMaterial.dispose();
       sketchSelectedMaterial.dispose();
+      highlightMaterial.dispose();
+      highlightOverlay.geometry.dispose();
       renderer.dispose();
       container.removeChild(renderer.domElement);
       apiRef.current = null;
@@ -756,13 +784,9 @@ export function Viewport({
       ]);
       faceMesh.userData.featureId = id;
       state.group.add(faceMesh);
-      // Edge LineSegments carry one geometry group per edge (from syncLines), so
-      // per-edge highlighting flips group.materialIndex on a material array.
-      const edges = new THREE.LineSegments(geometry.lines, [
-        state.lineMaterial,
-        state.edgeHoverMaterial,
-        state.edgeSelectedMaterial,
-      ]);
+      // Thin base edge outline. Highlighting is drawn by a separate fat-line
+      // overlay; geometry keeps per-edge groups (userData.edgeGroups) for picking.
+      const edges = new THREE.LineSegments(geometry.lines, state.lineMaterial);
       edges.userData.featureId = id;
       edges.userData.isBodyEdges = true;
       state.group.add(edges);
