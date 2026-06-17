@@ -200,9 +200,14 @@ Each feature stores **references** (to sketches, faces, edges, axes, planes), it
 Ordered so each phase produces something runnable and demoable. Estimates are
 rough relative sizing, not calendar promises.
 
-> **Progress (2026-06-17):** Phases 0 and 1 are complete and committed on `main`
-> (Phase 1 landed as chunks 1a/1b/1c). Phase 2 (sketching) is next, starting with
-> a navigation/datums prep step (2.0).
+> **Progress (2026-06-18):** Phases 0, 1, and 2 are complete and committed on
+> `main` (Phase 1 landed as chunks 1a/1b/1c; Phase 2 covers datums/navigation,
+> sketch tools, planegcs constraints, and a full selection/measurement layer).
+> Selection now supports feature/face/edge/vertex/sketch-entity/sketch-point/
+> sketch-face picking with multi-select, fat-line highlights (selecting a face
+> fattens its boundary edges), planar-graph sketch-region detection, and a
+> measurement info pane. **Phase 3 (extrude/revolve) is next** — it consumes the
+> selected sketch profile and is where the running-result model (1.5) gets built.
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
