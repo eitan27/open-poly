@@ -363,6 +363,43 @@
   position: relative;
 }
 
+.selection-info {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  min-width: 150px;
+  padding: 8px 12px;
+  font-size: 12px;
+  background: rgba(24, 26, 32, 0.88);
+  border: 1px solid #2a2d35;
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+
+.si-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a8f9c;
+  margin-bottom: 5px;
+}
+
+.si-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 1px 0;
+}
+
+.si-label {
+  color: #c7cad3;
+}
+
+.si-value {
+  color: #e6e8ee;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
 .view-controls {
   position: absolute;
   top: 12px;

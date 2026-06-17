@@ -27,6 +27,7 @@ import type {
   Vec2,
 } from "./document/types";
 import { solveSketch } from "./sketch/solver";
+import { measureSelection } from "./selection/measure";
 import { frameOf, planeRefLabel, type SketchPlaneRef } from "./document/planes";
 import {
   arcFrom3,
@@ -216,6 +217,11 @@ export default function App() {
     const f = doc.features.find((x) => x.id === editingSketchId);
     return f && f.type === "sketch" ? f : null;
   }, [doc, editingSketchId]);
+
+  const measure = useMemo(
+    () => measureSelection(selection, doc, meshes),
+    [selection, doc, meshes],
+  );
 
   // All visible sketches (so finished sketches stay rendered), each with its frame.
   const renderSketches = useMemo(
@@ -507,6 +513,17 @@ export default function App() {
                 <button onClick={() => setPicking(false)}>Cancel (Esc)</button>
               </div>
             )
+          )}
+          {measure && (
+            <div className="selection-info">
+              <div className="si-title">{measure.title}</div>
+              {measure.rows.map((r) => (
+                <div className="si-row" key={r.label}>
+                  <span className="si-label">{r.label}</span>
+                  <span className="si-value">{r.value}</span>
+                </div>
+              ))}
+            </div>
           )}
         </main>
       </div>
