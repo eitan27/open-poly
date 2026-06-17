@@ -281,40 +281,78 @@ Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
 >   trim/extend, construction geometry.
 > - Circles/arcs pass through the solver unchanged (not constrained).
 
-### Phase 3 — First solids: Extrude + Revolve
-- Profile selection from a sketch (region detection: which closed loops form
-  faces). Extrude with `NEW / ADD / CUT`, symmetric, two-sided, optional draft.
-- Revolve around a selected axis/edge.
-- This is where **selection round-trip** and **op merging** get exercised.
+> **Reprioritized 2026-06-18 (user):** Extrude is the single most important
+> solid op and is the headline of Phase 3; **Chamfer (and Fillet)** matter more
+> than Revolve, so they join Phase 3. **Revolve moves to the Sweep/Loft phase**
+> near the end. **Export (STL/STEP) is pulled up to Phase 4** to validate an
+> end-to-end workflow as early as possible. Boolean-between-bodies, Pattern, and
+> Mirror shift back accordingly.
 
-### Phase 4 — Dress-up + Boolean
-- Fillet (edge set, radius) and Chamfer (distance / two-distance / angle).
-- Boolean between bodies: union / subtract / intersect.
-- First real test of **topological naming** under upstream edits — invest here.
+### Phase 3 — First solids: Extrude + Chamfer/Fillet
+This phase builds the **running-result model** (Phase 1.5): the kernel facade
+moves from "build N independent shapes" to **folding operations over a running
+set of bodies**, and selection becomes **body-based** (a body's faces/edges)
+rather than feature-based. This is the largest architectural step left.
 
-### Phase 5 — Sweep + Loft
-- Sweep: profile along a path (with/without twist control later).
-- Loft: through 2+ profiles, optional guide rails.
+- **Extrude (headline).** Detailed spec:
+  - **Profiles:** accepts **one or more faces** — sketch regions (`sketchFace`)
+    and/or planar body faces. (Sketch profiles are the common case.)
+  - **Result mode**, selectable in the dialog:
+    - **New** — create a new body.
+    - **Add** (join/union) — merge into the existing body/bodies the extrusion
+      originates from or intersects.
+    - **Remove** (cut/subtract) — subtract from existing bodies.
+    (Default may auto-suggest Add/Remove when the profile sits on / intersects a
+    body, else New — but always explicitly overridable.)
+  - **Direction:** toggle-able (flip along the profile normal); symmetric/
+    two-sided later.
+  - **End condition**, in the dialog:
+    - **Blind** — a distance value (expression-backed, like other params).
+    - **Up to face** — extrude until a selected face that is **normal to the
+      extrusion direction**.
+    (Up-to-next / through-all can come later.)
+  - **Dialog:** an anchored mini-dialog (Onshape-style) exposing profiles,
+    result mode, direction toggle, end condition + its value/face. Live ghost
+    preview before commit is the goal.
+- **Chamfer** (distance / two-distance / angle) and **Fillet** (edge set,
+  radius) — edge dress-up on a body. First real exercise of **topological
+  naming** (stable edge/face refs under upstream edits); start pragmatic
+  (OCCT ids + best-effort matching) and note the limits.
+- Exercises the **selection round-trip** end to end: app selection (sketch
+  region / body face / body edge) → kernel inputs → new meshed body set back.
 
-### Phase 6 — Pattern + Mirror
+### Phase 4 — Export (validate end-to-end)
+- **Export STL** (mesh) and **STEP** (B-rep) of a selected part / the whole
+  document; image snapshot. Pulled here so the full pipeline — sketch →
+  constrain → extrude → chamfer → export a real file — is provable early.
+- Minimal part picking needed to choose what to export (full multi-body UX is
+  Phase 7). STEP **import** later.
+
+### Phase 5 — Boolean + Pattern + Mirror
+- Boolean between separate bodies: union / subtract / intersect (Extrude
+  Add/Remove already covers the extrusion-coupled case).
 - Linear pattern (1- and 2-direction), circular pattern (axis + count + angle).
 - Mirror across a plane/planar face.
-- Patterns multiply topology — stresses naming/selection again; do after Phase 4.
+- Patterns/booleans multiply topology — re-stress naming/selection here.
 
-### Phase 7 — Multi-body, parts, selection UX, export
+### Phase 6 — Sweep + Loft + Revolve
+- Sweep: profile along a path (twist control later).
+- Loft: through 2+ profiles, optional guide rails.
+- **Revolve** around a selected axis/edge (moved here from Phase 3).
+
+### Phase 7 — Multi-body, parts, selection UX
 - Multiple bodies/parts in one document; a Parts list; show/hide, color, isolate.
 - Robust selection (faces, edges, bodies; hover highlight; selection filters).
-- **Export:** STL (mesh) and **STEP** (B-rep) per-part or whole document; image
-  snapshot. Import STEP later.
 
 ### Phase 8 — Polish & persistence
 - IndexedDB save/load, document thumbnails, autosave.
 - Measurement tools, section view, appearance, keyboard shortcuts.
 - Performance: incremental regen (only re-run dirty features), tessellation LOD.
 
-> Suggested first deliverable ("v0.1, genuinely usable"): **Phases 0–3** — sketch
-> a constrained profile, extrude/cut it, with variables and a working timeline.
-> That already feels like Onshape and validates every hard layer.
+> Suggested first deliverable ("v0.1, genuinely usable"): **Phases 0–4** — sketch
+> a constrained profile, extrude/cut it, chamfer an edge, and **export a STEP/STL
+> file**, with variables and a working timeline. That validates every hard layer
+> end to end.
 
 ---
 
