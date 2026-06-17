@@ -3,8 +3,10 @@ import { KernelClient } from "./kernel/KernelClient";
 import {
   addFeature,
   addSketch,
+  addSketchEntity,
   addVariable,
   createDocument,
+  genId,
   moveFeature,
   removeFeature,
   removeVariable,
@@ -15,7 +17,7 @@ import {
   updateParam,
   updateVariable,
 } from "./document/document";
-import type { Document, FeatureKind } from "./document/types";
+import type { Document, FeatureKind, Vec2 } from "./document/types";
 import { frameOf, planeRefLabel, type SketchPlaneRef } from "./document/planes";
 import { useHistory } from "./hooks/useHistory";
 import { FeatureTree } from "./ui/FeatureTree";
@@ -24,6 +26,7 @@ import { VariablesPanel } from "./ui/VariablesPanel";
 import {
   Viewport,
   type FeatureMesh,
+  type SketchTool,
   type ViewName,
   type ViewportApi,
 } from "./viewport/Viewport";
@@ -59,6 +62,8 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
+  const [sketchTool, setSketchTool] = useState<SketchTool>("line");
+  const [lineStart, setLineStart] = useState<Vec2 | null>(null);
   const viewApiRef = useRef<ViewportApi | null>(null);
   const [meshes, setMeshes] = useState<FeatureMesh[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -83,12 +88,26 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setPicking(false);
-        setEditingSketchId(null);
+        if (picking) setPicking(false);
+        else if (lineStart) setLineStart(null); // end the current chain
+        else if (editingSketchId) finishSketch();
         return;
       }
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key === "Enter" && lineStart) {
+        setLineStart(null);
+        return;
+      }
+      if (editingSketchId && (e.key === "l" || e.key === "L")) {
+        setSketchTool("line");
+        return;
+      }
+      if (editingSketchId && (e.key === "v" || e.key === "V")) {
+        setSketchTool("select");
+        setLineStart(null);
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (e.shiftKey) redo();
@@ -97,7 +116,8 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undo, redo, picking, lineStart, editingSketchId]);
 
   // Resolution (variables + params -> numbers) is synchronous and pure; memoize
   // it so the UI can read evaluated values without re-running the kernel.
@@ -154,6 +174,8 @@ export default function App() {
     setSelectedId(id);
     setPicking(false);
     setEditingSketchId(id);
+    setSketchTool("line");
+    setLineStart(null);
     viewApiRef.current?.lookAtFrame(frameOf(ref));
   };
 
@@ -162,7 +184,25 @@ export default function App() {
     if (f?.type !== "sketch") return;
     setEditingSketchId(id);
     setSelectedId(id);
+    setSketchTool("line");
+    setLineStart(null);
     viewApiRef.current?.lookAtFrame(frameOf(f.plane));
+  };
+
+  const finishSketch = () => {
+    setEditingSketchId(null);
+    setLineStart(null);
+  };
+
+  // A snapped click on the sketch plane (already in uv coords).
+  const handleSketchClick = (uv: Vec2) => {
+    if (!editingSketchId || sketchTool !== "line") return;
+    if (!lineStart) {
+      setLineStart(uv);
+      return;
+    }
+    setDoc(addSketchEntity(doc, editingSketchId, { type: "line", id: genId(), a: lineStart, b: uv }));
+    setLineStart(uv); // chain: continue from this point
   };
 
   const errorCount =
@@ -246,7 +286,7 @@ export default function App() {
             }
             onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}
             onEditSketch={editSketch}
-            onFinishSketch={() => setEditingSketchId(null)}
+            onFinishSketch={finishSketch}
           />
         </aside>
         <main className="viewport">
@@ -260,8 +300,34 @@ export default function App() {
                 ? { datumId: editingSketch.plane.kind === "datum" ? editingSketch.plane.id : null }
                 : null
             }
+            sketchTool={sketchTool}
+            sketchFrame={editingSketch ? frameOf(editingSketch.plane) : null}
+            sketchEntities={editingSketch ? editingSketch.entities : []}
+            lineStart={lineStart}
+            onSketchClick={handleSketchClick}
             apiRef={viewApiRef}
           />
+          {editingSketch && (
+            <div className="sketch-toolbar">
+              <button
+                className={sketchTool === "select" ? "active" : ""}
+                title="Select (V)"
+                onClick={() => {
+                  setSketchTool("select");
+                  setLineStart(null);
+                }}
+              >
+                ↖
+              </button>
+              <button
+                className={sketchTool === "line" ? "active" : ""}
+                title="Line (L)"
+                onClick={() => setSketchTool("line")}
+              >
+                ╱
+              </button>
+            </div>
+          )}
           <div className="view-controls">
             {VIEW_BUTTONS.map((v) => (
               <button key={v.name} onClick={() => viewApiRef.current?.setView(v.name)}>
@@ -275,7 +341,7 @@ export default function App() {
                 Editing <strong>{editingSketch.name}</strong> ·{" "}
                 {planeRefLabel(editingSketch.plane)}
               </span>
-              <button onClick={() => setEditingSketchId(null)}>Finish sketch ⏎</button>
+              <button onClick={finishSketch}>Finish sketch ⏎</button>
             </div>
           ) : (
             picking && (

@@ -455,6 +455,41 @@
   background: #7d6a3a;
 }
 
+.sketch-toolbar {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px;
+  background: rgba(24, 26, 32, 0.85);
+  border: 1px solid #2a2d35;
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+
+.sketch-toolbar button {
+  width: 32px;
+  height: 32px;
+  font-size: 16px;
+  background: #232730;
+  border: 1px solid #313643;
+  color: #d6d9e0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sketch-toolbar button:hover {
+  background: #2c313c;
+}
+
+.sketch-toolbar button.active {
+  background: #1e2a44;
+  border-color: #4f8cff;
+  color: #cfe0ff;
+}
+
 .sketch-start {
   width: 100%;
   margin-bottom: 6px;

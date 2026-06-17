@@ -3,8 +3,10 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { syncGeometries } from "replicad-threejs-helper";
 import type { ShapeMeshPayload } from "../kernel/types";
+import type { SketchEntity, Vec2 } from "../document/types";
 import {
   deriveFaceFrame,
+  uvToWorld,
   type PlaneFrameData,
   type SketchPlaneId,
   type SketchPlaneRef,
@@ -16,7 +18,7 @@ export interface FeatureMesh {
 }
 
 export type DatumId = "origin" | SketchPlaneId;
-
+export type SketchTool = "select" | "line";
 export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
 
 export interface ViewportApi {
@@ -44,10 +46,15 @@ interface SceneState {
   hoverMaterial: THREE.MeshStandardMaterial;
   lineMaterial: THREE.LineBasicMaterial;
   datums: DatumEntry[];
+  sketchLines: THREE.LineSegments;
+  previewLine: THREE.Line;
+  snapMarker: THREE.Mesh;
   tween: { from: THREE.Vector3; to: THREE.Vector3; up: THREE.Vector3; t: number } | null;
 }
 
 const VIEW_DISTANCE = 220;
+const GRID_SNAP = 5;
+const SNAP_PX = 12;
 
 const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, number, number] }> = {
   front: { dir: [0, -1, 0], up: [0, 0, 1] },
@@ -65,6 +72,11 @@ export function Viewport({
   picking,
   onPick,
   activeSketch,
+  sketchTool,
+  sketchFrame,
+  sketchEntities,
+  lineStart,
+  onSketchClick,
   apiRef,
 }: {
   meshes: FeatureMesh[];
@@ -72,16 +84,32 @@ export function Viewport({
   picking: boolean;
   onPick: (ref: SketchPlaneRef) => void;
   activeSketch: { datumId: SketchPlaneId | null } | null;
+  sketchTool: SketchTool;
+  sketchFrame: PlaneFrameData | null;
+  sketchEntities: SketchEntity[];
+  lineStart: Vec2 | null;
+  onSketchClick: (uv: Vec2) => void;
   apiRef: { current: ViewportApi | null };
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<SceneState | null>(null);
+
+  // live values for the once-bound pointer handlers
   const pickingRef = useRef(picking);
   pickingRef.current = picking;
   const onPickRef = useRef(onPick);
   onPickRef.current = onPick;
+  const sketchFrameRef = useRef(sketchFrame);
+  sketchFrameRef.current = sketchFrame;
+  const sketchToolRef = useRef(sketchTool);
+  sketchToolRef.current = sketchTool;
+  const sketchEntitiesRef = useRef(sketchEntities);
+  sketchEntitiesRef.current = sketchEntities;
+  const lineStartRef = useRef(lineStart);
+  lineStartRef.current = lineStart;
+  const onSketchClickRef = useRef(onSketchClick);
+  onSketchClickRef.current = onSketchClick;
 
-  // hover bookkeeping (kept in refs so pointermove doesn't re-render React)
   const hoverPlaneRef = useRef<DatumId | null>(null);
   const hoverBodyRef = useRef<{ mesh: THREE.Mesh; prev: THREE.Material | THREE.Material[] } | null>(null);
 
@@ -123,13 +151,8 @@ export function Viewport({
 
     const makeFaceMaterial = (color: number) =>
       new THREE.MeshStandardMaterial({
-        color,
-        metalness: 0.1,
-        roughness: 0.55,
-        side: THREE.DoubleSide,
-        polygonOffset: true,
-        polygonOffsetFactor: 1,
-        polygonOffsetUnits: 1,
+        color, metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
       });
     const faceMaterial = makeFaceMaterial(0x4f8cff);
     const selectedMaterial = makeFaceMaterial(0xff9d3c);
@@ -139,10 +162,30 @@ export function Viewport({
     const group = new THREE.Group();
     scene.add(group);
 
+    // Sketch overlay objects (committed entities, rubber-band preview, snap dot).
+    const sketchLines = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color: 0xeaf0ff }),
+    );
+    sketchLines.frustumCulled = false;
+    const previewLine = new THREE.Line(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color: 0x7da8ff }),
+    );
+    previewLine.frustumCulled = false;
+    previewLine.visible = false;
+    const snapMarker = new THREE.Mesh(
+      new THREE.SphereGeometry(1.4, 16, 16),
+      new THREE.MeshBasicMaterial({ color: 0xffe14a, depthTest: false }),
+    );
+    snapMarker.renderOrder = 12;
+    snapMarker.visible = false;
+    scene.add(sketchLines, previewLine, snapMarker);
+
     const state: SceneState = {
       renderer, scene, camera, controls, group,
       faceMaterial, selectedMaterial, hoverMaterial, lineMaterial,
-      datums, tween: null,
+      datums, sketchLines, previewLine, snapMarker, tween: null,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
@@ -163,34 +206,73 @@ export function Viewport({
       },
     };
 
-    // --- Picking (planes + body faces), only while in pick mode ---
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     let down: { x: number; y: number } | null = null;
 
-    type Pick =
-      | { kind: "datum"; id: DatumId }
-      | { kind: "face"; mesh: THREE.Mesh; point: THREE.Vector3; normal: THREE.Vector3 };
-
-    const planeObjects = datums.filter((d) => d.kind === "plane").map((d) => d.object);
-
-    const pick = (clientX: number, clientY: number): Pick | null => {
+    // --- helpers ---
+    const projectToPx = (world: THREE.Vector3) => {
+      const v = world.clone().project(camera);
+      const rect = renderer.domElement.getBoundingClientRect();
+      return { x: (v.x * 0.5 + 0.5) * rect.width + rect.left, y: (-v.y * 0.5 + 0.5) * rect.height + rect.top };
+    };
+    const planeHitUv = (clientX: number, clientY: number): Vec2 | null => {
+      const frame = sketchFrameRef.current;
+      if (!frame) return null;
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+        new THREE.Vector3(...frame.normal).normalize(),
+        new THREE.Vector3(...frame.origin),
+      );
+      const hit = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(plane, hit)) return null;
+      const d = hit.sub(new THREE.Vector3(...frame.origin));
+      return [d.dot(new THREE.Vector3(...frame.uAxis)), d.dot(new THREE.Vector3(...frame.vAxis))];
+    };
+    const snap = (raw: Vec2, clientX: number, clientY: number): { uv: Vec2; isPoint: boolean } => {
+      const frame = sketchFrameRef.current!;
+      const cands: Vec2[] = [[0, 0]];
+      for (const e of sketchEntitiesRef.current) {
+        if (e.type === "line") cands.push(e.a, e.b);
+        else if (e.type === "point") cands.push(e.p);
+        else if (e.type === "circle" || e.type === "arc") cands.push(e.c);
+      }
+      if (lineStartRef.current) cands.push(lineStartRef.current);
+      let best: Vec2 | null = null;
+      let bestD = SNAP_PX;
+      for (const c of cands) {
+        const w = uvToWorld(frame, c[0], c[1]);
+        const px = projectToPx(new THREE.Vector3(w[0], w[1], w[2]));
+        const dist = Math.hypot(px.x - clientX, px.y - clientY);
+        if (dist < bestD) { bestD = dist; best = c; }
+      }
+      if (best) return { uv: best, isPoint: true };
+      return {
+        uv: [Math.round(raw[0] / GRID_SNAP) * GRID_SNAP, Math.round(raw[1] / GRID_SNAP) * GRID_SNAP],
+        isPoint: false,
+      };
+    };
+
+    const pick = (clientX: number, clientY: number) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const planeObjs = datums.filter((d) => d.kind === "plane").map((d) => d.object);
       const bodies = group.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
-      const hit = raycaster.intersectObjects([...planeObjects, ...bodies], false)[0];
+      const hit = raycaster.intersectObjects([...planeObjs, ...bodies], false)[0];
       if (!hit) return null;
       const datum = datums.find((d) => d.object === hit.object);
-      if (datum) return { kind: "datum", id: datum.id };
+      if (datum) return { kind: "datum" as const, id: datum.id };
       const mesh = hit.object as THREE.Mesh;
       const normal = hit.face
         ? hit.face.normal.clone().transformDirection(mesh.matrixWorld)
         : new THREE.Vector3(0, 0, 1);
-      return { kind: "face", mesh, point: hit.point.clone(), normal };
+      return { kind: "face" as const, mesh, point: hit.point.clone(), normal };
     };
-
     const clearHover = () => {
       if (hoverBodyRef.current) {
         hoverBodyRef.current.mesh.material = hoverBodyRef.current.prev;
@@ -204,39 +286,71 @@ export function Viewport({
     };
 
     const onMove = (e: PointerEvent) => {
-      if (!pickingRef.current) return;
-      const p = pick(e.clientX, e.clientY);
-      clearHover();
-      if (!p) return;
-      renderer.domElement.style.cursor = "pointer";
-      if (p.kind === "datum") {
-        hoverPlaneRef.current = p.id;
-        applyDatumAppearance(state, p.id);
-      } else {
-        hoverBodyRef.current = { mesh: p.mesh, prev: p.mesh.material };
-        p.mesh.material = hoverMaterial;
+      if (pickingRef.current) {
+        const p = pick(e.clientX, e.clientY);
+        clearHover();
+        if (!p) return;
+        renderer.domElement.style.cursor = "pointer";
+        if (p.kind === "datum") {
+          hoverPlaneRef.current = p.id;
+          applyDatumAppearance(state, p.id);
+        } else {
+          hoverBodyRef.current = { mesh: p.mesh, prev: p.mesh.material };
+          p.mesh.material = hoverMaterial;
+        }
+        return;
+      }
+      const frame = sketchFrameRef.current;
+      if (frame && sketchToolRef.current === "line") {
+        const raw = planeHitUv(e.clientX, e.clientY);
+        if (!raw) {
+          state.previewLine.visible = false;
+          state.snapMarker.visible = false;
+          return;
+        }
+        const { uv, isPoint } = snap(raw, e.clientX, e.clientY);
+        const ls = lineStartRef.current;
+        if (ls) {
+          setSegment(state.previewLine.geometry, uvToWorld(frame, ls[0], ls[1]), uvToWorld(frame, uv[0], uv[1]));
+          state.previewLine.visible = true;
+        } else {
+          state.previewLine.visible = false;
+        }
+        const w = uvToWorld(frame, uv[0], uv[1]);
+        state.snapMarker.position.set(w[0], w[1], w[2]);
+        state.snapMarker.visible = true;
+        (state.snapMarker.material as THREE.MeshBasicMaterial).color.set(isPoint ? 0xffe14a : 0x6fd0ff);
       }
     };
     const onDown = (e: PointerEvent) => {
       down = { x: e.clientX, y: e.clientY };
     };
     const onUp = (e: PointerEvent) => {
-      if (!pickingRef.current || !down) return;
+      if (!down) return;
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       down = null;
       if (moved > 5) return; // a drag (orbit/pan), not a click
-      const p = pick(e.clientX, e.clientY);
-      if (!p) return;
-      clearHover();
-      if (p.kind === "datum") {
-        if (p.id !== "origin") onPickRef.current({ kind: "datum", id: p.id });
-      } else {
-        const featureId = (p.mesh.userData.featureId as string) ?? "";
-        const frame = deriveFaceFrame(
-          [p.point.x, p.point.y, p.point.z],
-          [p.normal.x, p.normal.y, p.normal.z],
-        );
-        onPickRef.current({ kind: "face", featureId, frame });
+      if (pickingRef.current) {
+        const p = pick(e.clientX, e.clientY);
+        clearHover();
+        if (!p) return;
+        if (p.kind === "datum") {
+          if (p.id !== "origin") onPickRef.current({ kind: "datum", id: p.id });
+        } else {
+          const featureId = (p.mesh.userData.featureId as string) ?? "";
+          const frame = deriveFaceFrame(
+            [p.point.x, p.point.y, p.point.z],
+            [p.normal.x, p.normal.y, p.normal.z],
+          );
+          onPickRef.current({ kind: "face", featureId, frame });
+        }
+        return;
+      }
+      const frame = sketchFrameRef.current;
+      if (frame && sketchToolRef.current === "line") {
+        const raw = planeHitUv(e.clientX, e.clientY);
+        if (!raw) return;
+        onSketchClickRef.current(snap(raw, e.clientX, e.clientY).uv);
       }
     };
     renderer.domElement.addEventListener("pointermove", onMove);
@@ -260,7 +374,7 @@ export function Viewport({
       if (state.tween) {
         const tw = state.tween;
         tw.t = Math.min(1, tw.t + 0.12);
-        const e = 1 - Math.pow(1 - tw.t, 3); // easeOutCubic
+        const e = 1 - Math.pow(1 - tw.t, 3);
         camera.position.lerpVectors(tw.from, tw.to, e);
         camera.up.copy(tw.up);
         if (tw.t >= 1) state.tween = null;
@@ -279,6 +393,9 @@ export function Viewport({
       renderer.domElement.removeEventListener("pointerup", onUp);
       controls.dispose();
       disposeGroup(group);
+      sketchLines.geometry.dispose();
+      previewLine.geometry.dispose();
+      snapMarker.geometry.dispose();
       faceMaterial.dispose();
       selectedMaterial.dispose();
       hoverMaterial.dispose();
@@ -297,10 +414,7 @@ export function Viewport({
     hoverBodyRef.current = null;
     disposeGroup(state.group);
     for (const { id, mesh } of meshes) {
-      const [geometry] = syncGeometries(
-        [{ name: id, faces: mesh.faces, edges: mesh.edges }],
-        [],
-      );
+      const [geometry] = syncGeometries([{ name: id, faces: mesh.faces, edges: mesh.edges }], []);
       const material = id === selectedId ? state.selectedMaterial : state.faceMaterial;
       const faceMesh = new THREE.Mesh(geometry.faces, material);
       faceMesh.userData.featureId = id;
@@ -327,7 +441,35 @@ export function Viewport({
     if (!active) applyDatumAppearance(state, null);
   }, [activeSketch]);
 
+  // Render committed sketch entities; hide the overlay when not sketching.
+  useEffect(() => {
+    const state = stateRef.current;
+    if (!state) return;
+    const visible = sketchFrame !== null;
+    state.sketchLines.visible = visible;
+    if (!visible) {
+      state.previewLine.visible = false;
+      state.snapMarker.visible = false;
+      return;
+    }
+    const pts: number[] = [];
+    for (const e of sketchEntities) {
+      if (e.type === "line") {
+        const a = uvToWorld(sketchFrame, e.a[0], e.a[1]);
+        const b = uvToWorld(sketchFrame, e.b[0], e.b[1]);
+        pts.push(a[0], a[1], a[2], b[0], b[1], b[2]);
+      }
+    }
+    state.sketchLines.geometry.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    state.sketchLines.geometry.computeBoundingSphere();
+  }, [sketchEntities, sketchFrame]);
+
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+}
+
+function setSegment(geom: THREE.BufferGeometry, a: [number, number, number], b: [number, number, number]) {
+  geom.setAttribute("position", new THREE.Float32BufferAttribute([...a, ...b], 3));
+  geom.computeBoundingSphere();
 }
 
 // --- Datum geometry -------------------------------------------------------
@@ -343,10 +485,7 @@ function createDatums(scene: THREE.Scene): DatumEntry[] {
   const entries: DatumEntry[] = [];
 
   const originMat = new THREE.MeshBasicMaterial({
-    color: 0xffd24a,
-    depthTest: false,
-    transparent: true,
-    opacity: 0.5,
+    color: 0xffd24a, depthTest: false, transparent: true, opacity: 0.5,
   });
   const origin = new THREE.Mesh(new THREE.SphereGeometry(1.0, 20, 20), originMat);
   origin.renderOrder = 10;
@@ -355,21 +494,15 @@ function createDatums(scene: THREE.Scene): DatumEntry[] {
 
   const planeGeo = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
   const edgeGeo = new THREE.EdgesGeometry(planeGeo);
-
   const planes: { id: keyof typeof PLANE_TINTS; rot: [number, number, number] }[] = [
     { id: "plane-top", rot: [0, 0, 0] },
     { id: "plane-front", rot: [Math.PI / 2, 0, 0] },
     { id: "plane-right", rot: [0, Math.PI / 2, 0] },
   ];
-
   for (const { id, rot } of planes) {
     const tint = PLANE_TINTS[id];
     const mat = new THREE.MeshBasicMaterial({
-      color: tint,
-      transparent: true,
-      opacity: 0.06,
-      side: THREE.DoubleSide,
-      depthWrite: false,
+      color: tint, transparent: true, opacity: 0.06, side: THREE.DoubleSide, depthWrite: false,
     });
     const mesh = new THREE.Mesh(planeGeo, mat);
     mesh.rotation.set(...rot);
@@ -378,11 +511,9 @@ function createDatums(scene: THREE.Scene): DatumEntry[] {
       new THREE.LineBasicMaterial({ color: tint, transparent: true, opacity: 0.35 }),
     );
     outline.rotation.set(...rot);
-    scene.add(mesh);
-    scene.add(outline);
+    scene.add(mesh, outline);
     entries.push({ id, object: mesh, kind: "plane", material: mat, outline, baseOpacity: 0.06 });
   }
-
   return entries;
 }
 
@@ -391,9 +522,7 @@ function applyDatumAppearance(state: SceneState, hovered: DatumId | null): void 
     const hot = d.id === hovered;
     if (d.kind === "plane") {
       d.material.opacity = hot ? 0.18 : d.baseOpacity;
-      if (d.outline) {
-        (d.outline.material as THREE.LineBasicMaterial).opacity = hot ? 0.8 : 0.35;
-      }
+      if (d.outline) (d.outline.material as THREE.LineBasicMaterial).opacity = hot ? 0.8 : 0.35;
     } else {
       d.object.scale.setScalar(hot ? 1.35 : 1);
       d.material.opacity = hot ? 0.85 : d.baseOpacity;
@@ -401,7 +530,6 @@ function applyDatumAppearance(state: SceneState, hovered: DatumId | null): void 
   }
 }
 
-/** Remove and dispose every child geometry of a group (materials are shared). */
 function disposeGroup(group: THREE.Group): void {
   for (const child of group.children) {
     if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
