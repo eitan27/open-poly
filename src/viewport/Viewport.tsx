@@ -345,7 +345,7 @@ export function Viewport({
         return;
       }
       const frame = activeFrameRef.current;
-      if (frame && sketchToolRef.current === "line") {
+      if (frame && sketchToolRef.current !== "select") {
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) {
           state.previewLine.visible = false;
@@ -392,7 +392,7 @@ export function Viewport({
         return;
       }
       const frame = activeFrameRef.current;
-      if (frame && sketchToolRef.current === "line") {
+      if (frame && sketchToolRef.current !== "select") {
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) return;
         onSketchClickRef.current(snap(raw, e.clientX, e.clientY).uv);
