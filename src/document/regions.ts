@@ -12,13 +12,14 @@ export interface SketchRegion {
 
 const key = (p: Vec2) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
 
-function shoelace(pts: Vec2[]): number {
+/** Signed area (CCW positive) via the shoelace formula. */
+function signedArea(pts: Vec2[]): number {
   let a = 0;
   for (let i = 0; i < pts.length; i++) {
     const j = (i + 1) % pts.length;
     a += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
   }
-  return Math.abs(a) / 2;
+  return a / 2;
 }
 
 export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
@@ -35,38 +36,72 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
     regions.push({ id: `region-${e.id}`, outline, area: Math.PI * e.r * e.r });
   }
 
-  // Trace closed loops of line entities via shared endpoints.
+  // Find every enclosed region bounded by line entities. Treat the lines as a
+  // planar graph and enumerate its faces: each line becomes two directed
+  // half-edges, and each directed half-edge belongs to exactly one face. This
+  // (unlike a greedy loop tracer) lets a single line bound two adjacent
+  // regions — e.g. the middle polygon formed when two polygons are bridged.
   const lines = entities.filter((e): e is Extract<SketchEntity, { type: "line" }> => e.type === "line");
-  const adj = new Map<string, { lineId: string; to: Vec2 }[]>();
-  const link = (from: Vec2, to: Vec2, lineId: string) => {
-    const k = key(from);
-    if (!adj.has(k)) adj.set(k, []);
-    adj.get(k)!.push({ lineId, to });
-  };
-  for (const l of lines) {
-    link(l.a, l.b, l.id);
-    link(l.b, l.a, l.id);
-  }
-  const used = new Set<string>();
-  for (const start of lines) {
-    if (used.has(start.id)) continue;
-    const loop: Vec2[] = [start.a];
-    let cur = start.b;
-    used.add(start.id);
-    let closed = false;
-    for (let guard = 0; guard <= lines.length; guard++) {
-      if (key(cur) === key(start.a)) {
-        closed = true;
-        break;
-      }
-      loop.push(cur);
-      const next = (adj.get(key(cur)) ?? []).find((e) => !used.has(e.lineId));
-      if (!next) break;
-      used.add(next.lineId);
-      cur = next.to;
+
+  // Unique vertices (by rounded position).
+  const nodeIndex = new Map<string, number>();
+  const nodePos: Vec2[] = [];
+  const node = (p: Vec2): number => {
+    const k = key(p);
+    let i = nodeIndex.get(k);
+    if (i === undefined) {
+      i = nodePos.length;
+      nodeIndex.set(k, i);
+      nodePos.push(p);
     }
-    if (closed && loop.length >= 3) {
-      regions.push({ id: `region-loop-${start.id}`, outline: loop, area: shoelace(loop) });
+    return i;
+  };
+
+  // Half-edges, stored so that twin(i) === i ^ 1.
+  interface HalfEdge { from: number; to: number; lineId: string; angle: number }
+  const he: HalfEdge[] = [];
+  for (const l of lines) {
+    const a = node(l.a);
+    const b = node(l.b);
+    if (a === b) continue; // degenerate
+    he.push({ from: a, to: b, lineId: l.id, angle: Math.atan2(l.b[1] - l.a[1], l.b[0] - l.a[0]) });
+    he.push({ from: b, to: a, lineId: l.id, angle: Math.atan2(l.a[1] - l.b[1], l.a[0] - l.b[0]) });
+  }
+
+  // Outgoing half-edges per vertex, sorted CCW by angle.
+  const outgoing: number[][] = nodePos.map(() => []);
+  he.forEach((e, i) => outgoing[e.from].push(i));
+  for (const list of outgoing) list.sort((p, q) => he[p].angle - he[q].angle);
+
+  // next(e): arriving at e.to, turn to the most-clockwise next edge — i.e. the
+  // half-edge just before the reverse edge (twin) in CCW order around e.to.
+  const next = (i: number): number => {
+    const twin = i ^ 1;
+    const list = outgoing[he[i].to];
+    const pos = list.indexOf(twin);
+    return list[(pos - 1 + list.length) % list.length];
+  };
+
+  const visited = new Array<boolean>(he.length).fill(false);
+  for (let s = 0; s < he.length; s++) {
+    if (visited[s]) continue;
+    const loop: Vec2[] = [];
+    const lineIds = new Set<string>();
+    let cur = s;
+    for (let guard = 0; guard <= he.length; guard++) {
+      if (visited[cur]) break;
+      visited[cur] = true;
+      loop.push(nodePos[he[cur].from]);
+      lineIds.add(he[cur].lineId);
+      cur = next(cur);
+      if (cur === s) break;
+    }
+    // Bounded faces come out CCW (positive signed area); the single outer face
+    // comes out CW (negative) and is discarded. Slivers/danglers are ~0.
+    const a = signedArea(loop);
+    if (loop.length >= 3 && a > 1e-7) {
+      const id = `region-loop-${[...lineIds].sort().join("_")}`;
+      regions.push({ id, outline: loop, area: a });
     }
   }
 
