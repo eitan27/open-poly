@@ -470,21 +470,30 @@ export function Viewport({
       );
       const faceHit = raycaster.intersectObjects(faceMeshes, false)[0];
       const edgeHit = raycaster.intersectObjects(bodyEdges, false)[0];
+      const sketchHit = raycaster.intersectObjects(sketchSegs, false)[0];
 
-      // An edge hit wins when the cursor is near a body edge that isn't behind
-      // the face under the cursor (back-facing silhouette edges are farther away).
-      if (edgeHit && edgeHit.index != null && (!faceHit || edgeHit.distance <= faceHit.distance + 1)) {
-        const mesh = edgeHit.object as THREE.LineSegments;
+      // Thin elements (body edges, sketch lines) take priority over a face when
+      // the cursor is near them and they're not behind that face. Pick the nearer.
+      const faceDist = faceHit ? faceHit.distance : Infinity;
+      const edgeOk = !!edgeHit && edgeHit.index != null && edgeHit.distance <= faceDist + 1;
+      const sketchOk = !!sketchHit && sketchHit.distance <= faceDist + 1;
+
+      if (edgeOk && (!sketchOk || edgeHit!.distance <= sketchHit!.distance)) {
+        const mesh = edgeHit!.object as THREE.LineSegments;
         const fid = mesh.userData.featureId as string;
         const pos = mesh.geometry.getAttribute("position");
-        const a = new THREE.Vector3().fromBufferAttribute(pos, edgeHit.index);
-        const bpt = new THREE.Vector3().fromBufferAttribute(pos, edgeHit.index + 1);
-        const near = a.distanceTo(edgeHit.point) <= bpt.distanceTo(edgeHit.point) ? a : bpt;
-        if (near.distanceTo(edgeHit.point) < VERTEX_PICK_WORLD) {
+        const a = new THREE.Vector3().fromBufferAttribute(pos, edgeHit!.index!);
+        const bpt = new THREE.Vector3().fromBufferAttribute(pos, edgeHit!.index! + 1);
+        const near = a.distanceTo(edgeHit!.point) <= bpt.distanceTo(edgeHit!.point) ? a : bpt;
+        if (near.distanceTo(edgeHit!.point) < VERTEX_PICK_WORLD) {
           return { kind: "vertex", featureId: fid, point: [near.x, near.y, near.z] };
         }
-        const edgeId = getEdgeId(edgeHit.index, mesh.geometry);
+        const edgeId = getEdgeId(edgeHit!.index!, mesh.geometry);
         if (edgeId !== undefined) return { kind: "edge", featureId: fid, edgeId };
+      }
+      if (sketchOk) {
+        const sid = sketchHit!.object.userData.sketchId as string | undefined;
+        if (sid) return { kind: "feature", id: sid };
       }
       if (faceHit && faceHit.faceIndex != null) {
         const mesh = faceHit.object as THREE.Mesh;
@@ -495,11 +504,6 @@ export function Viewport({
             ? { kind: "feature", id: fid }
             : { kind: "face", featureId: fid, faceId };
         }
-      }
-      const sketchHit = raycaster.intersectObjects(sketchSegs, false)[0];
-      if (sketchHit) {
-        const sid = sketchHit.object.userData.sketchId as string | undefined;
-        if (sid) return { kind: "feature", id: sid };
       }
       return null;
     };
@@ -516,9 +520,12 @@ export function Viewport({
     };
 
     const onMove = (e: PointerEvent) => {
-      // Drop any idle selection-hover when not in idle (select) mode.
-      const idle = !pickingRef.current && activeFrameRef.current === null;
-      if (!idle && hoverSelRef.current) {
+      // Selection (hover) is active when idle OR editing a sketch with the Select
+      // tool. Drop a stale hover when neither applies.
+      const selecting =
+        !pickingRef.current &&
+        (activeFrameRef.current === null || sketchToolRef.current === "select");
+      if (!selecting && hoverSelRef.current) {
         hoverSelRef.current = null;
         applyHighlights();
       }
@@ -537,8 +544,7 @@ export function Viewport({
         return;
       }
       const frame = activeFrameRef.current;
-      if (frame) {
-        if (sketchToolRef.current === "select") return;
+      if (frame && sketchToolRef.current !== "select") {
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) {
           state.previewLine.visible = false;
@@ -563,7 +569,12 @@ export function Viewport({
         }
         return;
       }
-      // Idle: hover-highlight the body face / sketch under the cursor.
+      // Selection hover (idle, or sketch mode with the Select tool). Hide any
+      // leftover draw preview when hovering inside a sketch.
+      if (frame) {
+        state.previewLine.visible = false;
+        state.snapMarker.visible = false;
+      }
       const sel = pickSelection(e.clientX, e.clientY);
       if (!sameSelection(sel, hoverSelRef.current)) {
         hoverSelRef.current = sel;
@@ -593,16 +604,17 @@ export function Viewport({
         return;
       }
       const frame = activeFrameRef.current;
-      if (frame) {
-        if (sketchToolRef.current === "select") return;
+      if (frame && sketchToolRef.current !== "select") {
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) return;
         const s = snap(raw, e.clientX, e.clientY);
         onSketchClickRef.current(s.uv, s.kind === "h" ? "horizontal" : s.kind === "v" ? "vertical" : undefined);
         return;
       }
-      // Idle: click to select (or click empty space to clear).
-      onSelectRef.current(pickSelection(e.clientX, e.clientY));
+      // Selection click (idle, or sketch + Select tool). Clicking the already
+      // selected element toggles it off; clicking empty space clears.
+      const sel = pickSelection(e.clientX, e.clientY);
+      onSelectRef.current(sameSelection(sel, selectionRef.current) ? null : sel);
     };
     renderer.domElement.addEventListener("pointermove", onMove);
     renderer.domElement.addEventListener("pointerdown", onDown);
