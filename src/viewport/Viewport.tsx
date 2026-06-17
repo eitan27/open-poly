@@ -17,6 +17,12 @@ export interface FeatureMesh {
   mesh: ShapeMeshPayload;
 }
 
+export interface RenderSketch {
+  id: string;
+  frame: PlaneFrameData;
+  entities: SketchEntity[];
+}
+
 export type DatumId = "origin" | SketchPlaneId;
 export type SketchTool = "select" | "line";
 export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
@@ -46,15 +52,16 @@ interface SceneState {
   hoverMaterial: THREE.MeshStandardMaterial;
   lineMaterial: THREE.LineBasicMaterial;
   datums: DatumEntry[];
-  sketchLines: THREE.LineSegments;
+  sketchGroup: THREE.Group;
   previewLine: THREE.Line;
   snapMarker: THREE.Mesh;
-  tween: { from: THREE.Vector3; to: THREE.Vector3; up: THREE.Vector3; t: number } | null;
+  tween: { from: THREE.Vector3; to: THREE.Vector3; up: THREE.Vector3; start: number } | null;
 }
 
 const VIEW_DISTANCE = 220;
-const GRID_SNAP = 5;
+const TWEEN_MS = 300;
 const SNAP_PX = 12;
+const ANGLE_SNAP = 0.06; // ~3.4° — horizontal/vertical inference window
 
 const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, number, number] }> = {
   front: { dir: [0, -1, 0], up: [0, 0, 1] },
@@ -73,8 +80,8 @@ export function Viewport({
   onPick,
   activeSketch,
   sketchTool,
-  sketchFrame,
-  sketchEntities,
+  sketches,
+  activeSketchId,
   lineStart,
   onSketchClick,
   apiRef,
@@ -85,8 +92,8 @@ export function Viewport({
   onPick: (ref: SketchPlaneRef) => void;
   activeSketch: { datumId: SketchPlaneId | null } | null;
   sketchTool: SketchTool;
-  sketchFrame: PlaneFrameData | null;
-  sketchEntities: SketchEntity[];
+  sketches: RenderSketch[];
+  activeSketchId: string | null;
   lineStart: Vec2 | null;
   onSketchClick: (uv: Vec2) => void;
   apiRef: { current: ViewportApi | null };
@@ -94,21 +101,19 @@ export function Viewport({
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<SceneState | null>(null);
 
-  // live values for the once-bound pointer handlers
   const pickingRef = useRef(picking);
   pickingRef.current = picking;
   const onPickRef = useRef(onPick);
   onPickRef.current = onPick;
-  const sketchFrameRef = useRef(sketchFrame);
-  sketchFrameRef.current = sketchFrame;
   const sketchToolRef = useRef(sketchTool);
   sketchToolRef.current = sketchTool;
-  const sketchEntitiesRef = useRef(sketchEntities);
-  sketchEntitiesRef.current = sketchEntities;
   const lineStartRef = useRef(lineStart);
   lineStartRef.current = lineStart;
   const onSketchClickRef = useRef(onSketchClick);
   onSketchClickRef.current = onSketchClick;
+  // derived from sketches + activeSketchId in the render effect
+  const activeFrameRef = useRef<PlaneFrameData | null>(null);
+  const activeEntitiesRef = useRef<SketchEntity[]>([]);
 
   const hoverPlaneRef = useRef<DatumId | null>(null);
   const hoverBodyRef = useRef<{ mesh: THREE.Mesh; prev: THREE.Material | THREE.Material[] } | null>(null);
@@ -160,14 +165,9 @@ export function Viewport({
     const lineMaterial = new THREE.LineBasicMaterial({ color: 0x0d0f14 });
 
     const group = new THREE.Group();
-    scene.add(group);
+    const sketchGroup = new THREE.Group();
+    scene.add(group, sketchGroup);
 
-    // Sketch overlay objects (committed entities, rubber-band preview, snap dot).
-    const sketchLines = new THREE.LineSegments(
-      new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ color: 0xeaf0ff }),
-    );
-    sketchLines.frustumCulled = false;
     const previewLine = new THREE.Line(
       new THREE.BufferGeometry(),
       new THREE.LineBasicMaterial({ color: 0x7da8ff }),
@@ -180,29 +180,30 @@ export function Viewport({
     );
     snapMarker.renderOrder = 12;
     snapMarker.visible = false;
-    scene.add(sketchLines, previewLine, snapMarker);
+    scene.add(previewLine, snapMarker);
 
     const state: SceneState = {
       renderer, scene, camera, controls, group,
       faceMaterial, selectedMaterial, hoverMaterial, lineMaterial,
-      datums, sketchLines, previewLine, snapMarker, tween: null,
+      datums, sketchGroup, previewLine, snapMarker, tween: null,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
 
+    const startTween = (to: THREE.Vector3, up: THREE.Vector3, target: THREE.Vector3) => {
+      state.tween = { from: camera.position.clone(), to, up, start: performance.now() };
+      controls.target.copy(target);
+    };
     apiRef.current = {
       setView(name) {
         const v = VIEWS[name];
         const to = new THREE.Vector3(...v.dir).normalize().multiplyScalar(VIEW_DISTANCE);
-        state.tween = { from: camera.position.clone(), to, up: new THREE.Vector3(...v.up), t: 0 };
-        controls.target.set(0, 0, 0);
+        startTween(to, new THREE.Vector3(...v.up), new THREE.Vector3(0, 0, 0));
       },
       lookAtFrame(frame) {
         const origin = new THREE.Vector3(...frame.origin);
         const normal = new THREE.Vector3(...frame.normal).normalize();
-        const to = origin.clone().add(normal.multiplyScalar(VIEW_DISTANCE));
-        state.tween = { from: camera.position.clone(), to, up: new THREE.Vector3(...frame.vAxis), t: 0 };
-        controls.target.copy(origin);
+        startTween(origin.clone().add(normal.multiplyScalar(VIEW_DISTANCE)), new THREE.Vector3(...frame.vAxis), origin);
       },
     };
 
@@ -210,14 +211,13 @@ export function Viewport({
     const pointer = new THREE.Vector2();
     let down: { x: number; y: number } | null = null;
 
-    // --- helpers ---
     const projectToPx = (world: THREE.Vector3) => {
       const v = world.clone().project(camera);
       const rect = renderer.domElement.getBoundingClientRect();
       return { x: (v.x * 0.5 + 0.5) * rect.width + rect.left, y: (-v.y * 0.5 + 0.5) * rect.height + rect.top };
     };
     const planeHitUv = (clientX: number, clientY: number): Vec2 | null => {
-      const frame = sketchFrameRef.current;
+      const frame = activeFrameRef.current;
       if (!frame) return null;
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -232,15 +232,18 @@ export function Viewport({
       const d = hit.sub(new THREE.Vector3(...frame.origin));
       return [d.dot(new THREE.Vector3(...frame.uAxis)), d.dot(new THREE.Vector3(...frame.vAxis))];
     };
+    // Snap only to inferences: existing points/origin, then horizontal/vertical
+    // relative to the chain start. No grid snapping.
     const snap = (raw: Vec2, clientX: number, clientY: number): { uv: Vec2; isPoint: boolean } => {
-      const frame = sketchFrameRef.current!;
+      const frame = activeFrameRef.current!;
       const cands: Vec2[] = [[0, 0]];
-      for (const e of sketchEntitiesRef.current) {
+      for (const e of activeEntitiesRef.current) {
         if (e.type === "line") cands.push(e.a, e.b);
         else if (e.type === "point") cands.push(e.p);
         else if (e.type === "circle" || e.type === "arc") cands.push(e.c);
       }
-      if (lineStartRef.current) cands.push(lineStartRef.current);
+      const ls = lineStartRef.current;
+      if (ls) cands.push(ls);
       let best: Vec2 | null = null;
       let bestD = SNAP_PX;
       for (const c of cands) {
@@ -250,10 +253,16 @@ export function Viewport({
         if (dist < bestD) { bestD = dist; best = c; }
       }
       if (best) return { uv: best, isPoint: true };
-      return {
-        uv: [Math.round(raw[0] / GRID_SNAP) * GRID_SNAP, Math.round(raw[1] / GRID_SNAP) * GRID_SNAP],
-        isPoint: false,
-      };
+      if (ls) {
+        const du = raw[0] - ls[0];
+        const dv = raw[1] - ls[1];
+        const ang = Math.atan2(dv, du);
+        const dH = Math.min(Math.abs(ang), Math.abs(Math.abs(ang) - Math.PI));
+        const dV = Math.abs(Math.abs(ang) - Math.PI / 2);
+        if (dH < ANGLE_SNAP) return { uv: [raw[0], ls[1]], isPoint: false };
+        if (dV < ANGLE_SNAP) return { uv: [ls[0], raw[1]], isPoint: false };
+      }
+      return { uv: raw, isPoint: false };
     };
 
     const pick = (clientX: number, clientY: number) => {
@@ -300,7 +309,7 @@ export function Viewport({
         }
         return;
       }
-      const frame = sketchFrameRef.current;
+      const frame = activeFrameRef.current;
       if (frame && sketchToolRef.current === "line") {
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) {
@@ -316,10 +325,13 @@ export function Viewport({
         } else {
           state.previewLine.visible = false;
         }
-        const w = uvToWorld(frame, uv[0], uv[1]);
-        state.snapMarker.position.set(w[0], w[1], w[2]);
-        state.snapMarker.visible = true;
-        (state.snapMarker.material as THREE.MeshBasicMaterial).color.set(isPoint ? 0xffe14a : 0x6fd0ff);
+        if (isPoint) {
+          const w = uvToWorld(frame, uv[0], uv[1]);
+          state.snapMarker.position.set(w[0], w[1], w[2]);
+          state.snapMarker.visible = true;
+        } else {
+          state.snapMarker.visible = false;
+        }
       }
     };
     const onDown = (e: PointerEvent) => {
@@ -329,7 +341,7 @@ export function Viewport({
       if (!down) return;
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       down = null;
-      if (moved > 5) return; // a drag (orbit/pan), not a click
+      if (moved > 5) return;
       if (pickingRef.current) {
         const p = pick(e.clientX, e.clientY);
         clearHover();
@@ -338,15 +350,12 @@ export function Viewport({
           if (p.id !== "origin") onPickRef.current({ kind: "datum", id: p.id });
         } else {
           const featureId = (p.mesh.userData.featureId as string) ?? "";
-          const frame = deriveFaceFrame(
-            [p.point.x, p.point.y, p.point.z],
-            [p.normal.x, p.normal.y, p.normal.z],
-          );
+          const frame = deriveFaceFrame([p.point.x, p.point.y, p.point.z], [p.normal.x, p.normal.y, p.normal.z]);
           onPickRef.current({ kind: "face", featureId, frame });
         }
         return;
       }
-      const frame = sketchFrameRef.current;
+      const frame = activeFrameRef.current;
       if (frame && sketchToolRef.current === "line") {
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) return;
@@ -373,11 +382,11 @@ export function Viewport({
     const animate = () => {
       if (state.tween) {
         const tw = state.tween;
-        tw.t = Math.min(1, tw.t + 0.12);
-        const e = 1 - Math.pow(1 - tw.t, 3);
+        const t = Math.min(1, (performance.now() - tw.start) / TWEEN_MS);
+        const e = 1 - Math.pow(1 - t, 3);
         camera.position.lerpVectors(tw.from, tw.to, e);
         camera.up.copy(tw.up);
-        if (tw.t >= 1) state.tween = null;
+        if (t >= 1) state.tween = null;
       }
       controls.update();
       renderer.render(scene, camera);
@@ -393,7 +402,7 @@ export function Viewport({
       renderer.domElement.removeEventListener("pointerup", onUp);
       controls.dispose();
       disposeGroup(group);
-      sketchLines.geometry.dispose();
+      disposeSketchGroup(sketchGroup);
       previewLine.geometry.dispose();
       snapMarker.geometry.dispose();
       faceMaterial.dispose();
@@ -441,28 +450,39 @@ export function Viewport({
     if (!active) applyDatumAppearance(state, null);
   }, [activeSketch]);
 
-  // Render committed sketch entities; hide the overlay when not sketching.
+  // Render every sketch (so finished sketches stay visible); set the active
+  // frame/entities used for drawing.
   useEffect(() => {
     const state = stateRef.current;
     if (!state) return;
-    const visible = sketchFrame !== null;
-    state.sketchLines.visible = visible;
-    if (!visible) {
+    disposeSketchGroup(state.sketchGroup);
+    for (const s of sketches) {
+      const pts: number[] = [];
+      for (const e of s.entities) {
+        if (e.type === "line") {
+          const a = uvToWorld(s.frame, e.a[0], e.a[1]);
+          const b = uvToWorld(s.frame, e.b[0], e.b[1]);
+          pts.push(a[0], a[1], a[2], b[0], b[1], b[2]);
+        }
+      }
+      if (pts.length === 0) continue;
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+      const mat = new THREE.LineBasicMaterial({
+        color: s.id === activeSketchId ? 0xeaf0ff : 0xaeb9e0,
+      });
+      const seg = new THREE.LineSegments(geom, mat);
+      seg.frustumCulled = false;
+      state.sketchGroup.add(seg);
+    }
+    const active = sketches.find((s) => s.id === activeSketchId) ?? null;
+    activeFrameRef.current = active?.frame ?? null;
+    activeEntitiesRef.current = active?.entities ?? [];
+    if (!active) {
       state.previewLine.visible = false;
       state.snapMarker.visible = false;
-      return;
     }
-    const pts: number[] = [];
-    for (const e of sketchEntities) {
-      if (e.type === "line") {
-        const a = uvToWorld(sketchFrame, e.a[0], e.a[1]);
-        const b = uvToWorld(sketchFrame, e.b[0], e.b[1]);
-        pts.push(a[0], a[1], a[2], b[0], b[1], b[2]);
-      }
-    }
-    state.sketchLines.geometry.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-    state.sketchLines.geometry.computeBoundingSphere();
-  }, [sketchEntities, sketchFrame]);
+  }, [sketches, activeSketchId]);
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
@@ -534,6 +554,16 @@ function disposeGroup(group: THREE.Group): void {
   for (const child of group.children) {
     if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
       child.geometry.dispose();
+    }
+  }
+  group.clear();
+}
+
+function disposeSketchGroup(group: THREE.Group): void {
+  for (const child of group.children) {
+    if (child instanceof THREE.LineSegments) {
+      child.geometry.dispose();
+      (child.material as THREE.Material).dispose();
     }
   }
   group.clear();

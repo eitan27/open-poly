@@ -17,7 +17,7 @@ import {
   updateParam,
   updateVariable,
 } from "./document/document";
-import type { Document, FeatureKind, Vec2 } from "./document/types";
+import type { Document, FeatureKind, SketchFeature, Vec2 } from "./document/types";
 import { frameOf, planeRefLabel, type SketchPlaneRef } from "./document/planes";
 import { useHistory } from "./hooks/useHistory";
 import { FeatureTree } from "./ui/FeatureTree";
@@ -168,6 +168,16 @@ export default function App() {
     return f && f.type === "sketch" ? f : null;
   }, [doc, editingSketchId]);
 
+  // All visible sketches (so finished sketches stay rendered), each with its frame.
+  const renderSketches = useMemo(
+    () =>
+      doc.features
+        .slice(0, doc.rollbackIndex)
+        .filter((f): f is SketchFeature => f.type === "sketch" && !f.suppressed)
+        .map((f) => ({ id: f.id, frame: frameOf(f.plane), entities: f.entities })),
+    [doc],
+  );
+
   const startSketchOn = (ref: SketchPlaneRef) => {
     const { doc: next, id } = addSketch(doc, ref);
     setDoc(next);
@@ -301,8 +311,8 @@ export default function App() {
                 : null
             }
             sketchTool={sketchTool}
-            sketchFrame={editingSketch ? frameOf(editingSketch.plane) : null}
-            sketchEntities={editingSketch ? editingSketch.entities : []}
+            sketches={renderSketches}
+            activeSketchId={editingSketchId}
             lineStart={lineStart}
             onSketchClick={handleSketchClick}
             apiRef={viewApiRef}
