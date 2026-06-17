@@ -252,6 +252,30 @@ Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
 - **Exit criteria:** a fully-constrained closed profile that updates when a
   driving variable changes.
 
+> **2b status (2026-06-18):** the solver (`planegcs`) maps lines +
+> horizontal/vertical/parallel/perpendicular/distance. Auto H/V capture on line
+> draw, a manual ⛓ Solve button, and fully-constrained→green coloring are in.
+> **Length dimension is now interactive**: select a line, press **D** (or the ↔
+> toolbar button), type a length → it adds/replaces a `distance` constraint and
+> immediately re-solves so the whole sketch updates.
+>
+> **Known gaps in Phase 2 sketch constraints (deferred):**
+> - **Dimensions:** only line *length*. No radius/diameter (circle), angle
+>   (line–line), point-to-point / point-to-line distance, or driven-by-expression
+>   dimension values yet. No on-canvas dimension *labels* (the value isn't drawn
+>   next to the geometry; it lives only in the constraint + info pane), and no
+>   double-click-to-edit an existing dimension.
+> - **Geometric constraints not yet exposed in UI / mapped:** coincident,
+>   tangent, equal, concentric, symmetric, midpoint, collinear, fix/lock. (Only
+>   H/V are auto-captured; parallel/perpendicular exist in the model + solver but
+>   have no UI to add them.)
+> - **Point identity is by coordinate key** (see `solver.ts`): coincident
+>   endpoints merge by position, robust only until the first solve moves them —
+>   wants a real point-based sketch model before heavy constraint editing.
+> - **Sketch operations missing:** mirror, use/project (convert edges), offset,
+>   trim/extend, construction geometry.
+> - Circles/arcs pass through the solver unchanged (not constrained).
+
 ### Phase 3 — First solids: Extrude + Revolve
 - Profile selection from a sketch (region detection: which closed loops form
   faces). Extrude with `NEW / ADD / CUT`, symmetric, two-sided, optional draft.

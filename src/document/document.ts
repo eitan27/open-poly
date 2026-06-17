@@ -114,6 +114,14 @@ export function addSketchConstraints(
   }));
 }
 
+export function setSketchConstraints(
+  doc: Document,
+  sketchId: string,
+  constraints: SketchConstraint[],
+): Document {
+  return mapSketch(doc, sketchId, (s) => ({ ...s, constraints }));
+}
+
 export function removeSketchConstraint(
   doc: Document,
   sketchId: string,

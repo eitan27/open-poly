@@ -14,6 +14,7 @@ import {
   renameFeature,
   resolveDocument,
   setRollbackIndex,
+  setSketchConstraints,
   setSketchEntities,
   setSuppressed,
   updateParam,
@@ -54,6 +55,12 @@ import {
   type ViewportApi,
 } from "./viewport/Viewport";
 import "./App.css";
+
+/** Compact number formatting for the dimension input (trims trailing zeros). */
+const fmt = (n: number) => {
+  const r = Math.round(n * 1000) / 1000;
+  return Number.isInteger(r) ? String(r) : String(r);
+};
 
 const DATUM_ROWS: { id: DatumId; kind: string; label: string }[] = [
   { id: "origin", kind: "Point", label: "Origin" },
@@ -126,6 +133,9 @@ export default function App() {
   const [draft, setDraft] = useState<Vec2[]>([]);
   const [polygonSides, setPolygonSides] = useState(6);
   const [fullyConstrained, setFullyConstrained] = useState(false);
+  // Length-dimension entry: the line being dimensioned + the in-progress text.
+  const [dimInput, setDimInput] = useState<{ entityId: string; value: string } | null>(null);
+  const startDimensionRef = useRef<() => void>(() => {});
   const [datumVisibility, setDatumVisibility] = useState<Record<DatumId, boolean>>({
     origin: true,
     "plane-top": true,
@@ -178,6 +188,11 @@ export default function App() {
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (e.key === "Enter" && draft.length > 0) {
         setDraft([]);
+        return;
+      }
+      // D dimensions the selected line (Onshape's dimension shortcut).
+      if (editingSketchId && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === "d") {
+        startDimensionRef.current();
         return;
       }
       if (editingSketchId && !e.metaKey && !e.ctrlKey && SKETCH_KEYS[e.key.toLowerCase()]) {
@@ -243,6 +258,20 @@ export default function App() {
     const f = doc.features.find((x) => x.id === editingSketchId);
     return f && f.type === "sketch" ? f : null;
   }, [doc, editingSketchId]);
+
+  // The single line currently selected inside the active sketch (the target a
+  // length dimension would apply to). Null unless exactly one such line is held.
+  const dimLine = useMemo(() => {
+    if (!editingSketch) return null;
+    const lines = selection.filter(
+      (s): s is Extract<Selection, { kind: "sketchEntity" }> =>
+        s.kind === "sketchEntity" && s.sketchId === editingSketch.id,
+    );
+    if (lines.length !== 1) return null;
+    const e = editingSketch.entities.find((x) => x.id === lines[0].entityId);
+    if (e?.type !== "line") return null;
+    return { entityId: e.id, length: Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) };
+  }, [editingSketch, selection]);
 
   const measure = useMemo(
     () => measureSelection(selection, doc, meshes),
@@ -365,17 +394,52 @@ export default function App() {
     }
   };
 
-  // Run the planegcs solver on the active sketch, apply the solution, and update
-  // the fully-constrained indicator.
-  const handleSolve = async () => {
-    if (!editingSketch) return;
+  // Solve the given doc's sketch with planegcs, apply the moved geometry, and
+  // refresh the fully-constrained indicator. Returns the updated doc.
+  const solveSketchIn = async (docArg: Document, sketchId: string): Promise<Document> => {
+    const sk = docArg.features.find((f) => f.id === sketchId);
+    if (sk?.type !== "sketch") return docArg;
     try {
-      const res = await solveSketch(editingSketch.entities, editingSketch.constraints);
-      setDoc(setSketchEntities(doc, editingSketch.id, res.entities));
+      const res = await solveSketch(sk.entities, sk.constraints);
       setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+      return setSketchEntities(docArg, sketchId, res.entities);
     } catch (err) {
       console.error("constraint solve failed:", err);
+      return docArg;
     }
+  };
+
+  const handleSolve = async () => {
+    if (!editingSketch) return;
+    setDoc(await solveSketchIn(doc, editingSketch.id));
+  };
+
+  // Open the length-dimension input for the currently selected sketch line,
+  // pre-filled with its present length (Onshape's "select a line, press D").
+  const startDimension = () => {
+    if (!dimLine) return;
+    setDimInput({ entityId: dimLine.entityId, value: fmt(dimLine.length) });
+  };
+  startDimensionRef.current = startDimension;
+
+  // Apply the entered length as a `distance` constraint and immediately re-solve
+  // so the whole sketch updates. Replaces any prior length on the same line.
+  const applyDimension = async () => {
+    if (!dimInput || !editingSketch) return;
+    const sketchId = editingSketch.id;
+    const value = Number(dimInput.value);
+    setDimInput(null);
+    if (!Number.isFinite(value) || value <= 0) return;
+    const kept = editingSketch.constraints.filter(
+      (c) => !(c.type === "distance" && c.entity === dimInput.entityId),
+    );
+    let next = setSketchConstraints(doc, sketchId, [
+      ...kept,
+      { id: genId(), type: "distance", entity: dimInput.entityId, value },
+    ]);
+    next = await solveSketchIn(next, sketchId);
+    setDoc(next);
+    setSelection([]);
   };
 
   const errorCount =
@@ -516,6 +580,13 @@ export default function App() {
                   {t.label}
                 </button>
               ))}
+              <button
+                title="Dimension selected line (D)"
+                disabled={!dimLine}
+                onClick={startDimension}
+              >
+                ↔
+              </button>
               <button title="Solve constraints" onClick={handleSolve}>
                 ⛓
               </button>
@@ -541,6 +612,26 @@ export default function App() {
                   {fullyConstrained ? "✓" : editingSketch.constraints.length}
                 </span>
               )}
+            </div>
+          )}
+          {dimInput && (
+            <div className="dim-input">
+              <label>Length</label>
+              <input
+                type="number"
+                step="any"
+                autoFocus
+                value={dimInput.value}
+                onChange={(e) => setDimInput((d) => (d ? { ...d, value: e.target.value } : d))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyDimension();
+                  else if (e.key === "Escape") setDimInput(null);
+                }}
+              />
+              <button onClick={applyDimension}>Set</button>
+              <button className="ghost" onClick={() => setDimInput(null)}>
+                ✕
+              </button>
             </div>
           )}
           <div className="view-controls">
