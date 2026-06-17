@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { syncGeometries } from "replicad-threejs-helper";
+import { getFaceId, syncGeometries } from "replicad-threejs-helper";
 import type { ShapeMeshPayload } from "../kernel/types";
 import type { SketchEntity, Vec2 } from "../document/types";
 import {
@@ -30,6 +30,21 @@ export interface RenderSketch {
   id: string;
   frame: PlaneFrameData;
   entities: SketchEntity[];
+}
+
+/** What is currently selected in the viewport: a whole feature (sketch or body)
+ *  or one planar face of a body (referenced by its stable OCCT face id). */
+export type Selection =
+  | { kind: "feature"; id: string }
+  | { kind: "face"; featureId: string; faceId: number };
+
+function sameSelection(a: Selection | null, b: Selection | null): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.kind !== b.kind) return false;
+  if (a.kind === "feature" && b.kind === "feature") return a.id === b.id;
+  if (a.kind === "face" && b.kind === "face")
+    return a.featureId === b.featureId && a.faceId === b.faceId;
+  return false;
 }
 
 export type DatumId = "origin" | SketchPlaneId;
@@ -92,7 +107,8 @@ const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, numb
 
 export function Viewport({
   meshes,
-  selectedId,
+  selection,
+  onSelect,
   picking,
   onPick,
   activeSketch,
@@ -106,7 +122,8 @@ export function Viewport({
   apiRef,
 }: {
   meshes: FeatureMesh[];
-  selectedId: string | null;
+  selection: Selection | null;
+  onSelect: (selection: Selection | null) => void;
   picking: boolean;
   onPick: (ref: SketchPlaneRef) => void;
   activeSketch: { datumId: SketchPlaneId | null } | null;
@@ -122,6 +139,13 @@ export function Viewport({
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<SceneState | null>(null);
 
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const hoverSelRef = useRef<Selection | null>(null);
+  const applyHighlightsRef = useRef<() => void>(() => {});
+
   const pickingRef = useRef(picking);
   pickingRef.current = picking;
   const onPickRef = useRef(onPick);
@@ -134,6 +158,8 @@ export function Viewport({
   polygonSidesRef.current = polygonSides;
   const sketchFullyConstrainedRef = useRef(sketchFullyConstrained);
   sketchFullyConstrainedRef.current = sketchFullyConstrained;
+  const activeSketchIdRef = useRef(activeSketchId);
+  activeSketchIdRef.current = activeSketchId;
   const onSketchClickRef = useRef(onSketchClick);
   onSketchClickRef.current = onSketchClick;
   // derived from sketches + activeSketchId in the render effect
@@ -218,6 +244,52 @@ export function Viewport({
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
+
+    // Apply selection/hover highlighting to bodies (per-face material index) and
+    // sketches (line colour). Reads selectionRef + hoverSelRef.
+    const applyHighlights = () => {
+      const sel = selectionRef.current;
+      const hov = hoverSelRef.current;
+      for (const child of group.children) {
+        if (!(child instanceof THREE.Mesh)) continue;
+        const fid = child.userData.featureId as string;
+        const geom = child.geometry;
+        const fg = geom.userData.faceGroups as { faceId: number }[] | undefined;
+        if (!fg) continue;
+        const wholeSel = sel?.kind === "feature" && sel.id === fid;
+        const wholeHov = hov?.kind === "feature" && hov.id === fid;
+        const selFace = sel?.kind === "face" && sel.featureId === fid ? sel.faceId : null;
+        const hovFace = hov?.kind === "face" && hov.featureId === fid ? hov.faceId : null;
+        let dirty = false;
+        geom.groups.forEach((g: { materialIndex?: number }, i: number) => {
+          const faceId = fg[i]?.faceId;
+          const idx = wholeSel || selFace === faceId ? 2 : wholeHov || hovFace === faceId ? 1 : 0;
+          if (g.materialIndex !== idx) {
+            g.materialIndex = idx;
+            dirty = true;
+          }
+        });
+        if (dirty) (geom as THREE.BufferGeometry & { groupsNeedUpdate: boolean }).groupsNeedUpdate = true;
+      }
+      for (const seg of sketchGroup.children) {
+        if (!(seg instanceof THREE.LineSegments)) continue;
+        const sid = seg.userData.sketchId as string;
+        const isSel = sel?.kind === "feature" && sel.id === sid;
+        const isHov = hov?.kind === "feature" && hov.id === sid;
+        const isActive = sid === activeSketchIdRef.current;
+        const color = isSel
+          ? 0xff9d3c
+          : isHov
+            ? 0x36d6c3
+            : isActive
+              ? sketchFullyConstrainedRef.current
+                ? 0x4ad07a
+                : 0xeaf0ff
+              : 0xaeb9e0;
+        (seg.material as THREE.LineBasicMaterial).color.set(color);
+      }
+    };
+    applyHighlightsRef.current = applyHighlights;
 
     const startTween = (to: THREE.Vector3, up: THREE.Vector3, target: THREE.Vector3) => {
       state.tween = { from: camera.position.clone(), to, up, start: performance.now() };
@@ -321,6 +393,31 @@ export function Viewport({
         : new THREE.Vector3(0, 0, 1);
       return { kind: "face" as const, mesh, point: hit.point.clone(), normal };
     };
+    // Idle-mode selection: pick a body face (by stable face id) or a sketch.
+    const pickSelection = (clientX: number, clientY: number): Selection | null => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      raycaster.params.Line = { threshold: 1.6 };
+      const bodies = group.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
+      const segs = sketchGroup.children.filter(
+        (c): c is THREE.LineSegments => c instanceof THREE.LineSegments,
+      );
+      const hit = raycaster.intersectObjects([...bodies, ...segs], false)[0];
+      if (!hit) return null;
+      if (hit.object instanceof THREE.LineSegments) {
+        const sid = hit.object.userData.sketchId as string | undefined;
+        return sid ? { kind: "feature", id: sid } : null;
+      }
+      const mesh = hit.object as THREE.Mesh;
+      const fid = mesh.userData.featureId as string | undefined;
+      if (fid === undefined || hit.faceIndex == null) return null;
+      const faceId = getFaceId(hit.faceIndex, mesh.geometry);
+      return faceId === undefined
+        ? { kind: "feature", id: fid }
+        : { kind: "face", featureId: fid, faceId };
+    };
     const clearHover = () => {
       if (hoverBodyRef.current) {
         hoverBodyRef.current.mesh.material = hoverBodyRef.current.prev;
@@ -334,6 +431,12 @@ export function Viewport({
     };
 
     const onMove = (e: PointerEvent) => {
+      // Drop any idle selection-hover when not in idle (select) mode.
+      const idle = !pickingRef.current && activeFrameRef.current === null;
+      if (!idle && hoverSelRef.current) {
+        hoverSelRef.current = null;
+        applyHighlights();
+      }
       if (pickingRef.current) {
         const p = pick(e.clientX, e.clientY);
         clearHover();
@@ -349,7 +452,8 @@ export function Viewport({
         return;
       }
       const frame = activeFrameRef.current;
-      if (frame && sketchToolRef.current !== "select") {
+      if (frame) {
+        if (sketchToolRef.current === "select") return;
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) {
           state.previewLine.visible = false;
@@ -372,6 +476,14 @@ export function Viewport({
         } else {
           state.snapMarker.visible = false;
         }
+        return;
+      }
+      // Idle: hover-highlight the body face / sketch under the cursor.
+      const sel = pickSelection(e.clientX, e.clientY);
+      if (!sameSelection(sel, hoverSelRef.current)) {
+        hoverSelRef.current = sel;
+        renderer.domElement.style.cursor = sel ? "pointer" : "";
+        applyHighlights();
       }
     };
     const onDown = (e: PointerEvent) => {
@@ -396,12 +508,16 @@ export function Viewport({
         return;
       }
       const frame = activeFrameRef.current;
-      if (frame && sketchToolRef.current !== "select") {
+      if (frame) {
+        if (sketchToolRef.current === "select") return;
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) return;
         const s = snap(raw, e.clientX, e.clientY);
         onSketchClickRef.current(s.uv, s.kind === "h" ? "horizontal" : s.kind === "v" ? "vertical" : undefined);
+        return;
       }
+      // Idle: click to select (or click empty space to clear).
+      onSelectRef.current(pickSelection(e.clientX, e.clientY));
     };
     renderer.domElement.addEventListener("pointermove", onMove);
     renderer.domElement.addEventListener("pointerdown", onDown);
@@ -465,13 +581,24 @@ export function Viewport({
     disposeGroup(state.group);
     for (const { id, mesh } of meshes) {
       const [geometry] = syncGeometries([{ name: id, faces: mesh.faces, edges: mesh.edges }], []);
-      const material = id === selectedId ? state.selectedMaterial : state.faceMaterial;
-      const faceMesh = new THREE.Mesh(geometry.faces, material);
+      // Material array: index 0 = base, 1 = hover, 2 = selected. syncFaces sets a
+      // geometry group per face, so per-face highlighting flips group.materialIndex.
+      const faceMesh = new THREE.Mesh(geometry.faces, [
+        state.faceMaterial,
+        state.hoverMaterial,
+        state.selectedMaterial,
+      ]);
       faceMesh.userData.featureId = id;
       state.group.add(faceMesh);
       state.group.add(new THREE.LineSegments(geometry.lines, state.lineMaterial));
     }
-  }, [meshes, selectedId]);
+    applyHighlightsRef.current();
+  }, [meshes]);
+
+  // Re-apply highlighting when the external selection changes.
+  useEffect(() => {
+    applyHighlightsRef.current();
+  }, [selection]);
 
   // Sketch mode: dim solids and hide the inactive datum planes.
   useEffect(() => {
@@ -513,8 +640,10 @@ export function Viewport({
       });
       const seg = new THREE.LineSegments(geom, mat);
       seg.frustumCulled = false;
+      seg.userData.sketchId = s.id;
       state.sketchGroup.add(seg);
     }
+    applyHighlightsRef.current(); // re-apply selection/hover colors
     const active = sketches.find((s) => s.id === activeSketchId) ?? null;
     activeFrameRef.current = active?.frame ?? null;
     activeEntitiesRef.current = active?.entities ?? [];

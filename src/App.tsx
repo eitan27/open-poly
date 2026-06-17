@@ -43,6 +43,7 @@ import { VariablesPanel } from "./ui/VariablesPanel";
 import {
   Viewport,
   type FeatureMesh,
+  type Selection,
   type SketchTool,
   type ViewName,
   type ViewportApi,
@@ -87,7 +88,11 @@ export default function App() {
     canUndo,
     canRedo,
   } = useHistory<Document>(initialDocument);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const selectedFeatureId =
+    selection === null ? null : selection.kind === "feature" ? selection.id : selection.featureId;
+  const selectFeature = (id: string | null) =>
+    setSelection(id === null ? null : { kind: "feature", id });
   const [picking, setPicking] = useState(false);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
@@ -197,8 +202,8 @@ export default function App() {
   }, [resolved, ready]);
 
   const selected = useMemo(
-    () => doc.features.find((f) => f.id === selectedId) ?? null,
-    [doc, selectedId],
+    () => doc.features.find((f) => f.id === selectedFeatureId) ?? null,
+    [doc, selectedFeatureId],
   );
 
   const editingSketch = useMemo(() => {
@@ -219,7 +224,7 @@ export default function App() {
   const startSketchOn = (ref: SketchPlaneRef) => {
     const { doc: next, id } = addSketch(doc, ref);
     setDoc(next);
-    setSelectedId(id);
+    selectFeature(id);
     setPicking(false);
     setEditingSketchId(id);
     setSketchTool("line");
@@ -231,7 +236,7 @@ export default function App() {
     const f = doc.features.find((x) => x.id === id);
     if (f?.type !== "sketch") return;
     setEditingSketchId(id);
-    setSelectedId(id);
+    selectFeature(id);
     setSketchTool("line");
     setFullyConstrained(false);
     viewApiRef.current?.lookAtFrame(frameOf(f.plane));
@@ -344,12 +349,12 @@ export default function App() {
   const handleAdd = (kind: FeatureKind) => {
     const { doc: next, id } = addFeature(doc, kind);
     setDoc(next);
-    setSelectedId(id);
+    selectFeature(id);
   };
 
   const handleDelete = (id: string) => {
     setDoc(removeFeature(doc, id));
-    if (selectedId === id) setSelectedId(null);
+    if (selectedFeatureId === id) setSelection(null);
     if (editingSketchId === id) setEditingSketchId(null);
   };
 
@@ -389,9 +394,9 @@ export default function App() {
           <h2 className="params-heading">Timeline</h2>
           <FeatureTree
             doc={doc}
-            selectedId={selectedId}
+            selectedId={selectedFeatureId}
             errors={errors}
-            onSelect={setSelectedId}
+            onSelect={selectFeature}
             onAdd={handleAdd}
             onStartSketch={() => setPicking(true)}
             onDelete={handleDelete}
@@ -417,7 +422,8 @@ export default function App() {
         <main className="viewport">
           <Viewport
             meshes={meshes}
-            selectedId={selectedId}
+            selection={selection}
+            onSelect={setSelection}
             picking={picking}
             onPick={startSketchOn}
             activeSketch={
