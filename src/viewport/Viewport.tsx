@@ -123,6 +123,53 @@ const EDGE_SEL_COLOR = new THREE.Color(0xff9d3c);
 const EDGE_HOV_COLOR = new THREE.Color(0x36d6c3);
 const EDGE_PICK_WORLD = 1.6; // ray-distance threshold for grabbing an edge
 const VERTEX_PICK_WORLD = 3; // proximity to an edge endpoint that grabs the vertex
+
+const posKey = (x: number, y: number, z: number) =>
+  `${Math.round(x * 1000)},${Math.round(y * 1000)},${Math.round(z * 1000)}`;
+
+/**
+ * Returns the [start, count] vertex ranges (into the edge geometry) of every
+ * body edge that bounds the given face. An edge is a boundary of the face when
+ * all of its tessellation vertices coincide (by rounded position) with the
+ * face's triangle vertices. Exact for straight box edges; curved edges on
+ * curved faces are a known limitation (face/edge tessellations differ).
+ */
+function faceBoundaryEdges(
+  faceGeom: THREE.BufferGeometry,
+  edgeGeom: THREE.BufferGeometry,
+  faceId: number,
+): [number, number][] {
+  const fg = faceGeom.userData.faceGroups as { faceId: number }[] | undefined;
+  const eg = edgeGeom.userData.edgeGroups as { start: number; count: number; edgeId: number }[] | undefined;
+  if (!fg || !eg) return [];
+  const groupIdx = fg.findIndex((g) => g.faceId === faceId);
+  if (groupIdx < 0) return [];
+  const grp = faceGeom.groups[groupIdx];
+  if (!grp) return [];
+
+  // Collect the rounded positions of every vertex used by this face's triangles.
+  const faceVerts = new Set<string>();
+  const fpos = faceGeom.getAttribute("position");
+  const index = faceGeom.getIndex();
+  for (let i = grp.start; i < grp.start + grp.count; i++) {
+    const v = index ? index.getX(i) : i;
+    faceVerts.add(posKey(fpos.getX(v), fpos.getY(v), fpos.getZ(v)));
+  }
+
+  const epos = edgeGeom.getAttribute("position");
+  const ranges: [number, number][] = [];
+  for (const e of eg) {
+    let onFace = true;
+    for (let v = e.start; v < e.start + e.count; v++) {
+      if (!faceVerts.has(posKey(epos.getX(v), epos.getY(v), epos.getZ(v)))) {
+        onFace = false;
+        break;
+      }
+    }
+    if (onFace) ranges.push([e.start, e.count]);
+  }
+  return ranges;
+}
 const ANGLE_SNAP = 0.06; // ~3.4° — horizontal/vertical inference window
 
 const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, number, number] }> = {
@@ -139,7 +186,6 @@ export function Viewport({
   meshes,
   selection,
   onSelect,
-  onSketchDoubleClick,
   datumVisibility,
   picking,
   onPick,
@@ -156,7 +202,6 @@ export function Viewport({
   meshes: FeatureMesh[];
   selection: Selection[];
   onSelect: (picked: Selection | null) => void;
-  onSketchDoubleClick: (sketchId: string) => void;
   datumVisibility: Record<DatumId, boolean>;
   picking: boolean;
   onPick: (ref: SketchPlaneRef) => void;
@@ -177,8 +222,6 @@ export function Viewport({
   selectionRef.current = selection;
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
-  const onSketchDoubleClickRef = useRef(onSketchDoubleClick);
-  onSketchDoubleClickRef.current = onSketchDoubleClick;
   const hoverSelRef = useRef<Selection | null>(null);
   const applyHighlightsRef = useRef<() => void>(() => {});
 
@@ -370,14 +413,43 @@ export function Viewport({
         } else if (s.kind === "feature" && isSketchId(s.id)) {
           const child = sketchChild(s.id);
           if (child) pushRange(child.geometry, 0, child.geometry.getAttribute("position").count, c);
+        } else if (s.kind === "face") {
+          // Also highlight the face's boundary edges.
+          const faceMesh = group.children.find(
+            (x): x is THREE.Mesh => x instanceof THREE.Mesh && x.userData.featureId === s.featureId,
+          );
+          const edgeMesh = group.children.find(
+            (x): x is THREE.LineSegments =>
+              x instanceof THREE.LineSegments && x.userData.isBodyEdges && x.userData.featureId === s.featureId,
+          );
+          if (faceMesh && edgeMesh) {
+            for (const [start, count] of faceBoundaryEdges(faceMesh.geometry, edgeMesh.geometry, s.faceId)) {
+              pushRange(edgeMesh.geometry, start, count, c);
+            }
+          }
+        } else if (s.kind === "sketchFace") {
+          const fill = sketchGroup.children.find(
+            (x) => x instanceof THREE.Mesh && x.userData.isRegion && x.userData.sketchId === s.sketchId && x.userData.regionId === s.regionId,
+          );
+          const outline = fill?.userData.outlineWorld as number[] | undefined;
+          if (outline) {
+            for (let i = 0; i < outline.length; i += 3) {
+              overlayPos.push(outline[i], outline[i + 1], outline[i + 2]);
+              overlayCol.push(c.r, c.g, c.b);
+            }
+          }
         }
       };
       for (const s of sels) addOverlay(s, EDGE_SEL_COLOR);
       if (hovered) addOverlay(hovered, EDGE_HOV_COLOR);
       if (overlayPos.length >= 6) {
-        const og = highlightOverlay.geometry as LineSegmentsGeometry;
+        // Build a fresh geometry each time — re-using one via setPositions does
+        // not grow the rendered instance count when more segments are added.
+        const og = new LineSegmentsGeometry();
         og.setPositions(overlayPos);
         og.setColors(overlayCol);
+        highlightOverlay.geometry.dispose();
+        highlightOverlay.geometry = og;
         highlightOverlay.visible = true;
       } else {
         highlightOverlay.visible = false;
@@ -730,23 +802,9 @@ export function Viewport({
       // set and toggles the element off if it is already selected.
       onSelectRef.current(pickSelection(e.clientX, e.clientY));
     };
-    // Double-click a sketch element to select the whole sketch (all its lines).
-    const onDblClick = (e: MouseEvent) => {
-      if (pickingRef.current || activeFrameRef.current) return;
-      const picked = pickSelection(e.clientX, e.clientY);
-      if (!picked) return;
-      const sid =
-        picked.kind === "sketchEntity" || picked.kind === "sketchPoint" || picked.kind === "sketchFace"
-          ? picked.sketchId
-          : picked.kind === "feature" && sketchGroup.children.some((c) => c.userData.sketchId === picked.id)
-            ? picked.id
-            : null;
-      if (sid) onSketchDoubleClickRef.current(sid);
-    };
     renderer.domElement.addEventListener("pointermove", onMove);
     renderer.domElement.addEventListener("pointerdown", onDown);
     renderer.domElement.addEventListener("pointerup", onUp);
-    renderer.domElement.addEventListener("dblclick", onDblClick);
 
     const resize = () => {
       const w = container.clientWidth;
@@ -783,7 +841,6 @@ export function Viewport({
       renderer.domElement.removeEventListener("pointermove", onMove);
       renderer.domElement.removeEventListener("pointerdown", onDown);
       renderer.domElement.removeEventListener("pointerup", onUp);
-      renderer.domElement.removeEventListener("dblclick", onDblClick);
       controls.dispose();
       disposeGroup(group);
       disposeSketchGroup(sketchGroup);
@@ -918,6 +975,18 @@ export function Viewport({
         fill.userData.sketchId = s.id;
         fill.userData.regionId = region.id;
         fill.userData.isRegion = true;
+        // Closed boundary loop in world space (line-segment pairs) for fat-line
+        // highlighting when the sketch face is selected.
+        const ow: number[] = [];
+        const n = region.outline.length;
+        for (let i = 0; i < n; i++) {
+          const p = region.outline[i];
+          const q = region.outline[(i + 1) % n];
+          const wp = uvToWorld(s.frame, p[0], p[1]);
+          const wq = uvToWorld(s.frame, q[0], q[1]);
+          ow.push(wp[0], wp[1], wp[2], wq[0], wq[1], wq[2]);
+        }
+        fill.userData.outlineWorld = ow;
         state.sketchGroup.add(fill);
       }
     }

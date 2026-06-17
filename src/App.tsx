@@ -485,7 +485,6 @@ export default function App() {
             meshes={meshes}
             selection={selection}
             onSelect={handlePick}
-            onSketchDoubleClick={selectFeature}
             datumVisibility={datumVisibility}
             picking={picking}
             onPick={startSketchOn}
