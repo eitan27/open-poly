@@ -639,8 +639,8 @@ export default function App() {
                 </button>
               ))}
               <button
-                title="Dimension selected line (D)"
-                disabled={!dimLine}
+                title="Dimension a line (D) — pick one if none selected"
+                className={dimPending ? "active" : ""}
                 onClick={startDimension}
               >
                 ↔
