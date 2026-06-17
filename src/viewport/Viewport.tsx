@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { getFaceId, syncGeometries } from "replicad-threejs-helper";
+import { getEdgeId, getFaceId, syncGeometries } from "replicad-threejs-helper";
 import type { ShapeMeshPayload } from "../kernel/types";
 import type { SketchEntity, Vec2 } from "../document/types";
 import {
@@ -32,11 +32,14 @@ export interface RenderSketch {
   entities: SketchEntity[];
 }
 
-/** What is currently selected in the viewport: a whole feature (sketch or body)
- *  or one planar face of a body (referenced by its stable OCCT face id). */
+/** What is currently selected in the viewport: a whole feature (sketch or body),
+ *  or a sub-element of a body — a face / edge (by stable OCCT id) or a vertex
+ *  (by position, until a stable vertex id exists). */
 export type Selection =
   | { kind: "feature"; id: string }
-  | { kind: "face"; featureId: string; faceId: number };
+  | { kind: "face"; featureId: string; faceId: number }
+  | { kind: "edge"; featureId: string; edgeId: number }
+  | { kind: "vertex"; featureId: string; point: [number, number, number] };
 
 function sameSelection(a: Selection | null, b: Selection | null): boolean {
   if (a === b) return true;
@@ -44,6 +47,15 @@ function sameSelection(a: Selection | null, b: Selection | null): boolean {
   if (a.kind === "feature" && b.kind === "feature") return a.id === b.id;
   if (a.kind === "face" && b.kind === "face")
     return a.featureId === b.featureId && a.faceId === b.faceId;
+  if (a.kind === "edge" && b.kind === "edge")
+    return a.featureId === b.featureId && a.edgeId === b.edgeId;
+  if (a.kind === "vertex" && b.kind === "vertex")
+    return (
+      a.featureId === b.featureId &&
+      a.point[0] === b.point[0] &&
+      a.point[1] === b.point[1] &&
+      a.point[2] === b.point[2]
+    );
   return false;
 }
 
@@ -83,6 +95,9 @@ interface SceneState {
   selectedMaterial: THREE.MeshStandardMaterial;
   hoverMaterial: THREE.MeshStandardMaterial;
   lineMaterial: THREE.LineBasicMaterial;
+  edgeHoverMaterial: THREE.LineBasicMaterial;
+  edgeSelectedMaterial: THREE.LineBasicMaterial;
+  vertexMarker: THREE.Mesh;
   datums: DatumEntry[];
   sketchGroup: THREE.Group;
   previewLine: THREE.Line;
@@ -93,6 +108,8 @@ interface SceneState {
 const VIEW_DISTANCE = 220;
 const TWEEN_MS = 300;
 const SNAP_PX = 12;
+const EDGE_PICK_WORLD = 1.6; // ray-distance threshold for grabbing an edge
+const VERTEX_PICK_WORLD = 3; // proximity to an edge endpoint that grabs the vertex
 const ANGLE_SNAP = 0.06; // ~3.4° — horizontal/vertical inference window
 
 const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, number, number] }> = {
@@ -218,6 +235,17 @@ export function Viewport({
     const selectedMaterial = makeFaceMaterial(0xff9d3c);
     const hoverMaterial = makeFaceMaterial(0x36d6c3);
     const lineMaterial = new THREE.LineBasicMaterial({ color: 0x0d0f14 });
+    // Edges drawn on top (depthTest off) so a highlighted edge reads clearly.
+    const edgeHoverMaterial = new THREE.LineBasicMaterial({ color: 0x36d6c3, depthTest: false });
+    const edgeSelectedMaterial = new THREE.LineBasicMaterial({ color: 0xff9d3c, depthTest: false });
+
+    const vertexMarker = new THREE.Mesh(
+      new THREE.SphereGeometry(2.2, 16, 16),
+      new THREE.MeshBasicMaterial({ color: 0xff9d3c, depthTest: false }),
+    );
+    vertexMarker.renderOrder = 13;
+    vertexMarker.visible = false;
+    scene.add(vertexMarker);
 
     const group = new THREE.Group();
     const sketchGroup = new THREE.Group();
@@ -240,6 +268,7 @@ export function Viewport({
     const state: SceneState = {
       renderer, scene, camera, controls, group,
       faceMaterial, selectedMaterial, hoverMaterial, lineMaterial,
+      edgeHoverMaterial, edgeSelectedMaterial, vertexMarker,
       datums, sketchGroup, previewLine, snapMarker, tween: null,
     };
     stateRef.current = state;
@@ -270,6 +299,37 @@ export function Viewport({
           }
         });
         if (dirty) (geom as THREE.BufferGeometry & { groupsNeedUpdate: boolean }).groupsNeedUpdate = true;
+      }
+      // Body edges: per-edge material index.
+      for (const child of group.children) {
+        if (!(child instanceof THREE.LineSegments) || !child.userData.isBodyEdges) continue;
+        const fid = child.userData.featureId as string;
+        const geom = child.geometry;
+        const eg = geom.userData.edgeGroups as { edgeId: number }[] | undefined;
+        if (!eg) continue;
+        const selEdge = sel?.kind === "edge" && sel.featureId === fid ? sel.edgeId : null;
+        const hovEdge = hov?.kind === "edge" && hov.featureId === fid ? hov.edgeId : null;
+        let dirty = false;
+        geom.groups.forEach((g: { materialIndex?: number }, i: number) => {
+          const edgeId = eg[i]?.edgeId;
+          const idx = selEdge === edgeId ? 2 : hovEdge === edgeId ? 1 : 0;
+          if (g.materialIndex !== idx) {
+            g.materialIndex = idx;
+            dirty = true;
+          }
+        });
+        if (dirty) (geom as THREE.BufferGeometry & { groupsNeedUpdate: boolean }).groupsNeedUpdate = true;
+      }
+      // Vertex marker (selected takes precedence over hover).
+      const v = sel?.kind === "vertex" ? sel : hov?.kind === "vertex" ? hov : null;
+      if (v) {
+        vertexMarker.position.set(v.point[0], v.point[1], v.point[2]);
+        (vertexMarker.material as THREE.MeshBasicMaterial).color.set(
+          sel?.kind === "vertex" ? 0xff9d3c : 0x36d6c3,
+        );
+        vertexMarker.visible = true;
+      } else {
+        vertexMarker.visible = false;
       }
       for (const seg of sketchGroup.children) {
         if (!(seg instanceof THREE.LineSegments)) continue;
@@ -393,30 +453,55 @@ export function Viewport({
         : new THREE.Vector3(0, 0, 1);
       return { kind: "face" as const, mesh, point: hit.point.clone(), normal };
     };
-    // Idle-mode selection: pick a body face (by stable face id) or a sketch.
+    // Idle-mode selection with CAD priority: vertex > edge > face > sketch.
     const pickSelection = (clientX: number, clientY: number): Selection | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
-      raycaster.params.Line = { threshold: 1.6 };
-      const bodies = group.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
-      const segs = sketchGroup.children.filter(
+      raycaster.params.Line = { threshold: EDGE_PICK_WORLD };
+
+      const faceMeshes = group.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
+      const bodyEdges = group.children.filter(
+        (c): c is THREE.LineSegments => c instanceof THREE.LineSegments && c.userData.isBodyEdges,
+      );
+      const sketchSegs = sketchGroup.children.filter(
         (c): c is THREE.LineSegments => c instanceof THREE.LineSegments,
       );
-      const hit = raycaster.intersectObjects([...bodies, ...segs], false)[0];
-      if (!hit) return null;
-      if (hit.object instanceof THREE.LineSegments) {
-        const sid = hit.object.userData.sketchId as string | undefined;
-        return sid ? { kind: "feature", id: sid } : null;
+      const faceHit = raycaster.intersectObjects(faceMeshes, false)[0];
+      const edgeHit = raycaster.intersectObjects(bodyEdges, false)[0];
+
+      // An edge hit wins when the cursor is near a body edge that isn't behind
+      // the face under the cursor (back-facing silhouette edges are farther away).
+      if (edgeHit && edgeHit.index != null && (!faceHit || edgeHit.distance <= faceHit.distance + 1)) {
+        const mesh = edgeHit.object as THREE.LineSegments;
+        const fid = mesh.userData.featureId as string;
+        const pos = mesh.geometry.getAttribute("position");
+        const a = new THREE.Vector3().fromBufferAttribute(pos, edgeHit.index);
+        const bpt = new THREE.Vector3().fromBufferAttribute(pos, edgeHit.index + 1);
+        const near = a.distanceTo(edgeHit.point) <= bpt.distanceTo(edgeHit.point) ? a : bpt;
+        if (near.distanceTo(edgeHit.point) < VERTEX_PICK_WORLD) {
+          return { kind: "vertex", featureId: fid, point: [near.x, near.y, near.z] };
+        }
+        const edgeId = getEdgeId(edgeHit.index, mesh.geometry);
+        if (edgeId !== undefined) return { kind: "edge", featureId: fid, edgeId };
       }
-      const mesh = hit.object as THREE.Mesh;
-      const fid = mesh.userData.featureId as string | undefined;
-      if (fid === undefined || hit.faceIndex == null) return null;
-      const faceId = getFaceId(hit.faceIndex, mesh.geometry);
-      return faceId === undefined
-        ? { kind: "feature", id: fid }
-        : { kind: "face", featureId: fid, faceId };
+      if (faceHit && faceHit.faceIndex != null) {
+        const mesh = faceHit.object as THREE.Mesh;
+        const fid = mesh.userData.featureId as string | undefined;
+        if (fid !== undefined) {
+          const faceId = getFaceId(faceHit.faceIndex, mesh.geometry);
+          return faceId === undefined
+            ? { kind: "feature", id: fid }
+            : { kind: "face", featureId: fid, faceId };
+        }
+      }
+      const sketchHit = raycaster.intersectObjects(sketchSegs, false)[0];
+      if (sketchHit) {
+        const sid = sketchHit.object.userData.sketchId as string | undefined;
+        if (sid) return { kind: "feature", id: sid };
+      }
+      return null;
     };
     const clearHover = () => {
       if (hoverBodyRef.current) {
@@ -562,10 +647,13 @@ export function Viewport({
       disposeSketchGroup(sketchGroup);
       previewLine.geometry.dispose();
       snapMarker.geometry.dispose();
+      vertexMarker.geometry.dispose();
       faceMaterial.dispose();
       selectedMaterial.dispose();
       hoverMaterial.dispose();
       lineMaterial.dispose();
+      edgeHoverMaterial.dispose();
+      edgeSelectedMaterial.dispose();
       renderer.dispose();
       container.removeChild(renderer.domElement);
       apiRef.current = null;
@@ -590,7 +678,16 @@ export function Viewport({
       ]);
       faceMesh.userData.featureId = id;
       state.group.add(faceMesh);
-      state.group.add(new THREE.LineSegments(geometry.lines, state.lineMaterial));
+      // Edge LineSegments carry one geometry group per edge (from syncLines), so
+      // per-edge highlighting flips group.materialIndex on a material array.
+      const edges = new THREE.LineSegments(geometry.lines, [
+        state.lineMaterial,
+        state.edgeHoverMaterial,
+        state.edgeSelectedMaterial,
+      ]);
+      edges.userData.featureId = id;
+      edges.userData.isBodyEdges = true;
+      state.group.add(edges);
     }
     applyHighlightsRef.current();
   }, [meshes]);
