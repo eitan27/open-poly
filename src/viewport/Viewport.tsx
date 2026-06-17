@@ -114,6 +114,10 @@ export function Viewport({
   // derived from sketches + activeSketchId in the render effect
   const activeFrameRef = useRef<PlaneFrameData | null>(null);
   const activeEntitiesRef = useRef<SketchEntity[]>([]);
+  // snap candidates on the active plane (in uv): points (origin, endpoints,
+  // midpoints from any sketch or body edge) and lines (coplanar edges).
+  const snapPointsRef = useRef<Vec2[]>([]);
+  const snapLinesRef = useRef<[Vec2, Vec2][]>([]);
 
   const hoverPlaneRef = useRef<DatumId | null>(null);
   const hoverBodyRef = useRef<{ mesh: THREE.Mesh; prev: THREE.Material | THREE.Material[] } | null>(null);
@@ -232,37 +236,44 @@ export function Viewport({
       const d = hit.sub(new THREE.Vector3(...frame.origin));
       return [d.dot(new THREE.Vector3(...frame.uAxis)), d.dot(new THREE.Vector3(...frame.vAxis))];
     };
-    // Snap only to inferences: existing points/origin, then horizontal/vertical
-    // relative to the chain start. No grid snapping.
-    const snap = (raw: Vec2, clientX: number, clientY: number): { uv: Vec2; isPoint: boolean } => {
+    // Snap to inferences: points (origin, endpoints/midpoints of any coplanar
+    // sketch or body edge), then nearest point on a coplanar edge, then
+    // horizontal/vertical relative to the chain start. No grid snapping.
+    const snap = (raw: Vec2, clientX: number, clientY: number): { uv: Vec2; kind: "point" | "edge" | "free" } => {
       const frame = activeFrameRef.current!;
-      const cands: Vec2[] = [[0, 0]];
-      for (const e of activeEntitiesRef.current) {
-        if (e.type === "line") cands.push(e.a, e.b);
-        else if (e.type === "point") cands.push(e.p);
-        else if (e.type === "circle" || e.type === "arc") cands.push(e.c);
-      }
-      const ls = lineStartRef.current;
-      if (ls) cands.push(ls);
-      let best: Vec2 | null = null;
-      let bestD = SNAP_PX;
-      for (const c of cands) {
+      const distPx = (c: Vec2) => {
         const w = uvToWorld(frame, c[0], c[1]);
         const px = projectToPx(new THREE.Vector3(w[0], w[1], w[2]));
-        const dist = Math.hypot(px.x - clientX, px.y - clientY);
-        if (dist < bestD) { bestD = dist; best = c; }
+        return Math.hypot(px.x - clientX, px.y - clientY);
+      };
+      // 1. nearest snap point
+      let best: Vec2 | null = null;
+      let bestD = SNAP_PX;
+      for (const c of snapPointsRef.current) {
+        const d = distPx(c);
+        if (d < bestD) { bestD = d; best = c; }
       }
-      if (best) return { uv: best, isPoint: true };
+      const ls = lineStartRef.current;
+      if (ls) { const d = distPx(ls); if (d < bestD) { bestD = d; best = ls; } }
+      if (best) return { uv: best, kind: "point" };
+      // 2. nearest point on a coplanar edge
+      let bestLine: Vec2 | null = null;
+      let bestLD = SNAP_PX;
+      for (const [a, b] of snapLinesRef.current) {
+        const q = nearestOnSegment(raw, a, b);
+        const d = distPx(q);
+        if (d < bestLD) { bestLD = d; bestLine = q; }
+      }
+      if (bestLine) return { uv: bestLine, kind: "edge" };
+      // 3. horizontal / vertical inference
       if (ls) {
-        const du = raw[0] - ls[0];
-        const dv = raw[1] - ls[1];
-        const ang = Math.atan2(dv, du);
+        const ang = Math.atan2(raw[1] - ls[1], raw[0] - ls[0]);
         const dH = Math.min(Math.abs(ang), Math.abs(Math.abs(ang) - Math.PI));
         const dV = Math.abs(Math.abs(ang) - Math.PI / 2);
-        if (dH < ANGLE_SNAP) return { uv: [raw[0], ls[1]], isPoint: false };
-        if (dV < ANGLE_SNAP) return { uv: [ls[0], raw[1]], isPoint: false };
+        if (dH < ANGLE_SNAP) return { uv: [raw[0], ls[1]], kind: "free" };
+        if (dV < ANGLE_SNAP) return { uv: [ls[0], raw[1]], kind: "free" };
       }
-      return { uv: raw, isPoint: false };
+      return { uv: raw, kind: "free" };
     };
 
     const pick = (clientX: number, clientY: number) => {
@@ -317,7 +328,7 @@ export function Viewport({
           state.snapMarker.visible = false;
           return;
         }
-        const { uv, isPoint } = snap(raw, e.clientX, e.clientY);
+        const { uv, kind } = snap(raw, e.clientX, e.clientY);
         const ls = lineStartRef.current;
         if (ls) {
           setSegment(state.previewLine.geometry, uvToWorld(frame, ls[0], ls[1]), uvToWorld(frame, uv[0], uv[1]));
@@ -325,9 +336,10 @@ export function Viewport({
         } else {
           state.previewLine.visible = false;
         }
-        if (isPoint) {
+        if (kind !== "free") {
           const w = uvToWorld(frame, uv[0], uv[1]);
           state.snapMarker.position.set(w[0], w[1], w[2]);
+          (state.snapMarker.material as THREE.MeshBasicMaterial).color.set(kind === "edge" ? 0x36d6c3 : 0xffe14a);
           state.snapMarker.visible = true;
         } else {
           state.snapMarker.visible = false;
@@ -481,8 +493,52 @@ export function Viewport({
     if (!active) {
       state.previewLine.visible = false;
       state.snapMarker.visible = false;
+      snapPointsRef.current = [];
+      snapLinesRef.current = [];
+      return;
     }
-  }, [sketches, activeSketchId]);
+
+    // Gather snap candidates that lie ON the active plane, from every sketch and
+    // every body edge — points (endpoints + midpoints) and coplanar edges.
+    const frame = active.frame;
+    const O = new THREE.Vector3(...frame.origin);
+    const N = new THREE.Vector3(...frame.normal).normalize();
+    const U = new THREE.Vector3(...frame.uAxis);
+    const V = new THREE.Vector3(...frame.vAxis);
+    const TOL = 0.05;
+    const onPlane = (w: THREE.Vector3) => Math.abs(w.clone().sub(O).dot(N)) < TOL;
+    const toUv = (w: THREE.Vector3): Vec2 => {
+      const d = w.clone().sub(O);
+      return [d.dot(U), d.dot(V)];
+    };
+    const points: Vec2[] = [[0, 0]];
+    const lines: [Vec2, Vec2][] = [];
+    const addSeg = (aw: THREE.Vector3, bw: THREE.Vector3) => {
+      const aOn = onPlane(aw);
+      const bOn = onPlane(bw);
+      if (aOn) points.push(toUv(aw));
+      if (bOn) points.push(toUv(bw));
+      if (aOn && bOn) {
+        const a = toUv(aw);
+        const b = toUv(bw);
+        points.push([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]); // midpoint
+        lines.push([a, b]);
+      }
+    };
+    for (const s of sketches) {
+      for (const e of s.entities) {
+        if (e.type === "line") {
+          addSeg(
+            new THREE.Vector3(...uvToWorld(s.frame, e.a[0], e.a[1])),
+            new THREE.Vector3(...uvToWorld(s.frame, e.b[0], e.b[1])),
+          );
+        }
+      }
+    }
+    for (const [aw, bw] of collectBodyEdges(state.group)) addSeg(aw, bw);
+    snapPointsRef.current = points;
+    snapLinesRef.current = lines;
+  }, [sketches, activeSketchId, meshes]);
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
@@ -490,6 +546,33 @@ export function Viewport({
 function setSegment(geom: THREE.BufferGeometry, a: [number, number, number], b: [number, number, number]) {
   geom.setAttribute("position", new THREE.Float32BufferAttribute([...a, ...b], 3));
   geom.computeBoundingSphere();
+}
+
+/** Closest point on segment a-b to p, all in 2D (uv). */
+function nearestOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
+  const abx = b[0] - a[0];
+  const aby = b[1] - a[1];
+  const len2 = abx * abx + aby * aby || 1;
+  const t = ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / len2;
+  const tc = Math.max(0, Math.min(1, t));
+  return [a[0] + abx * tc, a[1] + aby * tc];
+}
+
+/** World-space endpoint pairs of every body edge currently in the scene. */
+function collectBodyEdges(group: THREE.Group): [THREE.Vector3, THREE.Vector3][] {
+  const segments: [THREE.Vector3, THREE.Vector3][] = [];
+  for (const child of group.children) {
+    if (!(child instanceof THREE.LineSegments)) continue;
+    const pos = child.geometry.getAttribute("position");
+    if (!pos) continue;
+    for (let i = 0; i + 1 < pos.count; i += 2) {
+      segments.push([
+        new THREE.Vector3().fromBufferAttribute(pos, i),
+        new THREE.Vector3().fromBufferAttribute(pos, i + 1),
+      ]);
+    }
+  }
+  return segments;
 }
 
 // --- Datum geometry -------------------------------------------------------
