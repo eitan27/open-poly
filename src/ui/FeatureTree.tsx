@@ -3,7 +3,7 @@ import type { Document, FeatureKind } from "../document/types";
 
 interface Props {
   doc: Document;
-  selectedId: string | null;
+  selectedIds: Set<string>;
   errors: Record<string, string>;
   onSelect: (id: string) => void;
   onAdd: (kind: FeatureKind) => void;
@@ -16,7 +16,7 @@ interface Props {
 
 export function FeatureTree({
   doc,
-  selectedId,
+  selectedIds,
   errors,
   onSelect,
   onAdd,
@@ -51,7 +51,7 @@ export function FeatureTree({
               <div
                 className={
                   "tree-row" +
-                  (feature.id === selectedId ? " selected" : "") +
+                  (selectedIds.has(feature.id) ? " selected" : "") +
                   (feature.suppressed || rolledBack ? " dim" : "") +
                   (error ? " error" : "")
                 }

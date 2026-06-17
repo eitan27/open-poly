@@ -46,7 +46,7 @@ export type Selection =
   | { kind: "sketchEntity"; sketchId: string; entityId: string }
   | { kind: "sketchPoint"; sketchId: string; point: [number, number] };
 
-function sameSelection(a: Selection | null, b: Selection | null): boolean {
+export function sameSelection(a: Selection | null, b: Selection | null): boolean {
   if (a === b) return true;
   if (!a || !b || a.kind !== b.kind) return false;
   if (a.kind === "feature" && b.kind === "feature") return a.id === b.id;
@@ -99,12 +99,11 @@ interface SceneState {
   selectedMaterial: THREE.MeshStandardMaterial;
   hoverMaterial: THREE.MeshStandardMaterial;
   lineMaterial: THREE.LineBasicMaterial;
-  sketchHoverMaterial: THREE.LineBasicMaterial;
-  sketchSelectedMaterial: THREE.LineBasicMaterial;
-  // Fat-line overlay that draws the currently highlighted body edge(s) on top.
+  // Fat-line overlay that draws highlighted body edges + sketch entities on top.
   highlightMaterial: LineMaterial;
   highlightOverlay: LineSegments2;
-  vertexMarker: THREE.Mesh;
+  // Highlighted vertices / sketch points (selected + hovered) as coloured points.
+  pointMarkers: THREE.Points;
   datums: DatumEntry[];
   sketchGroup: THREE.Group;
   previewLine: THREE.Line;
@@ -149,8 +148,8 @@ export function Viewport({
   apiRef,
 }: {
   meshes: FeatureMesh[];
-  selection: Selection | null;
-  onSelect: (selection: Selection | null) => void;
+  selection: Selection[];
+  onSelect: (picked: Selection | null) => void;
   datumVisibility: Record<DatumId, boolean>;
   picking: boolean;
   onPick: (ref: SketchPlaneRef) => void;
@@ -250,8 +249,6 @@ export function Viewport({
     const lineMaterial = new THREE.LineBasicMaterial({ color: 0x0d0f14 });
     // Shared sketch entity highlight materials (per-entity geometry groups flip
     // to these; index 0 is the per-sketch base material set in the render effect).
-    const sketchHoverMaterial = new THREE.LineBasicMaterial({ color: 0x36d6c3 });
-    const sketchSelectedMaterial = new THREE.LineBasicMaterial({ color: 0xff9d3c });
 
     // Fat-line overlay (real line width) for the highlighted body edge.
     const highlightMaterial = new LineMaterial({
@@ -267,13 +264,14 @@ export function Viewport({
     highlightOverlay.visible = false;
     scene.add(highlightOverlay);
 
-    const vertexMarker = new THREE.Mesh(
-      new THREE.SphereGeometry(2.2, 16, 16),
-      new THREE.MeshBasicMaterial({ color: 0xff9d3c, depthTest: false }),
+    const pointMarkers = new THREE.Points(
+      new THREE.BufferGeometry(),
+      new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, vertexColors: true, depthTest: false }),
     );
-    vertexMarker.renderOrder = 13;
-    vertexMarker.visible = false;
-    scene.add(vertexMarker);
+    pointMarkers.renderOrder = 13;
+    pointMarkers.visible = false;
+    pointMarkers.frustumCulled = false;
+    scene.add(pointMarkers);
 
     const group = new THREE.Group();
     const sketchGroup = new THREE.Group();
@@ -296,60 +294,77 @@ export function Viewport({
     const state: SceneState = {
       renderer, scene, camera, controls, group,
       faceMaterial, selectedMaterial, hoverMaterial, lineMaterial,
-      sketchHoverMaterial, sketchSelectedMaterial, highlightMaterial, highlightOverlay,
-      vertexMarker, datums, sketchGroup, previewLine, snapMarker, tween: null,
+      highlightMaterial, highlightOverlay, pointMarkers,
+      datums, sketchGroup, previewLine, snapMarker, tween: null,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
 
-    // Apply selection/hover highlighting to bodies (per-face material index) and
-    // sketches (line colour). Reads selectionRef + hoverSelRef.
+    // Apply selection (a SET) + hover highlighting. Faces use per-face material
+    // index; edges/sketch entities use the fat-line overlay; vertices/points use
+    // the point markers; sketches keep their per-sketch base colour.
     const applyHighlights = () => {
-      const sel = selectionRef.current;
+      const sels = selectionRef.current;
       const hov = hoverSelRef.current;
+      const hovered = hov && !sels.some((s) => sameSelection(s, hov)) ? hov : null;
+      const isSketchId = (id: string) =>
+        sketchGroup.children.some((c) => c.userData.sketchId === id);
+
+      // Faces
       for (const child of group.children) {
         if (!(child instanceof THREE.Mesh)) continue;
         const fid = child.userData.featureId as string;
         const geom = child.geometry;
         const fg = geom.userData.faceGroups as { faceId: number }[] | undefined;
         if (!fg) continue;
-        const wholeSel = sel?.kind === "feature" && sel.id === fid;
-        const wholeHov = hov?.kind === "feature" && hov.id === fid;
-        const selFace = sel?.kind === "face" && sel.featureId === fid ? sel.faceId : null;
-        const hovFace = hov?.kind === "face" && hov.featureId === fid ? hov.faceId : null;
+        const wholeSel = sels.some((s) => s.kind === "feature" && s.id === fid);
+        const wholeHov = hovered?.kind === "feature" && hovered.id === fid;
         let dirty = false;
         geom.groups.forEach((g: { materialIndex?: number }, i: number) => {
           const faceId = fg[i]?.faceId;
-          const idx = wholeSel || selFace === faceId ? 2 : wholeHov || hovFace === faceId ? 1 : 0;
-          if (g.materialIndex !== idx) {
-            g.materialIndex = idx;
-            dirty = true;
-          }
+          const selF = wholeSel || sels.some((s) => s.kind === "face" && s.featureId === fid && s.faceId === faceId);
+          const hovF = wholeHov || (hovered?.kind === "face" && hovered.featureId === fid && hovered.faceId === faceId);
+          const idx = selF ? 2 : hovF ? 1 : 0;
+          if (g.materialIndex !== idx) { g.materialIndex = idx; dirty = true; }
         });
         if (dirty) (geom as THREE.BufferGeometry & { groupsNeedUpdate: boolean }).groupsNeedUpdate = true;
       }
-      // Body edges: draw the highlighted edge(s) into the fat-line overlay.
+
+      // Fat-line overlay: body edges + sketch entities + whole sketches.
       const overlayPos: number[] = [];
       const overlayCol: number[] = [];
-      const addEdge = (featureId: string, edgeId: number, color: THREE.Color) => {
-        for (const child of group.children) {
-          if (!(child instanceof THREE.LineSegments) || !child.userData.isBodyEdges) continue;
-          if (child.userData.featureId !== featureId) continue;
-          const eg = child.geometry.userData.edgeGroups as
-            | { start: number; count: number; edgeId: number }[]
-            | undefined;
-          const g = eg?.find((x) => x.edgeId === edgeId);
-          if (!g) return;
-          const pos = child.geometry.getAttribute("position");
-          for (let v = g.start; v < g.start + g.count; v++) {
-            overlayPos.push(pos.getX(v), pos.getY(v), pos.getZ(v));
-            overlayCol.push(color.r, color.g, color.b);
-          }
-          return;
+      const pushRange = (geom: THREE.BufferGeometry, start: number, count: number, c: THREE.Color) => {
+        const pos = geom.getAttribute("position");
+        for (let v = start; v < start + count; v++) {
+          overlayPos.push(pos.getX(v), pos.getY(v), pos.getZ(v));
+          overlayCol.push(c.r, c.g, c.b);
         }
       };
-      if (sel?.kind === "edge") addEdge(sel.featureId, sel.edgeId, EDGE_SEL_COLOR);
-      if (hov?.kind === "edge" && !sameSelection(hov, sel)) addEdge(hov.featureId, hov.edgeId, EDGE_HOV_COLOR);
+      const sketchChild = (sid: string) =>
+        sketchGroup.children.find(
+          (c): c is THREE.LineSegments => c instanceof THREE.LineSegments && c.userData.sketchId === sid,
+        );
+      const addOverlay = (s: Selection, c: THREE.Color) => {
+        if (s.kind === "edge") {
+          const child = group.children.find(
+            (x): x is THREE.LineSegments =>
+              x instanceof THREE.LineSegments && x.userData.isBodyEdges && x.userData.featureId === s.featureId,
+          );
+          const eg = child?.geometry.userData.edgeGroups as { start: number; count: number; edgeId: number }[] | undefined;
+          const g = eg?.find((x) => x.edgeId === s.edgeId);
+          if (child && g) pushRange(child.geometry, g.start, g.count, c);
+        } else if (s.kind === "sketchEntity") {
+          const child = sketchChild(s.sketchId);
+          const eg = child?.geometry.userData.entityGroups as { start: number; count: number; entityId: string }[] | undefined;
+          const g = eg?.find((x) => x.entityId === s.entityId);
+          if (child && g) pushRange(child.geometry, g.start, g.count, c);
+        } else if (s.kind === "feature" && isSketchId(s.id)) {
+          const child = sketchChild(s.id);
+          if (child) pushRange(child.geometry, 0, child.geometry.getAttribute("position").count, c);
+        }
+      };
+      for (const s of sels) addOverlay(s, EDGE_SEL_COLOR);
+      if (hovered) addOverlay(hovered, EDGE_HOV_COLOR);
       if (overlayPos.length >= 6) {
         const og = highlightOverlay.geometry as LineSegmentsGeometry;
         og.setPositions(overlayPos);
@@ -358,62 +373,46 @@ export function Viewport({
       } else {
         highlightOverlay.visible = false;
       }
-      // Point marker for a selected/hovered vertex or sketch point.
-      const pickPt =
-        sel?.kind === "vertex" || sel?.kind === "sketchPoint"
-          ? sel
-          : hov?.kind === "vertex" || hov?.kind === "sketchPoint"
-            ? hov
-            : null;
-      let markerPos: [number, number, number] | null = null;
-      if (pickPt?.kind === "vertex") {
-        markerPos = pickPt.point;
-      } else if (pickPt?.kind === "sketchPoint") {
-        for (const seg of sketchGroup.children) {
-          if (seg instanceof THREE.LineSegments && seg.userData.sketchId === pickPt.sketchId) {
-            const frame = seg.userData.frame as PlaneFrameData | undefined;
-            if (frame) markerPos = uvToWorld(frame, pickPt.point[0], pickPt.point[1]);
-            break;
-          }
+
+      // Point markers: vertices + sketch points.
+      const ptPos: number[] = [];
+      const ptCol: number[] = [];
+      const ptWorld = (s: Selection): [number, number, number] | null => {
+        if (s.kind === "vertex") return s.point;
+        if (s.kind === "sketchPoint") {
+          const child = sketchChild(s.sketchId);
+          const frame = child?.userData.frame as PlaneFrameData | undefined;
+          if (frame) return uvToWorld(frame, s.point[0], s.point[1]);
         }
+        return null;
+      };
+      for (const s of sels) {
+        const w = ptWorld(s);
+        if (w) { ptPos.push(w[0], w[1], w[2]); ptCol.push(EDGE_SEL_COLOR.r, EDGE_SEL_COLOR.g, EDGE_SEL_COLOR.b); }
       }
-      if (markerPos) {
-        vertexMarker.position.set(markerPos[0], markerPos[1], markerPos[2]);
-        const markerSel = sel?.kind === "vertex" || sel?.kind === "sketchPoint";
-        (vertexMarker.material as THREE.MeshBasicMaterial).color.set(markerSel ? 0xff9d3c : 0x36d6c3);
-        vertexMarker.visible = true;
+      if (hovered) {
+        const w = ptWorld(hovered);
+        if (w) { ptPos.push(w[0], w[1], w[2]); ptCol.push(EDGE_HOV_COLOR.r, EDGE_HOV_COLOR.g, EDGE_HOV_COLOR.b); }
+      }
+      if (ptPos.length > 0) {
+        pointMarkers.geometry.setAttribute("position", new THREE.Float32BufferAttribute(ptPos, 3));
+        pointMarkers.geometry.setAttribute("color", new THREE.Float32BufferAttribute(ptCol, 3));
+        pointMarkers.visible = true;
       } else {
-        vertexMarker.visible = false;
+        pointMarkers.visible = false;
       }
-      // Sketches: per-sketch base colour + per-entity highlight.
-      for (const seg of sketchGroup.children) {
-        if (!(seg instanceof THREE.LineSegments)) continue;
-        const sid = seg.userData.sketchId as string;
-        const geom = seg.geometry;
-        const eg = geom.userData.entityGroups as { entityId: string }[] | undefined;
-        const mats = seg.material;
+
+      // Sketch base colours (per-sketch active/constrained state).
+      for (const child of sketchGroup.children) {
+        if (!(child instanceof THREE.LineSegments)) continue;
+        const sid = child.userData.sketchId as string;
         const isActive = sid === activeSketchIdRef.current;
-        const baseColor = isActive
+        const color = isActive
           ? sketchFullyConstrainedRef.current
             ? 0x4ad07a
             : 0xeaf0ff
           : 0xaeb9e0;
-        if (Array.isArray(mats)) (mats[0] as THREE.LineBasicMaterial).color.set(baseColor);
-        if (!eg) continue;
-        const wholeSel = sel?.kind === "feature" && sel.id === sid;
-        const wholeHov = hov?.kind === "feature" && hov.id === sid;
-        const selEnt = sel?.kind === "sketchEntity" && sel.sketchId === sid ? sel.entityId : null;
-        const hovEnt = hov?.kind === "sketchEntity" && hov.sketchId === sid ? hov.entityId : null;
-        let dirty = false;
-        geom.groups.forEach((g: { materialIndex?: number }, i: number) => {
-          const eid = eg[i]?.entityId;
-          const idx = wholeSel || selEnt === eid ? 2 : wholeHov || hovEnt === eid ? 1 : 0;
-          if (g.materialIndex !== idx) {
-            g.materialIndex = idx;
-            dirty = true;
-          }
-        });
-        if (dirty) (geom as THREE.BufferGeometry & { groupsNeedUpdate: boolean }).groupsNeedUpdate = true;
+        (child.material as THREE.LineBasicMaterial).color.set(color);
       }
     };
     applyHighlightsRef.current = applyHighlights;
@@ -702,10 +701,9 @@ export function Viewport({
         onSketchClickRef.current(s.uv, s.kind === "h" ? "horizontal" : s.kind === "v" ? "vertical" : undefined);
         return;
       }
-      // Selection click (idle, or sketch + Select tool). Clicking the already
-      // selected element toggles it off; clicking empty space clears.
-      const sel = pickSelection(e.clientX, e.clientY);
-      onSelectRef.current(sameSelection(sel, selectionRef.current) ? null : sel);
+      // Selection click (idle, or sketch + Select tool). App accumulates into a
+      // set and toggles the element off if it is already selected.
+      onSelectRef.current(pickSelection(e.clientX, e.clientY));
     };
     renderer.domElement.addEventListener("pointermove", onMove);
     renderer.domElement.addEventListener("pointerdown", onDown);
@@ -751,13 +749,12 @@ export function Viewport({
       disposeSketchGroup(sketchGroup);
       previewLine.geometry.dispose();
       snapMarker.geometry.dispose();
-      vertexMarker.geometry.dispose();
+      pointMarkers.geometry.dispose();
+      (pointMarkers.material as THREE.Material).dispose();
       faceMaterial.dispose();
       selectedMaterial.dispose();
       hoverMaterial.dispose();
       lineMaterial.dispose();
-      sketchHoverMaterial.dispose();
-      sketchSelectedMaterial.dispose();
       highlightMaterial.dispose();
       highlightOverlay.geometry.dispose();
       renderer.dispose();
@@ -851,11 +848,7 @@ export function Viewport({
             : 0xeaf0ff
           : 0xaeb9e0,
       });
-      const seg = new THREE.LineSegments(geom, [
-        baseMat,
-        state.sketchHoverMaterial,
-        state.sketchSelectedMaterial,
-      ]);
+      const seg = new THREE.LineSegments(geom, baseMat);
       seg.frustumCulled = false;
       seg.userData.sketchId = s.id;
       seg.userData.frame = s.frame;

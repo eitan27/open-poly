@@ -53,12 +53,40 @@ function edgeLength(edges: MeshedEdges, edgeId: number): number {
 }
 
 export function measureSelection(
-  selection: Selection | null,
+  selection: Selection[],
   doc: Document,
   meshes: FeatureMesh[],
 ): MeasureInfo | null {
-  if (!selection) return null;
+  if (selection.length === 0) return null;
+  if (selection.length > 1) return measureMany(selection, doc, meshes);
+  return measureOne(selection[0], doc, meshes);
+}
 
+/** Aggregate measurement for a multi-element selection. */
+function measureMany(selection: Selection[], doc: Document, meshes: FeatureMesh[]): MeasureInfo {
+  let length = 0;
+  let area = 0;
+  for (const s of selection) {
+    if (s.kind === "sketchEntity") {
+      const sk = doc.features.find((f) => f.id === s.sketchId);
+      const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === s.entityId) : undefined;
+      if (e?.type === "line") length += Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]);
+      else if (e?.type === "arc") length += e.r * Math.abs(e.end - e.start);
+    } else if (s.kind === "edge") {
+      const m = meshes.find((x) => x.id === s.featureId);
+      if (m) length += edgeLength(m.mesh.edges, s.edgeId);
+    } else if (s.kind === "face") {
+      const m = meshes.find((x) => x.id === s.featureId);
+      if (m) area += faceArea(m.mesh.faces, s.faceId);
+    }
+  }
+  const rows = [{ label: "Selected", value: String(selection.length) }];
+  if (length > 0) rows.push({ label: "Total length", value: fmt(length) });
+  if (area > 0) rows.push({ label: "Total area", value: fmt(area) });
+  return { title: "Selection", rows };
+}
+
+function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[]): MeasureInfo | null {
   if (selection.kind === "sketchEntity") {
     const sk = doc.features.find((f) => f.id === selection.sketchId);
     if (sk?.type !== "sketch") return null;

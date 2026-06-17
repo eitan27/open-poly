@@ -43,6 +43,7 @@ import { ParamEditor } from "./ui/ParamEditor";
 import { VariablesPanel } from "./ui/VariablesPanel";
 import {
   Viewport,
+  sameSelection,
   type DatumId,
   type FeatureMesh,
   type Selection,
@@ -97,17 +98,26 @@ export default function App() {
     canUndo,
     canRedo,
   } = useHistory<Document>(initialDocument);
-  const [selection, setSelection] = useState<Selection | null>(null);
-  const selectedFeatureId =
-    selection === null
-      ? null
-      : selection.kind === "feature"
-        ? selection.id
-        : "featureId" in selection
-          ? selection.featureId
-          : selection.sketchId;
+  const [selection, setSelection] = useState<Selection[]>([]);
+  const featureIdOf = (s: Selection): string =>
+    s.kind === "feature" ? s.id : "featureId" in s ? s.featureId : s.sketchId;
+  const selectedFeatureIds = useMemo(() => new Set(selection.map(featureIdOf)), [selection]);
+  const primaryFeatureId = selection.length ? featureIdOf(selection[selection.length - 1]) : null;
   const selectFeature = (id: string | null) =>
-    setSelection(id === null ? null : { kind: "feature", id });
+    setSelection(id === null ? [] : [{ kind: "feature", id }]);
+  // Regular clicks accumulate into the set; clicking a selected element removes
+  // it; clicking empty space clears.
+  const handlePick = (picked: Selection | null) => {
+    if (!picked) {
+      setSelection([]);
+      return;
+    }
+    setSelection((prev) => {
+      const i = prev.findIndex((s) => sameSelection(s, picked));
+      if (i >= 0) return prev.filter((_, j) => j !== i);
+      return [...prev, picked];
+    });
+  };
   const [picking, setPicking] = useState(false);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
@@ -223,8 +233,8 @@ export default function App() {
   }, [resolved, ready]);
 
   const selected = useMemo(
-    () => doc.features.find((f) => f.id === selectedFeatureId) ?? null,
-    [doc, selectedFeatureId],
+    () => doc.features.find((f) => f.id === primaryFeatureId) ?? null,
+    [doc, primaryFeatureId],
   );
 
   const editingSketch = useMemo(() => {
@@ -380,7 +390,7 @@ export default function App() {
 
   const handleDelete = (id: string) => {
     setDoc(removeFeature(doc, id));
-    if (selectedFeatureId === id) setSelection(null);
+    setSelection((prev) => prev.filter((s) => featureIdOf(s) !== id));
     if (editingSketchId === id) setEditingSketchId(null);
   };
 
@@ -439,7 +449,7 @@ export default function App() {
           <h2 className="params-heading">Timeline</h2>
           <FeatureTree
             doc={doc}
-            selectedId={selectedFeatureId}
+            selectedIds={selectedFeatureIds}
             errors={errors}
             onSelect={selectFeature}
             onAdd={handleAdd}
@@ -468,7 +478,7 @@ export default function App() {
           <Viewport
             meshes={meshes}
             selection={selection}
-            onSelect={setSelection}
+            onSelect={handlePick}
             datumVisibility={datumVisibility}
             picking={picking}
             onPick={startSketchOn}
