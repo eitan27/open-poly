@@ -11,6 +11,15 @@ import {
   type SketchPlaneId,
   type SketchPlaneRef,
 } from "../document/planes";
+import {
+  arcFrom3,
+  circleFrom3,
+  rectangleCorners,
+  rectangleFromCenter,
+  regularPolygon,
+  sampleArc,
+  sampleCircle,
+} from "../document/sketchTools";
 
 export interface FeatureMesh {
   id: string;
@@ -24,7 +33,15 @@ export interface RenderSketch {
 }
 
 export type DatumId = "origin" | SketchPlaneId;
-export type SketchTool = "select" | "line";
+export type SketchTool =
+  | "select"
+  | "line"
+  | "rect-corner"
+  | "rect-center"
+  | "circle-center"
+  | "circle-3p"
+  | "polygon"
+  | "arc-3p";
 export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
 
 export interface ViewportApi {
@@ -82,7 +99,8 @@ export function Viewport({
   sketchTool,
   sketches,
   activeSketchId,
-  lineStart,
+  draft,
+  polygonSides,
   onSketchClick,
   apiRef,
 }: {
@@ -94,7 +112,8 @@ export function Viewport({
   sketchTool: SketchTool;
   sketches: RenderSketch[];
   activeSketchId: string | null;
-  lineStart: Vec2 | null;
+  draft: Vec2[];
+  polygonSides: number;
   onSketchClick: (uv: Vec2) => void;
   apiRef: { current: ViewportApi | null };
 }) {
@@ -107,8 +126,10 @@ export function Viewport({
   onPickRef.current = onPick;
   const sketchToolRef = useRef(sketchTool);
   sketchToolRef.current = sketchTool;
-  const lineStartRef = useRef(lineStart);
-  lineStartRef.current = lineStart;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const polygonSidesRef = useRef(polygonSides);
+  polygonSidesRef.current = polygonSides;
   const onSketchClickRef = useRef(onSketchClick);
   onSketchClickRef.current = onSketchClick;
   // derived from sketches + activeSketchId in the render effect
@@ -246,15 +267,17 @@ export function Viewport({
         const px = projectToPx(new THREE.Vector3(w[0], w[1], w[2]));
         return Math.hypot(px.x - clientX, px.y - clientY);
       };
-      // 1. nearest snap point
+      // 1. nearest snap point (static candidates + the current draft points)
       let best: Vec2 | null = null;
       let bestD = SNAP_PX;
       for (const c of snapPointsRef.current) {
         const d = distPx(c);
         if (d < bestD) { bestD = d; best = c; }
       }
-      const ls = lineStartRef.current;
-      if (ls) { const d = distPx(ls); if (d < bestD) { bestD = d; best = ls; } }
+      for (const c of draftRef.current) {
+        const d = distPx(c);
+        if (d < bestD) { bestD = d; best = c; }
+      }
       if (best) return { uv: best, kind: "point" };
       // 2. nearest point on a coplanar edge
       let bestLine: Vec2 | null = null;
@@ -265,13 +288,14 @@ export function Viewport({
         if (d < bestLD) { bestLD = d; bestLine = q; }
       }
       if (bestLine) return { uv: bestLine, kind: "edge" };
-      // 3. horizontal / vertical inference
-      if (ls) {
-        const ang = Math.atan2(raw[1] - ls[1], raw[0] - ls[0]);
+      // 3. horizontal / vertical inference relative to the last placed point
+      const ref = draftRef.current[draftRef.current.length - 1];
+      if (ref) {
+        const ang = Math.atan2(raw[1] - ref[1], raw[0] - ref[0]);
         const dH = Math.min(Math.abs(ang), Math.abs(Math.abs(ang) - Math.PI));
         const dV = Math.abs(Math.abs(ang) - Math.PI / 2);
-        if (dH < ANGLE_SNAP) return { uv: [raw[0], ls[1]], kind: "free" };
-        if (dV < ANGLE_SNAP) return { uv: [ls[0], raw[1]], kind: "free" };
+        if (dH < ANGLE_SNAP) return { uv: [raw[0], ref[1]], kind: "free" };
+        if (dV < ANGLE_SNAP) return { uv: [ref[0], raw[1]], kind: "free" };
       }
       return { uv: raw, kind: "free" };
     };
@@ -329,9 +353,9 @@ export function Viewport({
           return;
         }
         const { uv, kind } = snap(raw, e.clientX, e.clientY);
-        const ls = lineStartRef.current;
-        if (ls) {
-          setSegment(state.previewLine.geometry, uvToWorld(frame, ls[0], ls[1]), uvToWorld(frame, uv[0], uv[1]));
+        const poly = previewPolyline(sketchToolRef.current, draftRef.current, uv, polygonSidesRef.current);
+        if (poly && poly.length >= 2) {
+          setPolyline(state.previewLine.geometry, poly.map((p) => uvToWorld(frame, p[0], p[1])));
           state.previewLine.visible = true;
         } else {
           state.previewLine.visible = false;
@@ -470,13 +494,7 @@ export function Viewport({
     disposeSketchGroup(state.sketchGroup);
     for (const s of sketches) {
       const pts: number[] = [];
-      for (const e of s.entities) {
-        if (e.type === "line") {
-          const a = uvToWorld(s.frame, e.a[0], e.a[1]);
-          const b = uvToWorld(s.frame, e.b[0], e.b[1]);
-          pts.push(a[0], a[1], a[2], b[0], b[1], b[2]);
-        }
-      }
+      for (const e of s.entities) entitySegments(e, s.frame, pts);
       if (pts.length === 0) continue;
       const geom = new THREE.BufferGeometry();
       geom.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
@@ -525,13 +543,24 @@ export function Viewport({
         lines.push([a, b]);
       }
     };
+    const addPoint = (uv: Vec2) => {
+      const w = new THREE.Vector3(...uvToWorld(active.frame, uv[0], uv[1]));
+      if (onPlane(w)) points.push(toUv(w));
+    };
     for (const s of sketches) {
+      const sameFrame = s.frame === active.frame;
       for (const e of s.entities) {
         if (e.type === "line") {
           addSeg(
             new THREE.Vector3(...uvToWorld(s.frame, e.a[0], e.a[1])),
             new THREE.Vector3(...uvToWorld(s.frame, e.b[0], e.b[1])),
           );
+        } else if (sameFrame && e.type === "circle") {
+          addPoint(e.c); // centre (radius/quadrant snaps are a later refinement)
+        } else if (sameFrame && e.type === "arc") {
+          addPoint(e.c);
+          addPoint([e.c[0] + e.r * Math.cos(e.start), e.c[1] + e.r * Math.sin(e.start)]);
+          addPoint([e.c[0] + e.r * Math.cos(e.end), e.c[1] + e.r * Math.sin(e.end)]);
         }
       }
     }
@@ -543,9 +572,63 @@ export function Viewport({
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
 
-function setSegment(geom: THREE.BufferGeometry, a: [number, number, number], b: [number, number, number]) {
-  geom.setAttribute("position", new THREE.Float32BufferAttribute([...a, ...b], 3));
+function setPolyline(geom: THREE.BufferGeometry, pts: [number, number, number][]) {
+  const arr: number[] = [];
+  for (const p of pts) arr.push(p[0], p[1], p[2]);
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(arr, 3));
   geom.computeBoundingSphere();
+}
+
+/** Append world-space segment endpoints for an entity to a flat buffer. */
+function entitySegments(e: SketchEntity, frame: PlaneFrameData, out: number[]) {
+  const push = (a: Vec2, b: Vec2) => {
+    const wa = uvToWorld(frame, a[0], a[1]);
+    const wb = uvToWorld(frame, b[0], b[1]);
+    out.push(wa[0], wa[1], wa[2], wb[0], wb[1], wb[2]);
+  };
+  if (e.type === "line") push(e.a, e.b);
+  else if (e.type === "circle") {
+    const pts = sampleCircle(e.c, e.r);
+    for (let i = 0; i + 1 < pts.length; i++) push(pts[i], pts[i + 1]);
+  } else if (e.type === "arc") {
+    const pts = sampleArc(e.c, e.r, e.start, e.end);
+    for (let i = 0; i + 1 < pts.length; i++) push(pts[i], pts[i + 1]);
+  }
+}
+
+/** Live preview polyline (in uv) for the in-progress tool, or null. */
+function previewPolyline(tool: SketchTool, draft: Vec2[], cursor: Vec2, sides: number): Vec2[] | null {
+  const closed = (pts: Vec2[]): Vec2[] => [...pts, pts[0]];
+  switch (tool) {
+    case "line":
+      return draft.length >= 1 ? [draft[draft.length - 1], cursor] : null;
+    case "rect-corner":
+      return draft.length === 1 ? closed(rectangleCorners(draft[0], cursor)) : null;
+    case "rect-center":
+      return draft.length === 1 ? closed(rectangleFromCenter(draft[0], cursor)) : null;
+    case "circle-center":
+      return draft.length === 1
+        ? sampleCircle(draft[0], Math.hypot(cursor[0] - draft[0][0], cursor[1] - draft[0][1]))
+        : null;
+    case "circle-3p":
+      if (draft.length === 1) return [draft[0], cursor];
+      if (draft.length === 2) {
+        const c = circleFrom3(draft[0], draft[1], cursor);
+        return c ? sampleCircle(c.center, c.r) : [draft[0], draft[1], cursor];
+      }
+      return null;
+    case "polygon":
+      return draft.length === 1 ? closed(regularPolygon(draft[0], cursor, sides)) : null;
+    case "arc-3p":
+      if (draft.length === 1) return [draft[0], cursor];
+      if (draft.length === 2) {
+        const a = arcFrom3(draft[0], cursor, draft[1]); // start, mid(cursor), end
+        return a ? sampleArc(a.center, a.r, a.start, a.end) : [draft[0], cursor, draft[1]];
+      }
+      return null;
+    default:
+      return null;
+  }
 }
 
 /** Closest point on segment a-b to p, all in 2D (uv). */

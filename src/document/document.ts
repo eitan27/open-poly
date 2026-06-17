@@ -78,6 +78,14 @@ export function addSketchEntity(
   return mapSketch(doc, sketchId, (s) => ({ ...s, entities: [...s.entities, entity] }));
 }
 
+export function addSketchEntities(
+  doc: Document,
+  sketchId: string,
+  entities: SketchEntity[],
+): Document {
+  return mapSketch(doc, sketchId, (s) => ({ ...s, entities: [...s.entities, ...entities] }));
+}
+
 export function setSketchEntities(
   doc: Document,
   sketchId: string,

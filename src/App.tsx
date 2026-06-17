@@ -3,7 +3,7 @@ import { KernelClient } from "./kernel/KernelClient";
 import {
   addFeature,
   addSketch,
-  addSketchEntity,
+  addSketchEntities,
   addVariable,
   createDocument,
   genId,
@@ -17,8 +17,22 @@ import {
   updateParam,
   updateVariable,
 } from "./document/document";
-import type { Document, FeatureKind, SketchFeature, Vec2 } from "./document/types";
+import type {
+  Document,
+  FeatureKind,
+  SketchEntity,
+  SketchFeature,
+  Vec2,
+} from "./document/types";
 import { frameOf, planeRefLabel, type SketchPlaneRef } from "./document/planes";
+import {
+  arcFrom3,
+  circleFrom3,
+  loopSegments,
+  rectangleCorners,
+  rectangleFromCenter,
+  regularPolygon,
+} from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
@@ -31,6 +45,17 @@ import {
   type ViewportApi,
 } from "./viewport/Viewport";
 import "./App.css";
+
+const SKETCH_TOOLS: { tool: SketchTool; label: string; title: string }[] = [
+  { tool: "select", label: "↖", title: "Select (V)" },
+  { tool: "line", label: "╱", title: "Line (L)" },
+  { tool: "rect-corner", label: "▭", title: "Rectangle: 2 corners (R)" },
+  { tool: "rect-center", label: "⊞", title: "Rectangle: center + corner" },
+  { tool: "circle-center", label: "○", title: "Circle: center + radius (C)" },
+  { tool: "circle-3p", label: "◔", title: "Circle: 3 points" },
+  { tool: "polygon", label: "⬢", title: "Regular polygon (P)" },
+  { tool: "arc-3p", label: "⌒", title: "Arc: 3 points (A)" },
+];
 
 const VIEW_BUTTONS: { name: ViewName; label: string }[] = [
   { name: "top", label: "Top" },
@@ -62,9 +87,15 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
-  const [sketchTool, setSketchTool] = useState<SketchTool>("line");
-  const [lineStart, setLineStart] = useState<Vec2 | null>(null);
+  const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
+  const [draft, setDraft] = useState<Vec2[]>([]);
+  const [polygonSides, setPolygonSides] = useState(6);
   const viewApiRef = useRef<ViewportApi | null>(null);
+
+  const setSketchTool = (t: SketchTool) => {
+    setSketchToolState(t);
+    setDraft([]); // starting a new tool abandons any in-progress points
+  };
   const [meshes, setMeshes] = useState<FeatureMesh[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -86,26 +117,29 @@ export default function App() {
   // Undo/redo keyboard shortcuts. Skip while typing so native text-field undo
   // keeps working inside inputs.
   useEffect(() => {
+    const SKETCH_KEYS: Record<string, SketchTool> = {
+      v: "select",
+      l: "line",
+      r: "rect-corner",
+      c: "circle-center",
+      p: "polygon",
+      a: "arc-3p",
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (picking) setPicking(false);
-        else if (lineStart) setLineStart(null); // end the current chain
+        else if (draft.length > 0) setDraft([]); // cancel the in-progress shape
         else if (editingSketchId) finishSketch();
         return;
       }
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (e.key === "Enter" && lineStart) {
-        setLineStart(null);
+      if (e.key === "Enter" && draft.length > 0) {
+        setDraft([]);
         return;
       }
-      if (editingSketchId && (e.key === "l" || e.key === "L")) {
-        setSketchTool("line");
-        return;
-      }
-      if (editingSketchId && (e.key === "v" || e.key === "V")) {
-        setSketchTool("select");
-        setLineStart(null);
+      if (editingSketchId && !e.metaKey && !e.ctrlKey && SKETCH_KEYS[e.key.toLowerCase()]) {
+        setSketchTool(SKETCH_KEYS[e.key.toLowerCase()]);
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
@@ -117,7 +151,7 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [undo, redo, picking, lineStart, editingSketchId]);
+  }, [undo, redo, picking, draft, editingSketchId]);
 
   // Resolution (variables + params -> numbers) is synchronous and pure; memoize
   // it so the UI can read evaluated values without re-running the kernel.
@@ -185,7 +219,6 @@ export default function App() {
     setPicking(false);
     setEditingSketchId(id);
     setSketchTool("line");
-    setLineStart(null);
     viewApiRef.current?.lookAtFrame(frameOf(ref));
   };
 
@@ -195,24 +228,79 @@ export default function App() {
     setEditingSketchId(id);
     setSelectedId(id);
     setSketchTool("line");
-    setLineStart(null);
     viewApiRef.current?.lookAtFrame(frameOf(f.plane));
   };
 
   const finishSketch = () => {
     setEditingSketchId(null);
-    setLineStart(null);
+    setDraft([]);
   };
 
-  // A snapped click on the sketch plane (already in uv coords).
+  // A snapped click on the sketch plane (already in uv coords). Drives the
+  // multi-click construction tools.
   const handleSketchClick = (uv: Vec2) => {
-    if (!editingSketchId || sketchTool !== "line") return;
-    if (!lineStart) {
-      setLineStart(uv);
-      return;
+    if (!editingSketchId || sketchTool === "select") return;
+    const sketchId = editingSketchId;
+    const commit = (entities: SketchEntity[]) => {
+      setDoc(addSketchEntities(doc, sketchId, entities));
+    };
+    const lineEntity = (a: Vec2, b: Vec2): SketchEntity => ({ type: "line", id: genId(), a, b });
+    const loopLines = (pts: Vec2[]) => loopSegments(pts).map(([a, b]) => lineEntity(a, b));
+
+    switch (sketchTool) {
+      case "line":
+        if (draft.length === 0) setDraft([uv]);
+        else {
+          commit([lineEntity(draft[0], uv)]);
+          setDraft([uv]); // chain
+        }
+        break;
+      case "rect-corner":
+        if (draft.length === 0) setDraft([uv]);
+        else {
+          commit(loopLines(rectangleCorners(draft[0], uv)));
+          setDraft([]);
+        }
+        break;
+      case "rect-center":
+        if (draft.length === 0) setDraft([uv]);
+        else {
+          commit(loopLines(rectangleFromCenter(draft[0], uv)));
+          setDraft([]);
+        }
+        break;
+      case "circle-center":
+        if (draft.length === 0) setDraft([uv]);
+        else {
+          const r = Math.hypot(uv[0] - draft[0][0], uv[1] - draft[0][1]);
+          commit([{ type: "circle", id: genId(), c: draft[0], r }]);
+          setDraft([]);
+        }
+        break;
+      case "circle-3p":
+        if (draft.length < 2) setDraft([...draft, uv]);
+        else {
+          const c = circleFrom3(draft[0], draft[1], uv);
+          if (c) commit([{ type: "circle", id: genId(), c: c.center, r: c.r }]);
+          setDraft([]);
+        }
+        break;
+      case "polygon":
+        if (draft.length === 0) setDraft([uv]);
+        else {
+          commit(loopLines(regularPolygon(draft[0], uv, polygonSides)));
+          setDraft([]);
+        }
+        break;
+      case "arc-3p":
+        if (draft.length < 2) setDraft([...draft, uv]);
+        else {
+          const a = arcFrom3(draft[0], uv, draft[1]); // start, mid(uv), end
+          if (a) commit([{ type: "arc", id: genId(), c: a.center, r: a.r, start: a.start, end: a.end }]);
+          setDraft([]);
+        }
+        break;
     }
-    setDoc(addSketchEntity(doc, editingSketchId, { type: "line", id: genId(), a: lineStart, b: uv }));
-    setLineStart(uv); // chain: continue from this point
   };
 
   const errorCount =
@@ -313,29 +401,37 @@ export default function App() {
             sketchTool={sketchTool}
             sketches={renderSketches}
             activeSketchId={editingSketchId}
-            lineStart={lineStart}
+            draft={draft}
+            polygonSides={polygonSides}
             onSketchClick={handleSketchClick}
             apiRef={viewApiRef}
           />
           {editingSketch && (
             <div className="sketch-toolbar">
-              <button
-                className={sketchTool === "select" ? "active" : ""}
-                title="Select (V)"
-                onClick={() => {
-                  setSketchTool("select");
-                  setLineStart(null);
-                }}
-              >
-                ↖
-              </button>
-              <button
-                className={sketchTool === "line" ? "active" : ""}
-                title="Line (L)"
-                onClick={() => setSketchTool("line")}
-              >
-                ╱
-              </button>
+              {SKETCH_TOOLS.map((t) => (
+                <button
+                  key={t.tool}
+                  className={sketchTool === t.tool ? "active" : ""}
+                  title={t.title}
+                  onClick={() => setSketchTool(t.tool)}
+                >
+                  {t.label}
+                </button>
+              ))}
+              {sketchTool === "polygon" && (
+                <label className="poly-sides" title="Polygon sides">
+                  <span>n</span>
+                  <input
+                    type="number"
+                    min={3}
+                    max={24}
+                    value={polygonSides}
+                    onChange={(e) =>
+                      setPolygonSides(Math.max(3, Math.min(24, Number(e.target.value) || 3)))
+                    }
+                  />
+                </label>
+              )}
             </div>
           )}
           <div className="view-controls">

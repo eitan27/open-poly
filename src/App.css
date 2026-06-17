@@ -490,6 +490,32 @@
   color: #cfe0ff;
 }
 
+.poly-sides {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #2a2d35;
+}
+
+.poly-sides span {
+  font-size: 11px;
+  color: #8a8f9c;
+  width: 12px;
+  text-align: center;
+}
+
+.poly-sides input {
+  width: 36px;
+  background: #0f1115;
+  border: 1px solid #2a2d35;
+  color: #e6e8ee;
+  border-radius: 5px;
+  padding: 3px 4px;
+  font-size: 12px;
+}
+
 .sketch-start {
   width: 100%;
   margin-bottom: 6px;
