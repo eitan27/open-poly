@@ -39,7 +39,9 @@ export type Selection =
   | { kind: "feature"; id: string }
   | { kind: "face"; featureId: string; faceId: number }
   | { kind: "edge"; featureId: string; edgeId: number }
-  | { kind: "vertex"; featureId: string; point: [number, number, number] };
+  | { kind: "vertex"; featureId: string; point: [number, number, number] }
+  | { kind: "sketchEntity"; sketchId: string; entityId: string }
+  | { kind: "sketchPoint"; sketchId: string; point: [number, number] };
 
 function sameSelection(a: Selection | null, b: Selection | null): boolean {
   if (a === b) return true;
@@ -50,12 +52,11 @@ function sameSelection(a: Selection | null, b: Selection | null): boolean {
   if (a.kind === "edge" && b.kind === "edge")
     return a.featureId === b.featureId && a.edgeId === b.edgeId;
   if (a.kind === "vertex" && b.kind === "vertex")
-    return (
-      a.featureId === b.featureId &&
-      a.point[0] === b.point[0] &&
-      a.point[1] === b.point[1] &&
-      a.point[2] === b.point[2]
-    );
+    return a.featureId === b.featureId && a.point.every((v, i) => v === b.point[i]);
+  if (a.kind === "sketchEntity" && b.kind === "sketchEntity")
+    return a.sketchId === b.sketchId && a.entityId === b.entityId;
+  if (a.kind === "sketchPoint" && b.kind === "sketchPoint")
+    return a.sketchId === b.sketchId && a.point.every((v, i) => v === b.point[i]);
   return false;
 }
 
@@ -97,6 +98,8 @@ interface SceneState {
   lineMaterial: THREE.LineBasicMaterial;
   edgeHoverMaterial: THREE.LineBasicMaterial;
   edgeSelectedMaterial: THREE.LineBasicMaterial;
+  sketchHoverMaterial: THREE.LineBasicMaterial;
+  sketchSelectedMaterial: THREE.LineBasicMaterial;
   vertexMarker: THREE.Mesh;
   datums: DatumEntry[];
   sketchGroup: THREE.Group;
@@ -177,6 +180,8 @@ export function Viewport({
   sketchFullyConstrainedRef.current = sketchFullyConstrained;
   const activeSketchIdRef = useRef(activeSketchId);
   activeSketchIdRef.current = activeSketchId;
+  const sketchesRef = useRef(sketches);
+  sketchesRef.current = sketches;
   const onSketchClickRef = useRef(onSketchClick);
   onSketchClickRef.current = onSketchClick;
   // derived from sketches + activeSketchId in the render effect
@@ -238,6 +243,10 @@ export function Viewport({
     // Edges drawn on top (depthTest off) so a highlighted edge reads clearly.
     const edgeHoverMaterial = new THREE.LineBasicMaterial({ color: 0x36d6c3, depthTest: false });
     const edgeSelectedMaterial = new THREE.LineBasicMaterial({ color: 0xff9d3c, depthTest: false });
+    // Shared sketch entity highlight materials (per-entity geometry groups flip
+    // to these; index 0 is the per-sketch base material set in the render effect).
+    const sketchHoverMaterial = new THREE.LineBasicMaterial({ color: 0x36d6c3 });
+    const sketchSelectedMaterial = new THREE.LineBasicMaterial({ color: 0xff9d3c });
 
     const vertexMarker = new THREE.Mesh(
       new THREE.SphereGeometry(2.2, 16, 16),
@@ -268,8 +277,8 @@ export function Viewport({
     const state: SceneState = {
       renderer, scene, camera, controls, group,
       faceMaterial, selectedMaterial, hoverMaterial, lineMaterial,
-      edgeHoverMaterial, edgeSelectedMaterial, vertexMarker,
-      datums, sketchGroup, previewLine, snapMarker, tween: null,
+      edgeHoverMaterial, edgeSelectedMaterial, sketchHoverMaterial, sketchSelectedMaterial,
+      vertexMarker, datums, sketchGroup, previewLine, snapMarker, tween: null,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
@@ -320,33 +329,62 @@ export function Viewport({
         });
         if (dirty) (geom as THREE.BufferGeometry & { groupsNeedUpdate: boolean }).groupsNeedUpdate = true;
       }
-      // Vertex marker (selected takes precedence over hover).
-      const v = sel?.kind === "vertex" ? sel : hov?.kind === "vertex" ? hov : null;
-      if (v) {
-        vertexMarker.position.set(v.point[0], v.point[1], v.point[2]);
-        (vertexMarker.material as THREE.MeshBasicMaterial).color.set(
-          sel?.kind === "vertex" ? 0xff9d3c : 0x36d6c3,
-        );
+      // Point marker for a selected/hovered vertex or sketch point.
+      const pickPt =
+        sel?.kind === "vertex" || sel?.kind === "sketchPoint"
+          ? sel
+          : hov?.kind === "vertex" || hov?.kind === "sketchPoint"
+            ? hov
+            : null;
+      let markerPos: [number, number, number] | null = null;
+      if (pickPt?.kind === "vertex") {
+        markerPos = pickPt.point;
+      } else if (pickPt?.kind === "sketchPoint") {
+        for (const seg of sketchGroup.children) {
+          if (seg instanceof THREE.LineSegments && seg.userData.sketchId === pickPt.sketchId) {
+            const frame = seg.userData.frame as PlaneFrameData | undefined;
+            if (frame) markerPos = uvToWorld(frame, pickPt.point[0], pickPt.point[1]);
+            break;
+          }
+        }
+      }
+      if (markerPos) {
+        vertexMarker.position.set(markerPos[0], markerPos[1], markerPos[2]);
+        const markerSel = sel?.kind === "vertex" || sel?.kind === "sketchPoint";
+        (vertexMarker.material as THREE.MeshBasicMaterial).color.set(markerSel ? 0xff9d3c : 0x36d6c3);
         vertexMarker.visible = true;
       } else {
         vertexMarker.visible = false;
       }
+      // Sketches: per-sketch base colour + per-entity highlight.
       for (const seg of sketchGroup.children) {
         if (!(seg instanceof THREE.LineSegments)) continue;
         const sid = seg.userData.sketchId as string;
-        const isSel = sel?.kind === "feature" && sel.id === sid;
-        const isHov = hov?.kind === "feature" && hov.id === sid;
+        const geom = seg.geometry;
+        const eg = geom.userData.entityGroups as { entityId: string }[] | undefined;
+        const mats = seg.material;
         const isActive = sid === activeSketchIdRef.current;
-        const color = isSel
-          ? 0xff9d3c
-          : isHov
-            ? 0x36d6c3
-            : isActive
-              ? sketchFullyConstrainedRef.current
-                ? 0x4ad07a
-                : 0xeaf0ff
-              : 0xaeb9e0;
-        (seg.material as THREE.LineBasicMaterial).color.set(color);
+        const baseColor = isActive
+          ? sketchFullyConstrainedRef.current
+            ? 0x4ad07a
+            : 0xeaf0ff
+          : 0xaeb9e0;
+        if (Array.isArray(mats)) (mats[0] as THREE.LineBasicMaterial).color.set(baseColor);
+        if (!eg) continue;
+        const wholeSel = sel?.kind === "feature" && sel.id === sid;
+        const wholeHov = hov?.kind === "feature" && hov.id === sid;
+        const selEnt = sel?.kind === "sketchEntity" && sel.sketchId === sid ? sel.entityId : null;
+        const hovEnt = hov?.kind === "sketchEntity" && hov.sketchId === sid ? hov.entityId : null;
+        let dirty = false;
+        geom.groups.forEach((g: { materialIndex?: number }, i: number) => {
+          const eid = eg[i]?.entityId;
+          const idx = wholeSel || selEnt === eid ? 2 : wholeHov || hovEnt === eid ? 1 : 0;
+          if (g.materialIndex !== idx) {
+            g.materialIndex = idx;
+            dirty = true;
+          }
+        });
+        if (dirty) (geom as THREE.BufferGeometry & { groupsNeedUpdate: boolean }).groupsNeedUpdate = true;
       }
     };
     applyHighlightsRef.current = applyHighlights;
@@ -492,8 +530,32 @@ export function Viewport({
         if (edgeId !== undefined) return { kind: "edge", featureId: fid, edgeId };
       }
       if (sketchOk) {
-        const sid = sketchHit!.object.userData.sketchId as string | undefined;
-        if (sid) return { kind: "feature", id: sid };
+        const obj = sketchHit!.object as THREE.LineSegments;
+        const sid = obj.userData.sketchId as string | undefined;
+        if (sid) {
+          const sketch = sketchesRef.current.find((s) => s.id === sid);
+          const frame = obj.userData.frame as PlaneFrameData | undefined;
+          // Sketch point (endpoint / centre) takes priority over the entity.
+          if (sketch && frame) {
+            let best: Vec2 | null = null;
+            let bestD = SNAP_PX;
+            for (const uv of sketchPointCandidates(sketch)) {
+              const w = uvToWorld(frame, uv[0], uv[1]);
+              const px = projectToPx(new THREE.Vector3(w[0], w[1], w[2]));
+              const d = Math.hypot(px.x - clientX, px.y - clientY);
+              if (d < bestD) { bestD = d; best = uv; }
+            }
+            if (best) return { kind: "sketchPoint", sketchId: sid, point: best };
+          }
+          const eg = obj.geometry.userData.entityGroups as
+            | { start: number; count: number; entityId: string }[]
+            | undefined;
+          if (eg && sketchHit!.index != null) {
+            const grp = eg.find((g) => sketchHit!.index! >= g.start && sketchHit!.index! < g.start + g.count);
+            if (grp) return { kind: "sketchEntity", sketchId: sid, entityId: grp.entityId };
+          }
+          return { kind: "feature", id: sid };
+        }
       }
       if (faceHit && faceHit.faceIndex != null) {
         const mesh = faceHit.object as THREE.Mesh;
@@ -666,6 +728,8 @@ export function Viewport({
       lineMaterial.dispose();
       edgeHoverMaterial.dispose();
       edgeSelectedMaterial.dispose();
+      sketchHoverMaterial.dispose();
+      sketchSelectedMaterial.dispose();
       renderer.dispose();
       container.removeChild(renderer.domElement);
       apiRef.current = null;
@@ -735,21 +799,35 @@ export function Viewport({
     disposeSketchGroup(state.sketchGroup);
     for (const s of sketches) {
       const pts: number[] = [];
-      for (const e of s.entities) entitySegments(e, s.frame, pts);
+      const entityGroups: { start: number; count: number; entityId: string }[] = [];
+      for (const e of s.entities) {
+        const startVert = pts.length / 3;
+        entitySegments(e, s.frame, pts);
+        const count = pts.length / 3 - startVert;
+        if (count > 0) entityGroups.push({ start: startVert, count, entityId: e.id });
+      }
       if (pts.length === 0) continue;
       const geom = new THREE.BufferGeometry();
       geom.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-      const mat = new THREE.LineBasicMaterial({
-        // Fully-constrained active sketch turns green (Onshape-style).
+      // One geometry group per entity, so individual entities are highlightable.
+      for (const g of entityGroups) geom.addGroup(g.start, g.count, 0);
+      geom.userData.entityGroups = entityGroups;
+      // Index 0 = per-sketch base colour (active=white/green, else grey).
+      const baseMat = new THREE.LineBasicMaterial({
         color: s.id === activeSketchId
           ? sketchFullyConstrainedRef.current
             ? 0x4ad07a
             : 0xeaf0ff
           : 0xaeb9e0,
       });
-      const seg = new THREE.LineSegments(geom, mat);
+      const seg = new THREE.LineSegments(geom, [
+        baseMat,
+        state.sketchHoverMaterial,
+        state.sketchSelectedMaterial,
+      ]);
       seg.frustumCulled = false;
       seg.userData.sketchId = s.id;
+      seg.userData.frame = s.frame;
       state.sketchGroup.add(seg);
     }
     applyHighlightsRef.current(); // re-apply selection/hover colors
@@ -879,6 +957,21 @@ function previewPolyline(tool: SketchTool, draft: Vec2[], cursor: Vec2, sides: n
   }
 }
 
+/** Selectable points of a sketch: line endpoints, circle centres, arc ends. */
+function sketchPointCandidates(sketch: RenderSketch): Vec2[] {
+  const out: Vec2[] = [];
+  for (const e of sketch.entities) {
+    if (e.type === "line") out.push(e.a, e.b);
+    else if (e.type === "circle") out.push(e.c);
+    else if (e.type === "arc") {
+      out.push(e.c);
+      out.push([e.c[0] + e.r * Math.cos(e.start), e.c[1] + e.r * Math.sin(e.start)]);
+      out.push([e.c[0] + e.r * Math.cos(e.end), e.c[1] + e.r * Math.sin(e.end)]);
+    } else if (e.type === "point") out.push(e.p);
+  }
+  return out;
+}
+
 /** Closest point on segment a-b to p, all in 2D (uv). */
 function nearestOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
   const abx = b[0] - a[0];
@@ -977,7 +1070,11 @@ function disposeSketchGroup(group: THREE.Group): void {
   for (const child of group.children) {
     if (child instanceof THREE.LineSegments) {
       child.geometry.dispose();
-      (child.material as THREE.Material).dispose();
+      const m = child.material;
+      // Only the per-sketch base material (index 0) is owned here; hover/selected
+      // materials are shared and disposed with the scene.
+      if (Array.isArray(m)) m[0].dispose();
+      else m.dispose();
     }
   }
   group.clear();

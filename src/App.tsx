@@ -90,7 +90,13 @@ export default function App() {
   } = useHistory<Document>(initialDocument);
   const [selection, setSelection] = useState<Selection | null>(null);
   const selectedFeatureId =
-    selection === null ? null : selection.kind === "feature" ? selection.id : selection.featureId;
+    selection === null
+      ? null
+      : selection.kind === "feature"
+        ? selection.id
+        : "featureId" in selection
+          ? selection.featureId
+          : selection.sketchId;
   const selectFeature = (id: string | null) =>
     setSelection(id === null ? null : { kind: "feature", id });
   const [picking, setPicking] = useState(false);
