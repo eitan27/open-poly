@@ -2,9 +2,11 @@
 // new Document (immutable updates) so React state and undo/redo stay simple.
 import { FEATURE_DEFS } from "./featureDefs";
 import { evaluateExpression, type Scope } from "./expression";
-import type { SketchPlaneRef } from "./planes";
+import { frameOf, type SketchPlaneRef } from "./planes";
+import { detectSketchRegions } from "./regions";
 import type {
   Document,
+  ExtrudeFeature,
   Feature,
   FeatureKind,
   SketchConstraint,
@@ -63,6 +65,25 @@ export function addSketch(doc: Document, plane: SketchPlaneRef): { doc: Document
     plane,
     entities: [],
     constraints: [],
+  };
+  return insertFeature(doc, feature);
+}
+
+export function addExtrude(
+  doc: Document,
+  profile: { sketchId: string; regionId: string },
+  opts: { distance?: string; flip?: boolean; mode?: ExtrudeFeature["mode"] } = {},
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "extrude").length + 1;
+  const feature: ExtrudeFeature = {
+    id: uid(),
+    type: "extrude",
+    name: `Extrude ${ordinal}`,
+    suppressed: false,
+    profile,
+    distance: opts.distance ?? "10",
+    flip: opts.flip ?? false,
+    mode: opts.mode ?? "new",
   };
   return insertFeature(doc, feature);
 }
@@ -175,9 +196,14 @@ export function updateParam(
   name: string,
   value: string,
 ): Document {
-  return mapFeature(doc, id, (f) =>
-    f.type === "primitive" ? { ...f, params: { ...f.params, [name]: value } } : f,
-  );
+  return mapFeature(doc, id, (f) => {
+    if (f.type === "primitive") return { ...f, params: { ...f.params, [name]: value } };
+    if (f.type === "extrude") {
+      if (name === "distance") return { ...f, distance: value };
+      if (name === "flip") return { ...f, flip: value === "true" };
+    }
+    return f;
+  });
 }
 
 export function setSuppressed(doc: Document, id: string, suppressed: boolean): Document {
@@ -275,13 +301,31 @@ export function resolveDocument(doc: Document): ResolveResult {
   const errors: Record<string, string> = {};
 
   for (const f of active) {
-    if (f.type !== "primitive") continue; // sketches produce no solid yet (Phase 3)
     try {
-      const params: Record<string, number> = {};
-      for (const [name, expr] of Object.entries(f.params)) {
-        params[name] = evaluateExpression(expr, scope);
+      if (f.type === "primitive") {
+        const params: Record<string, number> = {};
+        for (const [name, expr] of Object.entries(f.params)) {
+          params[name] = evaluateExpression(expr, scope);
+        }
+        features.push({ id: f.id, type: "primitive", kind: f.kind, params });
+      } else if (f.type === "extrude") {
+        // Bake the profile geometry here so the kernel only sees numbers: look up
+        // the referenced sketch region's outline + its plane frame.
+        const sketch = doc.features.find((x) => x.id === f.profile.sketchId);
+        if (sketch?.type !== "sketch") throw new Error("extrude: profile sketch not found");
+        const region = detectSketchRegions(sketch.entities).find((r) => r.id === f.profile.regionId);
+        if (!region) throw new Error("extrude: profile region not found");
+        const frame = frameOf(sketch.plane);
+        features.push({
+          id: f.id,
+          type: "extrude",
+          profile: { outline: region.outline, frame },
+          distance: evaluateExpression(f.distance, scope),
+          flip: f.flip,
+          mode: f.mode,
+        });
       }
-      features.push({ id: f.id, kind: f.kind, params });
+      // sketches contribute no body directly
     } catch (err) {
       errors[f.id] = String((err as Error).message ?? err);
     }

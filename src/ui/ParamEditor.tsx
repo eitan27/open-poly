@@ -36,7 +36,26 @@ export function ParamEditor({
         value={feature.name}
         onChange={(e) => onRename(feature.id, e.target.value)}
       />
-      {feature.type === "sketch" ? (
+      {feature.type === "extrude" ? (
+        <div className="sketch-params">
+          <label className="param-field">
+            <span className="param-label">Distance</span>
+            <input
+              className="param-input"
+              value={feature.distance}
+              onChange={(e) => onChangeParam(feature.id, "distance", e.target.value)}
+            />
+          </label>
+          <label className="param-field">
+            <span className="param-label">Flip</span>
+            <input
+              type="checkbox"
+              checked={feature.flip}
+              onChange={(e) => onChangeParam(feature.id, "flip", e.target.checked ? "true" : "false")}
+            />
+          </label>
+        </div>
+      ) : feature.type === "sketch" ? (
         <div className="sketch-params">
           <div className="param-field">
             <span className="param-label">On</span>

@@ -27,13 +27,29 @@ export interface ShapeMeshPayload {
 /** Primitive solids the kernel knows how to build (Phase 1). */
 export type PrimitiveKind = "box" | "cylinder" | "sphere";
 
-/** A feature with all parameters already resolved to numbers (expressions
- *  are evaluated in the app layer before reaching the kernel). */
-export interface ResolvedFeature {
-  id: string;
-  kind: PrimitiveKind;
-  params: Record<string, number>;
+/** An orthonormal coordinate frame (world space). */
+export interface ResolvedFrame {
+  origin: [number, number, number];
+  uAxis: [number, number, number];
+  vAxis: [number, number, number];
+  normal: [number, number, number];
 }
+
+/** A closed planar profile to extrude: an outer loop in sketch (u,v) coords on
+ *  a frame. (Inner loops / holes come later.) */
+export interface ResolvedProfile {
+  outline: [number, number][];
+  frame: ResolvedFrame;
+}
+
+/** How an extrude combines with the running body set. */
+export type ExtrudeMode = "new" | "add" | "remove";
+
+/** Features with all parameters already resolved to numbers/geometry
+ *  (expressions are evaluated in the app layer before reaching the kernel). */
+export type ResolvedFeature =
+  | { id: string; type: "primitive"; kind: PrimitiveKind; params: Record<string, number> }
+  | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; mode: ExtrudeMode };
 
 export type RegenFeatureResult =
   | { id: string; ok: true; mesh: ShapeMeshPayload }

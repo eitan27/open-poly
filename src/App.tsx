@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
+  addExtrude,
   addFeature,
   addSketch,
   addSketchConstraints,
@@ -309,6 +310,23 @@ export default function App() {
     [selection, doc, meshes],
   );
 
+  // A single selected sketch region — the profile an Extrude would consume.
+  const selectedSketchFace = useMemo(() => {
+    if (selection.length !== 1) return null;
+    const s = selection[0];
+    return s.kind === "sketchFace" ? s : null;
+  }, [selection]);
+
+  const handleExtrude = () => {
+    if (!selectedSketchFace) return;
+    const { doc: next, id } = addExtrude(doc, {
+      sketchId: selectedSketchFace.sketchId,
+      regionId: selectedSketchFace.regionId,
+    });
+    setDoc(next);
+    selectFeature(id);
+  };
+
   // All visible sketches (so finished sketches stay rendered), each with its frame.
   const renderSketches = useMemo(
     () =>
@@ -348,6 +366,7 @@ export default function App() {
   const finishSketch = () => {
     setEditingSketchId(null);
     setDraft([]);
+    setSelection([]); // so the next click (e.g. a face to extrude) starts fresh
   };
 
   // A snapped click on the sketch plane (already in uv coords). Drives the
@@ -718,6 +737,13 @@ export default function App() {
                 <button onClick={() => setPicking(false)}>Cancel (Esc)</button>
               </div>
             )
+          )}
+          {selectedSketchFace && !editingSketch && (
+            <div className="context-actions">
+              <button onClick={handleExtrude} title="Extrude this sketch region into a solid">
+                ⬆ Extrude
+              </button>
+            </div>
           )}
           {measure && (
             <div className="selection-info">

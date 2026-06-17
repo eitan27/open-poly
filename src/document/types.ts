@@ -38,7 +38,8 @@ export interface PrimitiveFeature extends FeatureBase {
   params: Record<string, string>;
 }
 
-/** A 2D sketch on a datum plane. Produces no solid yet (extrude is Phase 3). */
+/** A 2D sketch on a datum plane. Produces no solid on its own; it's a profile
+ *  source consumed by extrude (and later revolve/sweep). */
 export interface SketchFeature extends FeatureBase {
   type: "sketch";
   plane: SketchPlaneRef;
@@ -46,7 +47,22 @@ export interface SketchFeature extends FeatureBase {
   constraints: SketchConstraint[];
 }
 
-export type Feature = PrimitiveFeature | SketchFeature;
+/** How an extrude combines with the running body set. */
+export type ExtrudeMode = "new" | "add" | "remove";
+
+/** Extrude a sketch region into a solid. (Phase 3.) */
+export interface ExtrudeFeature extends FeatureBase {
+  type: "extrude";
+  /** The profile to extrude: a region of a sketch feature. */
+  profile: { sketchId: string; regionId: string };
+  /** Blind distance, as an expression string (e.g. "10" or "height/2"). */
+  distance: string;
+  /** Reverse the extrusion direction (against the profile normal). */
+  flip: boolean;
+  mode: ExtrudeMode;
+}
+
+export type Feature = PrimitiveFeature | SketchFeature | ExtrudeFeature;
 
 export interface Variable {
   id: string;

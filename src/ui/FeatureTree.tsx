@@ -61,7 +61,9 @@ export function FeatureTree({
                 <span className="row-kind">
                   {feature.type === "sketch"
                     ? "Sketch"
-                    : FEATURE_DEFS[feature.kind].label}
+                    : feature.type === "extrude"
+                      ? "Extrude"
+                      : FEATURE_DEFS[feature.kind].label}
                 </span>
                 <span className="row-name">{feature.name}</span>
                 {error && <span className="row-badge" title={error}>!</span>}

@@ -551,6 +551,30 @@
   z-index: 20;
 }
 
+.context-actions {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+}
+
+.context-actions button {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: #cfe0ff;
+  background: rgba(30, 42, 68, 0.95);
+  border: 1px solid #4f8cff;
+  border-radius: 8px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.context-actions button:hover {
+  background: rgba(40, 56, 90, 0.95);
+}
+
 .dim-hint {
   position: absolute;
   left: 50%;
