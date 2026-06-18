@@ -206,10 +206,11 @@ rough relative sizing, not calendar promises.
 > per-part opacity + hide toggle, a viewport modeling toolbar, delete-key, and
 > project renamed **Open Poly**. **IndexedDB autosave + restore is now in** (a
 > refresh keeps your work). **Reference planes (offset method) are in** — the
-> ⧉ Plane button creates a parametric offset plane you can sketch on. Likely
-> next high-value items: more plane methods (midplane/angle/through), a
-> multi-document manager (Documents list + import/export), Transform (move/
-> rotate, Phase 5.5), Mirror, or Revolve (Phase 6).
+> ⧉ Plane button creates a parametric offset plane you can sketch on. **Transform
+> (move + rotate bodies, Phase 5.5) is in** — a ✥ Transform gizmo + panel that
+> rigidly moves a body in place (keeps its id + names). Likely next high-value
+> items: more plane methods (midplane/angle/through), a multi-document manager
+> (Documents list + import/export), Mirror, or Revolve (Phase 6).
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -366,17 +367,23 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 - Mirror across a plane/planar face (incl. a reference plane above).
 - Patterns/booleans multiply topology — re-stress naming/selection here.
 
-### Phase 5.5 — Transform (move + rotate bodies)
-- A **Transform** feature that translates and/or rotates a selected body (and
-  later: scale, copy). Move by a vector (X/Y/Z deltas, expression-backed) and
-  rotate by an angle about an axis (a datum axis, a body edge, or a chosen
-  point + direction). Like all features it lives in the timeline and re-applies
-  on regen; the transformed body keeps its identity (and topological names) so
-  downstream features still reference it.
-- UI: a transform gizmo in the viewport (drag-to-move/rotate handles) plus
-  numeric fields in the parameter editor. Snap to grid/angles.
-- Kernel: `gp_Trsf` + `BRepBuilderAPI_Transform`; names pass through unchanged
-  (a rigid transform doesn't alter topology).
+### Phase 5.5 — Transform (move + rotate bodies) — ✅ DONE
+- A **Transform** feature that translates (X/Y/Z, expression-backed) and rotates
+  (angle about a world X/Y/Z axis through a pivot baked from the body's bbox
+  centre) a selected body. It's an **in-place modifier** — keeps the target
+  body's id (and topological names), like chamfer/fillet — so it lives in the
+  **Timeline** (not Parts) and downstream features still reference it.
+- UI: a **✥ Transform** toolbar button (enabled when one body is selected); a
+  **TransformControls gizmo** driven by an invisible proxy (1 mm / 5° snap;
+  orbit suspended while dragging), plus a floating Move/Rotate panel + numeric
+  fields in the parameter editor. Gizmo drags write back as expressions (one
+  undo step per drag); Cancel/Esc drops the feature.
+- Kernel: `transformNamed` applies `gp_Trsf` (rotate-about-pivot then translate)
+  via `BRepBuilderAPI_Transform_2` + `ModifiedShape`, re-keying the topological
+  name map by each face's image so the body's names survive the move.
+- **TODO:** scale + copy; rotation about a datum axis / body edge / arbitrary
+  point+direction (today: world axis through the bbox-centre pivot); a pivot
+  that re-derives if the body changes upstream (today it's baked at creation).
 
 ### Phase 6 — Sweep + Loft + Revolve
 - Sweep: profile along a path (twist control later).
