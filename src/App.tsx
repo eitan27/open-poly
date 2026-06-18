@@ -365,12 +365,19 @@ export default function App() {
     () =>
       rawMeshes.map((m) => {
         const feature = doc.features.find((f) => f.id === m.id);
-        const color = feature?.type === "primitive" ? feature.color : DEFAULT_SOLID_COLOR;
-        const opacity = feature?.type === "primitive" ? feature.opacity : 1;
+        // Primitives and "new" extrusions own a color/opacity; a body modified in
+        // place (add/remove/dressup) keeps the id — and color — of its source.
+        const hasColor = feature?.type === "primitive" || feature?.type === "extrude";
+        const color = hasColor ? feature.color : DEFAULT_SOLID_COLOR;
+        const opacity = hasColor ? feature.opacity : 1;
         return { id: m.id, mesh: m.mesh, color, opacity };
       }),
     [rawMeshes, doc],
   );
+
+  // Feature ids that produced an actual rendered body — what the Solids list
+  // shows (primitives, "new" extrusions, and add-targets that kept their id).
+  const bodyIds = useMemo(() => new Set(rawMeshes.map((m) => m.id)), [rawMeshes]);
 
   const selected = useMemo(
     () => doc.features.find((f) => f.id === primaryFeatureId) ?? null,
@@ -825,6 +832,7 @@ export default function App() {
           <h2 className="params-heading">Solids</h2>
           <SolidsList
             doc={doc}
+            bodyIds={bodyIds}
             selectedIds={selectedFeatureIds}
             onSelect={selectFeature}
             onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}

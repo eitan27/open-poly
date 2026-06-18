@@ -89,6 +89,8 @@ export function addExtrude(
     distance: opts.distance ?? "10",
     flip: opts.flip ?? false,
     mode: opts.mode ?? "new",
+    color: randomSolidColor(),
+    opacity: 1,
   };
   return insertFeature(doc, feature);
 }
@@ -257,12 +259,16 @@ export function renameFeature(doc: Document, id: string, name: string): Document
 }
 
 export function setFeatureColor(doc: Document, id: string, color: number): Document {
-  return mapFeature(doc, id, (f) => (f.type === "primitive" ? { ...f, color } : f));
+  return mapFeature(doc, id, (f) =>
+    f.type === "primitive" || f.type === "extrude" ? { ...f, color } : f,
+  );
 }
 
 export function setFeatureOpacity(doc: Document, id: string, opacity: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" ? { ...f, opacity: Math.max(0, Math.min(1, opacity)) } : f,
+    f.type === "primitive" || f.type === "extrude"
+      ? { ...f, opacity: Math.max(0, Math.min(1, opacity)) }
+      : f,
   );
 }
 

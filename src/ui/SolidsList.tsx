@@ -1,7 +1,10 @@
-import type { Document, PrimitiveFeature } from "../document/types";
+import type { Document, ExtrudeFeature, Feature, PrimitiveFeature } from "../document/types";
 
 interface Props {
   doc: Document;
+  /** Feature ids that produced an actual rendered body (primitives, "new"
+   *  extrusions, add-targets that kept their id). */
+  bodyIds: Set<string>;
   selectedIds: Set<string>;
   onSelect: (id: string) => void;
   onRename: (id: string, name: string) => void;
@@ -14,14 +17,15 @@ interface Props {
 
 const toHex = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
 
-/** Until extrude/revolve (Phase 3) and boolean (Phase 4) land, every
- *  solid-producing feature is a primitive; broaden this filter then. */
-function isSolid(f: Document["features"][number]): f is PrimitiveFeature {
-  return f.type === "primitive";
+/** A feature that owns a body's appearance (color/opacity). */
+type SolidFeature = PrimitiveFeature | ExtrudeFeature;
+function isSolidFeature(f: Feature): f is SolidFeature {
+  return f.type === "primitive" || f.type === "extrude";
 }
 
 export function SolidsList({
   doc,
+  bodyIds,
   selectedIds,
   onSelect,
   onRename,
@@ -31,10 +35,11 @@ export function SolidsList({
   onExportStep,
   onExportStl,
 }: Props) {
-  const solids = doc.features.filter(isSolid);
+  // List the features that have a rendered body and own its appearance.
+  const solids = doc.features.filter((f): f is SolidFeature => bodyIds.has(f.id) && isSolidFeature(f));
 
   if (solids.length === 0) {
-    return <p className="hint">No solids yet — add a primitive above.</p>;
+    return <p className="hint">No solids yet — add a primitive or extrude above.</p>;
   }
 
   return (

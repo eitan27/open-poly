@@ -72,6 +72,10 @@ export interface ExtrudeFeature extends FeatureBase {
   /** Reverse the extrusion direction (against the profile normal). */
   flip: boolean;
   mode: ExtrudeMode;
+  /** Display color/opacity for a "new" extrusion's body (like primitives).
+   *  Ignored when the extrude is add/remove (it modifies an existing body). */
+  color: number;
+  opacity: number;
 }
 
 /** Chamfer/fillet a set of edges of a body (referenced by persistent name). */
