@@ -328,6 +328,11 @@ Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
 > `exportStl` (per the facade table in §0), which doesn't exist yet. When
 > extrude/boolean land, broaden `SolidsList`'s `isSolid` filter (currently
 > `type === "primitive"`) to match.
+>
+> Also landed: pressing **Delete/Backspace** with a viewport selection removes
+> it — a whole body or sketch for `feature`/`face`/`edge`/`vertex` picks, or
+> just that one line/curve for a `sketchEntity` pick (and any constraints that
+> referenced it). `sketchPoint`/`sketchFace` picks aren't deletable yet.
 
 ### Phase 8 — Polish & persistence
 - IndexedDB save/load, document thumbnails, autosave.

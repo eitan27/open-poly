@@ -136,6 +136,16 @@ export function removeSketchConstraint(
   }));
 }
 
+function constraintRefsEntity(c: SketchConstraint, entityId: string): boolean {
+  switch (c.type) {
+    case "parallel":
+    case "perpendicular":
+      return c.a === entityId || c.b === entityId;
+    default:
+      return c.entity === entityId;
+  }
+}
+
 export function removeSketchEntity(
   doc: Document,
   sketchId: string,
@@ -144,6 +154,7 @@ export function removeSketchEntity(
   return mapSketch(doc, sketchId, (s) => ({
     ...s,
     entities: s.entities.filter((e) => e.id !== entityId),
+    constraints: s.constraints.filter((c) => !constraintRefsEntity(c, entityId)),
   }));
 }
 
