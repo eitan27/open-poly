@@ -47,7 +47,7 @@ export function makeFeature(kind: FeatureKind, existing: Feature[]): Feature {
   };
 }
 
-/** Insert a feature at the rollback point (Onshape-style) and advance the bar. */
+/** Insert a feature at the rollback point and advance the bar. */
 function insertFeature(doc: Document, feature: Feature): { doc: Document; id: string } {
   const features = [...doc.features];
   features.splice(doc.rollbackIndex, 0, feature);

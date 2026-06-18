@@ -1,6 +1,6 @@
 # Open Poly — Architecture & Delivery Plan
 
-A local-first, browser-based parametric CAD (a "simple Onshape"). This document
+A local-first, browser-based parametric CAD. This document
 captures the core technical decision (which engine/kernel), the architecture, and
 a phased roadmap to deliver the requested feature set.
 
@@ -9,12 +9,12 @@ a phased roadmap to deliver the requested feature set.
 ## 0. The most important decision: the geometry kernel
 
 > **Don't build on OpenSCAD.** It looks similar in spirit (everything is an
-> operation), but it's the wrong foundation for an Onshape/Fusion-style tool.
+> operation), but it's the wrong foundation for a feature-tree CAD tool.
 
 **Why not OpenSCAD:**
 - It is **mesh / CSG-based** (CGAL under the hood). Shapes are triangle soup.
 - No **B-rep** (boundary representation) → no real faces/edges/vertices as
-  first-class, selectable topology. Onshape's whole UX is "click this face,
+  first-class, selectable topology. A feature-tree modeler's whole UX is "click this face,
   fillet that edge." That requires B-rep.
 - Fillet/chamfer on meshes is fragile; revolve/sweep/loft are not native.
 - No **STEP/IGES** export (only mesh formats like STL).
@@ -117,7 +117,7 @@ distance, angle, radius, tangent, symmetric) need a **geometric constraint solve
 
 ## 2. Core architecture — the parametric model
 
-This is the heart of a parametric CAD and what makes it feel like Onshape.
+This is the heart of a parametric CAD and what makes it feel like a real modeler.
 
 ### Document = an ordered timeline of features
 A document is an **ordered list of features** (the timeline / feature tree).
@@ -129,7 +129,7 @@ feature(inputParams, references, variableScope) -> Shape(s)
 
 **Regeneration** = replay the list top to bottom, threading the resulting bodies
 forward. Editing feature *N*'s parameters re-runs *N* and everything after it.
-A **rollback bar** (like Onshape) regenerates only up to feature *k*.
+A **rollback bar** regenerates only up to feature *k*.
 
 ### Variables / expressions
 A document-level **symbol table** of named variables with expressions
@@ -249,8 +249,8 @@ Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
   grid). Draw **line, rectangle, circle, arc, polygon**, point. Snapping
   (endpoints, midpoints, grid, origin, existing geometry). Trim/extend, delete.
 - **2b:** Dimensions (driven values, expression-backed) + constraints with
-  **`planegcs`**. Show under/fully/over-constrained state with color, like
-  Onshape. Drag-to-solve.
+  **`planegcs`**. Show under/fully/over-constrained state with color.
+  Drag-to-solve.
 - **Exit criteria:** a fully-constrained closed profile that updates when a
   driving variable changes.
 
@@ -339,7 +339,7 @@ rather than feature-based. This is the largest architectural step left.
     - **Up to face** — extrude until a selected face that is **normal to the
       extrusion direction**.
     (Up-to-next / through-all can come later.)
-  - **Dialog:** an anchored mini-dialog (Onshape-style) exposing profiles,
+  - **Dialog:** an anchored mini-dialog exposing profiles,
     result mode, direction toggle, end condition + its value/face. Live ghost
     preview before commit is the goal.
 - **Chamfer** (distance / two-distance / angle) and **Fillet** (edge set,
@@ -418,13 +418,13 @@ rather than feature-based. This is the largest architectural step left.
 
 ---
 
-## 5. UX/UX principles (to feel like Onshape/Fusion)
+## 5. UX/UX principles (to feel like a polished parametric modeler)
 
 - **Direct manipulation + a tree.** Everything you do becomes a tree feature; the
   tree is editable history, not a log.
 - **Context toolbar / mini-dialog** anchored near the selection, not buried menus.
-- **Pre-select then act, or act then select** — support both (Onshape lets you
-  pre-highlight edges then hit Fillet).
+- **Pre-select then act, or act then select** — support both (e.g. pre-highlight
+  edges then hit Fillet).
 - **Live preview** of a feature before commit (ghosted result + OK/Cancel).
 - **Constraint feedback** with color (blue=under, black=fully, red=over).
 - **Normal-to camera** + auto-grid when entering a sketch; clear "exit sketch."

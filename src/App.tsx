@@ -306,7 +306,7 @@ export default function App() {
         setDraft([]);
         return;
       }
-      // D dimensions the selected line (Onshape's dimension shortcut).
+      // D dimensions the selected line (the standard dimension shortcut).
       // preventDefault so the keystroke can't leak into the input that opening
       // the dialog autofocuses synchronously.
       if (editingSketchId && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === "d") {
