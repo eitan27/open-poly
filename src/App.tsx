@@ -231,8 +231,9 @@ export default function App() {
   const [dressUpDialog, setDressUpDialog] = useState<
     { op: "chamfer" | "fillet"; size: string; x: number; y: number } | null
   >(null);
-  // The "New" solid dropdown (box/cylinder/sphere) in the viewport toolbar.
+  // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
+  const newSolidRef = useRef<HTMLDivElement>(null);
   const startDimensionRef = useRef<() => void>(() => {});
   const dimPendingRef = useRef(dimPending);
   dimPendingRef.current = dimPending;
@@ -327,6 +328,16 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [undo, redo, picking, draft, editingSketchId, selection, doc]);
+
+  // Close the "New Body" dropdown when clicking anywhere outside it.
+  useEffect(() => {
+    if (!newSolidOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!newSolidRef.current?.contains(e.target as Node)) setNewSolidOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [newSolidOpen]);
 
   // Resolution (variables + params -> numbers) is synchronous and pure; memoize
   // it so the UI can read evaluated values without re-running the kernel.
@@ -945,13 +956,13 @@ export default function App() {
             >
               ✎ Sketch
             </button>
-            <div className="mt-dropdown">
+            <div className="mt-dropdown" ref={newSolidRef}>
               <button
-                title="New solid"
+                title="Create a new solid body"
                 disabled={!!editingSketch}
                 onClick={() => setNewSolidOpen((o) => !o)}
               >
-                ◧ New ▾
+                ◧ New Body ▾
               </button>
               {newSolidOpen && (
                 <div className="mt-menu">
