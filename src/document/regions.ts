@@ -60,10 +60,19 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
   // Half-edges, stored so that twin(i) === i ^ 1.
   interface HalfEdge { from: number; to: number; lineId: string; angle: number }
   const he: HalfEdge[] = [];
+  // Collapse duplicate/coincident segments (same unordered endpoints). A shared
+  // edge drawn once per polygon shows up as two coincident lines; left as a
+  // multi-edge it corrupts the angular face traversal (the inner faces vanish
+  // and only the outer boundary is "found"). One edge bordering two faces is
+  // exactly what the half-edge enumeration expects.
+  const seenEdge = new Set<string>();
   for (const l of lines) {
     const a = node(l.a);
     const b = node(l.b);
     if (a === b) continue; // degenerate
+    const ek = a < b ? `${a}:${b}` : `${b}:${a}`;
+    if (seenEdge.has(ek)) continue;
+    seenEdge.add(ek);
     he.push({ from: a, to: b, lineId: l.id, angle: Math.atan2(l.b[1] - l.a[1], l.b[0] - l.a[0]) });
     he.push({ from: b, to: a, lineId: l.id, angle: Math.atan2(l.a[1] - l.b[1], l.a[0] - l.b[0]) });
   }
