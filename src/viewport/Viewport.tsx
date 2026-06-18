@@ -30,6 +30,8 @@ export interface FeatureMesh {
   mesh: ShapeMeshPayload;
   /** Base display color (0xRRGGBB) for this body's faces. */
   color: number;
+  /** Base display opacity, 0–1 (before the sketch-mode dim override). */
+  opacity: number;
 }
 
 export interface RenderSketch {
@@ -878,20 +880,23 @@ export function Viewport({
     if (!state) return;
     hoverBodyRef.current = null;
     disposeGroup(state.group);
-    for (const { id, mesh, color } of meshes) {
+    for (const { id, mesh, color, opacity } of meshes) {
       const [geometry] = syncGeometries([{ name: id, faces: mesh.faces, edges: mesh.edges }], []);
       // Material array: index 0 = this body's own color, 1 = hover, 2 = selected
       // (shared highlight materials). syncFaces sets a geometry group per face,
       // so per-face highlighting flips group.materialIndex.
       const baseMaterial = makeBodyMaterial(color);
-      baseMaterial.transparent = state.sketchDimActive;
-      baseMaterial.opacity = state.sketchDimActive ? 0.16 : 1;
+      baseMaterial.transparent = state.sketchDimActive || opacity < 1;
+      baseMaterial.opacity = state.sketchDimActive ? 0.16 : opacity;
       const faceMesh = new THREE.Mesh(geometry.faces, [
         baseMaterial,
         state.hoverMaterial,
         state.selectedMaterial,
       ]);
       faceMesh.userData.featureId = id;
+      // The body's own opacity (pre-dim), so the sketch-dim effect can restore
+      // it instead of snapping back to a hardcoded 1 when leaving sketch mode.
+      faceMesh.userData.opacity = opacity;
       state.group.add(faceMesh);
       // Thin base edge outline. Highlighting is drawn by a separate fat-line
       // overlay; geometry keeps per-edge groups (userData.edgeGroups) for picking.
@@ -918,8 +923,9 @@ export function Viewport({
     for (const child of state.group.children) {
       if (!(child instanceof THREE.Mesh) || !Array.isArray(child.material)) continue;
       const base = child.material[0] as THREE.MeshStandardMaterial;
-      base.transparent = active;
-      base.opacity = active ? 0.16 : 1;
+      const ownOpacity = (child.userData.opacity as number | undefined) ?? 1;
+      base.transparent = active || ownOpacity < 1;
+      base.opacity = active ? 0.16 : ownOpacity;
       base.needsUpdate = true;
     }
     for (const d of state.datums) {

@@ -1,0 +1,102 @@
+import type { Document, PrimitiveFeature } from "../document/types";
+
+interface Props {
+  doc: Document;
+  selectedIds: Set<string>;
+  onSelect: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+  onDelete: (id: string) => void;
+  onColorChange: (id: string, color: number) => void;
+  onOpacityChange: (id: string, opacity: number) => void;
+}
+
+const toHex = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
+
+/** Until extrude/revolve (Phase 3) and boolean (Phase 4) land, every
+ *  solid-producing feature is a primitive; broaden this filter then. */
+function isSolid(f: Document["features"][number]): f is PrimitiveFeature {
+  return f.type === "primitive";
+}
+
+export function SolidsList({
+  doc,
+  selectedIds,
+  onSelect,
+  onRename,
+  onDelete,
+  onColorChange,
+  onOpacityChange,
+}: Props) {
+  const solids = doc.features.filter(isSolid);
+
+  if (solids.length === 0) {
+    return <p className="hint">No solids yet — add a primitive above.</p>;
+  }
+
+  return (
+    <div className="tree-list solids-list">
+      {solids.map((f) => (
+        <div
+          key={f.id}
+          className={
+            "solid-row" +
+            (selectedIds.has(f.id) ? " selected" : "") +
+            (f.suppressed ? " dim" : "")
+          }
+          onClick={() => onSelect(f.id)}
+        >
+          <input
+            type="color"
+            className="solid-color"
+            value={toHex(f.color)}
+            title="Body color"
+            onChange={(e) => onColorChange(f.id, parseInt(e.target.value.slice(1), 16))}
+          />
+          <input
+            className="solid-name"
+            value={f.name}
+            title={f.name}
+            onChange={(e) => onRename(f.id, e.target.value)}
+          />
+          <input
+            type="range"
+            className="solid-opacity"
+            min={0}
+            max={1}
+            step={0.05}
+            value={f.opacity}
+            title={`Opacity ${Math.round(f.opacity * 100)}%`}
+            onChange={(e) => onOpacityChange(f.id, Number(e.target.value))}
+          />
+          <button
+            className="row-icon export-btn"
+            type="button"
+            disabled
+            title="Export STEP — coming soon"
+          >
+            STEP
+          </button>
+          <button
+            className="row-icon export-btn"
+            type="button"
+            disabled
+            title="Export STL — coming soon"
+          >
+            STL
+          </button>
+          <button
+            className="row-icon"
+            type="button"
+            title="Delete"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(f.id);
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}

@@ -15,6 +15,8 @@ import {
   removeVariable,
   renameFeature,
   resolveDocument,
+  setFeatureColor,
+  setFeatureOpacity,
   setRollbackIndex,
   setSketchConstraints,
   setSketchEntities,
@@ -49,6 +51,7 @@ import { useHistory } from "./hooks/useHistory";
 import { EyeIcon } from "./ui/icons";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
+import { SolidsList } from "./ui/SolidsList";
 import { VariablesPanel } from "./ui/VariablesPanel";
 import {
   Viewport,
@@ -228,7 +231,10 @@ export default function App() {
     setSketchToolState(t);
     setDraft([]); // starting a new tool abandons any in-progress points
   };
-  const [meshes, setMeshes] = useState<FeatureMesh[]>([]);
+  // Geometry from the last kernel regen, keyed by feature id. Color/opacity
+  // live on the feature and are overlaid in `meshes` below so tweaking them
+  // doesn't require re-running the (expensive) kernel regen.
+  const [rawMeshes, setRawMeshes] = useState<{ id: string; mesh: FeatureMesh["mesh"] }[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
@@ -310,18 +316,13 @@ export default function App() {
       .regenerate(resolved.features)
       .then((results) => {
         if (cancelled) return;
-        const nextMeshes: FeatureMesh[] = [];
+        const nextMeshes: { id: string; mesh: FeatureMesh["mesh"] }[] = [];
         const regenErrors: Record<string, string> = { ...resolved.errors };
         for (const r of results) {
-          if (r.ok) {
-            const feature = doc.features.find((f) => f.id === r.id);
-            const color = feature?.type === "primitive" ? feature.color : DEFAULT_SOLID_COLOR;
-            nextMeshes.push({ id: r.id, mesh: r.mesh, color });
-          } else {
-            regenErrors[r.id] = r.error;
-          }
+          if (r.ok) nextMeshes.push({ id: r.id, mesh: r.mesh });
+          else regenErrors[r.id] = r.error;
         }
-        setMeshes(nextMeshes);
+        setRawMeshes(nextMeshes);
         setErrors(regenErrors);
         setFatal(null);
       })
@@ -338,6 +339,19 @@ export default function App() {
       cancelled = true;
     };
   }, [resolved, ready]);
+
+  // Overlay each body's current color/opacity from the document onto its
+  // cached geometry — so changing appearance is instant, not a regen round-trip.
+  const meshes = useMemo<FeatureMesh[]>(
+    () =>
+      rawMeshes.map((m) => {
+        const feature = doc.features.find((f) => f.id === m.id);
+        const color = feature?.type === "primitive" ? feature.color : DEFAULT_SOLID_COLOR;
+        const opacity = feature?.type === "primitive" ? feature.opacity : 1;
+        return { id: m.id, mesh: m.mesh, color, opacity };
+      }),
+    [rawMeshes, doc],
+  );
 
   const selected = useMemo(
     () => doc.features.find((f) => f.id === primaryFeatureId) ?? null,
@@ -669,6 +683,12 @@ export default function App() {
     if (editingSketchId === id) setEditingSketchId(null);
   };
 
+  const handleSolidColor = (id: string, color: number) =>
+    setDoc(setFeatureColor(doc, id, color), `color:${id}`);
+
+  const handleSolidOpacity = (id: string, opacity: number) =>
+    setDoc(setFeatureOpacity(doc, id, opacity), `opacity:${id}`);
+
   return (
     <div className="app">
       <header className="topbar">
@@ -736,6 +756,16 @@ export default function App() {
             }
             onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
             onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
+          />
+          <h2 className="params-heading">Solids</h2>
+          <SolidsList
+            doc={doc}
+            selectedIds={selectedFeatureIds}
+            onSelect={selectFeature}
+            onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}
+            onDelete={handleDelete}
+            onColorChange={handleSolidColor}
+            onOpacityChange={handleSolidOpacity}
           />
           <h2 className="params-heading">Parameters</h2>
           <ParamEditor

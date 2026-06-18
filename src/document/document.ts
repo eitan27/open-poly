@@ -42,6 +42,7 @@ export function makeFeature(kind: FeatureKind, existing: Feature[]): Feature {
     suppressed: false,
     params,
     color: randomSolidColor(),
+    opacity: 1,
   };
 }
 
@@ -242,6 +243,16 @@ export function setSuppressed(doc: Document, id: string, suppressed: boolean): D
 
 export function renameFeature(doc: Document, id: string, name: string): Document {
   return mapFeature(doc, id, (f) => ({ ...f, name }));
+}
+
+export function setFeatureColor(doc: Document, id: string, color: number): Document {
+  return mapFeature(doc, id, (f) => (f.type === "primitive" ? { ...f, color } : f));
+}
+
+export function setFeatureOpacity(doc: Document, id: string, opacity: number): Document {
+  return mapFeature(doc, id, (f) =>
+    f.type === "primitive" ? { ...f, opacity: Math.max(0, Math.min(1, opacity)) } : f,
+  );
 }
 
 export function setRollbackIndex(doc: Document, index: number): Document {
