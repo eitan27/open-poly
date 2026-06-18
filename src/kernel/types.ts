@@ -31,6 +31,9 @@ export interface ShapeMeshPayload {
 /** Primitive solids the kernel knows how to build (Phase 1). */
 export type PrimitiveKind = "box" | "cylinder" | "sphere";
 
+/** Boolean combination operators. */
+export type BooleanOp = "union" | "subtract" | "intersect";
+
 /** An orthonormal coordinate frame (world space). */
 export interface ResolvedFrame {
   origin: [number, number, number];
@@ -56,7 +59,9 @@ export type ExtrudeMode = "new" | "add" | "remove";
 export type ResolvedFeature =
   | { id: string; type: "primitive"; kind: PrimitiveKind; params: Record<string, number> }
   | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; mode: ExtrudeMode }
-  | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; size: number };
+  | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; size: number }
+  // A boolean combines existing bodies (by id) from the running set.
+  | { id: string; type: "boolean"; op: BooleanOp; operands: string[] };
 
 export type RegenFeatureResult =
   | { id: string; ok: true; mesh: ShapeMeshPayload }

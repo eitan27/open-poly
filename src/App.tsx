@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
+  addBoolean,
   addDressUp,
   addExtrude,
   addFeature,
@@ -34,7 +35,7 @@ import type {
   SketchFeature,
   Vec2,
 } from "./document/types";
-import type { MeshedEdges, MeshedFaces } from "./kernel/types";
+import type { BooleanOp, MeshedEdges, MeshedFaces } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import { frameOf, planeRefLabel, uvToWorld, type SketchPlaneRef } from "./document/planes";
@@ -50,6 +51,7 @@ import {
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
 import { EyeIcon } from "./ui/icons";
+import { BooleanDialog } from "./ui/BooleanDialog";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
@@ -252,6 +254,9 @@ export default function App() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
+  const [booleanDialog, setBooleanDialog] = useState<{ op: BooleanOp; operandIds: string[] } | null>(
+    null,
+  );
 
   // Own the worker's lifecycle here so each mount cycle (incl. StrictMode's
   // mount/unmount/remount) gets a fresh, live kernel rather than a disposed one.
@@ -365,9 +370,11 @@ export default function App() {
     () =>
       rawMeshes.map((m) => {
         const feature = doc.features.find((f) => f.id === m.id);
-        // Primitives and "new" extrusions own a color/opacity; a body modified in
-        // place (add/remove/dressup) keeps the id — and color — of its source.
-        const hasColor = feature?.type === "primitive" || feature?.type === "extrude";
+        // Primitives, "new" extrusions, and booleans own a color/opacity; a body
+        // modified in place (add/remove/dressup) keeps the id — and color — of
+        // its source.
+        const hasColor =
+          feature?.type === "primitive" || feature?.type === "extrude" || feature?.type === "boolean";
         const color = hasColor ? feature.color : DEFAULT_SOLID_COLOR;
         const opacity = hasColor ? feature.opacity : 1;
         return { id: m.id, mesh: m.mesh, color, opacity };
@@ -376,8 +383,18 @@ export default function App() {
   );
 
   // Feature ids that produced an actual rendered body — what the Solids list
-  // shows (primitives, "new" extrusions, and add-targets that kept their id).
+  // shows and what a Boolean can combine (primitives, "new" extrusions,
+  // booleans, and add/dressup-targets that kept their id).
   const bodyIds = useMemo(() => new Set(rawMeshes.map((m) => m.id)), [rawMeshes]);
+
+  // Bodies available as Boolean operands: features with a rendered body.
+  const booleanCandidates = useMemo(
+    () =>
+      doc.features
+        .filter((f) => bodyIds.has(f.id))
+        .map((f) => ({ id: f.id, name: f.name })),
+    [doc, bodyIds],
+  );
 
   const selected = useMemo(
     () => doc.features.find((f) => f.id === primaryFeatureId) ?? null,
@@ -703,6 +720,35 @@ export default function App() {
     selectFeature(id);
   };
 
+  // Opens the Boolean dialog, auto-populating operands from whatever solids
+  // are already selected (deduped, in selection order).
+  const openBooleanDialog = () => {
+    const candidateIds = new Set(booleanCandidates.map((c) => c.id));
+    const operandIds = [...new Set(selection.map(featureIdOf))].filter((id) =>
+      candidateIds.has(id),
+    );
+    setBooleanDialog({ op: "union", operandIds });
+  };
+
+  const toggleBooleanOperand = (id: string) => {
+    setBooleanDialog((d) => {
+      if (!d) return d;
+      const has = d.operandIds.includes(id);
+      return {
+        ...d,
+        operandIds: has ? d.operandIds.filter((x) => x !== id) : [...d.operandIds, id],
+      };
+    });
+  };
+
+  const confirmBoolean = () => {
+    if (!booleanDialog || booleanDialog.operandIds.length < 2) return;
+    const { doc: next, id } = addBoolean(doc, booleanDialog.op, booleanDialog.operandIds);
+    setDoc(next);
+    selectFeature(id);
+    setBooleanDialog(null);
+  };
+
   const handleDelete = (id: string) => {
     setDoc(removeFeature(doc, id));
     setSelection((prev) => prev.filter((s) => featureIdOf(s) !== id));
@@ -822,6 +868,7 @@ export default function App() {
             onSelect={selectFeature}
             onAdd={handleAdd}
             onStartSketch={() => setPicking(true)}
+            onAddBoolean={openBooleanDialog}
             onDelete={handleDelete}
             onToggleSuppress={(id) =>
               setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
@@ -1061,6 +1108,17 @@ export default function App() {
           )}
         </main>
       </div>
+      {booleanDialog && (
+        <BooleanDialog
+          op={booleanDialog.op}
+          operandIds={booleanDialog.operandIds}
+          candidates={booleanCandidates}
+          onOpChange={(op) => setBooleanDialog((d) => (d ? { ...d, op } : d))}
+          onToggleOperand={toggleBooleanOperand}
+          onConfirm={confirmBoolean}
+          onCancel={() => setBooleanDialog(null)}
+        />
+      )}
     </div>
   );
 }

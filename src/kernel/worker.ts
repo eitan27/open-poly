@@ -6,12 +6,13 @@ import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
 import {
   setOC, makeBaseBox, makeCylinder, makeSphere, draw, Plane,
-  cast, getOC, Vector, HASH_CODE_MAX, exportSTEP,
+  cast, getOC, Vector, HASH_CODE_MAX, exportSTEP, measureVolume,
 } from "replicad";
 import type { Shape3D, Face } from "replicad";
 
 import type { KernelRequest, KernelResponse } from "./protocol";
 import type {
+  BooleanOp,
   ExportFormat,
   RegenFeatureResult,
   ResolvedFeature,
@@ -161,16 +162,19 @@ function extrudeBodyFace(
   return prismFromFace(best, best.normalAt(), flip ? -distance : distance, id);
 }
 
-/** Fuse or cut two named shapes, propagating face names through the boolean's
- *  history: a result face inherits its source face's name (Modified images, or
- *  the unchanged passthrough); collisions get a #n suffix. */
-function booleanNamed(op: "fuse" | "cut", base: NamedShape, tool: NamedShape): NamedShape {
-  const oc = getOC();
+/** Fuse, cut, or intersect (common) two named shapes, propagating face names
+ *  through the boolean's history: a result face inherits its source face's name
+ *  (Modified images, or the unchanged passthrough); collisions get a #n suffix. */
+function booleanNamed(op: "fuse" | "cut" | "common", base: NamedShape, tool: NamedShape): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
   const progress = new oc.Message_ProgressRange_1();
   const builder =
     op === "fuse"
       ? new oc.BRepAlgoAPI_Fuse_3(base.shape.wrapped, tool.shape.wrapped, progress)
-      : new oc.BRepAlgoAPI_Cut_3(base.shape.wrapped, tool.shape.wrapped, progress);
+      : op === "cut"
+        ? new oc.BRepAlgoAPI_Cut_3(base.shape.wrapped, tool.shape.wrapped, progress)
+        : new oc.BRepAlgoAPI_Common_3(base.shape.wrapped, tool.shape.wrapped, progress);
   builder.Build(progress);
   const shape = cast(builder.Shape()) as Shape3D;
 
@@ -274,6 +278,49 @@ function dressUpNamed(op: "chamfer" | "fillet", target: Body, edgeNames: string[
   return { shape, names };
 }
 
+// Relative epsilon (vs. the larger operand's volume) for "did this boolean
+// actually do anything" — non-overlapping solids that OCCT happily combines
+// into a degenerate result are caught and reported instead.
+const VOLUME_EPS_REL = 1e-6;
+const BOOL_OCC: Record<BooleanOp, "fuse" | "cut" | "common"> = {
+  union: "fuse",
+  subtract: "cut",
+  intersect: "common",
+};
+
+/** Combine operand bodies left-to-right with name propagation, validating that
+ *  the solids actually overlap. Returns a fresh NamedShape; the operand bodies'
+ *  shapes are left for the caller to dispose (after removing them from the set). */
+function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): NamedShape {
+  const ops = operandIds.map((id) => requireBody(bodies, id));
+  if (ops.length < 2) throw new Error("A boolean needs at least two operands.");
+  let acc: NamedShape = { shape: ops[0].shape, names: ops[0].names };
+  let accVol = measureVolume(acc.shape);
+  let accIsIntermediate = false;
+  for (let i = 1; i < ops.length; i++) {
+    const toolVol = measureVolume(ops[i].shape);
+    const next = booleanNamed(BOOL_OCC[op], acc, ops[i]);
+    const nextVol = measureVolume(next.shape);
+    const eps = VOLUME_EPS_REL * Math.max(accVol, toolVol, 1);
+    const bad =
+      op === "union"
+        ? nextVol >= accVol + toolVol - eps && "Solids don't overlap — union needs overlapping bodies."
+        : op === "subtract"
+          ? nextVol >= accVol - eps && "Solids don't overlap — nothing to subtract."
+          : nextVol <= eps && "Solids don't overlap — no common volume.";
+    if (bad) {
+      next.shape.delete();
+      if (accIsIntermediate) acc.shape.delete();
+      throw new Error(bad);
+    }
+    if (accIsIntermediate) acc.shape.delete();
+    acc = next;
+    accVol = nextVol;
+    accIsIntermediate = true;
+  }
+  return acc;
+}
+
 // The running-result model: replay features in order, folding each over a
 // running set of bodies. A sketch/face profile becomes a solid; mode "new" adds
 // it as its own body, while "add"/"remove" fuse/cut it into target bodies in
@@ -343,6 +390,19 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
         target.shape.delete();
         target.shape = res.shape;
         target.names = res.names;
+      } else if (feature.type === "boolean") {
+        // Combine 2+ existing bodies into one, consuming the operands and
+        // keeping the result keyed by this feature's id. Names propagate through
+        // the boolean history so the result's faces/edges stay referenceable.
+        const result = combineBodies(feature.op, feature.operands, bodies);
+        const operandSet = new Set(feature.operands);
+        const remaining: Body[] = [];
+        for (const b of bodies) {
+          if (operandSet.has(b.id)) b.shape.delete(); // operand consumed
+          else remaining.push(b);
+        }
+        bodies.length = 0;
+        bodies.push(...remaining, { id: feature.id, ...result });
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: String(err) });

@@ -2,7 +2,7 @@
 // plus a set of variables. Regeneration replays the features up to the rollback
 // point. This is the backbone every later feature (sketches, extrude, …) plugs
 // into.
-import type { PrimitiveKind } from "../kernel/types";
+import type { BooleanOp, PrimitiveKind } from "../kernel/types";
 import type { SketchPlaneRef } from "./planes";
 
 export type FeatureKind = PrimitiveKind;
@@ -78,6 +78,17 @@ export interface ExtrudeFeature extends FeatureBase {
   opacity: number;
 }
 
+/** A union/subtract/intersect of two or more earlier solid bodies, referenced
+ *  by id. Operand order matters for subtract (first = base, rest = tools). */
+export interface BooleanFeature extends FeatureBase {
+  type: "boolean";
+  op: BooleanOp;
+  operands: string[];
+  /** Inherited from the first operand at creation time — see document/colors.ts. */
+  color: number;
+  opacity: number;
+}
+
 /** Chamfer/fillet a set of edges of a body (referenced by persistent name). */
 export interface DressUpFeature extends FeatureBase {
   type: "dressup";
@@ -90,7 +101,12 @@ export interface DressUpFeature extends FeatureBase {
   size: string;
 }
 
-export type Feature = PrimitiveFeature | SketchFeature | ExtrudeFeature | DressUpFeature;
+export type Feature =
+  | PrimitiveFeature
+  | SketchFeature
+  | ExtrudeFeature
+  | DressUpFeature
+  | BooleanFeature;
 
 export interface Variable {
   id: string;

@@ -206,8 +206,10 @@ rough relative sizing, not calendar promises.
 > Selection now supports feature/face/edge/vertex/sketch-entity/sketch-point/
 > sketch-face picking with multi-select, fat-line highlights (selecting a face
 > fattens its boundary edges), planar-graph sketch-region detection, and a
-> measurement info pane. **Phase 3 (extrude/revolve) is next** — it consumes the
-> selected sketch profile and is where the running-result model (1.5) gets built.
+> measurement info pane. Boolean union/subtract/intersect (Phase 4) also landed
+> early, directly on primitives — see Phase 4 below. **Phase 3 (extrude/revolve)
+> is next** — it consumes the selected sketch profile and is where the
+> running-result model (1.5) gets built.
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -300,6 +302,16 @@ moves from "build N independent shapes" to **folding operations over a running
 set of bodies**, and selection becomes **body-based** (a body's faces/edges)
 rather than feature-based. This is the largest architectural step left.
 
+> **Boolean integrated (2026-06-18):** a `BooleanFeature` (union/subtract/
+> intersect over 2+ operand bodies, `ui/BooleanDialog.tsx` from the **+ Boolean**
+> button) was merged in and ported onto the running-fold + naming model: the
+> worker combines the operand bodies in place via `booleanNamed` (BRepAlgoAPI
+> Fuse/Cut/Common with name propagation), consuming the operands and keeping the
+> result keyed by the boolean's id; each step is validated by **volume before vs.
+> after** (OCCT returns a valid-but-empty result for non-overlapping solids).
+> The result inherits the first operand's color (`colorOfFeature`). Distinct
+> from extrude Add/Remove, which combine a *face-based* tool with one body.
+
 > **Status (2026-06-18): essentially complete.** Running-result fold + extrude
 > New/Add/Remove (profiles = sketch regions and body faces) with an anchored
 > dialog; chamfer + fillet on named edges. **Proper topological naming** is in:
@@ -367,14 +379,15 @@ rather than feature-based. This is the largest architectural step left.
 > (color and opacity are now overlaid onto cached kernel geometry in `App.tsx`
 > rather than baked in at creation, so changing them is instant and doesn't
 > re-run the kernel). Each row also has **STEP**/**STL** export buttons,
-> backed by `Kernel.exportFeature(feature, format)`: the worker rebuilds the
-> shape from its resolved params on demand (shapes aren't cached after
-> meshing) and returns a `Blob`, which `App.tsx` saves via a throwaway
-> `<a download>` element. All geometry is authored directly in millimetres
-> (replicad/OCCT's own default unit), and STEP export declares `unit: "mm"`
-> explicitly rather than relying on that default. When extrude/boolean land,
-> broaden `SolidsList`'s `isSolid` filter (currently `type === "primitive"`)
-> to match.
+> backed by `Kernel.exportFeature(features, featureId, format)`: the worker
+> rebuilds the requested feature's shape (and whatever boolean operands it
+> transitively depends on) from resolved params on demand (shapes aren't
+> cached after meshing) and returns a `Blob`, which `App.tsx` saves via a
+> throwaway `<a download>` element. All geometry is authored directly in
+> millimetres (replicad/OCCT's own default unit), and STEP export declares
+> `unit: "mm"` explicitly rather than relying on that default. `SolidsList`'s
+> `isSolid` filter now matches `"primitive" | "boolean"`; broaden it again
+> once extrude/revolve land.
 >
 > Also landed: pressing **Delete/Backspace** with a viewport selection removes
 > it — a whole body or sketch for `feature`/`face`/`edge`/`vertex` picks, or

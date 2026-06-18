@@ -1,4 +1,4 @@
-import type { Document, ExtrudeFeature, Feature, PrimitiveFeature } from "../document/types";
+import type { BooleanFeature, Document, ExtrudeFeature, Feature, PrimitiveFeature } from "../document/types";
 
 interface Props {
   doc: Document;
@@ -18,9 +18,9 @@ interface Props {
 const toHex = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
 
 /** A feature that owns a body's appearance (color/opacity). */
-type SolidFeature = PrimitiveFeature | ExtrudeFeature;
+type SolidFeature = PrimitiveFeature | ExtrudeFeature | BooleanFeature;
 function isSolidFeature(f: Feature): f is SolidFeature {
-  return f.type === "primitive" || f.type === "extrude";
+  return f.type === "primitive" || f.type === "extrude" || f.type === "boolean";
 }
 
 export function SolidsList({
@@ -35,7 +35,9 @@ export function SolidsList({
   onExportStep,
   onExportStl,
 }: Props) {
-  // List the features that have a rendered body and own its appearance.
+  // List the features that have a rendered body and own its appearance. A body
+  // consumed by a boolean isn't in `bodyIds` (the fold removed it), so this also
+  // excludes operands.
   const solids = doc.features.filter((f): f is SolidFeature => bodyIds.has(f.id) && isSolidFeature(f));
 
   if (solids.length === 0) {

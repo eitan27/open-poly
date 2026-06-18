@@ -1,11 +1,12 @@
 // Pure helpers for reading and updating the document. Every mutation returns a
 // new Document (immutable updates) so React state and undo/redo stay simple.
-import { FEATURE_DEFS } from "./featureDefs";
+import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "./featureDefs";
 import { randomSolidColor } from "./colors";
 import { evaluateExpression, type Scope } from "./expression";
 import { frameOf, type SketchPlaneRef } from "./planes";
 import { detectSketchRegions } from "./regions";
 import type {
+  BooleanFeature,
   Document,
   DressUpFeature,
   ExtrudeFeature,
@@ -16,7 +17,7 @@ import type {
   SketchEntity,
   SketchFeature,
 } from "./types";
-import type { ResolvedFeature } from "../kernel/types";
+import type { BooleanOp, ResolvedFeature } from "../kernel/types";
 
 function uid(): string {
   return crypto.randomUUID();
@@ -90,6 +91,35 @@ export function addExtrude(
     flip: opts.flip ?? false,
     mode: opts.mode ?? "new",
     color: randomSolidColor(),
+    opacity: 1,
+  };
+  return insertFeature(doc, feature);
+}
+
+/** Boolean results inherit the first operand's color rather than a fresh random
+ *  one, so the combined body still reads as "the same object" the user started
+ *  from — true for all three ops, not just union. */
+function colorOfFeature(doc: Document, id: string): number {
+  const f = doc.features.find((x) => x.id === id);
+  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean")
+    ? f.color
+    : randomSolidColor();
+}
+
+export function addBoolean(
+  doc: Document,
+  op: BooleanOp,
+  operands: string[],
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "boolean").length + 1;
+  const feature: BooleanFeature = {
+    id: uid(),
+    type: "boolean",
+    name: `${BOOLEAN_OP_LABELS[op]} ${ordinal}`,
+    suppressed: false,
+    op,
+    operands,
+    color: colorOfFeature(doc, operands[0]),
     opacity: 1,
   };
   return insertFeature(doc, feature);
@@ -260,13 +290,13 @@ export function renameFeature(doc: Document, id: string, name: string): Document
 
 export function setFeatureColor(doc: Document, id: string, color: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" ? { ...f, color } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" ? { ...f, color } : f,
   );
 }
 
 export function setFeatureOpacity(doc: Document, id: string, opacity: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude"
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean"
       ? { ...f, opacity: Math.max(0, Math.min(1, opacity)) }
       : f,
   );
@@ -393,6 +423,9 @@ export function resolveDocument(doc: Document): ResolveResult {
           edges: f.edges,
           size: evaluateExpression(f.size, scope),
         });
+      } else if (f.type === "boolean") {
+        if (f.operands.length < 2) throw new Error("A boolean needs at least two operands.");
+        features.push({ id: f.id, type: "boolean", op: f.op, operands: f.operands });
       }
       // sketches contribute no body directly
     } catch (err) {
