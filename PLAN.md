@@ -200,16 +200,16 @@ Each feature stores **references** (to sketches, faces, edges, axes, planes), it
 Ordered so each phase produces something runnable and demoable. Estimates are
 rough relative sizing, not calendar promises.
 
-> **Progress (2026-06-18):** Phases 0, 1, and 2 are complete and committed on
-> `main` (Phase 1 landed as chunks 1a/1b/1c; Phase 2 covers datums/navigation,
-> sketch tools, planegcs constraints, and a full selection/measurement layer).
-> Selection now supports feature/face/edge/vertex/sketch-entity/sketch-point/
-> sketch-face picking with multi-select, fat-line highlights (selecting a face
-> fattens its boundary edges), planar-graph sketch-region detection, and a
-> measurement info pane. Boolean union/subtract/intersect (Phase 4) also landed
-> early, directly on primitives — see Phase 4 below. **Phase 3 (extrude/revolve)
-> is next** — it consumes the selected sketch profile and is where the
-> running-result model (1.5) gets built.
+> **Progress (2026-06-18):** Phases 0–4 are essentially complete on `main`.
+> Phase 2 (sketching + planegcs constraints + interactive length dimension +
+> full selection/measurement). Phase 3 (the **running-result model**: extrude
+> New/Add/Remove with an explicit target body, chamfer + fillet) plus **proper
+> topological naming** via OCCT construction history. Phase 4 (**STEP/STL
+> export** in mm). **Boolean** union/subtract/intersect between bodies is done
+> and ported onto the running-fold + naming model. Plus colour/Parts panel,
+> per-part opacity, a viewport modeling toolbar, delete-key, and project renamed
+> **Open Poly**. **Biggest missing piece: persistence** — there is currently no
+> save/load, so a refresh loses the document. See the ROI note in Phase 8.
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -349,16 +349,14 @@ rather than feature-based. This is the largest architectural step left.
 - Exercises the **selection round-trip** end to end: app selection (sketch
   region / body face / body edge) → kernel inputs → new meshed body set back.
 
-### Phase 4 — Export (validate end-to-end)
-- **Export STL** (mesh) and **STEP** (B-rep) of a selected part / the whole
-  document; image snapshot. Pulled here so the full pipeline — sketch →
-  constrain → extrude → chamfer → export a real file — is provable early.
-- Minimal part picking needed to choose what to export (full multi-body UX is
-  Phase 7). STEP **import** later.
+### Phase 4 — Export (validate end-to-end) — ✅ DONE
+- **Export STL** (mesh) and **STEP** (B-rep, declared in mm) per part, from the
+  Parts panel. `Kernel.exportBody` replays the fold and serialises the chosen
+  result body. Image snapshot + STEP **import** still TODO.
 
-### Phase 5 — Boolean + Pattern + Mirror
-- Boolean between separate bodies: union / subtract / intersect (Extrude
-  Add/Remove already covers the extrusion-coupled case).
+### Phase 5 — Boolean + Pattern + Mirror *(Boolean ✅ DONE; Pattern/Mirror TODO)*
+- Boolean between separate bodies: union / subtract / intersect — **done**
+  (`BooleanFeature`, dialog, volume-verdict validation, name propagation).
 - Linear pattern (1- and 2-direction), circular pattern (axis + count + angle).
 - Mirror across a plane/planar face.
 - Patterns/booleans multiply topology — re-stress naming/selection here.
@@ -407,7 +405,11 @@ rather than feature-based. This is the largest architectural step left.
 > referenced it). `sketchPoint`/`sketchFace` picks aren't deletable yet.
 
 ### Phase 8 — Polish & persistence
-- IndexedDB save/load, document thumbnails, autosave.
+- **IndexedDB save/load + autosave (HIGHEST ROI right now — pull forward).** The
+  `Document` is already plain JSON-serializable data, so this is mostly a
+  storage layer + a documents list + import/export `.json`. Without it a refresh
+  loses everything, which caps the tool at "demo." Cheap, low-risk, and it makes
+  every feature already built actually usable. Document thumbnails later.
 - Measurement tools, section view, appearance, keyboard shortcuts.
 - Performance: incremental regen (only re-run dirty features), tessellation LOD.
 
