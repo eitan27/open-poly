@@ -39,6 +39,18 @@ export function ParamEditor({
       {feature.type === "extrude" ? (
         <div className="sketch-params">
           <label className="param-field">
+            <span className="param-label">Mode</span>
+            <select
+              className="param-input"
+              value={feature.mode}
+              onChange={(e) => onChangeParam(feature.id, "mode", e.target.value)}
+            >
+              <option value="new">New</option>
+              <option value="add">Add</option>
+              <option value="remove">Remove</option>
+            </select>
+          </label>
+          <label className="param-field">
             <span className="param-label">Distance</span>
             <input
               className="param-input"

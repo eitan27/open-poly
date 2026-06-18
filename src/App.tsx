@@ -180,6 +180,10 @@ export default function App() {
   // Armed dimension mode: D was pressed with nothing selected; the next picked
   // line becomes the dimension target.
   const [dimPending, setDimPending] = useState(false);
+  // The extrude dialog (anchored at the profile) while choosing parameters.
+  const [extrudeDialog, setExtrudeDialog] = useState<
+    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; x: number; y: number } | null
+  >(null);
   const startDimensionRef = useRef<() => void>(() => {});
   const dimPendingRef = useRef(dimPending);
   dimPendingRef.current = dimPending;
@@ -347,11 +351,39 @@ export default function App() {
     return null;
   }, [selection, meshes]);
 
-  const handleExtrude = () => {
+  // World-space anchor for the extrude dialog: a body face's centroid, or a
+  // sketch region's centroid mapped to 3D.
+  const profileAnchorWorld = (): [number, number, number] | null => {
+    const p = extrudeProfile;
+    if (!p) return null;
+    if (p.kind === "bodyFace") return p.center;
+    const sk = doc.features.find((f) => f.id === p.sketchId);
+    if (sk?.type !== "sketch") return null;
+    const region = detectSketchRegions(sk.entities).find((r) => r.id === p.regionId);
+    if (!region || region.outline.length === 0) return null;
+    let u = 0, v = 0;
+    for (const pt of region.outline) { u += pt[0]; v += pt[1]; }
+    const n = region.outline.length;
+    return uvToWorld(frameOf(sk.plane), u / n, v / n);
+  };
+
+  const openExtrudeDialog = () => {
     if (!extrudeProfile) return;
-    const { doc: next, id } = addExtrude(doc, extrudeProfile);
+    const world = profileAnchorWorld();
+    const s = (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
+    setExtrudeDialog({ mode: "new", distance: "10", flip: false, x: s.x, y: s.y });
+  };
+
+  const createExtrude = () => {
+    if (!extrudeProfile || !extrudeDialog) return;
+    const { doc: next, id } = addExtrude(doc, extrudeProfile, {
+      distance: extrudeDialog.distance,
+      flip: extrudeDialog.flip,
+      mode: extrudeDialog.mode,
+    });
     setDoc(next);
     selectFeature(id);
+    setExtrudeDialog(null);
   };
 
   // All visible sketches (so finished sketches stay rendered), each with its frame.
@@ -765,11 +797,51 @@ export default function App() {
               </div>
             )
           )}
-          {extrudeProfile && !editingSketch && !picking && (
+          {extrudeProfile && !editingSketch && !picking && !extrudeDialog && (
             <div className="context-actions">
-              <button onClick={handleExtrude} title="Extrude the selected sketch region or face into a solid">
+              <button onClick={openExtrudeDialog} title="Extrude the selected sketch region or face into a solid">
                 ⬆ Extrude
               </button>
+            </div>
+          )}
+          {extrudeDialog && (
+            <div className="extrude-dialog" style={{ left: extrudeDialog.x, top: extrudeDialog.y }}>
+              <div className="ed-title">Extrude</div>
+              <div className="ed-modes">
+                {(["new", "add", "remove"] as const).map((m) => (
+                  <button
+                    key={m}
+                    className={extrudeDialog.mode === m ? "active" : ""}
+                    onClick={() => setExtrudeDialog((d) => (d ? { ...d, mode: m } : d))}
+                  >
+                    {m === "new" ? "New" : m === "add" ? "Add" : "Remove"}
+                  </button>
+                ))}
+              </div>
+              <label className="ed-field">
+                <span>Distance</span>
+                <input
+                  autoFocus
+                  value={extrudeDialog.distance}
+                  onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, distance: e.target.value } : d))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") createExtrude();
+                    else if (e.key === "Escape") setExtrudeDialog(null);
+                  }}
+                />
+              </label>
+              <label className="ed-field ed-flip">
+                <span>Flip direction</span>
+                <input
+                  type="checkbox"
+                  checked={extrudeDialog.flip}
+                  onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, flip: e.target.checked } : d))}
+                />
+              </label>
+              <div className="ed-actions">
+                <button className="ed-primary" onClick={createExtrude}>Create</button>
+                <button onClick={() => setExtrudeDialog(null)}>Cancel</button>
+              </div>
             </div>
           )}
           {measure && (

@@ -94,12 +94,15 @@ function extrudeBodyFace(
   return basicFaceExtrusion(best, vec);
 }
 
+type Body = { id: string; shape: Shape3D };
+
 // The running-result model: replay features in order, folding each over a
-// running set of bodies (a sketch profile becomes a solid; later: add/remove
-// fuse/cut into existing bodies). Then tessellate the surviving bodies. Each
-// body's id is the feature that produced it, so meshes stay keyed by feature id.
+// running set of bodies. A sketch/face profile becomes a solid; mode "new" adds
+// it as its own body, while "add"/"remove" fuse/cut it into target bodies in
+// place (preserving their ids). Then tessellate the survivors. A body's id is
+// the feature that produced (or last started) it, so meshes stay keyed by id.
 function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
-  const bodies: { id: string; shape: Shape3D }[] = [];
+  const bodies: Body[] = [];
   const failures: RegenFeatureResult[] = [];
 
   for (const feature of features) {
@@ -107,13 +110,47 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
       if (feature.type === "primitive") {
         bodies.push({ id: feature.id, shape: buildPrimitive(feature) });
       } else if (feature.type === "extrude") {
-        // Phase-3 slice 1: only the "new body" mode (add/remove come next).
-        const { profile, flip, distance } = feature;
-        const shape =
+        const { profile, flip, distance, mode } = feature;
+        const built =
           profile.kind === "sketchRegion"
             ? extrudeSketchRegion(profile, flip, distance)
             : extrudeBodyFace(profile.sourceId, profile.center, flip, distance, bodies);
-        bodies.push({ id: feature.id, shape });
+
+        if (mode === "new") {
+          bodies.push({ id: feature.id, shape: built });
+        } else {
+          // Merge scope: a face profile combines with its source body; a sketch
+          // profile combines with every current body (Phase-7 will refine this).
+          const targetIds =
+            profile.kind === "bodyFace" ? [profile.sourceId] : bodies.map((b) => b.id);
+          const targets = bodies.filter((b) => targetIds.includes(b.id));
+
+          if (targets.length === 0) {
+            // Nothing to combine with: add becomes a new body, remove is a no-op.
+            if (mode === "add") bodies.push({ id: feature.id, shape: built });
+            else built.delete();
+          } else if (mode === "add") {
+            let acc = built;
+            for (const t of targets) {
+              const next = acc.fuse(t.shape);
+              acc.delete();
+              t.shape.delete();
+              acc = next;
+            }
+            const keepId = targets[0].id;
+            const remaining = bodies.filter((b) => !targets.includes(b));
+            bodies.length = 0;
+            bodies.push(...remaining, { id: keepId, shape: acc });
+          } else {
+            // remove: cut the tool from each target in place, preserving ids.
+            for (const t of targets) {
+              const next = t.shape.cut(built);
+              t.shape.delete();
+              t.shape = next;
+            }
+            built.delete();
+          }
+        }
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: String(err) });

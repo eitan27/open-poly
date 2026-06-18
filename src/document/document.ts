@@ -202,6 +202,9 @@ export function updateParam(
     if (f.type === "extrude") {
       if (name === "distance") return { ...f, distance: value };
       if (name === "flip") return { ...f, flip: value === "true" };
+      if (name === "mode" && (value === "new" || value === "add" || value === "remove")) {
+        return { ...f, mode: value };
+      }
     }
     return f;
   });
