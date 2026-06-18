@@ -538,7 +538,7 @@ export default function App() {
     selectFeature(id);
     setPicking(false);
     setEditingSketchId(id);
-    setSketchTool("line");
+    setSketchTool("select");
     setFullyConstrained(false);
     viewApiRef.current?.lookAtFrame(frameOf(ref));
   };
@@ -548,12 +548,17 @@ export default function App() {
     if (f?.type !== "sketch") return;
     setEditingSketchId(id);
     selectFeature(id);
-    setSketchTool("line");
+    setSketchTool("select");
     setFullyConstrained(false);
     viewApiRef.current?.lookAtFrame(frameOf(f.plane));
   };
 
   const finishSketch = () => {
+    // An empty sketch (no entities drawn) is treated as a cancel — drop it.
+    const sk = doc.features.find((f) => f.id === editingSketchId);
+    if (sk?.type === "sketch" && sk.entities.length === 0) {
+      setDoc(removeFeature(doc, sk.id));
+    }
     setEditingSketchId(null);
     setDraft([]);
     setSelection([]); // so the next click (e.g. a face to extrude) starts fresh
