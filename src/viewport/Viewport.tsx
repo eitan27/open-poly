@@ -882,16 +882,20 @@ export function Viewport({
     disposeGroup(state.group);
     for (const { id, mesh, color, opacity } of meshes) {
       const [geometry] = syncGeometries([{ name: id, faces: mesh.faces, edges: mesh.edges }], []);
-      // Material array: index 0 = this body's own color, 1 = hover, 2 = selected
-      // (shared highlight materials). syncFaces sets a geometry group per face,
-      // so per-face highlighting flips group.materialIndex.
+      // Material array: index 0 = this body's own color, 1 = hover (shared),
+      // 2 = selected. The selected material is per-body: the body's own colour
+      // blended toward the highlight orange, so the original colour still shows
+      // through instead of a flat orange. syncFaces sets a geometry group per
+      // face, so per-face highlighting flips group.materialIndex.
       const baseMaterial = makeBodyMaterial(color);
       baseMaterial.transparent = state.sketchDimActive || opacity < 1;
       baseMaterial.opacity = state.sketchDimActive ? 0.16 : opacity;
+      const selColor = new THREE.Color(color).lerp(EDGE_SEL_COLOR, 0.7);
+      const selectedMaterial = makeBodyMaterial(selColor.getHex());
       const faceMesh = new THREE.Mesh(geometry.faces, [
         baseMaterial,
         state.hoverMaterial,
-        state.selectedMaterial,
+        selectedMaterial,
       ]);
       faceMesh.userData.featureId = id;
       // The body's own opacity (pre-dim), so the sketch-dim effect can restore
@@ -1247,10 +1251,13 @@ function disposeGroup(group: THREE.Group): void {
   for (const child of group.children) {
     if (child instanceof THREE.Mesh) {
       child.geometry.dispose();
-      // material[0] is a per-body base-color material created in the rebuild
-      // effect (see makeBodyMaterial); [1]/[2] are the shared hover/selected
-      // materials owned by the scene and disposed on unmount instead.
-      if (Array.isArray(child.material)) child.material[0]?.dispose();
+      // material[0] (base colour) and [2] (per-body selected tint) are created
+      // per-body in the rebuild effect; [1] (hover) is shared and disposed on
+      // unmount instead.
+      if (Array.isArray(child.material)) {
+        child.material[0]?.dispose();
+        child.material[2]?.dispose();
+      }
     } else if (child instanceof THREE.LineSegments) {
       child.geometry.dispose();
     }
