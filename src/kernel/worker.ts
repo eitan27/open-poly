@@ -348,11 +348,10 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
         if (mode === "new") {
           bodies.push({ id: feature.id, ...built });
         } else {
-          // Merge scope: a face profile combines with its source body; a sketch
-          // profile combines with every current body (Phase-7 will refine this).
-          const targetIds =
-            profile.kind === "bodyFace" ? [profile.sourceId] : bodies.map((b) => b.id);
-          const targets = bodies.filter((b) => targetIds.includes(b.id));
+          // Merge scope: the user-chosen target body (add/remove now require one),
+          // falling back to the face's source body if none was specified.
+          const targetId = feature.targetId ?? (profile.kind === "bodyFace" ? profile.sourceId : undefined);
+          const targets = targetId ? bodies.filter((b) => b.id === targetId) : [];
 
           if (targets.length === 0) {
             // Nothing to combine with: add becomes a new body, remove is a no-op.

@@ -78,7 +78,7 @@ export function addSketch(doc: Document, plane: SketchPlaneRef): { doc: Document
 export function addExtrude(
   doc: Document,
   profile: ExtrudeProfile,
-  opts: { distance?: string; flip?: boolean; mode?: ExtrudeFeature["mode"] } = {},
+  opts: { distance?: string; flip?: boolean; mode?: ExtrudeFeature["mode"]; targetId?: string } = {},
 ): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "extrude").length + 1;
   const feature: ExtrudeFeature = {
@@ -90,6 +90,7 @@ export function addExtrude(
     distance: opts.distance ?? "10",
     flip: opts.flip ?? false,
     mode: opts.mode ?? "new",
+    targetId: opts.targetId,
     color: randomSolidColor(),
     opacity: 1,
   };
@@ -413,7 +414,7 @@ export function resolveDocument(doc: Document): ResolveResult {
           // the worker re-finds the face against the running body set.
           profile = { kind: "bodyFace" as const, sourceId: prof.featureId, faceName: prof.faceName, center: prof.center };
         }
-        features.push({ id: f.id, type: "extrude", profile, distance, flip: f.flip, mode: f.mode });
+        features.push({ id: f.id, type: "extrude", profile, distance, flip: f.flip, mode: f.mode, targetId: f.targetId });
       } else if (f.type === "dressup") {
         features.push({
           id: f.id,

@@ -225,7 +225,7 @@ export default function App() {
   const [dimPending, setDimPending] = useState(false);
   // The extrude dialog (anchored at the profile) while choosing parameters.
   const [extrudeDialog, setExtrudeDialog] = useState<
-    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; x: number; y: number } | null
+    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; targetId: string | null; x: number; y: number } | null
   >(null);
   const [dressUpDialog, setDressUpDialog] = useState<
     { op: "chamfer" | "fillet"; size: string; x: number; y: number } | null
@@ -461,15 +461,21 @@ export default function App() {
     if (!extrudeProfile) return;
     const world = profileAnchorWorld();
     const s = (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
-    setExtrudeDialog({ mode: "new", distance: "10", flip: false, x: s.x, y: s.y });
+    // Default add/remove target: the face's own body, else the first body.
+    const defaultTarget =
+      extrudeProfile.kind === "bodyFace" ? extrudeProfile.featureId : booleanCandidates[0]?.id ?? null;
+    setExtrudeDialog({ mode: "new", distance: "10", flip: false, targetId: defaultTarget, x: s.x, y: s.y });
   };
 
   const createExtrude = () => {
     if (!extrudeProfile || !extrudeDialog) return;
+    // Add/Remove require a target body to affect.
+    if (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) return;
     const { doc: next, id } = addExtrude(doc, extrudeProfile, {
       distance: extrudeDialog.distance,
       flip: extrudeDialog.flip,
       mode: extrudeDialog.mode,
+      targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
     });
     setDoc(next);
     selectFeature(id);
@@ -755,8 +761,10 @@ export default function App() {
     if (editingSketchId === id) setEditingSketchId(null);
   };
 
-  const handleSolidColor = (id: string, color: number) =>
+  const handleSolidColor = (id: string, color: number) => {
     setDoc(setFeatureColor(doc, id, color), `color:${id}`);
+    setSelection([]); // deselect so the new color isn't masked by the highlight
+  };
 
   const handleSolidOpacity = (id: string, opacity: number) =>
     setDoc(setFeatureOpacity(doc, id, opacity), `opacity:${id}`);
@@ -876,7 +884,7 @@ export default function App() {
             onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
             onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
           />
-          <h2 className="params-heading">Solids</h2>
+          <h2 className="params-heading">Parts</h2>
           <SolidsList
             doc={doc}
             bodyIds={bodyIds}
@@ -1038,6 +1046,20 @@ export default function App() {
                   </button>
                 ))}
               </div>
+              {extrudeDialog.mode !== "new" && (
+                <label className="ed-field">
+                  <span>Target</span>
+                  <select
+                    value={extrudeDialog.targetId ?? ""}
+                    onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, targetId: e.target.value || null } : d))}
+                  >
+                    <option value="" disabled>Select a part…</option>
+                    {booleanCandidates.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label className="ed-field">
                 <span>Distance</span>
                 <input
@@ -1059,7 +1081,13 @@ export default function App() {
                 />
               </label>
               <div className="ed-actions">
-                <button className="ed-primary" onClick={createExtrude}>Create</button>
+                <button
+                  className="ed-primary"
+                  disabled={extrudeDialog.mode !== "new" && !extrudeDialog.targetId}
+                  onClick={createExtrude}
+                >
+                  Create
+                </button>
                 <button onClick={() => setExtrudeDialog(null)}>Cancel</button>
               </div>
             </div>

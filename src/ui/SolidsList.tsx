@@ -41,7 +41,7 @@ export function SolidsList({
   const solids = doc.features.filter((f): f is SolidFeature => bodyIds.has(f.id) && isSolidFeature(f));
 
   if (solids.length === 0) {
-    return <p className="hint">No solids yet — add a primitive or extrude above.</p>;
+    return <p className="hint">No parts yet — add a primitive or extrude above.</p>;
   }
 
   return (

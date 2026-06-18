@@ -72,6 +72,8 @@ export interface ExtrudeFeature extends FeatureBase {
   /** Reverse the extrusion direction (against the profile normal). */
   flip: boolean;
   mode: ExtrudeMode;
+  /** For add/remove: the body (by feature id) to fuse into / cut from. */
+  targetId?: string;
   /** Display color/opacity for a "new" extrusion's body (like primitives).
    *  Ignored when the extrude is add/remove (it modifies an existing body). */
   color: number;

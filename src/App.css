@@ -704,6 +704,21 @@
   font-size: 13px;
 }
 
+.ed-field select {
+  width: 112px;
+  background: #0f1115;
+  border: 1px solid #2a2d35;
+  color: #e6e8ee;
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.ed-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .ed-flip {
   cursor: pointer;
 }
