@@ -66,8 +66,8 @@ const fmt = (n: number) => {
   return Number.isInteger(r) ? String(r) : String(r);
 };
 
-/** Average position of a tessellated body face — used to re-find the face after
- *  a rebuild (OCCT hashes aren't stable across builds). */
+/** Average position of a tessellated body face — the centroid fallback used to
+ *  re-find a face that has no persistent name yet. */
 function faceCentroid(
   faces: MeshedFaces,
   faceId: number,
@@ -84,6 +84,11 @@ function faceCentroid(
     n++;
   }
   return n ? [sx / n, sy / n, sz / n] : null;
+}
+
+/** The persistent topological name of a tessellated face (if it has one). */
+function faceNameOf(faces: MeshedFaces, faceId: number): string | undefined {
+  return faces.faceGroups?.find((fg) => fg.faceId === faceId)?.name;
 }
 
 const DATUM_ROWS: { id: DatumId; kind: string; label: string }[] = [
@@ -346,7 +351,8 @@ export default function App() {
       const m = meshes.find((x) => x.id === s.featureId);
       const center = m ? faceCentroid(m.mesh.faces, s.faceId) : null;
       if (!center) return null;
-      return { kind: "bodyFace", featureId: s.featureId, faceId: s.faceId, center };
+      const faceName = m ? faceNameOf(m.mesh.faces, s.faceId) : undefined;
+      return { kind: "bodyFace", featureId: s.featureId, faceId: s.faceId, faceName, center };
     }
     return null;
   }, [selection, meshes]);

@@ -54,10 +54,10 @@ export type ExtrudeMode = "new" | "add" | "remove";
  *  existing body (referenced by the feature that produced it + the face id). */
 export type ExtrudeProfile =
   | { kind: "sketchRegion"; sketchId: string; regionId: string }
-  // A body face: `faceId` is the (build-local) hash from selection; `center` is
-  // the face centroid, used to re-find the face after a rebuild since OCCT
-  // hashes aren't stable across builds (pragmatic stand-in for real naming).
-  | { kind: "bodyFace"; featureId: string; faceId: number; center: [number, number, number] };
+  // A body face. `faceName` is the persistent topological name (preferred,
+  // stable across rebuilds); `faceId` is the build-local hash from selection and
+  // `center` the centroid — both kept as fallback when there's no name yet.
+  | { kind: "bodyFace"; featureId: string; faceId: number; faceName?: string; center: [number, number, number] };
 
 /** Extrude a sketch region or a body face into a solid. (Phase 3.) */
 export interface ExtrudeFeature extends FeatureBase {

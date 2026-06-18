@@ -7,8 +7,10 @@ export interface MeshedFaces {
   vertices: number[];
   triangles: number[];
   normals?: number[];
-  /** Maps ranges of the triangle buffer back to a topological face id (for picking). */
-  faceGroups?: { start: number; count: number; faceId: number }[];
+  /** Maps ranges of the triangle buffer back to a topological face. `faceId` is
+   *  the build-local pick id (OCCT hash); `name` is the persistent topological
+   *  name (stable across rebuilds) used by feature references. */
+  faceGroups?: { start: number; count: number; faceId: number; name?: string }[];
 }
 
 export interface MeshedEdges {
@@ -40,7 +42,9 @@ export interface ResolvedFrame {
  *  (resolved against the body set inside the worker, where the B-rep lives). */
 export type ResolvedProfile =
   | { kind: "sketchRegion"; outline: [number, number][]; frame: ResolvedFrame }
-  | { kind: "bodyFace"; sourceId: string; center: [number, number, number] };
+  // `faceName` is the persistent topological name (preferred); `center` is the
+  // centroid fallback for faces that don't have a name yet.
+  | { kind: "bodyFace"; sourceId: string; faceName?: string; center: [number, number, number] };
 
 /** How an extrude combines with the running body set. */
 export type ExtrudeMode = "new" | "add" | "remove";

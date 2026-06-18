@@ -5,7 +5,7 @@
 import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
 import { setOC, makeBaseBox, makeCylinder, makeSphere, draw, Plane, basicFaceExtrusion } from "replicad";
-import type { Shape3D } from "replicad";
+import type { Shape3D, Face } from "replicad";
 
 import type { KernelRequest, KernelResponse } from "./protocol";
 import type {
@@ -30,6 +30,31 @@ function ensureOC(): Promise<void> {
 }
 
 const MESH_OPTS = { tolerance: 0.05, angularTolerance: 30 };
+
+// --- Topological naming (N1) ---
+// Persistent, build-independent names for faces. For axis-aligned planar faces
+// (all faces of our primitives) the name is the outward-normal direction, e.g.
+// "+z" — stable across rebuilds AND parameter changes (resize a box, its +z face
+// is still "+z"). Curved / non-axis-aligned faces have no canonical name yet and
+// fall back to centroid matching until history propagation (N2) names them.
+function classifyFaceName(f: Face): string | null {
+  if (f.geomType !== "PLANE") return null;
+  const [x, y, z] = f.normalAt().normalized().toTuple();
+  const axes: [string, number][] = [["x", x], ["y", y], ["z", z]];
+  const dom = axes.reduce((a, b) => (Math.abs(b[1]) > Math.abs(a[1]) ? b : a));
+  if (Math.abs(dom[1]) < 0.999) return null; // not axis-aligned
+  return (dom[1] >= 0 ? "+" : "-") + dom[0];
+}
+
+/** hashCode -> persistent name for every nameable face of a shape (this build). */
+function faceNameMap(shape: Shape3D): Map<number, string> {
+  const m = new Map<number, string>();
+  for (const f of shape.faces) {
+    const name = classifyFaceName(f);
+    if (name) m.set(f.hashCode, name);
+  }
+  return m;
+}
 
 /** Build a primitive solid (already translated to its position). */
 function buildPrimitive(feature: Extract<ResolvedFeature, { type: "primitive" }>): Shape3D {
@@ -68,10 +93,11 @@ function extrudeSketchRegion(
 }
 
 /** Extrude a face of a running body along its normal (signed by `flip`). The
- *  face is re-found by nearest centroid (OCCT hashes aren't stable across the
- *  rebuild, so we match geometry — a pragmatic stand-in for topological naming). */
+ *  face is re-found by its persistent name when available, else by nearest
+ *  centroid (the fallback for faces that don't have a name yet). */
 function extrudeBodyFace(
   sourceId: string,
+  faceName: string | undefined,
   center: [number, number, number],
   flip: boolean,
   distance: number,
@@ -79,14 +105,20 @@ function extrudeBodyFace(
 ): Shape3D {
   const src = bodies.find((b) => b.id === sourceId);
   if (!src) throw new Error("extrude: source body not found");
-  let best: (typeof src.shape.faces)[number] | null = null;
-  let bestDist = Infinity;
-  for (const f of src.shape.faces) {
-    const c = f.center.toTuple();
-    const d = (c[0] - center[0]) ** 2 + (c[1] - center[1]) ** 2 + (c[2] - center[2]) ** 2;
-    if (d < bestDist) {
-      bestDist = d;
-      best = f;
+
+  let best: Face | null = null;
+  if (faceName) {
+    for (const f of src.shape.faces) {
+      if (classifyFaceName(f) === faceName) { best = f; break; }
+    }
+  }
+  if (!best) {
+    // Fall back to nearest centroid.
+    let bestDist = Infinity;
+    for (const f of src.shape.faces) {
+      const c = f.center.toTuple();
+      const d = (c[0] - center[0]) ** 2 + (c[1] - center[1]) ** 2 + (c[2] - center[2]) ** 2;
+      if (d < bestDist) { bestDist = d; best = f; }
     }
   }
   if (!best) throw new Error("extrude: source body has no faces");
@@ -114,7 +146,7 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
         const built =
           profile.kind === "sketchRegion"
             ? extrudeSketchRegion(profile, flip, distance)
-            : extrudeBodyFace(profile.sourceId, profile.center, flip, distance, bodies);
+            : extrudeBodyFace(profile.sourceId, profile.faceName, profile.center, flip, distance, bodies);
 
         if (mode === "new") {
           bodies.push({ id: feature.id, shape: built });
@@ -159,10 +191,17 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
 
   const meshes: RegenFeatureResult[] = bodies.map((b) => {
     try {
+      const faces = b.shape.mesh(MESH_OPTS);
+      // Attach persistent names to face groups (matched by hash within this
+      // build) so the app can carry stable references across rebuilds.
+      const names = faceNameMap(b.shape);
+      if (faces.faceGroups) {
+        faces.faceGroups = faces.faceGroups.map((g) => ({ ...g, name: names.get(g.faceId) }));
+      }
       return {
         id: b.id,
         ok: true,
-        mesh: { name: b.id, faces: b.shape.mesh(MESH_OPTS), edges: b.shape.meshEdges(MESH_OPTS) },
+        mesh: { name: b.id, faces, edges: b.shape.meshEdges(MESH_OPTS) },
       };
     } catch (err) {
       return { id: b.id, ok: false, error: String(err) };

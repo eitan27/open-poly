@@ -325,9 +325,9 @@ export function resolveDocument(doc: Document): ResolveResult {
           if (!region) throw new Error("extrude: profile region not found");
           profile = { kind: "sketchRegion" as const, outline: region.outline, frame: frameOf(sketch.plane) };
         } else {
-          // A body face: pass the source + centroid; the worker re-finds the
-          // face against the running body set (where the B-rep lives).
-          profile = { kind: "bodyFace" as const, sourceId: prof.featureId, center: prof.center };
+          // A body face: pass the source + persistent name (+ centroid fallback);
+          // the worker re-finds the face against the running body set.
+          profile = { kind: "bodyFace" as const, sourceId: prof.featureId, faceName: prof.faceName, center: prof.center };
         }
         features.push({ id: f.id, type: "extrude", profile, distance, flip: f.flip, mode: f.mode });
       }
