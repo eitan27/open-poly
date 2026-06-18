@@ -1,4 +1,4 @@
-# open-shape — Architecture & Delivery Plan
+# Open Poly — Architecture & Delivery Plan
 
 A local-first, browser-based parametric CAD (a "simple Onshape"). This document
 captures the core technical decision (which engine/kernel), the architecture, and

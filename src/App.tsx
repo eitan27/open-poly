@@ -837,7 +837,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <span className="logo">open-shape</span>
+        <span className="logo">Open Poly</span>
         <span className="phase">Phase&nbsp;3 · modeling</span>
         <div className="topbar-actions">
           <button className="tool-btn" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">

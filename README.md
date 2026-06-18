@@ -1,8 +1,8 @@
-# open-shape
+# Open Poly
 
 An open source, locally runnable, in-browser CAD application.
 
-open-shape runs entirely in your browser — modeling is powered by the OpenCASCADE geometry kernel (via [replicad](https://replicad.xyz/)) compiled to WebAssembly, rendered with [three.js](https://threejs.org/), with parametric sketch constraints handled by [planegcs](https://github.com/Salusoft89/planegcs).
+Open Poly runs entirely in your browser — modeling is powered by the OpenCASCADE geometry kernel (via [replicad](https://replicad.xyz/)) compiled to WebAssembly, rendered with [three.js](https://threejs.org/), with parametric sketch constraints handled by [planegcs](https://github.com/Salusoft89/planegcs).
 
 ## Requirements
 
@@ -12,8 +12,8 @@ open-shape runs entirely in your browser — modeling is powered by the OpenCASC
 ## Clone
 
 ```bash
-git clone git@github.com:eitan27/open-shape.git
-cd open-shape
+git clone git@github.com:eitan27/open-poly.git
+cd open-poly
 ```
 
 ## Install
