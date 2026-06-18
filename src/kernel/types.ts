@@ -35,12 +35,12 @@ export interface ResolvedFrame {
   normal: [number, number, number];
 }
 
-/** A closed planar profile to extrude: an outer loop in sketch (u,v) coords on
- *  a frame. (Inner loops / holes come later.) */
-export interface ResolvedProfile {
-  outline: [number, number][];
-  frame: ResolvedFrame;
-}
+/** A profile to extrude, resolved for the kernel: either a baked sketch outline
+ *  (closed loop in u,v on a frame) or a reference to a face of a running body
+ *  (resolved against the body set inside the worker, where the B-rep lives). */
+export type ResolvedProfile =
+  | { kind: "sketchRegion"; outline: [number, number][]; frame: ResolvedFrame }
+  | { kind: "bodyFace"; sourceId: string; center: [number, number, number] };
 
 /** How an extrude combines with the running body set. */
 export type ExtrudeMode = "new" | "add" | "remove";

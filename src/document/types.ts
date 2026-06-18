@@ -50,11 +50,19 @@ export interface SketchFeature extends FeatureBase {
 /** How an extrude combines with the running body set. */
 export type ExtrudeMode = "new" | "add" | "remove";
 
-/** Extrude a sketch region into a solid. (Phase 3.) */
+/** What an extrude pulls: a closed region of a sketch, or a planar face of an
+ *  existing body (referenced by the feature that produced it + the face id). */
+export type ExtrudeProfile =
+  | { kind: "sketchRegion"; sketchId: string; regionId: string }
+  // A body face: `faceId` is the (build-local) hash from selection; `center` is
+  // the face centroid, used to re-find the face after a rebuild since OCCT
+  // hashes aren't stable across builds (pragmatic stand-in for real naming).
+  | { kind: "bodyFace"; featureId: string; faceId: number; center: [number, number, number] };
+
+/** Extrude a sketch region or a body face into a solid. (Phase 3.) */
 export interface ExtrudeFeature extends FeatureBase {
   type: "extrude";
-  /** The profile to extrude: a region of a sketch feature. */
-  profile: { sketchId: string; regionId: string };
+  profile: ExtrudeProfile;
   /** Blind distance, as an expression string (e.g. "10" or "height/2"). */
   distance: string;
   /** Reverse the extrusion direction (against the profile normal). */

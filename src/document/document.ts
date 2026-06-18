@@ -7,6 +7,7 @@ import { detectSketchRegions } from "./regions";
 import type {
   Document,
   ExtrudeFeature,
+  ExtrudeProfile,
   Feature,
   FeatureKind,
   SketchConstraint,
@@ -71,7 +72,7 @@ export function addSketch(doc: Document, plane: SketchPlaneRef): { doc: Document
 
 export function addExtrude(
   doc: Document,
-  profile: { sketchId: string; regionId: string },
+  profile: ExtrudeProfile,
   opts: { distance?: string; flip?: boolean; mode?: ExtrudeFeature["mode"] } = {},
 ): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "extrude").length + 1;
@@ -309,21 +310,23 @@ export function resolveDocument(doc: Document): ResolveResult {
         }
         features.push({ id: f.id, type: "primitive", kind: f.kind, params });
       } else if (f.type === "extrude") {
-        // Bake the profile geometry here so the kernel only sees numbers: look up
-        // the referenced sketch region's outline + its plane frame.
-        const sketch = doc.features.find((x) => x.id === f.profile.sketchId);
-        if (sketch?.type !== "sketch") throw new Error("extrude: profile sketch not found");
-        const region = detectSketchRegions(sketch.entities).find((r) => r.id === f.profile.regionId);
-        if (!region) throw new Error("extrude: profile region not found");
-        const frame = frameOf(sketch.plane);
-        features.push({
-          id: f.id,
-          type: "extrude",
-          profile: { outline: region.outline, frame },
-          distance: evaluateExpression(f.distance, scope),
-          flip: f.flip,
-          mode: f.mode,
-        });
+        const distance = evaluateExpression(f.distance, scope);
+        const prof = f.profile;
+        let profile;
+        if (prof.kind === "sketchRegion") {
+          // Bake the sketch region's outline + plane frame so the kernel sees
+          // only numbers.
+          const sketch = doc.features.find((x) => x.id === prof.sketchId);
+          if (sketch?.type !== "sketch") throw new Error("extrude: profile sketch not found");
+          const region = detectSketchRegions(sketch.entities).find((r) => r.id === prof.regionId);
+          if (!region) throw new Error("extrude: profile region not found");
+          profile = { kind: "sketchRegion" as const, outline: region.outline, frame: frameOf(sketch.plane) };
+        } else {
+          // A body face: pass the source + centroid; the worker re-finds the
+          // face against the running body set (where the B-rep lives).
+          profile = { kind: "bodyFace" as const, sourceId: prof.featureId, center: prof.center };
+        }
+        features.push({ id: f.id, type: "extrude", profile, distance, flip: f.flip, mode: f.mode });
       }
       // sketches contribute no body directly
     } catch (err) {

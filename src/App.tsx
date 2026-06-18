@@ -23,11 +23,13 @@ import {
 } from "./document/document";
 import type {
   Document,
+  ExtrudeProfile,
   FeatureKind,
   SketchEntity,
   SketchFeature,
   Vec2,
 } from "./document/types";
+import type { MeshedFaces } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import { frameOf, planeRefLabel, uvToWorld, type SketchPlaneRef } from "./document/planes";
@@ -63,6 +65,26 @@ const fmt = (n: number) => {
   const r = Math.round(n * 1000) / 1000;
   return Number.isInteger(r) ? String(r) : String(r);
 };
+
+/** Average position of a tessellated body face — used to re-find the face after
+ *  a rebuild (OCCT hashes aren't stable across builds). */
+function faceCentroid(
+  faces: MeshedFaces,
+  faceId: number,
+): [number, number, number] | null {
+  const g = faces.faceGroups?.find((fg) => fg.faceId === faceId);
+  if (!g) return null;
+  const { triangles, vertices } = faces;
+  let sx = 0, sy = 0, sz = 0, n = 0;
+  for (let k = g.start; k < g.start + g.count; k++) {
+    const vi = triangles[k] * 3;
+    sx += vertices[vi];
+    sy += vertices[vi + 1];
+    sz += vertices[vi + 2];
+    n++;
+  }
+  return n ? [sx / n, sy / n, sz / n] : null;
+}
 
 const DATUM_ROWS: { id: DatumId; kind: string; label: string }[] = [
   { id: "origin", kind: "Point", label: "Origin" },
@@ -310,19 +332,24 @@ export default function App() {
     [selection, doc, meshes],
   );
 
-  // A single selected sketch region — the profile an Extrude would consume.
-  const selectedSketchFace = useMemo(() => {
+  // A single selected profile an Extrude could consume: a sketch region or a
+  // planar face of an existing body (with its centroid baked in for re-finding).
+  const extrudeProfile = useMemo((): ExtrudeProfile | null => {
     if (selection.length !== 1) return null;
     const s = selection[0];
-    return s.kind === "sketchFace" ? s : null;
-  }, [selection]);
+    if (s.kind === "sketchFace") return { kind: "sketchRegion", sketchId: s.sketchId, regionId: s.regionId };
+    if (s.kind === "face") {
+      const m = meshes.find((x) => x.id === s.featureId);
+      const center = m ? faceCentroid(m.mesh.faces, s.faceId) : null;
+      if (!center) return null;
+      return { kind: "bodyFace", featureId: s.featureId, faceId: s.faceId, center };
+    }
+    return null;
+  }, [selection, meshes]);
 
   const handleExtrude = () => {
-    if (!selectedSketchFace) return;
-    const { doc: next, id } = addExtrude(doc, {
-      sketchId: selectedSketchFace.sketchId,
-      regionId: selectedSketchFace.regionId,
-    });
+    if (!extrudeProfile) return;
+    const { doc: next, id } = addExtrude(doc, extrudeProfile);
     setDoc(next);
     selectFeature(id);
   };
@@ -738,9 +765,9 @@ export default function App() {
               </div>
             )
           )}
-          {selectedSketchFace && !editingSketch && (
+          {extrudeProfile && !editingSketch && !picking && (
             <div className="context-actions">
-              <button onClick={handleExtrude} title="Extrude this sketch region into a solid">
+              <button onClick={handleExtrude} title="Extrude the selected sketch region or face into a solid">
                 ⬆ Extrude
               </button>
             </div>

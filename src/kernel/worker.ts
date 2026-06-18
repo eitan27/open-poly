@@ -4,7 +4,7 @@
 
 import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
-import { setOC, makeBaseBox, makeCylinder, makeSphere, draw, Plane } from "replicad";
+import { setOC, makeBaseBox, makeCylinder, makeSphere, draw, Plane, basicFaceExtrusion } from "replicad";
 import type { Shape3D } from "replicad";
 
 import type { KernelRequest, KernelResponse } from "./protocol";
@@ -52,16 +52,46 @@ function buildPrimitive(feature: Extract<ResolvedFeature, { type: "primitive" }>
   return shape.translate(p.x ?? 0, p.y ?? 0, p.z ?? 0) as Shape3D;
 }
 
-/** Extrude a planar profile along its frame normal (signed by `flip`). */
-function buildExtrude(feature: Extract<ResolvedFeature, { type: "extrude" }>): Shape3D {
-  const { outline, frame } = feature.profile;
+/** Extrude a baked sketch outline along its frame normal (signed by `flip`). */
+function extrudeSketchRegion(
+  profile: Extract<ResolvedFeature, { type: "extrude" }>["profile"] & { kind: "sketchRegion" },
+  flip: boolean,
+  distance: number,
+): Shape3D {
+  const { outline, frame } = profile;
   if (outline.length < 3) throw new Error("extrude: profile needs at least 3 points");
   const plane = new Plane(frame.origin, frame.uAxis, frame.normal);
   let pen = draw().movePointerTo(outline[0]);
   for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
   const sketch = pen.close().sketchOnPlane(plane);
-  const distance = feature.flip ? -feature.distance : feature.distance;
-  return sketch.extrude(distance) as Shape3D;
+  return sketch.extrude(flip ? -distance : distance) as Shape3D;
+}
+
+/** Extrude a face of a running body along its normal (signed by `flip`). The
+ *  face is re-found by nearest centroid (OCCT hashes aren't stable across the
+ *  rebuild, so we match geometry — a pragmatic stand-in for topological naming). */
+function extrudeBodyFace(
+  sourceId: string,
+  center: [number, number, number],
+  flip: boolean,
+  distance: number,
+  bodies: { id: string; shape: Shape3D }[],
+): Shape3D {
+  const src = bodies.find((b) => b.id === sourceId);
+  if (!src) throw new Error("extrude: source body not found");
+  let best: (typeof src.shape.faces)[number] | null = null;
+  let bestDist = Infinity;
+  for (const f of src.shape.faces) {
+    const c = f.center.toTuple();
+    const d = (c[0] - center[0]) ** 2 + (c[1] - center[1]) ** 2 + (c[2] - center[2]) ** 2;
+    if (d < bestDist) {
+      bestDist = d;
+      best = f;
+    }
+  }
+  if (!best) throw new Error("extrude: source body has no faces");
+  const vec = best.normalAt().normalized().multiply(flip ? -distance : distance);
+  return basicFaceExtrusion(best, vec);
 }
 
 // The running-result model: replay features in order, folding each over a
@@ -78,7 +108,12 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
         bodies.push({ id: feature.id, shape: buildPrimitive(feature) });
       } else if (feature.type === "extrude") {
         // Phase-3 slice 1: only the "new body" mode (add/remove come next).
-        bodies.push({ id: feature.id, shape: buildExtrude(feature) });
+        const { profile, flip, distance } = feature;
+        const shape =
+          profile.kind === "sketchRegion"
+            ? extrudeSketchRegion(profile, flip, distance)
+            : extrudeBodyFace(profile.sourceId, profile.center, flip, distance, bodies);
+        bodies.push({ id: feature.id, shape });
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: String(err) });
