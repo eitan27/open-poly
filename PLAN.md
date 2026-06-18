@@ -235,7 +235,7 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
   body for the **viewport highlight** only (`highlightBodyIds`); tree/params keep
   showing the modifier feature.
 
-### Phase 2 — Sketching (geometry first, then constraints) — ✅ DONE
+### Phase 2 — Sketching (geometry first, then constraints) — *core ✅ DONE; some tools below are follow-ons*
 - **2.0 — Navigation & datums prep** — ✅ DONE: clickable/snappable **origin
   point**; the three datum **planes (Top/Front/Right)** rendered faintly,
   hover/click-selectable (selecting one starts a sketch); **standard view
@@ -244,7 +244,13 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 - **2a:** ✅ mostly done — pick a plane/planar face → sketch mode (camera
   normal-to); draw **line, rectangle (2-corner + center), circle (center +
   3-pt), arc (3-pt), regular polygon**; snapping (endpoints/midpoints/origin/
-  coplanar edges); delete. **TODO: trim/extend.**
+  coplanar edges); delete. **TODO:**
+  - **Splines** (control-point / through-point curves).
+  - **Construction toggle** — mark any sketch entity as *construction*
+    (reference geometry: used for dimensions/constraints/snapping but ignored
+    when detecting profile regions and never extruded). A toolbar toggle while
+    drawing, plus a per-entity flag editable after.
+  - Trim/extend.
 - **2b:** ✅ constraints via **`planegcs`** (auto H/V capture, ⛓ Solve, fully-
   constrained→green) + **interactive length dimension** (press D, accepts
   number/expr/variable). **TODO (catalogued below):** radius/angle/p2p
@@ -295,31 +301,14 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 > modify a body in place and keep its existing color; a future Boolean union's
 > result should take the first operand's color (see the note in `colors.ts`).
 
-### Phase 3 — First solids: Extrude + Chamfer/Fillet
-This phase builds the **running-result model** (Phase 1.5): the kernel facade
-moves from "build N independent shapes" to **folding operations over a running
-set of bodies**, and selection becomes **body-based** (a body's faces/edges)
-rather than feature-based. This is the largest architectural step left.
-
-> **Boolean integrated (2026-06-18):** a `BooleanFeature` (union/subtract/
-> intersect over 2+ operand bodies, `ui/BooleanDialog.tsx` from the **+ Boolean**
-> button) was merged in and ported onto the running-fold + naming model: the
-> worker combines the operand bodies in place via `booleanNamed` (BRepAlgoAPI
-> Fuse/Cut/Common with name propagation), consuming the operands and keeping the
-> result keyed by the boolean's id; each step is validated by **volume before vs.
-> after** (OCCT returns a valid-but-empty result for non-overlapping solids).
-> The result inherits the first operand's color (`colorOfFeature`). Distinct
-> from extrude Add/Remove, which combine a *face-based* tool with one body.
-
-> **Status (2026-06-18): essentially complete.** Running-result fold + extrude
-> New/Add/Remove (profiles = sketch regions and body faces) with an anchored
-> dialog; chamfer + fillet on named edges. **Proper topological naming** is in:
-> face names seeded on primitives and propagated through extrude (MakePrism) and
-> booleans (fuse/cut) via OCCT history; edge names derived from adjacent face
-> names — so face/edge references survive rebuilds and parametric edits. Built
-> with raw `oc.*` (BRepPrimAPI_MakePrism, BRepAlgoAPI_Fuse/Cut, BRepFilletAPI).
-> Remaining polish: curved-face naming, up-to-face end condition. (Phase 4
-> export and Phase 5 Boolean are also done — see below.)
+### Phase 3 — First solids: Extrude + Chamfer/Fillet — ✅ DONE
+This phase built the **running-result model** (Phase 1.5): the kernel folds
+operations over a running set of bodies, and **proper topological naming** went
+in — face names seeded on primitives and propagated through extrude (MakePrism)
+and booleans (fuse/cut/common) via OCCT construction history; edge names derived
+from adjacent faces — so face/edge references survive rebuilds and parametric
+edits. Built with raw `oc.*` (BRepPrimAPI_MakePrism, BRepAlgoAPI, BRepFilletAPI)
+behind the `Kernel` facade. Item-by-item status is inline below.
 
 - **Extrude (headline)** — ✅ DONE (with the noted gaps):
   - **Profiles:** ✅ sketch regions (`sketchFace`) and planar body faces.
@@ -335,7 +324,7 @@ rather than feature-based. This is the largest architectural step left.
   referenced by **persistent name**. *(Chamfer two-distance/angle variants:
   TODO; currently single distance / single radius.)*
 - **Topological naming** — ✅ DONE (the real version, via OCCT history; see the
-  status note above). *(Gap: curved faces / cylinder sides aren't named yet →
+  phase intro above). *(Gap: curved faces / cylinder sides aren't named yet →
   centroid fallback.)*
 - **Selection round-trip** (sketch region / body face / body edge → kernel →
   meshed body back) — ✅ exercised end to end.
@@ -345,11 +334,23 @@ rather than feature-based. This is the largest architectural step left.
   Parts panel. `Kernel.exportBody` replays the fold and serialises the chosen
   result body. Image snapshot + STEP **import** still TODO.
 
-### Phase 5 — Boolean + Pattern + Mirror *(Boolean ✅ DONE; Pattern/Mirror TODO)*
+### Phase 5 — Boolean + Reference planes + Pattern + Mirror *(Boolean ✅ DONE; rest TODO)*
 - Boolean between separate bodies: union / subtract / intersect — **done**
   (`BooleanFeature`, dialog, volume-verdict validation, name propagation).
+- **Reference / construction planes (create plane).** A datum-plane feature
+  placed via a **dialog** with several methods:
+  - **Offset** — parallel to a selected face or plane, by a distance
+    (expression-backed; signed/flippable).
+  - **Midplane** — halfway between two references (face↔plane, face↔face, or
+    plane↔plane).
+  - **At an angle** — rotated by an angle about an edge/axis, relative to a
+    face or plane.
+  - **Through geometry** — 3 points, a line + a point, two parallel edges, etc.
+  The new plane is parametric (re-derived on regen), shows in the datums list,
+  and becomes selectable for **sketching** and as a **mirror** plane. This is
+  what lets sketches live somewhere other than the 3 base planes / a body face.
 - Linear pattern (1- and 2-direction), circular pattern (axis + count + angle).
-- Mirror across a plane/planar face.
+- Mirror across a plane/planar face (incl. a reference plane above).
 - Patterns/booleans multiply topology — re-stress naming/selection here.
 
 ### Phase 5.5 — Transform (move + rotate bodies)
