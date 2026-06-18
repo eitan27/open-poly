@@ -9,6 +9,7 @@ import {
   addSketch,
   addSketchConstraints,
   addSketchEntities,
+  addTransform,
   addVariable,
   createDocument,
   genId,
@@ -25,6 +26,7 @@ import {
   setSketchConstraints,
   setSketchEntities,
   setSuppressed,
+  setTransform,
   updateParam,
   updateVariable,
 } from "./document/document";
@@ -36,6 +38,7 @@ import type {
   PlaneFeature,
   SketchEntity,
   SketchFeature,
+  TransformFeature,
   Vec2,
 } from "./document/types";
 import type { BooleanOp, MeshedEdges, MeshedFaces } from "./kernel/types";
@@ -68,6 +71,8 @@ import {
   type FeatureMesh,
   type Selection,
   type SketchTool,
+  type TransformEdit,
+  type TransformMode,
   type ViewName,
   type ViewportApi,
 } from "./viewport/Viewport";
@@ -97,6 +102,22 @@ function faceCentroid(
     n++;
   }
   return n ? [sx / n, sy / n, sz / n] : null;
+}
+
+/** Bounding-box centre of a tessellated body — the default rotation pivot for a
+ *  Transform (intuitive: the body spins about its own middle). */
+function bodyCenter(faces: MeshedFaces): [number, number, number] {
+  const { vertices } = faces;
+  if (vertices.length === 0) return [0, 0, 0];
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < vertices.length; i += 3) {
+    const x = vertices[i], y = vertices[i + 1], z = vertices[i + 2];
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+  return [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
 }
 
 /** The persistent topological name of a tessellated face (if it has one). */
@@ -202,6 +223,7 @@ export default function App() {
       const f = doc.features.find((x) => x.id === s.id);
       if (f?.type === "extrude" && (f.mode === "add" || f.mode === "remove") && f.targetId) ids.add(f.targetId);
       else if (f?.type === "dressup") ids.add(f.targetId);
+      else if (f?.type === "transform") ids.add(f.targetId);
       else ids.add(s.id);
     }
     return ids;
@@ -262,6 +284,10 @@ export default function App() {
   const [dressUpDialog, setDressUpDialog] = useState<
     { op: "chamfer" | "fillet"; size: string; x: number; y: number } | null
   >(null);
+  // The Transform feature currently being edited with the gizmo (a floating
+  // panel + viewport gizmo are shown while this is set), and which gizmo to show.
+  const [transformEditId, setTransformEditId] = useState<string | null>(null);
+  const [transformMode, setTransformMode] = useState<TransformMode>("translate");
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
   const newSolidRef = useRef<HTMLDivElement>(null);
@@ -357,6 +383,7 @@ export default function App() {
         if (dimInputRef.current) setDimInput(null);
         else if (dimPendingRef.current) setDimPending(false);
         else if (planeDialog) setPlaneDialog(null);
+        else if (transformEditId) cancelTransform();
         else if (picking) setPicking(false);
         else if (draft.length > 0) setDraft([]); // cancel the in-progress shape
         else if (editingSketchId) finishSketch();
@@ -394,7 +421,7 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [undo, redo, picking, planeDialog, draft, editingSketchId, selection, doc]);
+  }, [undo, redo, picking, planeDialog, transformEditId, draft, editingSketchId, selection, doc]);
 
   // Close the "New Body" dropdown when clicking anywhere outside it.
   useEffect(() => {
@@ -607,6 +634,101 @@ export default function App() {
     setDoc(next);
     selectFeature(id);
     setDressUpDialog(null);
+  };
+
+  // The single body a Transform would move, resolved from the selection: any
+  // pick (feature / face / edge / vertex) on exactly one rendered body. In-place
+  // modifiers map to the body they affect (like highlightBodyIds).
+  const transformTarget = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of selection) {
+      let id = featureIdOf(s);
+      const f = doc.features.find((x) => x.id === id);
+      if (f?.type === "extrude" && (f.mode === "add" || f.mode === "remove") && f.targetId) id = f.targetId;
+      else if (f?.type === "dressup") id = f.targetId;
+      else if (f?.type === "transform") id = f.targetId;
+      ids.add(id);
+    }
+    const bodies = [...ids].filter((id) => bodyIds.has(id));
+    return bodies.length === 1 ? bodies[0] : null;
+  }, [selection, doc, bodyIds]);
+
+  // Create a Transform on the selected body and open the gizmo to edit it.
+  const openTransform = () => {
+    if (!transformTarget) return;
+    const m = rawMeshes.find((x) => x.id === transformTarget);
+    const pivot = m ? bodyCenter(m.mesh.faces) : ([0, 0, 0] as [number, number, number]);
+    const { doc: next, id } = addTransform(doc, transformTarget, pivot);
+    setDoc(next);
+    selectFeature(id);
+    setTransformMode("translate");
+    setTransformEditId(id);
+  };
+
+  // Re-open the gizmo for an existing Transform (from the parameter editor).
+  const editTransform = (id: string) => {
+    selectFeature(id);
+    setTransformMode("translate");
+    setTransformEditId(id);
+  };
+
+  // The live gizmo state: resolve the editing transform's expressions to numbers
+  // (the gizmo is numeric) while leaving the document's expression strings intact.
+  const transformEdit = useMemo<TransformEdit | null>(() => {
+    if (!transformEditId) return null;
+    const f = doc.features.find((x) => x.id === transformEditId);
+    if (f?.type !== "transform") return null;
+    const num = (s: string) => {
+      try {
+        const v = evaluateExpression(s, resolved.scope);
+        return Number.isFinite(v) ? v : 0;
+      } catch {
+        return 0;
+      }
+    };
+    return {
+      featureId: f.id,
+      pivot: f.pivot,
+      tx: num(f.tx),
+      ty: num(f.ty),
+      tz: num(f.tz),
+      angle: num(f.angle),
+      axis: f.axis,
+    };
+  }, [transformEditId, doc, resolved.scope]);
+
+  // The transform feature being edited (drives the floating panel's fields).
+  const editingTransform = useMemo(
+    () => doc.features.find((f) => f.id === transformEditId && f.type === "transform") as TransformFeature | undefined,
+    [doc, transformEditId],
+  );
+
+  // Each gizmo drag writes the new numeric values back as the feature's
+  // expressions. A shared coalescing key collapses the whole drag into one
+  // undo step.
+  const handleTransformInput = (d: { tx: number; ty: number; tz: number; angle: number }) => {
+    if (!transformEditId) return;
+    setDoc(
+      setTransform(doc, transformEditId, {
+        tx: fmt(d.tx),
+        ty: fmt(d.ty),
+        tz: fmt(d.tz),
+        angle: fmt(d.angle),
+      }),
+      `transform:${transformEditId}`,
+    );
+  };
+
+  // Close the gizmo, keeping the Transform feature as-is.
+  const finishTransform = () => setTransformEditId(null);
+
+  // Cancel: drop the Transform feature entirely (used by the panel's ✕ / Esc).
+  const cancelTransform = () => {
+    if (transformEditId) {
+      setDoc(removeFeature(doc, transformEditId));
+      setSelection((prev) => prev.filter((s) => featureIdOf(s) !== transformEditId));
+    }
+    setTransformEditId(null);
   };
 
   // All visible sketches (so finished sketches stay rendered), each with its frame.
@@ -1025,6 +1147,7 @@ export default function App() {
             onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}
             onEditSketch={editSketch}
             onFinishSketch={finishSketch}
+            onEditTransform={editTransform}
           />
         </aside>
         <main className="viewport">
@@ -1035,6 +1158,9 @@ export default function App() {
             onSelect={handlePick}
             datumVisibility={datumVisibility}
             userPlanes={userPlanes}
+            transformEdit={transformEdit}
+            transformMode={transformMode}
+            onTransformInput={handleTransformInput}
             picking={picking}
             onPick={handlePickRef}
             activeSketch={
@@ -1114,6 +1240,13 @@ export default function App() {
               onClick={openBooleanDialog}
             >
               ⊕ Boolean
+            </button>
+            <button
+              title="Move / rotate the selected body"
+              disabled={!transformTarget || !!editingSketch || picking || !!transformEditId}
+              onClick={openTransform}
+            >
+              ✥ Transform
             </button>
           </div>
           {editingSketch && (
@@ -1316,6 +1449,76 @@ export default function App() {
               <div className="ed-actions">
                 <button className="ed-primary" onClick={createPlane}>Create</button>
                 <button onClick={() => setPlaneDialog(null)}>Cancel</button>
+              </div>
+            </div>
+          )}
+          {editingTransform && (
+            <div className="extrude-dialog" style={{ left: "50%", top: 64, transform: "translateX(-50%)" }}>
+              <div className="ed-title">Transform · {editingTransform.name}</div>
+              <div className="ed-modes">
+                {(["translate", "rotate"] as const).map((m) => (
+                  <button
+                    key={m}
+                    className={transformMode === m ? "active" : ""}
+                    onClick={() => setTransformMode(m)}
+                  >
+                    {m === "translate" ? "Move" : "Rotate"}
+                  </button>
+                ))}
+              </div>
+              {transformMode === "translate" ? (
+                (["tx", "ty", "tz"] as const).map((k) => (
+                  <label className="ed-field" key={k}>
+                    <span>Move {k[1].toUpperCase()}</span>
+                    <input
+                      value={editingTransform[k]}
+                      onChange={(e) =>
+                        setDoc(updateParam(doc, editingTransform.id, k, e.target.value), `param:${editingTransform.id}:${k}`)
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") finishTransform();
+                        else if (e.key === "Escape") cancelTransform();
+                      }}
+                    />
+                  </label>
+                ))
+              ) : (
+                <>
+                  <div className="ed-field">
+                    <span>Axis</span>
+                    <div className="ed-modes" style={{ width: 112 }}>
+                      {(["x", "y", "z"] as const).map((ax) => (
+                        <button
+                          key={ax}
+                          className={editingTransform.axis === ax ? "active" : ""}
+                          onClick={() =>
+                            setDoc(updateParam(doc, editingTransform.id, "axis", ax), `param:${editingTransform.id}:axis`)
+                          }
+                        >
+                          {ax.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="ed-field">
+                    <span>Angle°</span>
+                    <input
+                      value={editingTransform.angle}
+                      onChange={(e) =>
+                        setDoc(updateParam(doc, editingTransform.id, "angle", e.target.value), `param:${editingTransform.id}:angle`)
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") finishTransform();
+                        else if (e.key === "Escape") cancelTransform();
+                      }}
+                    />
+                  </label>
+                </>
+              )}
+              <div className="ed-hint">Drag the gizmo, or type exact values.</div>
+              <div className="ed-actions">
+                <button className="ed-primary" onClick={finishTransform}>Done</button>
+                <button onClick={cancelTransform}>Cancel</button>
               </div>
             </div>
           )}

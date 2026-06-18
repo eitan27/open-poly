@@ -278,6 +278,73 @@ function dressUpNamed(op: "chamfer" | "fillet", target: Body, edgeNames: string[
   return { shape, names };
 }
 
+const AXIS_DIR: Record<"x" | "y" | "z", [number, number, number]> = {
+  x: [1, 0, 0],
+  y: [0, 1, 0],
+  z: [0, 0, 1],
+};
+
+/** Apply a single rigid gp_Trsf to a named shape, propagating face names through
+ *  the transform's ModifiedShape map. A rigid motion preserves topology 1:1 —
+ *  only hashCodes change — so we re-key the name map by each face's image. */
+function applyTrsf(target: NamedShape, trsf: Topo): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const builder = new oc.BRepBuilderAPI_Transform_2(target.shape.wrapped, trsf, true);
+  const shape = cast(builder.ModifiedShape(target.shape.wrapped)) as Shape3D;
+  const names = new Map<number, string>();
+  for (const f of target.shape.faces) {
+    const nm = target.names.get(f.hashCode);
+    if (!nm) continue;
+    names.set(hashOf(builder.ModifiedShape(f.wrapped)), nm);
+  }
+  builder.delete();
+  return { shape, names };
+}
+
+/** Translate + rotate a body in place (rotation about pivot/axis first, then
+ *  translation). Returns a FRESH NamedShape distinct from `target` (the caller
+ *  disposes the original); names pass through unchanged since topology doesn't. */
+function transformNamed(
+  target: Body,
+  t: Extract<ResolvedFeature, { type: "transform" }>,
+): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  let cur: NamedShape = target;
+  let owned = false; // cur.shape is our allocation (not the target's original)
+  const step = (trsf: Topo) => {
+    const next = applyTrsf(cur, trsf);
+    if (owned) cur.shape.delete();
+    cur = next;
+    owned = true;
+    trsf.delete();
+  };
+
+  if (t.angle !== 0) {
+    const [dx, dy, dz] = AXIS_DIR[t.axis];
+    const origin = new oc.gp_Pnt_3(t.pivot[0], t.pivot[1], t.pivot[2]);
+    const dir = new oc.gp_Dir_4(dx, dy, dz);
+    const ax1 = new oc.gp_Ax1_2(origin, dir);
+    const rot = new oc.gp_Trsf_1();
+    rot.SetRotation_1(ax1, (t.angle * Math.PI) / 180);
+    step(rot);
+    ax1.delete();
+    dir.delete();
+    origin.delete();
+  }
+
+  // The translation step ALWAYS runs (even at zero) so the result is a fresh
+  // shape the caller can swap in before deleting the original target.
+  const vec = new oc.gp_Vec_4(t.tx, t.ty, t.tz);
+  const tr = new oc.gp_Trsf_1();
+  tr.SetTranslation_1(vec);
+  step(tr);
+  vec.delete();
+
+  return cur; // owned is always true here (translation step ran)
+}
+
 // Relative epsilon (vs. the larger operand's volume) for "did this boolean
 // actually do anything" — non-overlapping solids that OCCT happily combines
 // into a degenerate result are caught and reported instead.
@@ -402,6 +469,13 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
         }
         bodies.length = 0;
         bodies.push(...remaining, { id: feature.id, ...result });
+      } else if (feature.type === "transform") {
+        // Translate/rotate the target body in place, keeping its id and names.
+        const target = requireBody(bodies, feature.targetId);
+        const res = transformNamed(target, feature);
+        target.shape.delete();
+        target.shape = res.shape;
+        target.names = res.names;
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: String(err) });

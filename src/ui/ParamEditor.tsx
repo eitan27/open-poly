@@ -10,6 +10,7 @@ interface Props {
   onRename: (id: string, name: string) => void;
   onEditSketch: (id: string) => void;
   onFinishSketch: () => void;
+  onEditTransform: (id: string) => void;
 }
 
 export function ParamEditor({
@@ -20,6 +21,7 @@ export function ParamEditor({
   onRename,
   onEditSketch,
   onFinishSketch,
+  onEditTransform,
 }: Props) {
   if (!feature) {
     return (
@@ -127,6 +129,42 @@ export function ParamEditor({
               onChange={(e) => onChangeParam(feature.id, "offset", e.target.value)}
             />
           </label>
+        </div>
+      ) : feature.type === "transform" ? (
+        <div className="sketch-params">
+          {(["tx", "ty", "tz"] as const).map((k) => (
+            <label className="param-field" key={k}>
+              <span className="param-label">Move {k[1].toUpperCase()}</span>
+              <input
+                className="param-input"
+                value={feature[k]}
+                onChange={(e) => onChangeParam(feature.id, k, e.target.value)}
+              />
+            </label>
+          ))}
+          <label className="param-field">
+            <span className="param-label">Axis</span>
+            <select
+              className="param-input"
+              value={feature.axis}
+              onChange={(e) => onChangeParam(feature.id, "axis", e.target.value)}
+            >
+              <option value="x">X</option>
+              <option value="y">Y</option>
+              <option value="z">Z</option>
+            </select>
+          </label>
+          <label className="param-field">
+            <span className="param-label">Angle°</span>
+            <input
+              className="param-input"
+              value={feature.angle}
+              onChange={(e) => onChangeParam(feature.id, "angle", e.target.value)}
+            />
+          </label>
+          <button className="add-btn sketch-btn" onClick={() => onEditTransform(feature.id)}>
+            Edit with gizmo
+          </button>
         </div>
       ) : (
         FEATURE_DEFS[feature.kind].params.map((p) => (

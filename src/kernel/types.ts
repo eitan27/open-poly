@@ -61,7 +61,9 @@ export type ResolvedFeature =
   | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; mode: ExtrudeMode; targetId?: string }
   | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; size: number }
   // A boolean combines existing bodies (by id) from the running set.
-  | { id: string; type: "boolean"; op: BooleanOp; operands: string[] };
+  | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
+  // A rigid transform moves a body (by id) in place — translate + rotate.
+  | { id: string; type: "transform"; targetId: string; tx: number; ty: number; tz: number; angle: number; axis: "x" | "y" | "z"; pivot: [number, number, number] };
 
 export type RegenFeatureResult =
   | { id: string; ok: true; mesh: ShapeMeshPayload }

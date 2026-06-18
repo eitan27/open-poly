@@ -817,6 +817,12 @@
   color: #cfe0ff;
 }
 
+.ed-hint {
+  font-size: 11px;
+  color: #6f7480;
+  line-height: 1.3;
+}
+
 .dim-hint {
   position: absolute;
   left: 50%;

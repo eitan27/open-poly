@@ -54,7 +54,9 @@ export function FeatureTree({
                           ? BOOLEAN_OP_LABELS[feature.op]
                           : feature.type === "plane"
                             ? "Plane"
-                            : FEATURE_DEFS[feature.kind].label}
+                            : feature.type === "transform"
+                              ? "Transform"
+                              : FEATURE_DEFS[feature.kind].label}
                 </span>
                 <span className="row-name">{feature.name}</span>
                 {error && <span className="row-badge" title={error}>!</span>}

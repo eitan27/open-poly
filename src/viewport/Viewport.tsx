@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
@@ -47,6 +48,31 @@ export interface RenderPlane {
   name: string;
   frame: PlaneFrameData;
   color: number;
+}
+
+export type TransformMode = "translate" | "rotate";
+
+/** The live state of the Transform gizmo: which body it sits on, its rotation
+ *  pivot, and the current (resolved, numeric) translate/rotate values. Numbers,
+ *  not expressions — the gizmo is a numeric input device; the dialog owns text. */
+export interface TransformEdit {
+  featureId: string;
+  pivot: [number, number, number];
+  tx: number;
+  ty: number;
+  tz: number;
+  /** Rotation angle in degrees about `axis` (a world axis). */
+  angle: number;
+  axis: "x" | "y" | "z";
+}
+
+/** Numeric values the gizmo emits on each drag (written back as the feature's
+ *  translate/rotate expressions). */
+export interface TransformDelta {
+  tx: number;
+  ty: number;
+  tz: number;
+  angle: number;
 }
 
 /** What is currently selected in the viewport: a whole feature (sketch or body),
@@ -129,6 +155,10 @@ interface SceneState {
   sketchGroup: THREE.Group;
   /** User-created reference planes (translucent quads), rebuilt from the prop. */
   planeGroup: THREE.Group;
+  // The translate/rotate gizmo and the invisible proxy object it drives. The
+  // proxy's position/rotation are read back as the Transform feature's values.
+  transformControls: TransformControls;
+  gizmoProxy: THREE.Object3D;
   previewLine: THREE.Line;
   snapMarker: THREE.Mesh;
   tween: { from: THREE.Vector3; to: THREE.Vector3; up: THREE.Vector3; start: number } | null;
@@ -214,6 +244,9 @@ export function Viewport({
   onSelect,
   datumVisibility,
   userPlanes,
+  transformEdit,
+  transformMode,
+  onTransformInput,
   picking,
   onPick,
   activeSketch,
@@ -235,6 +268,12 @@ export function Viewport({
   datumVisibility: Record<DatumId, boolean>;
   /** User reference planes to render + make pickable (for sketch / plane base). */
   userPlanes: RenderPlane[];
+  /** The active Transform gizmo (null = no gizmo shown). */
+  transformEdit: TransformEdit | null;
+  /** Which gizmo to show while editing a transform. */
+  transformMode: TransformMode;
+  /** Live numeric values emitted as the gizmo is dragged. */
+  onTransformInput: (delta: TransformDelta) => void;
   picking: boolean;
   onPick: (ref: SketchPlaneRef) => void;
   activeSketch: { datumId: SketchPlaneId | null } | null;
@@ -258,6 +297,10 @@ export function Viewport({
   onSelectRef.current = onSelect;
   const userPlanesRef = useRef(userPlanes);
   userPlanesRef.current = userPlanes;
+  const transformEditRef = useRef(transformEdit);
+  transformEditRef.current = transformEdit;
+  const onTransformInputRef = useRef(onTransformInput);
+  onTransformInputRef.current = onTransformInput;
   const hoverSelRef = useRef<Selection | null>(null);
   const applyHighlightsRef = useRef<() => void>(() => {});
 
@@ -367,6 +410,38 @@ export function Viewport({
     const planeGroup = new THREE.Group();
     scene.add(group, sketchGroup, planeGroup);
 
+    // Transform gizmo: an invisible proxy object that the TransformControls move,
+    // whose position/rotation are read back as the active Transform feature's
+    // translate/rotate values. Hidden until a transform is being edited.
+    const gizmoProxy = new THREE.Object3D();
+    scene.add(gizmoProxy);
+    const transformControls = new TransformControls(camera, renderer.domElement);
+    transformControls.setTranslationSnap(1); // 1 mm grid
+    transformControls.setRotationSnap(THREE.MathUtils.degToRad(5)); // 5° snap
+    transformControls.setSize(0.85);
+    const gizmoHelper = transformControls.getHelper();
+    gizmoHelper.visible = false;
+    scene.add(gizmoHelper);
+    // Suspend orbiting while a gizmo handle is being dragged.
+    transformControls.addEventListener("dragging-changed", (e) => {
+      controls.enabled = !(e as unknown as { value: boolean }).value;
+    });
+    // On each drag, derive translate/rotate from the proxy and emit upward.
+    transformControls.addEventListener("objectChange", () => {
+      if (!transformControls.dragging) return;
+      const te = transformEditRef.current;
+      if (!te) return;
+      const p = gizmoProxy.position;
+      const r = gizmoProxy.rotation;
+      const rad = te.axis === "x" ? r.x : te.axis === "y" ? r.y : r.z;
+      onTransformInputRef.current({
+        tx: p.x - te.pivot[0],
+        ty: p.y - te.pivot[1],
+        tz: p.z - te.pivot[2],
+        angle: THREE.MathUtils.radToDeg(rad),
+      });
+    });
+
     const previewLine = new THREE.Line(
       new THREE.BufferGeometry(),
       new THREE.LineBasicMaterial({ color: 0x7da8ff }),
@@ -385,7 +460,8 @@ export function Viewport({
       renderer, scene, camera, controls, group,
       sketchDimActive: false, selectedMaterial, hoverMaterial, lineMaterial,
       highlightMaterial, highlightOverlay, pointMarkers,
-      datums, sketchGroup, planeGroup, previewLine, snapMarker, tween: null,
+      datums, sketchGroup, planeGroup, transformControls, gizmoProxy,
+      previewLine, snapMarker, tween: null,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
@@ -904,6 +980,9 @@ export function Viewport({
       renderer.domElement.removeEventListener("pointerdown", onDown);
       renderer.domElement.removeEventListener("pointerup", onUp);
       controls.dispose();
+      transformControls.detach();
+      transformControls.dispose();
+      scene.remove(gizmoHelper, gizmoProxy);
       disposeGroup(group);
       disposeSketchGroup(sketchGroup);
       for (const c of planeGroup.children) {
@@ -1042,6 +1121,39 @@ export function Viewport({
       state.planeGroup.add(mesh, outline);
     }
   }, [userPlanes]);
+
+  // Drive the transform gizmo from the active TransformEdit + mode. The gizmo is
+  // attached to a proxy whose pose reflects the feature's current values; while
+  // the user is actively dragging we leave the proxy alone (the values we emit
+  // round-trip back here, so re-setting would only risk a snap-jitter).
+  useEffect(() => {
+    const state = stateRef.current;
+    if (!state) return;
+    const tc = state.transformControls;
+    const proxy = state.gizmoProxy;
+    const helper = tc.getHelper();
+    if (!transformEdit) {
+      tc.detach();
+      tc.enabled = false;
+      helper.visible = false;
+      return;
+    }
+    tc.enabled = true;
+    helper.visible = true;
+    tc.setMode(transformMode);
+    // Translate shows all three arrows; rotate shows only the chosen axis ring,
+    // so the drag maps cleanly onto a single (axis, angle).
+    tc.showX = transformMode === "translate" || transformEdit.axis === "x";
+    tc.showY = transformMode === "translate" || transformEdit.axis === "y";
+    tc.showZ = transformMode === "translate" || transformEdit.axis === "z";
+    if (!tc.dragging) {
+      const { pivot, tx, ty, tz, angle, axis } = transformEdit;
+      proxy.position.set(pivot[0] + tx, pivot[1] + ty, pivot[2] + tz);
+      const a = THREE.MathUtils.degToRad(angle);
+      proxy.rotation.set(axis === "x" ? a : 0, axis === "y" ? a : 0, axis === "z" ? a : 0);
+    }
+    tc.attach(proxy);
+  }, [transformEdit, transformMode]);
 
   // Render every sketch (so finished sketches stay visible); set the active
   // frame/entities used for drawing.

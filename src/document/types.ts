@@ -119,13 +119,36 @@ export interface PlaneFeature extends FeatureBase {
   color: number;
 }
 
+/** A rigid transform (translate + rotate) applied to a body in place. A rigid
+ *  motion doesn't alter topology, so the body keeps its identity AND its
+ *  persistent topological names — downstream features still reference it. The
+ *  body keeps the id of the feature that produced it (like chamfer/fillet).
+ *  Phase 5.5. */
+export interface TransformFeature extends FeatureBase {
+  type: "transform";
+  /** The body being moved (the feature id that produced it). */
+  targetId: string;
+  /** Translation along world X/Y/Z, as expression strings (mm). */
+  tx: string;
+  ty: string;
+  tz: string;
+  /** Rotation angle in degrees (expression), about `axis` through `pivot`. */
+  angle: string;
+  /** World axis the rotation turns about. */
+  axis: "x" | "y" | "z";
+  /** Pivot the rotation turns around (world space), baked at creation from the
+   *  target body's centroid so the gizmo and kernel agree. */
+  pivot: [number, number, number];
+}
+
 export type Feature =
   | PrimitiveFeature
   | SketchFeature
   | ExtrudeFeature
   | DressUpFeature
   | BooleanFeature
-  | PlaneFeature;
+  | PlaneFeature
+  | TransformFeature;
 
 export interface Variable {
   id: string;

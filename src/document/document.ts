@@ -17,6 +17,7 @@ import type {
   SketchConstraint,
   SketchEntity,
   SketchFeature,
+  TransformFeature,
 } from "./types";
 import type { BooleanOp, ResolvedFeature } from "../kernel/types";
 
@@ -167,6 +168,39 @@ export function addPlane(
   return insertFeature(doc, feature);
 }
 
+export function addTransform(
+  doc: Document,
+  targetId: string,
+  pivot: [number, number, number],
+  opts: { tx?: string; ty?: string; tz?: string; angle?: string; axis?: "x" | "y" | "z" } = {},
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "transform").length + 1;
+  const feature: TransformFeature = {
+    id: uid(),
+    type: "transform",
+    name: `Transform ${ordinal}`,
+    suppressed: false,
+    targetId,
+    tx: opts.tx ?? "0",
+    ty: opts.ty ?? "0",
+    tz: opts.tz ?? "0",
+    angle: opts.angle ?? "0",
+    axis: opts.axis ?? "z",
+    pivot,
+  };
+  return insertFeature(doc, feature);
+}
+
+/** Patch a transform feature's fields (the gizmo writes numeric drags back here
+ *  as strings; the dialog edits expressions). No-op for non-transform features. */
+export function setTransform(
+  doc: Document,
+  id: string,
+  patch: Partial<Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis">>,
+): Document {
+  return mapFeature(doc, id, (f) => (f.type === "transform" ? { ...f, ...patch } : f));
+}
+
 /** Resolve every (active) reference-plane feature to a concrete frame, keyed by
  *  plane feature id. Processed in document order so a plane may be based on an
  *  earlier plane. Pure geometry — no kernel needed. */
@@ -314,6 +348,14 @@ export function updateParam(
     }
     if (f.type === "dressup" && name === "size") return { ...f, size: value };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
+    if (f.type === "transform") {
+      if (name === "tx" || name === "ty" || name === "tz" || name === "angle") {
+        return { ...f, [name]: value };
+      }
+      if (name === "axis" && (value === "x" || value === "y" || value === "z")) {
+        return { ...f, axis: value };
+      }
+    }
     return f;
   });
 }
@@ -474,8 +516,20 @@ export function resolveDocument(doc: Document): ResolveResult {
       } else if (f.type === "boolean") {
         if (f.operands.length < 2) throw new Error("A boolean needs at least two operands.");
         features.push({ id: f.id, type: "boolean", op: f.op, operands: f.operands });
+      } else if (f.type === "transform") {
+        features.push({
+          id: f.id,
+          type: "transform",
+          targetId: f.targetId,
+          tx: evaluateExpression(f.tx, scope),
+          ty: evaluateExpression(f.ty, scope),
+          tz: evaluateExpression(f.tz, scope),
+          angle: evaluateExpression(f.angle, scope),
+          axis: f.axis,
+          pivot: f.pivot,
+        });
       }
-      // sketches contribute no body directly
+      // sketches + planes contribute no body directly
     } catch (err) {
       errors[f.id] = String((err as Error).message ?? err);
     }
