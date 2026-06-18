@@ -294,6 +294,16 @@ moves from "build N independent shapes" to **folding operations over a running
 set of bodies**, and selection becomes **body-based** (a body's faces/edges)
 rather than feature-based. This is the largest architectural step left.
 
+> **Status (2026-06-18): essentially complete.** Running-result fold + extrude
+> New/Add/Remove (profiles = sketch regions and body faces) with an anchored
+> dialog; chamfer + fillet on named edges. **Proper topological naming** is in:
+> face names seeded on primitives and propagated through extrude (MakePrism) and
+> booleans (fuse/cut) via OCCT history; edge names derived from adjacent face
+> names — so face/edge references survive rebuilds and parametric edits. Built
+> with raw `oc.*` (BRepPrimAPI_MakePrism, BRepAlgoAPI_Fuse/Cut, BRepFilletAPI).
+> Remaining polish: curved-face naming, body-id identity after add/remove,
+> up-to-face end condition. **Next: Phase 4 (export).**
+
 - **Extrude (headline).** Detailed spec:
   - **Profiles:** accepts **one or more faces** — sketch regions (`sketchFace`)
     and/or planar body faces. (Sketch profiles are the common case.)
