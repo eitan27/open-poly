@@ -199,9 +199,11 @@ rough relative sizing, not calendar promises.
 > topological naming** via OCCT construction history. Phase 4 (**STEP/STL
 > export** in mm). **Boolean** union/subtract/intersect between bodies is done
 > and ported onto the running-fold + naming model. Plus colour/Parts panel,
-> per-part opacity, a viewport modeling toolbar, delete-key, and project renamed
-> **Open Poly**. **Biggest missing piece: persistence** — there is currently no
-> save/load, so a refresh loses the document. See the ROI note in Phase 8.
+> per-part opacity + hide toggle, a viewport modeling toolbar, delete-key, and
+> project renamed **Open Poly**. **IndexedDB autosave + restore is now in** (a
+> refresh keeps your work). Likely next high-value items: a multi-document
+> manager (Documents list + import/export), Transform (move/rotate, Phase 5.5),
+> reference planes (Phase 5), or Revolve (Phase 6).
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -384,11 +386,12 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   filters** (restrict picking to faces / edges / bodies only).
 
 ### Phase 8 — Polish & persistence
-- **IndexedDB save/load + autosave (HIGHEST ROI right now — pull forward).** The
-  `Document` is already plain JSON-serializable data, so this is mostly a
-  storage layer + a documents list + import/export `.json`. Without it a refresh
-  loses everything, which caps the tool at "demo." Cheap, low-risk, and it makes
-  every feature already built actually usable. Document thumbnails later.
+- **IndexedDB autosave + restore — ✅ DONE.** `src/storage/db.ts` wraps
+  IndexedDB (object store keyed by document id, structured-clone of the plain
+  `Document`); the app restores the most-recent doc on load and debounced-
+  autosaves on change (autosave waits for the initial load). A refresh no longer
+  loses work. **TODO:** a multi-document **Documents list** (new/open/rename/
+  delete), **import/export `.json`**, and document **thumbnails**.
 - Measurement tools, section view, appearance, keyboard shortcuts.
 - Performance: incremental regen (only re-run dirty features), tessellation LOD.
 
