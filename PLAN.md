@@ -205,9 +205,11 @@ rough relative sizing, not calendar promises.
 > and ported onto the running-fold + naming model. Plus colour/Parts panel,
 > per-part opacity + hide toggle, a viewport modeling toolbar, delete-key, and
 > project renamed **Open Poly**. **IndexedDB autosave + restore is now in** (a
-> refresh keeps your work). Likely next high-value items: a multi-document
-> manager (Documents list + import/export), Transform (move/rotate, Phase 5.5),
-> reference planes (Phase 5), or Revolve (Phase 6).
+> refresh keeps your work). **Reference planes (offset method) are in** — the
+> ⧉ Plane button creates a parametric offset plane you can sketch on. Likely
+> next high-value items: more plane methods (midplane/angle/through), a
+> multi-document manager (Documents list + import/export), Transform (move/
+> rotate, Phase 5.5), Mirror, or Revolve (Phase 6).
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -340,21 +342,26 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   Parts panel. `Kernel.exportBody` replays the fold and serialises the chosen
   result body. Image snapshot + STEP **import** still TODO.
 
-### Phase 5 — Boolean + Reference planes + Pattern + Mirror *(Boolean ✅ DONE; rest TODO)*
+### Phase 5 — Boolean + Reference planes + Pattern + Mirror *(Boolean + offset planes ✅; rest TODO)*
 - Boolean between separate bodies: union / subtract / intersect — **done**
   (`BooleanFeature`, dialog, volume-verdict validation, name propagation).
-- **Reference / construction planes (create plane).** A datum-plane feature
-  placed via a **dialog** with several methods:
-  - **Offset** — parallel to a selected face or plane, by a distance
-    (expression-backed; signed/flippable).
+- **Reference / construction planes (create plane).** A parametric `PlaneFeature`
+  placed via the **⧉ Plane** toolbar button (right of New Body) → a pick flow
+  (select a plane/face to base it on) → a dialog. Methods:
+  - **Offset** — parallel to a base datum / face / earlier plane, by a (signed,
+    expression-backed) distance. **✅ DONE.** `resolvePlanes()` derives the
+    frame (`frameOf(base)` translated along its normal, in timeline order so a
+    plane can sit on an earlier plane); `SketchPlaneRef` gained a
+    `{kind:"plane"}` variant; planes render as translucent amber quads and are
+    **selectable for sketching** (offset is editable → re-derives on change).
   - **Midplane** — halfway between two references (face↔plane, face↔face, or
-    plane↔plane).
+    plane↔plane). **TODO.**
   - **At an angle** — rotated by an angle about an edge/axis, relative to a
-    face or plane.
+    face or plane. **TODO.**
   - **Through geometry** — 3 points, a line + a point, two parallel edges, etc.
-  The new plane is parametric (re-derived on regen), shows in the datums list,
-  and becomes selectable for **sketching** and as a **mirror** plane. This is
-  what lets sketches live somewhere other than the 3 base planes / a body face.
+    **TODO.**
+  Still TODO for planes overall: show them in the **datums list** (today they're
+  only in the timeline + viewport) and use them as a **mirror** plane.
 - Linear pattern (1- and 2-direction), circular pattern (axis + count + angle).
 - Mirror across a plane/planar face (incl. a reference plane above).
 - Patterns/booleans multiply topology — re-stress naming/selection here.
