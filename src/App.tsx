@@ -179,6 +179,22 @@ export default function App() {
   const featureIdOf = (s: Selection): string =>
     s.kind === "feature" ? s.id : "featureId" in s ? s.featureId : s.sketchId;
   const selectedFeatureIds = useMemo(() => new Set(selection.map(featureIdOf)), [selection]);
+  // Which rendered bodies a whole-feature selection should highlight. A body
+  // keeps the id of the feature that *created* it; in-place modifiers (Add/Remove
+  // extrude, chamfer/fillet) preserve the target's id, so selecting the modifier
+  // feature should highlight that target body (not look for a body with the
+  // modifier's own id, which doesn't exist).
+  const highlightBodyIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of selection) {
+      if (s.kind !== "feature") continue;
+      const f = doc.features.find((x) => x.id === s.id);
+      if (f?.type === "extrude" && (f.mode === "add" || f.mode === "remove") && f.targetId) ids.add(f.targetId);
+      else if (f?.type === "dressup") ids.add(f.targetId);
+      else ids.add(s.id);
+    }
+    return ids;
+  }, [selection, doc]);
   const primaryFeatureId = selection.length ? featureIdOf(selection[selection.length - 1]) : null;
   const selectFeature = (id: string | null) =>
     setSelection(id === null ? [] : [{ kind: "feature", id }]);
@@ -930,6 +946,7 @@ export default function App() {
           <Viewport
             meshes={meshes}
             selection={selection}
+            highlightBodyIds={highlightBodyIds}
             onSelect={handlePick}
             datumVisibility={datumVisibility}
             picking={picking}

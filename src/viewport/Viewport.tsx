@@ -200,6 +200,7 @@ const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, numb
 export function Viewport({
   meshes,
   selection,
+  highlightBodyIds,
   onSelect,
   datumVisibility,
   picking,
@@ -216,6 +217,9 @@ export function Viewport({
 }: {
   meshes: FeatureMesh[];
   selection: Selection[];
+  /** Body ids whose whole body should highlight (modifier features resolve to
+   *  the body they affect — see App). */
+  highlightBodyIds: Set<string>;
   onSelect: (picked: Selection | null) => void;
   datumVisibility: Record<DatumId, boolean>;
   picking: boolean;
@@ -235,6 +239,8 @@ export function Viewport({
 
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  const highlightBodyIdsRef = useRef(highlightBodyIds);
+  highlightBodyIdsRef.current = highlightBodyIds;
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
   const hoverSelRef = useRef<Selection | null>(null);
@@ -385,7 +391,7 @@ export function Viewport({
         const geom = child.geometry;
         const fg = geom.userData.faceGroups as { faceId: number }[] | undefined;
         if (!fg) continue;
-        const wholeSel = sels.some((s) => s.kind === "feature" && s.id === fid);
+        const wholeSel = highlightBodyIdsRef.current.has(fid);
         const wholeHov = hovered?.kind === "feature" && hovered.id === fid;
         let dirty = false;
         geom.groups.forEach((g: { materialIndex?: number }, i: number) => {
@@ -919,10 +925,11 @@ export function Viewport({
     applyHighlightsRef.current();
   }, [meshes]);
 
-  // Re-apply highlighting when the external selection changes.
+  // Re-apply highlighting when the external selection (or resolved body set)
+  // changes.
   useEffect(() => {
     applyHighlightsRef.current();
-  }, [selection]);
+  }, [selection, highlightBodyIds]);
 
   // Datum visibility (user toggle) + sketch mode (dim solids, hide the inactive
   // planes while editing).
