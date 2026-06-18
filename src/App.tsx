@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
+  addDressUp,
   addExtrude,
   addFeature,
   addSketch,
@@ -29,7 +30,7 @@ import type {
   SketchFeature,
   Vec2,
 } from "./document/types";
-import type { MeshedFaces } from "./kernel/types";
+import type { MeshedEdges, MeshedFaces } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import { frameOf, planeRefLabel, uvToWorld, type SketchPlaneRef } from "./document/planes";
@@ -89,6 +90,23 @@ function faceCentroid(
 /** The persistent topological name of a tessellated face (if it has one). */
 function faceNameOf(faces: MeshedFaces, faceId: number): string | undefined {
   return faces.faceGroups?.find((fg) => fg.faceId === faceId)?.name;
+}
+
+/** The persistent topological name of a tessellated edge (if it has one). */
+function edgeNameOf(edges: MeshedEdges, edgeId: number): string | undefined {
+  return edges.edgeGroups?.find((eg) => eg.edgeId === edgeId)?.name;
+}
+
+/** Midpoint of a tessellated edge (world space) — anchors the dress-up dialog. */
+function edgeMidpoint(edges: MeshedEdges, edgeId: number): [number, number, number] | null {
+  const g = edges.edgeGroups?.find((eg) => eg.edgeId === edgeId);
+  if (!g) return null;
+  const { lines } = edges;
+  let sx = 0, sy = 0, sz = 0, n = 0;
+  for (let v = g.start; v < g.start + g.count; v++) {
+    sx += lines[v * 3]; sy += lines[v * 3 + 1]; sz += lines[v * 3 + 2]; n++;
+  }
+  return n ? [sx / n, sy / n, sz / n] : null;
 }
 
 const DATUM_ROWS: { id: DatumId; kind: string; label: string }[] = [
@@ -188,6 +206,9 @@ export default function App() {
   // The extrude dialog (anchored at the profile) while choosing parameters.
   const [extrudeDialog, setExtrudeDialog] = useState<
     { mode: "new" | "add" | "remove"; distance: string; flip: boolean; x: number; y: number } | null
+  >(null);
+  const [dressUpDialog, setDressUpDialog] = useState<
+    { op: "chamfer" | "fillet"; size: string; x: number; y: number } | null
   >(null);
   const startDimensionRef = useRef<() => void>(() => {});
   const dimPendingRef = useRef(dimPending);
@@ -390,6 +411,41 @@ export default function App() {
     setDoc(next);
     selectFeature(id);
     setExtrudeDialog(null);
+  };
+
+  // One or more selected body edges, all on the same body — what a chamfer or
+  // fillet would dress. Resolves each edge to its persistent name.
+  const dressUpTarget = useMemo(() => {
+    const edges = selection.filter((s): s is Extract<Selection, { kind: "edge" }> => s.kind === "edge");
+    if (edges.length === 0 || edges.length !== selection.length) return null;
+    const targetId = edges[0].featureId;
+    if (!edges.every((e) => e.featureId === targetId)) return null;
+    const m = meshes.find((x) => x.id === targetId);
+    if (!m) return null;
+    const names: string[] = [];
+    for (const e of edges) {
+      const nm = edgeNameOf(m.mesh.edges, e.edgeId);
+      if (!nm) return null; // unnamed edge — can't reference it stably
+      names.push(nm);
+    }
+    const anchor = edgeMidpoint(m.mesh.edges, edges[0].edgeId);
+    return { targetId, edges: names, anchor };
+  }, [selection, meshes]);
+
+  const openDressUp = (op: "chamfer" | "fillet") => {
+    if (!dressUpTarget) return;
+    const s = (dressUpTarget.anchor && viewApiRef.current?.worldToScreen(dressUpTarget.anchor)) || { x: 240, y: 160 };
+    setDressUpDialog({ op, size: "2", x: s.x, y: s.y });
+  };
+
+  const createDressUp = () => {
+    if (!dressUpTarget || !dressUpDialog) return;
+    const { doc: next, id } = addDressUp(
+      doc, dressUpDialog.op, dressUpTarget.targetId, dressUpTarget.edges, dressUpDialog.size,
+    );
+    setDoc(next);
+    selectFeature(id);
+    setDressUpDialog(null);
   };
 
   // All visible sketches (so finished sketches stay rendered), each with its frame.
@@ -847,6 +903,37 @@ export default function App() {
               <div className="ed-actions">
                 <button className="ed-primary" onClick={createExtrude}>Create</button>
                 <button onClick={() => setExtrudeDialog(null)}>Cancel</button>
+              </div>
+            </div>
+          )}
+          {dressUpTarget && !editingSketch && !picking && !dressUpDialog && (
+            <div className="context-actions">
+              <button onClick={() => openDressUp("chamfer")} title="Chamfer the selected edge(s)">
+                ◣ Chamfer
+              </button>
+              <button onClick={() => openDressUp("fillet")} title="Fillet (round) the selected edge(s)">
+                ◜ Fillet
+              </button>
+            </div>
+          )}
+          {dressUpDialog && (
+            <div className="extrude-dialog" style={{ left: dressUpDialog.x, top: dressUpDialog.y }}>
+              <div className="ed-title">{dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}</div>
+              <label className="ed-field">
+                <span>{dressUpDialog.op === "chamfer" ? "Distance" : "Radius"}</span>
+                <input
+                  autoFocus
+                  value={dressUpDialog.size}
+                  onChange={(e) => setDressUpDialog((d) => (d ? { ...d, size: e.target.value } : d))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") createDressUp();
+                    else if (e.key === "Escape") setDressUpDialog(null);
+                  }}
+                />
+              </label>
+              <div className="ed-actions">
+                <button className="ed-primary" onClick={createDressUp}>Create</button>
+                <button onClick={() => setDressUpDialog(null)}>Cancel</button>
               </div>
             </div>
           )}

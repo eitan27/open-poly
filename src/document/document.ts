@@ -6,6 +6,7 @@ import { frameOf, type SketchPlaneRef } from "./planes";
 import { detectSketchRegions } from "./regions";
 import type {
   Document,
+  DressUpFeature,
   ExtrudeFeature,
   ExtrudeProfile,
   Feature,
@@ -85,6 +86,28 @@ export function addExtrude(
     distance: opts.distance ?? "10",
     flip: opts.flip ?? false,
     mode: opts.mode ?? "new",
+  };
+  return insertFeature(doc, feature);
+}
+
+export function addDressUp(
+  doc: Document,
+  op: "chamfer" | "fillet",
+  targetId: string,
+  edges: string[],
+  size = "2",
+): { doc: Document; id: string } {
+  const label = op === "chamfer" ? "Chamfer" : "Fillet";
+  const ordinal = doc.features.filter((f) => f.type === "dressup" && f.op === op).length + 1;
+  const feature: DressUpFeature = {
+    id: uid(),
+    type: "dressup",
+    op,
+    name: `${label} ${ordinal}`,
+    suppressed: false,
+    targetId,
+    edges,
+    size,
   };
   return insertFeature(doc, feature);
 }
@@ -206,6 +229,7 @@ export function updateParam(
         return { ...f, mode: value };
       }
     }
+    if (f.type === "dressup" && name === "size") return { ...f, size: value };
     return f;
   });
 }
@@ -330,6 +354,15 @@ export function resolveDocument(doc: Document): ResolveResult {
           profile = { kind: "bodyFace" as const, sourceId: prof.featureId, faceName: prof.faceName, center: prof.center };
         }
         features.push({ id: f.id, type: "extrude", profile, distance, flip: f.flip, mode: f.mode });
+      } else if (f.type === "dressup") {
+        features.push({
+          id: f.id,
+          type: "dressup",
+          op: f.op,
+          targetId: f.targetId,
+          edges: f.edges,
+          size: evaluateExpression(f.size, scope),
+        });
       }
       // sketches contribute no body directly
     } catch (err) {

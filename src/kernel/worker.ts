@@ -193,8 +193,81 @@ function booleanNamed(op: "fuse" | "cut", base: NamedShape, tool: NamedShape): N
 
 function requireBody(bodies: Body[], id: string): Body {
   const b = bodies.find((x) => x.id === id);
-  if (!b) throw new Error("extrude: source body not found");
+  if (!b) throw new Error("source body not found");
   return b;
+}
+
+/** Edge names are DERIVED from face names: an edge is the intersection of two
+ *  faces, so its name is the sorted pair of their names (e.g. "id/+x∩id/+z").
+ *  Stable wherever both adjacent faces are named. Returns hashCode -> name. */
+function edgeNamesFrom(shape: Shape3D, faceNames: Map<number, string>): Map<number, string> {
+  const adj = new Map<number, string[]>();
+  for (const f of shape.faces) {
+    const fn = faceNames.get(f.hashCode);
+    if (!fn) continue;
+    for (const e of f.edges) {
+      const arr = adj.get(e.hashCode) ?? [];
+      arr.push(fn);
+      adj.set(e.hashCode, arr);
+    }
+  }
+  const names = new Map<number, string>();
+  const used = new Map<string, number>();
+  for (const [h, fns] of adj) {
+    if (fns.length < 2) continue; // need both adjacent faces named
+    const base = [...fns].sort().join("∩");
+    const c = used.get(base) ?? 0;
+    used.set(base, c + 1);
+    names.set(h, c === 0 ? base : `${base}#${c}`);
+  }
+  return names;
+}
+
+/** Chamfer or fillet the named edges of a body, propagating face names through
+ *  the operation's history (modified faces keep their names; the new bevel/round
+ *  faces are named after the feature). Modifies geometry; returns a NamedShape. */
+function dressUpNamed(op: "chamfer" | "fillet", target: Body, edgeNames: string[], size: number, id: string): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const targetEdgeNames = edgeNamesFrom(target.shape, target.names);
+  const builder =
+    op === "fillet"
+      ? new oc.BRepFilletAPI_MakeFillet(target.shape.wrapped, oc.ChFi3d_FilletShape.ChFi3d_Rational)
+      : new oc.BRepFilletAPI_MakeChamfer(target.shape.wrapped);
+
+  const dressed: Topo[] = [];
+  for (const e of target.shape.edges) {
+    const nm = targetEdgeNames.get(e.hashCode);
+    if (nm && edgeNames.includes(nm)) {
+      builder.Add_2(size, e.wrapped);
+      dressed.push(e.wrapped);
+    }
+  }
+  if (dressed.length === 0) throw new Error(`${op}: no matching edges`);
+  const progress = new oc.Message_ProgressRange_1();
+  builder.Build(progress);
+  const shape = cast(builder.Shape()) as Shape3D;
+
+  const names = new Map<number, string>();
+  const used = new Map<string, number>();
+  const assign = (h: number, name: string) => {
+    const c = used.get(name) ?? 0;
+    used.set(name, c + 1);
+    names.set(h, c === 0 ? name : `${name}#${c}`);
+  };
+  for (const f of target.shape.faces) {
+    const nm = target.names.get(f.hashCode);
+    if (!nm || builder.IsDeleted(f.wrapped)) continue;
+    const images = drainList(builder.Modified(f.wrapped));
+    if (images.length === 0) names.set(f.hashCode, nm);
+    else for (const img of images) assign(hashOf(img), nm);
+  }
+  // The new bevel/round faces, generated from each dressed edge.
+  for (const e of dressed) {
+    for (const g of drainList(builder.Generated(e))) assign(hashOf(g), `${id}/${op}`);
+  }
+  builder.delete();
+  return { shape, names };
 }
 
 // The running-result model: replay features in order, folding each over a
@@ -258,6 +331,13 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
             built.shape.delete();
           }
         }
+      } else if (feature.type === "dressup") {
+        // Chamfer/fillet modifies the target body in place, keeping its id.
+        const target = requireBody(bodies, feature.targetId);
+        const res = dressUpNamed(feature.op, target, feature.edges, feature.size, feature.id);
+        target.shape.delete();
+        target.shape = res.shape;
+        target.names = res.names;
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: String(err) });
@@ -267,16 +347,17 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
   const meshes: RegenFeatureResult[] = bodies.map((b) => {
     try {
       const faces = b.shape.mesh(MESH_OPTS);
-      // Attach each face's persistent name (matched by build-local hash) so the
-      // app carries stable references across rebuilds.
+      const edges = b.shape.meshEdges(MESH_OPTS);
+      // Attach each face's / edge's persistent name (matched by build-local hash)
+      // so the app carries stable references across rebuilds.
       if (faces.faceGroups) {
         faces.faceGroups = faces.faceGroups.map((g) => ({ ...g, name: b.names.get(g.faceId) }));
       }
-      return {
-        id: b.id,
-        ok: true,
-        mesh: { name: b.id, faces, edges: b.shape.meshEdges(MESH_OPTS) },
-      };
+      if (edges.edgeGroups) {
+        const edgeNames = edgeNamesFrom(b.shape, b.names);
+        edges.edgeGroups = edges.edgeGroups.map((g) => ({ ...g, name: edgeNames.get(g.edgeId) }));
+      }
+      return { id: b.id, ok: true, mesh: { name: b.id, faces, edges } };
     } catch (err) {
       return { id: b.id, ok: false, error: String(err) };
     } finally {

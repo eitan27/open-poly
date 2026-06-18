@@ -67,6 +67,21 @@ export function ParamEditor({
             />
           </label>
         </div>
+      ) : feature.type === "dressup" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Edges</span>
+            <span className="param-static">{feature.edges.length}</span>
+          </div>
+          <label className="param-field">
+            <span className="param-label">{feature.op === "chamfer" ? "Distance" : "Radius"}</span>
+            <input
+              className="param-input"
+              value={feature.size}
+              onChange={(e) => onChangeParam(feature.id, "size", e.target.value)}
+            />
+          </label>
+        </div>
       ) : feature.type === "sketch" ? (
         <div className="sketch-params">
           <div className="param-field">

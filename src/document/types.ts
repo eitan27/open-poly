@@ -70,7 +70,19 @@ export interface ExtrudeFeature extends FeatureBase {
   mode: ExtrudeMode;
 }
 
-export type Feature = PrimitiveFeature | SketchFeature | ExtrudeFeature;
+/** Chamfer/fillet a set of edges of a body (referenced by persistent name). */
+export interface DressUpFeature extends FeatureBase {
+  type: "dressup";
+  op: "chamfer" | "fillet";
+  /** The body whose edges are dressed (the feature id that produced it). */
+  targetId: string;
+  /** Persistent names of the edges to chamfer/fillet. */
+  edges: string[];
+  /** Chamfer distance / fillet radius, as an expression string. */
+  size: string;
+}
+
+export type Feature = PrimitiveFeature | SketchFeature | ExtrudeFeature | DressUpFeature;
 
 export interface Variable {
   id: string;

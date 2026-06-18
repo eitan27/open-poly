@@ -15,8 +15,10 @@ export interface MeshedFaces {
 
 export interface MeshedEdges {
   lines: number[];
-  /** Maps ranges of the line buffer back to a topological edge id (for picking). */
-  edgeGroups?: { start: number; count: number; edgeId: number }[];
+  /** Maps ranges of the line buffer back to a topological edge. `edgeId` is the
+   *  build-local pick id; `name` is the persistent name (derived from the two
+   *  adjacent faces' names) used by feature references like chamfer/fillet. */
+  edgeGroups?: { start: number; count: number; edgeId: number; name?: string }[];
 }
 
 /** A tessellated shape ready to be uploaded to three.js. */
@@ -53,7 +55,8 @@ export type ExtrudeMode = "new" | "add" | "remove";
  *  (expressions are evaluated in the app layer before reaching the kernel). */
 export type ResolvedFeature =
   | { id: string; type: "primitive"; kind: PrimitiveKind; params: Record<string, number> }
-  | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; mode: ExtrudeMode };
+  | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; mode: ExtrudeMode }
+  | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; size: number };
 
 export type RegenFeatureResult =
   | { id: string; ok: true; mesh: ShapeMeshPayload }
