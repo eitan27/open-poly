@@ -220,15 +220,20 @@ rough relative sizing, not calendar promises.
 - Stand-in features: box/cylinder/sphere **primitives** (independent bodies) until
   sketch-based features arrive.
 
-### Phase 1.5 — Running-result regeneration model *(deferred, but needed soon)*
-The Phase 1 regen model builds N **independent** shapes and renders one mesh per
-feature, so feature→feature order is currently cosmetic (only variables couple
-things). Real CAD folds operations over a **running set of bodies**: a feature
-consumes the prior result (extrude ADD/CUT, boolean, fillet modify an existing
-body). This refactor — kernel facade from "build N shapes" to "fold ops over a
-running model", plus body-based (not feature-based) selection — is a prerequisite
-for Phase 3+ and is the point at which the timeline earns its purpose. Folded into
-Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
+### Phase 1.5 — Running-result regeneration model — ✅ DONE (folded into Phase 3)
+The kernel now **folds operations over a running set of bodies** (`worker.ts`
+`buildBodies`): a sketch/face profile becomes a solid, extrude New adds a body,
+extrude Add/Remove fuse/cut in place, boolean combines operands, chamfer/fillet
+modify a body. A body is keyed by the id of the feature that **created** it
+(primitive / New extrude / boolean); **in-place modifiers preserve the target's
+id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
+- **Body identity:** kept pragmatically as "body id = creating-feature id"
+  rather than a separate body-record with its own ids — a full decoupling would
+  actually worsen Parts naming (a union should read "Union 1", not "Box 1"), so
+  it's intentionally not done. The one visible gap (selecting an in-place
+  modifier didn't highlight its body) is fixed by resolving modifier→affected
+  body for the **viewport highlight** only (`highlightBodyIds`); tree/params keep
+  showing the modifier feature.
 
 ### Phase 2 — Sketching (geometry first, then constraints)
 - **2.0 — Navigation & datums prep** *(in progress)*: a clickable/snappable
@@ -370,31 +375,16 @@ rather than feature-based. This is the largest architectural step left.
 - Loft: through 2+ profiles, optional guide rails.
 - **Revolve** around a selected axis/edge (moved here from Phase 3).
 
-### Phase 7 — Multi-body, parts, selection UX
-- Multiple bodies/parts in one document; a Parts list; show/hide, color, isolate.
-- Robust selection (faces, edges, bodies; hover highlight; selection filters).
-
-> **Early start (2026-06-18):** a first cut of the Parts list landed ahead of
-> schedule, while every solid-producing feature is still a primitive — a
-> "Solids" panel below the timeline (`ui/SolidsList.tsx`) lists every body,
-> and each row supports select, rename, delete, and a color/opacity picker
-> (color and opacity are now overlaid onto cached kernel geometry in `App.tsx`
-> rather than baked in at creation, so changing them is instant and doesn't
-> re-run the kernel). Each row also has **STEP**/**STL** export buttons,
-> backed by `Kernel.exportFeature(features, featureId, format)`: the worker
-> rebuilds the requested feature's shape (and whatever boolean operands it
-> transitively depends on) from resolved params on demand (shapes aren't
-> cached after meshing) and returns a `Blob`, which `App.tsx` saves via a
-> throwaway `<a download>` element. All geometry is authored directly in
-> millimetres (replicad/OCCT's own default unit), and STEP export declares
-> `unit: "mm"` explicitly rather than relying on that default. `SolidsList`'s
-> `isSolid` filter now matches `"primitive" | "boolean"`; broaden it again
-> once extrude/revolve land.
->
-> Also landed: pressing **Delete/Backspace** with a viewport selection removes
-> it — a whole body or sketch for `feature`/`face`/`edge`/`vertex` picks, or
-> just that one line/curve for a `sketchEntity` pick (and any constraints that
-> referenced it). `sketchPoint`/`sketchFace` picks aren't deletable yet.
+### Phase 7 — Multi-body, parts, selection UX *(mostly DONE; isolate / hide-toggle / filters TODO)*
+- Multiple bodies/parts in one document — ✅. A **Parts** panel
+  (`ui/SolidsList.tsx`) lists every rendered body (primitive / extrude / boolean)
+  with select, rename, delete, colour, opacity slider, and STEP/STL export.
+  Colour/opacity are overlaid onto cached geometry in `App.tsx` (instant, no
+  regen). **Delete/Backspace** removes a body or sketch (or a single sketch line).
+- Robust selection (faces, edges, bodies; hover highlight) — ✅.
+- **TODO:** show/hide *toggle* per part (today: suppress via the timeline eye, or
+  opacity→0), **isolate** (show only this body), and **selection filters**
+  (restrict picking to faces / edges / bodies only).
 
 ### Phase 8 — Polish & persistence
 - **IndexedDB save/load + autosave (HIGHEST ROI right now — pull forward).** The
