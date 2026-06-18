@@ -96,8 +96,12 @@ distance, angle, radius, tangent, symmetric) need a **geometric constraint solve
 - **Viewport:** three.js (OrbitControls or custom arcball; raycaster for picking).
 - **Kernel:** `opencascade.js` via `replicad`.
 - **Constraints:** `planegcs`.
-- **State:** Zustand (light) for app/document state + command history.
-- **Persistence:** IndexedDB via Dexie (local-first; documents saved in-browser).
+- **State:** plain React `useState` + a small custom `useHistory` hook for the
+  document/undo-redo (no Zustand so far — the document is a single immutable
+  value, which keeps state trivial; revisit if app state grows).
+- **Persistence:** **IndexedDB directly** via a tiny `src/storage/db.ts` wrapper
+  (local-first; documents saved in-browser). No Dexie — the store is one object
+  store of plain JSON `Document` records, simple enough to not need a library.
 - **Concurrency:** Run **OCCT and the solver in a Web Worker.** The WASM kernel
   is heavy and regeneration can take 100s of ms — never block the UI thread.
   The main thread holds the document model + UI; the worker holds the kernel and
@@ -390,15 +394,22 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   IndexedDB (object store keyed by document id, structured-clone of the plain
   `Document`); the app restores the most-recent doc on load and debounced-
   autosaves on change (autosave waits for the initial load). A refresh no longer
-  loses work. **TODO:** a multi-document **Documents list** (new/open/rename/
-  delete), **import/export `.json`**, and document **thumbnails**.
+  loses work.
+- **Multi-document manager (TODO — builds directly on `db.ts`).** A **Documents
+  list / file menu**: new, open, rename, duplicate, and delete documents (the
+  store is already keyed by id and `listDocs()` exists). Track the active
+  document id (e.g. in localStorage) instead of "most recent." Add **import /
+  export as `.json`** for portability/sharing, and per-document **thumbnails**
+  (render a snapshot Blob into the record). This is the next persistence step
+  that turns "one autosaved sketchpad" into a real multi-file workspace.
 - Measurement tools, section view, appearance, keyboard shortcuts.
 - Performance: incremental regen (only re-run dirty features), tessellation LOD.
 
-> Suggested first deliverable ("v0.1, genuinely usable"): **Phases 0–4** — sketch
-> a constrained profile, extrude/cut it, chamfer an edge, and **export a STEP/STL
-> file**, with variables and a working timeline. That validates every hard layer
-> end to end.
+> First deliverable ("v0.1, genuinely usable") — **✅ reached.** Phases 0–4 plus
+> Boolean: sketch a constrained profile, extrude/cut it, chamfer/fillet an edge,
+> boolean bodies, recolor/hide parts, **export a STEP/STL file**, and it all
+> **autosaves** — with variables and a working timeline. Validates every hard
+> layer end to end.
 
 ---
 
