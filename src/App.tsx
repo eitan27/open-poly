@@ -12,6 +12,7 @@ import {
   genId,
   moveFeature,
   removeFeature,
+  removeSketchEntity,
   removeVariable,
   renameFeature,
   resolveDocument,
@@ -274,6 +275,11 @@ export default function App() {
       }
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if ((e.key === "Delete" || e.key === "Backspace") && selection.length > 0) {
+        e.preventDefault();
+        handleDeleteSelection();
+        return;
+      }
       if (e.key === "Enter" && draft.length > 0) {
         setDraft([]);
         return;
@@ -299,7 +305,7 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [undo, redo, picking, draft, editingSketchId]);
+  }, [undo, redo, picking, draft, editingSketchId, selection, doc]);
 
   // Resolution (variables + params -> numbers) is synchronous and pure; memoize
   // it so the UI can read evaluated values without re-running the kernel.
@@ -688,6 +694,34 @@ export default function App() {
 
   const handleSolidOpacity = (id: string, opacity: number) =>
     setDoc(setFeatureOpacity(doc, id, opacity), `opacity:${id}`);
+
+  // Delete key from the viewport: whole bodies/sketches (feature, face, edge,
+  // vertex picks) are removed entirely; sketchEntity picks remove just that
+  // line/curve. Bare sketchPoint/sketchFace picks have no deletion target.
+  const handleDeleteSelection = () => {
+    const featureIds = new Set<string>();
+    const entityRefs: { sketchId: string; entityId: string }[] = [];
+    for (const s of selection) {
+      if (s.kind === "feature" || s.kind === "face" || s.kind === "edge" || s.kind === "vertex") {
+        featureIds.add(featureIdOf(s));
+      } else if (s.kind === "sketchEntity") {
+        entityRefs.push({ sketchId: s.sketchId, entityId: s.entityId });
+      }
+    }
+    let next = doc;
+    for (const { sketchId, entityId } of entityRefs) {
+      if (featureIds.has(sketchId)) continue; // whole sketch is already going away
+      next = removeSketchEntity(next, sketchId, entityId);
+    }
+    for (const id of featureIds) {
+      next = removeFeature(next, id);
+    }
+    if (next === doc) return;
+    setDoc(next);
+    setSelection([]);
+    if (editingSketchId && featureIds.has(editingSketchId)) setEditingSketchId(null);
+    if (entityRefs.length > 0) setFullyConstrained(false);
+  };
 
   return (
     <div className="app">
