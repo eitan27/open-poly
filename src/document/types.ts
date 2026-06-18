@@ -38,6 +38,8 @@ export interface PrimitiveFeature extends FeatureBase {
   params: Record<string, string>;
   /** Display color (0xRRGGBB), assigned once at creation from the pastel bank. */
   color: number;
+  /** Display opacity, 0 (invisible) – 1 (opaque). User-adjustable in the solids list. */
+  opacity: number;
 }
 
 /** A 2D sketch on a datum plane. Produces no solid yet (extrude is Phase 3). */

@@ -317,6 +317,18 @@ Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
 - **Export:** STL (mesh) and **STEP** (B-rep) per-part or whole document; image
   snapshot. Import STEP later.
 
+> **Early start (2026-06-18):** a first cut of the Parts list landed ahead of
+> schedule, while every solid-producing feature is still a primitive — a
+> "Solids" panel below the timeline (`ui/SolidsList.tsx`) lists every body,
+> and each row supports select, rename, delete, and a color/opacity picker
+> (color and opacity are now overlaid onto cached kernel geometry in `App.tsx`
+> rather than baked in at creation, so changing them is instant and doesn't
+> re-run the kernel). Each row also has disabled **STEP**/**STL** export
+> buttons — wired up to nothing yet; real export needs `Kernel.exportStep`/
+> `exportStl` (per the facade table in §0), which doesn't exist yet. When
+> extrude/boolean land, broaden `SolidsList`'s `isSolid` filter (currently
+> `type === "primitive"`) to match.
+
 ### Phase 8 — Polish & persistence
 - IndexedDB save/load, document thumbnails, autosave.
 - Measurement tools, section view, appearance, keyboard shortcuts.

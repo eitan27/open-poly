@@ -273,6 +273,73 @@
   cursor: default;
 }
 
+/* --- Solids list --- */
+
+.solids-list {
+  margin-top: 2px;
+}
+
+.solid-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.solid-row:hover {
+  background: #20242c;
+}
+
+.solid-row.selected {
+  background: #1e2a44;
+  border-color: #4f8cff;
+}
+
+.solid-row.dim {
+  opacity: 0.45;
+}
+
+.solid-color {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #313643;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.solid-name {
+  flex: 1;
+  min-width: 0;
+  background: #0f1115;
+  border: 1px solid #2a2d35;
+  color: #e6e8ee;
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.solid-name:focus {
+  outline: none;
+  border-color: #4f8cff;
+}
+
+.solid-opacity {
+  flex: none;
+  width: 46px;
+}
+
+.export-btn {
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  padding: 2px 4px;
+}
+
 /* --- Rollback bar --- */
 
 .rollback-gutter {
