@@ -1,5 +1,5 @@
-import { BOOLEAN_OP_LABELS, FEATURE_DEFS, FEATURE_KINDS } from "../document/featureDefs";
-import type { Document, FeatureKind } from "../document/types";
+import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "../document/featureDefs";
+import type { Document } from "../document/types";
 import { EyeIcon } from "./icons";
 
 interface Props {
@@ -7,9 +7,6 @@ interface Props {
   selectedIds: Set<string>;
   errors: Record<string, string>;
   onSelect: (id: string) => void;
-  onAdd: (kind: FeatureKind) => void;
-  onStartSketch: () => void;
-  onAddBoolean: () => void;
   onDelete: (id: string) => void;
   onToggleSuppress: (id: string) => void;
   onSetRollback: (index: number) => void;
@@ -21,9 +18,6 @@ export function FeatureTree({
   selectedIds,
   errors,
   onSelect,
-  onAdd,
-  onStartSketch,
-  onAddBoolean,
   onDelete,
   onToggleSuppress,
   onSetRollback,
@@ -33,20 +27,6 @@ export function FeatureTree({
 
   return (
     <div className="tree">
-      <button className="add-btn sketch-start" onClick={onStartSketch}>
-        + Sketch
-      </button>
-      <div className="tree-add">
-        {FEATURE_KINDS.map((kind) => (
-          <button key={kind} className="add-btn" onClick={() => onAdd(kind)}>
-            + {FEATURE_DEFS[kind].label}
-          </button>
-        ))}
-        <button className="add-btn" onClick={onAddBoolean}>
-          + Boolean
-        </button>
-      </div>
-
       <ol className="tree-list">
         <RollbackGutter index={0} active={rollbackIndex === 0} onSet={onSetRollback} />
         {features.map((feature, i) => {
@@ -131,7 +111,7 @@ export function FeatureTree({
       </ol>
 
       {features.length === 0 && (
-        <p className="hint">Add a feature above to start the timeline.</p>
+        <p className="hint">Use the viewport toolbar to add a sketch or solid.</p>
       )}
     </div>
   );

@@ -562,10 +562,81 @@
   background: #7d6a3a;
 }
 
-.sketch-toolbar {
+/* --- Viewport modeling toolbar (top-left) --- */
+.model-toolbar {
   position: absolute;
   left: 12px;
   top: 12px;
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  background: rgba(24, 26, 32, 0.85);
+  border: 1px solid #2a2d35;
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+
+.model-toolbar > button,
+.mt-dropdown > button {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #d6d9e0;
+  background: #232730;
+  border: 1px solid #313643;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.model-toolbar button:hover:not(:disabled) {
+  background: #2c313c;
+  border-color: #4f8cff;
+}
+
+.model-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mt-dropdown {
+  position: relative;
+}
+
+.mt-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  min-width: 110px;
+  background: rgba(28, 30, 38, 0.97);
+  border: 1px solid #313643;
+  border-radius: 7px;
+  z-index: 25;
+  backdrop-filter: blur(4px);
+}
+
+.mt-menu button {
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #d6d9e0;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.mt-menu button:hover {
+  background: #2c313c;
+}
+
+.sketch-toolbar {
+  position: absolute;
+  left: 12px;
+  top: 58px;
   display: flex;
   flex-direction: column;
   gap: 4px;

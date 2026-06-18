@@ -287,6 +287,13 @@ export function Viewport({
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
+    // Middle mouse pans (like right); zoom stays on the scroll wheel. (Left =
+    // rotate.) Middle/right will be differentiated later.
+    controls.mouseButtons = {
+      LEFT: THREE.MOUSE.ROTATE,
+      MIDDLE: THREE.MOUSE.PAN,
+      RIGHT: THREE.MOUSE.PAN,
+    };
     controls.target.set(0, 0, 0);
     controls.update();
 

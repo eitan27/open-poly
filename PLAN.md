@@ -363,6 +363,18 @@ rather than feature-based. This is the largest architectural step left.
 - Mirror across a plane/planar face.
 - Patterns/booleans multiply topology — re-stress naming/selection here.
 
+### Phase 5.5 — Transform (move + rotate bodies)
+- A **Transform** feature that translates and/or rotates a selected body (and
+  later: scale, copy). Move by a vector (X/Y/Z deltas, expression-backed) and
+  rotate by an angle about an axis (a datum axis, a body edge, or a chosen
+  point + direction). Like all features it lives in the timeline and re-applies
+  on regen; the transformed body keeps its identity (and topological names) so
+  downstream features still reference it.
+- UI: a transform gizmo in the viewport (drag-to-move/rotate handles) plus
+  numeric fields in the parameter editor. Snap to grid/angles.
+- Kernel: `gp_Trsf` + `BRepBuilderAPI_Transform`; names pass through unchanged
+  (a rigid transform doesn't alter topology).
+
 ### Phase 6 — Sweep + Loft + Revolve
 - Sweep: profile along a path (twist control later).
 - Loft: through 2+ profiles, optional guide rails.

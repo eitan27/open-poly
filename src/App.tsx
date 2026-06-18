@@ -41,6 +41,7 @@ import { measureSelection } from "./selection/measure";
 import { frameOf, planeRefLabel, uvToWorld, type SketchPlaneRef } from "./document/planes";
 import { evaluateExpression } from "./document/expression";
 import { detectSketchRegions } from "./document/regions";
+import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
 import {
   arcFrom3,
   circleFrom3,
@@ -230,6 +231,8 @@ export default function App() {
   const [dressUpDialog, setDressUpDialog] = useState<
     { op: "chamfer" | "fillet"; size: string; x: number; y: number } | null
   >(null);
+  // The "New" solid dropdown (box/cylinder/sphere) in the viewport toolbar.
+  const [newSolidOpen, setNewSolidOpen] = useState(false);
   const startDimensionRef = useRef<() => void>(() => {});
   const dimPendingRef = useRef(dimPending);
   dimPendingRef.current = dimPending;
@@ -824,7 +827,7 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <span className="logo">open-shape</span>
-        <span className="phase">Phase&nbsp;1 · timeline</span>
+        <span className="phase">Phase&nbsp;3 · modeling</span>
         <div className="topbar-actions">
           <button className="tool-btn" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">
             ↶
@@ -879,9 +882,6 @@ export default function App() {
             selectedIds={selectedFeatureIds}
             errors={errors}
             onSelect={selectFeature}
-            onAdd={handleAdd}
-            onStartSketch={() => setPicking(true)}
-            onAddBoolean={openBooleanDialog}
             onDelete={handleDelete}
             onToggleSuppress={(id) =>
               setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
@@ -937,6 +937,64 @@ export default function App() {
             onSketchClick={handleSketchClick}
             apiRef={viewApiRef}
           />
+          <div className="model-toolbar">
+            <button
+              title="Start a sketch (pick a plane or face)"
+              disabled={!!editingSketch || picking}
+              onClick={() => setPicking(true)}
+            >
+              ✎ Sketch
+            </button>
+            <div className="mt-dropdown">
+              <button
+                title="New solid"
+                disabled={!!editingSketch}
+                onClick={() => setNewSolidOpen((o) => !o)}
+              >
+                ◧ New ▾
+              </button>
+              {newSolidOpen && (
+                <div className="mt-menu">
+                  {FEATURE_KINDS.map((kind) => (
+                    <button
+                      key={kind}
+                      onClick={() => { handleAdd(kind); setNewSolidOpen(false); }}
+                    >
+                      {FEATURE_DEFS[kind].label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              title="Extrude the selected sketch region or face"
+              disabled={!extrudeProfile || !!editingSketch || picking || !!extrudeDialog}
+              onClick={openExtrudeDialog}
+            >
+              ⬆ Extrude
+            </button>
+            <button
+              title="Chamfer the selected edge(s)"
+              disabled={!dressUpTarget || !!editingSketch || picking}
+              onClick={() => openDressUp("chamfer")}
+            >
+              ◣ Chamfer
+            </button>
+            <button
+              title="Fillet (round) the selected edge(s)"
+              disabled={!dressUpTarget || !!editingSketch || picking}
+              onClick={() => openDressUp("fillet")}
+            >
+              ◜ Fillet
+            </button>
+            <button
+              title="Boolean (union / subtract / intersect)"
+              disabled={bodyIds.size < 2 || !!editingSketch || picking}
+              onClick={openBooleanDialog}
+            >
+              ⊕ Boolean
+            </button>
+          </div>
           {editingSketch && (
             <div className="sketch-toolbar">
               {SKETCH_TOOLS.map((t) => (
@@ -1030,13 +1088,6 @@ export default function App() {
               </div>
             )
           )}
-          {extrudeProfile && !editingSketch && !picking && !extrudeDialog && (
-            <div className="context-actions">
-              <button onClick={openExtrudeDialog} title="Extrude the selected sketch region or face into a solid">
-                ⬆ Extrude
-              </button>
-            </div>
-          )}
           {extrudeDialog && (
             <div className="extrude-dialog" style={{ left: extrudeDialog.x, top: extrudeDialog.y }}>
               <div className="ed-title">Extrude</div>
@@ -1095,16 +1146,6 @@ export default function App() {
                 </button>
                 <button onClick={() => setExtrudeDialog(null)}>Cancel</button>
               </div>
-            </div>
-          )}
-          {dressUpTarget && !editingSketch && !picking && !dressUpDialog && (
-            <div className="context-actions">
-              <button onClick={() => openDressUp("chamfer")} title="Chamfer the selected edge(s)">
-                ◣ Chamfer
-              </button>
-              <button onClick={() => openDressUp("fillet")} title="Fillet (round) the selected edge(s)">
-                ◜ Fillet
-              </button>
             </div>
           )}
           {dressUpDialog && (
