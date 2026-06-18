@@ -3,7 +3,7 @@ import type { ExportFormat, RegenFeatureResult, ResolvedFeature } from "./types"
 
 export type KernelRequest =
   | { id: number; op: "regenerate"; features: ResolvedFeature[] }
-  | { id: number; op: "export"; feature: ResolvedFeature; format: ExportFormat };
+  | { id: number; op: "export"; features: ResolvedFeature[]; featureId: string; format: ExportFormat };
 
 export type KernelResponse =
   | { id: number; ok: true; op: "regenerate"; results: RegenFeatureResult[] }

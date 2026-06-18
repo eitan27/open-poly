@@ -1,8 +1,11 @@
-import type { Document, PrimitiveFeature } from "../document/types";
+import type { BooleanFeature, Document, PrimitiveFeature } from "../document/types";
 
 interface Props {
   doc: Document;
   selectedIds: Set<string>;
+  /** Ids consumed as an operand by some active boolean — these are still real
+   *  features (other booleans may reuse them) but shouldn't get their own row. */
+  consumedIds: Set<string>;
   onSelect: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
@@ -14,15 +17,14 @@ interface Props {
 
 const toHex = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
 
-/** Until extrude/revolve (Phase 3) and boolean (Phase 4) land, every
- *  solid-producing feature is a primitive; broaden this filter then. */
-function isSolid(f: Document["features"][number]): f is PrimitiveFeature {
-  return f.type === "primitive";
+function isSolid(f: Document["features"][number]): f is PrimitiveFeature | BooleanFeature {
+  return f.type === "primitive" || f.type === "boolean";
 }
 
 export function SolidsList({
   doc,
   selectedIds,
+  consumedIds,
   onSelect,
   onRename,
   onDelete,
@@ -31,7 +33,7 @@ export function SolidsList({
   onExportStep,
   onExportStl,
 }: Props) {
-  const solids = doc.features.filter(isSolid);
+  const solids = doc.features.filter((f) => isSolid(f) && !consumedIds.has(f.id));
 
   if (solids.length === 0) {
     return <p className="hint">No solids yet — add a primitive above.</p>;

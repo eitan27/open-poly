@@ -1,4 +1,4 @@
-import { FEATURE_DEFS } from "../document/featureDefs";
+import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "../document/featureDefs";
 import { planeRefLabel } from "../document/planes";
 import type { Feature } from "../document/types";
 
@@ -55,6 +55,17 @@ export function ParamEditor({
               Edit sketch
             </button>
           )}
+        </div>
+      ) : feature.type === "boolean" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Operation</span>
+            <span className="param-static">{BOOLEAN_OP_LABELS[feature.op]}</span>
+          </div>
+          <div className="param-field">
+            <span className="param-label">Operands</span>
+            <span className="param-static">{feature.operands.length}</span>
+          </div>
         </div>
       ) : (
         FEATURE_DEFS[feature.kind].params.map((p) => (

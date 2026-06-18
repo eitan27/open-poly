@@ -55,9 +55,9 @@ export class KernelClient implements Kernel {
     });
   }
 
-  exportFeature(feature: ResolvedFeature, format: ExportFormat): Promise<Blob> {
+  exportFeature(features: ResolvedFeature[], featureId: string, format: ExportFormat): Promise<Blob> {
     const id = this.nextId++;
-    const req: KernelRequest = { id, op: "export", feature, format };
+    const req: KernelRequest = { id, op: "export", features, featureId, format };
     return new Promise<Blob>((resolve, reject) => {
       this.pending.set(id, { op: "export", resolve, reject });
       this.worker.postMessage(req);

@@ -1,5 +1,6 @@
 // Static metadata for each feature kind: which parameters it exposes and their
 // defaults. Drives both the parameter editor UI and new-feature creation.
+import type { BooleanOp } from "../kernel/types";
 import type { FeatureKind } from "./types";
 
 export interface ParamDef {
@@ -53,3 +54,11 @@ export const FEATURE_DEFS: Record<FeatureKind, FeatureDef> = {
 };
 
 export const FEATURE_KINDS = Object.keys(FEATURE_DEFS) as FeatureKind[];
+
+export const BOOLEAN_OPS: BooleanOp[] = ["union", "subtract", "intersect"];
+
+export const BOOLEAN_OP_LABELS: Record<BooleanOp, string> = {
+  union: "Union",
+  subtract: "Subtract",
+  intersect: "Intersect",
+};

@@ -22,11 +22,3 @@ export function randomSolidColor(): number {
 /** Fallback for a resolved body whose feature doesn't carry a color (shouldn't
  *  happen for primitives, which always set one at creation). */
 export const DEFAULT_SOLID_COLOR = SOLID_COLORS[0];
-
-// NOTE for Phase 4 (Boolean): a Boolean union's result should inherit the
-// color of the first-selected operand rather than getting a new random color
-// from this bank — only union needs this (cut/intersect keep the target
-// body's identity too, so the same rule applies there). There is no Boolean
-// feature yet to wire this into; whoever implements Phase 4 should set the
-// resulting feature's `color` from the first operand instead of calling
-// randomSolidColor().

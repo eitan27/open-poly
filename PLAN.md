@@ -206,8 +206,10 @@ rough relative sizing, not calendar promises.
 > Selection now supports feature/face/edge/vertex/sketch-entity/sketch-point/
 > sketch-face picking with multi-select, fat-line highlights (selecting a face
 > fattens its boundary edges), planar-graph sketch-region detection, and a
-> measurement info pane. **Phase 3 (extrude/revolve) is next** — it consumes the
-> selected sketch profile and is where the running-result model (1.5) gets built.
+> measurement info pane. Boolean union/subtract/intersect (Phase 4) also landed
+> early, directly on primitives — see Phase 4 below. **Phase 3 (extrude/revolve)
+> is next** — it consumes the selected sketch profile and is where the
+> running-result model (1.5) gets built.
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -293,14 +295,36 @@ Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
 
 ### Phase 4 — Dress-up + Boolean
 - Fillet (edge set, radius) and Chamfer (distance / two-distance / angle).
-- Boolean between bodies: union / subtract / intersect.
+- Boolean between bodies: union / subtract / intersect. — ✅ landed early, see below.
 - First real test of **topological naming** under upstream edits — invest here.
-- **Color rule (not yet implemented — too early, no Boolean feature exists
-  yet):** a Boolean **union**'s result should take the `color` of the
-  first-selected operand, not a new random color from the bank. (Subtract/
-  intersect keep modifying the target body, so they'd naturally keep its color
-  too — same rule, just less ambiguous since there's only one "target.") See
-  the note in `document/colors.ts` next to `randomSolidColor()`.
+
+> **Early start (2026-06-18):** Boolean (union/subtract/intersect) landed ahead
+> of schedule, on top of the still-primitives-only model. A `BooleanFeature`
+> references its operands by id (`document/types.ts`); the **+ Boolean** button
+> in the feature tree (`ui/FeatureTree.tsx`) opens a dialog
+> (`ui/BooleanDialog.tsx`) to pick the op and operands — auto-populated from
+> the current selection if any, otherwise empty. The worker
+> (`kernel/worker.ts`) builds every active feature into a shared id-keyed
+> shape cache in timeline order, so a boolean can consume any earlier
+> primitive *or boolean* as an operand (chaining), and validates each
+> fuse/cut/intersect step by **comparing volume before vs. after** — OCCT
+> happily returns a valid-but-empty `Compound` for non-overlapping solids
+> instead of erroring, so volume is the only reliable signal. A failed step
+> surfaces as a per-feature error badge, same as any other feature error.
+> Operands consumed by a boolean (`consumedFeatureIds()` in `kernel/types.ts`)
+> are hidden from the **Solids** list (only the boolean's result gets a row)
+> but remain valid, reusable operands for *other* booleans, since
+> `fuse`/`cut`/`intersect` never mutate their inputs. The result inherits the
+> **first operand's color** (`document.ts`'s `colorOfFeature()`) rather than a
+> fresh random one — implemented for all three ops, not just union, since the
+> "first operand survives" framing applies equally to subtract/intersect.
+> Export (`Kernel.exportFeature`) now takes the whole resolved feature batch
+> plus a target id, mirroring `regenerate`, since a boolean's export needs its
+> full operand chain rebuilt, not just itself.
+>
+> Broaden `SolidsList`'s row filter to `"boolean"` is done; the still-open
+> follow-up is the same one Phase 3 already calls out below — extrude/revolve
+> results need the same treatment once they exist.
 
 ### Phase 5 — Sweep + Loft
 - Sweep: profile along a path (with/without twist control later).
@@ -324,14 +348,15 @@ Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
 > (color and opacity are now overlaid onto cached kernel geometry in `App.tsx`
 > rather than baked in at creation, so changing them is instant and doesn't
 > re-run the kernel). Each row also has **STEP**/**STL** export buttons,
-> backed by `Kernel.exportFeature(feature, format)`: the worker rebuilds the
-> shape from its resolved params on demand (shapes aren't cached after
-> meshing) and returns a `Blob`, which `App.tsx` saves via a throwaway
-> `<a download>` element. All geometry is authored directly in millimetres
-> (replicad/OCCT's own default unit), and STEP export declares `unit: "mm"`
-> explicitly rather than relying on that default. When extrude/boolean land,
-> broaden `SolidsList`'s `isSolid` filter (currently `type === "primitive"`)
-> to match.
+> backed by `Kernel.exportFeature(features, featureId, format)`: the worker
+> rebuilds the requested feature's shape (and whatever boolean operands it
+> transitively depends on) from resolved params on demand (shapes aren't
+> cached after meshing) and returns a `Blob`, which `App.tsx` saves via a
+> throwaway `<a download>` element. All geometry is authored directly in
+> millimetres (replicad/OCCT's own default unit), and STEP export declares
+> `unit: "mm"` explicitly rather than relying on that default. `SolidsList`'s
+> `isSolid` filter now matches `"primitive" | "boolean"`; broaden it again
+> once extrude/revolve land.
 >
 > Also landed: pressing **Delete/Backspace** with a viewport selection removes
 > it — a whole body or sketch for `feature`/`face`/`edge`/`vertex` picks, or

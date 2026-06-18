@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
+  addBoolean,
   addFeature,
   addSketch,
   addSketchConstraints,
@@ -25,12 +26,16 @@ import {
 } from "./document/document";
 import { DEFAULT_SOLID_COLOR } from "./document/colors";
 import type {
+  BooleanFeature,
   Document,
   FeatureKind,
+  PrimitiveFeature,
   SketchEntity,
   SketchFeature,
   Vec2,
 } from "./document/types";
+import type { BooleanOp } from "./kernel/types";
+import { consumedFeatureIds } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import { frameOf, planeRefLabel, uvToWorld, type SketchPlaneRef } from "./document/planes";
@@ -46,6 +51,7 @@ import {
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
 import { EyeIcon } from "./ui/icons";
+import { BooleanDialog } from "./ui/BooleanDialog";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
@@ -199,6 +205,9 @@ export default function App() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
+  const [booleanDialog, setBooleanDialog] = useState<{ op: BooleanOp; operandIds: string[] } | null>(
+    null,
+  );
 
   // Own the worker's lifecycle here so each mount cycle (incl. StrictMode's
   // mount/unmount/remount) gets a fresh, live kernel rather than a disposed one.
@@ -312,11 +321,31 @@ export default function App() {
     () =>
       rawMeshes.map((m) => {
         const feature = doc.features.find((f) => f.id === m.id);
-        const color = feature?.type === "primitive" ? feature.color : DEFAULT_SOLID_COLOR;
-        const opacity = feature?.type === "primitive" ? feature.opacity : 1;
+        const hasAppearance = feature?.type === "primitive" || feature?.type === "boolean";
+        const color = hasAppearance ? feature.color : DEFAULT_SOLID_COLOR;
+        const opacity = hasAppearance ? feature.opacity : 1;
         return { id: m.id, mesh: m.mesh, color, opacity };
       }),
     [rawMeshes, doc],
+  );
+
+  // Ids consumed as an operand by some active boolean — hidden from the Solids
+  // list (they're not meshed standalone) but still pickable as operands below.
+  const consumedIds = useMemo(() => consumedFeatureIds(resolved.features), [resolved.features]);
+
+  // Solid-producing features available as Boolean operands: active, non-suppressed
+  // primitives and booleans (a feature already consumed by one boolean can still
+  // be reused as a tool body by another).
+  const booleanCandidates = useMemo(
+    () =>
+      doc.features
+        .slice(0, doc.rollbackIndex)
+        .filter(
+          (f): f is PrimitiveFeature | BooleanFeature =>
+            (f.type === "primitive" || f.type === "boolean") && !f.suppressed,
+        )
+        .map((f) => ({ id: f.id, name: f.name })),
+    [doc],
   );
 
   const selected = useMemo(
@@ -556,6 +585,35 @@ export default function App() {
     selectFeature(id);
   };
 
+  // Opens the Boolean dialog, auto-populating operands from whatever solids
+  // are already selected (deduped, in selection order).
+  const openBooleanDialog = () => {
+    const candidateIds = new Set(booleanCandidates.map((c) => c.id));
+    const operandIds = [...new Set(selection.map(featureIdOf))].filter((id) =>
+      candidateIds.has(id),
+    );
+    setBooleanDialog({ op: "union", operandIds });
+  };
+
+  const toggleBooleanOperand = (id: string) => {
+    setBooleanDialog((d) => {
+      if (!d) return d;
+      const has = d.operandIds.includes(id);
+      return {
+        ...d,
+        operandIds: has ? d.operandIds.filter((x) => x !== id) : [...d.operandIds, id],
+      };
+    });
+  };
+
+  const confirmBoolean = () => {
+    if (!booleanDialog || booleanDialog.operandIds.length < 2) return;
+    const { doc: next, id } = addBoolean(doc, booleanDialog.op, booleanDialog.operandIds);
+    setDoc(next);
+    selectFeature(id);
+    setBooleanDialog(null);
+  };
+
   const handleDelete = (id: string) => {
     setDoc(removeFeature(doc, id));
     setSelection((prev) => prev.filter((s) => featureIdOf(s) !== id));
@@ -575,9 +633,9 @@ export default function App() {
       setFatal("Can't export: this solid has no resolved geometry right now.");
       return;
     }
-    const name = doc.features.find((f) => f.id === id)?.name ?? feature.kind;
+    const name = doc.features.find((f) => f.id === id)?.name ?? "solid";
     kernel
-      .exportFeature(feature, format)
+      .exportFeature(resolved.features, id, format)
       .then((blob) => downloadBlob(blob, `${safeFilename(name)}.${format}`))
       .catch((err) => setFatal(String(err?.message ?? err)));
   };
@@ -674,6 +732,7 @@ export default function App() {
             onSelect={selectFeature}
             onAdd={handleAdd}
             onStartSketch={() => setPicking(true)}
+            onAddBoolean={openBooleanDialog}
             onDelete={handleDelete}
             onToggleSuppress={(id) =>
               setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
@@ -685,6 +744,7 @@ export default function App() {
           <SolidsList
             doc={doc}
             selectedIds={selectedFeatureIds}
+            consumedIds={consumedIds}
             onSelect={selectFeature}
             onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}
             onDelete={handleDelete}
@@ -834,6 +894,17 @@ export default function App() {
           )}
         </main>
       </div>
+      {booleanDialog && (
+        <BooleanDialog
+          op={booleanDialog.op}
+          operandIds={booleanDialog.operandIds}
+          candidates={booleanCandidates}
+          onOpChange={(op) => setBooleanDialog((d) => (d ? { ...d, op } : d))}
+          onToggleOperand={toggleBooleanOperand}
+          onConfirm={confirmBoolean}
+          onCancel={() => setBooleanDialog(null)}
+        />
+      )}
     </div>
   );
 }

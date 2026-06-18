@@ -1,4 +1,4 @@
-import { FEATURE_DEFS, FEATURE_KINDS } from "../document/featureDefs";
+import { BOOLEAN_OP_LABELS, FEATURE_DEFS, FEATURE_KINDS } from "../document/featureDefs";
 import type { Document, FeatureKind } from "../document/types";
 import { EyeIcon } from "./icons";
 
@@ -9,6 +9,7 @@ interface Props {
   onSelect: (id: string) => void;
   onAdd: (kind: FeatureKind) => void;
   onStartSketch: () => void;
+  onAddBoolean: () => void;
   onDelete: (id: string) => void;
   onToggleSuppress: (id: string) => void;
   onSetRollback: (index: number) => void;
@@ -22,6 +23,7 @@ export function FeatureTree({
   onSelect,
   onAdd,
   onStartSketch,
+  onAddBoolean,
   onDelete,
   onToggleSuppress,
   onSetRollback,
@@ -40,6 +42,9 @@ export function FeatureTree({
             + {FEATURE_DEFS[kind].label}
           </button>
         ))}
+        <button className="add-btn" onClick={onAddBoolean}>
+          + Boolean
+        </button>
       </div>
 
       <ol className="tree-list">
@@ -61,7 +66,9 @@ export function FeatureTree({
                 <span className="row-kind">
                   {feature.type === "sketch"
                     ? "Sketch"
-                    : FEATURE_DEFS[feature.kind].label}
+                    : feature.type === "boolean"
+                      ? BOOLEAN_OP_LABELS[feature.op]
+                      : FEATURE_DEFS[feature.kind].label}
                 </span>
                 <span className="row-name">{feature.name}</span>
                 {error && <span className="row-badge" title={error}>!</span>}
