@@ -8,22 +8,14 @@ a phased roadmap to deliver the requested feature set.
 
 ## 0. The most important decision: the geometry kernel
 
-> **Don't build on OpenSCAD.** It looks similar in spirit (everything is an
-> operation), but it's the wrong foundation for a feature-tree CAD tool.
+The kernel must be a real **B-rep** (boundary representation) engine so that
+faces, edges, and vertices are first-class, selectable topology — the whole UX
+is "click this face, fillet that edge," which mesh/CSG engines can't give.
 
-**Why not OpenSCAD:**
-- It is **mesh / CSG-based** (CGAL under the hood). Shapes are triangle soup.
-- No **B-rep** (boundary representation) → no real faces/edges/vertices as
-  first-class, selectable topology. A feature-tree modeler's whole UX is "click this face,
-  fillet that edge." That requires B-rep.
-- Fillet/chamfer on meshes is fragile; revolve/sweep/loft are not native.
-- No **STEP/IGES** export (only mesh formats like STL).
-- It's a scripting language, not a kernel you can drive from a feature tree.
-
-**What to use instead — OpenCascade (OCCT):** the de-facto open-source B-rep
-CAD kernel (it powers FreeCAD, KiCad's 3D viewer, etc.). It is compiled to
-WebAssembly as **`opencascade.js`**, so it runs entirely in the browser. It
-gives you, directly:
+**The kernel — OpenCascade (OCCT):** the de-facto open-source B-rep CAD kernel
+(it powers FreeCAD, KiCad's 3D viewer, etc.). It is compiled to WebAssembly as
+**`opencascade.js`**, so it runs entirely in the browser. It gives you,
+directly:
 
 | Your feature        | OCCT API |
 |---------------------|----------|
@@ -453,8 +445,8 @@ rather than feature-based. This is the largest architectural step left.
 
 - **Engine:** `three.js` (render) + **`opencascade.js`** (B-rep kernel), behind
   **our own `Kernel` facade**; `replicad` is an accelerator/reference, not the
-  core. **Not** OpenSCAD — it's mesh/CSG and can't give you selectable B-rep
-  topology, clean fillets, or STEP export.
+  core. A real B-rep kernel is required for selectable face/edge topology, clean
+  fillets, and STEP export.
 - **Constraints:** `planegcs`.
 - **Architecture:** a document = an ordered **timeline of features**, each a pure
   function of params + references + variables; regeneration replays it.
