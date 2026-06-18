@@ -28,6 +28,8 @@ import {
 export interface FeatureMesh {
   id: string;
   mesh: ShapeMeshPayload;
+  /** Base display color (0xRRGGBB) for this body's faces. */
+  color: number;
 }
 
 export interface RenderSketch {
@@ -102,7 +104,9 @@ interface SceneState {
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   group: THREE.Group;
-  faceMaterial: THREE.MeshStandardMaterial;
+  // Whether sketch-edit mode is dimming solids (applied per-body since each
+  // body now owns its own base-color material instead of sharing one).
+  sketchDimActive: boolean;
   selectedMaterial: THREE.MeshStandardMaterial;
   hoverMaterial: THREE.MeshStandardMaterial;
   lineMaterial: THREE.LineBasicMaterial;
@@ -117,6 +121,13 @@ interface SceneState {
   snapMarker: THREE.Mesh;
   tween: { from: THREE.Vector3; to: THREE.Vector3; up: THREE.Vector3; start: number } | null;
 }
+
+/** Material for a body's faces (base color, hover, or selected highlight). */
+const makeBodyMaterial = (color: number) =>
+  new THREE.MeshStandardMaterial({
+    color, metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide,
+    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+  });
 
 const VIEW_DISTANCE = 220;
 const TWEEN_MS = 300;
@@ -292,14 +303,8 @@ export function Viewport({
 
     const datums = createDatums(scene);
 
-    const makeFaceMaterial = (color: number) =>
-      new THREE.MeshStandardMaterial({
-        color, metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide,
-        polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
-      });
-    const faceMaterial = makeFaceMaterial(0x4f8cff);
-    const selectedMaterial = makeFaceMaterial(0xff9d3c);
-    const hoverMaterial = makeFaceMaterial(0x36d6c3);
+    const selectedMaterial = makeBodyMaterial(0xff9d3c);
+    const hoverMaterial = makeBodyMaterial(0x36d6c3);
     const lineMaterial = new THREE.LineBasicMaterial({ color: 0x0d0f14 });
     // Shared sketch entity highlight materials (per-entity geometry groups flip
     // to these; index 0 is the per-sketch base material set in the render effect).
@@ -347,7 +352,7 @@ export function Viewport({
 
     const state: SceneState = {
       renderer, scene, camera, controls, group,
-      faceMaterial, selectedMaterial, hoverMaterial, lineMaterial,
+      sketchDimActive: false, selectedMaterial, hoverMaterial, lineMaterial,
       highlightMaterial, highlightOverlay, pointMarkers,
       datums, sketchGroup, previewLine, snapMarker, tween: null,
     };
@@ -855,7 +860,6 @@ export function Viewport({
       snapMarker.geometry.dispose();
       pointMarkers.geometry.dispose();
       (pointMarkers.material as THREE.Material).dispose();
-      faceMaterial.dispose();
       selectedMaterial.dispose();
       hoverMaterial.dispose();
       lineMaterial.dispose();
@@ -874,12 +878,16 @@ export function Viewport({
     if (!state) return;
     hoverBodyRef.current = null;
     disposeGroup(state.group);
-    for (const { id, mesh } of meshes) {
+    for (const { id, mesh, color } of meshes) {
       const [geometry] = syncGeometries([{ name: id, faces: mesh.faces, edges: mesh.edges }], []);
-      // Material array: index 0 = base, 1 = hover, 2 = selected. syncFaces sets a
-      // geometry group per face, so per-face highlighting flips group.materialIndex.
+      // Material array: index 0 = this body's own color, 1 = hover, 2 = selected
+      // (shared highlight materials). syncFaces sets a geometry group per face,
+      // so per-face highlighting flips group.materialIndex.
+      const baseMaterial = makeBodyMaterial(color);
+      baseMaterial.transparent = state.sketchDimActive;
+      baseMaterial.opacity = state.sketchDimActive ? 0.16 : 1;
       const faceMesh = new THREE.Mesh(geometry.faces, [
-        state.faceMaterial,
+        baseMaterial,
         state.hoverMaterial,
         state.selectedMaterial,
       ]);
@@ -906,9 +914,14 @@ export function Viewport({
     const state = stateRef.current;
     if (!state) return;
     const active = activeSketch !== null;
-    state.faceMaterial.transparent = active;
-    state.faceMaterial.opacity = active ? 0.16 : 1;
-    state.faceMaterial.needsUpdate = true;
+    state.sketchDimActive = active;
+    for (const child of state.group.children) {
+      if (!(child instanceof THREE.Mesh) || !Array.isArray(child.material)) continue;
+      const base = child.material[0] as THREE.MeshStandardMaterial;
+      base.transparent = active;
+      base.opacity = active ? 0.16 : 1;
+      base.needsUpdate = true;
+    }
     for (const d of state.datums) {
       const userVisible = datumVisibility[d.id] ?? true;
       if (d.kind === "plane") {
@@ -1226,7 +1239,13 @@ function applyDatumAppearance(state: SceneState, hovered: DatumId | null): void 
 
 function disposeGroup(group: THREE.Group): void {
   for (const child of group.children) {
-    if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
+    if (child instanceof THREE.Mesh) {
+      child.geometry.dispose();
+      // material[0] is a per-body base-color material created in the rebuild
+      // effect (see makeBodyMaterial); [1]/[2] are the shared hover/selected
+      // materials owned by the scene and disposed on unmount instead.
+      if (Array.isArray(child.material)) child.material[0]?.dispose();
+    } else if (child instanceof THREE.LineSegments) {
       child.geometry.dispose();
     }
   }

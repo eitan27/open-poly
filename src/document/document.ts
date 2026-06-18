@@ -1,6 +1,7 @@
 // Pure helpers for reading and updating the document. Every mutation returns a
 // new Document (immutable updates) so React state and undo/redo stay simple.
 import { FEATURE_DEFS } from "./featureDefs";
+import { randomSolidColor } from "./colors";
 import { evaluateExpression, type Scope } from "./expression";
 import { frameOf, type SketchPlaneRef } from "./planes";
 import { detectSketchRegions } from "./regions";
@@ -40,6 +41,7 @@ export function makeFeature(kind: FeatureKind, existing: Feature[]): Feature {
     name: `${def.label} ${ordinal}`,
     suppressed: false,
     params,
+    color: randomSolidColor(),
   };
 }
 

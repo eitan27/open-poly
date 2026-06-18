@@ -287,6 +287,12 @@ Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
 > near the end. **Export (STL/STEP) is pulled up to Phase 4** to validate an
 > end-to-end workflow as early as possible. Boolean-between-bodies, Pattern, and
 > Mirror shift back accordingly.
+>
+> **Color rule (from the pastel-colors work):** every solid-producing feature
+> that creates a NEW body (primitive, extrude-New) should set a `color` via
+> `randomSolidColor()` (`document/colors.ts`). Add/Remove and chamfer/fillet
+> modify a body in place and keep its existing color; a future Boolean union's
+> result should take the first operand's color (see the note in `colors.ts`).
 
 ### Phase 3 — First solids: Extrude + Chamfer/Fillet
 This phase builds the **running-result model** (Phase 1.5): the kernel facade

@@ -22,6 +22,7 @@ import {
   updateParam,
   updateVariable,
 } from "./document/document";
+import { DEFAULT_SOLID_COLOR } from "./document/colors";
 import type {
   Document,
   ExtrudeProfile,
@@ -312,8 +313,13 @@ export default function App() {
         const nextMeshes: FeatureMesh[] = [];
         const regenErrors: Record<string, string> = { ...resolved.errors };
         for (const r of results) {
-          if (r.ok) nextMeshes.push({ id: r.id, mesh: r.mesh });
-          else regenErrors[r.id] = r.error;
+          if (r.ok) {
+            const feature = doc.features.find((f) => f.id === r.id);
+            const color = feature?.type === "primitive" ? feature.color : DEFAULT_SOLID_COLOR;
+            nextMeshes.push({ id: r.id, mesh: r.mesh, color });
+          } else {
+            regenErrors[r.id] = r.error;
+          }
         }
         setMeshes(nextMeshes);
         setErrors(regenErrors);
