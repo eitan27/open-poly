@@ -235,21 +235,23 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
   body for the **viewport highlight** only (`highlightBodyIds`); tree/params keep
   showing the modifier feature.
 
-### Phase 2 — Sketching (geometry first, then constraints)
-- **2.0 — Navigation & datums prep** *(in progress)*: a clickable/snappable
-  **origin point**; the three standard datum **planes (Top=XY, Front=XZ,
-  Right=YZ)** rendered faintly and hover/click-selectable (selecting one will
-  later start a sketch); **standard view navigation** (Front/Back/Left/Right/Top/
-  Bottom/Iso/Home) — buttons/dropdown now, a true interactive ViewCube later.
-  Establishes the raycast hover/select infrastructure all sketching needs.
-- **2a:** Pick a base plane / planar face → enter sketch mode (camera normal-to,
-  grid). Draw **line, rectangle, circle, arc, polygon**, point. Snapping
-  (endpoints, midpoints, grid, origin, existing geometry). Trim/extend, delete.
-- **2b:** Dimensions (driven values, expression-backed) + constraints with
-  **`planegcs`**. Show under/fully/over-constrained state with color.
-  Drag-to-solve.
-- **Exit criteria:** a fully-constrained closed profile that updates when a
-  driving variable changes.
+### Phase 2 — Sketching (geometry first, then constraints) — ✅ DONE
+- **2.0 — Navigation & datums prep** — ✅ DONE: clickable/snappable **origin
+  point**; the three datum **planes (Top/Front/Right)** rendered faintly,
+  hover/click-selectable (selecting one starts a sketch); **standard view
+  navigation** (Front/Back/Left/Right/Top/Bottom/Iso). (A true interactive
+  ViewCube is still a later nicety.)
+- **2a:** ✅ mostly done — pick a plane/planar face → sketch mode (camera
+  normal-to); draw **line, rectangle (2-corner + center), circle (center +
+  3-pt), arc (3-pt), regular polygon**; snapping (endpoints/midpoints/origin/
+  coplanar edges); delete. **TODO: trim/extend.**
+- **2b:** ✅ constraints via **`planegcs`** (auto H/V capture, ⛓ Solve, fully-
+  constrained→green) + **interactive length dimension** (press D, accepts
+  number/expr/variable). **TODO (catalogued below):** radius/angle/p2p
+  dimensions, on-canvas dimension labels + edit, and a manual-constraint UI
+  (coincident/tangent/equal/parallel/perp).
+- **Exit criteria** (a fully-constrained closed profile that updates when a
+  driving variable changes): met.
 
 > **2b status (2026-06-18):** the solver (`planegcs`) maps lines +
 > horizontal/vertical/parallel/perpendicular/distance. Auto H/V capture on line
@@ -316,35 +318,27 @@ rather than feature-based. This is the largest architectural step left.
 > booleans (fuse/cut) via OCCT history; edge names derived from adjacent face
 > names — so face/edge references survive rebuilds and parametric edits. Built
 > with raw `oc.*` (BRepPrimAPI_MakePrism, BRepAlgoAPI_Fuse/Cut, BRepFilletAPI).
-> Remaining polish: curved-face naming, body-id identity after add/remove,
-> up-to-face end condition. **Next: Phase 4 (export).**
+> Remaining polish: curved-face naming, up-to-face end condition. (Phase 4
+> export and Phase 5 Boolean are also done — see below.)
 
-- **Extrude (headline).** Detailed spec:
-  - **Profiles:** accepts **one or more faces** — sketch regions (`sketchFace`)
-    and/or planar body faces. (Sketch profiles are the common case.)
-  - **Result mode**, selectable in the dialog:
-    - **New** — create a new body.
-    - **Add** (join/union) — merge into the existing body/bodies the extrusion
-      originates from or intersects.
-    - **Remove** (cut/subtract) — subtract from existing bodies.
-    (Default may auto-suggest Add/Remove when the profile sits on / intersects a
-    body, else New — but always explicitly overridable.)
-  - **Direction:** toggle-able (flip along the profile normal); symmetric/
-    two-sided later.
-  - **End condition**, in the dialog:
-    - **Blind** — a distance value (expression-backed, like other params).
-    - **Up to face** — extrude until a selected face that is **normal to the
-      extrusion direction**.
-    (Up-to-next / through-all can come later.)
-  - **Dialog:** an anchored mini-dialog exposing profiles,
-    result mode, direction toggle, end condition + its value/face. Live ghost
-    preview before commit is the goal.
-- **Chamfer** (distance / two-distance / angle) and **Fillet** (edge set,
-  radius) — edge dress-up on a body. First real exercise of **topological
-  naming** (stable edge/face refs under upstream edits); start pragmatic
-  (OCCT ids + best-effort matching) and note the limits.
-- Exercises the **selection round-trip** end to end: app selection (sketch
-  region / body face / body edge) → kernel inputs → new meshed body set back.
+- **Extrude (headline)** — ✅ DONE (with the noted gaps):
+  - **Profiles:** ✅ sketch regions (`sketchFace`) and planar body faces.
+    *(One profile at a time; multi-profile in one extrude is TODO.)*
+  - **Result mode** (in the dialog): ✅ **New** / **Add** (join) / **Remove**
+    (cut). Add/Remove require choosing an explicit **target body** in the dialog.
+  - **Direction:** ✅ flip toggle. *(Symmetric/two-sided: TODO.)*
+  - **End condition:** ✅ **Blind** (expression-backed distance). *(Up-to-face /
+    up-to-next / through-all: TODO.)*
+  - **Dialog:** ✅ anchored mini-dialog (mode + target + distance + flip).
+    *(Live ghost preview: TODO — deferred; editable features give most of it.)*
+- **Chamfer + Fillet** — ✅ DONE: edge dress-up via `BRepFilletAPI`, edges
+  referenced by **persistent name**. *(Chamfer two-distance/angle variants:
+  TODO; currently single distance / single radius.)*
+- **Topological naming** — ✅ DONE (the real version, via OCCT history; see the
+  status note above). *(Gap: curved faces / cylinder sides aren't named yet →
+  centroid fallback.)*
+- **Selection round-trip** (sketch region / body face / body edge → kernel →
+  meshed body back) — ✅ exercised end to end.
 
 ### Phase 4 — Export (validate end-to-end) — ✅ DONE
 - **Export STL** (mesh) and **STEP** (B-rep, declared in mm) per part, from the
@@ -375,16 +369,18 @@ rather than feature-based. This is the largest architectural step left.
 - Loft: through 2+ profiles, optional guide rails.
 - **Revolve** around a selected axis/edge (moved here from Phase 3).
 
-### Phase 7 — Multi-body, parts, selection UX *(mostly DONE; isolate / hide-toggle / filters TODO)*
+### Phase 7 — Multi-body, parts, selection UX *(mostly DONE; isolate / filters TODO)*
 - Multiple bodies/parts in one document — ✅. A **Parts** panel
   (`ui/SolidsList.tsx`) lists every rendered body (primitive / extrude / boolean)
-  with select, rename, delete, colour, opacity slider, and STEP/STL export.
-  Colour/opacity are overlaid onto cached geometry in `App.tsx` (instant, no
-  regen). **Delete/Backspace** removes a body or sketch (or a single sketch line).
+  with select, rename, delete, colour, opacity slider, a **per-part show/hide
+  eye toggle** (`hidden` flag → body dropped from the rendered meshes), and
+  STEP/STL export. Colour/opacity/hidden are overlaid onto cached geometry in
+  `App.tsx` (instant, no regen). **Delete/Backspace** removes a body or sketch
+  (or a single sketch line). Suppress (timeline) uses a distinct no-entry icon
+  for non-sketch features, separate from hide.
 - Robust selection (faces, edges, bodies; hover highlight) — ✅.
-- **TODO:** show/hide *toggle* per part (today: suppress via the timeline eye, or
-  opacity→0), **isolate** (show only this body), and **selection filters**
-  (restrict picking to faces / edges / bodies only).
+- **TODO:** **isolate** (show only this body, hide the rest) and **selection
+  filters** (restrict picking to faces / edges / bodies only).
 
 ### Phase 8 — Polish & persistence
 - **IndexedDB save/load + autosave (HIGHEST ROI right now — pull forward).** The
