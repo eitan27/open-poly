@@ -4,7 +4,10 @@
 
 import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
-import { setOC, makeBaseBox, makeCylinder, makeSphere, draw, Plane, basicFaceExtrusion } from "replicad";
+import {
+  setOC, makeBaseBox, makeCylinder, makeSphere, draw, Plane,
+  cast, getOC, Vector, HASH_CODE_MAX,
+} from "replicad";
 import type { Shape3D, Face } from "replicad";
 
 import type { KernelRequest, KernelResponse } from "./protocol";
@@ -31,50 +34,83 @@ function ensureOC(): Promise<void> {
 
 const MESH_OPTS = { tolerance: 0.05, angularTolerance: 30 };
 
-// --- Topological naming (N1) ---
-// Persistent, build-independent names for faces. For axis-aligned planar faces
-// (all faces of our primitives) the name is the outward-normal direction, e.g.
-// "+z" — stable across rebuilds AND parameter changes (resize a box, its +z face
-// is still "+z"). Curved / non-axis-aligned faces have no canonical name yet and
-// fall back to centroid matching until history propagation (N2) names them.
-function classifyFaceName(f: Face): string | null {
+// --- Topological naming (N2: OCCT construction history) ---
+// A body carries a name map (face hashCode -> persistent name) built at creation
+// and PROPAGATED through every operation via OCCT history (Generated/Modified/
+// IsDeleted), so a face keeps its identity across rebuilds and edits. hashCodes
+// are only build-local handles; the names are the stable identity.
+type NamedShape = { shape: Shape3D; names: Map<number, string> };
+type Body = NamedShape & { id: string };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Topo = any; // a raw OCCT TopoDS_Shape (opencascade.js binding)
+const hashOf = (t: Topo): number => t.HashCode(HASH_CODE_MAX);
+
+/** Drain a TopTools_ListOfShape into an array (destructive; safe to consume). */
+function drainList(list: Topo): Topo[] {
+  const out: Topo[] = [];
+  while (list.Size() > 0) {
+    out.push(list.First_1());
+    list.RemoveFirst();
+  }
+  return out;
+}
+
+/** Canonical name for an axis-aligned planar face (box faces): its outward
+ *  normal direction, e.g. "+z". Stable across rebuilds and parameter changes. */
+function axisFaceName(f: Face): string | null {
   if (f.geomType !== "PLANE") return null;
   const [x, y, z] = f.normalAt().normalized().toTuple();
   const axes: [string, number][] = [["x", x], ["y", y], ["z", z]];
   const dom = axes.reduce((a, b) => (Math.abs(b[1]) > Math.abs(a[1]) ? b : a));
-  if (Math.abs(dom[1]) < 0.999) return null; // not axis-aligned
+  if (Math.abs(dom[1]) < 0.999) return null;
   return (dom[1] >= 0 ? "+" : "-") + dom[0];
 }
 
-/** hashCode -> persistent name for every nameable face of a shape (this build). */
-function faceNameMap(shape: Shape3D): Map<number, string> {
-  const m = new Map<number, string>();
-  for (const f of shape.faces) {
-    const name = classifyFaceName(f);
-    if (name) m.set(f.hashCode, name);
-  }
-  return m;
-}
-
-/** Build a primitive solid (already translated to its position). */
-function buildPrimitive(feature: Extract<ResolvedFeature, { type: "primitive" }>): Shape3D {
+/** Build a primitive solid and name its (axis-aligned) faces, scoped by id. */
+function buildPrimitive(feature: Extract<ResolvedFeature, { type: "primitive" }>): NamedShape {
   const p = feature.params;
   let shape: Shape3D;
   switch (feature.kind) {
-    case "box":
-      shape = makeBaseBox(p.width, p.depth, p.height);
-      break;
-    case "cylinder":
-      shape = makeCylinder(p.radius, p.height);
-      break;
-    case "sphere":
-      shape = makeSphere(p.radius);
-      break;
-    default:
-      throw new Error(`Unknown feature kind: ${(feature as { kind: string }).kind}`);
+    case "box": shape = makeBaseBox(p.width, p.depth, p.height); break;
+    case "cylinder": shape = makeCylinder(p.radius, p.height); break;
+    case "sphere": shape = makeSphere(p.radius); break;
+    default: throw new Error(`Unknown feature kind: ${(feature as { kind: string }).kind}`);
   }
   // NB: replicad's 3D translate() deletes the original and returns a new shape.
-  return shape.translate(p.x ?? 0, p.y ?? 0, p.z ?? 0) as Shape3D;
+  shape = shape.translate(p.x ?? 0, p.y ?? 0, p.z ?? 0) as Shape3D;
+  const names = new Map<number, string>();
+  for (const f of shape.faces) {
+    const dir = axisFaceName(f);
+    if (dir) names.set(f.hashCode, `${feature.id}/${dir}`);
+  }
+  return { shape, names };
+}
+
+/** Extrude a profile face along `dir` and name the result from MakePrism's
+ *  history: the two caps (start/end) and one side face per profile edge. */
+function prismFromFace(profileFace: Face, dir: Vector, signedDist: number, id: string): NamedShape {
+  const oc = getOC();
+  const vec = dir.normalized().multiply(signedDist);
+  const builder = new oc.BRepPrimAPI_MakePrism_1(profileFace.wrapped, vec.wrapped, false, true);
+  const shape = cast(builder.Shape()) as Shape3D;
+
+  const startHash = hashOf(builder.FirstShape_1());
+  const endHash = hashOf(builder.LastShape_1());
+  const sideByHash = new Map<number, string>();
+  profileFace.edges.forEach((e, i) => {
+    for (const g of drainList(builder.Generated(e.wrapped))) sideByHash.set(hashOf(g), `${id}/side${i}`);
+  });
+
+  const names = new Map<number, string>();
+  for (const f of shape.faces) {
+    const h = f.hashCode;
+    if (h === startHash) names.set(h, `${id}/start`);
+    else if (h === endHash) names.set(h, `${id}/end`);
+    else if (sideByHash.has(h)) names.set(h, sideByHash.get(h)!);
+  }
+  builder.delete();
+  return { shape, names };
 }
 
 /** Extrude a baked sketch outline along its frame normal (signed by `flip`). */
@@ -82,38 +118,34 @@ function extrudeSketchRegion(
   profile: Extract<ResolvedFeature, { type: "extrude" }>["profile"] & { kind: "sketchRegion" },
   flip: boolean,
   distance: number,
-): Shape3D {
+  id: string,
+): NamedShape {
   const { outline, frame } = profile;
   if (outline.length < 3) throw new Error("extrude: profile needs at least 3 points");
   const plane = new Plane(frame.origin, frame.uAxis, frame.normal);
   let pen = draw().movePointerTo(outline[0]);
   for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
-  const sketch = pen.close().sketchOnPlane(plane);
-  return sketch.extrude(flip ? -distance : distance) as Shape3D;
+  const face = (pen.close().sketchOnPlane(plane) as { face(): Face }).face();
+  return prismFromFace(face, new Vector(frame.normal), flip ? -distance : distance, id);
 }
 
 /** Extrude a face of a running body along its normal (signed by `flip`). The
- *  face is re-found by its persistent name when available, else by nearest
- *  centroid (the fallback for faces that don't have a name yet). */
+ *  face is re-found by its persistent name, else by nearest centroid. */
 function extrudeBodyFace(
-  sourceId: string,
+  src: Body,
   faceName: string | undefined,
   center: [number, number, number],
   flip: boolean,
   distance: number,
-  bodies: { id: string; shape: Shape3D }[],
-): Shape3D {
-  const src = bodies.find((b) => b.id === sourceId);
-  if (!src) throw new Error("extrude: source body not found");
-
+  id: string,
+): NamedShape {
   let best: Face | null = null;
   if (faceName) {
     for (const f of src.shape.faces) {
-      if (classifyFaceName(f) === faceName) { best = f; break; }
+      if (src.names.get(f.hashCode) === faceName) { best = f; break; }
     }
   }
   if (!best) {
-    // Fall back to nearest centroid.
     let bestDist = Infinity;
     for (const f of src.shape.faces) {
       const c = f.center.toTuple();
@@ -122,11 +154,48 @@ function extrudeBodyFace(
     }
   }
   if (!best) throw new Error("extrude: source body has no faces");
-  const vec = best.normalAt().normalized().multiply(flip ? -distance : distance);
-  return basicFaceExtrusion(best, vec);
+  return prismFromFace(best, best.normalAt(), flip ? -distance : distance, id);
 }
 
-type Body = { id: string; shape: Shape3D };
+/** Fuse or cut two named shapes, propagating face names through the boolean's
+ *  history: a result face inherits its source face's name (Modified images, or
+ *  the unchanged passthrough); collisions get a #n suffix. */
+function booleanNamed(op: "fuse" | "cut", base: NamedShape, tool: NamedShape): NamedShape {
+  const oc = getOC();
+  const progress = new oc.Message_ProgressRange_1();
+  const builder =
+    op === "fuse"
+      ? new oc.BRepAlgoAPI_Fuse_3(base.shape.wrapped, tool.shape.wrapped, progress)
+      : new oc.BRepAlgoAPI_Cut_3(base.shape.wrapped, tool.shape.wrapped, progress);
+  builder.Build(progress);
+  const shape = cast(builder.Shape()) as Shape3D;
+
+  const names = new Map<number, string>();
+  const used = new Map<string, number>();
+  const assign = (h: number, name: string) => {
+    const c = used.get(name) ?? 0;
+    used.set(name, c + 1);
+    names.set(h, c === 0 ? name : `${name}#${c}`);
+  };
+  for (const input of [base, tool]) {
+    for (const f of input.shape.faces) {
+      const nm = input.names.get(f.hashCode);
+      if (!nm) continue;
+      if (builder.IsDeleted(f.wrapped)) continue;
+      const images = drainList(builder.Modified(f.wrapped));
+      if (images.length === 0) names.set(f.hashCode, nm); // unchanged passthrough
+      else for (const img of images) assign(hashOf(img), nm);
+    }
+  }
+  builder.delete();
+  return { shape, names };
+}
+
+function requireBody(bodies: Body[], id: string): Body {
+  const b = bodies.find((x) => x.id === id);
+  if (!b) throw new Error("extrude: source body not found");
+  return b;
+}
 
 // The running-result model: replay features in order, folding each over a
 // running set of bodies. A sketch/face profile becomes a solid; mode "new" adds
@@ -140,16 +209,19 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
   for (const feature of features) {
     try {
       if (feature.type === "primitive") {
-        bodies.push({ id: feature.id, shape: buildPrimitive(feature) });
+        bodies.push({ id: feature.id, ...buildPrimitive(feature) });
       } else if (feature.type === "extrude") {
         const { profile, flip, distance, mode } = feature;
-        const built =
+        const built: NamedShape =
           profile.kind === "sketchRegion"
-            ? extrudeSketchRegion(profile, flip, distance)
-            : extrudeBodyFace(profile.sourceId, profile.faceName, profile.center, flip, distance, bodies);
+            ? extrudeSketchRegion(profile, flip, distance, feature.id)
+            : extrudeBodyFace(
+                requireBody(bodies, profile.sourceId),
+                profile.faceName, profile.center, flip, distance, feature.id,
+              );
 
         if (mode === "new") {
-          bodies.push({ id: feature.id, shape: built });
+          bodies.push({ id: feature.id, ...built });
         } else {
           // Merge scope: a face profile combines with its source body; a sketch
           // profile combines with every current body (Phase-7 will refine this).
@@ -159,28 +231,31 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
 
           if (targets.length === 0) {
             // Nothing to combine with: add becomes a new body, remove is a no-op.
-            if (mode === "add") bodies.push({ id: feature.id, shape: built });
-            else built.delete();
+            if (mode === "add") bodies.push({ id: feature.id, ...built });
+            else built.shape.delete();
           } else if (mode === "add") {
-            let acc = built;
+            // Fuse the tool into the targets, preserving the first target's id
+            // (and propagating names through the boolean history).
+            let acc: NamedShape = built;
             for (const t of targets) {
-              const next = acc.fuse(t.shape);
-              acc.delete();
+              const next = booleanNamed("fuse", t, acc);
+              acc.shape.delete();
               t.shape.delete();
               acc = next;
             }
             const keepId = targets[0].id;
             const remaining = bodies.filter((b) => !targets.includes(b));
             bodies.length = 0;
-            bodies.push(...remaining, { id: keepId, shape: acc });
+            bodies.push(...remaining, { id: keepId, ...acc });
           } else {
             // remove: cut the tool from each target in place, preserving ids.
             for (const t of targets) {
-              const next = t.shape.cut(built);
+              const next = booleanNamed("cut", t, built);
               t.shape.delete();
-              t.shape = next;
+              t.shape = next.shape;
+              t.names = next.names;
             }
-            built.delete();
+            built.shape.delete();
           }
         }
       }
@@ -192,11 +267,10 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
   const meshes: RegenFeatureResult[] = bodies.map((b) => {
     try {
       const faces = b.shape.mesh(MESH_OPTS);
-      // Attach persistent names to face groups (matched by hash within this
-      // build) so the app can carry stable references across rebuilds.
-      const names = faceNameMap(b.shape);
+      // Attach each face's persistent name (matched by build-local hash) so the
+      // app carries stable references across rebuilds.
       if (faces.faceGroups) {
-        faces.faceGroups = faces.faceGroups.map((g) => ({ ...g, name: names.get(g.faceId) }));
+        faces.faceGroups = faces.faceGroups.map((g) => ({ ...g, name: b.names.get(g.faceId) }));
       }
       return {
         id: b.id,
