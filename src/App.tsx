@@ -43,6 +43,7 @@ import { frameOf, planeRefLabel, uvToWorld, type SketchPlaneRef } from "./docume
 import { evaluateExpression } from "./document/expression";
 import { detectSketchRegions } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
+import { listDocs, saveDoc } from "./storage/db";
 import {
   arcFrom3,
   circleFrom3,
@@ -171,11 +172,18 @@ export default function App() {
   const {
     state: doc,
     set: setDoc,
+    reset: resetDoc,
     undo,
     redo,
     canUndo,
     canRedo,
   } = useHistory<Document>(initialDocument);
+  // Persistence: the IndexedDB record id for the working document, and whether
+  // the initial load has completed (autosave waits for it so the placeholder
+  // doesn't clobber a saved doc).
+  const docIdRef = useRef<string | null>(null);
+  if (docIdRef.current === null) docIdRef.current = genId();
+  const [persistLoaded, setPersistLoaded] = useState(false);
   const [selection, setSelection] = useState<Selection[]>([]);
   const featureIdOf = (s: Selection): string =>
     s.kind === "feature" ? s.id : "featureId" in s ? s.featureId : s.sketchId;
@@ -291,6 +299,41 @@ export default function App() {
       setReady(false);
     };
   }, []);
+
+  // Restore the working document from IndexedDB on first load (most recent), or
+  // keep the seed and adopt its id. Autosave only starts once this completes so
+  // the placeholder can't overwrite a saved document.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const docs = await listDocs();
+        if (cancelled) return;
+        if (docs.length > 0) {
+          docIdRef.current = docs[0].id;
+          resetDoc(docs[0].doc);
+        }
+      } catch (err) {
+        console.warn("could not load saved document:", err);
+      } finally {
+        if (!cancelled) setPersistLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [resetDoc]);
+
+  // Autosave the working document to IndexedDB (debounced) after each change.
+  useEffect(() => {
+    if (!persistLoaded) return;
+    const t = setTimeout(() => {
+      saveDoc({ id: docIdRef.current!, name: "Untitled", doc, updatedAt: Date.now() }).catch((err) =>
+        console.warn("autosave failed:", err),
+      );
+    }, 600);
+    return () => clearTimeout(t);
+  }, [doc, persistLoaded]);
 
   // Undo/redo keyboard shortcuts. Skip while typing so native text-field undo
   // keeps working inside inputs.

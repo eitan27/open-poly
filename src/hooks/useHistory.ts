@@ -53,9 +53,16 @@ export function useHistory<T>(initial: T | (() => T)) {
     });
   }, []);
 
+  // Replace the whole state and clear undo/redo — e.g. loading a saved document
+  // shouldn't leave an undo path back to the placeholder it replaced.
+  const reset = useCallback((value: T) => {
+    setHist({ past: [], present: value, future: [] });
+  }, []);
+
   return {
     state: hist.present,
     set,
+    reset,
     undo,
     redo,
     canUndo: hist.past.length > 0,
