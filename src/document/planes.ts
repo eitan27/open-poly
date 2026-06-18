@@ -56,17 +56,38 @@ export interface PlaneFrameData {
   normal: Vec3;
 }
 
-/** Where a sketch lives: a named datum plane, or a planar face of a body. */
+/** Where a sketch (or a new reference plane) is placed: a named datum plane, a
+ *  planar face of a body, or a user-created reference plane (by feature id). */
 export type SketchPlaneRef =
   | { kind: "datum"; id: SketchPlaneId }
-  | { kind: "face"; featureId: string; frame: PlaneFrameData };
+  | { kind: "face"; featureId: string; frame: PlaneFrameData }
+  | { kind: "plane"; planeId: string };
 
-export function frameOf(ref: SketchPlaneRef): PlaneFrameData {
-  return ref.kind === "datum" ? PLANES[ref.id] : ref.frame;
+/** Resolve a placement ref to a concrete frame. Reference-plane refs need the
+ *  resolved-planes map (planeId -> frame), computed from the document. */
+export function frameOf(ref: SketchPlaneRef, planes?: Map<string, PlaneFrameData>): PlaneFrameData {
+  if (ref.kind === "datum") return PLANES[ref.id];
+  if (ref.kind === "face") return ref.frame;
+  const frame = planes?.get(ref.planeId);
+  if (!frame) throw new Error("reference plane not found");
+  return frame;
 }
 
 export function planeRefLabel(ref: SketchPlaneRef): string {
-  return ref.kind === "datum" ? `${PLANES[ref.id].label} plane` : "Face";
+  if (ref.kind === "datum") return `${PLANES[ref.id].label} plane`;
+  return ref.kind === "face" ? "Face" : "Reference plane";
+}
+
+/** Translate a frame along its own normal (an offset/parallel plane). */
+export function offsetFrame(frame: PlaneFrameData, distance: number): PlaneFrameData {
+  return {
+    ...frame,
+    origin: [
+      frame.origin[0] + frame.normal[0] * distance,
+      frame.origin[1] + frame.normal[1] * distance,
+      frame.origin[2] + frame.normal[2] * distance,
+    ],
+  };
 }
 
 /** Map a 2D sketch point on a frame to a 3D world position. */

@@ -41,6 +41,13 @@ export interface RenderSketch {
   regions: SketchRegion[];
 }
 
+/** A user reference plane to render + pick. */
+export interface RenderPlane {
+  id: string;
+  name: string;
+  frame: PlaneFrameData;
+}
+
 /** What is currently selected in the viewport: a whole feature (sketch or body),
  *  or a sub-element of a body — a face / edge (by stable OCCT id) or a vertex
  *  (by position, until a stable vertex id exists). */
@@ -119,6 +126,8 @@ interface SceneState {
   pointMarkers: THREE.Points;
   datums: DatumEntry[];
   sketchGroup: THREE.Group;
+  /** User-created reference planes (translucent quads), rebuilt from the prop. */
+  planeGroup: THREE.Group;
   previewLine: THREE.Line;
   snapMarker: THREE.Mesh;
   tween: { from: THREE.Vector3; to: THREE.Vector3; up: THREE.Vector3; start: number } | null;
@@ -203,6 +212,7 @@ export function Viewport({
   highlightBodyIds,
   onSelect,
   datumVisibility,
+  userPlanes,
   picking,
   onPick,
   activeSketch,
@@ -222,6 +232,8 @@ export function Viewport({
   highlightBodyIds: Set<string>;
   onSelect: (picked: Selection | null) => void;
   datumVisibility: Record<DatumId, boolean>;
+  /** User reference planes to render + make pickable (for sketch / plane base). */
+  userPlanes: RenderPlane[];
   picking: boolean;
   onPick: (ref: SketchPlaneRef) => void;
   activeSketch: { datumId: SketchPlaneId | null } | null;
@@ -243,6 +255,8 @@ export function Viewport({
   highlightBodyIdsRef.current = highlightBodyIds;
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const userPlanesRef = useRef(userPlanes);
+  userPlanesRef.current = userPlanes;
   const hoverSelRef = useRef<Selection | null>(null);
   const applyHighlightsRef = useRef<() => void>(() => {});
 
@@ -349,7 +363,8 @@ export function Viewport({
 
     const group = new THREE.Group();
     const sketchGroup = new THREE.Group();
-    scene.add(group, sketchGroup);
+    const planeGroup = new THREE.Group();
+    scene.add(group, sketchGroup, planeGroup);
 
     const previewLine = new THREE.Line(
       new THREE.BufferGeometry(),
@@ -369,7 +384,7 @@ export function Viewport({
       renderer, scene, camera, controls, group,
       sketchDimActive: false, selectedMaterial, hoverMaterial, lineMaterial,
       highlightMaterial, highlightOverlay, pointMarkers,
-      datums, sketchGroup, previewLine, snapMarker, tween: null,
+      datums, sketchGroup, planeGroup, previewLine, snapMarker, tween: null,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
@@ -622,11 +637,14 @@ export function Viewport({
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       const planeObjs = datums.filter((d) => d.kind === "plane").map((d) => d.object);
+      const userPlaneObjs = planeGroup.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
       const bodies = group.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
-      const hit = raycaster.intersectObjects([...planeObjs, ...bodies], false)[0];
+      const hit = raycaster.intersectObjects([...planeObjs, ...userPlaneObjs, ...bodies], false)[0];
       if (!hit) return null;
       const datum = datums.find((d) => d.object === hit.object);
       if (datum) return { kind: "datum" as const, id: datum.id };
+      const planeId = hit.object.userData.planeId as string | undefined;
+      if (planeId) return { kind: "userplane" as const, planeId };
       const mesh = hit.object as THREE.Mesh;
       const normal = hit.face
         ? hit.face.normal.clone().transformDirection(mesh.matrixWorld)
@@ -751,6 +769,8 @@ export function Viewport({
         if (p.kind === "datum") {
           hoverPlaneRef.current = p.id;
           applyDatumAppearance(state, p.id);
+        } else if (p.kind === "userplane") {
+          // cursor already set to pointer; no extra hover material for now
         } else {
           hoverBodyRef.current = { mesh: p.mesh, prev: p.mesh.material };
           p.mesh.material = hoverMaterial;
@@ -810,6 +830,8 @@ export function Viewport({
         if (!p) return;
         if (p.kind === "datum") {
           if (p.id !== "origin") onPickRef.current({ kind: "datum", id: p.id });
+        } else if (p.kind === "userplane") {
+          onPickRef.current({ kind: "plane", planeId: p.planeId });
         } else {
           const featureId = (p.mesh.userData.featureId as string) ?? "";
           const frame = deriveFaceFrame([p.point.x, p.point.y, p.point.z], [p.normal.x, p.normal.y, p.normal.z]);
@@ -871,6 +893,12 @@ export function Viewport({
       controls.dispose();
       disposeGroup(group);
       disposeSketchGroup(sketchGroup);
+      for (const c of planeGroup.children) {
+        if (c instanceof THREE.Mesh || c instanceof THREE.LineSegments) {
+          c.geometry.dispose();
+          (c.material as THREE.Material).dispose();
+        }
+      }
       previewLine.geometry.dispose();
       snapMarker.geometry.dispose();
       pointMarkers.geometry.dispose();
@@ -959,6 +987,48 @@ export function Viewport({
     }
     if (!active) applyDatumAppearance(state, null);
   }, [activeSketch, datumVisibility]);
+
+  // Render user reference planes (translucent amber quads, distinct from the
+  // grey base datums) and rebuild on change. The face mesh carries userData
+  // .planeId so the pick flow can return a plane ref.
+  useEffect(() => {
+    const state = stateRef.current;
+    if (!state) return;
+    for (const c of state.planeGroup.children) {
+      if (c instanceof THREE.Mesh || c instanceof THREE.LineSegments) {
+        c.geometry.dispose();
+        (c.material as THREE.Material).dispose();
+      }
+    }
+    state.planeGroup.clear();
+    const SIZE = 60;
+    for (const rp of userPlanes) {
+      const geo = new THREE.PlaneGeometry(SIZE, SIZE);
+      const quat = new THREE.Quaternion().setFromRotationMatrix(
+        new THREE.Matrix4().makeBasis(
+          new THREE.Vector3(...rp.frame.uAxis),
+          new THREE.Vector3(...rp.frame.vAxis),
+          new THREE.Vector3(...rp.frame.normal),
+        ),
+      );
+      const pos = new THREE.Vector3(...rp.frame.origin);
+      const mesh = new THREE.Mesh(
+        geo,
+        new THREE.MeshBasicMaterial({ color: 0xf2b34a, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false }),
+      );
+      mesh.quaternion.copy(quat);
+      mesh.position.copy(pos);
+      mesh.userData.planeId = rp.id;
+      const outline = new THREE.LineSegments(
+        new THREE.EdgesGeometry(geo),
+        new THREE.LineBasicMaterial({ color: 0xf2b34a, transparent: true, opacity: 0.5 }),
+      );
+      outline.quaternion.copy(quat);
+      outline.position.copy(pos);
+      outline.userData.planeId = rp.id;
+      state.planeGroup.add(mesh, outline);
+    }
+  }, [userPlanes]);
 
   // Render every sketch (so finished sketches stay visible); set the active
   // frame/entities used for drawing.

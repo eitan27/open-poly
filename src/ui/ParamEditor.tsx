@@ -113,6 +113,21 @@ export function ParamEditor({
             <span className="param-static">{feature.operands.length}</span>
           </div>
         </div>
+      ) : feature.type === "plane" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">On</span>
+            <span className="param-static">{planeRefLabel(feature.base)}</span>
+          </div>
+          <label className="param-field">
+            <span className="param-label">Offset</span>
+            <input
+              className="param-input"
+              value={feature.offset}
+              onChange={(e) => onChangeParam(feature.id, "offset", e.target.value)}
+            />
+          </label>
+        </div>
       ) : (
         FEATURE_DEFS[feature.kind].params.map((p) => (
           <label className="param-field" key={p.name}>

@@ -5,6 +5,7 @@ import {
   addDressUp,
   addExtrude,
   addFeature,
+  addPlane,
   addSketch,
   addSketchConstraints,
   addSketchEntities,
@@ -32,6 +33,7 @@ import type {
   Document,
   ExtrudeProfile,
   FeatureKind,
+  PlaneFeature,
   SketchEntity,
   SketchFeature,
   Vec2,
@@ -236,6 +238,10 @@ export default function App() {
     });
   };
   const [picking, setPicking] = useState(false);
+  // What the plane/face pick flow is for: starting a sketch, or the base of a
+  // new reference plane.
+  const [pickPurpose, setPickPurpose] = useState<"sketch" | "plane">("sketch");
+  const [planeDialog, setPlaneDialog] = useState<{ base: SketchPlaneRef; offset: string } | null>(null);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
   const [draft, setDraft] = useState<Vec2[]>([]);
@@ -350,6 +356,7 @@ export default function App() {
       if (e.key === "Escape") {
         if (dimInputRef.current) setDimInput(null);
         else if (dimPendingRef.current) setDimPending(false);
+        else if (planeDialog) setPlaneDialog(null);
         else if (picking) setPicking(false);
         else if (draft.length > 0) setDraft([]); // cancel the in-progress shape
         else if (editingSketchId) finishSketch();
@@ -387,7 +394,7 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [undo, redo, picking, draft, editingSketchId, selection, doc]);
+  }, [undo, redo, picking, planeDialog, draft, editingSketchId, selection, doc]);
 
   // Close the "New Body" dropdown when clicking anywhere outside it.
   useEffect(() => {
@@ -402,6 +409,16 @@ export default function App() {
   // Resolution (variables + params -> numbers) is synchronous and pure; memoize
   // it so the UI can read evaluated values without re-running the kernel.
   const resolved = useMemo(() => resolveDocument(doc), [doc]);
+
+  // User-created reference planes that resolved to a frame — rendered in the
+  // viewport and selectable for sketching / as a base for further planes.
+  const userPlanes = useMemo(
+    () =>
+      doc.features
+        .filter((f): f is PlaneFeature => f.type === "plane" && resolved.planeFrames.has(f.id))
+        .map((f) => ({ id: f.id, name: f.name, frame: resolved.planeFrames.get(f.id)! })),
+    [doc, resolved.planeFrames],
+  );
 
   // Regenerate whenever the resolved document changes — the kernel runs off-thread.
   useEffect(() => {
@@ -529,7 +546,7 @@ export default function App() {
     let u = 0, v = 0;
     for (const pt of region.outline) { u += pt[0]; v += pt[1]; }
     const n = region.outline.length;
-    return uvToWorld(frameOf(sk.plane), u / n, v / n);
+    return uvToWorld(frameOf(sk.plane, resolved.planeFrames), u / n, v / n);
   };
 
   const openExtrudeDialog = () => {
@@ -600,7 +617,7 @@ export default function App() {
         .filter((f): f is SketchFeature => f.type === "sketch" && !f.suppressed)
         .map((f) => ({
           id: f.id,
-          frame: frameOf(f.plane),
+          frame: frameOf(f.plane, resolved.planeFrames),
           entities: f.entities,
           regions: detectSketchRegions(f.entities),
         })),
@@ -615,7 +632,26 @@ export default function App() {
     setEditingSketchId(id);
     setSketchTool("select");
     setFullyConstrained(false);
-    viewApiRef.current?.lookAtFrame(frameOf(ref));
+    viewApiRef.current?.lookAtFrame(frameOf(ref, resolved.planeFrames));
+  };
+
+  // The plane/face pick resolved: either start a sketch on it, or use it as the
+  // base for a new reference plane (open the offset dialog).
+  const handlePickRef = (ref: SketchPlaneRef) => {
+    if (pickPurpose === "plane") {
+      setPicking(false);
+      setPlaneDialog({ base: ref, offset: "20" });
+    } else {
+      startSketchOn(ref);
+    }
+  };
+
+  const createPlane = () => {
+    if (!planeDialog) return;
+    const { doc: next, id } = addPlane(doc, planeDialog.base, planeDialog.offset);
+    setDoc(next);
+    selectFeature(id);
+    setPlaneDialog(null);
   };
 
   const editSketch = (id: string) => {
@@ -625,7 +661,7 @@ export default function App() {
     selectFeature(id);
     setSketchTool("select");
     setFullyConstrained(false);
-    viewApiRef.current?.lookAtFrame(frameOf(f.plane));
+    viewApiRef.current?.lookAtFrame(frameOf(f.plane, resolved.planeFrames));
   };
 
   const finishSketch = () => {
@@ -738,7 +774,7 @@ export default function App() {
   // with its present length.
   const openDimensionFor = (line: Extract<SketchEntity, { type: "line" }>) => {
     if (!editingSketch) return;
-    const frame = frameOf(editingSketch.plane);
+    const frame = frameOf(editingSketch.plane, resolved.planeFrames);
     const world = uvToWorld(frame, (line.a[0] + line.b[0]) / 2, (line.a[1] + line.b[1]) / 2);
     const s = viewApiRef.current?.worldToScreen(world) ?? { x: 240, y: 120 };
     const length = Math.hypot(line.b[0] - line.a[0], line.b[1] - line.a[1]);
@@ -998,8 +1034,9 @@ export default function App() {
             highlightBodyIds={highlightBodyIds}
             onSelect={handlePick}
             datumVisibility={datumVisibility}
+            userPlanes={userPlanes}
             picking={picking}
-            onPick={startSketchOn}
+            onPick={handlePickRef}
             activeSketch={
               editingSketch
                 ? { datumId: editingSketch.plane.kind === "datum" ? editingSketch.plane.id : null }
@@ -1018,7 +1055,7 @@ export default function App() {
             <button
               title="Start a sketch (pick a plane or face)"
               disabled={!!editingSketch || picking}
-              onClick={() => setPicking(true)}
+              onClick={() => { setPickPurpose("sketch"); setPicking(true); }}
             >
               ✎ Sketch
             </button>
@@ -1043,6 +1080,13 @@ export default function App() {
                 </div>
               )}
             </div>
+            <button
+              title="Create a reference plane (pick a plane or face to offset from)"
+              disabled={!!editingSketch || picking}
+              onClick={() => { setPickPurpose("plane"); setPicking(true); }}
+            >
+              ⧉ Plane
+            </button>
             <button
               title="Extrude the selected sketch region or face"
               disabled={!extrudeProfile || !!editingSketch || picking || !!extrudeDialog}
@@ -1160,7 +1204,11 @@ export default function App() {
           ) : (
             picking && (
               <div className="sketch-banner pick">
-                <span>Select a plane or planar face for the sketch</span>
+                <span>
+                  {pickPurpose === "plane"
+                    ? "Select a plane or planar face to offset the new plane from"
+                    : "Select a plane or planar face for the sketch"}
+                </span>
                 <button onClick={() => setPicking(false)}>Cancel (Esc)</button>
               </div>
             )
@@ -1243,6 +1291,31 @@ export default function App() {
               <div className="ed-actions">
                 <button className="ed-primary" onClick={createDressUp}>Create</button>
                 <button onClick={() => setDressUpDialog(null)}>Cancel</button>
+              </div>
+            </div>
+          )}
+          {planeDialog && (
+            <div className="extrude-dialog" style={{ left: "50%", top: 64, transform: "translateX(-50%)" }}>
+              <div className="ed-title">Reference plane</div>
+              <div className="ed-field">
+                <span>On</span>
+                <span className="ed-static">{planeRefLabel(planeDialog.base)}</span>
+              </div>
+              <label className="ed-field">
+                <span>Offset</span>
+                <input
+                  autoFocus
+                  value={planeDialog.offset}
+                  onChange={(e) => setPlaneDialog((d) => (d ? { ...d, offset: e.target.value } : d))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") createPlane();
+                    else if (e.key === "Escape") setPlaneDialog(null);
+                  }}
+                />
+              </label>
+              <div className="ed-actions">
+                <button className="ed-primary" onClick={createPlane}>Create</button>
+                <button onClick={() => setPlaneDialog(null)}>Cancel</button>
               </div>
             </div>
           )}

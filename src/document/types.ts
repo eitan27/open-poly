@@ -107,12 +107,23 @@ export interface DressUpFeature extends FeatureBase {
   size: string;
 }
 
+/** A user-created reference / construction plane. v1: offset (parallel) from a
+ *  base datum / face / earlier plane by a (signed) distance. More placement
+ *  methods (midplane, angle, through-geometry) come later. */
+export interface PlaneFeature extends FeatureBase {
+  type: "plane";
+  base: SketchPlaneRef;
+  /** Offset distance along the base's normal, as an expression string. */
+  offset: string;
+}
+
 export type Feature =
   | PrimitiveFeature
   | SketchFeature
   | ExtrudeFeature
   | DressUpFeature
-  | BooleanFeature;
+  | BooleanFeature
+  | PlaneFeature;
 
 export interface Variable {
   id: string;

@@ -52,7 +52,9 @@ export function FeatureTree({
                         ? feature.op === "chamfer" ? "Chamfer" : "Fillet"
                         : feature.type === "boolean"
                           ? BOOLEAN_OP_LABELS[feature.op]
-                          : FEATURE_DEFS[feature.kind].label}
+                          : feature.type === "plane"
+                            ? "Plane"
+                            : FEATURE_DEFS[feature.kind].label}
                 </span>
                 <span className="row-name">{feature.name}</span>
                 {error && <span className="row-badge" title={error}>!</span>}
@@ -85,7 +87,7 @@ export function FeatureTree({
                   // (others): faded when active, bright when suppressed.
                   style={{
                     opacity:
-                      feature.type === "sketch"
+                      feature.type === "sketch" || feature.type === "plane"
                         ? feature.suppressed ? 0.35 : 1
                         : feature.suppressed ? 1 : 0.35,
                   }}
@@ -94,10 +96,10 @@ export function FeatureTree({
                     onToggleSuppress(feature.id);
                   }}
                 >
-                  {/* Sketches don't produce geometry, so suppress ≈ hide → eye;
-                      everything else removes geometry from the model → a distinct
-                      "disabled" icon. */}
-                  {feature.type === "sketch" ? <EyeIcon /> : <SuppressIcon />}
+                  {/* Sketches/planes produce no solid geometry, so suppress ≈ hide
+                      → eye; everything else removes geometry from the model → a
+                      distinct "disabled" icon. */}
+                  {feature.type === "sketch" || feature.type === "plane" ? <EyeIcon /> : <SuppressIcon />}
                 </button>
                 <button
                   className="row-icon"

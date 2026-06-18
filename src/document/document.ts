@@ -3,7 +3,7 @@
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "./featureDefs";
 import { randomSolidColor } from "./colors";
 import { evaluateExpression, type Scope } from "./expression";
-import { frameOf, type SketchPlaneRef } from "./planes";
+import { frameOf, offsetFrame, type PlaneFrameData, type SketchPlaneRef } from "./planes";
 import { detectSketchRegions } from "./regions";
 import type {
   BooleanFeature,
@@ -13,6 +13,7 @@ import type {
   ExtrudeProfile,
   Feature,
   FeatureKind,
+  PlaneFeature,
   SketchConstraint,
   SketchEntity,
   SketchFeature,
@@ -148,6 +149,40 @@ export function addDressUp(
   return insertFeature(doc, feature);
 }
 
+export function addPlane(
+  doc: Document,
+  base: SketchPlaneRef,
+  offset = "20",
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "plane").length + 1;
+  const feature: PlaneFeature = {
+    id: uid(),
+    type: "plane",
+    name: `Plane ${ordinal}`,
+    suppressed: false,
+    base,
+    offset,
+  };
+  return insertFeature(doc, feature);
+}
+
+/** Resolve every (active) reference-plane feature to a concrete frame, keyed by
+ *  plane feature id. Processed in document order so a plane may be based on an
+ *  earlier plane. Pure geometry — no kernel needed. */
+export function resolvePlanes(doc: Document, scope: Scope): Map<string, PlaneFrameData> {
+  const planes = new Map<string, PlaneFrameData>();
+  for (const f of doc.features) {
+    if (f.type !== "plane" || f.suppressed) continue;
+    try {
+      const dist = evaluateExpression(f.offset, scope);
+      planes.set(f.id, offsetFrame(frameOf(f.base, planes), dist));
+    } catch {
+      // base unresolved (suppressed/missing reference) — skip this plane
+    }
+  }
+  return planes;
+}
+
 function mapSketch(
   doc: Document,
   id: string,
@@ -277,6 +312,7 @@ export function updateParam(
       }
     }
     if (f.type === "dressup" && name === "size") return { ...f, size: value };
+    if (f.type === "plane" && name === "offset") return { ...f, offset: value };
     return f;
   });
 }
@@ -348,6 +384,8 @@ export interface ResolveResult {
   scope: Scope;
   /** variableId -> error message (cycle / unknown reference / bad expression). */
   variableErrors: Record<string, string>;
+  /** Reference-plane frames (planeId -> frame), for rendering + sketch placement. */
+  planeFrames: Map<string, PlaneFrameData>;
 }
 
 /** Evaluate variables in dependency order via fixpoint iteration; whatever can't
@@ -388,6 +426,7 @@ function evaluateVariables(doc: Document): {
 /** Resolve the active (non-suppressed, pre-rollback) features to numeric params. */
 export function resolveDocument(doc: Document): ResolveResult {
   const { scope, errors: variableErrors } = evaluateVariables(doc);
+  const planeFrames = resolvePlanes(doc, scope);
 
   const active = doc.features
     .slice(0, doc.rollbackIndex)
@@ -415,7 +454,7 @@ export function resolveDocument(doc: Document): ResolveResult {
           if (sketch?.type !== "sketch") throw new Error("extrude: profile sketch not found");
           const region = detectSketchRegions(sketch.entities).find((r) => r.id === prof.regionId);
           if (!region) throw new Error("extrude: profile region not found");
-          profile = { kind: "sketchRegion" as const, outline: region.outline, frame: frameOf(sketch.plane) };
+          profile = { kind: "sketchRegion" as const, outline: region.outline, frame: frameOf(sketch.plane, planeFrames) };
         } else {
           // A body face: pass the source + persistent name (+ centroid fallback);
           // the worker re-finds the face against the running body set.
@@ -441,5 +480,5 @@ export function resolveDocument(doc: Document): ResolveResult {
     }
   }
 
-  return { features, errors, scope, variableErrors };
+  return { features, errors, scope, variableErrors, planeFrames };
 }
