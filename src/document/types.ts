@@ -40,6 +40,8 @@ export interface PrimitiveFeature extends FeatureBase {
   color: number;
   /** Display opacity, 0 (invisible) – 1 (opaque). User-adjustable in the solids list. */
   opacity: number;
+  /** Hidden (not rendered/pickable) — a view toggle, distinct from suppress. */
+  hidden?: boolean;
 }
 
 /** A 2D sketch on a datum plane. Produces no solid on its own; it's a profile
@@ -78,6 +80,7 @@ export interface ExtrudeFeature extends FeatureBase {
    *  Ignored when the extrude is add/remove (it modifies an existing body). */
   color: number;
   opacity: number;
+  hidden?: boolean;
 }
 
 /** A union/subtract/intersect of two or more earlier solid bodies, referenced
@@ -89,6 +92,7 @@ export interface BooleanFeature extends FeatureBase {
   /** Inherited from the first operand at creation time — see document/colors.ts. */
   color: number;
   opacity: number;
+  hidden?: boolean;
 }
 
 /** Chamfer/fillet a set of edges of a body (referenced by persistent name). */

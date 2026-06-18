@@ -303,6 +303,13 @@ export function setFeatureOpacity(doc: Document, id: string, opacity: number): D
   );
 }
 
+/** Hide/show a part — a view toggle (skips rendering), distinct from suppress. */
+export function setFeatureHidden(doc: Document, id: string, hidden: boolean): Document {
+  return mapFeature(doc, id, (f) =>
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" ? { ...f, hidden } : f,
+  );
+}
+
 export function setRollbackIndex(doc: Document, index: number): Document {
   return { ...doc, rollbackIndex: Math.max(0, Math.min(index, doc.features.length)) };
 }

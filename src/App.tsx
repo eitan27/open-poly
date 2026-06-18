@@ -18,6 +18,7 @@ import {
   renameFeature,
   resolveDocument,
   setFeatureColor,
+  setFeatureHidden,
   setFeatureOpacity,
   setRollbackIndex,
   setSketchConstraints,
@@ -398,16 +399,17 @@ export default function App() {
   // cached geometry — so changing appearance is instant, not a regen round-trip.
   const meshes = useMemo<FeatureMesh[]>(
     () =>
-      rawMeshes.map((m) => {
+      rawMeshes.flatMap((m) => {
         const feature = doc.features.find((f) => f.id === m.id);
-        // Primitives, "new" extrusions, and booleans own a color/opacity; a body
-        // modified in place (add/remove/dressup) keeps the id — and color — of
-        // its source.
-        const hasColor =
+        // Primitives, "new" extrusions, and booleans own a color/opacity/hidden;
+        // a body modified in place (add/remove/dressup) keeps the id — and those
+        // appearance props — of its source.
+        const owns =
           feature?.type === "primitive" || feature?.type === "extrude" || feature?.type === "boolean";
-        const color = hasColor ? feature.color : DEFAULT_SOLID_COLOR;
-        const opacity = hasColor ? feature.opacity : 1;
-        return { id: m.id, mesh: m.mesh, color, opacity };
+        if (owns && feature.hidden) return []; // hidden part — don't render or pick
+        const color = owns ? feature.color : DEFAULT_SOLID_COLOR;
+        const opacity = owns ? feature.opacity : 1;
+        return [{ id: m.id, mesh: m.mesh, color, opacity }];
       }),
     [rawMeshes, doc],
   );
@@ -804,6 +806,9 @@ export default function App() {
   const handleSolidOpacity = (id: string, opacity: number) =>
     setDoc(setFeatureOpacity(doc, id, opacity), `opacity:${id}`);
 
+  const handleSolidHidden = (id: string, hidden: boolean) =>
+    setDoc(setFeatureHidden(doc, id, hidden));
+
   const exportSolid = (id: string, format: "step" | "stl") => {
     const kernel = kernelRef.current;
     // `id` is a result-body id (a rendered mesh). The worker replays the feature
@@ -926,6 +931,7 @@ export default function App() {
             onDelete={handleDelete}
             onColorChange={handleSolidColor}
             onOpacityChange={handleSolidOpacity}
+            onToggleHidden={handleSolidHidden}
             onExportStep={handleExportStep}
             onExportStl={handleExportStl}
           />

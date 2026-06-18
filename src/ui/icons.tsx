@@ -20,3 +20,23 @@ export function EyeIcon({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
+
+/** A no-entry / disabled circle — used for "suppress" (exclude a feature from
+ *  regen), which is stronger than hide. Faded = active; solid = suppressed. */
+export function SuppressIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.4}
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="8" r="6.2" />
+      <line x1="3.6" y1="3.6" x2="12.4" y2="12.4" />
+    </svg>
+  );
+}

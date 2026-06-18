@@ -1,6 +1,6 @@
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "../document/featureDefs";
 import type { Document } from "../document/types";
-import { EyeIcon } from "./icons";
+import { EyeIcon, SuppressIcon } from "./icons";
 
 interface Props {
   doc: Document;
@@ -80,14 +80,24 @@ export function FeatureTree({
                 </button>
                 <button
                   className="row-icon"
-                  title={feature.suppressed ? "Unsuppress (show)" : "Suppress (hide)"}
-                  style={{ opacity: feature.suppressed ? 0.35 : 1 }}
+                  title={feature.suppressed ? "Unsuppress" : "Suppress (exclude from the model)"}
+                  // Eye (sketch): bright = visible, faded = hidden. Suppress icon
+                  // (others): faded when active, bright when suppressed.
+                  style={{
+                    opacity:
+                      feature.type === "sketch"
+                        ? feature.suppressed ? 0.35 : 1
+                        : feature.suppressed ? 1 : 0.35,
+                  }}
                   onClick={(e) => {
                     e.stopPropagation();
                     onToggleSuppress(feature.id);
                   }}
                 >
-                  <EyeIcon />
+                  {/* Sketches don't produce geometry, so suppress ≈ hide → eye;
+                      everything else removes geometry from the model → a distinct
+                      "disabled" icon. */}
+                  {feature.type === "sketch" ? <EyeIcon /> : <SuppressIcon />}
                 </button>
                 <button
                   className="row-icon"

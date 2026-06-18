@@ -1,4 +1,5 @@
 import type { BooleanFeature, Document, ExtrudeFeature, Feature, PrimitiveFeature } from "../document/types";
+import { EyeIcon } from "./icons";
 
 interface Props {
   doc: Document;
@@ -11,6 +12,7 @@ interface Props {
   onDelete: (id: string) => void;
   onColorChange: (id: string, color: number) => void;
   onOpacityChange: (id: string, opacity: number) => void;
+  onToggleHidden: (id: string, hidden: boolean) => void;
   onExportStep: (id: string) => void;
   onExportStl: (id: string) => void;
 }
@@ -32,6 +34,7 @@ export function SolidsList({
   onDelete,
   onColorChange,
   onOpacityChange,
+  onToggleHidden,
   onExportStep,
   onExportStl,
 }: Props) {
@@ -52,7 +55,7 @@ export function SolidsList({
           className={
             "solid-row" +
             (selectedIds.has(f.id) ? " selected" : "") +
-            (f.suppressed ? " dim" : "")
+            (f.suppressed || f.hidden ? " dim" : "")
           }
           onClick={() => onSelect(f.id)}
         >
@@ -79,6 +82,18 @@ export function SolidsList({
             title={`Opacity ${Math.round(f.opacity * 100)}%`}
             onChange={(e) => onOpacityChange(f.id, Number(e.target.value))}
           />
+          <button
+            className="row-icon"
+            type="button"
+            title={f.hidden ? "Show" : "Hide"}
+            style={{ opacity: f.hidden ? 0.35 : 1 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleHidden(f.id, !f.hidden);
+            }}
+          >
+            <EyeIcon />
+          </button>
           <button
             className="row-icon export-btn"
             type="button"
