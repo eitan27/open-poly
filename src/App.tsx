@@ -996,7 +996,7 @@ export default function App() {
               disabled={!dressUpTarget || !!editingSketch || picking}
               onClick={() => openDressUp("fillet")}
             >
-              ◜ Fillet
+              ◖ Fillet
             </button>
             <button
               title="Boolean (union / subtract / intersect)"
