@@ -46,6 +46,7 @@ export interface RenderPlane {
   id: string;
   name: string;
   frame: PlaneFrameData;
+  color: number;
 }
 
 /** What is currently selected in the viewport: a whole feature (sketch or body),
@@ -649,7 +650,9 @@ export function Viewport({
       const normal = hit.face
         ? hit.face.normal.clone().transformDirection(mesh.matrixWorld)
         : new THREE.Vector3(0, 0, 1);
-      return { kind: "face" as const, mesh, point: hit.point.clone(), normal };
+      const featureId = mesh.userData.featureId as string | undefined;
+      const faceId = hit.faceIndex != null ? getFaceId(hit.faceIndex, mesh.geometry) : undefined;
+      return { kind: "face" as const, mesh, point: hit.point.clone(), normal, featureId, faceId };
     };
     // Idle-mode selection with CAD priority: vertex > edge > face > sketch.
     const pickSelection = (clientX: number, clientY: number): Selection | null => {
@@ -764,16 +767,25 @@ export function Viewport({
       if (pickingRef.current) {
         const p = pick(e.clientX, e.clientY);
         clearHover();
-        if (!p) return;
+        const prevHover = hoverSelRef.current;
+        let nextHover: Selection | null = null;
+        if (!p) {
+          if (prevHover) { hoverSelRef.current = null; applyHighlights(); }
+          return;
+        }
         renderer.domElement.style.cursor = "pointer";
         if (p.kind === "datum") {
           hoverPlaneRef.current = p.id;
           applyDatumAppearance(state, p.id);
         } else if (p.kind === "userplane") {
           // cursor already set to pointer; no extra hover material for now
-        } else {
-          hoverBodyRef.current = { mesh: p.mesh, prev: p.mesh.material };
-          p.mesh.material = hoverMaterial;
+        } else if (p.kind === "face" && p.faceId !== undefined && p.featureId) {
+          // Highlight just the hovered face (+ its boundary edges), not the body.
+          nextHover = { kind: "face", featureId: p.featureId, faceId: p.faceId };
+        }
+        if (!sameSelection(nextHover, prevHover)) {
+          hoverSelRef.current = nextHover;
+          applyHighlights();
         }
         return;
       }
@@ -827,6 +839,7 @@ export function Viewport({
       if (pickingRef.current) {
         const p = pick(e.clientX, e.clientY);
         clearHover();
+        if (hoverSelRef.current) { hoverSelRef.current = null; applyHighlightsRef.current(); }
         if (!p) return;
         if (p.kind === "datum") {
           if (p.id !== "origin") onPickRef.current({ kind: "datum", id: p.id });
@@ -1004,24 +1017,24 @@ export function Viewport({
     const SIZE = 60;
     for (const rp of userPlanes) {
       const geo = new THREE.PlaneGeometry(SIZE, SIZE);
-      const quat = new THREE.Quaternion().setFromRotationMatrix(
-        new THREE.Matrix4().makeBasis(
-          new THREE.Vector3(...rp.frame.uAxis),
-          new THREE.Vector3(...rp.frame.vAxis),
-          new THREE.Vector3(...rp.frame.normal),
-        ),
+      // Orient by aligning the quad's own normal (+Z) to the frame normal. A
+      // makeBasis(u,v,n) would reflect on left-handed frames (e.g. the Front
+      // datum), mis-orienting the quad; the square's in-plane spin doesn't matter.
+      const quat = new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(0, 0, 1),
+        new THREE.Vector3(...rp.frame.normal).normalize(),
       );
       const pos = new THREE.Vector3(...rp.frame.origin);
       const mesh = new THREE.Mesh(
         geo,
-        new THREE.MeshBasicMaterial({ color: 0xf2b34a, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false }),
+        new THREE.MeshBasicMaterial({ color: rp.color, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false }),
       );
       mesh.quaternion.copy(quat);
       mesh.position.copy(pos);
       mesh.userData.planeId = rp.id;
       const outline = new THREE.LineSegments(
         new THREE.EdgesGeometry(geo),
-        new THREE.LineBasicMaterial({ color: 0xf2b34a, transparent: true, opacity: 0.5 }),
+        new THREE.LineBasicMaterial({ color: rp.color, transparent: true, opacity: 0.5 }),
       );
       outline.quaternion.copy(quat);
       outline.position.copy(pos);

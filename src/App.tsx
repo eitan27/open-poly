@@ -416,7 +416,7 @@ export default function App() {
     () =>
       doc.features
         .filter((f): f is PlaneFeature => f.type === "plane" && resolved.planeFrames.has(f.id))
-        .map((f) => ({ id: f.id, name: f.name, frame: resolved.planeFrames.get(f.id)! })),
+        .map((f) => ({ id: f.id, name: f.name, frame: resolved.planeFrames.get(f.id)!, color: f.color })),
     [doc, resolved.planeFrames],
   );
 

@@ -115,6 +115,8 @@ export interface PlaneFeature extends FeatureBase {
   base: SketchPlaneRef;
   /** Offset distance along the base's normal, as an expression string. */
   offset: string;
+  /** Display color (0xRRGGBB), assigned once at creation from the pastel bank. */
+  color: number;
 }
 
 export type Feature =

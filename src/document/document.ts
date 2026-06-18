@@ -162,6 +162,7 @@ export function addPlane(
     suppressed: false,
     base,
     offset,
+    color: randomSolidColor(),
   };
   return insertFeature(doc, feature);
 }
