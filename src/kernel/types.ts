@@ -62,8 +62,13 @@ export type RegenFeatureResult =
   | { id: string; ok: true; mesh: ShapeMeshPayload }
   | { id: string; ok: false; error: string };
 
+export type ExportFormat = "step" | "stl";
+
 /** The contract implemented by the worker-backed client. Grows per phase. */
 export interface Kernel {
   regenerate(features: ResolvedFeature[]): Promise<RegenFeatureResult[]>;
+  /** Replays the feature list and exports the result body with `bodyId`.
+   *  Geometry is authored in millimetres throughout, so STEP declares "mm". */
+  exportBody(features: ResolvedFeature[], bodyId: string, format: ExportFormat): Promise<Blob>;
   dispose(): void;
 }

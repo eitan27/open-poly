@@ -6,12 +6,13 @@ import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
 import {
   setOC, makeBaseBox, makeCylinder, makeSphere, draw, Plane,
-  cast, getOC, Vector, HASH_CODE_MAX,
+  cast, getOC, Vector, HASH_CODE_MAX, exportSTEP,
 } from "replicad";
 import type { Shape3D, Face } from "replicad";
 
 import type { KernelRequest, KernelResponse } from "./protocol";
 import type {
+  ExportFormat,
   RegenFeatureResult,
   ResolvedFeature,
 } from "./types";
@@ -39,6 +40,9 @@ const MESH_OPTS = { tolerance: 0.05, angularTolerance: 30 };
 // and PROPAGATED through every operation via OCCT history (Generated/Modified/
 // IsDeleted), so a face keeps its identity across rebuilds and edits. hashCodes
 // are only build-local handles; the names are the stable identity.
+//
+// All geometry is authored directly in millimetres (no unit conversion) since
+// that is OpenCascade's default working unit; STEP export declares "mm".
 type NamedShape = { shape: Shape3D; names: Map<number, string> };
 type Body = NamedShape & { id: string };
 
@@ -273,9 +277,10 @@ function dressUpNamed(op: "chamfer" | "fillet", target: Body, edgeNames: string[
 // The running-result model: replay features in order, folding each over a
 // running set of bodies. A sketch/face profile becomes a solid; mode "new" adds
 // it as its own body, while "add"/"remove" fuse/cut it into target bodies in
-// place (preserving their ids). Then tessellate the survivors. A body's id is
-// the feature that produced (or last started) it, so meshes stay keyed by id.
-function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
+// place (preserving their ids). A body's id is the feature that produced (or
+// last started) it. Callers either tessellate the survivors (regenerate) or
+// export one (exportBody); both must delete the body shapes when done.
+function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: RegenFeatureResult[] } {
   const bodies: Body[] = [];
   const failures: RegenFeatureResult[] = [];
 
@@ -343,7 +348,11 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
       failures.push({ id: feature.id, ok: false, error: String(err) });
     }
   }
+  return { bodies, failures };
+}
 
+function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
+  const { bodies, failures } = buildBodies(features);
   const meshes: RegenFeatureResult[] = bodies.map((b) => {
     try {
       const faces = b.shape.mesh(MESH_OPTS);
@@ -368,6 +377,25 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
   return [...meshes, ...failures];
 }
 
+// Export one result body: run the same fold, pick the body whose id matches,
+// and serialise it. (Exporting a single feature standalone would be wrong now —
+// extrude/add/remove only make sense within the running model.)
+function exportBody(features: ResolvedFeature[], bodyId: string, format: ExportFormat): Blob {
+  const { bodies } = buildBodies(features);
+  try {
+    const target = bodies.find((b) => b.id === bodyId);
+    if (!target) throw new Error("export: body not found");
+    // STEP declares its unit explicitly; STL coordinates are already mm. STL
+    // uses the viewport's tessellation quality (replicad's 1e-3 default makes
+    // far larger files than useful for curved shapes).
+    return format === "step"
+      ? exportSTEP([{ shape: target.shape, name: bodyId }], { unit: "mm" })
+      : target.shape.blobSTL(MESH_OPTS);
+  } finally {
+    for (const b of bodies) b.shape.delete();
+  }
+}
+
 ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
   const req = event.data;
   try {
@@ -375,7 +403,10 @@ ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
     let res: KernelResponse;
     switch (req.op) {
       case "regenerate":
-        res = { id: req.id, ok: true, results: regenerate(req.features) };
+        res = { id: req.id, ok: true, op: "regenerate", results: regenerate(req.features) };
+        break;
+      case "export":
+        res = { id: req.id, ok: true, op: "export", blob: exportBody(req.features, req.bodyId, req.format) };
         break;
       default:
         throw new Error(`Unknown kernel op: ${(req as { op: string }).op}`);
