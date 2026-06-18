@@ -286,11 +286,21 @@ Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
   faces). Extrude with `NEW / ADD / CUT`, symmetric, two-sided, optional draft.
 - Revolve around a selected axis/edge.
 - This is where **selection round-trip** and **op merging** get exercised.
+- Every new solid (extrude/revolve `NEW`) should get a `color` the same way
+  primitives do today — `randomSolidColor()` from `document/colors.ts` — so the
+  pastel-color bank introduced in Phase 1 keeps covering all solid-producing
+  features, not just box/cylinder/sphere.
 
 ### Phase 4 — Dress-up + Boolean
 - Fillet (edge set, radius) and Chamfer (distance / two-distance / angle).
 - Boolean between bodies: union / subtract / intersect.
 - First real test of **topological naming** under upstream edits — invest here.
+- **Color rule (not yet implemented — too early, no Boolean feature exists
+  yet):** a Boolean **union**'s result should take the `color` of the
+  first-selected operand, not a new random color from the bank. (Subtract/
+  intersect keep modifying the target body, so they'd naturally keep its color
+  too — same rule, just less ambiguous since there's only one "target.") See
+  the note in `document/colors.ts` next to `randomSolidColor()`.
 
 ### Phase 5 — Sweep + Loft
 - Sweep: profile along a path (with/without twist control later).

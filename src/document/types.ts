@@ -36,6 +36,8 @@ export interface PrimitiveFeature extends FeatureBase {
   kind: FeatureKind;
   /** param name -> expression string (e.g. "40", or "width * 2"). */
   params: Record<string, string>;
+  /** Display color (0xRRGGBB), assigned once at creation from the pastel bank. */
+  color: number;
 }
 
 /** A 2D sketch on a datum plane. Produces no solid yet (extrude is Phase 3). */
