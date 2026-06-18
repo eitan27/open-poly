@@ -323,11 +323,15 @@ Phase 3 (extrude NEW/ADD/CUT) rather than done standalone.
 > and each row supports select, rename, delete, and a color/opacity picker
 > (color and opacity are now overlaid onto cached kernel geometry in `App.tsx`
 > rather than baked in at creation, so changing them is instant and doesn't
-> re-run the kernel). Each row also has disabled **STEP**/**STL** export
-> buttons — wired up to nothing yet; real export needs `Kernel.exportStep`/
-> `exportStl` (per the facade table in §0), which doesn't exist yet. When
-> extrude/boolean land, broaden `SolidsList`'s `isSolid` filter (currently
-> `type === "primitive"`) to match.
+> re-run the kernel). Each row also has **STEP**/**STL** export buttons,
+> backed by `Kernel.exportFeature(feature, format)`: the worker rebuilds the
+> shape from its resolved params on demand (shapes aren't cached after
+> meshing) and returns a `Blob`, which `App.tsx` saves via a throwaway
+> `<a download>` element. All geometry is authored directly in millimetres
+> (replicad/OCCT's own default unit), and STEP export declares `unit: "mm"`
+> explicitly rather than relying on that default. When extrude/boolean land,
+> broaden `SolidsList`'s `isSolid` filter (currently `type === "primitive"`)
+> to match.
 >
 > Also landed: pressing **Delete/Backspace** with a viewport selection removes
 > it — a whole body or sketch for `feature`/`face`/`edge`/`vertex` picks, or

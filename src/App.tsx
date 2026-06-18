@@ -68,6 +68,19 @@ const fmt = (n: number) => {
   return Number.isInteger(r) ? String(r) : String(r);
 };
 
+/** Saves a Blob to the user's machine via a throwaway anchor element. */
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Strips characters that are awkward in filenames across platforms. */
+const safeFilename = (name: string) => name.replace(/[^a-z0-9_\-]+/gi, "_");
+
 const DATUM_ROWS: { id: DatumId; kind: string; label: string }[] = [
   { id: "origin", kind: "Point", label: "Origin" },
   { id: "plane-top", kind: "Plane", label: "Top" },
@@ -555,6 +568,23 @@ export default function App() {
   const handleSolidOpacity = (id: string, opacity: number) =>
     setDoc(setFeatureOpacity(doc, id, opacity), `opacity:${id}`);
 
+  const exportSolid = (id: string, format: "step" | "stl") => {
+    const kernel = kernelRef.current;
+    const feature = resolved.features.find((f) => f.id === id);
+    if (!kernel || !feature) {
+      setFatal("Can't export: this solid has no resolved geometry right now.");
+      return;
+    }
+    const name = doc.features.find((f) => f.id === id)?.name ?? feature.kind;
+    kernel
+      .exportFeature(feature, format)
+      .then((blob) => downloadBlob(blob, `${safeFilename(name)}.${format}`))
+      .catch((err) => setFatal(String(err?.message ?? err)));
+  };
+
+  const handleExportStep = (id: string) => exportSolid(id, "step");
+  const handleExportStl = (id: string) => exportSolid(id, "stl");
+
   // Delete key from the viewport: whole bodies/sketches (feature, face, edge,
   // vertex picks) are removed entirely; sketchEntity picks remove just that
   // line/curve. Bare sketchPoint/sketchFace picks have no deletion target.
@@ -660,6 +690,8 @@ export default function App() {
             onDelete={handleDelete}
             onColorChange={handleSolidColor}
             onOpacityChange={handleSolidOpacity}
+            onExportStep={handleExportStep}
+            onExportStl={handleExportStl}
           />
           <h2 className="params-heading">Parameters</h2>
           <ParamEditor

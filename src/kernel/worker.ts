@@ -4,10 +4,12 @@
 
 import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
-import { setOC, makeBaseBox, makeCylinder, makeSphere } from "replicad";
+import { setOC, makeBaseBox, makeCylinder, makeSphere, exportSTEP } from "replicad";
+import type { AnyShape } from "replicad";
 
 import type { KernelRequest, KernelResponse } from "./protocol";
 import type {
+  ExportFormat,
   RegenFeatureResult,
   ResolvedFeature,
   ShapeMeshPayload,
@@ -31,9 +33,12 @@ function ensureOC(): Promise<void> {
 
 const MESH_OPTS = { tolerance: 0.05, angularTolerance: 30 };
 
-function buildFeature(feature: ResolvedFeature): ShapeMeshPayload {
+// All geometry here is authored directly in millimetres (box width/height,
+// cylinder/sphere radii, etc. are taken as-is, with no unit conversion) since
+// that's OpenCascade's own default working unit.
+function buildShape(feature: ResolvedFeature): AnyShape {
   const p = feature.params;
-  let shape;
+  let shape: AnyShape;
   switch (feature.kind) {
     case "box":
       shape = makeBaseBox(p.width, p.depth, p.height);
@@ -49,7 +54,11 @@ function buildFeature(feature: ResolvedFeature): ShapeMeshPayload {
   }
   // NB: replicad's 3D translate() deletes the original and returns a new shape,
   // so reassign and only delete the final shape.
-  shape = shape.translate(p.x ?? 0, p.y ?? 0, p.z ?? 0);
+  return shape.translate(p.x ?? 0, p.y ?? 0, p.z ?? 0);
+}
+
+function buildFeature(feature: ResolvedFeature): ShapeMeshPayload {
+  const shape = buildShape(feature);
   try {
     return {
       name: feature.kind,
@@ -71,6 +80,22 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
   });
 }
 
+function exportFeature(feature: ResolvedFeature, format: ExportFormat): Blob {
+  const shape = buildShape(feature);
+  try {
+    // STEP declares its unit explicitly; STL has no unit field, but the
+    // underlying coordinates are already millimetres so no scaling is needed.
+    // Match the viewport's tessellation quality — replicad's own STL default
+    // (1e-3 tolerance) generates files orders of magnitude larger for curved
+    // shapes than is useful here.
+    return format === "step"
+      ? exportSTEP([{ shape, name: feature.id }], { unit: "mm" })
+      : shape.blobSTL(MESH_OPTS);
+  } finally {
+    shape.delete();
+  }
+}
+
 ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
   const req = event.data;
   try {
@@ -78,7 +103,10 @@ ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
     let res: KernelResponse;
     switch (req.op) {
       case "regenerate":
-        res = { id: req.id, ok: true, results: regenerate(req.features) };
+        res = { id: req.id, ok: true, op: "regenerate", results: regenerate(req.features) };
+        break;
+      case "export":
+        res = { id: req.id, ok: true, op: "export", blob: exportFeature(req.feature, req.format) };
         break;
       default:
         throw new Error(`Unknown kernel op: ${(req as { op: string }).op}`);

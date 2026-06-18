@@ -8,6 +8,8 @@ interface Props {
   onDelete: (id: string) => void;
   onColorChange: (id: string, color: number) => void;
   onOpacityChange: (id: string, opacity: number) => void;
+  onExportStep: (id: string) => void;
+  onExportStl: (id: string) => void;
 }
 
 const toHex = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
@@ -26,6 +28,8 @@ export function SolidsList({
   onDelete,
   onColorChange,
   onOpacityChange,
+  onExportStep,
+  onExportStl,
 }: Props) {
   const solids = doc.features.filter(isSolid);
 
@@ -71,16 +75,22 @@ export function SolidsList({
           <button
             className="row-icon export-btn"
             type="button"
-            disabled
-            title="Export STEP — coming soon"
+            title="Export STEP"
+            onClick={(e) => {
+              e.stopPropagation();
+              onExportStep(f.id);
+            }}
           >
             STEP
           </button>
           <button
             className="row-icon export-btn"
             type="button"
-            disabled
-            title="Export STL — coming soon"
+            title="Export STL"
+            onClick={(e) => {
+              e.stopPropagation();
+              onExportStl(f.id);
+            }}
           >
             STL
           </button>
