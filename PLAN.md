@@ -210,7 +210,8 @@ rough relative sizing, not calendar promises.
 > (move + rotate bodies, Phase 5.5) is in** — a ✥ Transform gizmo + panel that
 > rigidly moves a body in place (keeps its id + names). Likely next high-value
 > items: more plane methods (midplane/angle/through), a multi-document manager
-> (Documents list + import/export), Mirror, or Revolve (Phase 6).
+> (Documents list + import/export), Mirror, Revolve (Phase 6), or **LLM agent
+> integration via local MCP (Phase 9 — fully specced below)**.
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -458,6 +459,180 @@ this — datum / reference-plane sketches stay anchored to their datum.
 > boolean bodies, recolor/hide parts, **export a STEP/STL file**, and it all
 > **autosaves** — with variables and a working timeline. Validates every hard
 > layer end to end.
+
+---
+
+## Phase 9 — LLM agent integration (local MCP) — PLANNED
+
+**Goal.** Let a local LLM agent (Claude Desktop, Claude Code, Cursor, Cline, Zed,
+…) **drive the live Open Poly browser tab** — sketch, extrude, transform, arrange
+— while the user *watches it happen in their browser*, and let the agent **read
+state** (document, a scene summary, a viewport screenshot) so it can plan and
+self-correct, including resuming a prior session's document. **Scope: local,
+single-user, stdio MCP.** Remote/hosted MCP and an in-app chat agent are explicit
+**stretch goals** (below).
+
+### Design principle — two layers (don't build an "MCP app")
+1. A **vendor-neutral command + read API** over the document (apply a typed
+   `Operation`; read document / scene-summary / screenshot). Knows nothing about
+   any LLM or transport.
+2. **Adapters** on top. MCP is the first adapter; because layer 1 is neutral, a
+   future in-app agent or OpenAI/Gemini function-calling adapter reuses it with no
+   rework. **Build layer 1 first and well.**
+
+### Architecture (data flow)
+```
+LLM client ⟷ (stdio MCP) ⟷  bridge/MCP server (Node)  ⟷ (WebSocket) ⟷  browser tab
+                              one process, two faces                    (command layer)
+```
+- The **browser tab holds the state and renders**, so it must **connect out** (a
+  tab can't be listened to). The tab opens a WebSocket to a `localhost` hub.
+- The **MCP server and the WebSocket hub are one Node process**: stdio to the LLM
+  client, a WS server for the tab. An MCP tool call → forward over WS to the tab →
+  the tab applies it via the command layer → renders (user watches) → returns
+  result/ids/errors (and, for `screenshot`, a PNG) → back to the LLM.
+
+### Component 1 — Command layer (browser, vendor-neutral core)
+New dir `src/agent/`.
+- `operations.ts` — the typed **`Operation`** discriminated union + **`OpResult`**
+  + read-query types + **zod schemas** (validation reused by the server). Each
+  `Operation` maps onto an existing pure document fn in `src/document/document.ts`:
+  - `addPrimitive {kind:"box"|"cylinder"|"sphere", params?, name?}` → `addFeature`
+    + `updateParam`/`setParam`.
+  - `addSketch {plane: PlaneRefSpec, entities: EntitySpec[], constraints?}` →
+    `addSketch` + `addSketchEntities` (+ `setSketchConstraints`). Non-interactive:
+    the agent supplies entities in plane **(u,v)** coords in one call. Provide
+    sugar specs (`rect{center|corner,w,h}`, `circle{c,r}`, `polygon{c,r,n}`) that
+    expand to entities so the model doesn't hand-place every line.
+  - `addExtrude {profile: ProfileSpec, distance, flip?, mode?, targetId?}` →
+    `addExtrude`. `ProfileSpec` = `{sketchId, regionId}` **or** `{bodyId, faceName}`.
+  - `addPlane {base: PlaneRefSpec, offset}` → `addPlane`.
+  - `transform {targetId, tx?,ty?,tz?, angle?, axis?, copy?}` → `addTransform`.
+  - `boolean {op, operands[]}` → `addBoolean`.
+  - `dressUp {kind:"chamfer"|"fillet", targetId, edges:string[]/*names*/, size}` →
+    `addDressUp`.
+  - `setParam {featureId, name, value}` / `setAppearance {featureId, color?,
+    opacity?, hidden?}` / `rename` / `delete` / `setRollback {index}` /
+    `select {refs}` (so a screenshot shows what's highlighted).
+  - **Reference handles must be stable ids the agent got from a read**: feature
+    ids; **persistent face/edge names** (we already emit `mesh.faceGroups[].name`
+    / `edgeGroups[].name`); plane refs (`{datum}`/`{planeId}`/`{bodyId,faceName}`);
+    sketch `regionId` (deterministic from `detectSketchRegions`). **Conventions:
+    millimetres, world is Z-up** — state this in every tool description.
+- `commands.ts` — `applyOperation(ctx, op): Promise<OpResult>` and the reads
+  `getDocument(ctx)`, `getSceneSummary(ctx)`, `getSelection(ctx)`,
+  `screenshot(ctx, opts?)`. `ctx` exposes the **live** doc + setters + viewport,
+  via **refs** (always read latest, never a stale closure — mirror how
+  `Viewport.tsx` uses `selectionRef`).
+  - **Route every mutation through `setDoc`** (the `useHistory` setter) so the
+    user can `Cmd-Z` anything the agent did — the agent is "just another input
+    device."
+  - **Await regen settle** before resolving a mutating op: kernel regen is async
+    in the worker, so `applyOperation` must wait for the next `rawMeshes`/`errors`
+    update before returning, so the agent knows it succeeded and can screenshot.
+    Implement via a one-shot "regen done" promise the regen effect resolves.
+  - Return `{ok, createdId?, doc-delta or summary, errors?}` — structured, so the
+    model can chain ("extrude the face I just made").
+- `useAgentBridge.ts` — a hook mounted in `App.tsx` that builds `ctx` (closing
+  over `doc`/`setDoc`/`selection`/`setSelection`/`viewApiRef`/`meshes`/`resolved`
+  via refs) and owns the WebSocket client. Also expose `window.__openpoly` =
+  `{apply, read}` in dev for manual console testing before any networking.
+
+### Component 2 — WebSocket bridge client (browser)
+- `src/agent/bridgeClient.ts`: connect to `ws://127.0.0.1:<port>`, send `hello`
+  (session id + optional token + a `conventions`/capabilities blob), then service
+  `request` messages by calling the command layer and replying with `result`.
+- **Serial request queue**: process one request at a time and **await each op's
+  commit + regen** before the next — React state updates are async, so op *N+1*
+  must observe op *N*. No concurrency on a single tab.
+- **Reconnect** with backoff on drop/reload. Show an **"Agent connected"**
+  indicator (a small badge in the top bar) so the user knows a session is live.
+
+### Component 3 — Bridge + MCP server (Node, `mcp-server/` — its own package)
+Separate runtime (Node, not the browser bundle); own `package.json`. Use the
+official **`@modelcontextprotocol/sdk`**.
+- `wsHub.ts` — a `ws` server on a fixed localhost port; tracks the connected
+  tab session(s); request/response correlation by `id`; timeouts; "no tab
+  connected → clear error telling the user to open Open Poly."
+- `protocol.ts` — **shared** WS message types (`hello`, `request{id,kind:"apply"
+  |"read",payload}`, `result{id,ok,payload|error}`, optional `event`). Keep a
+  single source of truth importable by both browser and server (a small shared
+  `.ts` both tsconfigs include).
+- `tools.ts` / `index.ts` — register one MCP **tool per Operation** + read tools
+  (`get_document`, `get_scene_summary`, `screenshot`); validate args with the
+  shared zod schemas; forward over the hub; map results to MCP content. For
+  `screenshot`, return MCP **image** content (base64 PNG). Optionally also expose
+  `get_document`/`get_scene_summary` as MCP **resources** (subscribable URIs).
+- Ship a **config snippet** for Claude Desktop / Cursor / Cline (the `command`/
+  `args` stdio entry) and a one-line `npx`/`node` launch.
+
+### Read API detail
+- `get_document` → the full JSON `Document` (+ schemaVersion) — ground truth.
+- `get_scene_summary` → compact, LLM-first digest: **bodies** (id, name, kind,
+  bbox, volume, color, **named faces + edges**), **sketches** (id, plane,
+  entities, regions w/ ids), **planes**, **variables**, **rollback index**,
+  **selection**. This is the model's primary planning input — keep it small and
+  semantic, not raw geometry. (bbox from mesh vertices in-app; volume can come
+  from the kernel — `measureVolume` is already available in `worker.ts`.)
+- `screenshot {view?, fit?}` → set the camera (reuse `ViewportApi.setView`),
+  render, `renderer.domElement.toDataURL("image/png")`. **Add a `capturePNG()`
+  method to `ViewportApi`** (`src/viewport/Viewport.tsx`) — it owns the renderer.
+  Visual feedback is the big unlock: the agent can *see* what it built.
+
+### Cross-session state
+- Ground truth is **IndexedDB** in the tab (`src/storage/db.ts`); the agent reads
+  the current doc/summary on connect. The hub may cache the last snapshot per
+  session for quick re-reads.
+- Lean on the **multi-document manager** (Phase 8): expose `list_documents` /
+  `open_document` / `new_document` tools so "continue yesterday's bracket" = open
+  that doc + `get_scene_summary`.
+
+### Engineering concerns / guardrails
+- **Undo-routed** mutations (above) = the human stays in control.
+- **Human-in-the-loop on destructive ops** (delete / boolean consuming bodies /
+  setRollback): allowed + undoable for v1; leave a `confirm` hook for later.
+- **Security**: bind WS to `127.0.0.1` only; a shared **token** (app displays it;
+  MCP config carries it) so random local processes can't connect. Single active
+  tab for v1 (last-connected wins; surface it in the badge).
+- **Errors**: a small taxonomy (`not_found`, `invalid_op`, `kernel_error`,
+  `no_session`, `timeout`) with human-readable messages the model can act on.
+
+### Delivery steps
+- **L0 — Command layer, no networking.** `operations.ts` (+ zod), `commands.ts`,
+  `useAgentBridge` building `ctx`; `window.__openpoly` for console testing;
+  `capturePNG()` on `ViewportApi`. Unit-test `applyOperation` on a doc (doc
+  mutations are pure — no kernel needed); kernel-dependent results via the
+  Playwright harness. **Exit:** drive the model from the dev console end-to-end.
+- **L1 — WS bridge.** `bridgeClient.ts` (serial queue, reconnect) + a throwaway
+  Node WS sender to validate browser⟷hub round-trips; "Agent connected" badge.
+- **L2 — MCP server (stdio).** `mcp-server/` with `@modelcontextprotocol/sdk`;
+  tools mapped to ops + reads; validate via shared zod; client config snippets.
+  Verify with the **MCP Inspector** and a real client (Claude Desktop/Cursor).
+- **L3 — Reads + screenshots + regen-await polish.** `get_scene_summary`,
+  `screenshot` (image content), `applyOperation` awaits regen settle and returns
+  deltas + ids + errors. **Exit:** an agent builds a bracket from a text prompt,
+  screenshots it, and corrects itself.
+- **L4 — Robustness.** token auth, multi-tab handling, error taxonomy, queue
+  ordering, reconnection, timeouts, and `list/open/new_document` tools.
+
+### Existing touchpoints (where a new session hooks in)
+- `src/document/document.ts` — every mutating `Operation` maps to a fn here.
+- `src/App.tsx` — `doc`/`setDoc` (undo), `selection`/`setSelection`,
+  `viewApiRef`, `meshes`/`rawMeshes`, `resolved` (`scope`, `errors`,
+  `planeFrames`); mount `useAgentBridge` here.
+- `src/viewport/Viewport.tsx` — `ViewportApi` (add `capturePNG()`; `setView`,
+  `worldToScreen` exist).
+- `src/kernel/worker.ts` — `measureVolume` for the summary; mesh `faceGroups`/
+  `edgeGroups` carry the **persistent names** the agent references.
+- `src/storage/db.ts` — current/saved documents for cross-session continuity.
+
+### Stretch goals (future)
+- **Remote (Streamable-HTTP) MCP server + session pairing** so hosted/web chat
+  UIs (ChatGPT/Gemini connectors, claude.ai) can drive it — adds hosting, auth,
+  and a pairing code; softens local-first (server in the loop).
+- **In-app chat agent** (zero-setup) calling an LLM API directly, reusing the
+  same command layer.
+- **OpenAI/Gemini function-calling adapters** for non-MCP tool clients.
 
 ---
 
