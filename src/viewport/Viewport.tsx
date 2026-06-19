@@ -421,6 +421,7 @@ export function Viewport({
     transformControls.setSize(0.85);
     const gizmoHelper = transformControls.getHelper();
     gizmoHelper.visible = false;
+    softenGizmo(gizmoHelper); // mute the default pure-RGB arrows to fit the UI
     scene.add(gizmoHelper);
     // Suspend orbiting while a gizmo handle is being dragged.
     transformControls.addEventListener("dragging-changed", (e) => {
@@ -1396,6 +1397,30 @@ function collectBodyEdges(group: THREE.Group): [THREE.Vector3, THREE.Vector3][] 
     }
   }
   return segments;
+}
+
+/** Mute TransformControls' default pure-RGB arrows so the gizmo fits the muted
+ *  UI. TransformControls restores each handle's cached base colour/opacity every
+ *  frame, so we override that cache (`_color`/`_opacity`) too — not just the live
+ *  material — or the softening would be reset on the next render. The invisible
+ *  picker handles (already near-zero opacity) just get fainter; hover-highlight
+ *  still brightens the active axis from this softened base. */
+function softenGizmo(helper: THREE.Object3D): void {
+  const neutral = new THREE.Color(0xc2cad8);
+  helper.traverse((o) => {
+    const mat = (o as THREE.Mesh).material;
+    if (!mat) return;
+    for (const raw of Array.isArray(mat) ? mat : [mat]) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const m = raw as any;
+      if (!m.color) continue;
+      m.transparent = true;
+      m.color.lerp(neutral, 0.3);
+      m.opacity = m.opacity * 0.72;
+      m._color = m.color.clone();
+      m._opacity = m.opacity;
+    }
+  });
 }
 
 // --- Datum geometry -------------------------------------------------------
