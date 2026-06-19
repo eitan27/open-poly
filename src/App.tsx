@@ -608,7 +608,12 @@ export default function App() {
       mode: extrudeDialog.mode,
       targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
     });
-    setDoc(next);
+    // Hide the source sketch once it's been consumed by an extrude. It stays in
+    // place and editable — toggle the timeline eye (or edit it) to bring it back.
+    // Folded into the same undo step as the extrude.
+    const updated =
+      extrudeProfile.kind === "sketchRegion" ? setSuppressed(next, extrudeProfile.sketchId, true) : next;
+    setDoc(updated);
     selectFeature(id);
     setExtrudeDialog(null);
   };
@@ -765,14 +770,16 @@ export default function App() {
     () =>
       doc.features
         .slice(0, doc.rollbackIndex)
-        .filter((f): f is SketchFeature => f.type === "sketch" && !f.suppressed)
+        // Hidden (suppressed) sketches aren't drawn — except the one being
+        // actively edited, so editing a post-extrude hidden sketch still shows it.
+        .filter((f): f is SketchFeature => f.type === "sketch" && (!f.suppressed || f.id === editingSketchId))
         .map((f) => ({
           id: f.id,
           frame: frameOf(f.plane, resolved.planeFrames),
           entities: f.entities,
           regions: detectSketchRegions(f.entities),
         })),
-    [doc],
+    [doc, editingSketchId, resolved.planeFrames],
   );
 
   const startSketchOn = (ref: SketchPlaneRef) => {
