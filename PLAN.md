@@ -483,11 +483,13 @@ this — datum / reference-plane sketches stay anchored to their datum.
 
 ---
 
-## Phase 9 — LLM agent integration (local MCP) — IN PROGRESS (L0 done, L1 next)
+## Phase 9 — LLM agent integration (local MCP) — IN PROGRESS (L0+L1 done, L2 next)
 
-**Status (2026-06-19).** **L0 shipped** — the vendor-neutral command + read layer
-(layer 1) is built, tested, and verified end-to-end against the live kernel; see
-the L0 entry under *Delivery steps* for what landed. **L1 (WS bridge) is next.**
+**Status (2026-06-19).** **L0 + L1 shipped** — the vendor-neutral command + read
+layer (L0) and the browser WebSocket bridge client (L1) are built, tested, and
+validated end-to-end (tab dials a throwaway hub, requests round-trip through the
+serial pipeline, "Agent connected" badge shows). See the L0/L1 entries under
+*Delivery steps*. **L2 (Node stdio MCP server) is next.**
 
 **Goal.** Let a local LLM agent (Claude Desktop, Claude Code, Cursor, Cline, Zed,
 …) **drive the live Open Poly browser tab** — sketch, extrude, transform, arrange
@@ -658,8 +660,17 @@ official **`@modelcontextprotocol/sdk`**.
   await (L3) — only synchronous resolve errors surface today; the modeling-guide
   lists snake_case MCP tool names while Operation discriminators are camelCase
   (reconcile the mapping in L2).
-- **L1 — WS bridge.** `bridgeClient.ts` (serial queue, reconnect) + a throwaway
-  Node WS sender to validate browser⟷hub round-trips; "Agent connected" badge.
+- **L1 — WS bridge. ✅ DONE (2026-06-19).** `src/agent/protocol.ts` (shared
+  `hello`/`request`/`result`/`event` types + fixed port `7373`, the single source
+  of truth for browser + future server), `bridgeClient.ts` (dials the hub,
+  announces `hello` with a capabilities blob, **serial request pipeline** that
+  awaits each before the next, capped-backoff reconnect, status callback). Wired
+  into `useAgentBridge` (handlers validate via the shared zod schemas) with an
+  "Agent connected" badge in the topbar. Throwaway hub `scripts/bridge-e2e.mjs`
+  (added `ws` devDep) + Playwright **validated** round-trips: apply/read, serial
+  ordering, structured errors, badge. *Note:* the tab auto-connects in prod too,
+  so it logs WS connect errors (~every ≤10s) when no hub runs — add an
+  enable/token gate in L4.
 - **L2 — MCP server (stdio).** `mcp-server/` with `@modelcontextprotocol/sdk`;
   tools mapped to ops + reads; validate via shared zod; client config snippets.
   Verify with the **MCP Inspector** and a real client (Claude Desktop/Cursor).

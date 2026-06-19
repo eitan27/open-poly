@@ -74,6 +74,25 @@
   color: #f08a8a;
 }
 
+/* Live indicator that an LLM agent is driving this tab (Phase 9). Sits just
+   left of the status chip; claims the flex auto-space so the right cluster
+   stays together. */
+.agent-badge {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #15233a;
+  color: #6db0ff;
+  border: 1px solid #294063;
+}
+
+/* status keeps its own pill; when the badge is present it no longer needs the
+   auto margin, but harmless to leave. */
+.agent-badge + .status {
+  margin-left: 8px;
+}
+
 .body {
   display: flex;
   flex: 1 1 auto;

@@ -160,6 +160,9 @@ export const operationSchema = z.discriminatedUnion("op", [
 
 export type Operation = z.infer<typeof operationSchema>;
 
+/** Every `op` name — advertised to the hub as the tab's capabilities. */
+export const OPERATION_NAMES = operationSchema.options.map((o) => o.shape.op.value);
+
 // --- Read queries ---------------------------------------------------------
 
 export const readQuerySchema = z.discriminatedUnion("read", [
@@ -173,6 +176,9 @@ export const readQuerySchema = z.discriminatedUnion("read", [
   }),
 ]);
 export type ReadQuery = z.infer<typeof readQuerySchema>;
+
+/** Every `read` name — advertised to the hub as the tab's capabilities. */
+export const READ_NAMES = readQuerySchema.options.map((o) => o.shape.read.value);
 
 // --- Result shapes --------------------------------------------------------
 

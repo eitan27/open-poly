@@ -567,9 +567,12 @@ export default function App() {
   // booleans, and add/dressup-targets that kept their id).
   const bodyIds = useMemo(() => new Set(rawMeshes.map((m) => m.id)), [rawMeshes]);
 
-  // Agent command layer (Phase 9 L0): exposes window.__openpoly for console
-  // testing and builds the AgentContext the WS bridge (L1) will plug into.
-  useAgentBridge({ doc, setDoc, selection, setSelection, meshes, errors, viewApiRef });
+  // Agent command layer (Phase 9): exposes window.__openpoly for console testing
+  // and runs the WebSocket bridge to the local MCP hub. `agentStatus` drives the
+  // "Agent connected" badge.
+  const { status: agentStatus } = useAgentBridge({
+    doc, setDoc, selection, setSelection, meshes, errors, viewApiRef,
+  });
 
   // Bodies available as Boolean operands: features with a rendered body.
   const booleanCandidates = useMemo(
@@ -1200,6 +1203,11 @@ export default function App() {
             ↷
           </button>
         </div>
+        {agentStatus === "connected" && (
+          <span className="agent-badge" title="An LLM agent is connected to this tab">
+            ● Agent connected
+          </span>
+        )}
         <span className={`status ${statusClass}`} title={fatal ?? undefined}>
           {status}
         </span>

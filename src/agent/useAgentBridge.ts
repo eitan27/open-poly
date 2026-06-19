@@ -1,10 +1,11 @@
 // Mounts the agent command layer into the live app. Builds an AgentContext that
 // reads the latest committed state through refs (never a stale closure — mirrors
-// Viewport's selectionRef) and routes mutations through the undo setter. For now
-// it only exposes `window.__openpoly = { apply, read }` for manual console
-// testing (L0 exit: drive the model from the dev console end-to-end). The
-// WebSocket bridge client (L1) plugs into this same ctx.
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+// Viewport's selectionRef) and routes mutations through the undo setter. Owns the
+// WebSocket bridge client (L1): it dials the local hub, services requests via the
+// command layer, and surfaces the connection status for the "Agent connected"
+// badge. Also exposes `window.__openpoly = { apply, read }` in dev for manual
+// console testing without any networking.
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   applyOperation,
   getDocument,
@@ -16,11 +17,15 @@ import {
 import {
   operationSchema,
   readQuerySchema,
+  OPERATION_NAMES,
+  READ_NAMES,
   type Operation,
   type OpResult,
   type ReadQuery,
   type SceneSummary,
 } from "./operations";
+import { BridgeClient, type BridgeStatus } from "./bridgeClient";
+import { genId } from "../document/document";
 import type { Document } from "../document/types";
 import type { FeatureMesh, Selection, ViewName, ViewportApi } from "../viewport/Viewport";
 
@@ -53,11 +58,16 @@ declare global {
   }
 }
 
-export function useAgentBridge(deps: BridgeDeps): AgentContext {
+export interface AgentBridge {
+  ctx: AgentContext;
+  /** Live WS connection status (drives the badge). */
+  status: BridgeStatus;
+}
+
+export function useAgentBridge(deps: BridgeDeps): AgentBridge {
   // Refs always hold the latest committed state, so ctx getters never close over
-  // stale values. `setDoc` also writes docRef synchronously so a chain of
-  // console ops in one tick composes (each sees the prior op's doc) before React
-  // re-renders.
+  // stale values. `setDoc` also writes docRef synchronously so a chain of ops in
+  // one tick composes (each sees the prior op's doc) before React re-renders.
   const docRef = useRef(deps.doc);
   docRef.current = deps.doc;
   const selectionRef = useRef(deps.selection);
@@ -91,24 +101,52 @@ export function useAgentBridge(deps: BridgeDeps): AgentContext {
     [viewApiRef],
   );
 
-  // Dev-only console handle for manual testing before any networking exists.
+  // Apply/read handlers shared by the WS bridge and the dev console. Validate
+  // every payload with the shared zod schemas (same as the MCP server will).
+  const handleApply = useMemo(
+    () => (payload: unknown): OpResult => applyOperation(ctx, operationSchema.parse(payload)),
+    [ctx],
+  );
+  const handleRead = useMemo(
+    () => (payload: unknown) => {
+      const q = readQuerySchema.parse(payload);
+      switch (q.read) {
+        case "document":
+          return getDocument(ctx);
+        case "sceneSummary":
+          return getSceneSummary(ctx);
+        case "selection":
+          return getSelection(ctx);
+        case "screenshot":
+          return screenshot(ctx, q.view ? { view: q.view } : undefined);
+      }
+    },
+    [ctx],
+  );
+
+  // WebSocket bridge: dial the hub, auto-reconnect, service requests serially.
+  const [status, setStatus] = useState<BridgeStatus>("disconnected");
+  const sessionIdRef = useRef<string>("");
+  if (!sessionIdRef.current) sessionIdRef.current = genId();
+
+  useEffect(() => {
+    const client = new BridgeClient({
+      sessionId: sessionIdRef.current,
+      conventions: { units: "mm", up: "z", operations: OPERATION_NAMES, reads: READ_NAMES },
+      handleApply,
+      handleRead,
+      onStatus: setStatus,
+    });
+    client.start();
+    return () => client.close();
+  }, [handleApply, handleRead]);
+
+  // Dev-only console handle for manual testing before any networking is up.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     const api: OpenPolyApi = {
       apply: (op) => applyOperation(ctx, operationSchema.parse(op)),
-      read: (query) => {
-        const q = readQuerySchema.parse(query);
-        switch (q.read) {
-          case "document":
-            return getDocument(ctx);
-          case "sceneSummary":
-            return getSceneSummary(ctx);
-          case "selection":
-            return getSelection(ctx);
-          case "screenshot":
-            return screenshot(ctx, q.view ? { view: q.view } : undefined);
-        }
-      },
+      read: (query) => handleRead(query) as ReturnType<OpenPolyApi["read"]>,
       document: () => getDocument(ctx),
       summary: () => getSceneSummary(ctx),
       selection: () => getSelection(ctx),
@@ -118,7 +156,7 @@ export function useAgentBridge(deps: BridgeDeps): AgentContext {
     return () => {
       if (window.__openpoly === api) delete window.__openpoly;
     };
-  }, [ctx]);
+  }, [ctx, handleRead]);
 
-  return ctx;
+  return { ctx, status };
 }
