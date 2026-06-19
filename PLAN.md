@@ -483,13 +483,15 @@ this — datum / reference-plane sketches stay anchored to their datum.
 
 ---
 
-## Phase 9 — LLM agent integration (local MCP) — IN PROGRESS (L0+L1 done, L2 next)
+## Phase 9 — LLM agent integration (local MCP) — IN PROGRESS (L0–L2 done, L3 next)
 
-**Status (2026-06-19).** **L0 + L1 shipped** — the vendor-neutral command + read
-layer (L0) and the browser WebSocket bridge client (L1) are built, tested, and
-validated end-to-end (tab dials a throwaway hub, requests round-trip through the
-serial pipeline, "Agent connected" badge shows). See the L0/L1 entries under
-*Delivery steps*. **L2 (Node stdio MCP server) is next.**
+**Status (2026-06-20).** **L0–L2 shipped.** The command + read layer (L0), the
+browser WebSocket bridge (L1), and the **Node stdio MCP server** (`mcp-server/`,
+L2) are built and validated end-to-end: a real MCP client spawns the server,
+which starts the hub; a headless tab dials in; and tool calls flow client →
+server → hub → tab → kernel → back (incl. PNG image content for `screenshot`).
+See the L0–L2 entries under *Delivery steps*. **L3 (reads/screenshot polish +
+regen-await) is next.**
 
 **Goal.** Let a local LLM agent (Claude Desktop, Claude Code, Cursor, Cline, Zed,
 …) **drive the live Open Poly browser tab** — sketch, extrude, transform, arrange
@@ -671,9 +673,18 @@ official **`@modelcontextprotocol/sdk`**.
   ordering, structured errors, badge. *Note:* the tab auto-connects in prod too,
   so it logs WS connect errors (~every ≤10s) when no hub runs — add an
   enable/token gate in L4.
-- **L2 — MCP server (stdio).** `mcp-server/` with `@modelcontextprotocol/sdk`;
-  tools mapped to ops + reads; validate via shared zod; client config snippets.
-  Verify with the **MCP Inspector** and a real client (Claude Desktop/Cursor).
+- **L2 — MCP server (stdio). ✅ DONE (2026-06-20).** `mcp-server/` (own package,
+  runs from TS via `tsx`; deps `@modelcontextprotocol/sdk` 1.29 + `ws`): `wsHub.ts`
+  (localhost WS hub on :7373, id-correlated request/response, timeouts, clear
+  "no tab connected" error), `tools.ts` (one MCP tool per Operation + the read
+  tools, **input schemas derived from the shared `operations.ts` zod schemas** so
+  the contract can't drift; `screenshot` → MCP image content), `index.ts` (stdio
+  transport + the modeling guide as tool/resource/prompt + `report_issue` →
+  `issues.log.jsonl`). All logging on **stderr** (stdout is the JSON-RPC channel).
+  Config snippets in `mcp-server/README.md`. **Validated** by `scripts/mcp-e2e.mjs`
+  (SDK client spawns the server, Playwright tab dials the hub, 21 tools, full
+  round-trip incl. image content + structured errors). *Note:* tool names are
+  snake_case ↔ camelCase Operation discriminators (mapped in `tools.ts`).
 - **L3 — Reads + screenshots + regen-await polish.** `get_scene_summary`,
   `screenshot` (image content), `applyOperation` awaits regen settle and returns
   deltas + ids + errors. **Exit:** an agent builds a bracket from a text prompt,

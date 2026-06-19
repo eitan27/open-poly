@@ -9,6 +9,9 @@ dist-ssr/
 *.log
 npm-debug.log*
 
+# agent issue reports (report_issue tool output)
+mcp-server/issues.log.jsonl
+
 # editor / OS
 .DS_Store
 *.local

@@ -1,0 +1,22 @@
+{
+  "name": "open-poly-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local stdio MCP server that lets an LLM agent drive a live Open Poly browser tab (Phase 9).",
+  "bin": {
+    "open-poly-mcp": "src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ws": "^8.18.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0"
+  }
+}
