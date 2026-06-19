@@ -163,7 +163,7 @@ export function ParamEditor({
             />
           </label>
           <button className="add-btn sketch-btn" onClick={() => onEditTransform(feature.id)}>
-            Edit with gizmo
+            Edit in viewport
           </button>
         </div>
       ) : (

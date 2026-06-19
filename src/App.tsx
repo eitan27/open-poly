@@ -288,6 +288,14 @@ export default function App() {
   // panel + viewport gizmo are shown while this is set), and which gizmo to show.
   const [transformEditId, setTransformEditId] = useState<string | null>(null);
   const [transformMode, setTransformMode] = useState<TransformMode>("translate");
+  // How the current transform edit began, so Cancel knows what to undo: a
+  // just-created transform is dropped entirely; an existing one being re-edited
+  // is reverted to the snapshot it had when this edit started.
+  const [transformOrigin, setTransformOrigin] = useState<
+    | { created: true }
+    | { created: false; snapshot: Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis"> }
+    | null
+  >(null);
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
   const newSolidRef = useRef<HTMLDivElement>(null);
@@ -663,13 +671,21 @@ export default function App() {
     selectFeature(id);
     setTransformMode("translate");
     setTransformEditId(id);
+    setTransformOrigin({ created: true });
   };
 
   // Re-open the gizmo for an existing Transform (from the parameter editor).
+  // Snapshot its current values so Cancel can revert this edit (vs. delete).
   const editTransform = (id: string) => {
+    const f = doc.features.find((x) => x.id === id);
+    if (f?.type !== "transform") return;
     selectFeature(id);
     setTransformMode("translate");
     setTransformEditId(id);
+    setTransformOrigin({
+      created: false,
+      snapshot: { tx: f.tx, ty: f.ty, tz: f.tz, angle: f.angle, axis: f.axis },
+    });
   };
 
   // The live gizmo state: resolve the editing transform's expressions to numbers
@@ -720,15 +736,24 @@ export default function App() {
   };
 
   // Close the gizmo, keeping the Transform feature as-is.
-  const finishTransform = () => setTransformEditId(null);
+  const finishTransform = () => {
+    setTransformEditId(null);
+    setTransformOrigin(null);
+  };
 
-  // Cancel: drop the Transform feature entirely (used by the panel's ✕ / Esc).
+  // Cancel (panel Cancel / Esc): a just-created transform is dropped entirely;
+  // an existing one being re-edited reverts to its pre-edit snapshot.
   const cancelTransform = () => {
     if (transformEditId) {
-      setDoc(removeFeature(doc, transformEditId));
-      setSelection((prev) => prev.filter((s) => featureIdOf(s) !== transformEditId));
+      if (transformOrigin && !transformOrigin.created) {
+        setDoc(setTransform(doc, transformEditId, transformOrigin.snapshot));
+      } else {
+        setDoc(removeFeature(doc, transformEditId));
+        setSelection((prev) => prev.filter((s) => featureIdOf(s) !== transformEditId));
+      }
     }
     setTransformEditId(null);
+    setTransformOrigin(null);
   };
 
   // All visible sketches (so finished sketches stay rendered), each with its frame.
