@@ -483,7 +483,11 @@ this — datum / reference-plane sketches stay anchored to their datum.
 
 ---
 
-## Phase 9 — LLM agent integration (local MCP) — PLANNED
+## Phase 9 — LLM agent integration (local MCP) — IN PROGRESS (L0 done, L1 next)
+
+**Status (2026-06-19).** **L0 shipped** — the vendor-neutral command + read layer
+(layer 1) is built, tested, and verified end-to-end against the live kernel; see
+the L0 entry under *Delivery steps* for what landed. **L1 (WS bridge) is next.**
 
 **Goal.** Let a local LLM agent (Claude Desktop, Claude Code, Cursor, Cline, Zed,
 …) **drive the live Open Poly browser tab** — sketch, extrude, transform, arrange
@@ -640,11 +644,20 @@ official **`@modelcontextprotocol/sdk`**.
   `no_session`, `timeout`) with human-readable messages the model can act on.
 
 ### Delivery steps
-- **L0 — Command layer, no networking.** `operations.ts` (+ zod), `commands.ts`,
-  `useAgentBridge` building `ctx`; `window.__openpoly` for console testing;
-  `capturePNG()` on `ViewportApi`. Unit-test `applyOperation` on a doc (doc
-  mutations are pure — no kernel needed); kernel-dependent results via the
-  Playwright harness. **Exit:** drive the model from the dev console end-to-end.
+- **L0 — Command layer, no networking. ✅ DONE (2026-06-19).** Built in
+  `src/agent/`: `operations.ts` (zod `Operation` union + `OpResult`/`ReadQuery`/
+  `SceneSummary` + `expandEntities` sugar shapes; added **zod v4**), `commands.ts`
+  (`applyOperation` routed through the pure `document.ts` fns + the undo setter;
+  reads `getDocument`/`getSceneSummary`/`getSelection`/`screenshot`; resolves
+  face/profile refs from mesh `faceGroups`), `useAgentBridge.ts` (builds the
+  `AgentContext` from refs, exposes `window.__openpoly={apply,read,…}` in dev).
+  Added `capturePNG()` to `ViewportApi`; mounted the hook in `App.tsx`. Unit
+  tests in `commands.test.ts` (14 pass); tsc + build clean. **Verified** end-to-
+  end via Playwright driving `window.__openpoly` (box → sketch-on-named-face →
+  extrude-remove → screenshot; named faces + bbox resolve). *Deferred:* regen-
+  await (L3) — only synchronous resolve errors surface today; the modeling-guide
+  lists snake_case MCP tool names while Operation discriminators are camelCase
+  (reconcile the mapping in L2).
 - **L1 — WS bridge.** `bridgeClient.ts` (serial queue, reconnect) + a throwaway
   Node WS sender to validate browser⟷hub round-trips; "Agent connected" badge.
 - **L2 — MCP server (stdio).** `mcp-server/` with `@modelcontextprotocol/sdk`;
