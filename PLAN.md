@@ -344,7 +344,25 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 ### Phase 4 — Export (validate end-to-end) — ✅ DONE
 - **Export STL** (mesh) and **STEP** (B-rep, declared in mm) per part, from the
   Parts panel. `Kernel.exportBody` replays the fold and serialises the chosen
-  result body. Image snapshot + STEP **import** still TODO.
+  result body. Image snapshot still TODO.
+- **Import STEP (TODO).** Load a `.step`/`.stp` file as a body in the document.
+  - **Feature:** an `ImportFeature` (a body *producer*, like a primitive) holding
+    the source — store the STEP **text** in the feature (it's JSON-serializable so
+    it round-trips through IndexedDB / `.json` like everything else; watch size,
+    consider a separate IndexedDB blob + a ref if files get big). UI: a **file
+    menu / Parts "Import"** that reads the file (`<input type=file>` →
+    `file.text()`).
+  - **Kernel:** the worker reads it via OCCT `STEPControl_Reader` (or replicad's
+    `importSTEP`), producing a `Shape3D`; fold it in as a new `Body` keyed by the
+    feature id (gets a colour like other new bodies). Multi-solid STEP → either
+    one body per solid or a compound; decide (one-body-per-solid is friendlier).
+  - **Topological names:** imported faces/edges have **no** persistent names, so
+    seed them on import (axis-aligned planar faces via `axisFaceName` like
+    primitives; otherwise index/centroid fallback) so downstream extrude-on-face /
+    chamfer / the agent can still reference them. This is the main work item.
+  - Once imported it's a first-class body: transform, boolean, dress-up, export.
+  - Pairs naturally with **drag-and-drop a file onto the viewport** and the
+    multi-document manager's `.json` import (Phase 8).
 
 ### Phase 5 — Boolean + Reference planes + Pattern + Mirror *(Boolean + offset planes ✅; rest TODO)*
 - Boolean between separate bodies: union / subtract / intersect — **done**
