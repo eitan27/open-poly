@@ -1416,7 +1416,7 @@ function softenGizmo(helper: THREE.Object3D): void {
       if (!m.color) continue;
       m.transparent = true;
       m.color.lerp(neutral, 0.3);
-      m.opacity = m.opacity * 0.72;
+      m.opacity = m.opacity * 0.82;
       m._color = m.color.clone();
       m._opacity = m.opacity;
     }
