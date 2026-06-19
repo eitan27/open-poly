@@ -208,10 +208,12 @@ rough relative sizing, not calendar promises.
 > refresh keeps your work). **Reference planes (offset method) are in** — the
 > ⧉ Plane button creates a parametric offset plane you can sketch on. **Transform
 > (move + rotate bodies, Phase 5.5) is in** — a ✥ Transform gizmo + panel that
-> rigidly moves a body in place (keeps its id + names). Likely next high-value
-> items: more plane methods (midplane/angle/through), a multi-document manager
-> (Documents list + import/export), Mirror, Revolve (Phase 6), or **LLM agent
-> integration via local MCP (Phase 9 — fully specced below)**.
+> rigidly moves a body in place (keeps its id + names). **Transform copy** and
+> **STEP import** (⤓ Import STEP → a first-class named body) are also in. Likely
+> next high-value items: more plane methods (midplane/angle/through), a
+> multi-document manager (Documents list + import/export), Mirror, Revolve
+> (Phase 6), or **LLM agent integration via local MCP (Phase 9 — fully specced
+> below)**.
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -346,24 +348,24 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   Parts panel. `Kernel.exportBody` replays the fold and serialises the chosen
   result body. Image snapshot still TODO.
 - **Import STEP — ✅ DONE.** An **⤓ Import STEP** button by the Parts heading
-  loads a `.step`/`.stp` file as a body in the document.
-  - **Feature:** an `ImportFeature` (a body *producer*, like a primitive) holding
-    the source — store the STEP **text** in the feature (it's JSON-serializable so
-    it round-trips through IndexedDB / `.json` like everything else; watch size,
-    consider a separate IndexedDB blob + a ref if files get big). UI: a **file
-    menu / Parts "Import"** that reads the file (`<input type=file>` →
-    `file.text()`).
-  - **Kernel:** the worker reads it via OCCT `STEPControl_Reader` (or replicad's
-    `importSTEP`), producing a `Shape3D`; fold it in as a new `Body` keyed by the
-    feature id (gets a colour like other new bodies). Multi-solid STEP → either
-    one body per solid or a compound; decide (one-body-per-solid is friendlier).
-  - **Topological names:** imported faces/edges have **no** persistent names, so
-    seed them on import (axis-aligned planar faces via `axisFaceName` like
-    primitives; otherwise index/centroid fallback) so downstream extrude-on-face /
-    chamfer / the agent can still reference them. This is the main work item.
-  - Once imported it's a first-class body: transform, boolean, dress-up, export.
-  - Pairs naturally with **drag-and-drop a file onto the viewport** and the
-    multi-document manager's `.json` import (Phase 8).
+  loads a `.step`/`.stp` file as a body.
+  - **Feature:** `ImportFeature` (a body *producer*, like a primitive) stores the
+    STEP **text** on the feature — JSON-serializable, so it round-trips through
+    IndexedDB / `.json`. UI: `<input type=file>` → `file.text()` → `addImport`.
+  - **Kernel:** `importStepNamed` reads it via OCCT `STEPControl_Reader` (sync —
+    writes the text straight to the in-memory FS), `cast(OneShape())` → a body
+    keyed by the feature id (random colour like other new bodies). Folds in via
+    `buildBodies`. (Multi-solid STEP comes in as one body/compound for now;
+    one-body-per-solid is a future refinement.)
+  - **Topological names seeded on import:** axis-aligned planar faces get an axis
+    name (`id/+z`) via `axisFaceName`, the rest a stable unique index name
+    (`id/fN`) — so downstream extrude-on-face / chamfer / the agent can reference
+    imported geometry.
+  - It's then a **first-class body**: colour / opacity / hide, transform, boolean,
+    dress-up, and re-export (Parts panel) all work; named in the Parts list /
+    timeline / param editor.
+  - **TODO:** drag-and-drop a file onto the viewport; one-body-per-solid; cache
+    the parsed shape so big files don't re-parse on every regen (perf).
 
 ### Phase 5 — Boolean + Reference planes + Pattern + Mirror *(Boolean + offset planes ✅; rest TODO)*
 - Boolean between separate bodies: union / subtract / intersect — **done**
