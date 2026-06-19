@@ -39,7 +39,7 @@ import {
 } from "../document/planes";
 import type { Document, ExtrudeProfile, Feature, PrimitiveFeature } from "../document/types";
 import type { MeshedFaces, ShapeMeshPayload } from "../kernel/types";
-import type { FeatureMesh, Selection, ViewName } from "../viewport/Viewport";
+import type { Selection, ViewName } from "../viewport/Viewport";
 import {
   expandEntities,
   type Operation,
@@ -48,6 +48,22 @@ import {
   type ProfileSpec,
   type SceneSummary,
 } from "./operations";
+
+/** A regenerated body the agent can read: its id + tessellation (geometry,
+ *  named faces/edges). Appearance is derived from the producing feature. */
+export interface AgentMesh {
+  id: string;
+  mesh: ShapeMeshPayload;
+}
+
+/** The outcome of a kernel regeneration, delivered to whoever awaited it via
+ *  `waitForRegen`: the merged per-feature error map (resolve + kernel) and the
+ *  ids of the bodies that built. `timedOut` if regen didn't settle in time. */
+export interface RegenSettle {
+  errors: Record<string, string>;
+  bodyIds?: string[];
+  timedOut?: boolean;
+}
 
 /** Everything the command layer needs from the live app, exposed via getters so
  *  it always reads the latest committed state (never a stale closure) — mirrors
@@ -58,9 +74,15 @@ export interface AgentContext {
   setDoc(next: Document): void;
   getSelection(): Selection[];
   setSelection(sel: Selection[]): void;
-  getMeshes(): FeatureMesh[];
-  /** Per-feature resolve + kernel errors (App's merged error map). */
+  /** The latest regenerated bodies — fed synchronously when regen settles, so a
+   *  read right after an awaited mutation sees fresh geometry (not stale React
+   *  state). */
+  getMeshes(): AgentMesh[];
+  /** Per-feature resolve + kernel errors (merged), kept fresh on each regen. */
   getErrors(): Record<string, string>;
+  /** Resolve after the next kernel regeneration settles — so a mutating op can
+   *  report success/errors and a follow-up read/screenshot sees the result. */
+  waitForRegen(): Promise<RegenSettle>;
   /** The viewport API (camera + capturePNG), or null before it mounts. */
   getViewport(): {
     setView(name: ViewName): void;
@@ -170,9 +192,11 @@ function requireFeature(doc: Document, id: string): Feature {
 
 // --- Apply ----------------------------------------------------------------
 
-/** Apply one Operation. Returns a structured result; throws nothing (errors are
- *  returned in `OpResult`). Mutations go through `ctx.setDoc` (undoable). */
-export function applyOperation(ctx: AgentContext, op: Operation): OpResult {
+/** Apply one Operation. Resolves to a structured result; throws nothing (errors
+ *  are returned in `OpResult`). Mutations go through `ctx.setDoc` (undoable) and
+ *  then **await the kernel regen** so the result reflects settled geometry (and a
+ *  follow-up read/screenshot sees it). */
+export async function applyOperation(ctx: AgentContext, op: Operation): Promise<OpResult> {
   try {
     const doc = ctx.getDoc();
     let next: Document;
@@ -296,10 +320,15 @@ export function applyOperation(ctx: AgentContext, op: Operation): OpResult {
     }
 
     ctx.setDoc(next);
-    // Cheap synchronous validation: expression / reference resolution. Kernel
-    // (regen) errors only surface once L3 wires the regen-await loop.
-    const resolved = resolveDocument(next);
-    const featureErrors = Object.keys(resolved.errors).length ? resolved.errors : undefined;
+    // Wait for the worker to regenerate, then report what actually happened —
+    // resolve (expression/reference) AND kernel (build) errors, merged.
+    const { errors } = await ctx.waitForRegen();
+    // If the feature this op created failed to build, surface it as the op's
+    // own failure so the agent self-corrects instead of building on nothing.
+    if (createdId && errors[createdId]) {
+      return { ok: false, createdId, error: errors[createdId], errorKind: "kernel_error", featureErrors: errors };
+    }
+    const featureErrors = Object.keys(errors).length ? errors : undefined;
     return { ok: true, createdId, featureErrors };
   } catch (err) {
     if (err instanceof OpError) return { ok: false, error: err.message, errorKind: err.kind };
@@ -329,6 +358,9 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
   const resolved = resolveDocument(doc);
 
   const featureById = new Map(doc.features.map((f) => [f.id, f]));
+  // Bodies that own appearance carry a color; in-place modifiers inherit it.
+  const hasColor = (f: Feature | undefined): f is Extract<Feature, { color: number }> =>
+    !!f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "import");
   const bodies: SceneSummary["bodies"] = meshes.map((m) => {
     const f = featureById.get(m.id);
     const mesh: ShapeMeshPayload = m.mesh;
@@ -337,7 +369,7 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
       name: f?.name ?? m.id,
       kind: f ? (f.type === "primitive" ? f.kind : f.type) : "body",
       bbox: bbox(mesh.faces),
-      color: m.color,
+      color: hasColor(f) ? f.color : undefined,
       hidden: f && "hidden" in f ? f.hidden : undefined,
       faces: uniqueNames(mesh.faces.faceGroups),
       edges: uniqueNames(mesh.edges.edgeGroups),

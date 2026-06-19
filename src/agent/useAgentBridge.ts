@@ -13,6 +13,8 @@ import {
   getSelection,
   screenshot,
   type AgentContext,
+  type AgentMesh,
+  type RegenSettle,
 } from "./commands";
 import {
   operationSchema,
@@ -27,7 +29,7 @@ import {
 import { BridgeClient, type BridgeStatus } from "./bridgeClient";
 import { genId } from "../document/document";
 import type { Document } from "../document/types";
-import type { FeatureMesh, Selection, ViewName, ViewportApi } from "../viewport/Viewport";
+import type { Selection, ViewName, ViewportApi } from "../viewport/Viewport";
 
 interface BridgeDeps {
   doc: Document;
@@ -35,16 +37,20 @@ interface BridgeDeps {
   setDoc: (next: Document) => void;
   selection: Selection[];
   setSelection: (sel: Selection[]) => void;
-  meshes: FeatureMesh[];
-  /** App's merged per-feature error map (resolve + kernel). */
-  errors: Record<string, string>;
+  /** Latest regenerated bodies, fed synchronously when regen settles. */
+  meshesRef: RefObject<AgentMesh[]>;
+  /** Merged per-feature error map (resolve + kernel), refreshed each regen. */
+  errorsRef: RefObject<Record<string, string>>;
+  /** Resolves after the next kernel regen settles. */
+  waitForRegen: () => Promise<RegenSettle>;
   viewApiRef: RefObject<ViewportApi | null>;
 }
 
 /** The dev-console handle. `apply` validates the op with the shared zod schema
- *  (so console typos get readable errors); `read` runs a typed read query. */
+ *  (so console typos get readable errors) and resolves once regen settles;
+ *  `read` runs a typed read query. */
 export interface OpenPolyApi {
-  apply(op: Operation): OpResult;
+  apply(op: Operation): Promise<OpResult>;
   read(query: ReadQuery): Document | SceneSummary | Selection[] | string | null;
   document(): Document;
   summary(): SceneSummary;
@@ -72,14 +78,15 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
   docRef.current = deps.doc;
   const selectionRef = useRef(deps.selection);
   selectionRef.current = deps.selection;
-  const meshesRef = useRef(deps.meshes);
-  meshesRef.current = deps.meshes;
-  const errorsRef = useRef(deps.errors);
-  errorsRef.current = deps.errors;
   const setDocRef = useRef(deps.setDoc);
   setDocRef.current = deps.setDoc;
   const setSelectionRef = useRef(deps.setSelection);
   setSelectionRef.current = deps.setSelection;
+  const waitForRegenRef = useRef(deps.waitForRegen);
+  waitForRegenRef.current = deps.waitForRegen;
+  // These refs are owned by App's regen effect (synchronously fresh on settle).
+  const meshesRef = deps.meshesRef;
+  const errorsRef = deps.errorsRef;
   const viewApiRef = deps.viewApiRef;
 
   const ctx = useMemo<AgentContext>(
@@ -96,15 +103,16 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
       },
       getMeshes: () => meshesRef.current,
       getErrors: () => errorsRef.current,
+      waitForRegen: () => waitForRegenRef.current(),
       getViewport: () => viewApiRef.current,
     }),
-    [viewApiRef],
+    [meshesRef, errorsRef, viewApiRef],
   );
 
   // Apply/read handlers shared by the WS bridge and the dev console. Validate
   // every payload with the shared zod schemas (same as the MCP server will).
   const handleApply = useMemo(
-    () => (payload: unknown): OpResult => applyOperation(ctx, operationSchema.parse(payload)),
+    () => (payload: unknown): Promise<OpResult> => applyOperation(ctx, operationSchema.parse(payload)),
     [ctx],
   );
   const handleRead = useMemo(

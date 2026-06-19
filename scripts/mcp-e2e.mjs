@@ -42,16 +42,13 @@ check(
 const r1 = await client.callTool({ name: "add_primitive", arguments: { kind: "box", name: "McpBox" } });
 const op1 = JSON.parse(textOf(r1));
 check("add_primitive -> ok", !r1.isError && op1.ok === true, textOf(r1));
+const boxId = op1.createdId;
 
-// read: poll the summary until regen meshes it
-let names = [];
-for (let i = 0; i < 15; i++) {
-  const r = await client.callTool({ name: "get_scene_summary", arguments: {} });
-  names = (JSON.parse(textOf(r)).bodies ?? []).map((b) => b.name);
-  if (names.includes("McpBox")) break;
-  await new Promise((res) => setTimeout(res, 300));
-}
-check("get_scene_summary sees McpBox (after regen)", names.includes("McpBox"), JSON.stringify(names));
+// read: a SINGLE read right after the awaited apply must already see the body —
+// L3 makes apply await regen, so no polling is needed.
+const rsum = await client.callTool({ name: "get_scene_summary", arguments: {} });
+const names = (JSON.parse(textOf(rsum)).bodies ?? []).map((b) => b.name);
+check("get_scene_summary sees McpBox on first read (regen awaited)", names.includes("McpBox"), JSON.stringify(names));
 
 // screenshot returns image content
 const rs = await client.callTool({ name: "screenshot", arguments: { view: "iso" } });
@@ -62,6 +59,12 @@ check("screenshot -> PNG image content", !rs.isError && !!img && img.mimeType ==
 const re = await client.callTool({ name: "set_param", arguments: { featureId: "missing", name: "width", value: 1 } });
 const op2 = JSON.parse(textOf(re));
 check("set_param missing -> isError + not_found", re.isError === true && op2.ok === false && op2.errorKind === "not_found", textOf(re));
+
+// a KERNEL build failure (bogus edge) surfaces only because we await regen —
+// this is what lets an agent see a bad op and self-correct.
+const rk = await client.callTool({ name: "dress_up", arguments: { kind: "fillet", targetId: boxId, edges: ["does-not-exist"], size: 1 } });
+const op3 = JSON.parse(textOf(rk));
+check("dress_up bad edge -> isError + kernel_error (regen-await)", rk.isError === true && op3.ok === false && op3.errorKind === "kernel_error", textOf(rk));
 
 // modeling guide + report_issue (don't go through the hub)
 const rg = await client.callTool({ name: "get_modeling_guide", arguments: {} });

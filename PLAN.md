@@ -483,15 +483,18 @@ this — datum / reference-plane sketches stay anchored to their datum.
 
 ---
 
-## Phase 9 — LLM agent integration (local MCP) — IN PROGRESS (L0–L2 done, L3 next)
+## Phase 9 — LLM agent integration (local MCP) — IN PROGRESS (L0–L3 done, L4 next)
 
-**Status (2026-06-20).** **L0–L2 shipped.** The command + read layer (L0), the
-browser WebSocket bridge (L1), and the **Node stdio MCP server** (`mcp-server/`,
-L2) are built and validated end-to-end: a real MCP client spawns the server,
-which starts the hub; a headless tab dials in; and tool calls flow client →
-server → hub → tab → kernel → back (incl. PNG image content for `screenshot`).
-See the L0–L2 entries under *Delivery steps*. **L3 (reads/screenshot polish +
-regen-await) is next.**
+**Status (2026-06-20).** **L0–L3 shipped.** The command + read layer (L0), the
+browser WebSocket bridge (L1), the **Node stdio MCP server** (`mcp-server/`, L2),
+and **regen-await + read/screenshot polish** (L3) are built and validated end to
+end: a real MCP client spawns the server, a headless tab dials the hub, and tool
+calls flow client → server → hub → tab → kernel → back. After L3 a mutating op
+**awaits the kernel regen** before returning, so a single follow-up read/
+screenshot sees the result (no polling) and a failed build surfaces as
+`kernel_error` for the agent to self-correct. See the L0–L3 entries under
+*Delivery steps*. **L4 (robustness: token auth, multi-tab, error taxonomy,
+list/open/new_document) is next.**
 
 **Goal.** Let a local LLM agent (Claude Desktop, Claude Code, Cursor, Cline, Zed,
 …) **drive the live Open Poly browser tab** — sketch, extrude, transform, arrange
@@ -685,10 +688,20 @@ official **`@modelcontextprotocol/sdk`**.
   (SDK client spawns the server, Playwright tab dials the hub, 21 tools, full
   round-trip incl. image content + structured errors). *Note:* tool names are
   snake_case ↔ camelCase Operation discriminators (mapped in `tools.ts`).
-- **L3 — Reads + screenshots + regen-await polish.** `get_scene_summary`,
-  `screenshot` (image content), `applyOperation` awaits regen settle and returns
-  deltas + ids + errors. **Exit:** an agent builds a bracket from a text prompt,
-  screenshots it, and corrects itself.
+- **L3 — Reads + screenshots + regen-await polish. ✅ DONE (2026-06-20).**
+  `applyOperation` is now async and **awaits the kernel regen** before resolving:
+  App's regen effect feeds `agentMeshesRef`/`agentErrorsRef` synchronously on
+  settle and flushes one-shot `waitForRegen` promises, gated by a regen
+  start-sequence so a waiter only resolves on a regen that began *after* the op
+  (otherwise the slow initial-load regen resolves it early). A created feature
+  that fails to build is returned as `ok:false` `kernel_error` (with
+  `featureErrors`). `get_scene_summary` reads the fresh meshes (bbox + named
+  faces/edges; color derived from the feature) and `screenshot` returns image
+  content. **Validated** by `scripts/mcp-e2e.mjs`: a *single* read right after an
+  awaited apply sees the new body (no polling), and `dress_up` on a bogus edge
+  surfaces `kernel_error` ("fillet: no matching edges"). 8/8 checks, stable across
+  repeats. **Exit met** (mechanics): build → single-read verify → error-driven
+  self-correct all work; an LLM driving it is the natural next manual test.
 - **L4 — Robustness.** token auth, multi-tab handling, error taxonomy, queue
   ordering, reconnection, timeouts, and `list/open/new_document` tools.
 

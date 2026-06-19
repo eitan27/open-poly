@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
   addBoolean,
@@ -61,6 +61,7 @@ import {
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
 import { useAgentBridge } from "./agent/useAgentBridge";
+import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { EyeIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { DraggableDialog } from "./ui/DraggableDialog";
@@ -372,6 +373,34 @@ export default function App() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
+
+  // Agent regen coordinator (Phase 9 L3). The regen effect feeds these refs the
+  // instant a regen settles — synchronously, ahead of React's re-render — so an
+  // agent op can await regen and a follow-up read/screenshot sees fresh geometry
+  // without polling. `agentMeshesRef` mirrors `rawMeshes`; `agentErrorsRef`
+  // mirrors the merged error map; `regenWaitersRef` holds one-shot resolvers.
+  const agentMeshesRef = useRef<AgentMesh[]>([]);
+  const agentErrorsRef = useRef<Record<string, string>>({});
+  // Monotonic count of regens that have *started*. A waiter must only resolve on
+  // a regen that began after it started waiting — otherwise a regen already in
+  // flight (e.g. the slow initial load) would resolve it before the agent's edit
+  // is even regenerated.
+  const regenStartSeqRef = useRef(0);
+  const regenWaitersRef = useRef<{ threshold: number; settle: (s: RegenSettle) => void }[]>([]);
+  const waitForRegen = useCallback(
+    (): Promise<RegenSettle> =>
+      new Promise((resolve) => {
+        let done = false;
+        const settle = (s: RegenSettle) => {
+          if (!done) { done = true; resolve(s); }
+        };
+        regenWaitersRef.current.push({ threshold: regenStartSeqRef.current, settle });
+        // Never hang: if regen doesn't settle (kernel not ready, a competing
+        // edit cancelled it), resolve with whatever errors we last knew.
+        setTimeout(() => settle({ errors: agentErrorsRef.current, timedOut: true }), 8000);
+      }),
+    [],
+  );
   const [booleanDialog, setBooleanDialog] = useState<{ op: BooleanOp; operandIds: string[] } | null>(
     null,
   );
@@ -510,6 +539,10 @@ export default function App() {
     if (!ready || !kernel) return;
     let cancelled = false;
     setBusy(true);
+    // This regen's start ordinal — waiters that began before it resolve on it.
+    const myStart = (regenStartSeqRef.current += 1);
+    // Captured outcome handed to anyone awaiting this regen (the agent layer).
+    let settle: RegenSettle = { errors: { ...resolved.errors } };
 
     kernel
       .regenerate(resolved.features)
@@ -524,14 +557,28 @@ export default function App() {
         setRawMeshes(nextMeshes);
         setErrors(regenErrors);
         setFatal(null);
+        // Feed the agent refs synchronously (ahead of React's commit).
+        agentMeshesRef.current = nextMeshes;
+        agentErrorsRef.current = regenErrors;
+        settle = { errors: regenErrors, bodyIds: nextMeshes.map((m) => m.id) };
       })
       .catch((err) => {
         if (cancelled) return;
         console.error("regeneration failed:", err);
         setFatal(String(err?.message ?? err));
+        settle = { errors: agentErrorsRef.current };
       })
       .finally(() => {
-        if (!cancelled) setBusy(false);
+        if (cancelled) return;
+        setBusy(false);
+        // Resolve only waiters that began before this regen started; keep the
+        // rest pending for a later regen.
+        const stillWaiting: typeof regenWaitersRef.current = [];
+        for (const w of regenWaitersRef.current) {
+          if (myStart > w.threshold) w.settle(settle);
+          else stillWaiting.push(w);
+        }
+        regenWaitersRef.current = stillWaiting;
       });
 
     return () => {
@@ -571,7 +618,8 @@ export default function App() {
   // and runs the WebSocket bridge to the local MCP hub. `agentStatus` drives the
   // "Agent connected" badge.
   const { status: agentStatus } = useAgentBridge({
-    doc, setDoc, selection, setSelection, meshes, errors, viewApiRef,
+    doc, setDoc, selection, setSelection,
+    meshesRef: agentMeshesRef, errorsRef: agentErrorsRef, waitForRegen, viewApiRef,
   });
 
   // Bodies available as Boolean operands: features with a rendered body.
