@@ -404,12 +404,16 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
         bodies.push({ id: feature.id, ...buildPrimitive(feature) });
       } else if (feature.type === "extrude") {
         const { profile, flip, distance, mode } = feature;
+        // A "remove" cuts *into* the body, so its natural direction is opposite
+        // the profile normal — the Flip toggle then reverses that. New/Add follow
+        // the normal outward.
+        const dirFlip = mode === "remove" ? !flip : flip;
         const built: NamedShape =
           profile.kind === "sketchRegion"
-            ? extrudeSketchRegion(profile, flip, distance, feature.id)
+            ? extrudeSketchRegion(profile, dirFlip, distance, feature.id)
             : extrudeBodyFace(
                 requireBody(bodies, profile.sourceId),
-                profile.faceName, profile.center, flip, distance, feature.id,
+                profile.faceName, profile.center, dirFlip, distance, feature.id,
               );
 
         if (mode === "new") {
