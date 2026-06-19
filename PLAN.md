@@ -608,6 +608,27 @@ official **`@modelcontextprotocol/sdk`**.
   `open_document` / `new_document` tools so "continue yesterday's bracket" = open
   that doc + `get_scene_summary`.
 
+### Agent modeling guide + issue reporting
+- **The "skill"** — a concise modeling playbook lives at
+  `src/agent/modeling-guide.md` (drafted): mental model, conventions (mm, Z-up,
+  reference-by-name), the read→plan→one-op→verify loop, recipes, and best
+  practices (drive dimensions with **variables**, constrain sketches, name
+  parts, verify with screenshots). It is the source of truth, **version-
+  controlled with the tools and kept in sync with them**. Deliver it to clients
+  as an MCP **prompt** + **resource**, plus a `get_modeling_guide` tool, so any
+  connecting client picks it up automatically.
+- **`report_issue` tool (first-class feedback loop).** The guide instructs the
+  agent: when blocked or surprised, don't fake geometry — call `report_issue`
+  with `kind: "missing_feature" | "bug" | "friction"` (+ goal / what-it-tried /
+  expected / observed / suggested API). The server **appends these to a
+  reviewable log** (a file and/or a dev-facing resource), deduped. This turns the
+  agent into a product-feedback generator — surfacing both **capability gaps**
+  (revolve, sweep/loft, pattern/mirror, midplane/angle planes, more constraints…)
+  **and bugs** — and keeps it honest instead of hallucinating geometry.
+- Design implication already reflected in the Operation set: **variables are
+  first-class** (so the guide can say "parameterize it"), there is a
+  **`screenshot`** tool (verify loop), and references are by **stable name/id**.
+
 ### Engineering concerns / guardrails
 - **Undo-routed** mutations (above) = the human stays in control.
 - **Human-in-the-loop on destructive ops** (delete / boolean consuming bodies /
