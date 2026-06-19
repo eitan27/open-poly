@@ -324,6 +324,8 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     *(One profile at a time; multi-profile in one extrude is TODO.)*
   - **Result mode** (in the dialog): ✅ **New** / **Add** (join) / **Remove**
     (cut). Add/Remove require choosing an explicit **target body** in the dialog.
+    Defaults to **Add** onto a solid when the sketch sits on that solid's face
+    (drawn on it, or coplanar + overlapping a face), else **New** — overridable.
   - **Direction:** ✅ flip toggle. *(Symmetric/two-sided: TODO.)*
   - **End condition:** ✅ **Blind** (expression-backed distance). *(Up-to-face /
     up-to-next / through-all: TODO.)*

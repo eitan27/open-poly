@@ -45,7 +45,7 @@ import type {
 import type { BooleanOp, MeshedEdges, MeshedFaces } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
-import { frameOf, planeRefLabel, uvToWorld, type SketchPlaneRef } from "./document/planes";
+import { frameOf, planeRefLabel, uvToWorld, type PlaneFrameData, type SketchPlaneRef } from "./document/planes";
 import { evaluateExpression } from "./document/expression";
 import { detectSketchRegions } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
@@ -119,6 +119,50 @@ function bodyCenter(faces: MeshedFaces): [number, number, number] {
     if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
   }
   return [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+}
+
+/** 2D: is point p inside triangle a-b-c (uv space)? (sign-consistency test) */
+function pointInTriangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2): boolean {
+  const cross = (o: Vec2, u: Vec2, w: Vec2) => (u[0] - o[0]) * (w[1] - o[1]) - (u[1] - o[1]) * (w[0] - o[0]);
+  const d1 = cross(p, a, b), d2 = cross(p, b, c), d3 = cross(p, c, a);
+  return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+}
+
+/** The id of a rendered body that has a planar face **coplanar** with `frame`
+ *  which the region (`outline`, in uv) **overlaps** — i.e. the sketch sits on
+ *  that solid's face, so an extrude should default to adding onto it. null if
+ *  none. Coplanarity = every face vertex on the sketch plane; overlap = a region
+ *  vertex (or its centroid) inside a face triangle. */
+function bodyUnderRegion(frame: PlaneFrameData, outline: Vec2[], meshes: FeatureMesh[]): string | null {
+  if (outline.length === 0) return null;
+  const [ox, oy, oz] = frame.origin;
+  const [nx, ny, nz] = frame.normal;
+  const [ux, uy, uz] = frame.uAxis;
+  const [vx, vy, vz] = frame.vAxis;
+  const TOL = 0.05; // mm coplanarity tolerance
+  let cu = 0, cv = 0;
+  for (const p of outline) { cu += p[0]; cv += p[1]; }
+  const centroid: Vec2 = [cu / outline.length, cv / outline.length];
+  for (const m of meshes) {
+    const { vertices, triangles, faceGroups } = m.mesh.faces;
+    if (!faceGroups) continue;
+    for (const g of faceGroups) {
+      const uv: Vec2[] = [];
+      let coplanar = true;
+      for (let k = g.start; k < g.start + g.count; k++) {
+        const i = triangles[k] * 3;
+        const dx = vertices[i] - ox, dy = vertices[i + 1] - oy, dz = vertices[i + 2] - oz;
+        if (Math.abs(dx * nx + dy * ny + dz * nz) > TOL) { coplanar = false; break; }
+        uv.push([dx * ux + dy * uy + dz * uz, dx * vx + dy * vy + dz * vz]);
+      }
+      if (!coplanar) continue;
+      for (let t = 0; t + 2 < uv.length; t += 3) {
+        if (pointInTriangle(centroid, uv[t], uv[t + 1], uv[t + 2])) return m.id;
+        for (const p of outline) if (pointInTriangle(p, uv[t], uv[t + 1], uv[t + 2])) return m.id;
+      }
+    }
+  }
+  return null;
 }
 
 /** The persistent topological name of a tessellated face (if it has one). */
@@ -588,14 +632,31 @@ export default function App() {
     return uvToWorld(frameOf(sk.plane, resolved.planeFrames), u / n, v / n);
   };
 
+  // The solid a sketch-region profile sits on (drawn on its face, or coplanar +
+  // overlapping it), if any — so the extrude can default to adding onto it.
+  const extrudeHostBody = (): string | null => {
+    const p = extrudeProfile;
+    if (!p || p.kind !== "sketchRegion") return null;
+    const sk = doc.features.find((f) => f.id === p.sketchId);
+    if (sk?.type !== "sketch") return null;
+    // Fast, exact: the sketch was drawn directly on a body face.
+    if (sk.plane.kind === "face" && bodyIds.has(sk.plane.featureId)) return sk.plane.featureId;
+    // Otherwise: a body whose coplanar face the region overlaps geometrically.
+    const region = detectSketchRegions(sk.entities).find((r) => r.id === p.regionId);
+    if (!region) return null;
+    return bodyUnderRegion(frameOf(sk.plane, resolved.planeFrames), region.outline, meshes);
+  };
+
   const openExtrudeDialog = () => {
     if (!extrudeProfile) return;
     const world = profileAnchorWorld();
     const s = (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
-    // Default add/remove target: the face's own body, else the first body.
+    // If the sketch sits on a solid's face, default to adding onto that solid;
+    // otherwise a new body (default target = the face's own body, else the first).
+    const host = extrudeHostBody();
     const defaultTarget =
-      extrudeProfile.kind === "bodyFace" ? extrudeProfile.featureId : booleanCandidates[0]?.id ?? null;
-    setExtrudeDialog({ mode: "new", distance: "10", flip: false, targetId: defaultTarget, x: s.x, y: s.y });
+      host ?? (extrudeProfile.kind === "bodyFace" ? extrudeProfile.featureId : booleanCandidates[0]?.id ?? null);
+    setExtrudeDialog({ mode: host ? "add" : "new", distance: "10", flip: false, targetId: defaultTarget, x: s.x, y: s.y });
   };
 
   const createExtrude = () => {
