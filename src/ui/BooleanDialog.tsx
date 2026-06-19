@@ -1,5 +1,6 @@
 import { BOOLEAN_OPS, BOOLEAN_OP_LABELS } from "../document/featureDefs";
 import type { BooleanOp } from "../kernel/types";
+import { DraggableDialog } from "./DraggableDialog";
 
 export interface BooleanCandidate {
   id: string;
@@ -29,8 +30,8 @@ export function BooleanDialog({
 
   return (
     <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3 className="modal-title">Boolean operation</h3>
+      <DraggableDialog className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3 className="modal-title" data-drag-handle>Boolean operation</h3>
         <div className="modal-op-row">
           {BOOLEAN_OPS.map((o) => (
             <button
@@ -65,7 +66,7 @@ export function BooleanDialog({
             Create
           </button>
         </div>
-      </div>
+      </DraggableDialog>
     </div>
   );
 }

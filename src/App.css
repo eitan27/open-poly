@@ -734,6 +734,13 @@
   color: #e6e8ee;
 }
 
+/* Title bars act as drag handles for movable dialogs. */
+[data-drag-handle] {
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+
 .ed-modes {
   display: flex;
   gap: 4px;

@@ -61,6 +61,7 @@ import {
 import { useHistory } from "./hooks/useHistory";
 import { EyeIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
+import { DraggableDialog } from "./ui/DraggableDialog";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
@@ -651,12 +652,25 @@ export default function App() {
     if (!extrudeProfile) return;
     const world = profileAnchorWorld();
     const s = (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
-    // If the sketch sits on a solid's face, default to adding onto that solid;
-    // otherwise a new body (default target = the face's own body, else the first).
-    const host = extrudeHostBody();
-    const defaultTarget =
-      host ?? (extrudeProfile.kind === "bodyFace" ? extrudeProfile.featureId : booleanCandidates[0]?.id ?? null);
-    setExtrudeDialog({ mode: host ? "add" : "new", distance: "10", flip: false, targetId: defaultTarget, x: s.x, y: s.y });
+    // Default to adding onto the host solid when the profile sits on one:
+    //  - a body face -> that face's own body,
+    //  - a sketch region drawn on / coplanar+overlapping a solid's face -> that solid.
+    // Otherwise a new body (target = first available, for if the user switches mode).
+    const addTarget =
+      extrudeProfile.kind === "bodyFace"
+        ? bodyIds.has(extrudeProfile.featureId)
+          ? extrudeProfile.featureId
+          : null
+        : extrudeHostBody();
+    const defaultTarget = addTarget ?? booleanCandidates[0]?.id ?? null;
+    setExtrudeDialog({
+      mode: addTarget ? "add" : "new",
+      distance: "10",
+      flip: false,
+      targetId: defaultTarget,
+      x: s.x,
+      y: s.y,
+    });
   };
 
   const createExtrude = () => {
@@ -1444,8 +1458,8 @@ export default function App() {
             )
           )}
           {extrudeDialog && (
-            <div className="extrude-dialog" style={{ left: extrudeDialog.x, top: extrudeDialog.y }}>
-              <div className="ed-title">Extrude</div>
+            <DraggableDialog className="extrude-dialog" style={{ left: extrudeDialog.x, top: extrudeDialog.y }}>
+              <div className="ed-title" data-drag-handle>Extrude</div>
               <div className="ed-modes">
                 {(["new", "add", "remove"] as const).map((m) => (
                   <button
@@ -1501,11 +1515,11 @@ export default function App() {
                 </button>
                 <button onClick={() => setExtrudeDialog(null)}>Cancel</button>
               </div>
-            </div>
+            </DraggableDialog>
           )}
           {dressUpDialog && (
-            <div className="extrude-dialog" style={{ left: dressUpDialog.x, top: dressUpDialog.y }}>
-              <div className="ed-title">{dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}</div>
+            <DraggableDialog className="extrude-dialog" style={{ left: dressUpDialog.x, top: dressUpDialog.y }}>
+              <div className="ed-title" data-drag-handle>{dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}</div>
               <label className="ed-field">
                 <span>{dressUpDialog.op === "chamfer" ? "Distance" : "Radius"}</span>
                 <input
@@ -1522,11 +1536,11 @@ export default function App() {
                 <button className="ed-primary" onClick={createDressUp}>Create</button>
                 <button onClick={() => setDressUpDialog(null)}>Cancel</button>
               </div>
-            </div>
+            </DraggableDialog>
           )}
           {planeDialog && (
-            <div className="extrude-dialog" style={{ left: "50%", top: 64, transform: "translateX(-50%)" }}>
-              <div className="ed-title">Reference plane</div>
+            <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
+              <div className="ed-title" data-drag-handle>Reference plane</div>
               <div className="ed-field">
                 <span>On</span>
                 <span className="ed-static">{planeRefLabel(planeDialog.base)}</span>
@@ -1547,11 +1561,11 @@ export default function App() {
                 <button className="ed-primary" onClick={createPlane}>Create</button>
                 <button onClick={() => setPlaneDialog(null)}>Cancel</button>
               </div>
-            </div>
+            </DraggableDialog>
           )}
           {editingTransform && (
-            <div className="extrude-dialog" style={{ left: "50%", top: 64, transform: "translateX(-50%)" }}>
-              <div className="ed-title">Transform · {editingTransform.name}</div>
+            <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
+              <div className="ed-title" data-drag-handle>Transform · {editingTransform.name}</div>
               <div className="ed-modes">
                 {(["translate", "rotate"] as const).map((m) => (
                   <button
@@ -1627,7 +1641,7 @@ export default function App() {
                 <button className="ed-primary" onClick={finishTransform}>Done</button>
                 <button onClick={cancelTransform}>Cancel</button>
               </div>
-            </div>
+            </DraggableDialog>
           )}
           {measure && (
             <div className="selection-info">
