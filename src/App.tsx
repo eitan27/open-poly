@@ -13,6 +13,7 @@ import {
   addVariable,
   createDocument,
   genId,
+  migrateDocument,
   moveFeature,
   removeFeature,
   removeSketchEntity,
@@ -351,7 +352,7 @@ export default function App() {
         if (cancelled) return;
         if (docs.length > 0) {
           docIdRef.current = docs[0].id;
-          resetDoc(docs[0].doc);
+          resetDoc(migrateDocument(docs[0].doc));
         }
       } catch (err) {
         console.warn("could not load saved document:", err);

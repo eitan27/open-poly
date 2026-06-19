@@ -31,6 +31,37 @@ export function createDocument(): Document {
   return { features: [], variables: [], rollbackIndex: 0 };
 }
 
+/** Backfill fields that were added to a feature type after a document may have
+ *  been persisted (IndexedDB / imported `.json`), so older documents stay valid.
+ *  Run on load. Uses `in` checks (the static types say the fields are present,
+ *  but old stored data may lack them). */
+export function migrateDocument(doc: Document): Document {
+  let changed = false;
+  const features = doc.features.map((feat) => {
+    // The static types say these fields exist, but old persisted data may lack
+    // them — read through a loose view to test for that.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const f = feat as any;
+    // Transforms gained copy/color/opacity (copy = a body-producing duplicate).
+    if (feat.type === "transform" && (f.copy === undefined || f.color === undefined || f.opacity === undefined)) {
+      changed = true;
+      return {
+        ...feat,
+        copy: f.copy ?? false,
+        color: f.color ?? randomSolidColor(),
+        opacity: f.opacity ?? 1,
+      };
+    }
+    // Reference planes gained a color after they first shipped.
+    if (feat.type === "plane" && f.color === undefined) {
+      changed = true;
+      return { ...feat, color: randomSolidColor() };
+    }
+    return feat;
+  });
+  return changed ? { ...doc, features } : doc;
+}
+
 export function makeFeature(kind: FeatureKind, existing: Feature[]): Feature {
   const def = FEATURE_DEFS[kind];
   const ordinal =
