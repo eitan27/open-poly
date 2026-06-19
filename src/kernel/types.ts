@@ -64,7 +64,9 @@ export type ResolvedFeature =
   | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
   // A rigid transform moves a body (by id) — translate + rotate. `copy` keeps
   // the original and emits the moved body as a NEW body (keyed by this feature).
-  | { id: string; type: "transform"; targetId: string; tx: number; ty: number; tz: number; angle: number; axis: "x" | "y" | "z"; pivot: [number, number, number]; copy: boolean };
+  | { id: string; type: "transform"; targetId: string; tx: number; ty: number; tz: number; angle: number; axis: "x" | "y" | "z"; pivot: [number, number, number]; copy: boolean }
+  // A body imported from a CAD file (the raw STEP text).
+  | { id: string; type: "import"; source: string };
 
 export type RegenFeatureResult =
   | { id: string; ok: true; mesh: ShapeMeshPayload }

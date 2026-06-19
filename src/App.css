@@ -101,6 +101,30 @@
   margin-top: 22px;
 }
 
+/* Parts section header: title on the left, "Import STEP" on the right. */
+.parts-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.parts-header .params-heading {
+  margin-bottom: 0;
+}
+.parts-import {
+  font-size: 11px;
+  padding: 3px 8px;
+  color: #cfe0ff;
+  background: #2a3346;
+  border: 1px solid #3a465f;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.parts-import:hover {
+  background: #344058;
+}
+
 /* --- Variables --- */
 
 .var-row {

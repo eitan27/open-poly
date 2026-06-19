@@ -345,7 +345,8 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 - **Export STL** (mesh) and **STEP** (B-rep, declared in mm) per part, from the
   Parts panel. `Kernel.exportBody` replays the fold and serialises the chosen
   result body. Image snapshot still TODO.
-- **Import STEP (TODO).** Load a `.step`/`.stp` file as a body in the document.
+- **Import STEP — ✅ DONE.** An **⤓ Import STEP** button by the Parts heading
+  loads a `.step`/`.stp` file as a body in the document.
   - **Feature:** an `ImportFeature` (a body *producer*, like a primitive) holding
     the source — store the STEP **text** in the feature (it's JSON-serializable so
     it round-trips through IndexedDB / `.json` like everything else; watch size,

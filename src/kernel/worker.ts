@@ -92,6 +92,40 @@ function buildPrimitive(feature: Extract<ResolvedFeature, { type: "primitive" }>
   return { shape, names };
 }
 
+/** Parse a STEP file's text into a body, seeding face names so downstream
+ *  extrude-on-face / chamfer / the agent can reference them: axis-aligned planar
+ *  faces get an axis name (`id/+z`), the rest a stable index name (`id/fN`).
+ *  Names are kept unique within the body. (Sync — writes the text straight to
+ *  OCCT's in-memory FS, no Blob round-trip.) */
+function importStepNamed(source: string, id: string): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const fileName = `${id}.step`;
+  oc.FS.writeFile(`/${fileName}`, new TextEncoder().encode(source));
+  const reader = new oc.STEPControl_Reader_1();
+  let shape: Shape3D;
+  try {
+    if (!reader.ReadFile(fileName)) throw new Error("Could not read STEP file");
+    const progress = new oc.Message_ProgressRange_1();
+    reader.TransferRoots(progress);
+    progress.delete();
+    shape = cast(reader.OneShape()) as Shape3D;
+  } finally {
+    oc.FS.unlink("/" + fileName);
+    reader.delete();
+  }
+  const names = new Map<number, string>();
+  const used = new Set<string>();
+  shape.faces.forEach((f, i) => {
+    const dir = axisFaceName(f);
+    const axis = dir ? `${id}/${dir}` : null;
+    const nm = axis && !used.has(axis) ? axis : `${id}/f${i}`;
+    used.add(nm);
+    names.set(f.hashCode, nm);
+  });
+  return { shape, names };
+}
+
 /** Extrude a profile face along `dir` and name the result from MakePrism's
  *  history: the two caps (start/end) and one side face per profile edge. */
 function prismFromFace(profileFace: Face, dir: Vector, signedDist: number, id: string): NamedShape {
@@ -402,6 +436,8 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
     try {
       if (feature.type === "primitive") {
         bodies.push({ id: feature.id, ...buildPrimitive(feature) });
+      } else if (feature.type === "import") {
+        bodies.push({ id: feature.id, ...importStepNamed(feature.source, feature.id) });
       } else if (feature.type === "extrude") {
         const { profile, flip, distance, mode } = feature;
         // A "remove" cuts *into* the body, so its natural direction is opposite

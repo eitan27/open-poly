@@ -1,4 +1,4 @@
-import type { BooleanFeature, Document, ExtrudeFeature, Feature, PrimitiveFeature, TransformFeature } from "../document/types";
+import type { BooleanFeature, Document, ExtrudeFeature, Feature, ImportFeature, PrimitiveFeature, TransformFeature } from "../document/types";
 import { EyeIcon } from "./icons";
 
 interface Props {
@@ -22,9 +22,12 @@ const toHex = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
 /** A feature that owns a body's appearance (color/opacity). A copy-transform
  *  produces a body keyed by its own id; an in-place transform doesn't (its body
  *  keeps the target's id), so the bodyIds filter naturally excludes it. */
-type SolidFeature = PrimitiveFeature | ExtrudeFeature | BooleanFeature | TransformFeature;
+type SolidFeature = PrimitiveFeature | ExtrudeFeature | BooleanFeature | TransformFeature | ImportFeature;
 function isSolidFeature(f: Feature): f is SolidFeature {
-  return f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform";
+  return (
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" ||
+    f.type === "transform" || f.type === "import"
+  );
 }
 
 export function SolidsList({

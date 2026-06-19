@@ -56,7 +56,9 @@ export function FeatureTree({
                             ? "Plane"
                             : feature.type === "transform"
                               ? "Transform"
-                              : FEATURE_DEFS[feature.kind].label}
+                              : feature.type === "import"
+                                ? "Import"
+                                : FEATURE_DEFS[feature.kind].label}
                 </span>
                 <span className="row-name">{feature.name}</span>
                 {error && <span className="row-badge" title={error}>!</span>}

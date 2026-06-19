@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
   addBoolean,
   addDressUp,
   addExtrude,
   addFeature,
+  addImport,
   addPlane,
   addSketch,
   addSketchConstraints,
@@ -345,6 +346,7 @@ export default function App() {
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
   const newSolidRef = useRef<HTMLDivElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const startDimensionRef = useRef<() => void>(() => {});
   const dimPendingRef = useRef(dimPending);
   dimPendingRef.current = dimPending;
@@ -549,7 +551,8 @@ export default function App() {
           feature?.type === "primitive" ||
           feature?.type === "extrude" ||
           feature?.type === "boolean" ||
-          feature?.type === "transform";
+          feature?.type === "transform" ||
+          feature?.type === "import";
         if (owns && feature.hidden) return []; // hidden part — don't render or pick
         const color = owns ? feature.color : DEFAULT_SOLID_COLOR;
         const opacity = owns ? feature.opacity : 1;
@@ -1139,6 +1142,18 @@ export default function App() {
   const handleExportStep = (id: string) => exportSolid(id, "step");
   const handleExportStl = (id: string) => exportSolid(id, "stl");
 
+  // Import a local STEP file as a new part (the kernel parses it on regen).
+  const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // reset so the same file can be re-imported
+    if (!file) return;
+    const text = await file.text();
+    const base = file.name.replace(/\.(step|stp)$/i, "");
+    const { doc: next, id } = addImport(doc, text, base);
+    setDoc(next);
+    selectFeature(id);
+  };
+
   // Delete key from the viewport: whole bodies/sketches (feature, face, edge,
   // vertex picks) are removed entirely; sketchEntity picks remove just that
   // line/curve. Bare sketchPoint/sketchFace picks have no deletion target.
@@ -1233,7 +1248,24 @@ export default function App() {
             onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
             onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
           />
-          <h2 className="params-heading">Parts</h2>
+          <div className="parts-header">
+            <h2 className="params-heading">Parts</h2>
+            <button
+              className="parts-import"
+              type="button"
+              title="Import a STEP file as a new part"
+              onClick={() => importInputRef.current?.click()}
+            >
+              ⤓ Import STEP
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".step,.stp,.STEP,.STP"
+              style={{ display: "none" }}
+              onChange={handleImportFile}
+            />
+          </div>
           <SolidsList
             doc={doc}
             bodyIds={bodyIds}

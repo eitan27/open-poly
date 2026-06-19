@@ -13,6 +13,7 @@ import type {
   ExtrudeProfile,
   Feature,
   FeatureKind,
+  ImportFeature,
   PlaneFeature,
   SketchConstraint,
   SketchEntity,
@@ -135,7 +136,7 @@ export function addExtrude(
  *  from — true for all three ops, not just union. */
 function colorOfFeature(doc: Document, id: string): number {
   const f = doc.features.find((x) => x.id === id);
-  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform")
+  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "import")
     ? f.color
     : randomSolidColor();
 }
@@ -233,6 +234,25 @@ export function setTransform(
   patch: Partial<Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis" | "copy">>,
 ): Document {
   return mapFeature(doc, id, (f) => (f.type === "transform" ? { ...f, ...patch } : f));
+}
+
+export function addImport(
+  doc: Document,
+  source: string,
+  name?: string,
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "import").length + 1;
+  const feature: ImportFeature = {
+    id: uid(),
+    type: "import",
+    format: "step",
+    name: name && name.trim() ? name.trim() : `Import ${ordinal}`,
+    suppressed: false,
+    source,
+    color: randomSolidColor(),
+    opacity: 1,
+  };
+  return insertFeature(doc, feature);
 }
 
 /** Resolve every (active) reference-plane feature to a concrete frame, keyed by
@@ -405,13 +425,13 @@ export function renameFeature(doc: Document, id: string, name: string): Document
 
 export function setFeatureColor(doc: Document, id: string, color: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" ? { ...f, color } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "import" ? { ...f, color } : f,
   );
 }
 
 export function setFeatureOpacity(doc: Document, id: string, opacity: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform"
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "import"
       ? { ...f, opacity: Math.max(0, Math.min(1, opacity)) }
       : f,
   );
@@ -420,7 +440,7 @@ export function setFeatureOpacity(doc: Document, id: string, opacity: number): D
 /** Hide/show a part — a view toggle (skips rendering), distinct from suppress. */
 export function setFeatureHidden(doc: Document, id: string, hidden: boolean): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" ? { ...f, hidden } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "import" ? { ...f, hidden } : f,
   );
 }
 
@@ -564,6 +584,8 @@ export function resolveDocument(doc: Document): ResolveResult {
           pivot: f.pivot,
           copy: f.copy,
         });
+      } else if (f.type === "import") {
+        features.push({ id: f.id, type: "import", source: f.source });
       }
       // sketches + planes contribute no body directly
     } catch (err) {

@@ -166,6 +166,17 @@ export function ParamEditor({
             Edit in viewport
           </button>
         </div>
+      ) : feature.type === "import" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Format</span>
+            <span className="param-static">{feature.format.toUpperCase()}</span>
+          </div>
+          <div className="param-field">
+            <span className="param-label">Size</span>
+            <span className="param-static">{(feature.source.length / 1024).toFixed(1)} KB</span>
+          </div>
+        </div>
       ) : (
         FEATURE_DEFS[feature.kind].params.map((p) => (
           <label className="param-field" key={p.name}>

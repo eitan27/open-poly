@@ -149,6 +149,19 @@ export interface TransformFeature extends FeatureBase {
   hidden?: boolean;
 }
 
+/** A body imported from a CAD file (STEP for now). A body *producer*, like a
+ *  primitive. The raw file text is stored on the feature (JSON-serializable, so
+ *  it round-trips through IndexedDB / `.json`). */
+export interface ImportFeature extends FeatureBase {
+  type: "import";
+  format: "step";
+  /** Raw STEP file contents. */
+  source: string;
+  color: number;
+  opacity: number;
+  hidden?: boolean;
+}
+
 export type Feature =
   | PrimitiveFeature
   | SketchFeature
@@ -156,7 +169,8 @@ export type Feature =
   | DressUpFeature
   | BooleanFeature
   | PlaneFeature
-  | TransformFeature;
+  | TransformFeature
+  | ImportFeature;
 
 export interface Variable {
   id: string;
