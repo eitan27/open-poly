@@ -104,7 +104,7 @@ export function addExtrude(
  *  from — true for all three ops, not just union. */
 function colorOfFeature(doc: Document, id: string): number {
   const f = doc.features.find((x) => x.id === id);
-  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean")
+  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform")
     ? f.color
     : randomSolidColor();
 }
@@ -172,7 +172,7 @@ export function addTransform(
   doc: Document,
   targetId: string,
   pivot: [number, number, number],
-  opts: { tx?: string; ty?: string; tz?: string; angle?: string; axis?: "x" | "y" | "z" } = {},
+  opts: { tx?: string; ty?: string; tz?: string; angle?: string; axis?: "x" | "y" | "z"; copy?: boolean } = {},
 ): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "transform").length + 1;
   const feature: TransformFeature = {
@@ -187,6 +187,9 @@ export function addTransform(
     angle: opts.angle ?? "0",
     axis: opts.axis ?? "z",
     pivot,
+    copy: opts.copy ?? false,
+    color: randomSolidColor(),
+    opacity: 1,
   };
   return insertFeature(doc, feature);
 }
@@ -196,7 +199,7 @@ export function addTransform(
 export function setTransform(
   doc: Document,
   id: string,
-  patch: Partial<Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis">>,
+  patch: Partial<Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis" | "copy">>,
 ): Document {
   return mapFeature(doc, id, (f) => (f.type === "transform" ? { ...f, ...patch } : f));
 }
@@ -355,6 +358,7 @@ export function updateParam(
       if (name === "axis" && (value === "x" || value === "y" || value === "z")) {
         return { ...f, axis: value };
       }
+      if (name === "copy") return { ...f, copy: value === "true" };
     }
     return f;
   });
@@ -370,13 +374,13 @@ export function renameFeature(doc: Document, id: string, name: string): Document
 
 export function setFeatureColor(doc: Document, id: string, color: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" ? { ...f, color } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" ? { ...f, color } : f,
   );
 }
 
 export function setFeatureOpacity(doc: Document, id: string, opacity: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean"
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform"
       ? { ...f, opacity: Math.max(0, Math.min(1, opacity)) }
       : f,
   );
@@ -385,7 +389,7 @@ export function setFeatureOpacity(doc: Document, id: string, opacity: number): D
 /** Hide/show a part — a view toggle (skips rendering), distinct from suppress. */
 export function setFeatureHidden(doc: Document, id: string, hidden: boolean): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" ? { ...f, hidden } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" ? { ...f, hidden } : f,
   );
 }
 
@@ -527,6 +531,7 @@ export function resolveDocument(doc: Document): ResolveResult {
           angle: evaluateExpression(f.angle, scope),
           axis: f.axis,
           pivot: f.pivot,
+          copy: f.copy,
         });
       }
       // sketches + planes contribute no body directly

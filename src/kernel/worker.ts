@@ -470,12 +470,19 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
         bodies.length = 0;
         bodies.push(...remaining, { id: feature.id, ...result });
       } else if (feature.type === "transform") {
-        // Translate/rotate the target body in place, keeping its id and names.
         const target = requireBody(bodies, feature.targetId);
         const res = transformNamed(target, feature);
-        target.shape.delete();
-        target.shape = res.shape;
-        target.names = res.names;
+        if (feature.copy) {
+          // Keep the original; add the transformed copy as a NEW body keyed by
+          // this feature (transformNamed builds a fresh shape, never consuming
+          // the target).
+          bodies.push({ id: feature.id, ...res });
+        } else {
+          // Move the target in place, keeping its id and names.
+          target.shape.delete();
+          target.shape = res.shape;
+          target.names = res.names;
+        }
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: String(err) });

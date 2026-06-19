@@ -139,6 +139,14 @@ export interface TransformFeature extends FeatureBase {
   /** Pivot the rotation turns around (world space), baked at creation from the
    *  target body's centroid so the gizmo and kernel agree. */
   pivot: [number, number, number];
+  /** Keep the original: when true the transform produces a NEW body (a moved
+   *  copy, keyed by this feature) and leaves the target untouched; when false it
+   *  moves the target in place (keeping its id). */
+  copy: boolean;
+  /** Appearance of the copied body (used only when `copy`). */
+  color: number;
+  opacity: number;
+  hidden?: boolean;
 }
 
 export type Feature =

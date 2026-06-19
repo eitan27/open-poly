@@ -223,7 +223,7 @@ export default function App() {
       const f = doc.features.find((x) => x.id === s.id);
       if (f?.type === "extrude" && (f.mode === "add" || f.mode === "remove") && f.targetId) ids.add(f.targetId);
       else if (f?.type === "dressup") ids.add(f.targetId);
-      else if (f?.type === "transform") ids.add(f.targetId);
+      else if (f?.type === "transform") ids.add(f.copy ? f.id : f.targetId);
       else ids.add(s.id);
     }
     return ids;
@@ -293,7 +293,7 @@ export default function App() {
   // is reverted to the snapshot it had when this edit started.
   const [transformOrigin, setTransformOrigin] = useState<
     | { created: true }
-    | { created: false; snapshot: Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis"> }
+    | { created: false; snapshot: Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis" | "copy"> }
     | null
   >(null);
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
@@ -496,11 +496,14 @@ export default function App() {
     () =>
       rawMeshes.flatMap((m) => {
         const feature = doc.features.find((f) => f.id === m.id);
-        // Primitives, "new" extrusions, and booleans own a color/opacity/hidden;
-        // a body modified in place (add/remove/dressup) keeps the id — and those
-        // appearance props — of its source.
+        // Primitives, "new" extrusions, booleans, and copy-transforms own a
+        // color/opacity/hidden; a body modified in place (add/remove/dressup, or
+        // a non-copy transform) keeps the id — and appearance — of its source.
         const owns =
-          feature?.type === "primitive" || feature?.type === "extrude" || feature?.type === "boolean";
+          feature?.type === "primitive" ||
+          feature?.type === "extrude" ||
+          feature?.type === "boolean" ||
+          feature?.type === "transform";
         if (owns && feature.hidden) return []; // hidden part — don't render or pick
         const color = owns ? feature.color : DEFAULT_SOLID_COLOR;
         const opacity = owns ? feature.opacity : 1;
@@ -654,7 +657,7 @@ export default function App() {
       const f = doc.features.find((x) => x.id === id);
       if (f?.type === "extrude" && (f.mode === "add" || f.mode === "remove") && f.targetId) id = f.targetId;
       else if (f?.type === "dressup") id = f.targetId;
-      else if (f?.type === "transform") id = f.targetId;
+      else if (f?.type === "transform" && !f.copy) id = f.targetId;
       ids.add(id);
     }
     const bodies = [...ids].filter((id) => bodyIds.has(id));
@@ -684,7 +687,7 @@ export default function App() {
     setTransformEditId(id);
     setTransformOrigin({
       created: false,
-      snapshot: { tx: f.tx, ty: f.ty, tz: f.tz, angle: f.angle, axis: f.axis },
+      snapshot: { tx: f.tx, ty: f.ty, tz: f.tz, angle: f.angle, axis: f.axis, copy: f.copy },
     });
   };
 
@@ -1540,6 +1543,16 @@ export default function App() {
                   </label>
                 </>
               )}
+              <label className="ed-field ed-flip">
+                <span>Keep original (copy)</span>
+                <input
+                  type="checkbox"
+                  checked={editingTransform.copy}
+                  onChange={(e) =>
+                    setDoc(updateParam(doc, editingTransform.id, "copy", String(e.target.checked)))
+                  }
+                />
+              </label>
               <div className="ed-hint">Drag the gizmo, or type exact values.</div>
               <div className="ed-actions">
                 <button className="ed-primary" onClick={finishTransform}>Done</button>
