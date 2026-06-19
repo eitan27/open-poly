@@ -60,6 +60,7 @@ import {
   regularPolygon,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
+import { useAgentBridge } from "./agent/useAgentBridge";
 import { EyeIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { DraggableDialog } from "./ui/DraggableDialog";
@@ -565,6 +566,10 @@ export default function App() {
   // shows and what a Boolean can combine (primitives, "new" extrusions,
   // booleans, and add/dressup-targets that kept their id).
   const bodyIds = useMemo(() => new Set(rawMeshes.map((m) => m.id)), [rawMeshes]);
+
+  // Agent command layer (Phase 9 L0): exposes window.__openpoly for console
+  // testing and builds the AgentContext the WS bridge (L1) will plug into.
+  useAgentBridge({ doc, setDoc, selection, setSelection, meshes, errors, viewApiRef });
 
   // Bodies available as Boolean operands: features with a rendered body.
   const booleanCandidates = useMemo(

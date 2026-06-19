@@ -17,7 +17,8 @@
     "replicad": "^0.23.1",
     "replicad-opencascadejs": "^0.23.0",
     "replicad-threejs-helper": "^0.23.0",
-    "three": "^0.184.0"
+    "three": "^0.184.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",

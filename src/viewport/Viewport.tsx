@@ -123,6 +123,10 @@ export interface ViewportApi {
   lookAtFrame(frame: PlaneFrameData): void;
   /** Project a world point to pixel coords relative to the canvas top-left. */
   worldToScreen(p: [number, number, number]): { x: number; y: number };
+  /** Render the current scene and return it as a PNG data URL — the agent's
+   *  visual feedback (Phase 9). Finalizes any in-flight camera tween first so a
+   *  preceding setView is reflected immediately. */
+  capturePNG(): string;
 }
 
 interface DatumEntry {
@@ -638,6 +642,20 @@ export function Viewport({
         const v = new THREE.Vector3(p[0], p[1], p[2]).project(camera);
         const rect = renderer.domElement.getBoundingClientRect();
         return { x: (v.x * 0.5 + 0.5) * rect.width, y: (-v.y * 0.5 + 0.5) * rect.height };
+      },
+      capturePNG() {
+        // Snap to the end of any in-flight view tween so the requested camera is
+        // captured now, not mid-animation.
+        if (state.tween) {
+          camera.position.copy(state.tween.to);
+          camera.up.copy(state.tween.up);
+          state.tween = null;
+        }
+        controls.update();
+        // Read back in the same tick as render — the WebGL drawing buffer isn't
+        // preserved across the browser's compositing step.
+        renderer.render(scene, camera);
+        return renderer.domElement.toDataURL("image/png");
       },
     };
 
