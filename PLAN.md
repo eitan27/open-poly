@@ -313,7 +313,16 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 > - **Geometric constraints now in the UI:** auto H/V (on draw), **parallel**,
 >   **perpendicular**, **equal** (lines→equal length, circles→equal radius), and
 >   **angle** (as a dimension). **Still not exposed / mapped:** coincident,
->   tangent, concentric, symmetric, midpoint, collinear, fix/lock.
+>   tangent, concentric, symmetric, midpoint, collinear, fix/lock (and `equal`
+>   only covers lines + circles, not arcs).
+> - **Constraint management & feedback:** there's **no UI to delete an individual
+>   constraint** — `removeSketchConstraint` exists in `document.ts` but is wired to
+>   nothing, so a parallel/perp/equal or a dimension can only be removed by
+>   deleting the whole entity; there's also no constraint list/inspector. And
+>   **over-constrained / conflict state isn't surfaced**: `solver.ts` computes
+>   `dof` + `hasConflicts` but they only gate the green "fully-constrained" color
+>   (`App.tsx`), so PLAN's intended blue=under / black=fully / **red=over** is only
+>   half-done (a conflicting sketch silently fails to go green).
 > - **Point identity is by coordinate key** (see `solver.ts`): coincident
 >   endpoints merge by position, robust only until the first solve moves them —
 >   wants a real point-based sketch model before heavy constraint editing.
