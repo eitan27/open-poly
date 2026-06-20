@@ -295,6 +295,15 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 > constraint drives them and a sketch with a circle is correctly under-constrained
 > until pinned.
 >
+> **Constraint integrity fix (2026-06-21):** auto H/V capture now also fires when
+> a line's endpoint snaps to an existing point. Previously the snap resolved early
+> on a point/edge hit, so the *closing* edge of a line-drawn rectangle (which
+> lands on the first corner) silently lost its H/V constraint — leaving the
+> "square" under-constrained and free to **shear** the moment any other
+> constraint (e.g. an angle dimension on a corner line) was added. The
+> **rectangle tool** now also emits H/V on all four edges (previously it created
+> the four lines with *zero* constraints), so a rect-drawn square is rigid too.
+>
 > **Known gaps in Phase 2 sketch constraints (deferred):**
 > - **Dimensions:** no point-to-point / point-to-line distance, no *diameter*
 >   variant of the circle dimension, and no driven-by-expression dimension values
