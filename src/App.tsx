@@ -17,6 +17,7 @@ import {
   migrateDocument,
   moveFeature,
   removeFeature,
+  removeSketchConstraint,
   removeSketchEntity,
   removeVariable,
   renameFeature,
@@ -61,7 +62,7 @@ import {
   regularPolygon,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
-import { EyeIcon, ParallelIcon } from "./ui/icons";
+import { ConstructionIcon, EyeIcon, ParallelIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { DraggableDialog } from "./ui/DraggableDialog";
 import { DimensionLabels, type DimLabelSpec } from "./ui/DimensionLabels";
@@ -75,6 +76,7 @@ import {
   type DatumId,
   type FeatureMesh,
   type Selection,
+  type SelectionFilter,
   type SketchTool,
   type TransformEdit,
   type TransformMode,
@@ -87,6 +89,20 @@ import "./App.css";
 const fmt = (n: number) => {
   const r = Math.round(n * 1000) / 1000;
   return Number.isInteger(r) ? String(r) : String(r);
+};
+
+/** Human-readable label for a sketch constraint (for the constraints list). */
+const constraintLabel = (c: SketchConstraint): string => {
+  switch (c.type) {
+    case "horizontal": return "Horizontal";
+    case "vertical": return "Vertical";
+    case "parallel": return "Parallel";
+    case "perpendicular": return "Perpendicular";
+    case "equal": return "Equal";
+    case "distance": return `Length ${fmt(c.value)}`;
+    case "radius": return `Radius ${fmt(c.value)}`;
+    case "angle": return `Angle ${fmt(c.value)}°`;
+  }
 };
 
 /** Average position of a tessellated body face — the centroid fallback used to
@@ -317,7 +333,11 @@ export default function App() {
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
   const [draft, setDraft] = useState<Vec2[]>([]);
   const [polygonSides, setPolygonSides] = useState(6);
+  // When on, newly drawn entities are marked as construction (reference) geometry.
+  const [constructionMode, setConstructionMode] = useState(false);
   const [fullyConstrained, setFullyConstrained] = useState(false);
+  // The last solve reported conflicting/redundant (over-)constraints.
+  const [solveConflict, setSolveConflict] = useState(false);
   // Dimension entry: the entity being dimensioned, whether it's a line length or
   // a circle radius, the in-progress text, and the on-screen position (px,
   // canvas-relative) to anchor the input box.
@@ -382,6 +402,10 @@ export default function App() {
   // live on the feature and are overlaid in `meshes` below so tweaking them
   // doesn't require re-running the (expensive) kernel regen.
   const [rawMeshes, setRawMeshes] = useState<{ id: string; mesh: FeatureMesh["mesh"] }[]>([]);
+  // When set, only this body is rendered (isolate); others are hidden until exit.
+  const [isolatedBodyId, setIsolatedBodyId] = useState<string | null>(null);
+  // Which geometry kinds clicking can pick (selection filters).
+  const [selFilter, setSelFilter] = useState<SelectionFilter>({ body: true, face: true, edge: true, vertex: true });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
@@ -557,6 +581,7 @@ export default function App() {
   const meshes = useMemo<FeatureMesh[]>(
     () =>
       rawMeshes.flatMap((m) => {
+        if (isolatedBodyId && m.id !== isolatedBodyId) return []; // isolate mode
         const feature = doc.features.find((f) => f.id === m.id);
         // Primitives, "new" extrusions, booleans, and copy-transforms own a
         // color/opacity/hidden; a body modified in place (add/remove/dressup, or
@@ -572,13 +597,19 @@ export default function App() {
         const opacity = owns ? feature.opacity : 1;
         return [{ id: m.id, mesh: m.mesh, color, opacity }];
       }),
-    [rawMeshes, doc],
+    [rawMeshes, doc, isolatedBodyId],
   );
 
   // Feature ids that produced an actual rendered body — what the Solids list
   // shows and what a Boolean can combine (primitives, "new" extrusions,
   // booleans, and add/dressup-targets that kept their id).
   const bodyIds = useMemo(() => new Set(rawMeshes.map((m) => m.id)), [rawMeshes]);
+
+  // Exit isolate if the isolated body disappears (deleted / consumed / regen).
+  useEffect(() => {
+    if (isolatedBodyId && !bodyIds.has(isolatedBodyId)) setIsolatedBodyId(null);
+  }, [bodyIds, isolatedBodyId]);
+  const handleIsolate = (id: string) => setIsolatedBodyId((cur) => (cur === id ? null : id));
 
   // Bodies available as Boolean operands: features with a rendered body.
   const booleanCandidates = useMemo(
@@ -995,7 +1026,9 @@ export default function App() {
       setDoc(addSketchEntities(doc, sketchId, entities));
       setFullyConstrained(false); // geometry changed; constraint state unknown
     };
-    const lineEntity = (a: Vec2, b: Vec2): SketchEntity => ({ type: "line", id: genId(), a, b });
+    // Stamp construction (reference) geometry when that draw-mode is on.
+    const mark = <T extends SketchEntity>(e: T): T => (constructionMode ? { ...e, construction: true } : e);
+    const lineEntity = (a: Vec2, b: Vec2): SketchEntity => mark({ type: "line", id: genId(), a, b });
     const loopLines = (pts: Vec2[]) => loopSegments(pts).map(([a, b]) => lineEntity(a, b));
 
     // Commit a rectangle as 4 looped lines plus the implicit horizontal/vertical
@@ -1048,7 +1081,7 @@ export default function App() {
         if (draft.length === 0) setDraft([uv]);
         else {
           const r = Math.hypot(uv[0] - draft[0][0], uv[1] - draft[0][1]);
-          commit([{ type: "circle", id: genId(), c: draft[0], r }]);
+          commit([mark({ type: "circle", id: genId(), c: draft[0], r })]);
           setDraft([]);
         }
         break;
@@ -1056,7 +1089,7 @@ export default function App() {
         if (draft.length < 2) setDraft([...draft, uv]);
         else {
           const c = circleFrom3(draft[0], draft[1], uv);
-          if (c) commit([{ type: "circle", id: genId(), c: c.center, r: c.r }]);
+          if (c) commit([mark({ type: "circle", id: genId(), c: c.center, r: c.r })]);
           setDraft([]);
         }
         break;
@@ -1071,7 +1104,7 @@ export default function App() {
         if (draft.length < 2) setDraft([...draft, uv]);
         else {
           const a = arcFrom3(draft[0], uv, draft[1]); // start, mid(uv), end
-          if (a) commit([{ type: "arc", id: genId(), c: a.center, r: a.r, start: a.start, end: a.end }]);
+          if (a) commit([mark({ type: "arc", id: genId(), c: a.center, r: a.r, start: a.start, end: a.end })]);
           setDraft([]);
         }
         break;
@@ -1086,6 +1119,7 @@ export default function App() {
     try {
       const res = await solveSketch(sk.entities, sk.constraints);
       setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+      setSolveConflict(res.hasConflicts);
       return setSketchEntities(docArg, sketchId, res.entities);
     } catch (err) {
       console.error("constraint solve failed:", err);
@@ -1174,6 +1208,30 @@ export default function App() {
     next = await solveSketchIn(next, sketchId);
     setDoc(next);
     setSelection([]);
+  };
+
+  // Construction (reference) geometry: with a sketch-entity selection, flip those
+  // entities' construction flag; otherwise toggle the draw-mode for new entities.
+  const toggleConstruction = () => {
+    if (!editingSketch) return;
+    if (selectedSketchEntities.length === 0) {
+      setConstructionMode((m) => !m);
+      return;
+    }
+    const ids = new Set(selectedSketchEntities.map((e) => e.id));
+    const makeConstruction = selectedSketchEntities.some((e) => !e.construction);
+    const entities = editingSketch.entities.map((e) =>
+      ids.has(e.id) ? { ...e, construction: makeConstruction } : e,
+    );
+    setDoc(setSketchEntities(doc, editingSketch.id, entities));
+  };
+
+  // Remove a single constraint (from the constraints list) and re-solve.
+  const deleteConstraint = async (id: string) => {
+    if (!editingSketch) return;
+    let next = removeSketchConstraint(doc, editingSketch.id, id);
+    next = await solveSketchIn(next, editingSketch.id);
+    setDoc(next);
   };
 
   // Reopen the editor for an existing constraint (double-clicking its label).
@@ -1445,7 +1503,27 @@ export default function App() {
             onToggleHidden={handleSolidHidden}
             onExportStep={handleExportStep}
             onExportStl={handleExportStl}
+            isolatedId={isolatedBodyId}
+            onIsolate={handleIsolate}
           />
+          {editingSketch && editingSketch.constraints.length > 0 && (
+            <>
+              <h2 className="params-heading">
+                Constraints
+                {solveConflict && <span className="constraint-warn" title="Over-constrained / conflicting"> ⚠ conflict</span>}
+              </h2>
+              <ul className="constraint-list">
+                {editingSketch.constraints.map((c) => (
+                  <li key={c.id}>
+                    <span>{constraintLabel(c)}</span>
+                    <button className="cl-del" title="Delete constraint" onClick={() => deleteConstraint(c.id)}>
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <h2 className="params-heading">Parameters</h2>
           <ParamEditor
             feature={selected}
@@ -1485,6 +1563,7 @@ export default function App() {
             draft={draft}
             polygonSides={polygonSides}
             onSketchClick={handleSketchClick}
+            selectionFilter={selFilter}
             apiRef={viewApiRef}
           />
           <div className="model-toolbar">
@@ -1610,6 +1689,17 @@ export default function App() {
                 ＝
               </button>
               <div className="sketch-toolbar-sep" />
+              <button
+                title={
+                  selectedSketchEntities.length > 0
+                    ? "Toggle construction (reference) geometry on the selection"
+                    : "Construction geometry: draw reference geometry (toggle)"
+                }
+                className={constructionMode ? "active" : ""}
+                onClick={toggleConstruction}
+              >
+                <ConstructionIcon />
+              </button>
               <button title="Solve constraints" onClick={handleSolve}>
                 ⛓
               </button>
@@ -1629,10 +1719,14 @@ export default function App() {
               )}
               {editingSketch.constraints.length > 0 && (
                 <span
-                  className="constraint-count"
-                  title={`${editingSketch.constraints.length} constraints${fullyConstrained ? " · fully constrained" : ""}`}
+                  className={`constraint-count${solveConflict ? " conflict" : ""}`}
+                  title={
+                    solveConflict
+                      ? "Over-constrained / conflicting constraints"
+                      : `${editingSketch.constraints.length} constraints${fullyConstrained ? " · fully constrained" : ""}`
+                  }
                 >
-                  {fullyConstrained ? "✓" : editingSketch.constraints.length}
+                  {solveConflict ? "⚠" : fullyConstrained ? "✓" : editingSketch.constraints.length}
                 </span>
               )}
             </div>
@@ -1679,6 +1773,27 @@ export default function App() {
               </button>
             ))}
           </div>
+          {!editingSketch && !picking && (
+            <div className="sel-filters" title="Selection filters — what a click can pick">
+              {(["body", "face", "edge", "vertex"] as const).map((k) => (
+                <button
+                  key={k}
+                  className={selFilter[k] ? "active" : ""}
+                  onClick={() => setSelFilter((f) => ({ ...f, [k]: !f[k] }))}
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
+          )}
+          {isolatedBodyId && (
+            <div className="isolate-banner">
+              <span>
+                Isolated · <strong>{doc.features.find((f) => f.id === isolatedBodyId)?.name ?? "body"}</strong>
+              </span>
+              <button onClick={() => setIsolatedBodyId(null)}>Exit isolate</button>
+            </div>
+          )}
           {editingSketch ? (
             <div className="sketch-banner">
               <span>

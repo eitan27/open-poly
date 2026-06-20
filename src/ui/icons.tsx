@@ -41,6 +41,25 @@ export function ParallelIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+/** A dashed diagonal line — used for the sketch Construction-geometry toggle. */
+export function ConstructionIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeDasharray="2.4 2.2"
+      aria-hidden="true"
+    >
+      <line x1="3" y1="13" x2="13" y2="3" />
+    </svg>
+  );
+}
+
 /** A no-entry / disabled circle — used for "suppress" (exclude a feature from
  *  regen), which is stronger than hide. Faded = active; solid = suppressed. */
 export function SuppressIcon({ size = 14 }: { size?: number }) {

@@ -9,11 +9,14 @@ export type FeatureKind = PrimitiveKind;
 
 export type Vec2 = [number, number];
 
+/** `construction: true` marks an entity as reference geometry — used for
+ *  dimensions/constraints/snapping but ignored when detecting profile regions
+ *  and never extruded. */
 export type SketchEntity =
-  | { type: "line"; id: string; a: Vec2; b: Vec2 }
-  | { type: "circle"; id: string; c: Vec2; r: number }
-  | { type: "arc"; id: string; c: Vec2; r: number; start: number; end: number }
-  | { type: "point"; id: string; p: Vec2 };
+  | { type: "line"; id: string; a: Vec2; b: Vec2; construction?: boolean }
+  | { type: "circle"; id: string; c: Vec2; r: number; construction?: boolean }
+  | { type: "arc"; id: string; c: Vec2; r: number; start: number; end: number; construction?: boolean }
+  | { type: "point"; id: string; p: Vec2; construction?: boolean };
 
 /** Dimensional/geometric constraints over sketch entities (solved by planegcs).
  *  `entity`/`a`/`b` reference SketchEntity ids. */
