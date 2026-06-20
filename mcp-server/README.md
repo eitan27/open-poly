@@ -102,6 +102,20 @@ Point your MCP client at the same command. Use an **absolute path** to
 
 **Cursor** (`.cursor/mcp.json`) / **Cline** use the same `command` + `args` shape.
 
+**Claude Code** — already wired via the committed `.mcp.json` at the repo root
+(relative path; Claude Code runs it with the repo as the working directory). In a
+session for this repo, run `/mcp` to approve/connect `open-poly` (project-scoped
+servers prompt on first use); `claude mcp list` shows status. To configure it
+yourself instead of using the committed file:
+
+```sh
+claude mcp add open-poly -- npx -y tsx "$PWD/mcp-server/src/index.ts"
+```
+
+> MCP servers load at session start, so a session that was already open won't see
+> `open-poly` until you restart it (or reconnect via `/mcp`). Then run the app
+> (`npm run dev`) and open the tab as in the walkthrough above.
+
 ## Tools
 
 - **One per document operation** (snake_case): `add_primitive`, `add_sketch`,
