@@ -672,6 +672,9 @@
 }
 
 .sketch-toolbar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 32px;
   height: 32px;
   font-size: 16px;
@@ -697,11 +700,18 @@
   cursor: default;
 }
 
+/* Groups drawing tools / dimension / constraints / solve in the sketch toolbar. */
+.sketch-toolbar-sep {
+  height: 1px;
+  margin: 2px 4px;
+  background: #313643;
+}
+
 .dim-input {
   position: absolute;
-  /* left/top set inline to the line's screen position; nudge up-right so the
-     box sits beside the line rather than on top of it. */
-  transform: translate(14px, -130%);
+  /* left/top set inline to the line's screen position; the up-right nudge that
+     sits the box beside the line (rather than on top of it) is applied as
+     DraggableDialog's baseTransform so the box stays draggable by its label. */
   display: flex;
   align-items: center;
   gap: 6px;
@@ -898,6 +908,30 @@
   border-color: #313643;
   color: #8a8f9c;
   padding: 4px 8px;
+}
+
+/* On-canvas dimension value, drawn beside its line. Positioned imperatively
+   (top/left 0; the per-frame transform places it), tracks the camera. */
+.dim-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 15;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #cfe0ff;
+  background: rgba(24, 26, 32, 0.82);
+  border: 1px solid #3a4663;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  backdrop-filter: blur(2px);
+}
+
+.dim-label:hover {
+  border-color: #4f8cff;
+  color: #fff;
 }
 
 .poly-sides {

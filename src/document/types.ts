@@ -22,7 +22,10 @@ export type SketchConstraint =
   | { id: string; type: "vertical"; entity: string }
   | { id: string; type: "parallel"; a: string; b: string }
   | { id: string; type: "perpendicular"; a: string; b: string }
-  | { id: string; type: "distance"; entity: string; value: number };
+  | { id: string; type: "equal"; a: string; b: string }
+  | { id: string; type: "distance"; entity: string; value: number }
+  | { id: string; type: "radius"; entity: string; value: number }
+  | { id: string; type: "angle"; a: string; b: string; value: number };
 
 interface FeatureBase {
   id: string;
