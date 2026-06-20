@@ -6,8 +6,9 @@
 // coordinate key, so coincident endpoints (chained lines, snapped points) merge
 // into one solver point. This is correct immediately after drawing; a proper
 // point-based sketch model would make coincidence robust across repeated solves.
-// Only line geometry + horizontal/vertical/parallel/perpendicular/distance
-// constraints are mapped so far; circles/arcs pass through unchanged.
+// Lines and circles are mapped (a circle's centre + radius are solvable, so a
+// radius constraint drives it); arcs still pass through unchanged. Constraints
+// mapped: horizontal/vertical/parallel/perpendicular/equal/distance/radius/angle.
 
 import { make_gcs_wrapper, type GcsWrapper } from "@salusoft89/planegcs";
 import wasmUrl from "@salusoft89/planegcs/dist/planegcs_dist/planegcs.wasm?url";
@@ -42,6 +43,7 @@ export async function solveSketch(
   const pointIdByKey = new Map<string, string>();
   const keyToCoord = new Map<string, Vec2>();
   const lineIdByEntity = new Map<string, string>();
+  const circleIdByEntity = new Map<string, string>();
   let pc = 0;
   let cc = 0;
 
@@ -65,6 +67,14 @@ export async function solveSketch(
       const id = `ln_${e.id}`;
       lineIdByEntity.set(e.id, id);
       prims.push({ id, type: "line", p1_id: p1, p2_id: p2 });
+    } else if (e.type === "circle") {
+      // A circle's centre is a solver point (so it merges with a coincident
+      // endpoint), and its radius is a free parameter until a radius constraint
+      // drives it.
+      const cId = ensurePoint(e.c);
+      const id = `ci_${e.id}`;
+      circleIdByEntity.set(e.id, id);
+      prims.push({ id, type: "circle", c_id: cId, radius: e.r });
     }
   }
 
@@ -83,6 +93,24 @@ export async function solveSketch(
       if (e && e.type === "line") {
         prims.push({ id, type: "p2p_distance", p1_id: ensurePoint(e.a), p2_id: ensurePoint(e.b), distance: c.value });
       }
+    } else if (c.type === "radius" && circleIdByEntity.has(c.entity)) {
+      prims.push({ id, type: "circle_radius", c_id: circleIdByEntity.get(c.entity), radius: c.value });
+    } else if (c.type === "equal") {
+      // Equal applies to two lines (equal length) or two circles (equal radius).
+      if (lineIdByEntity.has(c.a) && lineIdByEntity.has(c.b)) {
+        prims.push({ id, type: "equal_length", l1_id: lineIdByEntity.get(c.a), l2_id: lineIdByEntity.get(c.b) });
+      } else if (circleIdByEntity.has(c.a) && circleIdByEntity.has(c.b)) {
+        prims.push({ id, type: "equal_radius_cc", c1_id: circleIdByEntity.get(c.a), c2_id: circleIdByEntity.get(c.b) });
+      }
+    } else if (c.type === "angle" && lineIdByEntity.has(c.a) && lineIdByEntity.has(c.b)) {
+      // Our angle constraints are stored in degrees; planegcs works in radians.
+      prims.push({
+        id,
+        type: "l2l_angle_ll",
+        l1_id: lineIdByEntity.get(c.a),
+        l2_id: lineIdByEntity.get(c.b),
+        angle: (c.value * Math.PI) / 180,
+      });
     }
   }
 
@@ -102,9 +130,16 @@ export async function solveSketch(
   }
   const movePoint = (p: Vec2): Vec2 => solvedByKey.get(key(p)) ?? p;
 
-  const updated: SketchEntity[] = entities.map((e) =>
-    e.type === "line" ? { ...e, a: movePoint(e.a), b: movePoint(e.b) } : e,
-  );
+  const updated: SketchEntity[] = entities.map((e) => {
+    if (e.type === "line") return { ...e, a: movePoint(e.a), b: movePoint(e.b) };
+    if (e.type === "circle") {
+      const cid = circleIdByEntity.get(e.id);
+      if (!cid) return e;
+      const ci = wrapper.sketch_index.get_sketch_circle(cid);
+      return { ...e, c: movePoint(e.c), r: ci.radius };
+    }
+    return e;
+  });
 
   return { entities: updated, dof, ok: true, hasConflicts };
 }

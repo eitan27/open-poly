@@ -38,6 +38,7 @@ import type {
   ExtrudeProfile,
   FeatureKind,
   PlaneFeature,
+  SketchConstraint,
   SketchEntity,
   SketchFeature,
   TransformFeature,
@@ -60,9 +61,10 @@ import {
   regularPolygon,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
-import { EyeIcon } from "./ui/icons";
+import { EyeIcon, ParallelIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { DraggableDialog } from "./ui/DraggableDialog";
+import { DimensionLabels, type DimLabelSpec } from "./ui/DimensionLabels";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
@@ -281,18 +283,18 @@ export default function App() {
   // Regular clicks accumulate into the set; clicking a selected element removes
   // it; clicking empty space clears.
   const handlePick = (picked: Selection | null) => {
-    // Dimension mode armed: the next picked line becomes the dimension target.
+    // Dimension mode armed: the next picked line/circle is the dimension target.
     if (dimPending) {
       const sk = doc.features.find((f) => f.id === editingSketchId);
       const e =
         picked?.kind === "sketchEntity" && picked.sketchId === editingSketchId && sk?.type === "sketch"
           ? sk.entities.find((x) => x.id === picked.entityId)
           : undefined;
-      if (e?.type === "line") {
+      if (e?.type === "line" || e?.type === "circle") {
         setSelection([picked!]);
         openDimensionFor(e);
       } else {
-        setDimPending(false); // clicked empty / non-line → cancel
+        setDimPending(false); // clicked empty / non-dimensionable → cancel
       }
       return;
     }
@@ -316,13 +318,25 @@ export default function App() {
   const [draft, setDraft] = useState<Vec2[]>([]);
   const [polygonSides, setPolygonSides] = useState(6);
   const [fullyConstrained, setFullyConstrained] = useState(false);
-  // Length-dimension entry: the line being dimensioned, the in-progress text,
-  // and the on-screen position (px, canvas-relative) to anchor the input box.
+  // Dimension entry: the entity being dimensioned, whether it's a line length or
+  // a circle radius, the in-progress text, and the on-screen position (px,
+  // canvas-relative) to anchor the input box.
   const [dimInput, setDimInput] = useState<
-    { entityId: string; value: string; x: number; y: number } | null
+    {
+      entityId: string;
+      /** Second line, for an angle dimension between two lines. */
+      entityId2?: string;
+      kind: "length" | "radius" | "angle";
+      /** The constraint being edited (if reopening an existing one), so its
+       *  on-canvas label is hidden while the input is open. */
+      editId?: string;
+      value: string;
+      x: number;
+      y: number;
+    } | null
   >(null);
   // Armed dimension mode: D was pressed with nothing selected; the next picked
-  // line becomes the dimension target.
+  // line/circle becomes the dimension target.
   const [dimPending, setDimPending] = useState(false);
   // The extrude dialog (anchored at the profile) while choosing parameters.
   const [extrudeDialog, setExtrudeDialog] = useState<
@@ -585,19 +599,79 @@ export default function App() {
     return f && f.type === "sketch" ? f : null;
   }, [doc, editingSketchId]);
 
-  // The single line currently selected inside the active sketch (the target a
-  // length dimension would apply to). Null unless exactly one such line is held.
-  const dimLine = useMemo(() => {
-    if (!editingSketch) return null;
-    const lines = selection.filter(
-      (s): s is Extract<Selection, { kind: "sketchEntity" }> =>
-        s.kind === "sketchEntity" && s.sketchId === editingSketch.id,
+  // The single dimensionable entity selected inside the active sketch (a line →
+  // length, or a circle → radius). Null unless exactly one such entity is held.
+  // The sketch entities currently selected in the active sketch, in pick order.
+  const selectedSketchEntities = useMemo(() => {
+    if (!editingSketch) return [];
+    return selection.flatMap((s) =>
+      s.kind === "sketchEntity" && s.sketchId === editingSketch.id
+        ? (editingSketch.entities.find((x) => x.id === s.entityId) ?? [])
+        : [],
     );
-    if (lines.length !== 1) return null;
-    const e = editingSketch.entities.find((x) => x.id === lines[0].entityId);
-    if (e?.type !== "line") return null;
-    return { entityId: e.id, length: Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) };
   }, [editingSketch, selection]);
+
+  // A single line/circle selected → eligible for a length/radius dimension.
+  const dimEntity = useMemo(() => {
+    if (selectedSketchEntities.length !== 1) return null;
+    const e = selectedSketchEntities[0];
+    return e.type === "line" || e.type === "circle" ? e : null;
+  }, [selectedSketchEntities]);
+
+  // Exactly two lines / two circles selected → eligible for the line-pair
+  // constraints (angle/parallel/perpendicular/equal-length) and equal-radius.
+  const twoSelectedLines = useMemo(() => {
+    const es = selectedSketchEntities;
+    return es.length === 2 && es[0].type === "line" && es[1].type === "line"
+      ? ([es[0], es[1]] as Extract<SketchEntity, { type: "line" }>[])
+      : null;
+  }, [selectedSketchEntities]);
+  const twoSelectedCircles = useMemo(() => {
+    const es = selectedSketchEntities;
+    return es.length === 2 && es[0].type === "circle" && es[1].type === "circle"
+      ? ([es[0], es[1]] as Extract<SketchEntity, { type: "circle" }>[])
+      : null;
+  }, [selectedSketchEntities]);
+
+  // The active sketch's plane frame (uv → world), for placing on-canvas overlays.
+  const dimFrame = useMemo(
+    () => (editingSketch ? frameOf(editingSketch.plane, resolved.planeFrames) : null),
+    [editingSketch, resolved.planeFrames],
+  );
+
+  // On-canvas dimension labels for the active sketch: one per length (line),
+  // radius (circle), or angle (line–line) dimension. The label currently being
+  // edited (its dim-input is open) is dropped so the two don't overlap.
+  const ent = (id: string) => editingSketch?.entities.find((x) => x.id === id);
+  const dimLabels = useMemo<DimLabelSpec[]>(() => {
+    if (!editingSketch) return [];
+    return editingSketch.constraints.flatMap((c): DimLabelSpec[] => {
+      if (c.id === dimInput?.editId) return [];
+      if (c.type === "distance") {
+        const e = ent(c.entity);
+        if (e?.type === "line") return [{ id: c.id, text: fmt(c.value), a: e.a, b: e.b }];
+      } else if (c.type === "radius") {
+        const e = ent(c.entity);
+        if (e?.type === "circle") {
+          // Anchor the label out along a 45° radius leader (centre → rim point).
+          const rim: Vec2 = [e.c[0] + e.r * Math.SQRT1_2, e.c[1] + e.r * Math.SQRT1_2];
+          return [{ id: c.id, text: `R${fmt(c.value)}`, a: e.c, b: rim }];
+        }
+      } else if (c.type === "angle") {
+        const la = ent(c.a);
+        const lb = ent(c.b);
+        if (la?.type === "line" && lb?.type === "line") {
+          const mid = (l: Extract<SketchEntity, { type: "line" }>): Vec2 => [
+            (l.a[0] + l.b[0]) / 2,
+            (l.a[1] + l.b[1]) / 2,
+          ];
+          return [{ id: c.id, text: `${fmt(c.value)}°`, a: mid(la), b: mid(lb) }];
+        }
+      }
+      return [];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingSketch, dimInput]);
 
   const measure = useMemo(
     () => measureSelection(selection, doc, meshes),
@@ -1006,38 +1080,106 @@ export default function App() {
     setDoc(await solveSketchIn(doc, editingSketch.id));
   };
 
-  // Open the length-dimension input anchored next to the given line, pre-filled
-  // with its present length.
-  const openDimensionFor = (line: Extract<SketchEntity, { type: "line" }>) => {
-    if (!editingSketch) return;
-    const frame = frameOf(editingSketch.plane, resolved.planeFrames);
-    const world = uvToWorld(frame, (line.a[0] + line.b[0]) / 2, (line.a[1] + line.b[1]) / 2);
-    const s = viewApiRef.current?.worldToScreen(world) ?? { x: 240, y: 120 };
-    const length = Math.hypot(line.b[0] - line.a[0], line.b[1] - line.a[1]);
-    setDimPending(false);
-    setSelection([{ kind: "sketchEntity", sketchId: editingSketch.id, entityId: line.id }]);
-    setDimInput({ entityId: line.id, value: fmt(length), x: s.x, y: s.y });
+  const screenOf = (uv: Vec2) => {
+    const frame = frameOf(editingSketch!.plane, resolved.planeFrames);
+    return viewApiRef.current?.worldToScreen(uvToWorld(frame, uv[0], uv[1])) ?? { x: 240, y: 120 };
   };
 
-  // D (or the ↔ button): dimension the selected line if there is one, otherwise
-  // arm "pick a line to dimension" mode (forcing the Select tool so clicks pick).
+  // Open the dimension input anchored next to the given entity: a line → length
+  // (input next to its midpoint); a circle → radius (input next to its centre).
+  // `editId`/`prefill` are supplied when reopening an existing constraint (its
+  // label hides while the input is open, and the input shows the stored value);
+  // for a fresh dimension the value is computed from the current geometry.
+  const openDimensionFor = (
+    entity: Extract<SketchEntity, { type: "line" | "circle" }>,
+    editId?: string,
+    prefill?: number,
+  ) => {
+    if (!editingSketch) return;
+    const [uv, kind, measured]: [Vec2, "length" | "radius", number] =
+      entity.type === "line"
+        ? [
+            [(entity.a[0] + entity.b[0]) / 2, (entity.a[1] + entity.b[1]) / 2],
+            "length",
+            Math.hypot(entity.b[0] - entity.a[0], entity.b[1] - entity.a[1]),
+          ]
+        : [entity.c, "radius", entity.r];
+    const s = screenOf(uv);
+    setDimPending(false);
+    setSelection([{ kind: "sketchEntity", sketchId: editingSketch.id, entityId: entity.id }]);
+    setDimInput({ entityId: entity.id, kind, editId, value: fmt(prefill ?? measured), x: s.x, y: s.y });
+  };
+
+  // Open the angle input between two lines, anchored between their midpoints.
+  // Reopening shows the stored value (`prefill`); a fresh angle is computed from
+  // the lines' current included angle (which may be the supplement of what a
+  // later constraint settles on, so we never recompute over a stored value).
+  const openAngleFor = (
+    la: Extract<SketchEntity, { type: "line" }>,
+    lb: Extract<SketchEntity, { type: "line" }>,
+    editId?: string,
+    prefill?: number,
+  ) => {
+    if (!editingSketch) return;
+    const mid = (l: typeof la): Vec2 => [(l.a[0] + l.b[0]) / 2, (l.a[1] + l.b[1]) / 2];
+    const angOf = (l: typeof la) => Math.atan2(l.b[1] - l.a[1], l.b[0] - l.a[0]);
+    const deg = prefill ?? ((Math.abs(angOf(lb) - angOf(la)) * 180) / Math.PI) % 180;
+    const ma = mid(la);
+    const mb = mid(lb);
+    const s = screenOf([(ma[0] + mb[0]) / 2, (ma[1] + mb[1]) / 2]);
+    setDimPending(false);
+    setDimInput({ entityId: la.id, entityId2: lb.id, kind: "angle", editId, value: fmt(deg), x: s.x, y: s.y });
+  };
+
+  // D (or the ↔ button): dimension the current selection — a single line/circle
+  // (length/radius), or two lines (angle) — else arm "pick one to dimension"
+  // mode (forcing the Select tool so clicks pick).
   const startDimension = () => {
     if (!editingSketch) return;
-    if (dimLine) {
-      const e = editingSketch.entities.find((x) => x.id === dimLine.entityId);
-      if (e?.type === "line") openDimensionFor(e);
-      return;
-    }
+    if (dimEntity) return openDimensionFor(dimEntity);
+    if (twoSelectedLines) return openAngleFor(twoSelectedLines[0], twoSelectedLines[1]);
     setSketchTool("select");
     setDimPending(true);
   };
   startDimensionRef.current = startDimension;
 
-  // Apply the entered length as a `distance` constraint and immediately re-solve
-  // so the whole sketch updates. Replaces any prior length on the same line.
+  // Add a geometric (non-dimensional) constraint between two entities and re-solve.
+  // No-op if an equivalent constraint already exists (avoids redundant piles).
+  const addGeoConstraint = async (type: "parallel" | "perpendicular" | "equal", a: string, b: string) => {
+    if (!editingSketch) return;
+    const sketchId = editingSketch.id;
+    const exists = editingSketch.constraints.some(
+      (c) => c.type === type && ((c.a === a && c.b === b) || (c.a === b && c.b === a)),
+    );
+    if (exists) return;
+    let next = addSketchConstraints(doc, sketchId, [{ id: genId(), type, a, b }]);
+    next = await solveSketchIn(next, sketchId);
+    setDoc(next);
+    setSelection([]);
+  };
+
+  // Reopen the editor for an existing constraint (double-clicking its label).
+  const editConstraint = (constraintId: string) => {
+    if (!editingSketch) return;
+    const c = editingSketch.constraints.find((x) => x.id === constraintId);
+    if (!c) return;
+    if (c.type === "distance" || c.type === "radius") {
+      const e = ent(c.entity);
+      if (e?.type === "line" || e?.type === "circle") openDimensionFor(e, c.id, c.value);
+    } else if (c.type === "angle") {
+      const la = ent(c.a);
+      const lb = ent(c.b);
+      if (la?.type === "line" && lb?.type === "line") openAngleFor(la, lb, c.id, c.value);
+    }
+  };
+
+  // Apply the entered value as a `distance` (line), `radius` (circle), or `angle`
+  // (line–line) constraint and immediately re-solve. Replaces any prior dimension
+  // of the same kind on the same entity/pair.
   const applyDimension = async () => {
     if (!dimInput || !editingSketch) return;
     const sketchId = editingSketch.id;
+    const { kind, entityId, entityId2 } = dimInput;
     // Evaluate against the variable scope so a number, expression, or variable
     // name all work. (Note: this resolves to a number now; a live expression
     // link that re-evaluates on variable change is a deferred Phase-2 gap.)
@@ -1048,14 +1190,21 @@ export default function App() {
       value = NaN;
     }
     setDimInput(null);
-    if (!Number.isFinite(value) || value <= 0) return;
-    const kept = editingSketch.constraints.filter(
-      (c) => !(c.type === "distance" && c.entity === dimInput.entityId),
-    );
-    let next = setSketchConstraints(doc, sketchId, [
-      ...kept,
-      { id: genId(), type: "distance", entity: dimInput.entityId, value },
-    ]);
+    // Angles accept 0–180; lengths/radii must be positive.
+    if (!Number.isFinite(value) || (kind === "angle" ? value < 0 || value >= 180 : value <= 0)) return;
+
+    const samePair = (a: string, b: string) =>
+      (a === entityId && b === entityId2) || (a === entityId2 && b === entityId);
+    const kept = editingSketch.constraints.filter((c) => {
+      if (kind === "angle") return !(c.type === "angle" && samePair(c.a, c.b));
+      const ctype = kind === "radius" ? "radius" : "distance";
+      return !(c.type === ctype && c.entity === entityId);
+    });
+    const added: SketchConstraint =
+      kind === "angle"
+        ? { id: genId(), type: "angle", a: entityId, b: entityId2!, value }
+        : { id: genId(), type: kind === "radius" ? "radius" : "distance", entity: entityId, value };
+    let next = setSketchConstraints(doc, sketchId, [...kept, added]);
     next = await solveSketchIn(next, sketchId);
     setDoc(next);
     setSelection([]);
@@ -1405,12 +1554,44 @@ export default function App() {
                 </button>
               ))}
               <button
-                title="Dimension a line (D) — pick one if none selected"
+                title="Dimension (D): a line (length), circle (radius), or two lines (angle) — pick one if none selected"
                 className={dimPending ? "active" : ""}
                 onClick={startDimension}
               >
                 ↔
               </button>
+              <div className="sketch-toolbar-sep" />
+              <button
+                title="Parallel — select two lines"
+                disabled={!twoSelectedLines}
+                onClick={() =>
+                  twoSelectedLines &&
+                  addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id)
+                }
+              >
+                <ParallelIcon />
+              </button>
+              <button
+                title="Perpendicular — select two lines"
+                disabled={!twoSelectedLines}
+                onClick={() =>
+                  twoSelectedLines &&
+                  addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id)
+                }
+              >
+                ⊥
+              </button>
+              <button
+                title="Equal — select two lines (equal length) or two circles (equal radius)"
+                disabled={!twoSelectedLines && !twoSelectedCircles}
+                onClick={() => {
+                  const pair = twoSelectedLines ?? twoSelectedCircles;
+                  if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
+                }}
+              >
+                ＝
+              </button>
+              <div className="sketch-toolbar-sep" />
               <button title="Solve constraints" onClick={handleSolve}>
                 ⛓
               </button>
@@ -1439,14 +1620,17 @@ export default function App() {
             </div>
           )}
           {dimPending && (
-            <div className="dim-hint">Pick a line to dimension · Esc to cancel</div>
+            <div className="dim-hint">Pick a line or circle to dimension · Esc to cancel</div>
           )}
           {dimInput && (
-            <div
+            <DraggableDialog
               className="dim-input"
+              baseTransform="translate(14px, -130%)"
               style={{ left: dimInput.x, top: dimInput.y }}
             >
-              <label>Length</label>
+              <label data-drag-handle>
+                {dimInput.kind === "radius" ? "Radius" : dimInput.kind === "angle" ? "Angle °" : "Length"}
+              </label>
               <input
                 autoFocus
                 value={dimInput.value}
@@ -1460,7 +1644,15 @@ export default function App() {
               <button className="ghost" onClick={() => setDimInput(null)}>
                 ✕
               </button>
-            </div>
+            </DraggableDialog>
+          )}
+          {dimFrame && dimLabels.length > 0 && (
+            <DimensionLabels
+              frame={dimFrame}
+              labels={dimLabels}
+              viewApiRef={viewApiRef}
+              onEdit={editConstraint}
+            />
           )}
           <div className="view-controls">
             {VIEW_BUTTONS.map((v) => (

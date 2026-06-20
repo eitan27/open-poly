@@ -264,10 +264,12 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
     drawing, plus a per-entity flag editable after.
   - Trim/extend.
 - **2b:** ✅ constraints via **`planegcs`** (auto H/V capture, ⛓ Solve, fully-
-  constrained→green) + **interactive length dimension** (press D, accepts
-  number/expr/variable). **TODO (catalogued below):** radius/angle/p2p
-  dimensions, on-canvas dimension labels + edit, and a manual-constraint UI
-  (coincident/tangent/equal/parallel/perp).
+  constrained→green) + **interactive length / radius / angle dimensions** (press
+  D, accepts number/expr/variable) with **on-canvas labels + double-click-to-
+  edit**, plus a **manual-constraint UI** (∥ parallel, ⊥ perpendicular, ＝ equal
+  — toolbar buttons enabled on the matching selection). **TODO (catalogued
+  below):** point-to-point / point-to-line distance, diameter variant, and the
+  remaining geometric constraints (coincident/tangent/concentric/symmetric/…).
 - **Exit criteria** (a fully-constrained closed profile that updates when a
   driving variable changes): met.
 
@@ -283,22 +285,33 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 > resolved number — a *live* expression link that re-evaluates when the variable
 > changes is still a deferred gap, below.)
 >
+> **Dimensions update (2026-06-20):** dimensions now cover **line length**,
+> **circle radius**, and **line–line angle** (degrees). Each draws an **on-canvas
+> label** that tracks the camera (`ui/DimensionLabels.tsx`, repositioned per-frame
+> via `worldToScreen` with no React re-render), and **double-clicking a label**
+> reopens its editor pre-filled with the stored value. The dimension input box is
+> now a `DraggableDialog` (movable by its label, like Extrude/Chamfer). Circles
+> are now mapped into planegcs (centre point + solvable radius), so a radius
+> constraint drives them and a sketch with a circle is correctly under-constrained
+> until pinned.
+>
 > **Known gaps in Phase 2 sketch constraints (deferred):**
-> - **Dimensions:** only line *length*. No radius/diameter (circle), angle
->   (line–line), point-to-point / point-to-line distance, or driven-by-expression
->   dimension values yet. No on-canvas dimension *labels* (the value isn't drawn
->   next to the geometry; it lives only in the constraint + info pane), and no
->   double-click-to-edit an existing dimension.
-> - **Geometric constraints not yet exposed in UI / mapped:** coincident,
->   tangent, equal, concentric, symmetric, midpoint, collinear, fix/lock. (Only
->   H/V are auto-captured; parallel/perpendicular exist in the model + solver but
->   have no UI to add them.)
+> - **Dimensions:** no point-to-point / point-to-line distance, no *diameter*
+>   variant of the circle dimension, and no driven-by-expression dimension values
+>   (the value is stored as a resolved number; a *live* link that re-evaluates on
+>   variable change is still deferred). p2p distance is entangled with the
+>   point-identity gap below (it needs robust point references).
+> - **Geometric constraints now in the UI:** auto H/V (on draw), **parallel**,
+>   **perpendicular**, **equal** (lines→equal length, circles→equal radius), and
+>   **angle** (as a dimension). **Still not exposed / mapped:** coincident,
+>   tangent, concentric, symmetric, midpoint, collinear, fix/lock.
 > - **Point identity is by coordinate key** (see `solver.ts`): coincident
 >   endpoints merge by position, robust only until the first solve moves them —
 >   wants a real point-based sketch model before heavy constraint editing.
 > - **Sketch operations missing:** mirror, use/project (convert edges), offset,
 >   trim/extend, construction geometry.
-> - Circles/arcs pass through the solver unchanged (not constrained).
+> - **Arcs** still pass through the solver unchanged (not constrained); circles
+>   are now mapped + radius-constrainable.
 
 > **Reprioritized 2026-06-18 (user):** Extrude is the single most important
 > solid op and is the headline of Phase 3; **Chamfer (and Fillet)** matter more

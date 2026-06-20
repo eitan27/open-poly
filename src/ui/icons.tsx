@@ -21,6 +21,26 @@ export function EyeIcon({ size = 14 }: { size?: number }) {
   );
 }
 
+/** Two slanted parallel lines (the ∥ symbol), drawn with a comfortable gap so
+ *  they don't read as a single line — used for the sketch Parallel constraint. */
+export function ParallelIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <line x1="6" y1="3" x2="3.5" y2="13" />
+      <line x1="12.5" y1="3" x2="10" y2="13" />
+    </svg>
+  );
+}
+
 /** A no-entry / disabled circle — used for "suppress" (exclude a feature from
  *  regen), which is stronger than hide. Faded = active; solid = suppressed. */
 export function SuppressIcon({ size = 14 }: { size?: number }) {

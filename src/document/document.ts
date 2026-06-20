@@ -342,6 +342,8 @@ function constraintRefsEntity(c: SketchConstraint, entityId: string): boolean {
   switch (c.type) {
     case "parallel":
     case "perpendicular":
+    case "equal":
+    case "angle":
       return c.a === entityId || c.b === entityId;
     default:
       return c.entity === entityId;
