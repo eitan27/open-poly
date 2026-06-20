@@ -14,6 +14,7 @@ import type {
   Feature,
   FeatureKind,
   ImportFeature,
+  MirrorFeature,
   PlaneFeature,
   SketchConstraint,
   SketchEntity,
@@ -136,7 +137,7 @@ export function addExtrude(
  *  from — true for all three ops, not just union. */
 function colorOfFeature(doc: Document, id: string): number {
   const f = doc.features.find((x) => x.id === id);
-  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "import")
+  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "import")
     ? f.color
     : randomSolidColor();
 }
@@ -234,6 +235,26 @@ export function setTransform(
   patch: Partial<Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis" | "copy">>,
 ): Document {
   return mapFeature(doc, id, (f) => (f.type === "transform" ? { ...f, ...patch } : f));
+}
+
+/** Mirror a body across a plane, producing a new reflected body (original kept). */
+export function addMirror(
+  doc: Document,
+  targetId: string,
+  plane: SketchPlaneRef,
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "mirror").length + 1;
+  const feature: MirrorFeature = {
+    id: uid(),
+    type: "mirror",
+    name: `Mirror ${ordinal}`,
+    suppressed: false,
+    targetId,
+    plane,
+    color: colorOfFeature(doc, targetId),
+    opacity: 1,
+  };
+  return insertFeature(doc, feature);
 }
 
 export function addImport(
@@ -427,13 +448,13 @@ export function renameFeature(doc: Document, id: string, name: string): Document
 
 export function setFeatureColor(doc: Document, id: string, color: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "import" ? { ...f, color } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "import" ? { ...f, color } : f,
   );
 }
 
 export function setFeatureOpacity(doc: Document, id: string, opacity: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "import"
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "import"
       ? { ...f, opacity: Math.max(0, Math.min(1, opacity)) }
       : f,
   );
@@ -442,7 +463,7 @@ export function setFeatureOpacity(doc: Document, id: string, opacity: number): D
 /** Hide/show a part — a view toggle (skips rendering), distinct from suppress. */
 export function setFeatureHidden(doc: Document, id: string, hidden: boolean): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "import" ? { ...f, hidden } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "import" ? { ...f, hidden } : f,
   );
 }
 
@@ -586,6 +607,10 @@ export function resolveDocument(doc: Document): ResolveResult {
           pivot: f.pivot,
           copy: f.copy,
         });
+      } else if (f.type === "mirror") {
+        // Bake the mirror plane to a point + normal the kernel can reflect about.
+        const frame = frameOf(f.plane, planeFrames);
+        features.push({ id: f.id, type: "mirror", targetId: f.targetId, origin: frame.origin, normal: frame.normal });
       } else if (f.type === "import") {
         features.push({ id: f.id, type: "import", source: f.source });
       }

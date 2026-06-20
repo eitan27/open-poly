@@ -379,6 +379,25 @@ function transformNamed(
   return cur; // owned is always true here (translation step ran)
 }
 
+/** Mirror a named shape across the plane through `origin` with `normal`. A
+ *  reflection is a rigid (topology-preserving) gp_Trsf, so face names re-key 1:1
+ *  through applyTrsf, like a transform. */
+function mirrorNamed(target: NamedShape, origin: number[], normal: number[], _id: string): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const pnt = new oc.gp_Pnt_3(origin[0], origin[1], origin[2]);
+  const dir = new oc.gp_Dir_4(normal[0], normal[1], normal[2]);
+  const ax2 = new oc.gp_Ax2_3(pnt, dir); // its XY-plane is the mirror plane
+  const trsf = new oc.gp_Trsf_1();
+  trsf.SetMirror_3(ax2);
+  const res = applyTrsf(target, trsf);
+  trsf.delete();
+  ax2.delete();
+  dir.delete();
+  pnt.delete();
+  return res;
+}
+
 // Relative epsilon (vs. the larger operand's volume) for "did this boolean
 // actually do anything" — non-overlapping solids that OCCT happily combines
 // into a degenerate result are caught and reported instead.
@@ -523,6 +542,12 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
           target.shape = res.shape;
           target.names = res.names;
         }
+      } else if (feature.type === "mirror") {
+        // Reflect the target across the plane; keep the original, add the
+        // mirrored body as a NEW body keyed by this feature.
+        const src = requireBody(bodies, feature.targetId);
+        const res = mirrorNamed(src, feature.origin, feature.normal, feature.id);
+        bodies.push({ id: feature.id, ...res });
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: String(err) });

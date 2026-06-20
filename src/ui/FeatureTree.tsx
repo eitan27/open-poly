@@ -58,7 +58,9 @@ export function FeatureTree({
                               ? "Transform"
                               : feature.type === "import"
                                 ? "Import"
-                                : FEATURE_DEFS[feature.kind].label}
+                                : feature.type === "mirror"
+                                  ? "Mirror"
+                                  : FEATURE_DEFS[feature.kind].label}
                 </span>
                 <span className="row-name">{feature.name}</span>
                 {error && <span className="row-badge" title={error}>!</span>}

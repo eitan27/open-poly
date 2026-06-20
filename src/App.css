@@ -768,6 +768,39 @@
   color: #e6e8ee;
 }
 
+.mirror-dialog select {
+  background: #0f1115;
+  border: 1px solid #2a2d35;
+  color: #e6e8ee;
+  border-radius: 5px;
+  padding: 5px 6px;
+  font-size: 13px;
+}
+
+.mirror-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.mirror-actions button {
+  flex: 1;
+  padding: 5px 0;
+  font-size: 12px;
+  color: #cfe0ff;
+  background: #1e2a44;
+  border: 1px solid #4f8cff;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.mirror-actions button.ghost {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  background: transparent;
+  border-color: #313643;
+  color: #8a8f9c;
+}
+
 /* Title bars act as drag handles for movable dialogs. */
 [data-drag-handle] {
   cursor: move;
