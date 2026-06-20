@@ -263,6 +263,17 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
     when detecting profile regions and never extruded). A toolbar toggle while
     drawing, plus a per-entity flag editable after.
   - Trim/extend.
+  - **Double-click to edit in the timeline** — double-clicking a sketch (or any
+    editable feature) in the feature tree should enter its edit mode. Today
+    editing a sketch requires selecting it then clicking "Edit sketch" in the
+    param editor (`editSketch` in App.tsx); `FeatureTree` has no double-click
+    handler. Generalize to "double-click any editable element → edit it."
+  - **Cancel a sketch edit (discard changes)** — when re-editing an *existing*
+    sketch, exiting should be able to **discard** all changes. Today every edit
+    applies live via `setDoc`, and `finishSketch` only treats a brand-new *empty*
+    sketch as a cancel (drops it) — there's no way to back out of edits made to an
+    existing sketch. Needs snapshotting the sketch on edit-entry and restoring it
+    on Cancel/Esc (Finish/⏎ keeps changes as now).
 - **2b:** ✅ constraints via **`planegcs`** (auto H/V capture, ⛓ Solve, fully-
   constrained→green) + **interactive length / radius / angle dimensions** (press
   D, accepts number/expr/variable) with **on-canvas labels + double-click-to-
