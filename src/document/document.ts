@@ -3,7 +3,7 @@
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "./featureDefs";
 import { randomSolidColor } from "./colors";
 import { evaluateExpression, type Scope } from "./expression";
-import { frameOf, offsetFrame, type PlaneFrameData, type SketchPlaneRef } from "./planes";
+import { frameOf, offsetFrame, uvToWorld, type PlaneFrameData, type SketchPlaneRef } from "./planes";
 import { detectSketchRegions } from "./regions";
 import type {
   BooleanFeature,
@@ -16,6 +16,7 @@ import type {
   ImportFeature,
   MirrorFeature,
   PlaneFeature,
+  RevolveFeature,
   SketchConstraint,
   SketchEntity,
   SketchFeature,
@@ -137,7 +138,7 @@ export function addExtrude(
  *  from — true for all three ops, not just union. */
 function colorOfFeature(doc: Document, id: string): number {
   const f = doc.features.find((x) => x.id === id);
-  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "import")
+  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "import")
     ? f.color
     : randomSolidColor();
 }
@@ -235,6 +236,28 @@ export function setTransform(
   patch: Partial<Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis" | "copy">>,
 ): Document {
   return mapFeature(doc, id, (f) => (f.type === "transform" ? { ...f, ...patch } : f));
+}
+
+/** Revolve a sketch region around an axis line into a solid body. */
+export function addRevolve(
+  doc: Document,
+  profile: { sketchId: string; regionId: string },
+  axis: { sketchId: string; entityId: string },
+  angle = "360",
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "revolve").length + 1;
+  const feature: RevolveFeature = {
+    id: uid(),
+    type: "revolve",
+    name: `Revolve ${ordinal}`,
+    suppressed: false,
+    profile,
+    axis,
+    angle,
+    color: randomSolidColor(),
+    opacity: 1,
+  };
+  return insertFeature(doc, feature);
 }
 
 /** Mirror a body across a plane, producing a new reflected body (original kept). */
@@ -424,6 +447,7 @@ export function updateParam(
       }
     }
     if (f.type === "dressup" && name === "size") return { ...f, size: value };
+    if (f.type === "revolve" && name === "angle") return { ...f, angle: value };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
     if (f.type === "transform") {
       if (name === "tx" || name === "ty" || name === "tz" || name === "angle") {
@@ -448,13 +472,13 @@ export function renameFeature(doc: Document, id: string, name: string): Document
 
 export function setFeatureColor(doc: Document, id: string, color: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "import" ? { ...f, color } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "import" ? { ...f, color } : f,
   );
 }
 
 export function setFeatureOpacity(doc: Document, id: string, opacity: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "import"
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "import"
       ? { ...f, opacity: Math.max(0, Math.min(1, opacity)) }
       : f,
   );
@@ -463,7 +487,7 @@ export function setFeatureOpacity(doc: Document, id: string, opacity: number): D
 /** Hide/show a part — a view toggle (skips rendering), distinct from suppress. */
 export function setFeatureHidden(doc: Document, id: string, hidden: boolean): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "import" ? { ...f, hidden } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "import" ? { ...f, hidden } : f,
   );
 }
 
@@ -611,6 +635,30 @@ export function resolveDocument(doc: Document): ResolveResult {
         // Bake the mirror plane to a point + normal the kernel can reflect about.
         const frame = frameOf(f.plane, planeFrames);
         features.push({ id: f.id, type: "mirror", targetId: f.targetId, origin: frame.origin, normal: frame.normal });
+      } else if (f.type === "revolve") {
+        const angle = evaluateExpression(f.angle, scope);
+        const sketch = doc.features.find((x) => x.id === f.profile.sketchId);
+        if (sketch?.type !== "sketch") throw new Error("revolve: profile sketch not found");
+        const region = detectSketchRegions(sketch.entities).find((r) => r.id === f.profile.regionId);
+        if (!region) throw new Error("revolve: profile region not found");
+        const frame = frameOf(sketch.plane, planeFrames);
+        // Bake the axis line's two endpoints to world → origin + direction.
+        const axisSketch = doc.features.find((x) => x.id === f.axis.sketchId);
+        if (axisSketch?.type !== "sketch") throw new Error("revolve: axis sketch not found");
+        const axisEnt = axisSketch.entities.find((e) => e.id === f.axis.entityId);
+        if (axisEnt?.type !== "line") throw new Error("revolve: axis must be a line");
+        const axisFrame = frameOf(axisSketch.plane, planeFrames);
+        const a = uvToWorld(axisFrame, axisEnt.a[0], axisEnt.a[1]);
+        const b = uvToWorld(axisFrame, axisEnt.b[0], axisEnt.b[1]);
+        const dir: [number, number, number] = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        features.push({
+          id: f.id,
+          type: "revolve",
+          profile: { kind: "sketchRegion", outline: region.outline, frame },
+          angle,
+          axisOrigin: a,
+          axisDir: dir,
+        });
       } else if (f.type === "import") {
         features.push({ id: f.id, type: "import", source: f.source });
       }

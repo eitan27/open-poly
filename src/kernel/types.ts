@@ -68,6 +68,8 @@ export type ResolvedFeature =
   // Mirror a body (by id) across the plane through `origin` with `normal`,
   // producing a new reflected body (the original is kept).
   | { id: string; type: "mirror"; targetId: string; origin: [number, number, number]; normal: [number, number, number] }
+  // Revolve a sketch profile around an axis (origin + direction) by an angle.
+  | { id: string; type: "revolve"; profile: ResolvedProfile; angle: number; axisOrigin: [number, number, number]; axisDir: [number, number, number] }
   // A body imported from a CAD file (the raw STEP text).
   | { id: string; type: "import"; source: string };
 

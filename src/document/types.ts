@@ -152,6 +152,21 @@ export interface TransformFeature extends FeatureBase {
   hidden?: boolean;
 }
 
+/** Revolve a sketch region around an axis line (in a sketch) to make a solid.
+ *  Like extrude, a body *producer*. (Phase 6.) */
+export interface RevolveFeature extends FeatureBase {
+  type: "revolve";
+  /** The closed sketch region to revolve. */
+  profile: { sketchId: string; regionId: string };
+  /** The rotation axis: a line entity (its two endpoints define the axis). */
+  axis: { sketchId: string; entityId: string };
+  /** Revolve angle in degrees, as an expression (e.g. "360" or "angle/2"). */
+  angle: string;
+  color: number;
+  opacity: number;
+  hidden?: boolean;
+}
+
 /** Mirror a body across a plane, producing a new (reflected) body. The original
  *  is kept. The mirror plane is a datum / reference plane / planar face. */
 export interface MirrorFeature extends FeatureBase {
@@ -187,6 +202,7 @@ export type Feature =
   | PlaneFeature
   | TransformFeature
   | MirrorFeature
+  | RevolveFeature
   | ImportFeature;
 
 export interface Variable {

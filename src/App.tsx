@@ -8,6 +8,7 @@ import {
   addImport,
   addMirror,
   addPlane,
+  addRevolve,
   addSketch,
   addSketchConstraints,
   addSketchEntities,
@@ -842,6 +843,29 @@ export default function App() {
       ? { kind: "plane", planeId: key.slice(6) }
       : { kind: "datum", id: key.slice(6) as SketchPlaneId };
 
+  // Revolve needs a profile region + an axis line, both in the same sketch.
+  const revolveInputs = useMemo(() => {
+    let profile: { sketchId: string; regionId: string } | null = null;
+    let axis: { sketchId: string; entityId: string } | null = null;
+    for (const s of selection) {
+      if (s.kind === "sketchFace") profile = { sketchId: s.sketchId, regionId: s.regionId };
+      else if (s.kind === "sketchEntity") {
+        const sk = doc.features.find((f) => f.id === s.sketchId);
+        const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === s.entityId) : undefined;
+        if (e?.type === "line") axis = { sketchId: s.sketchId, entityId: s.entityId };
+      }
+    }
+    return profile && axis && profile.sketchId === axis.sketchId ? { profile, axis } : null;
+  }, [selection, doc]);
+
+  // Create a Revolve (360° by default; edit the angle in the parameter editor).
+  const openRevolve = () => {
+    if (!revolveInputs) return;
+    const { doc: next, id } = addRevolve(doc, revolveInputs.profile, revolveInputs.axis);
+    setDoc(next);
+    selectFeature(id);
+  };
+
   const openMirror = () => {
     if (!transformTarget) return;
     setMirrorDialog({ targetId: transformTarget, plane: "datum:plane-front" });
@@ -1561,6 +1585,13 @@ export default function App() {
               onClick={openExtrudeDialog}
             >
               ⬆ Extrude
+            </button>
+            <button
+              title="Revolve a sketch region around an axis line (select both)"
+              disabled={!revolveInputs || !!editingSketch || picking}
+              onClick={openRevolve}
+            >
+              ⟳ Revolve
             </button>
             <button
               title="Chamfer the selected edge(s)"
