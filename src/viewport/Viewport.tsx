@@ -669,12 +669,30 @@ export function Viewport({
     // Snap to inferences: points (origin, endpoints/midpoints of any coplanar
     // sketch or body edge), then nearest point on a coplanar edge, then
     // horizontal/vertical relative to the chain start. No grid snapping.
-    const snap = (raw: Vec2, clientX: number, clientY: number): { uv: Vec2; kind: "point" | "edge" | "h" | "v" | "free" } => {
+    const snap = (
+      raw: Vec2,
+      clientX: number,
+      clientY: number,
+    ): { uv: Vec2; kind: "point" | "edge" | "h" | "v" | "free"; hv?: "horizontal" | "vertical" } => {
       const frame = activeFrameRef.current!;
       const distPx = (c: Vec2) => {
         const w = uvToWorld(frame, c[0], c[1]);
         const px = projectToPx(new THREE.Vector3(w[0], w[1], w[2]));
         return Math.hypot(px.x - clientX, px.y - clientY);
+      };
+      const ref = draftRef.current[draftRef.current.length - 1];
+      // Horizontal/vertical of the segment ref -> p (if it's near-axis-aligned).
+      // Derived from the *resolved* endpoint, so it still fires when the endpoint
+      // also snaps to a point/edge — otherwise closing a rectangle onto an
+      // existing corner would silently drop that edge's H/V constraint.
+      const hvOf = (p: Vec2): "horizontal" | "vertical" | undefined => {
+        if (!ref || (p[0] === ref[0] && p[1] === ref[1])) return undefined;
+        const ang = Math.atan2(p[1] - ref[1], p[0] - ref[0]);
+        const dH = Math.min(Math.abs(ang), Math.abs(Math.abs(ang) - Math.PI));
+        const dV = Math.abs(Math.abs(ang) - Math.PI / 2);
+        if (dH < ANGLE_SNAP) return "horizontal";
+        if (dV < ANGLE_SNAP) return "vertical";
+        return undefined;
       };
       // 1. nearest snap point (static candidates + the current draft points)
       let best: Vec2 | null = null;
@@ -687,7 +705,7 @@ export function Viewport({
         const d = distPx(c);
         if (d < bestD) { bestD = d; best = c; }
       }
-      if (best) return { uv: best, kind: "point" };
+      if (best) return { uv: best, kind: "point", hv: hvOf(best) };
       // 2. nearest point on a coplanar edge
       let bestLine: Vec2 | null = null;
       let bestLD = SNAP_PX;
@@ -696,15 +714,14 @@ export function Viewport({
         const d = distPx(q);
         if (d < bestLD) { bestLD = d; bestLine = q; }
       }
-      if (bestLine) return { uv: bestLine, kind: "edge" };
+      if (bestLine) return { uv: bestLine, kind: "edge", hv: hvOf(bestLine) };
       // 3. horizontal / vertical inference relative to the last placed point
-      const ref = draftRef.current[draftRef.current.length - 1];
       if (ref) {
         const ang = Math.atan2(raw[1] - ref[1], raw[0] - ref[0]);
         const dH = Math.min(Math.abs(ang), Math.abs(Math.abs(ang) - Math.PI));
         const dV = Math.abs(Math.abs(ang) - Math.PI / 2);
-        if (dH < ANGLE_SNAP) return { uv: [raw[0], ref[1]], kind: "h" };
-        if (dV < ANGLE_SNAP) return { uv: [ref[0], raw[1]], kind: "v" };
+        if (dH < ANGLE_SNAP) return { uv: [raw[0], ref[1]], kind: "h", hv: "horizontal" };
+        if (dV < ANGLE_SNAP) return { uv: [ref[0], raw[1]], kind: "v", hv: "vertical" };
       }
       return { uv: raw, kind: "free" };
     };
@@ -934,7 +951,7 @@ export function Viewport({
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) return;
         const s = snap(raw, e.clientX, e.clientY);
-        onSketchClickRef.current(s.uv, s.kind === "h" ? "horizontal" : s.kind === "v" ? "vertical" : undefined);
+        onSketchClickRef.current(s.uv, s.hv);
         return;
       }
       // Selection click (idle, or sketch + Select tool). App accumulates into a

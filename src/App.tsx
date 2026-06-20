@@ -998,6 +998,24 @@ export default function App() {
     const lineEntity = (a: Vec2, b: Vec2): SketchEntity => ({ type: "line", id: genId(), a, b });
     const loopLines = (pts: Vec2[]) => loopSegments(pts).map(([a, b]) => lineEntity(a, b));
 
+    // Commit a rectangle as 4 looped lines plus the implicit horizontal/vertical
+    // constraints (each edge is axis-aligned, so it's exactly H or V). Without
+    // these a "rectangle" is just four coincident lines, free to shear the
+    // moment any later constraint is added.
+    const commitRect = (pts: Vec2[]) => {
+      const segs = loopSegments(pts);
+      const lines = segs.map(([a, b]) => lineEntity(a, b));
+      let next = addSketchEntities(doc, sketchId, lines);
+      const cons: SketchConstraint[] = segs.map(([a, b], i) => ({
+        id: genId(),
+        type: Math.abs(b[0] - a[0]) >= Math.abs(b[1] - a[1]) ? "horizontal" : "vertical",
+        entity: lines[i].id,
+      }));
+      next = addSketchConstraints(next, sketchId, cons);
+      setDoc(next);
+      setFullyConstrained(false);
+    };
+
     switch (sketchTool) {
       case "line":
         if (draft.length === 0) setDraft([uv]);
@@ -1015,14 +1033,14 @@ export default function App() {
       case "rect-corner":
         if (draft.length === 0) setDraft([uv]);
         else {
-          commit(loopLines(rectangleCorners(draft[0], uv)));
+          commitRect(rectangleCorners(draft[0], uv));
           setDraft([]);
         }
         break;
       case "rect-center":
         if (draft.length === 0) setDraft([uv]);
         else {
-          commit(loopLines(rectangleFromCenter(draft[0], uv)));
+          commitRect(rectangleFromCenter(draft[0], uv));
           setDraft([]);
         }
         break;
