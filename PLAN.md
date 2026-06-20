@@ -485,16 +485,20 @@ this — datum / reference-plane sketches stay anchored to their datum.
 
 ## Phase 9 — LLM agent integration (local MCP) — IN PROGRESS (L0–L3 done, L4 next)
 
-**Status (2026-06-20).** **L0–L3 shipped.** The command + read layer (L0), the
-browser WebSocket bridge (L1), the **Node stdio MCP server** (`mcp-server/`, L2),
-and **regen-await + read/screenshot polish** (L3) are built and validated end to
-end: a real MCP client spawns the server, a headless tab dials the hub, and tool
-calls flow client → server → hub → tab → kernel → back. After L3 a mutating op
-**awaits the kernel regen** before returning, so a single follow-up read/
-screenshot sees the result (no polling) and a failed build surfaces as
-`kernel_error` for the agent to self-correct. See the L0–L3 entries under
-*Delivery steps*. **L4 (robustness: token auth, multi-tab, error taxonomy,
-list/open/new_document) is next.**
+**Status (2026-06-20).** **L0–L3 shipped, and validated against a real MCP
+client** (Claude Code + Claude Desktop): the agent reads the scene, sketches,
+extrudes, dresses up, and screenshots a live tab end to end — "runs extremely
+well" in manual testing. The command + read layer (L0), the browser WebSocket
+bridge (L1), the **Node stdio MCP server** (`mcp-server/`, L2), and **regen-await
++ read/screenshot polish** (L3) flow client → server → hub → tab → kernel → back.
+After L3 a mutating op **awaits the kernel regen** before returning, so a single
+follow-up read/screenshot sees the result (no polling) and a failed build
+surfaces as `kernel_error` for the agent to self-correct. Wired for Claude Code
+via a committed root `.mcp.json`; setup in `mcp-server/README.md`. See the L0–L3
+entries under *Delivery steps*. **All Phase 9 work lives on branch
+`feat/phase9-agent`** (to merge once the whole feature is validated). **L4
+(robustness: token auth, multi-tab, error taxonomy, list/open/new_document) is
+next.**
 
 **Goal.** Let a local LLM agent (Claude Desktop, Claude Code, Cursor, Cline, Zed,
 …) **drive the live Open Poly browser tab** — sketch, extrude, transform, arrange
