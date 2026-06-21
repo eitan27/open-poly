@@ -38,6 +38,7 @@ import {
 import { DEFAULT_SOLID_COLOR } from "./document/colors";
 import type {
   Document,
+  ExtrudeExtent,
   ExtrudeProfile,
   FeatureKind,
   PlaneFeature,
@@ -365,7 +366,7 @@ export default function App() {
   const [dimPending, setDimPending] = useState(false);
   // The extrude dialog (anchored at the profile) while choosing parameters.
   const [extrudeDialog, setExtrudeDialog] = useState<
-    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; targetId: string | null; x: number; y: number } | null
+    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; extent: ExtrudeExtent; targetId: string | null; x: number; y: number } | null
   >(null);
   // Live ghost preview of the extrude dialog's current params: `bodyId` is
   // whichever body the regen result represents (the new extrude itself for
@@ -749,26 +750,31 @@ export default function App() {
     [selection, doc, meshes],
   );
 
-  // A single selected profile an Extrude could consume: a sketch region or a
-  // planar face of an existing body (with its centroid baked in for re-finding).
-  const extrudeProfile = useMemo((): ExtrudeProfile | null => {
-    if (selection.length !== 1) return null;
-    const s = selection[0];
-    if (s.kind === "sketchFace") return { kind: "sketchRegion", sketchId: s.sketchId, regionId: s.regionId };
-    if (s.kind === "face") {
-      const m = meshes.find((x) => x.id === s.featureId);
-      const center = m ? faceCentroid(m.mesh.faces, s.faceId) : null;
-      if (!center) return null;
-      const faceName = m ? faceNameOf(m.mesh.faces, s.faceId) : undefined;
-      return { kind: "bodyFace", featureId: s.featureId, faceId: s.faceId, faceName, center };
+  // Every selected profile an Extrude could consume: sketch regions and/or
+  // planar faces of existing bodies, picked one at a time and accumulated by
+  // the normal multi-select (see handlePick) — one dialog fill-in extrudes or
+  // cuts all of them at once.
+  const extrudeProfiles = useMemo((): ExtrudeProfile[] => {
+    const profiles: ExtrudeProfile[] = [];
+    for (const s of selection) {
+      if (s.kind === "sketchFace") {
+        profiles.push({ kind: "sketchRegion", sketchId: s.sketchId, regionId: s.regionId });
+      } else if (s.kind === "face") {
+        const m = meshes.find((x) => x.id === s.featureId);
+        const center = m ? faceCentroid(m.mesh.faces, s.faceId) : null;
+        if (!center) continue;
+        const faceName = m ? faceNameOf(m.mesh.faces, s.faceId) : undefined;
+        profiles.push({ kind: "bodyFace", featureId: s.featureId, faceId: s.faceId, faceName, center });
+      }
     }
-    return null;
+    return profiles;
   }, [selection, meshes]);
 
   // World-space anchor for the extrude dialog: a body face's centroid, or a
-  // sketch region's centroid mapped to 3D.
+  // sketch region's centroid mapped to 3D. Anchored on the first profile when
+  // several are selected.
   const profileAnchorWorld = (): [number, number, number] | null => {
-    const p = extrudeProfile;
+    const p = extrudeProfiles[0];
     if (!p) return null;
     if (p.kind === "bodyFace") return p.center;
     const sk = doc.features.find((f) => f.id === p.sketchId);
@@ -784,7 +790,7 @@ export default function App() {
   // The solid a sketch-region profile sits on (drawn on its face, or coplanar +
   // overlapping it), if any — so the extrude can default to adding onto it.
   const extrudeHostBody = (): string | null => {
-    const p = extrudeProfile;
+    const p = extrudeProfiles[0];
     if (!p || p.kind !== "sketchRegion") return null;
     const sk = doc.features.find((f) => f.id === p.sketchId);
     if (sk?.type !== "sketch") return null;
@@ -797,7 +803,8 @@ export default function App() {
   };
 
   const openExtrudeDialog = () => {
-    if (!extrudeProfile) return;
+    if (extrudeProfiles.length === 0) return;
+    const first = extrudeProfiles[0];
     const world = profileAnchorWorld();
     const s = (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
     // Default to adding onto the host solid when the profile sits on one:
@@ -805,9 +812,9 @@ export default function App() {
     //  - a sketch region drawn on / coplanar+overlapping a solid's face -> that solid.
     // Otherwise a new body (target = first available, for if the user switches mode).
     const addTarget =
-      extrudeProfile.kind === "bodyFace"
-        ? bodyIds.has(extrudeProfile.featureId)
-          ? extrudeProfile.featureId
+      first.kind === "bodyFace"
+        ? bodyIds.has(first.featureId)
+          ? first.featureId
           : null
         : extrudeHostBody();
     const defaultTarget = addTarget ?? booleanCandidates[0]?.id ?? null;
@@ -815,6 +822,7 @@ export default function App() {
       mode: addTarget ? "add" : "new",
       distance: "10",
       flip: false,
+      extent: "blind",
       targetId: defaultTarget,
       x: s.x,
       y: s.y,
@@ -822,22 +830,30 @@ export default function App() {
   };
 
   const createExtrude = () => {
-    if (!extrudeProfile || !extrudeDialog) return;
+    if (extrudeProfiles.length === 0 || !extrudeDialog) return;
     // Add/Remove require a target body to affect.
     if (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) return;
-    const { doc: next, id } = addExtrude(doc, extrudeProfile, {
-      distance: extrudeDialog.distance,
-      flip: extrudeDialog.flip,
-      mode: extrudeDialog.mode,
-      targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
-    });
-    // Hide the source sketch once it's been consumed by an extrude. It stays in
-    // place and editable — toggle the timeline eye (or edit it) to bring it back.
-    // Folded into the same undo step as the extrude.
-    const updated =
-      extrudeProfile.kind === "sketchRegion" ? setSuppressed(next, extrudeProfile.sketchId, true) : next;
-    setDoc(updated);
-    selectFeature(id);
+    // One Extrude feature per selected profile, sharing the dialog's settings —
+    // folded into a single undo step by threading `next` through every
+    // addExtrude/setSuppressed call before the one setDoc at the end.
+    let next = doc;
+    let lastId = "";
+    for (const profile of extrudeProfiles) {
+      const res = addExtrude(next, profile, {
+        distance: extrudeDialog.distance,
+        flip: extrudeDialog.flip,
+        extent: extrudeDialog.extent,
+        mode: extrudeDialog.mode,
+        targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
+      });
+      // Hide the source sketch once it's been consumed by an extrude. It stays
+      // in place and editable — toggle the timeline eye (or edit it) to bring
+      // it back.
+      next = profile.kind === "sketchRegion" ? setSuppressed(res.doc, profile.sketchId, true) : res.doc;
+      lastId = res.id;
+    }
+    setDoc(next);
+    selectFeature(lastId);
     setExtrudeDialog(null);
   };
 
@@ -847,7 +863,7 @@ export default function App() {
   // model. Re-runs on every dialog/profile change, same as editing a committed
   // feature's params already does.
   useEffect(() => {
-    if (!extrudeDialog || !extrudeProfile || (extrudeDialog.mode !== "new" && !extrudeDialog.targetId)) {
+    if (!extrudeDialog || extrudeProfiles.length === 0 || (extrudeDialog.mode !== "new" && !extrudeDialog.targetId)) {
       setExtrudePreview(null);
       setExtrudePreviewError(null);
       return;
@@ -856,15 +872,27 @@ export default function App() {
     if (!ready || !kernel) return;
     let cancelled = false;
 
-    const { doc: previewDoc, id: previewId } = addExtrude(doc, extrudeProfile, {
-      distance: extrudeDialog.distance,
-      flip: extrudeDialog.flip,
-      mode: extrudeDialog.mode,
-      targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
-    });
-    const bodyId = extrudeDialog.mode === "new" ? previewId : extrudeDialog.targetId!;
+    // Build a throwaway doc with every selected profile extruded (mirrors
+    // createExtrude), honoring the dialog's extent. We can only ghost one body,
+    // so we show the single body the result is observed on: the shared target
+    // for add/remove, else the first new body. (Multi-profile "new" previews
+    // just that first body.)
+    let previewDoc = doc;
+    const createdIds: string[] = [];
+    for (const profile of extrudeProfiles) {
+      const res = addExtrude(previewDoc, profile, {
+        distance: extrudeDialog.distance,
+        flip: extrudeDialog.flip,
+        extent: extrudeDialog.extent,
+        mode: extrudeDialog.mode,
+        targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
+      });
+      previewDoc = res.doc;
+      createdIds.push(res.id);
+    }
+    const bodyId = extrudeDialog.mode === "new" ? createdIds[0] : extrudeDialog.targetId!;
     const previewResolved = resolveDocument(previewDoc);
-    const resolveErr = previewResolved.errors[previewId];
+    const resolveErr = createdIds.map((id) => previewResolved.errors[id]).find(Boolean);
     if (resolveErr) {
       setExtrudePreview(null);
       setExtrudePreviewError(resolveErr);
@@ -893,7 +921,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [extrudeDialog, extrudeProfile, doc, ready]);
+  }, [extrudeDialog, extrudeProfiles, doc, ready]);
 
   // One or more selected body edges, all on the same body — what a chamfer or
   // fillet would dress. Resolves each edge to its persistent name.
@@ -1766,8 +1794,8 @@ export default function App() {
               ⧉ Plane
             </button>
             <button
-              title="Extrude the selected sketch region or face"
-              disabled={!extrudeProfile || !!editingSketch || picking || !!extrudeDialog}
+              title="Extrude the selected sketch region(s) and/or face(s)"
+              disabled={extrudeProfiles.length === 0 || !!editingSketch || picking || !!extrudeDialog}
               onClick={openExtrudeDialog}
             >
               ⬆ Extrude
@@ -1993,13 +2021,19 @@ export default function App() {
           )}
           {extrudeDialog && (
             <DraggableDialog className="extrude-dialog" style={{ left: extrudeDialog.x, top: extrudeDialog.y }}>
-              <div className="ed-title" data-drag-handle>Extrude</div>
+              <div className="ed-title" data-drag-handle>
+                Extrude{extrudeProfiles.length > 1 ? ` (${extrudeProfiles.length} profiles)` : ""}
+              </div>
               <div className="ed-modes">
                 {(["new", "add", "remove"] as const).map((m) => (
                   <button
                     key={m}
                     className={extrudeDialog.mode === m ? "active" : ""}
-                    onClick={() => setExtrudeDialog((d) => (d ? { ...d, mode: m } : d))}
+                    onClick={() =>
+                      setExtrudeDialog((d) =>
+                        d ? { ...d, mode: m, extent: m === "new" && d.extent === "throughAll" ? "blind" : d.extent } : d,
+                      )
+                    }
                   >
                     {m === "new" ? "New" : m === "add" ? "Add" : "Remove"}
                   </button>
@@ -2019,6 +2053,18 @@ export default function App() {
                   </select>
                 </label>
               )}
+              <div className="ed-modes">
+                {(["blind", "symmetric", "throughAll"] as const).map((ex) => (
+                  <button
+                    key={ex}
+                    className={extrudeDialog.extent === ex ? "active" : ""}
+                    disabled={ex === "throughAll" && extrudeDialog.mode === "new"}
+                    onClick={() => setExtrudeDialog((d) => (d ? { ...d, extent: ex } : d))}
+                  >
+                    {ex === "blind" ? "Blind" : ex === "symmetric" ? "Symmetric" : "Through All"}
+                  </button>
+                ))}
+              </div>
               <label className="ed-field">
                 <span>Distance</span>
                 <input
@@ -2031,14 +2077,16 @@ export default function App() {
                   }}
                 />
               </label>
-              <label className="ed-field ed-flip">
-                <span>Flip direction</span>
-                <input
-                  type="checkbox"
-                  checked={extrudeDialog.flip}
-                  onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, flip: e.target.checked } : d))}
-                />
-              </label>
+              {extrudeDialog.extent !== "symmetric" && (
+                <label className="ed-field ed-flip">
+                  <span>Flip direction</span>
+                  <input
+                    type="checkbox"
+                    checked={extrudeDialog.flip}
+                    onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, flip: e.target.checked } : d))}
+                  />
+                </label>
+              )}
               {extrudePreviewError && <p className="ed-warning">{extrudePreviewError}</p>}
               <div className="ed-actions">
                 <button

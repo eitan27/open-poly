@@ -861,6 +861,11 @@
   color: #cfe0ff;
 }
 
+.ed-modes button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .ed-field {
   display: flex;
   align-items: center;

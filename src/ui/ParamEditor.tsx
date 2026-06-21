@@ -53,6 +53,18 @@ export function ParamEditor({
             </select>
           </label>
           <label className="param-field">
+            <span className="param-label">Extent</span>
+            <select
+              className="param-input"
+              value={feature.extent}
+              onChange={(e) => onChangeParam(feature.id, "extent", e.target.value)}
+            >
+              <option value="blind">Blind</option>
+              <option value="symmetric">Symmetric</option>
+              <option value="throughAll" disabled={feature.mode === "new"}>Through All</option>
+            </select>
+          </label>
+          <label className="param-field">
             <span className="param-label">Distance</span>
             <input
               className="param-input"
@@ -60,14 +72,16 @@ export function ParamEditor({
               onChange={(e) => onChangeParam(feature.id, "distance", e.target.value)}
             />
           </label>
-          <label className="param-field">
-            <span className="param-label">Flip</span>
-            <input
-              type="checkbox"
-              checked={feature.flip}
-              onChange={(e) => onChangeParam(feature.id, "flip", e.target.checked ? "true" : "false")}
-            />
-          </label>
+          {feature.extent !== "symmetric" && (
+            <label className="param-field">
+              <span className="param-label">Flip</span>
+              <input
+                type="checkbox"
+                checked={feature.flip}
+                onChange={(e) => onChangeParam(feature.id, "flip", e.target.checked ? "true" : "false")}
+              />
+            </label>
+          )}
         </div>
       ) : feature.type === "dressup" ? (
         <div className="sketch-params">

@@ -14,6 +14,7 @@ import type { KernelRequest, KernelResponse } from "./protocol";
 import type {
   BooleanOp,
   ExportFormat,
+  ExtrudeExtent,
   RegenFeatureResult,
   ResolvedFeature,
 } from "./types";
@@ -208,32 +209,27 @@ function revolveSketchRegion(
   return revolveFromFace(face, axisOrigin, axisDir, angleRad, id);
 }
 
-/** Extrude a baked sketch outline along its frame normal (signed by `flip`). */
-function extrudeSketchRegion(
+/** Resolve a sketch-region profile to the OCCT face it extrudes and the
+ *  outward direction (its frame normal). */
+function sketchRegionFace(
   profile: Extract<ResolvedFeature, { type: "extrude" }>["profile"] & { kind: "sketchRegion" },
-  flip: boolean,
-  distance: number,
-  id: string,
-): NamedShape {
+): { face: Face; normal: Vector } {
   const { outline, frame } = profile;
   if (outline.length < 3) throw new Error("extrude: profile needs at least 3 points");
   const plane = new Plane(frame.origin, frame.uAxis, frame.normal);
   let pen = draw().movePointerTo(outline[0]);
   for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
   const face = (pen.close().sketchOnPlane(plane) as { face(): Face }).face();
-  return prismFromFace(face, new Vector(frame.normal), flip ? -distance : distance, id);
+  return { face, normal: new Vector(frame.normal) };
 }
 
-/** Extrude a face of a running body along its normal (signed by `flip`). The
- *  face is re-found by its persistent name, else by nearest centroid. */
-function extrudeBodyFace(
+/** Resolve a body-face profile to its OCCT face and outward normal. The face
+ *  is re-found by its persistent name, else by nearest centroid. */
+function bodyProfileFace(
   src: Body,
   faceName: string | undefined,
   center: [number, number, number],
-  flip: boolean,
-  distance: number,
-  id: string,
-): NamedShape {
+): { face: Face; normal: Vector } {
   let best: Face | null = null;
   if (faceName) {
     for (const f of src.shape.faces) {
@@ -249,7 +245,41 @@ function extrudeBodyFace(
     }
   }
   if (!best) throw new Error("extrude: source body has no faces");
-  return prismFromFace(best, best.normalAt(), flip ? -distance : distance, id);
+  return { face: best, normal: best.normalAt() };
+}
+
+/** A prism length, starting anywhere on `face`, guaranteed to clear past every
+ *  point of `target` regardless of direction: the distance between the two
+ *  shapes' bounding-box centers plus both boxes' half-diagonals, plus a
+ *  small margin. Generous on purpose — the boolean op that follows (fuse/cut)
+ *  clips the result to the target's actual shape either way, so all this
+ *  needs to guarantee is "long enough to fully pass through". */
+function throughAllLength(face: Face, target: Shape3D): number {
+  const halfDiagonal = (bounds: [[number, number, number], [number, number, number]]) => {
+    const [min, max] = bounds;
+    return Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2;
+  };
+  const fb = face.boundingBox;
+  const tb = target.boundingBox;
+  const centerDist = Math.hypot(
+    fb.center[0] - tb.center[0],
+    fb.center[1] - tb.center[1],
+    fb.center[2] - tb.center[2],
+  );
+  return centerDist + halfDiagonal(fb.bounds) + halfDiagonal(tb.bounds) + 1;
+}
+
+/** The signed prism length(s) to build for a given extent — one length for
+ *  "blind"/"throughAll", two (equal and opposite) for "symmetric" whose union
+ *  is fused into the final tool. "throughAll" only has a target to size
+ *  against for add/remove; with no target (or "new") it falls back to the
+ *  literal blind distance. */
+function extrudeLengths(extent: ExtrudeExtent, distance: number, face: Face, targets: Body[]): number[] {
+  if (extent === "symmetric") return [distance / 2, -distance / 2];
+  if (extent === "throughAll" && targets.length > 0) {
+    return [Math.max(...targets.map((t) => throughAllLength(face, t.shape)))];
+  }
+  return [distance];
 }
 
 /** Fuse, cut, or intersect (common) two named shapes, propagating face names
@@ -514,27 +544,39 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
       } else if (feature.type === "import") {
         bodies.push({ id: feature.id, ...importStepNamed(feature.source, feature.id) });
       } else if (feature.type === "extrude") {
-        const { profile, flip, distance, mode } = feature;
+        const { profile, flip, distance, extent, mode } = feature;
         // A "remove" cuts *into* the body, so its natural direction is opposite
         // the profile normal — the Flip toggle then reverses that. New/Add follow
         // the normal outward.
         const dirFlip = mode === "remove" ? !flip : flip;
-        const built: NamedShape =
+
+        // Merge scope: the user-chosen target body (add/remove now require one),
+        // falling back to the face's source body if none was specified. Resolved
+        // up front (rather than after building the tool, as before) because
+        // extent "throughAll" needs the target's geometry to size the tool.
+        const targetId =
+          mode !== "new" ? feature.targetId ?? (profile.kind === "bodyFace" ? profile.sourceId : undefined) : undefined;
+        const targets = targetId ? bodies.filter((b) => b.id === targetId) : [];
+
+        const { face, normal } =
           profile.kind === "sketchRegion"
-            ? extrudeSketchRegion(profile, dirFlip, distance, feature.id)
-            : extrudeBodyFace(
-                requireBody(bodies, profile.sourceId),
-                profile.faceName, profile.center, dirFlip, distance, feature.id,
-              );
+            ? sketchRegionFace(profile)
+            : bodyProfileFace(requireBody(bodies, profile.sourceId), profile.faceName, profile.center);
+
+        const sign = dirFlip ? -1 : 1;
+        const lengths = extrudeLengths(extent, distance, face, targets).map((l) => l * sign);
+        let built: NamedShape = prismFromFace(face, normal, lengths[0], feature.id);
+        for (let i = 1; i < lengths.length; i++) {
+          const more = prismFromFace(face, normal, lengths[i], feature.id);
+          const fused = booleanNamed("fuse", built, more);
+          built.shape.delete();
+          more.shape.delete();
+          built = fused;
+        }
 
         if (mode === "new") {
           bodies.push({ id: feature.id, ...built });
         } else {
-          // Merge scope: the user-chosen target body (add/remove now require one),
-          // falling back to the face's source body if none was specified.
-          const targetId = feature.targetId ?? (profile.kind === "bodyFace" ? profile.sourceId : undefined);
-          const targets = targetId ? bodies.filter((b) => b.id === targetId) : [];
-
           if (targets.length === 0) {
             // Nothing to combine with: add becomes a new body, remove is a no-op.
             if (mode === "add") bodies.push({ id: feature.id, ...built });
