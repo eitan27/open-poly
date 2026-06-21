@@ -101,6 +101,43 @@
   margin-top: 22px;
 }
 
+/* A collapsible section heading (e.g. Variables) — a full-width toggle button
+   with a disclosure caret. Typography matches the .panel h2 section headings
+   (Timeline/Parts/Parameters): same font, weight, size, casing and colour. */
+.params-heading.collapsible {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 22px 0 10px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8a8f9c;
+  text-align: left;
+}
+
+.params-heading.collapsible:hover {
+  color: #cfe0ff;
+}
+
+.collapse-caret {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1;
+  transition: transform 0.12s ease;
+}
+
+.collapse-caret.open {
+  transform: rotate(90deg);
+}
+
 /* Parts section header: title on the left, "Import STEP" on the right. */
 .parts-header {
   display: flex;
@@ -276,6 +313,18 @@
   color: #f08a8a;
 }
 
+/* Fixed base datums folded into the timeline: not clickable to select, slightly
+   muted so they read as permanent reference geometry rather than features. */
+.tree-row.datum-row {
+  cursor: default;
+}
+.tree-row.datum-row:hover {
+  background: transparent;
+}
+.tree-row.datum-row .row-name {
+  color: #aeb4c0;
+}
+
 .row-kind {
   font-size: 10px;
   text-transform: uppercase;
@@ -382,11 +431,6 @@
 .solid-name:focus {
   outline: none;
   border-color: #4f8cff;
-}
-
-.solid-opacity {
-  flex: none;
-  width: 46px;
 }
 
 .export-btn {
@@ -1132,8 +1176,23 @@
   left: 12px;
   bottom: 14px;
   display: flex;
+  flex-direction: column;
   gap: 4px;
   z-index: 15;
+}
+
+.sel-filters-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6b7180;
+  padding-left: 2px;
+}
+
+.sel-filters-row {
+  display: flex;
+  gap: 4px;
 }
 
 .sel-filters button {

@@ -41,7 +41,6 @@ export function SolidsList({
   onRename,
   onDelete,
   onColorChange,
-  onOpacityChange,
   onToggleHidden,
   onExportStep,
   onExportStl,
@@ -81,16 +80,6 @@ export function SolidsList({
             value={f.name}
             title={f.name}
             onChange={(e) => onRename(f.id, e.target.value)}
-          />
-          <input
-            type="range"
-            className="solid-opacity"
-            min={0}
-            max={1}
-            step={0.05}
-            value={f.opacity}
-            title={`Opacity ${Math.round(f.opacity * 100)}%`}
-            onChange={(e) => onOpacityChange(f.id, Number(e.target.value))}
           />
           <button
             className="row-icon"

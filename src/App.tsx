@@ -65,7 +65,7 @@ import {
   regularPolygon,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
-import { ConstructionIcon, EyeIcon, ParallelIcon } from "./ui/icons";
+import { ConstructionIcon, ParallelIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { DraggableDialog } from "./ui/DraggableDialog";
 import { DimensionLabels, type DimLabelSpec } from "./ui/DimensionLabels";
@@ -393,6 +393,12 @@ export default function App() {
   >(null);
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
+  // The Variables section is collapsible (to reclaim panel space). Default:
+  // open for a short list (< 5 variables), collapsed for a long one so it
+  // doesn't dominate the panel. Set from the loaded doc (see the restore effect)
+  // and then left wherever the user puts it.
+  const VARS_OPEN_THRESHOLD = 5;
+  const [variablesOpen, setVariablesOpen] = useState(() => doc.variables.length < VARS_OPEN_THRESHOLD);
   // Height of the timeline's own scroll box, dragged via the splitter below it.
   const [timelineHeight, setTimelineHeight] = useState(260);
   const startTimelineResize = (e: PointerEvent<HTMLDivElement>) => {
@@ -466,7 +472,10 @@ export default function App() {
         if (cancelled) return;
         if (docs.length > 0) {
           docIdRef.current = docs[0].id;
-          resetDoc(migrateDocument(docs[0].doc));
+          const migrated = migrateDocument(docs[0].doc);
+          resetDoc(migrated);
+          // Default the Variables section open/collapsed by the restored count.
+          setVariablesOpen(migrated.variables.length < VARS_OPEN_THRESHOLD);
         }
       } catch (err) {
         console.warn("could not load saved document:", err);
@@ -630,13 +639,11 @@ export default function App() {
     [rawMeshes, doc, isolatedBodyId],
   );
 
-  // While the extrude dialog has a live preview, hide those bodies' *current*
-  // meshes from the viewport — the ghosts (rendered separately) stand in for them.
-  const viewportMeshes = useMemo(() => {
-    if (!extrudePreview) return meshes;
-    const hidden = new Set(extrudePreview.map((p) => p.bodyId));
-    return meshes.filter((m) => !hidden.has(m.id));
-  }, [meshes, extrudePreview]);
+  // The extrude live preview ghosts only the swept *tool* (the changing
+  // portion), keyed by fresh ids that aren't among the real bodies — so every
+  // existing body stays rendered in its own colour and only the new material
+  // reads as cyan. Hence the viewport just shows all real meshes as usual.
+  const viewportMeshes = meshes;
   const ghostMeshes = useMemo<GhostMesh[]>(
     () => (extrudePreview ? extrudePreview.map((p) => ({ mesh: p.mesh })) : []),
     [extrudePreview],
@@ -874,9 +881,10 @@ export default function App() {
     let cancelled = false;
 
     // Build a throwaway doc with every selected profile extruded (mirrors
-    // createExtrude), honoring the dialog's extent. The bodies the result is
-    // observed on: every new extrude for "new", or the single shared target
-    // for add/remove (all profiles fuse into / cut from it).
+    // createExtrude), honoring the dialog's extent. Each extrude is regenerated
+    // in `previewTool` mode so the kernel emits only the swept tool (the
+    // changing portion) — the existing bodies are left untouched and keep their
+    // own colour, so only the new material reads as cyan.
     let previewDoc = doc;
     const createdIds: string[] = [];
     for (const profile of extrudeProfiles) {
@@ -890,7 +898,7 @@ export default function App() {
       previewDoc = res.doc;
       createdIds.push(res.id);
     }
-    const bodyIds = extrudeDialog.mode === "new" ? createdIds : [extrudeDialog.targetId!];
+    const created = new Set(createdIds);
     const previewResolved = resolveDocument(previewDoc);
     const resolveErr = createdIds.map((id) => previewResolved.errors[id]).find(Boolean);
     if (resolveErr) {
@@ -898,14 +906,17 @@ export default function App() {
       setExtrudePreviewError(resolveErr);
       return;
     }
+    const features = previewResolved.features.map((rf) =>
+      rf.type === "extrude" && created.has(rf.id) ? { ...rf, previewTool: true } : rf,
+    );
 
     kernel
-      .regenerate(previewResolved.features)
+      .regenerate(features)
       .then((results) => {
         if (cancelled) return;
         const previews: { bodyId: string; mesh: FeatureMesh["mesh"] }[] = [];
         let failure: string | null = null;
-        for (const id of bodyIds) {
+        for (const id of createdIds) {
           const hit = results.find((r) => r.id === id);
           if (hit?.ok) previews.push({ bodyId: id, mesh: hit.mesh });
           else if (hit && !hit.ok) failure = hit.error;
@@ -1615,44 +1626,36 @@ export default function App() {
       </header>
       <div className="body">
         <aside className="panel">
-          <h2>Datums</h2>
-          <div className="tree-list">
-            {DATUM_ROWS.map((d) => {
-              const visible = datumVisibility[d.id];
-              return (
-                <div className={"tree-row" + (visible ? "" : " dim")} key={d.id}>
-                  <span className="row-kind">{d.kind}</span>
-                  <span className="row-name">{d.label}</span>
-                  <button
-                    className="row-icon"
-                    title={visible ? "Hide" : "Show"}
-                    style={{ opacity: visible ? 1 : 0.35 }}
-                    onClick={() => setDatumVisibility((v) => ({ ...v, [d.id]: !v[d.id] }))}
-                  >
-                    <EyeIcon />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-          <h2 className="params-heading">Variables</h2>
-          <VariablesPanel
-            variables={doc.variables}
-            scope={resolved.scope}
-            errors={resolved.variableErrors}
-            onAdd={() => {
-              const { doc: next } = addVariable(doc);
-              setDoc(next);
-            }}
-            onChange={(id, field, value) =>
-              setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)
-            }
-            onDelete={(id) => setDoc(removeVariable(doc, id))}
-          />
+          <button
+            className="params-heading collapsible"
+            aria-expanded={variablesOpen}
+            onClick={() => setVariablesOpen((o) => !o)}
+          >
+            <span className={"collapse-caret" + (variablesOpen ? " open" : "")}>▶</span>
+            Variables ({doc.variables.length})
+          </button>
+          {variablesOpen && (
+            <VariablesPanel
+              variables={doc.variables}
+              scope={resolved.scope}
+              errors={resolved.variableErrors}
+              onAdd={() => {
+                const { doc: next } = addVariable(doc);
+                setDoc(next);
+              }}
+              onChange={(id, field, value) =>
+                setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)
+              }
+              onDelete={(id) => setDoc(removeVariable(doc, id))}
+            />
+          )}
           <h2 className="params-heading">Timeline</h2>
           <FeatureTree
             doc={doc}
             height={timelineHeight}
+            datums={DATUM_ROWS}
+            datumVisibility={datumVisibility}
+            onToggleDatum={(id) => setDatumVisibility((v) => ({ ...v, [id]: !v[id] }))}
             selectedIds={selectedFeatureIds}
             errors={errors}
             onSelect={selectFeature}
@@ -1986,15 +1989,18 @@ export default function App() {
           </div>
           {!editingSketch && !picking && (
             <div className="sel-filters" title="Selection filters — what a click can pick">
-              {(["body", "face", "edge", "vertex"] as const).map((k) => (
-                <button
-                  key={k}
-                  className={selFilter[k] ? "active" : ""}
-                  onClick={() => setSelFilter((f) => ({ ...f, [k]: !f[k] }))}
-                >
-                  {k}
-                </button>
-              ))}
+              <span className="sel-filters-label">Selection filters</span>
+              <div className="sel-filters-row">
+                {(["body", "face", "edge", "vertex"] as const).map((k) => (
+                  <button
+                    key={k}
+                    className={selFilter[k] ? "active" : ""}
+                    onClick={() => setSelFilter((f) => ({ ...f, [k]: !f[k] }))}
+                  >
+                    {k}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           {isolatedBodyId && (
