@@ -8,7 +8,7 @@ import {
   setOC, makeBaseBox, makeCylinder, makeSphere, draw, Plane,
   cast, getOC, Vector, HASH_CODE_MAX, exportSTEP, measureVolume,
 } from "replicad";
-import type { Shape3D, Face } from "replicad";
+import type { Shape3D, Face, Sketch } from "replicad";
 
 import type { KernelRequest, KernelResponse } from "./protocol";
 import type {
@@ -17,6 +17,8 @@ import type {
   ExtrudeExtent,
   RegenFeatureResult,
   ResolvedFeature,
+  ResolvedFrame,
+  ResolvedProfile,
 } from "./types";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -207,6 +209,121 @@ function revolveSketchRegion(
   for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
   const face = (pen.close().sketchOnPlane(plane) as { face(): Face }).face();
   return revolveFromFace(face, axisOrigin, axisDir, angleRad, id);
+}
+
+type RegionProfile = Extract<ResolvedProfile, { kind: "sketchRegion" }>;
+
+type V3 = [number, number, number];
+const vlen = (v: V3) => Math.hypot(v[0], v[1], v[2]) || 1;
+const vunit = (v: V3): V3 => { const L = vlen(v); return [v[0] / L, v[1] / L, v[2] / L]; };
+const vcross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+/** Map a frame-local (u,v) point to world. */
+function frameToWorld(f: ResolvedFrame, p: [number, number]): [number, number, number] {
+  return [
+    f.origin[0] + p[0] * f.uAxis[0] + p[1] * f.vAxis[0],
+    f.origin[1] + p[0] * f.uAxis[1] + p[1] * f.vAxis[1],
+    f.origin[2] + p[0] * f.uAxis[2] + p[1] * f.vAxis[2],
+  ];
+}
+
+/** Build a closed profile Drawing from a baked outline (uv, on its own frame). */
+function profileDrawing(outline: [number, number][]) {
+  if (outline.length < 3) throw new Error("profile needs at least 3 points");
+  let pen = draw().movePointerTo(outline[0]);
+  for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
+  return pen.close();
+}
+
+/** Resolve `shape`'s faces to a name map, given hash→name maps for the swept
+ *  side faces and the start/end caps; anything unmapped gets a stable `f{n}`. */
+function namesFromHistory(shape: Shape3D, id: string, caps: Map<number, string>, sides: Map<number, string>): NamedShape {
+  const names = new Map<number, string>();
+  let extra = 0;
+  for (const f of shape.faces) {
+    const h = f.hashCode;
+    if (caps.has(h)) names.set(h, caps.get(h)!);
+    else if (sides.has(h)) names.set(h, sides.get(h)!);
+    else names.set(h, `${id}/f${extra++}`);
+  }
+  return { shape, names };
+}
+
+/** Sweep a profile region along a path (a wire built from baked 2D points: a
+ *  B-spline when `smooth`, else a polyline). Built on raw OCCT
+ *  `BRepOffsetAPI_MakePipeShell` so the result's faces are named from history:
+ *  one side face per profile edge (`Generated`) + the two caps. */
+function sweepBody(profile: RegionProfile, path: { points: [number, number][]; smooth: boolean; frame: ResolvedFrame }, id: string): NamedShape {
+  if (path.points.length < 2) throw new Error("sweep: path needs at least 2 points");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  // Spine wire from the path points (open drawing → wire).
+  const pathPlane = new Plane(path.frame.origin, path.frame.uAxis, path.frame.normal);
+  let pen = draw().movePointerTo(path.points[0]);
+  for (let i = 1; i < path.points.length; i++) {
+    pen = path.smooth ? pen.smoothSplineTo(path.points[i]) : pen.lineTo(path.points[i]);
+  }
+  const spineWire = (pen.done().sketchOnPlane(pathPlane) as unknown as Sketch).wire;
+
+  // Place the profile at the spine start, perpendicular to the start tangent
+  // (a frame with normal = tangent), then sweep it along the spine.
+  const start = frameToWorld(path.frame, path.points[0]);
+  const next = frameToWorld(path.frame, path.points[1]);
+  const tangent = vunit([next[0] - start[0], next[1] - start[1], next[2] - start[2]]);
+  const ref: V3 = Math.abs(tangent[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  const uAxis = vunit(vcross(ref, tangent));
+  // MakePipeShell sweeps a profile WIRE (then MakeSolid caps it).
+  const profileWire = (profileDrawing(profile.outline).sketchOnPlane(new Plane(start, uAxis, tangent)) as unknown as Sketch).wire;
+
+  const builder = new oc.BRepOffsetAPI_MakePipeShell(spineWire.wrapped);
+  builder.Add_1(profileWire.wrapped, false, true);
+  const progress = new oc.Message_ProgressRange_1();
+  builder.Build(progress);
+  builder.MakeSolid();
+  const shape = cast(builder.Shape()) as Shape3D;
+
+  const sides = new Map<number, string>();
+  profileWire.edges.forEach((e, i) => {
+    for (const g of drainList(builder.Generated(e.wrapped))) sides.set(hashOf(g), `${id}/side${i}`);
+  });
+  const caps = new Map<number, string>();
+  try { caps.set(hashOf(builder.FirstShape()), `${id}/start`); } catch { /* no start cap */ }
+  try { caps.set(hashOf(builder.LastShape()), `${id}/end`); } catch { /* no end cap */ }
+
+  const res = namesFromHistory(shape, id, caps, sides);
+  progress.delete();
+  builder.delete();
+  return res;
+}
+
+/** Loft through 2+ profile regions (in order) into a solid. Built on raw OCCT
+ *  `BRepOffsetAPI_ThruSections` so faces are named from history: one lateral
+ *  face per section edge (`GeneratedFace`) + the start/end caps. */
+function loftBody(profiles: RegionProfile[], id: string): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const wires = profiles.map(
+    (p) => (profileDrawing(p.outline).sketchOnPlane(new Plane(p.frame.origin, p.frame.uAxis, p.frame.normal)) as unknown as Sketch).wire,
+  );
+  const builder = new oc.BRepOffsetAPI_ThruSections(true, false, 1e-6); // solid, smooth
+  for (const w of wires) builder.AddWire(w.wrapped);
+  const progress = new oc.Message_ProgressRange_1();
+  builder.Build(progress);
+  const shape = cast(builder.Shape()) as Shape3D;
+
+  // Lateral faces: each edge of the first section generates one side face strip.
+  const sides = new Map<number, string>();
+  wires[0].edges.forEach((e, i) => {
+    const gf = builder.GeneratedFace(e.wrapped);
+    if (gf && !gf.IsNull()) sides.set(hashOf(gf), `${id}/side${i}`);
+  });
+  const caps = new Map<number, string>();
+  try { caps.set(hashOf(builder.FirstShape()), `${id}/start`); } catch { /* no start cap */ }
+  try { caps.set(hashOf(builder.LastShape()), `${id}/end`); } catch { /* no end cap */ }
+
+  const res = namesFromHistory(shape, id, caps, sides);
+  progress.delete();
+  builder.delete();
+  return res;
 }
 
 /** Resolve a sketch-region profile to the OCCT face it extrudes and the
@@ -661,6 +778,13 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
           feature.id,
         );
         bodies.push({ id: feature.id, ...built });
+      } else if (feature.type === "sweep") {
+        if (feature.profile.kind !== "sketchRegion") throw new Error("sweep: profile must be a sketch region");
+        bodies.push({ id: feature.id, ...sweepBody(feature.profile, feature.path, feature.id) });
+      } else if (feature.type === "loft") {
+        const regions = feature.profiles.filter((p) => p.kind === "sketchRegion");
+        if (regions.length < 2) throw new Error("loft: needs at least 2 sketch-region sections");
+        bodies.push({ id: feature.id, ...loftBody(regions as Extract<ResolvedProfile, { kind: "sketchRegion" }>[], feature.id) });
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: String(err) });

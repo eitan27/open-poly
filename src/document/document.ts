@@ -14,15 +14,18 @@ import type {
   Feature,
   FeatureKind,
   ImportFeature,
+  LoftFeature,
   MirrorFeature,
   PlaneFeature,
   RevolveFeature,
   SketchConstraint,
   SketchEntity,
   SketchFeature,
+  SweepFeature,
   TransformFeature,
 } from "./types";
 import type { BooleanOp, ResolvedFeature } from "../kernel/types";
+import { sampleArc } from "./sketchTools";
 
 function uid(): string {
   return crypto.randomUUID();
@@ -145,7 +148,7 @@ export function addExtrude(
  *  from — true for all three ops, not just union. */
 function colorOfFeature(doc: Document, id: string): number {
   const f = doc.features.find((x) => x.id === id);
-  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "import")
+  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import")
     ? f.color
     : randomSolidColor();
 }
@@ -282,6 +285,44 @@ export function addMirror(
     targetId,
     plane,
     color: colorOfFeature(doc, targetId),
+    opacity: 1,
+  };
+  return insertFeature(doc, feature);
+}
+
+/** Sweep a sketch region along a path entity (line/arc/spline) into a solid. */
+export function addSweep(
+  doc: Document,
+  profile: { sketchId: string; regionId: string },
+  path: { sketchId: string; entityId: string },
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "sweep").length + 1;
+  const feature: SweepFeature = {
+    id: uid(),
+    type: "sweep",
+    name: `Sweep ${ordinal}`,
+    suppressed: false,
+    profile,
+    path,
+    color: randomSolidColor(),
+    opacity: 1,
+  };
+  return insertFeature(doc, feature);
+}
+
+/** Loft through two or more sketch regions (timeline order) into a solid. */
+export function addLoft(
+  doc: Document,
+  profiles: { sketchId: string; regionId: string }[],
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "loft").length + 1;
+  const feature: LoftFeature = {
+    id: uid(),
+    type: "loft",
+    name: `Loft ${ordinal}`,
+    suppressed: false,
+    profiles,
+    color: randomSolidColor(),
     opacity: 1,
   };
   return insertFeature(doc, feature);
@@ -482,13 +523,13 @@ export function renameFeature(doc: Document, id: string, name: string): Document
 
 export function setFeatureColor(doc: Document, id: string, color: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "import" ? { ...f, color } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import" ? { ...f, color } : f,
   );
 }
 
 export function setFeatureOpacity(doc: Document, id: string, opacity: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "import"
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import"
       ? { ...f, opacity: Math.max(0, Math.min(1, opacity)) }
       : f,
   );
@@ -497,7 +538,7 @@ export function setFeatureOpacity(doc: Document, id: string, opacity: number): D
 /** Hide/show a part — a view toggle (skips rendering), distinct from suppress. */
 export function setFeatureHidden(doc: Document, id: string, hidden: boolean): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "import" ? { ...f, hidden } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import" ? { ...f, hidden } : f,
   );
 }
 
@@ -670,6 +711,40 @@ export function resolveDocument(doc: Document): ResolveResult {
           axisOrigin: a,
           axisDir: dir,
         });
+      } else if (f.type === "sweep") {
+        const sketch = doc.features.find((x) => x.id === f.profile.sketchId);
+        if (sketch?.type !== "sketch") throw new Error("sweep: profile sketch not found");
+        const region = detectSketchRegions(sketch.entities).find((r) => r.id === f.profile.regionId);
+        if (!region) throw new Error("sweep: profile region not found");
+        const frame = frameOf(sketch.plane, planeFrames);
+        // Bake the path entity to 2D points (+ a smooth flag) in its own frame.
+        const pathSketch = doc.features.find((x) => x.id === f.path.sketchId);
+        if (pathSketch?.type !== "sketch") throw new Error("sweep: path sketch not found");
+        const pe = pathSketch.entities.find((e) => e.id === f.path.entityId);
+        if (!pe) throw new Error("sweep: path entity not found");
+        let points: [number, number][];
+        let smooth = false;
+        if (pe.type === "line") points = [pe.a, pe.b];
+        else if (pe.type === "arc") { points = sampleArc(pe.c, pe.r, pe.start, pe.end, 32); smooth = true; }
+        else if (pe.type === "spline") { points = pe.points; smooth = true; }
+        else throw new Error("sweep: path must be a line, arc, or spline");
+        if (points.length < 2) throw new Error("sweep: path needs at least 2 points");
+        features.push({
+          id: f.id,
+          type: "sweep",
+          profile: { kind: "sketchRegion", outline: region.outline, frame },
+          path: { points, smooth, frame: frameOf(pathSketch.plane, planeFrames) },
+        });
+      } else if (f.type === "loft") {
+        if (f.profiles.length < 2) throw new Error("loft: needs at least 2 sections");
+        const profiles = f.profiles.map((p) => {
+          const sketch = doc.features.find((x) => x.id === p.sketchId);
+          if (sketch?.type !== "sketch") throw new Error("loft: section sketch not found");
+          const region = detectSketchRegions(sketch.entities).find((r) => r.id === p.regionId);
+          if (!region) throw new Error("loft: section region not found");
+          return { kind: "sketchRegion" as const, outline: region.outline, frame: frameOf(sketch.plane, planeFrames) };
+        });
+        features.push({ id: f.id, type: "loft", profiles });
       } else if (f.type === "import") {
         features.push({ id: f.id, type: "import", source: f.source });
       }

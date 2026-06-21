@@ -209,6 +209,20 @@ export function ParamEditor({
             />
           </label>
         </div>
+      ) : feature.type === "sweep" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Sweep</span>
+            <span className="param-static">a region along a path</span>
+          </div>
+        </div>
+      ) : feature.type === "loft" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Sections</span>
+            <span className="param-static">{feature.profiles.length}</span>
+          </div>
+        </div>
       ) : (
         FEATURE_DEFS[feature.kind].params.map((p) => (
           <label className="param-field" key={p.name}>
