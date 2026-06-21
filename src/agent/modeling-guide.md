@@ -45,13 +45,15 @@ If an op errors, read the message, fix the cause, and retry — don't loop blind
 
 - **Read:** `get_scene_summary`, `get_document`, `get_selection`, `screenshot`.
 - **Create/modify (each maps to one document operation):** `add_primitive`,
-  `add_sketch` (plane + entities in uv; mark an entity `construction:true` to make
-  it reference-only — used for snapping / as a revolve axis, never extruded),
+  `add_sketch` (plane + entities in uv — sugar shapes incl. `spline` (open
+  through-point curve, a sweep path); mark an entity `construction:true` to make
+  it reference-only — snapping / a revolve axis, never extruded),
   `add_extrude` (profile + distance + mode `new|add|remove` + extent
   `blind|symmetric|throughAll`), `add_revolve` (region + axis line + angle),
-  `add_mirror` (body + plane), `add_plane`, `transform` (translate/rotate,
-  optional `copy`), `boolean`, `dress_up` (chamfer/fillet), `set_param`,
-  `set_appearance`, `rename`, `delete`, `select`, `import_step`.
+  `add_sweep` (region + path entity), `add_loft` (2+ regions), `add_mirror`
+  (body + plane), `add_plane`, `transform` (translate/rotate, optional `copy`),
+  `boolean`, `dress_up` (chamfer/fillet), `set_param`, `set_appearance`,
+  `rename`, `delete`, `select`, `import_step`.
 - **Feedback:** `report_issue` — see below.
 
 All mutations route through undo, so the human can revert anything you do.
@@ -80,6 +82,16 @@ All mutations route through undo, so the human can revert anything you do.
 - **Mirror a body across a plane:** `add_mirror` (body + plane) → a reflected
   **new** body, original kept. Use it for symmetric parts: build one half, mirror
   it, then `boolean` `union` if you need a single body.
+- **Swept solid (pipe, tube, extrusion along a curve):** sketch the **cross-
+  section region** and a **path** entity — a `line`/`arc` for a simple sweep, or a
+  `spline` (open through-point curve) for a freeform path (the path can be in a
+  separate sketch). Then `add_sweep` with `profile` + `path: {sketchId, entityId}`
+  (get the path's `entityId` from `get_scene_summary`'s sketch entities). The
+  profile is auto-oriented perpendicular to the path at its start.
+- **Lofted / transitioning solid (e.g. round→square, a funnel):** sketch each
+  **section region** on its own plane (use `add_plane` offsets so they're at
+  different heights), then `add_loft` with `profiles: [{sketchId, regionId}, …]`
+  in order. Sections on the **same** plane won't loft — give them distinct planes.
 - **Round/bevel an edge:** `dress_up` (`fillet`/`chamfer`) referencing the edge by
   its **name** from the scene summary.
 - **Combine two bodies:** `boolean` (union/subtract/intersect) by body ids.
@@ -110,10 +122,11 @@ You are also the project's feedback loop. When something blocks or surprises you
 **do not fake geometry or silently work around it** — call **`report_issue`**:
 
 - `kind: "missing_feature"` — the operation you need isn't expressible with the
-  available tools (e.g. sweep, loft, linear/circular pattern, "up to face" extrude
-  extent, variable-radius fillet, a constraint type, a midplane/angle reference
-  plane). *(Revolve, mirror, and symmetric / through-all extrude now exist — use
-  those tools.)* Include the goal, what you tried, and a suggested API.
+  available tools (e.g. linear/circular pattern, "up to face" extrude extent,
+  variable-radius fillet, a constraint type, a midplane/angle reference plane,
+  trim/extend, mirroring sketch entities). *(Revolve, mirror, sweep, loft, the
+  spline tool, and symmetric / through-all extrude all exist now — use those
+  tools.)* Include the goal, what you tried, and a suggested API.
 - `kind: "bug"` — a tool did the wrong thing or errored unexpectedly (e.g. a
   remove that didn't cut, a name that didn't resolve, a regen error). Include what
   you did, what you **expected**, what you **observed**, and a minimal repro.

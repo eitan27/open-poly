@@ -58,6 +58,9 @@ export const entitySchema = z.discriminatedUnion("shape", [
   z.object({ shape: z.literal("polygon"), c: vec2, r: z.number().positive(), n: z.number().int().min(3), construction }),
   z.object({ shape: z.literal("line"), a: vec2, b: vec2, construction }),
   z.object({ shape: z.literal("arc"), c: vec2, r: z.number().positive(), start: z.number(), end: z.number(), construction }),
+  // A smooth through-point spline (≥2 points). An open curve — used as a sweep
+  // path, not a region boundary.
+  z.object({ shape: z.literal("spline"), points: z.array(vec2).min(2), construction }),
   z.object({ shape: z.literal("point"), p: vec2, construction }),
 ]);
 export type EntitySpec = z.infer<typeof entitySchema>;
@@ -127,6 +130,24 @@ export const operationSchema = z.discriminatedUnion("op", [
     targetId: z.string(),
     /** The mirror plane (datum, reference plane, or a body face by name). */
     plane: planeRefSchema,
+    name: z.string().optional(),
+  }),
+  z.object({
+    op: z.literal("addSweep"),
+    /** The closed region (cross-section) to sweep (omit regionId for the sole region). */
+    profile: z.object({ sketchId: z.string(), regionId: z.string().optional() }),
+    /** The path/spine: a single open entity (line, arc, or **spline**) in a
+     *  sketch — get its entityId from get_scene_summary's sketch entities. May be
+     *  in a different sketch from the profile; the profile is placed perpendicular
+     *  to the path start. */
+    path: z.object({ sketchId: z.string(), entityId: z.string() }),
+    name: z.string().optional(),
+  }),
+  z.object({
+    op: z.literal("addLoft"),
+    /** Ordered closed sections to loft through (≥2), each a sketch region (omit
+     *  regionId for a sketch's sole region). Put them on different planes. */
+    profiles: z.array(z.object({ sketchId: z.string(), regionId: z.string().optional() })).min(2),
     name: z.string().optional(),
   }),
   z.object({
@@ -290,6 +311,9 @@ export function expandEntities(specs: EntitySpec[]): SketchEntity[] {
         break;
       case "arc":
         out.push(mark({ type: "arc", id: genId(), c: s.c, r: s.r, start: s.start, end: s.end }, s.construction));
+        break;
+      case "spline":
+        out.push(mark({ type: "spline", id: genId(), points: s.points }, s.construction));
         break;
       case "point":
         out.push(mark({ type: "point", id: genId(), p: s.p }, s.construction));

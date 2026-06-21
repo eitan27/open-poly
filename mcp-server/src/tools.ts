@@ -24,10 +24,12 @@ const UNITS = " Conventions: millimetres, world is Z-up. Reference geometry by t
 /** One-line purpose per operation (the convention note is appended). */
 const OP_DESCRIPTIONS: Record<string, string> = {
   addPrimitive: "Add a primitive solid body (box | cylinder | sphere); override params with numbers or expressions.",
-  addSketch: "Add a 2D sketch on a plane (datum top/front/right, a reference plane, or a body face by name). Entities are sugar shapes (rect/circle/polygon/line/arc/point) in the plane's (u,v) coords.",
+  addSketch: "Add a 2D sketch on a plane (datum top/front/right, a reference plane, or a body face by name). Entities are sugar shapes (rect/circle/polygon/line/arc/spline/point) in the plane's (u,v) coords; a spline is an open through-point curve handy as a sweep path.",
   addExtrude: "Extrude a sketch region (or a body face) into a solid. mode new|add|remove (remove cuts inward by default); extent blind|symmetric|throughAll (throughAll needs a targetId).",
   addRevolve: "Revolve a sketch region around an axis line in the same sketch by an angle (default 360). Make the axis a construction line and keep the region off the axis. Get the axis entity id from get_scene_summary's sketch entities.",
   addMirror: "Mirror a body across a plane (datum/reference plane/body face) into a new body; the original is kept.",
+  addSweep: "Sweep a sketch region (cross-section) along a path entity (line/arc/spline, possibly in another sketch) into a solid. Get the path entityId from get_scene_summary's sketch entities; the profile is placed perpendicular to the path start.",
+  addLoft: "Loft through 2+ sketch regions (sections, in the given order) into a solid. Put the sections on different planes (e.g. a base datum + an offset plane).",
   addPlane: "Add an offset reference plane parallel to a base (datum/plane/face) at a signed distance.",
   transform: "Rigid-move a body (translate + single-axis rotate). copy:true keeps the original and emits a moved copy.",
   boolean: "Combine two or more bodies (union/subtract/intersect) by id. For subtract, the first operand is the base.",

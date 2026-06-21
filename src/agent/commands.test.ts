@@ -207,6 +207,62 @@ describe("applyOperation — construction, extent, revolve, mirror", () => {
     expect(m.ok).toBe(true);
     expect(doc().features.find((x) => x.id === m.createdId)?.type).toBe("mirror");
   });
+
+  it("expandEntities expands a spline through its points", () => {
+    const e = expandEntities([{ shape: "spline", points: [[0, 0], [10, 5], [20, 0]] }]);
+    expect(e).toEqual([{ type: "spline", id: expect.any(String), points: [[0, 0], [10, 5], [20, 0]] }]);
+  });
+
+  it("addSweep sweeps a region along a spline path", async () => {
+    const { ctx, doc } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch",
+      plane: { datum: "top" },
+      entities: [
+        { shape: "circle", c: [0, 0], r: 4 },
+        { shape: "spline", points: [[0, 0], [20, 10], [40, -5]] },
+      ],
+    });
+    const path = getSceneSummary(ctx).sketches[0].entities.find((e) => e.type === "spline");
+    expect(path).toBeTruthy();
+    const sw = await apply(ctx, {
+      op: "addSweep",
+      profile: { sketchId: sk.createdId! },
+      path: { sketchId: sk.createdId!, entityId: path!.id },
+    });
+    expect(sw.ok).toBe(true);
+    expect(doc().features.find((x) => x.id === sw.createdId)?.type).toBe("sweep");
+  });
+
+  it("addSweep rejects a non-curve path (e.g. a circle)", async () => {
+    const { ctx } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch",
+      plane: { datum: "top" },
+      entities: [{ shape: "rect", center: [0, 0], w: 8, h: 8 }, { shape: "circle", c: [30, 0], r: 3 }],
+    });
+    const circ = getSceneSummary(ctx).sketches[0].entities.find((e) => e.type === "circle");
+    const sw = await apply(ctx, {
+      op: "addSweep",
+      profile: { sketchId: sk.createdId! },
+      path: { sketchId: sk.createdId!, entityId: circ!.id },
+    });
+    expect(sw.ok).toBe(false);
+    expect(sw.errorKind).toBe("invalid_op");
+  });
+
+  it("addLoft lofts through two regions on different planes", async () => {
+    const { ctx, doc } = makeCtx();
+    const s1 = await apply(ctx, { op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "circle", c: [0, 0], r: 10 }] });
+    const pl = await apply(ctx, { op: "addPlane", base: { datum: "top" }, offset: 30 });
+    const s2 = await apply(ctx, { op: "addSketch", plane: { planeId: pl.createdId! }, entities: [{ shape: "circle", c: [0, 0], r: 4 }] });
+    const lf = await apply(ctx, {
+      op: "addLoft",
+      profiles: [{ sketchId: s1.createdId! }, { sketchId: s2.createdId! }],
+    });
+    expect(lf.ok).toBe(true);
+    expect(doc().features.find((x) => x.id === lf.createdId)?.type).toBe("loft");
+  });
 });
 
 describe("getSceneSummary", () => {
