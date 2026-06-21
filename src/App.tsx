@@ -6,9 +6,11 @@ import {
   addExtrude,
   addFeature,
   addImport,
+  addLoft,
   addMirror,
   addPlane,
   addRevolve,
+  addSweep,
   addSketch,
   addSketchConstraints,
   addSketchEntities,
@@ -240,6 +242,7 @@ const SKETCH_TOOLS: { tool: SketchTool; label: string; title: string }[] = [
   { tool: "circle-3p", label: "◔", title: "Circle: 3 points" },
   { tool: "polygon", label: "⬢", title: "Regular polygon (P)" },
   { tool: "arc-3p", label: "⌒", title: "Arc: 3 points (A)" },
+  { tool: "spline", label: "∿", title: "Spline: click points, Enter to finish" },
 ];
 
 const VIEW_BUTTONS: { name: ViewName; label: string }[] = [
@@ -529,7 +532,8 @@ export default function App() {
         return;
       }
       if (e.key === "Enter" && draft.length > 0) {
-        setDraft([]);
+        // Spline: Enter commits the accumulated points; other tools just abandon.
+        if (!finishSpline()) setDraft([]);
         return;
       }
       // D dimensions the selected line (the standard dimension shortcut).
@@ -553,7 +557,7 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [undo, redo, picking, planeDialog, transformEditId, draft, editingSketchId, selection, doc]);
+  }, [undo, redo, picking, planeDialog, transformEditId, draft, editingSketchId, selection, doc, sketchTool, constructionMode]);
 
   // Close the "New Body" dropdown when clicking anywhere outside it.
   useEffect(() => {
@@ -630,6 +634,9 @@ export default function App() {
           feature?.type === "boolean" ||
           feature?.type === "transform" ||
           feature?.type === "mirror" ||
+          feature?.type === "revolve" ||
+          feature?.type === "sweep" ||
+          feature?.type === "loft" ||
           feature?.type === "import";
         if (owns && feature.hidden) return []; // hidden part — don't render or pick
         const color = owns ? feature.color : DEFAULT_SOLID_COLOR;
@@ -1031,6 +1038,49 @@ export default function App() {
     selectFeature(id);
   };
 
+  // Sweep needs a profile region + a path entity (line / arc / spline). They may
+  // be in different sketches (e.g. a circle on Top swept along a spline on Front).
+  const sweepInputs = useMemo(() => {
+    let profile: { sketchId: string; regionId: string } | null = null;
+    let path: { sketchId: string; entityId: string } | null = null;
+    for (const s of selection) {
+      if (s.kind === "sketchFace") profile = { sketchId: s.sketchId, regionId: s.regionId };
+      else if (s.kind === "sketchEntity") {
+        const sk = doc.features.find((f) => f.id === s.sketchId);
+        const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === s.entityId) : undefined;
+        if (e && (e.type === "line" || e.type === "arc" || e.type === "spline")) {
+          path = { sketchId: s.sketchId, entityId: s.entityId };
+        }
+      }
+    }
+    return profile && path ? { profile, path } : null;
+  }, [selection, doc]);
+
+  const openSweep = () => {
+    if (!sweepInputs) return;
+    const { doc: next, id } = addSweep(doc, sweepInputs.profile, sweepInputs.path);
+    setDoc(next);
+    selectFeature(id);
+  };
+
+  // Loft needs ≥2 selected regions (sketch faces). Ordered by their sketch's
+  // timeline position so the loft direction is predictable (not selection order).
+  const loftInputs = useMemo(() => {
+    const faces = selection.filter((s): s is Extract<Selection, { kind: "sketchFace" }> => s.kind === "sketchFace");
+    if (faces.length < 2 || faces.length !== selection.length) return null;
+    const idx = (sketchId: string) => doc.features.findIndex((f) => f.id === sketchId);
+    return [...faces]
+      .sort((a, b) => idx(a.sketchId) - idx(b.sketchId))
+      .map((s) => ({ sketchId: s.sketchId, regionId: s.regionId }));
+  }, [selection, doc]);
+
+  const openLoft = () => {
+    if (!loftInputs) return;
+    const { doc: next, id } = addLoft(doc, loftInputs);
+    setDoc(next);
+    selectFeature(id);
+  };
+
   const openMirror = () => {
     if (!transformTarget) return;
     setMirrorDialog({ targetId: transformTarget, plane: "datum:plane-front" });
@@ -1308,7 +1358,23 @@ export default function App() {
           setDraft([]);
         }
         break;
+      case "spline":
+        // Accumulate control points; the spline is committed on Enter / Finish
+        // (see finishSpline) so it can take any number of points.
+        setDraft([...draft, uv]);
+        break;
     }
+  };
+
+  // Commit the in-progress spline (≥2 points) as a spline entity, then clear the
+  // draft. Called from Enter while the spline tool is active.
+  const finishSpline = () => {
+    if (!editingSketchId || sketchTool !== "spline" || draft.length < 2) return false;
+    const e: SketchEntity = { type: "spline", id: genId(), points: draft };
+    setDoc(addSketchEntities(doc, editingSketchId, [constructionMode ? { ...e, construction: true } : e]));
+    setFullyConstrained(false);
+    setDraft([]);
+    return true;
   };
 
   // Solve the given doc's sketch with planegcs, apply the moved geometry, and
@@ -1815,6 +1881,20 @@ export default function App() {
               onClick={openRevolve}
             >
               ⟳ Revolve
+            </button>
+            <button
+              title="Sweep a sketch region along a path: line / arc / spline (select both)"
+              disabled={!sweepInputs || !!editingSketch || picking}
+              onClick={openSweep}
+            >
+              ⊃ Sweep
+            </button>
+            <button
+              title="Loft through 2+ sketch regions (select the sections)"
+              disabled={!loftInputs || !!editingSketch || picking}
+              onClick={openLoft}
+            >
+              ⌧ Loft
             </button>
             <button
               title="Chamfer the selected edge(s)"

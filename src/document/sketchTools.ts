@@ -99,3 +99,27 @@ export function sampleArc(center: Vec2, r: number, start: number, end: number, s
 export function loopSegments(points: Vec2[]): [Vec2, Vec2][] {
   return points.map((p, i) => [p, points[(i + 1) % points.length]]);
 }
+
+/** Tessellate a smooth (Catmull-Rom) spline through `points` into a polyline,
+ *  for sketch rendering/preview. The kernel builds the actual B-spline, so this
+ *  is just a visual approximation of the same control points. */
+export function sampleSpline(points: Vec2[], segsPerSpan = 16): Vec2[] {
+  if (points.length < 3) return points.slice();
+  const out: Vec2[] = [points[0]];
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] ?? points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] ?? points[i + 1];
+    for (let s = 1; s <= segsPerSpan; s++) {
+      const t = s / segsPerSpan;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      // Catmull-Rom basis (tension 0.5).
+      const x = 0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3);
+      const y = 0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3);
+      out.push([x, y]);
+    }
+  }
+  return out;
+}

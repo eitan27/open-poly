@@ -16,6 +16,9 @@ export type SketchEntity =
   | { type: "line"; id: string; a: Vec2; b: Vec2; construction?: boolean }
   | { type: "circle"; id: string; c: Vec2; r: number; construction?: boolean }
   | { type: "arc"; id: string; c: Vec2; r: number; start: number; end: number; construction?: boolean }
+  // A smooth (interpolated) open spline through its control points. An open curve
+  // — used for snapping and as a sweep path, not a region boundary.
+  | { type: "spline"; id: string; points: Vec2[]; construction?: boolean }
   | { type: "point"; id: string; p: Vec2; construction?: boolean };
 
 /** Dimensional/geometric constraints over sketch entities (solved by planegcs).
@@ -192,6 +195,30 @@ export interface MirrorFeature extends FeatureBase {
   hidden?: boolean;
 }
 
+/** Sweep a sketch region (profile) along a path entity (line/arc/spline) in a
+ *  sketch. A body *producer* like extrude/revolve. (Phase 6.) */
+export interface SweepFeature extends FeatureBase {
+  type: "sweep";
+  /** The closed sketch region to sweep. */
+  profile: { sketchId: string; regionId: string };
+  /** The path/spine: a single open entity (line, arc, or spline) in a sketch. */
+  path: { sketchId: string; entityId: string };
+  color: number;
+  opacity: number;
+  hidden?: boolean;
+}
+
+/** Loft through two or more sketch regions (in timeline order) to make a solid.
+ *  A body *producer*. (Phase 6.) */
+export interface LoftFeature extends FeatureBase {
+  type: "loft";
+  /** Ordered closed sections to loft through (≥2). */
+  profiles: { sketchId: string; regionId: string }[];
+  color: number;
+  opacity: number;
+  hidden?: boolean;
+}
+
 /** A body imported from a CAD file (STEP for now). A body *producer*, like a
  *  primitive. The raw file text is stored on the feature (JSON-serializable, so
  *  it round-trips through IndexedDB / `.json`). */
@@ -215,6 +242,8 @@ export type Feature =
   | TransformFeature
   | MirrorFeature
   | RevolveFeature
+  | SweepFeature
+  | LoftFeature
   | ImportFeature;
 
 export interface Variable {

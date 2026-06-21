@@ -24,6 +24,7 @@ import {
   regularPolygon,
   sampleArc,
   sampleCircle,
+  sampleSpline,
 } from "../document/sketchTools";
 
 export interface FeatureMesh {
@@ -133,7 +134,8 @@ export type SketchTool =
   | "circle-center"
   | "circle-3p"
   | "polygon"
-  | "arc-3p";
+  | "arc-3p"
+  | "spline";
 export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
 
 export interface ViewportApi {
@@ -1415,6 +1417,9 @@ function entitySegments(e: SketchEntity, frame: PlaneFrameData, out: number[]) {
   } else if (e.type === "arc") {
     const pts = sampleArc(e.c, e.r, e.start, e.end);
     for (let i = 0; i + 1 < pts.length; i++) push(pts[i], pts[i + 1]);
+  } else if (e.type === "spline") {
+    const pts = sampleSpline(e.points);
+    for (let i = 0; i + 1 < pts.length; i++) push(pts[i], pts[i + 1]);
   }
 }
 
@@ -1448,6 +1453,9 @@ function previewPolyline(tool: SketchTool, draft: Vec2[], cursor: Vec2, sides: n
         return a ? sampleArc(a.center, a.r, a.start, a.end) : [draft[0], cursor, draft[1]];
       }
       return null;
+    case "spline":
+      // The committed points so far + the cursor, drawn as a smooth spline.
+      return draft.length >= 1 ? sampleSpline([...draft, cursor]) : null;
     default:
       return null;
   }
@@ -1463,7 +1471,8 @@ function sketchPointCandidates(sketch: RenderSketch): Vec2[] {
       out.push(e.c);
       out.push([e.c[0] + e.r * Math.cos(e.start), e.c[1] + e.r * Math.sin(e.start)]);
       out.push([e.c[0] + e.r * Math.cos(e.end), e.c[1] + e.r * Math.sin(e.end)]);
-    } else if (e.type === "point") out.push(e.p);
+    } else if (e.type === "spline") out.push(...e.points);
+    else if (e.type === "point") out.push(e.p);
   }
   return out;
 }

@@ -79,6 +79,11 @@ export type ResolvedFeature =
   | { id: string; type: "mirror"; targetId: string; origin: [number, number, number]; normal: [number, number, number] }
   // Revolve a sketch profile around an axis (origin + direction) by an angle.
   | { id: string; type: "revolve"; profile: ResolvedProfile; angle: number; axisOrigin: [number, number, number]; axisDir: [number, number, number] }
+  // Sweep a sketch profile along a path (baked to 2D points on a frame; `smooth`
+  // builds a B-spline spine, else a polyline).
+  | { id: string; type: "sweep"; profile: ResolvedProfile; path: { points: [number, number][]; smooth: boolean; frame: ResolvedFrame } }
+  // Loft through 2+ sketch profiles (in order).
+  | { id: string; type: "loft"; profiles: ResolvedProfile[] }
   // A body imported from a CAD file (the raw STEP text).
   | { id: string; type: "import"; source: string };
 

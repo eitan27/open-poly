@@ -114,6 +114,19 @@ function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[]):
         ],
       };
     }
+    if (e.type === "spline") {
+      let len = 0;
+      for (let i = 0; i + 1 < e.points.length; i++) {
+        len += Math.hypot(e.points[i + 1][0] - e.points[i][0], e.points[i + 1][1] - e.points[i][1]);
+      }
+      return {
+        title: "Spline",
+        rows: [
+          { label: "Points", value: String(e.points.length) },
+          { label: "Chord length", value: fmt(len) },
+        ],
+      };
+    }
     return null;
   }
 
