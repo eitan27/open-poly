@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
   addBoolean,
@@ -368,6 +368,21 @@ export default function App() {
   >(null);
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
+  // Height of the timeline's own scroll box, dragged via the splitter below it.
+  const [timelineHeight, setTimelineHeight] = useState(260);
+  const startTimelineResize = (e: PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = timelineHeight;
+    const move = (ev: globalThis.PointerEvent) =>
+      setTimelineHeight(Math.min(600, Math.max(80, startHeight + ev.clientY - startY)));
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
   const newSolidRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const startDimensionRef = useRef<() => void>(() => {});
@@ -1489,6 +1504,7 @@ export default function App() {
           <h2 className="params-heading">Timeline</h2>
           <FeatureTree
             doc={doc}
+            height={timelineHeight}
             selectedIds={selectedFeatureIds}
             errors={errors}
             onSelect={selectFeature}
@@ -1499,6 +1515,11 @@ export default function App() {
             }
             onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
             onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
+          />
+          <div
+            className="panel-splitter"
+            title="Drag to resize the timeline"
+            onPointerDown={startTimelineResize}
           />
           <div className="parts-header">
             <h2 className="params-heading">Parts</h2>

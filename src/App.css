@@ -190,15 +190,35 @@
 
 /* --- Feature tree --- */
 
-/* Scrolls internally past a fixed height so a long timeline never pushes
-   the Parts/Parameters sections below it out of view. */
+/* Scrolls internally at its own (resizable) height so a long timeline never
+   pushes the Parts/Parameters sections below it out of view. */
 .tree {
-  max-height: 260px;
   overflow-y: auto;
   border: 1px solid #2a2d35;
   border-radius: 6px;
   padding: 4px;
+}
+
+/* Drag handle between the timeline and the Parts section, resizing .tree. */
+.panel-splitter {
+  height: 11px;
   margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+}
+
+.panel-splitter::before {
+  content: "";
+  width: 36px;
+  height: 3px;
+  border-radius: 2px;
+  background: #2a2d35;
+}
+
+.panel-splitter:hover::before {
+  background: #4f8cff;
 }
 
 .tree-add {
