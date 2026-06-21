@@ -218,7 +218,14 @@ rough relative sizing, not calendar promises.
 > **construction geometry**, a **constraints list + delete + over-constraint ⚠**,
 > and **double-click-to-edit** in the timeline (Phase 2); **isolate** + **selection
 > filters** (Phase 7); plus a sidebar polish pass (collapsible Variables, datums
-> folded into the timeline). Remaining high-value items: the **UI/UX backlog
+> folded into the timeline).
+>
+> **Progress (2026-06-22):** **Sweep + Loft + a Spline sketch tool** shipped
+> (Phase 6 now complete) — sweep a region along a line/arc/spline path
+> (`BRepOffsetAPI_MakePipeShell`), loft through 2+ regions
+> (`BRepOffsetAPI_ThruSections`), both with **OCCT history-based face naming**
+> (side faces per profile/section edge + start/end caps), and a `∿` spline tool
+> for freeform sweep paths. Remaining high-value items: the **UI/UX backlog
 > (Phase 8.5)** below (discoverable edit panels, extrude extent dropdown +
 > up-to-face, click-to-populate boolean, keyboard shortcuts, spline), more plane
 > methods, a **multi-document manager**, Sweep/Loft (Phase 6), or **LLM agent
@@ -503,9 +510,24 @@ this — datum / reference-plane sketches stay anchored to their datum.
 - Rotation fidelity: do we need correct rotation-following (needs the face's
   natural axes), or is translation the 99% case for v1?
 
-### Phase 6 — Sweep + Loft + Revolve *(Revolve ✅; Sweep/Loft TODO)*
-- Sweep: profile along a path (twist control later). **TODO.**
-- Loft: through 2+ profiles, optional guide rails. **TODO.**
+### Phase 6 — Sweep + Loft + Revolve — ✅ DONE
+- **Sweep — ✅ DONE.** A `SweepFeature` sweeps a **sketch region** along a **path
+  entity** (line / arc / **spline**, possibly in a different sketch) — `⊃ Sweep`
+  enables when a region + a path entity are selected. Kernel `sweepBody` uses raw
+  OCCT `BRepOffsetAPI_MakePipeShell` (profile placed perpendicular to the spine
+  start; B-spline spine when the path is smooth) with **history-based naming**
+  (one side face per profile edge via `Generated`, + `start`/`end` caps).
+  *(Twist / multiple profiles along the path: future.)*
+- **Loft — ✅ DONE.** A `LoftFeature` lofts through **2+ sketch regions** (ordered
+  by timeline position) — `⌧ Loft` enables when ≥2 regions are selected. Kernel
+  `loftBody` uses raw OCCT `BRepOffsetAPI_ThruSections` (solid) with
+  **history-based naming** (lateral faces via `GeneratedFace` per section edge, +
+  caps). *(Ruled option / guide rails / point-capped ends: future.)*
+- **Spline sketch tool — ✅ DONE** (was UI/UX backlog #8). A `spline`
+  `SketchEntity` (smooth Catmull-Rom through control points): the `∿` sketch tool
+  (click points, **Enter** to finish), rendered/snapped/measured; an open curve
+  (not a region boundary) used mainly as a **sweep path** (kernel builds a real
+  B-spline via `smoothSplineTo`).
 - **Revolve — ✅ DONE.** A `RevolveFeature` revolves a **sketch region** around
   an **axis line** (both in the same sketch) by an expression-backed **angle**
   (default 360°). `⟳ Revolve` enables when a region + a line in one sketch are
@@ -610,10 +632,9 @@ spline tool. Captured 2026-06-21.
    Parallel/Perpendicular). Add a global key handler that respects mode-gating
    (sketch vs modeling) and ignores typing in inputs.
 
-8. **Spline tool in sketch.** Control-point / through-point curves (Phase 2a
-   carryover). Needs a `SketchEntity` spline variant, draw interaction
-   (click points, finish on Enter/double-click), tessellation for rendering +
-   region detection, and a kernel path (BSpline edge in the profile wire).
+8. **Spline tool in sketch — ✅ DONE** (see Phase 6). Through-point smooth
+   spline `SketchEntity`, the `∿` tool, used as a sweep path. *(Remaining: spline
+   as a closed-region boundary — region detection still ignores splines.)*
 
 ---
 
