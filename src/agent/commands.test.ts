@@ -139,6 +139,76 @@ describe("applyOperation — delete & rollback", () => {
   });
 });
 
+describe("applyOperation — construction, extent, revolve, mirror", () => {
+  it("expandEntities marks construction geometry (only when true)", () => {
+    const c = expandEntities([{ shape: "line", a: [0, 0], b: [0, 10], construction: true }]);
+    expect(c[0]).toMatchObject({ type: "line", construction: true });
+    const n = expandEntities([{ shape: "line", a: [0, 0], b: [0, 10] }]);
+    expect("construction" in n[0]).toBe(false);
+  });
+
+  it("addExtrude passes through the extent", async () => {
+    const { ctx, doc } = makeCtx();
+    const sk = await apply(ctx, { op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "rect", center: [0, 0], w: 20, h: 20 }] });
+    const ex = await apply(ctx, { op: "addExtrude", profile: { sketchId: sk.createdId! }, distance: 10, extent: "symmetric" });
+    const f = doc().features.find((x) => x.id === ex.createdId);
+    expect(f && f.type === "extrude" && f.extent).toBe("symmetric");
+  });
+
+  it("addRevolve revolves a region around a construction axis line", async () => {
+    const { ctx, doc } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch",
+      plane: { datum: "front" },
+      entities: [
+        { shape: "rect", corner: [10, 0], w: 5, h: 20 },
+        { shape: "line", a: [0, 0], b: [0, 20], construction: true }, // axis (off the region)
+      ],
+    });
+    // The agent gets the axis entity id from the scene summary's new `entities`.
+    const axis = getSceneSummary(ctx).sketches[0].entities.find((e) => e.type === "line" && e.construction);
+    expect(axis).toBeTruthy();
+    const rev = await apply(ctx, {
+      op: "addRevolve",
+      profile: { sketchId: sk.createdId! },
+      axis: { sketchId: sk.createdId!, entityId: axis!.id },
+      angle: 270,
+    });
+    expect(rev.ok).toBe(true);
+    const f = doc().features.find((x) => x.id === rev.createdId);
+    expect(f?.type).toBe("revolve");
+    expect(f && f.type === "revolve" && f.angle).toBe("270");
+  });
+
+  it("addRevolve rejects a non-line axis", async () => {
+    const { ctx } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch",
+      plane: { datum: "front" },
+      entities: [
+        { shape: "rect", corner: [10, 0], w: 5, h: 20 },
+        { shape: "circle", c: [0, 0], r: 2, construction: true },
+      ],
+    });
+    const circ = getSceneSummary(ctx).sketches[0].entities.find((e) => e.type === "circle");
+    const rev = await apply(ctx, {
+      op: "addRevolve",
+      profile: { sketchId: sk.createdId! },
+      axis: { sketchId: sk.createdId!, entityId: circ!.id },
+    });
+    expect(rev.ok).toBe(false);
+    expect(rev.errorKind).toBe("invalid_op");
+  });
+
+  it("addMirror mirrors a body across a datum plane", async () => {
+    const { ctx, doc } = makeCtx();
+    const box = await apply(ctx, { op: "addPrimitive", kind: "box" });
+    const m = await apply(ctx, { op: "addMirror", targetId: box.createdId!, plane: { datum: "right" } });
+    expect(m.ok).toBe(true);
+    expect(doc().features.find((x) => x.id === m.createdId)?.type).toBe("mirror");
+  });
+});
+
 describe("getSceneSummary", () => {
   it("digests sketches, variables, and selection (bodies need the kernel)", async () => {
     const { ctx } = makeCtx();

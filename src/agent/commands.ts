@@ -14,7 +14,9 @@ import {
   addDressUp,
   addExtrude,
   addImport,
+  addMirror,
   addPlane,
+  addRevolve,
   addSketch,
   addSketchEntities,
   addTransform,
@@ -228,9 +230,33 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         const r = addExtrude(doc, profile, {
           distance: op.distance,
           flip: op.flip,
+          extent: op.extent,
           mode: op.mode,
           targetId: op.targetId,
         });
+        next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
+        createdId = r.id;
+        break;
+      }
+      case "addRevolve": {
+        // Validate the region (so the agent gets a clear error, not a kernel
+        // failure) and the axis line, both in the same sketch.
+        const prof = resolveProfile(ctx, op.profile);
+        if (prof.kind !== "sketchRegion") throw new OpError("invalid_op", "revolve profile must be a sketch region.");
+        const axisSketch = requireFeature(doc, op.axis.sketchId);
+        if (axisSketch.type !== "sketch") throw new OpError("not_found", `Axis "${op.axis.sketchId}" is not a sketch.`);
+        const axisEnt = axisSketch.entities.find((e) => e.id === op.axis.entityId);
+        if (!axisEnt) throw new OpError("not_found", `No entity "${op.axis.entityId}" in sketch "${op.axis.sketchId}".`);
+        if (axisEnt.type !== "line") throw new OpError("invalid_op", "revolve axis must be a line entity.");
+        const r = addRevolve(doc, { sketchId: prof.sketchId, regionId: prof.regionId }, op.axis, op.angle);
+        next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
+        createdId = r.id;
+        break;
+      }
+      case "addMirror": {
+        requireFeature(doc, op.targetId);
+        const plane = resolvePlaneRef(ctx, op.plane);
+        const r = addMirror(doc, op.targetId, plane);
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;
         break;
@@ -360,7 +386,7 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
   const featureById = new Map(doc.features.map((f) => [f.id, f]));
   // Bodies that own appearance carry a color; in-place modifiers inherit it.
   const hasColor = (f: Feature | undefined): f is Extract<Feature, { color: number }> =>
-    !!f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "import");
+    !!f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "import");
   const bodies: SceneSummary["bodies"] = meshes.map((m) => {
     const f = featureById.get(m.id);
     const mesh: ShapeMeshPayload = m.mesh;
@@ -385,6 +411,11 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
         name: s.name,
         plane: planeRefLabel(s.plane),
         entityCount: s.entities.length,
+        entities: s.entities.map((e) => ({
+          id: e.id,
+          type: e.type,
+          ...(e.construction ? { construction: true } : {}),
+        })),
         regions: detectSketchRegions(s.entities).map((r) => ({ id: r.id, area: r.area })),
       };
     });

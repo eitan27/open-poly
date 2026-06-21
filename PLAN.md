@@ -673,9 +673,18 @@ New dir `src/agent/`.
     `addSketch` + `addSketchEntities` (+ `setSketchConstraints`). Non-interactive:
     the agent supplies entities in plane **(u,v)** coords in one call. Provide
     sugar specs (`rect{center|corner,w,h}`, `circle{c,r}`, `polygon{c,r,n}`) that
-    expand to entities so the model doesn't hand-place every line.
-  - `addExtrude {profile: ProfileSpec, distance, flip?, mode?, targetId?}` →
-    `addExtrude`. `ProfileSpec` = `{sketchId, regionId}` **or** `{bodyId, faceName}`.
+    expand to entities so the model doesn't hand-place every line. Any entity may
+    set `construction:true` (reference-only — e.g. a revolve **axis** line).
+  - `addExtrude {profile: ProfileSpec, distance, flip?, extent?, mode?,
+    targetId?}` → `addExtrude`. `ProfileSpec` = `{sketchId, regionId}` **or**
+    `{bodyId, faceName}`. `extent` = `blind` | `symmetric` | `throughAll`
+    (throughAll needs a `targetId`). *(Multi-profile: the agent issues one
+    addExtrude per region.)*
+  - `addRevolve {profile:{sketchId,regionId?}, axis:{sketchId,entityId}, angle?}`
+    → `addRevolve`. The axis is a **line** entity (id from the scene summary's
+    sketch `entities`); the region must not cross it. `angle` defaults to 360.
+  - `addMirror {targetId, plane: PlaneRefSpec}` → `addMirror`. Reflects a body
+    into a new body (original kept).
   - `addPlane {base: PlaneRefSpec, offset}` → `addPlane`.
   - `transform {targetId, tx?,ty?,tz?, angle?, axis?, copy?}` → `addTransform`.
   - `boolean {op, operands[]}` → `addBoolean`.

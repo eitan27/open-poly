@@ -48,13 +48,17 @@ export type ProfileSpec = z.infer<typeof profileSchema>;
 /** Sugar shapes (+ raw primitives) the agent places in a sketch's (u, v) plane
  *  coords, so it doesn't hand-place every line. Expanded to SketchEntity[] by
  *  `expandEntities`. */
+// `construction: true` marks an entity as reference geometry — used for
+// dimensions/snapping (and as a revolve **axis** line) but ignored when
+// detecting profile regions and never extruded.
+const construction = z.boolean().optional();
 export const entitySchema = z.discriminatedUnion("shape", [
-  z.object({ shape: z.literal("rect"), center: vec2.optional(), corner: vec2.optional(), w: z.number().positive(), h: z.number().positive() }),
-  z.object({ shape: z.literal("circle"), c: vec2, r: z.number().positive() }),
-  z.object({ shape: z.literal("polygon"), c: vec2, r: z.number().positive(), n: z.number().int().min(3) }),
-  z.object({ shape: z.literal("line"), a: vec2, b: vec2 }),
-  z.object({ shape: z.literal("arc"), c: vec2, r: z.number().positive(), start: z.number(), end: z.number() }),
-  z.object({ shape: z.literal("point"), p: vec2 }),
+  z.object({ shape: z.literal("rect"), center: vec2.optional(), corner: vec2.optional(), w: z.number().positive(), h: z.number().positive(), construction }),
+  z.object({ shape: z.literal("circle"), c: vec2, r: z.number().positive(), construction }),
+  z.object({ shape: z.literal("polygon"), c: vec2, r: z.number().positive(), n: z.number().int().min(3), construction }),
+  z.object({ shape: z.literal("line"), a: vec2, b: vec2, construction }),
+  z.object({ shape: z.literal("arc"), c: vec2, r: z.number().positive(), start: z.number(), end: z.number(), construction }),
+  z.object({ shape: z.literal("point"), p: vec2, construction }),
 ]);
 export type EntitySpec = z.infer<typeof entitySchema>;
 
@@ -96,9 +100,33 @@ export const operationSchema = z.discriminatedUnion("op", [
     profile: profileSchema,
     distance: expr,
     flip: z.boolean().optional(),
+    /** How far it reaches: blind = `distance` one way; symmetric = `distance`
+     *  split evenly both ways (flip ignored); throughAll = clear through the
+     *  target (add/remove only — needs a targetId). Defaults to blind. */
+    extent: z.enum(["blind", "symmetric", "throughAll"]).optional(),
     mode: z.enum(["new", "add", "remove"]).optional(),
     /** For add/remove: the body (feature id) to fuse into / cut from. */
     targetId: z.string().optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
+    op: z.literal("addRevolve"),
+    /** The closed sketch region to revolve (omit regionId for the sole region). */
+    profile: z.object({ sketchId: z.string(), regionId: z.string().optional() }),
+    /** The rotation axis: a **line** entity in the *same* sketch (its two
+     *  endpoints define the axis). The profile must not cross it. Make the axis a
+     *  `construction` line so it isn't part of the region. */
+    axis: z.object({ sketchId: z.string(), entityId: z.string() }),
+    /** Revolve angle in degrees (number or expression). Defaults to 360. */
+    angle: expr.optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
+    op: z.literal("addMirror"),
+    /** The body (feature id) to mirror; the original is kept. */
+    targetId: z.string(),
+    /** The mirror plane (datum, reference plane, or a body face by name). */
+    plane: planeRefSchema,
     name: z.string().optional(),
   }),
   z.object({
@@ -214,6 +242,9 @@ export interface SceneSummary {
     name: string;
     plane: string;
     entityCount: number;
+    /** Entities by id + type (+ construction flag) so the agent can reference a
+     *  specific one — e.g. a `line` entity as a revolve axis. */
+    entities: { id: string; type: string; construction?: boolean }[];
     regions: { id: string; area: number }[];
   }[];
   planes: { id: string; name: string }[];
@@ -230,11 +261,13 @@ export interface SceneSummary {
  *  fresh ids), in the sketch's (u, v) plane coords. Pure — unit-tested. */
 export function expandEntities(specs: EntitySpec[]): SketchEntity[] {
   const out: SketchEntity[] = [];
-  const lineLoop = (pts: Vec2[]) => {
+  // Stamp the construction flag (only when true, to keep entities clean).
+  const mark = <T extends SketchEntity>(e: T, c?: boolean): T => (c ? { ...e, construction: true } : e);
+  const lineLoop = (pts: Vec2[], c?: boolean) => {
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i];
       const b = pts[(i + 1) % pts.length];
-      out.push({ type: "line", id: genId(), a, b });
+      out.push(mark({ type: "line", id: genId(), a, b }, c));
     }
   };
   for (const s of specs) {
@@ -243,23 +276,23 @@ export function expandEntities(specs: EntitySpec[]): SketchEntity[] {
         const pts = s.center
           ? rectangleFromCenter(s.center, [s.center[0] + s.w / 2, s.center[1] + s.h / 2])
           : rectangleCorners(s.corner ?? [0, 0], [(s.corner?.[0] ?? 0) + s.w, (s.corner?.[1] ?? 0) + s.h]);
-        lineLoop(pts);
+        lineLoop(pts, s.construction);
         break;
       }
       case "circle":
-        out.push({ type: "circle", id: genId(), c: s.c, r: s.r });
+        out.push(mark({ type: "circle", id: genId(), c: s.c, r: s.r }, s.construction));
         break;
       case "polygon":
-        lineLoop(regularPolygon(s.c, [s.c[0] + s.r, s.c[1]], s.n));
+        lineLoop(regularPolygon(s.c, [s.c[0] + s.r, s.c[1]], s.n), s.construction);
         break;
       case "line":
-        out.push({ type: "line", id: genId(), a: s.a, b: s.b });
+        out.push(mark({ type: "line", id: genId(), a: s.a, b: s.b }, s.construction));
         break;
       case "arc":
-        out.push({ type: "arc", id: genId(), c: s.c, r: s.r, start: s.start, end: s.end });
+        out.push(mark({ type: "arc", id: genId(), c: s.c, r: s.r, start: s.start, end: s.end }, s.construction));
         break;
       case "point":
-        out.push({ type: "point", id: genId(), p: s.p });
+        out.push(mark({ type: "point", id: genId(), p: s.p }, s.construction));
         break;
     }
   }

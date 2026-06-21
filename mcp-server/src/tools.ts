@@ -25,7 +25,9 @@ const UNITS = " Conventions: millimetres, world is Z-up. Reference geometry by t
 const OP_DESCRIPTIONS: Record<string, string> = {
   addPrimitive: "Add a primitive solid body (box | cylinder | sphere); override params with numbers or expressions.",
   addSketch: "Add a 2D sketch on a plane (datum top/front/right, a reference plane, or a body face by name). Entities are sugar shapes (rect/circle/polygon/line/arc/point) in the plane's (u,v) coords.",
-  addExtrude: "Extrude a sketch region (or a body face) into a solid. mode new|add|remove; a remove cuts inward by default.",
+  addExtrude: "Extrude a sketch region (or a body face) into a solid. mode new|add|remove (remove cuts inward by default); extent blind|symmetric|throughAll (throughAll needs a targetId).",
+  addRevolve: "Revolve a sketch region around an axis line in the same sketch by an angle (default 360). Make the axis a construction line and keep the region off the axis. Get the axis entity id from get_scene_summary's sketch entities.",
+  addMirror: "Mirror a body across a plane (datum/reference plane/body face) into a new body; the original is kept.",
   addPlane: "Add an offset reference plane parallel to a base (datum/plane/face) at a signed distance.",
   transform: "Rigid-move a body (translate + single-axis rotate). copy:true keeps the original and emits a moved copy.",
   boolean: "Combine two or more bodies (union/subtract/intersect) by id. For subtract, the first operand is the base.",
@@ -42,7 +44,7 @@ const OP_DESCRIPTIONS: Record<string, string> = {
 
 const READ_TOOLS: Record<string, { tool: string; description: string }> = {
   document: { tool: "get_document", description: "Return the full document JSON (ground truth)." },
-  sceneSummary: { tool: "get_scene_summary", description: "Compact, LLM-first digest: bodies (named faces/edges, bbox), sketches (regions), planes, variables, rollback, selection. Your primary planning input." },
+  sceneSummary: { tool: "get_scene_summary", description: "Compact, LLM-first digest: bodies (named faces/edges, bbox), sketches (entities by id+type, regions), planes, variables, rollback, selection. Your primary planning input — read it to get the entity id for a revolve axis, region ids, and face/edge names." },
   selection: { tool: "get_selection", description: "Return the current viewport selection." },
   screenshot: { tool: "screenshot", description: "Render the viewport and return a PNG image (optionally snap to a standard view first). Use it to verify what you built." },
 };
