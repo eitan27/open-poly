@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
   addBoolean,
@@ -77,6 +77,7 @@ import {
   sameSelection,
   type DatumId,
   type FeatureMesh,
+  type GhostMesh,
   type Selection,
   type SelectionFilter,
   type SketchTool,
@@ -366,6 +367,14 @@ export default function App() {
   const [extrudeDialog, setExtrudeDialog] = useState<
     { mode: "new" | "add" | "remove"; distance: string; flip: boolean; targetId: string | null; x: number; y: number } | null
   >(null);
+  // Live ghost preview of the extrude dialog's current params: `bodyId` is
+  // whichever body the regen result represents (the new extrude itself for
+  // "new", or the chosen target for "add"/"remove") — used to swap that body's
+  // real mesh out for the translucent preview while the dialog is open.
+  const [extrudePreview, setExtrudePreview] = useState<{ bodyId: string; mesh: FeatureMesh["mesh"] } | null>(
+    null,
+  );
+  const [extrudePreviewError, setExtrudePreviewError] = useState<string | null>(null);
   const [dressUpDialog, setDressUpDialog] = useState<
     { op: "chamfer" | "fillet"; size: string; x: number; y: number } | null
   >(null);
@@ -383,6 +392,21 @@ export default function App() {
   >(null);
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
+  // Height of the timeline's own scroll box, dragged via the splitter below it.
+  const [timelineHeight, setTimelineHeight] = useState(260);
+  const startTimelineResize = (e: PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = timelineHeight;
+    const move = (ev: globalThis.PointerEvent) =>
+      setTimelineHeight(Math.min(600, Math.max(80, startHeight + ev.clientY - startY)));
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
   const newSolidRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const startDimensionRef = useRef<() => void>(() => {});
@@ -605,6 +629,17 @@ export default function App() {
     [rawMeshes, doc, isolatedBodyId],
   );
 
+  // While the extrude dialog has a live preview, hide that body's *current*
+  // mesh from the viewport — the ghost (rendered separately) stands in for it.
+  const viewportMeshes = useMemo(
+    () => (extrudePreview ? meshes.filter((m) => m.id !== extrudePreview.bodyId) : meshes),
+    [meshes, extrudePreview],
+  );
+  const ghostMesh = useMemo<GhostMesh | null>(
+    () => (extrudePreview ? { mesh: extrudePreview.mesh } : null),
+    [extrudePreview],
+  );
+
   // Feature ids that produced an actual rendered body — what the Solids list
   // shows and what a Boolean can combine (primitives, "new" extrusions,
   // booleans, and add/dressup-targets that kept their id).
@@ -805,6 +840,60 @@ export default function App() {
     selectFeature(id);
     setExtrudeDialog(null);
   };
+
+  // Live ghost preview of the extrude dialog: mirrors the main regen effect
+  // above, but against a throwaway document (current doc + this draft extrude)
+  // that's never assigned via `setDoc` — no undo entry, no effect on the real
+  // model. Re-runs on every dialog/profile change, same as editing a committed
+  // feature's params already does.
+  useEffect(() => {
+    if (!extrudeDialog || !extrudeProfile || (extrudeDialog.mode !== "new" && !extrudeDialog.targetId)) {
+      setExtrudePreview(null);
+      setExtrudePreviewError(null);
+      return;
+    }
+    const kernel = kernelRef.current;
+    if (!ready || !kernel) return;
+    let cancelled = false;
+
+    const { doc: previewDoc, id: previewId } = addExtrude(doc, extrudeProfile, {
+      distance: extrudeDialog.distance,
+      flip: extrudeDialog.flip,
+      mode: extrudeDialog.mode,
+      targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
+    });
+    const bodyId = extrudeDialog.mode === "new" ? previewId : extrudeDialog.targetId!;
+    const previewResolved = resolveDocument(previewDoc);
+    const resolveErr = previewResolved.errors[previewId];
+    if (resolveErr) {
+      setExtrudePreview(null);
+      setExtrudePreviewError(resolveErr);
+      return;
+    }
+
+    kernel
+      .regenerate(previewResolved.features)
+      .then((results) => {
+        if (cancelled) return;
+        const hit = results.find((r) => r.id === bodyId);
+        if (hit?.ok) {
+          setExtrudePreview({ bodyId, mesh: hit.mesh });
+          setExtrudePreviewError(null);
+        } else {
+          setExtrudePreview(null);
+          setExtrudePreviewError(hit && !hit.ok ? hit.error : "Preview failed.");
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setExtrudePreview(null);
+        setExtrudePreviewError(String(err?.message ?? err));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [extrudeDialog, extrudeProfile, doc, ready]);
 
   // One or more selected body edges, all on the same body — what a chamfer or
   // fillet would dress. Resolves each edge to its persistent name.
@@ -1070,6 +1159,16 @@ export default function App() {
     setEditingSketchId(null);
     setDraft([]);
     setSelection([]); // so the next click (e.g. a face to extrude) starts fresh
+  };
+
+  // Double-clicking a timeline row enters its edit mode directly — sketches and
+  // transforms have a distinct edit mode (gizmo / sketch canvas); every other
+  // feature type already shows editable fields in the param editor on select,
+  // so a double-click there is just a (harmless) select.
+  const handleTreeDoubleClick = (id: string) => {
+    const f = doc.features.find((x) => x.id === id);
+    if (f?.type === "sketch") editSketch(id);
+    else if (f?.type === "transform") editTransform(id);
   };
 
   // A snapped click on the sketch plane (already in uv coords). Drives the
@@ -1519,15 +1618,22 @@ export default function App() {
           <h2 className="params-heading">Timeline</h2>
           <FeatureTree
             doc={doc}
+            height={timelineHeight}
             selectedIds={selectedFeatureIds}
             errors={errors}
             onSelect={selectFeature}
+            onDoubleClick={handleTreeDoubleClick}
             onDelete={handleDelete}
             onToggleSuppress={(id) =>
               setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
             }
             onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
             onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
+          />
+          <div
+            className="panel-splitter"
+            title="Drag to resize the timeline"
+            onPointerDown={startTimelineResize}
           />
           <div className="parts-header">
             <h2 className="params-heading">Parts</h2>
@@ -1596,7 +1702,8 @@ export default function App() {
         </aside>
         <main className="viewport">
           <Viewport
-            meshes={meshes}
+            meshes={viewportMeshes}
+            ghostMesh={ghostMesh}
             selection={selection}
             highlightBodyIds={highlightBodyIds}
             onSelect={handlePick}
@@ -1932,6 +2039,7 @@ export default function App() {
                   onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, flip: e.target.checked } : d))}
                 />
               </label>
+              {extrudePreviewError && <p className="ed-warning">{extrudePreviewError}</p>}
               <div className="ed-actions">
                 <button
                   className="ed-primary"

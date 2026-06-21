@@ -35,6 +35,15 @@ export interface FeatureMesh {
   opacity: number;
 }
 
+/** A would-be result rendered as a translucent "ghost" before the user commits
+ *  (e.g. the Extrude dialog's live preview). It lives in its own group with
+ *  fixed materials, so it's never raycast-pickable and never participates in
+ *  selection highlighting — callers omit the body it stands in for from
+ *  `meshes` themselves. */
+export interface GhostMesh {
+  mesh: ShapeMeshPayload;
+}
+
 export interface RenderSketch {
   id: string;
   frame: PlaneFrameData;
@@ -164,6 +173,10 @@ interface SceneState {
   sketchGroup: THREE.Group;
   /** User-created reference planes (translucent quads), rebuilt from the prop. */
   planeGroup: THREE.Group;
+  /** The live ghost-preview body (rebuilt from the `ghostMesh` prop). */
+  ghostGroup: THREE.Group;
+  ghostMaterial: THREE.MeshStandardMaterial;
+  ghostLineMaterial: THREE.LineBasicMaterial;
   // The translate/rotate gizmo and the invisible proxy object it drives. The
   // proxy's position/rotation are read back as the Transform feature's values.
   transformControls: TransformControls;
@@ -248,6 +261,7 @@ const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, numb
 
 export function Viewport({
   meshes,
+  ghostMesh,
   selection,
   highlightBodyIds,
   onSelect,
@@ -270,6 +284,8 @@ export function Viewport({
   apiRef,
 }: {
   meshes: FeatureMesh[];
+  /** A live preview body to render translucently (null = none). */
+  ghostMesh: GhostMesh | null;
   selection: Selection[];
   /** Body ids whose whole body should highlight (modifier features resolve to
    *  the body they affect — see App). */
@@ -421,7 +437,19 @@ export function Viewport({
     const group = new THREE.Group();
     const sketchGroup = new THREE.Group();
     const planeGroup = new THREE.Group();
-    scene.add(group, sketchGroup, planeGroup);
+    const ghostGroup = new THREE.Group();
+    scene.add(group, sketchGroup, planeGroup, ghostGroup);
+
+    // Ghost-preview materials: a fixed accent colour (not the body's own
+    // colour) so a preview always reads as "not committed yet," regardless of
+    // what it's standing in for.
+    const ghostMaterial = new THREE.MeshStandardMaterial({
+      color: 0x4fd1ff, metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide,
+      transparent: true, opacity: 0.35, depthWrite: false,
+    });
+    const ghostLineMaterial = new THREE.LineBasicMaterial({
+      color: 0x4fd1ff, transparent: true, opacity: 0.7,
+    });
 
     // Transform gizmo: an invisible proxy object that the TransformControls move,
     // whose position/rotation are read back as the active Transform feature's
@@ -475,6 +503,7 @@ export function Viewport({
       sketchDimActive: false, selectedMaterial, hoverMaterial, lineMaterial,
       highlightMaterial, highlightOverlay, pointMarkers,
       datums, sketchGroup, planeGroup, transformControls, gizmoProxy,
+      ghostGroup, ghostMaterial, ghostLineMaterial,
       previewLine, snapMarker, tween: null,
     };
     stateRef.current = state;
@@ -1028,6 +1057,11 @@ export function Viewport({
           (c.material as THREE.Material).dispose();
         }
       }
+      for (const c of ghostGroup.children) {
+        if (c instanceof THREE.Mesh || c instanceof THREE.LineSegments) c.geometry.dispose();
+      }
+      ghostMaterial.dispose();
+      ghostLineMaterial.dispose();
       previewLine.geometry.dispose();
       snapMarker.geometry.dispose();
       pointMarkers.geometry.dispose();
@@ -1081,6 +1115,27 @@ export function Viewport({
     }
     applyHighlightsRef.current();
   }, [meshes]);
+
+  // Rebuild the ghost-preview body independently of the real bodies — its own
+  // group/materials, so it never enters the raycast-pickable or highlight-
+  // eligible sets (those only ever look at `group`/`sketchGroup`/`planeGroup`).
+  useEffect(() => {
+    const state = stateRef.current;
+    if (!state) return;
+    for (const c of state.ghostGroup.children) {
+      if (c instanceof THREE.Mesh || c instanceof THREE.LineSegments) c.geometry.dispose();
+    }
+    state.ghostGroup.clear();
+    if (ghostMesh) {
+      const [geometry] = syncGeometries(
+        [{ name: "ghost", faces: ghostMesh.mesh.faces, edges: ghostMesh.mesh.edges }],
+        [],
+      );
+      const faceMesh = new THREE.Mesh(geometry.faces, state.ghostMaterial);
+      const edges = new THREE.LineSegments(geometry.lines, state.ghostLineMaterial);
+      state.ghostGroup.add(faceMesh, edges);
+    }
+  }, [ghostMesh]);
 
   // Re-apply highlighting when the external selection (or resolved body set)
   // changes.

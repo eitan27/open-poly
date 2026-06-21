@@ -4,9 +4,11 @@ import { EyeIcon, SuppressIcon } from "./icons";
 
 interface Props {
   doc: Document;
+  height: number;
   selectedIds: Set<string>;
   errors: Record<string, string>;
   onSelect: (id: string) => void;
+  onDoubleClick: (id: string) => void;
   onDelete: (id: string) => void;
   onToggleSuppress: (id: string) => void;
   onSetRollback: (index: number) => void;
@@ -15,9 +17,11 @@ interface Props {
 
 export function FeatureTree({
   doc,
+  height,
   selectedIds,
   errors,
   onSelect,
+  onDoubleClick,
   onDelete,
   onToggleSuppress,
   onSetRollback,
@@ -26,7 +30,7 @@ export function FeatureTree({
   const { features, rollbackIndex } = doc;
 
   return (
-    <div className="tree">
+    <div className="tree" style={{ height }}>
       <ol className="tree-list">
         <RollbackGutter index={0} active={rollbackIndex === 0} onSet={onSetRollback} />
         {features.map((feature, i) => {
@@ -42,6 +46,7 @@ export function FeatureTree({
                   (error ? " error" : "")
                 }
                 onClick={() => onSelect(feature.id)}
+                onDoubleClick={() => onDoubleClick(feature.id)}
               >
                 <span className="row-kind">
                   {feature.type === "sketch"
