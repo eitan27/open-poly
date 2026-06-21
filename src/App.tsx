@@ -368,11 +368,11 @@ export default function App() {
   const [extrudeDialog, setExtrudeDialog] = useState<
     { mode: "new" | "add" | "remove"; distance: string; flip: boolean; extent: ExtrudeExtent; targetId: string | null; x: number; y: number } | null
   >(null);
-  // Live ghost preview of the extrude dialog's current params: `bodyId` is
-  // whichever body the regen result represents (the new extrude itself for
-  // "new", or the chosen target for "add"/"remove") — used to swap that body's
-  // real mesh out for the translucent preview while the dialog is open.
-  const [extrudePreview, setExtrudePreview] = useState<{ bodyId: string; mesh: FeatureMesh["mesh"] } | null>(
+  // Live ghost preview of the extrude dialog's current params: one entry per
+  // body the regen result represents (every new extrude for "new", or the
+  // single chosen target for "add"/"remove") — used to swap those bodies' real
+  // meshes out for the translucent previews while the dialog is open.
+  const [extrudePreview, setExtrudePreview] = useState<{ bodyId: string; mesh: FeatureMesh["mesh"] }[] | null>(
     null,
   );
   const [extrudePreviewError, setExtrudePreviewError] = useState<string | null>(null);
@@ -630,14 +630,15 @@ export default function App() {
     [rawMeshes, doc, isolatedBodyId],
   );
 
-  // While the extrude dialog has a live preview, hide that body's *current*
-  // mesh from the viewport — the ghost (rendered separately) stands in for it.
-  const viewportMeshes = useMemo(
-    () => (extrudePreview ? meshes.filter((m) => m.id !== extrudePreview.bodyId) : meshes),
-    [meshes, extrudePreview],
-  );
-  const ghostMesh = useMemo<GhostMesh | null>(
-    () => (extrudePreview ? { mesh: extrudePreview.mesh } : null),
+  // While the extrude dialog has a live preview, hide those bodies' *current*
+  // meshes from the viewport — the ghosts (rendered separately) stand in for them.
+  const viewportMeshes = useMemo(() => {
+    if (!extrudePreview) return meshes;
+    const hidden = new Set(extrudePreview.map((p) => p.bodyId));
+    return meshes.filter((m) => !hidden.has(m.id));
+  }, [meshes, extrudePreview]);
+  const ghostMeshes = useMemo<GhostMesh[]>(
+    () => (extrudePreview ? extrudePreview.map((p) => ({ mesh: p.mesh })) : []),
     [extrudePreview],
   );
 
@@ -873,10 +874,9 @@ export default function App() {
     let cancelled = false;
 
     // Build a throwaway doc with every selected profile extruded (mirrors
-    // createExtrude), honoring the dialog's extent. We can only ghost one body,
-    // so we show the single body the result is observed on: the shared target
-    // for add/remove, else the first new body. (Multi-profile "new" previews
-    // just that first body.)
+    // createExtrude), honoring the dialog's extent. The bodies the result is
+    // observed on: every new extrude for "new", or the single shared target
+    // for add/remove (all profiles fuse into / cut from it).
     let previewDoc = doc;
     const createdIds: string[] = [];
     for (const profile of extrudeProfiles) {
@@ -890,7 +890,7 @@ export default function App() {
       previewDoc = res.doc;
       createdIds.push(res.id);
     }
-    const bodyId = extrudeDialog.mode === "new" ? createdIds[0] : extrudeDialog.targetId!;
+    const bodyIds = extrudeDialog.mode === "new" ? createdIds : [extrudeDialog.targetId!];
     const previewResolved = resolveDocument(previewDoc);
     const resolveErr = createdIds.map((id) => previewResolved.errors[id]).find(Boolean);
     if (resolveErr) {
@@ -903,13 +903,19 @@ export default function App() {
       .regenerate(previewResolved.features)
       .then((results) => {
         if (cancelled) return;
-        const hit = results.find((r) => r.id === bodyId);
-        if (hit?.ok) {
-          setExtrudePreview({ bodyId, mesh: hit.mesh });
-          setExtrudePreviewError(null);
+        const previews: { bodyId: string; mesh: FeatureMesh["mesh"] }[] = [];
+        let failure: string | null = null;
+        for (const id of bodyIds) {
+          const hit = results.find((r) => r.id === id);
+          if (hit?.ok) previews.push({ bodyId: id, mesh: hit.mesh });
+          else if (hit && !hit.ok) failure = hit.error;
+        }
+        if (previews.length > 0) {
+          setExtrudePreview(previews);
+          setExtrudePreviewError(failure); // partial failure still surfaces
         } else {
           setExtrudePreview(null);
-          setExtrudePreviewError(hit && !hit.ok ? hit.error : "Preview failed.");
+          setExtrudePreviewError(failure ?? "Preview failed.");
         }
       })
       .catch((err) => {
@@ -1731,7 +1737,7 @@ export default function App() {
         <main className="viewport">
           <Viewport
             meshes={viewportMeshes}
-            ghostMesh={ghostMesh}
+            ghostMeshes={ghostMeshes}
             selection={selection}
             highlightBodyIds={highlightBodyIds}
             onSelect={handlePick}

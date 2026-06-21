@@ -173,7 +173,7 @@ interface SceneState {
   sketchGroup: THREE.Group;
   /** User-created reference planes (translucent quads), rebuilt from the prop. */
   planeGroup: THREE.Group;
-  /** The live ghost-preview body (rebuilt from the `ghostMesh` prop). */
+  /** The live ghost-preview bodies (rebuilt from the `ghostMeshes` prop). */
   ghostGroup: THREE.Group;
   ghostMaterial: THREE.MeshStandardMaterial;
   ghostLineMaterial: THREE.LineBasicMaterial;
@@ -261,7 +261,7 @@ const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, numb
 
 export function Viewport({
   meshes,
-  ghostMesh,
+  ghostMeshes,
   selection,
   highlightBodyIds,
   onSelect,
@@ -284,8 +284,8 @@ export function Viewport({
   apiRef,
 }: {
   meshes: FeatureMesh[];
-  /** A live preview body to render translucently (null = none). */
-  ghostMesh: GhostMesh | null;
+  /** Live preview bodies to render translucently (empty = none). */
+  ghostMeshes: GhostMesh[];
   selection: Selection[];
   /** Body ids whose whole body should highlight (modifier features resolve to
    *  the body they affect — see App). */
@@ -1116,8 +1116,8 @@ export function Viewport({
     applyHighlightsRef.current();
   }, [meshes]);
 
-  // Rebuild the ghost-preview body independently of the real bodies — its own
-  // group/materials, so it never enters the raycast-pickable or highlight-
+  // Rebuild the ghost-preview bodies independently of the real bodies — their
+  // own group/materials, so they never enter the raycast-pickable or highlight-
   // eligible sets (those only ever look at `group`/`sketchGroup`/`planeGroup`).
   useEffect(() => {
     const state = stateRef.current;
@@ -1126,16 +1126,16 @@ export function Viewport({
       if (c instanceof THREE.Mesh || c instanceof THREE.LineSegments) c.geometry.dispose();
     }
     state.ghostGroup.clear();
-    if (ghostMesh) {
+    ghostMeshes.forEach((ghost, i) => {
       const [geometry] = syncGeometries(
-        [{ name: "ghost", faces: ghostMesh.mesh.faces, edges: ghostMesh.mesh.edges }],
+        [{ name: `ghost${i}`, faces: ghost.mesh.faces, edges: ghost.mesh.edges }],
         [],
       );
       const faceMesh = new THREE.Mesh(geometry.faces, state.ghostMaterial);
       const edges = new THREE.LineSegments(geometry.lines, state.ghostLineMaterial);
       state.ghostGroup.add(faceMesh, edges);
-    }
-  }, [ghostMesh]);
+    });
+  }, [ghostMeshes]);
 
   // Re-apply highlighting when the external selection (or resolved body set)
   // changes.
