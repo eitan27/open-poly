@@ -190,6 +190,17 @@
 
 /* --- Feature tree --- */
 
+/* Scrolls internally past a fixed height so a long timeline never pushes
+   the Parts/Parameters sections below it out of view. */
+.tree {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+  padding: 4px;
+  margin-bottom: 4px;
+}
+
 .tree-add {
   display: flex;
   gap: 6px;
