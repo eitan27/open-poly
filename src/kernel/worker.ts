@@ -574,7 +574,12 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
           built = fused;
         }
 
-        if (mode === "new") {
+        if (feature.previewTool) {
+          // Live-preview ghost: emit just the swept tool (the changing portion),
+          // built with the real direction (dirFlip) and extent, leaving every
+          // existing body untouched so they keep their own colour.
+          bodies.push({ id: feature.id, ...built });
+        } else if (mode === "new") {
           bodies.push({ id: feature.id, ...built });
         } else {
           if (targets.length === 0) {
