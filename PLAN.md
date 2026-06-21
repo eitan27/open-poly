@@ -210,10 +210,19 @@ rough relative sizing, not calendar promises.
 > (move + rotate bodies, Phase 5.5) is in** — a ✥ Transform gizmo + panel that
 > rigidly moves a body in place (keeps its id + names). **Transform copy** and
 > **STEP import** (⤓ Import STEP → a first-class named body) are also in. Likely
-> next high-value items: more plane methods (midplane/angle/through), a
-> multi-document manager (Documents list + import/export), Mirror, Revolve
-> (Phase 6), or **LLM agent integration via local MCP (Phase 9 — fully specced
-> below)**.
+> next high-value items remain below.
+>
+> **Progress (2026-06-21):** a large feature + UX batch landed on `main` —
+> **Revolve** and **Mirror** (Phase 5/6); **multi-profile extrude** + **symmetric**
+> and **through-all** extents + a **live cyan tool-only ghost preview**;
+> **construction geometry**, a **constraints list + delete + over-constraint ⚠**,
+> and **double-click-to-edit** in the timeline (Phase 2); **isolate** + **selection
+> filters** (Phase 7); plus a sidebar polish pass (collapsible Variables, datums
+> folded into the timeline). Remaining high-value items: the **UI/UX backlog
+> (Phase 8.5)** below (discoverable edit panels, extrude extent dropdown +
+> up-to-face, click-to-populate boolean, keyboard shortcuts, spline), more plane
+> methods, a **multi-document manager**, Sweep/Loft (Phase 6), or **LLM agent
+> integration via local MCP (Phase 9 — fully specced below)**.
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -256,18 +265,18 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 - **2a:** ✅ mostly done — pick a plane/planar face → sketch mode (camera
   normal-to); draw **line, rectangle (2-corner + center), circle (center +
   3-pt), arc (3-pt), regular polygon**; snapping (endpoints/midpoints/origin/
-  coplanar edges); delete. **TODO:**
-  - **Splines** (control-point / through-point curves).
-  - **Construction toggle** — mark any sketch entity as *construction*
+  coplanar edges); delete.
+  - **Construction toggle — ✅ DONE.** Mark any sketch entity as *construction*
     (reference geometry: used for dimensions/constraints/snapping but ignored
-    when detecting profile regions and never extruded). A toolbar toggle while
-    drawing, plus a per-entity flag editable after.
+    when detecting profile regions and never extruded). Toolbar toggle while
+    drawing **and** per-selection convert; rendered dashed amber
+    (`regions.ts` filters it; `Viewport` dashes it via a material array).
+  - **Double-click to edit in the timeline — ✅ DONE.** Double-clicking a
+    timeline row enters its edit mode (sketch → edit sketch, transform → edit
+    gizmo); `FeatureTree.onDoubleClick` → `handleTreeDoubleClick` in `App.tsx`.
+  - **TODO:**
+  - **Splines** (control-point / through-point curves) — *see UI/UX backlog #8.*
   - Trim/extend.
-  - **Double-click to edit in the timeline** — double-clicking a sketch (or any
-    editable feature) in the feature tree should enter its edit mode. Today
-    editing a sketch requires selecting it then clicking "Edit sketch" in the
-    param editor (`editSketch` in App.tsx); `FeatureTree` has no double-click
-    handler. Generalize to "double-click any editable element → edit it."
   - **Cancel a sketch edit (discard changes)** — when re-editing an *existing*
     sketch, exiting should be able to **discard** all changes. Today every edit
     applies live via `setDoc`, and `finishSketch` only treats a brand-new *empty*
@@ -326,14 +335,13 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 >   **angle** (as a dimension). **Still not exposed / mapped:** coincident,
 >   tangent, concentric, symmetric, midpoint, collinear, fix/lock (and `equal`
 >   only covers lines + circles, not arcs).
-> - **Constraint management & feedback:** there's **no UI to delete an individual
->   constraint** — `removeSketchConstraint` exists in `document.ts` but is wired to
->   nothing, so a parallel/perp/equal or a dimension can only be removed by
->   deleting the whole entity; there's also no constraint list/inspector. And
->   **over-constrained / conflict state isn't surfaced**: `solver.ts` computes
->   `dof` + `hasConflicts` but they only gate the green "fully-constrained" color
->   (`App.tsx`), so PLAN's intended blue=under / black=fully / **red=over** is only
->   half-done (a conflicting sketch silently fails to go green).
+> - **Constraint management & feedback — ✅ DONE (2026-06-21).** A **Constraints
+>   list** (sidebar, while editing a sketch) shows each constraint with a per-row
+>   **✕ delete** (wires the previously-unused `removeSketchConstraint` →
+>   re-solve), and **over-constrained/conflict is surfaced**: `solveConflict`
+>   (from `res.hasConflicts`) drives a red **⚠ conflict** badge on the heading +
+>   the constraint count chip. *(Discoverability: the list sits below Parts —
+>   relocating it is UI/UX backlog #1.)*
 > - **Point identity is by coordinate key** (see `solver.ts`): coincident
 >   endpoints merge by position, robust only until the first solve moves them —
 >   wants a real point-based sketch model before heavy constraint editing.
@@ -366,16 +374,24 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 
 - **Extrude (headline)** — ✅ DONE (with the noted gaps):
   - **Profiles:** ✅ sketch regions (`sketchFace`) and planar body faces.
-    *(One profile at a time; multi-profile in one extrude is TODO.)*
+    **Multi-profile — ✅ DONE:** select several regions/faces → one dialog
+    extrudes them all in a single undo step (`extrudeProfiles[]` in `App.tsx`).
   - **Result mode** (in the dialog): ✅ **New** / **Add** (join) / **Remove**
     (cut). Add/Remove require choosing an explicit **target body** in the dialog.
     Defaults to **Add** onto a solid when the sketch sits on that solid's face
     (drawn on it, or coplanar + overlapping a face), else **New** — overridable.
-  - **Direction:** ✅ flip toggle. *(Symmetric/two-sided: TODO.)*
-  - **End condition:** ✅ **Blind** (expression-backed distance). *(Up-to-face /
-    up-to-next / through-all: TODO.)*
-  - **Dialog:** ✅ anchored mini-dialog (mode + target + distance + flip).
-    *(Live ghost preview: TODO — deferred; editable features give most of it.)*
+  - **Direction:** ✅ flip toggle. **Symmetric/two-sided — ✅ DONE**
+    (`ExtrudeExtent="symmetric"` → two opposite prisms fused; flip hidden).
+  - **End condition / extent:** ✅ **Blind** (expression-backed distance),
+    ✅ **Symmetric**, ✅ **Through-all** (add/remove; bbox-sized tool, clipped by
+    the boolean). *(Up-to-face / up-to-next: TODO — UI/UX backlog #3. Through-all
+    additive semantics want clarifying — backlog #2.)*
+  - **Dialog:** ✅ anchored mini-dialog (mode + target + extent + distance +
+    flip). **Live ghost preview — ✅ DONE:** the dialog regenerates a throwaway
+    doc and renders the **swept tool only** (the changing portion) as a
+    translucent cyan ghost (`previewTool` in the kernel) while existing bodies
+    keep their own colour; one ghost per profile, updates live with the params.
+    *(Extent UI is buttons today → move to a dropdown, backlog #2.)*
 - **Chamfer + Fillet** — ✅ DONE: edge dress-up via `BRepFilletAPI`, edges
   referenced by **persistent name**. *(Chamfer two-distance/angle variants:
   TODO; currently single distance / single radius.)*
@@ -428,9 +444,13 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   - **Through geometry** — 3 points, a line + a point, two parallel edges, etc.
     **TODO.**
   Still TODO for planes overall: show them in the **datums list** (today they're
-  only in the timeline + viewport) and use them as a **mirror** plane.
+  only in the timeline + viewport).
 - Linear pattern (1- and 2-direction), circular pattern (axis + count + angle).
-- Mirror across a plane/planar face (incl. a reference plane above).
+  **TODO.**
+- **Mirror across a plane/planar face — ✅ DONE.** A `MirrorFeature` reflects a
+  body across a datum / reference plane into a **new** body (original kept) via
+  `gp_Trsf.SetMirror` (reuses `applyTrsf`; names re-key 1:1). `⇋ Mirror` button
+  + plane-pick dialog. *(Mirror about a planar body face: future.)*
 - Patterns/booleans multiply topology — re-stress naming/selection here.
 
 ### Phase 5.5 — Transform (move + rotate bodies) — ✅ DONE
@@ -483,12 +503,17 @@ this — datum / reference-plane sketches stay anchored to their datum.
 - Rotation fidelity: do we need correct rotation-following (needs the face's
   natural axes), or is translation the 99% case for v1?
 
-### Phase 6 — Sweep + Loft + Revolve
-- Sweep: profile along a path (twist control later).
-- Loft: through 2+ profiles, optional guide rails.
-- **Revolve** around a selected axis/edge (moved here from Phase 3).
+### Phase 6 — Sweep + Loft + Revolve *(Revolve ✅; Sweep/Loft TODO)*
+- Sweep: profile along a path (twist control later). **TODO.**
+- Loft: through 2+ profiles, optional guide rails. **TODO.**
+- **Revolve — ✅ DONE.** A `RevolveFeature` revolves a **sketch region** around
+  an **axis line** (both in the same sketch) by an expression-backed **angle**
+  (default 360°). `⟳ Revolve` enables when a region + a line in one sketch are
+  selected. Kernel `revolveFromFace` uses `BRepPrimAPI_MakeRevol` with
+  history-based naming (swept side faces per profile edge + start/end caps for a
+  partial revolve). *(Axis from a body edge / datum axis: future.)*
 
-### Phase 7 — Multi-body, parts, selection UX *(mostly DONE; isolate / filters TODO)*
+### Phase 7 — Multi-body, parts, selection UX — ✅ DONE
 - Multiple bodies/parts in one document — ✅. A **Parts** panel
   (`ui/SolidsList.tsx`) lists every rendered body (primitive / extrude / boolean)
   with select, rename, delete, colour, opacity slider, a **per-part show/hide
@@ -498,8 +523,13 @@ this — datum / reference-plane sketches stay anchored to their datum.
   (or a single sketch line). Suppress (timeline) uses a distinct no-entry icon
   for non-sketch features, separate from hide.
 - Robust selection (faces, edges, bodies; hover highlight) — ✅.
-- **TODO:** **isolate** (show only this body, hide the rest) and **selection
-  filters** (restrict picking to faces / edges / bodies only).
+- **Isolate — ✅ DONE.** A ◎ button per Parts row renders only that body
+  (others hidden, Exit banner, auto-exits if the body disappears).
+- **Selection filters — ✅ DONE.** **Body / Face / Edge / Vertex** chips
+  (bottom-left of the viewport, under a "Selection filters" heading) gate what a
+  click can pick (`SelectionFilter` in `Viewport.pickSelection`).
+  *(Opacity slider note: the Parts-row opacity control is currently hidden —
+  reinstate via a better home, UI/UX backlog #1.)*
 
 ### Phase 8 — Polish & persistence
 - **IndexedDB autosave + restore — ✅ DONE.** `src/storage/db.ts` wraps
@@ -522,6 +552,68 @@ this — datum / reference-plane sketches stay anchored to their datum.
 > boolean bodies, recolor/hide parts, **export a STEP/STL file**, and it all
 > **autosaves** — with variables and a working timeline. Validates every hard
 > layer end to end.
+
+### Phase 8.5 — UI/UX backlog (next polish pass) — TODO
+
+A focused pass on layout, discoverability, and the two interactions that still
+feel rough (extrude extents, boolean operand picking), plus shortcuts and the
+spline tool. Captured 2026-06-21.
+
+1. **Relocate the Constraints list + Parameters so they're discoverable.**
+   Today both sit in the left sidebar *below* the Parts list, so when you're
+   editing a sketch or a solid they're easy to miss. Move the active-edit
+   panel (constraints while sketching; parameters while a feature is selected)
+   somewhere it reads as "the thing you're editing" — e.g. a small **movable
+   dialog anchored top-left of the viewport** (like the Extrude mini-dialog),
+   appearing on edit and dismissing when done. Open to alternatives (a docked
+   context panel, a right rail). See Phase 2b "Constraint management" + the
+   `ParamEditor`/constraints JSX in `App.tsx`.
+
+2. **Improve Extrude "Through All" + move extents to a dropdown.** The additive
+   ("Add") semantics of through-all are unclear and want rethinking/clarifying
+   (through-all naturally reads as a *cut* operation; what should an additive
+   through-all do?). Also change the extent **buttons** (Blind / Symmetric /
+   Through All) into a **dropdown** to declutter the dialog and make room for #3.
+   (`extent` UI in `App.tsx` extrude dialog; `extrudeLengths`/`throughAllLength`
+   in `kernel/worker.ts`.)
+
+3. **Add an "Up to face" extrude extent.** New extent option; when chosen a
+   **"Select a face"** button appears. Clicking it arms a pick; the next clicked
+   face fills it in — **validated as an eligible target face** for the extent
+   (planar / facing the extrude direction / actually reachable). The button can
+   be clicked again to re-pick. Needs: an `extent="upToFace"` variant carrying a
+   face reference (persistent name + body id), a kernel path that extrudes the
+   profile up to that face (e.g. `BRepFeat_MakePrism` "until"), and pick-arming
+   UI like the existing sketch/plane pick flows.
+
+4. **Replace the Boolean checkbox dialog with click-to-populate.** Drop the
+   current `BooleanDialog` checklist. Instead: a **small movable dialog** that
+   **fills in operands as bodies are clicked** in the viewport (click a body →
+   added to the operand list; click again → removed), with the op (union /
+   subtract / intersect) chosen there. Mirrors how a CAD user expects to pick
+   tool/target bodies directly. (`ui/BooleanDialog.tsx`, `openBooleanDialog` in
+   `App.tsx`.)
+
+5. **Timeline formatting.** Re-evaluate the bordered **box** around the timeline
+   — is it needed for the drag-resize affordance, or can the splitter work
+   without the frame? Tighten **spacing to be consistent with the datums** now
+   that datums live inside the timeline. (`FeatureTree` `.tree`/`.panel-splitter`
+   + `.tree-row`/`.datum-row` spacing in `App.css`.)
+
+6. **Less space above the Variables title.** The `.params-heading.collapsible`
+   top margin (22px) leaves too big a gap above "Variables" (now the first item
+   under Datums-in-timeline). Tighten it.
+
+7. **Implement keyboard shortcuts.** Wire up the proposal in
+   `KEYBOARD_SHORTCUTS.md` (modeling toolbar, sketch tools, views, timeline).
+   Resolve the two flagged letter conflicts (New Body vs Boolean; Polygon vs
+   Parallel/Perpendicular). Add a global key handler that respects mode-gating
+   (sketch vs modeling) and ignores typing in inputs.
+
+8. **Spline tool in sketch.** Control-point / through-point curves (Phase 2a
+   carryover). Needs a `SketchEntity` spline variant, draw interaction
+   (click points, finish on Enter/double-click), tessellation for rendering +
+   region detection, and a kernel path (BSpline edge in the profile wire).
 
 ---
 
