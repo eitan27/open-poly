@@ -7,6 +7,7 @@ interface Props {
   selectedIds: Set<string>;
   errors: Record<string, string>;
   onSelect: (id: string) => void;
+  onDoubleClick: (id: string) => void;
   onDelete: (id: string) => void;
   onToggleSuppress: (id: string) => void;
   onSetRollback: (index: number) => void;
@@ -18,6 +19,7 @@ export function FeatureTree({
   selectedIds,
   errors,
   onSelect,
+  onDoubleClick,
   onDelete,
   onToggleSuppress,
   onSetRollback,
@@ -42,6 +44,7 @@ export function FeatureTree({
                   (error ? " error" : "")
                 }
                 onClick={() => onSelect(feature.id)}
+                onDoubleClick={() => onDoubleClick(feature.id)}
               >
                 <span className="row-kind">
                   {feature.type === "sketch"
