@@ -59,6 +59,12 @@ export interface SketchFeature extends FeatureBase {
 /** How an extrude combines with the running body set. */
 export type ExtrudeMode = "new" | "add" | "remove";
 
+/** How far an extrude reaches: a fixed `distance` one way ("blind"), `distance`
+ *  split evenly both ways of the profile ("symmetric"), or far enough to fully
+ *  clear the target body regardless of its shape ("throughAll" — add/remove
+ *  only; a target-less extrude falls back to blind using `distance`). */
+export type ExtrudeExtent = "blind" | "symmetric" | "throughAll";
+
 /** What an extrude pulls: a closed region of a sketch, or a planar face of an
  *  existing body (referenced by the feature that produced it + the face id). */
 export type ExtrudeProfile =
@@ -72,10 +78,13 @@ export type ExtrudeProfile =
 export interface ExtrudeFeature extends FeatureBase {
   type: "extrude";
   profile: ExtrudeProfile;
-  /** Blind distance, as an expression string (e.g. "10" or "height/2"). */
+  /** Blind/symmetric distance, as an expression string (e.g. "10" or "height/2").
+   *  Ignored by "throughAll" once it resolves a target. */
   distance: string;
-  /** Reverse the extrusion direction (against the profile normal). */
+  /** Reverse the extrusion direction (against the profile normal). No effect
+   *  when extent is "symmetric" (both directions are always extruded). */
   flip: boolean;
+  extent: ExtrudeExtent;
   mode: ExtrudeMode;
   /** For add/remove: the body (by feature id) to fuse into / cut from. */
   targetId?: string;

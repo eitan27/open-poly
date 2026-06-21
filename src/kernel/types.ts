@@ -54,11 +54,16 @@ export type ResolvedProfile =
 /** How an extrude combines with the running body set. */
 export type ExtrudeMode = "new" | "add" | "remove";
 
+/** How far an extrude reaches — see document/types.ts's ExtrudeExtent for the
+ *  full description; mirrored here since the kernel doesn't import the
+ *  document model. */
+export type ExtrudeExtent = "blind" | "symmetric" | "throughAll";
+
 /** Features with all parameters already resolved to numbers/geometry
  *  (expressions are evaluated in the app layer before reaching the kernel). */
 export type ResolvedFeature =
   | { id: string; type: "primitive"; kind: PrimitiveKind; params: Record<string, number> }
-  | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; mode: ExtrudeMode; targetId?: string }
+  | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; extent: ExtrudeExtent; mode: ExtrudeMode; targetId?: string }
   | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; size: number }
   // A boolean combines existing bodies (by id) from the running set.
   | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
