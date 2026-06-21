@@ -271,8 +271,8 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
   ViewCube is still a later nicety.)
 - **2a:** ✅ mostly done — pick a plane/planar face → sketch mode (camera
   normal-to); draw **line, rectangle (2-corner + center), circle (center +
-  3-pt), arc (3-pt), regular polygon**; snapping (endpoints/midpoints/origin/
-  coplanar edges); delete.
+  3-pt), arc (3-pt), regular polygon, spline**; snapping (endpoints/midpoints/
+  origin/coplanar edges); delete.
   - **Construction toggle — ✅ DONE.** Mark any sketch entity as *construction*
     (reference geometry: used for dimensions/constraints/snapping but ignored
     when detecting profile regions and never extruded). Toolbar toggle while
@@ -281,8 +281,12 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
   - **Double-click to edit in the timeline — ✅ DONE.** Double-clicking a
     timeline row enters its edit mode (sketch → edit sketch, transform → edit
     gizmo); `FeatureTree.onDoubleClick` → `handleTreeDoubleClick` in `App.tsx`.
+  - **Spline tool — ✅ DONE.** A smooth through-point `spline` SketchEntity (the
+    `∿` tool: click points, **Enter** to finish; Catmull-Rom render/snap/measure;
+    real B-spline in the kernel). An open curve used mainly as a **sweep path**
+    (Phase 6) — **not yet a closed-region boundary** (region detection still
+    ignores splines, like arcs).
   - **TODO:**
-  - **Splines** (control-point / through-point curves) — *see UI/UX backlog #8.*
   - Trim/extend.
   - **Cancel a sketch edit (discard changes)** — when re-editing an *existing*
     sketch, exiting should be able to **discard** all changes. Today every edit
@@ -352,10 +356,11 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 > - **Point identity is by coordinate key** (see `solver.ts`): coincident
 >   endpoints merge by position, robust only until the first solve moves them —
 >   wants a real point-based sketch model before heavy constraint editing.
-> - **Sketch operations missing:** mirror, use/project (convert edges), offset,
->   trim/extend, construction geometry.
-> - **Arcs** still pass through the solver unchanged (not constrained); circles
->   are now mapped + radius-constrainable.
+> - **Sketch operations missing:** mirror (of sketch entities), use/project
+>   (convert body edges into the sketch), offset, trim/extend. *(Construction
+>   geometry and splines are now done — see 2a.)*
+> - **Arcs and splines** still pass through the solver unchanged (not
+>   constrained); circles are now mapped + radius-constrainable.
 
 > **Reprioritized 2026-06-18 (user):** Extrude is the single most important
 > solid op and is the headline of Phase 3; **Chamfer (and Fillet)** matter more
