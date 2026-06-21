@@ -107,6 +107,15 @@ export function sameSelection(a: Selection | null, b: Selection | null): boolean
 }
 
 export type DatumId = "origin" | SketchPlaneId;
+
+/** Which body-geometry kinds the picker is allowed to return (selection filters).
+ *  Sketch picking while editing a sketch is unaffected. */
+export interface SelectionFilter {
+  body: boolean;
+  face: boolean;
+  edge: boolean;
+  vertex: boolean;
+}
 export type SketchTool =
   | "select"
   | "line"
@@ -257,6 +266,7 @@ export function Viewport({
   draft,
   polygonSides,
   onSketchClick,
+  selectionFilter,
   apiRef,
 }: {
   meshes: FeatureMesh[];
@@ -284,6 +294,7 @@ export function Viewport({
   draft: Vec2[];
   polygonSides: number;
   onSketchClick: (uv: Vec2, hv?: "horizontal" | "vertical") => void;
+  selectionFilter: SelectionFilter;
   apiRef: { current: ViewportApi | null };
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -310,6 +321,8 @@ export function Viewport({
   onPickRef.current = onPick;
   const sketchToolRef = useRef(sketchTool);
   sketchToolRef.current = sketchTool;
+  const selectionFilterRef = useRef(selectionFilter);
+  selectionFilterRef.current = selectionFilter;
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const polygonSidesRef = useRef(polygonSides);
@@ -603,7 +616,10 @@ export function Viewport({
         if (child instanceof THREE.LineSegments) {
           const sid = child.userData.sketchId as string;
           const isActive = sid === activeSketchIdRef.current;
-          (child.material as THREE.LineBasicMaterial).color.set(
+          // material[0] = solid base line; material[1] (if present) = the dashed
+          // construction line, whose amber colour stays fixed.
+          const base = (Array.isArray(child.material) ? child.material[0] : child.material) as THREE.LineBasicMaterial;
+          base.color.set(
             isActive ? (sketchFullyConstrainedRef.current ? 0x4ad07a : 0xeaf0ff) : 0xaeb9e0,
           );
         } else if (child instanceof THREE.Mesh && child.userData.isRegion) {
@@ -771,24 +787,28 @@ export function Viewport({
       const sketchHit = raycaster.intersectObjects(sketchSegs, false)[0];
       const regionHit = raycaster.intersectObjects(regionMeshes, false)[0];
 
+      // Selection filters: which body-geometry kinds the picker may return.
+      // (Sketch picks below are unaffected — they belong to sketch editing.)
+      const flt = selectionFilterRef.current;
+
       // Thin elements (body edges, sketch lines) take priority over a face when
       // the cursor is near them and they're not behind that face. Pick the nearer.
       const faceDist = faceHit ? faceHit.distance : Infinity;
       const edgeOk = !!edgeHit && edgeHit.index != null && edgeHit.distance <= faceDist + 1;
       const sketchOk = !!sketchHit && sketchHit.distance <= faceDist + 1;
 
-      if (edgeOk && (!sketchOk || edgeHit!.distance <= sketchHit!.distance)) {
+      if ((flt.edge || flt.vertex) && edgeOk && (!sketchOk || edgeHit!.distance <= sketchHit!.distance)) {
         const mesh = edgeHit!.object as THREE.LineSegments;
         const fid = mesh.userData.featureId as string;
         const pos = mesh.geometry.getAttribute("position");
         const a = new THREE.Vector3().fromBufferAttribute(pos, edgeHit!.index!);
         const bpt = new THREE.Vector3().fromBufferAttribute(pos, edgeHit!.index! + 1);
         const near = a.distanceTo(edgeHit!.point) <= bpt.distanceTo(edgeHit!.point) ? a : bpt;
-        if (near.distanceTo(edgeHit!.point) < VERTEX_PICK_WORLD) {
+        if (flt.vertex && near.distanceTo(edgeHit!.point) < VERTEX_PICK_WORLD) {
           return { kind: "vertex", featureId: fid, point: [near.x, near.y, near.z] };
         }
         const edgeId = getEdgeId(edgeHit!.index!, mesh.geometry);
-        if (edgeId !== undefined) return { kind: "edge", featureId: fid, edgeId };
+        if (flt.edge && edgeId !== undefined) return { kind: "edge", featureId: fid, edgeId };
       }
       if (sketchOk) {
         const obj = sketchHit!.object as THREE.LineSegments;
@@ -824,14 +844,13 @@ export function Viewport({
         const rid = regionHit.object.userData.regionId as string | undefined;
         if (sid && rid) return { kind: "sketchFace", sketchId: sid, regionId: rid };
       }
-      if (faceHit && faceHit.faceIndex != null) {
+      if (faceHit && faceHit.faceIndex != null && (flt.face || flt.body)) {
         const mesh = faceHit.object as THREE.Mesh;
         const fid = mesh.userData.featureId as string | undefined;
         if (fid !== undefined) {
           const faceId = getFaceId(faceHit.faceIndex, mesh.geometry);
-          return faceId === undefined
-            ? { kind: "feature", id: fid }
-            : { kind: "face", featureId: fid, faceId };
+          if (faceId !== undefined && flt.face) return { kind: "face", featureId: fid, faceId };
+          if (flt.body) return { kind: "feature", id: fid };
         }
       }
       return null;
@@ -1181,18 +1200,19 @@ export function Viewport({
     disposeSketchGroup(state.sketchGroup);
     for (const s of sketches) {
       const pts: number[] = [];
-      const entityGroups: { start: number; count: number; entityId: string }[] = [];
+      const entityGroups: { start: number; count: number; entityId: string; construction: boolean }[] = [];
       for (const e of s.entities) {
         const startVert = pts.length / 3;
         entitySegments(e, s.frame, pts);
         const count = pts.length / 3 - startVert;
-        if (count > 0) entityGroups.push({ start: startVert, count, entityId: e.id });
+        if (count > 0) entityGroups.push({ start: startVert, count, entityId: e.id, construction: !!e.construction });
       }
       if (pts.length === 0) continue;
       const geom = new THREE.BufferGeometry();
       geom.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
       // One geometry group per entity, so individual entities are highlightable.
-      for (const g of entityGroups) geom.addGroup(g.start, g.count, 0);
+      // Material index 1 = construction (dashed amber); 0 = normal solid line.
+      for (const g of entityGroups) geom.addGroup(g.start, g.count, g.construction ? 1 : 0);
       geom.userData.entityGroups = entityGroups;
       // Index 0 = per-sketch base colour (active=white/green, else grey).
       const baseMat = new THREE.LineBasicMaterial({
@@ -1202,7 +1222,11 @@ export function Viewport({
             : 0xeaf0ff
           : 0xaeb9e0,
       });
-      const seg = new THREE.LineSegments(geom, baseMat);
+      const constructionMat = new THREE.LineDashedMaterial({
+        color: 0xe0a64f, dashSize: 1.4, gapSize: 0.9,
+      });
+      const seg = new THREE.LineSegments(geom, [baseMat, constructionMat]);
+      seg.computeLineDistances(); // needed by the dashed construction material
       seg.frustumCulled = false;
       seg.userData.sketchId = s.id;
       seg.userData.frame = s.frame;
@@ -1520,7 +1544,9 @@ function disposeSketchGroup(group: THREE.Group): void {
   for (const child of group.children) {
     if (child instanceof THREE.LineSegments || (child instanceof THREE.Mesh && child.userData.isRegion)) {
       child.geometry.dispose();
-      (child.material as THREE.Material).dispose();
+      const m = child.material as THREE.Material | THREE.Material[];
+      if (Array.isArray(m)) m.forEach((x) => x.dispose());
+      else m.dispose();
     }
   }
   group.clear();

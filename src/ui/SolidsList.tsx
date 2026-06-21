@@ -15,6 +15,9 @@ interface Props {
   onToggleHidden: (id: string, hidden: boolean) => void;
   onExportStep: (id: string) => void;
   onExportStl: (id: string) => void;
+  /** The body currently isolated (only it is shown), or null. */
+  isolatedId: string | null;
+  onIsolate: (id: string) => void;
 }
 
 const toHex = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
@@ -42,6 +45,8 @@ export function SolidsList({
   onToggleHidden,
   onExportStep,
   onExportStl,
+  isolatedId,
+  onIsolate,
 }: Props) {
   // List the features that have a rendered body and own its appearance. A body
   // consumed by a boolean isn't in `bodyIds` (the fold removed it), so this also
@@ -98,6 +103,17 @@ export function SolidsList({
             }}
           >
             <EyeIcon />
+          </button>
+          <button
+            className={"row-icon" + (isolatedId === f.id ? " active" : "")}
+            type="button"
+            title={isolatedId === f.id ? "Exit isolate" : "Isolate (show only this)"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onIsolate(f.id);
+            }}
+          >
+            ◎
           </button>
           <button
             className="row-icon export-btn"

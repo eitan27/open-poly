@@ -967,6 +967,117 @@
   padding: 2px 0;
 }
 
+.constraint-count.conflict {
+  color: #ff6b6b;
+}
+
+/* Constraints list (sketch editing): each row is a constraint + delete. */
+.constraint-list {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.constraint-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: #c3c8d2;
+  border-radius: 5px;
+}
+
+.constraint-list li:hover {
+  background: #1b1e26;
+}
+
+.constraint-list .cl-del {
+  background: transparent;
+  border: none;
+  color: #8a8f9c;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+}
+
+.constraint-list .cl-del:hover {
+  color: #ff6b6b;
+}
+
+.constraint-warn {
+  color: #ff6b6b;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.row-icon.active {
+  color: #6db0ff;
+}
+
+.isolate-banner {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: rgba(40, 33, 20, 0.92);
+  border: 1px solid #b9892f;
+  border-radius: 8px;
+  color: #f0d9a8;
+  font-size: 12px;
+  backdrop-filter: blur(4px);
+  z-index: 20;
+}
+
+.isolate-banner button {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #f0d9a8;
+  background: #4a3a1c;
+  border: 1px solid #b9892f;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.isolate-banner button:hover {
+  background: #5a4622;
+}
+
+/* Selection-filter chips (what a click can pick), bottom-left of the viewport. */
+.sel-filters {
+  position: absolute;
+  left: 12px;
+  bottom: 14px;
+  display: flex;
+  gap: 4px;
+  z-index: 15;
+}
+
+.sel-filters button {
+  padding: 3px 9px;
+  font-size: 11px;
+  text-transform: capitalize;
+  color: #6b7180;
+  background: rgba(24, 26, 32, 0.8);
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.sel-filters button.active {
+  color: #cfe0ff;
+  border-color: #4f8cff;
+  background: rgba(30, 42, 68, 0.9);
+}
+
 .sketch-start {
   width: 100%;
   margin-bottom: 6px;
