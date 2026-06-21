@@ -120,6 +120,43 @@
   margin-top: 22px;
 }
 
+/* A collapsible section heading (e.g. Variables) — a full-width toggle button
+   with a disclosure caret. Typography matches the .panel h2 section headings
+   (Timeline/Parts/Parameters): same font, weight, size, casing and colour. */
+.params-heading.collapsible {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 22px 0 10px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8a8f9c;
+  text-align: left;
+}
+
+.params-heading.collapsible:hover {
+  color: #cfe0ff;
+}
+
+.collapse-caret {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1;
+  transition: transform 0.12s ease;
+}
+
+.collapse-caret.open {
+  transform: rotate(90deg);
+}
+
 /* Parts section header: title on the left, "Import STEP" on the right. */
 .parts-header {
   display: flex;
@@ -209,6 +246,37 @@
 
 /* --- Feature tree --- */
 
+/* Scrolls internally at its own (resizable) height so a long timeline never
+   pushes the Parts/Parameters sections below it out of view. */
+.tree {
+  overflow-y: auto;
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+  padding: 4px;
+}
+
+/* Drag handle between the timeline and the Parts section, resizing .tree. */
+.panel-splitter {
+  height: 11px;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+}
+
+.panel-splitter::before {
+  content: "";
+  width: 36px;
+  height: 3px;
+  border-radius: 2px;
+  background: #2a2d35;
+}
+
+.panel-splitter:hover::before {
+  background: #4f8cff;
+}
+
 .tree-add {
   display: flex;
   gap: 6px;
@@ -262,6 +330,18 @@
 
 .tree-row.error .row-name {
   color: #f08a8a;
+}
+
+/* Fixed base datums folded into the timeline: not clickable to select, slightly
+   muted so they read as permanent reference geometry rather than features. */
+.tree-row.datum-row {
+  cursor: default;
+}
+.tree-row.datum-row:hover {
+  background: transparent;
+}
+.tree-row.datum-row .row-name {
+  color: #aeb4c0;
 }
 
 .row-kind {
@@ -370,11 +450,6 @@
 .solid-name:focus {
   outline: none;
   border-color: #4f8cff;
-}
-
-.solid-opacity {
-  flex: none;
-  width: 46px;
 }
 
 .export-btn {
@@ -691,6 +766,9 @@
 }
 
 .sketch-toolbar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 32px;
   height: 32px;
   font-size: 16px;
@@ -716,11 +794,18 @@
   cursor: default;
 }
 
+/* Groups drawing tools / dimension / constraints / solve in the sketch toolbar. */
+.sketch-toolbar-sep {
+  height: 1px;
+  margin: 2px 4px;
+  background: #313643;
+}
+
 .dim-input {
   position: absolute;
-  /* left/top set inline to the line's screen position; nudge up-right so the
-     box sits beside the line rather than on top of it. */
-  transform: translate(14px, -130%);
+  /* left/top set inline to the line's screen position; the up-right nudge that
+     sits the box beside the line (rather than on top of it) is applied as
+     DraggableDialog's baseTransform so the box stays draggable by its label. */
   display: flex;
   align-items: center;
   gap: 6px;
@@ -777,6 +862,39 @@
   color: #e6e8ee;
 }
 
+.mirror-dialog select {
+  background: #0f1115;
+  border: 1px solid #2a2d35;
+  color: #e6e8ee;
+  border-radius: 5px;
+  padding: 5px 6px;
+  font-size: 13px;
+}
+
+.mirror-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.mirror-actions button {
+  flex: 1;
+  padding: 5px 0;
+  font-size: 12px;
+  color: #cfe0ff;
+  background: #1e2a44;
+  border: 1px solid #4f8cff;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.mirror-actions button.ghost {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  background: transparent;
+  border-color: #313643;
+  color: #8a8f9c;
+}
+
 /* Title bars act as drag handles for movable dialogs. */
 [data-drag-handle] {
   cursor: move;
@@ -804,6 +922,11 @@
   background: #1e2a44;
   border-color: #4f8cff;
   color: #cfe0ff;
+}
+
+.ed-modes button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .ed-field {
@@ -873,6 +996,13 @@
   line-height: 1.3;
 }
 
+.ed-warning {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.3;
+  color: #f0a0a0;
+}
+
 .dim-hint {
   position: absolute;
   left: 50%;
@@ -919,6 +1049,30 @@
   padding: 4px 8px;
 }
 
+/* On-canvas dimension value, drawn beside its line. Positioned imperatively
+   (top/left 0; the per-frame transform places it), tracks the camera. */
+.dim-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 15;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #cfe0ff;
+  background: rgba(24, 26, 32, 0.82);
+  border: 1px solid #3a4663;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  backdrop-filter: blur(2px);
+}
+
+.dim-label:hover {
+  border-color: #4f8cff;
+  color: #fff;
+}
+
 .poly-sides {
   display: flex;
   align-items: center;
@@ -950,6 +1104,132 @@
   font-size: 12px;
   color: #6fcf97;
   padding: 2px 0;
+}
+
+.constraint-count.conflict {
+  color: #ff6b6b;
+}
+
+/* Constraints list (sketch editing): each row is a constraint + delete. */
+.constraint-list {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.constraint-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: #c3c8d2;
+  border-radius: 5px;
+}
+
+.constraint-list li:hover {
+  background: #1b1e26;
+}
+
+.constraint-list .cl-del {
+  background: transparent;
+  border: none;
+  color: #8a8f9c;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+}
+
+.constraint-list .cl-del:hover {
+  color: #ff6b6b;
+}
+
+.constraint-warn {
+  color: #ff6b6b;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.row-icon.active {
+  color: #6db0ff;
+}
+
+.isolate-banner {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: rgba(40, 33, 20, 0.92);
+  border: 1px solid #b9892f;
+  border-radius: 8px;
+  color: #f0d9a8;
+  font-size: 12px;
+  backdrop-filter: blur(4px);
+  z-index: 20;
+}
+
+.isolate-banner button {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #f0d9a8;
+  background: #4a3a1c;
+  border: 1px solid #b9892f;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.isolate-banner button:hover {
+  background: #5a4622;
+}
+
+/* Selection-filter chips (what a click can pick), bottom-left of the viewport. */
+.sel-filters {
+  position: absolute;
+  left: 12px;
+  bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 15;
+}
+
+.sel-filters-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6b7180;
+  padding-left: 2px;
+}
+
+.sel-filters-row {
+  display: flex;
+  gap: 4px;
+}
+
+.sel-filters button {
+  padding: 3px 9px;
+  font-size: 11px;
+  text-transform: capitalize;
+  color: #6b7180;
+  background: rgba(24, 26, 32, 0.8);
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.sel-filters button.active {
+  color: #cfe0ff;
+  border-color: #4f8cff;
+  background: rgba(30, 42, 68, 0.9);
 }
 
 .sketch-start {

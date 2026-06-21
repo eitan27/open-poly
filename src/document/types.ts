@@ -9,11 +9,14 @@ export type FeatureKind = PrimitiveKind;
 
 export type Vec2 = [number, number];
 
+/** `construction: true` marks an entity as reference geometry — used for
+ *  dimensions/constraints/snapping but ignored when detecting profile regions
+ *  and never extruded. */
 export type SketchEntity =
-  | { type: "line"; id: string; a: Vec2; b: Vec2 }
-  | { type: "circle"; id: string; c: Vec2; r: number }
-  | { type: "arc"; id: string; c: Vec2; r: number; start: number; end: number }
-  | { type: "point"; id: string; p: Vec2 };
+  | { type: "line"; id: string; a: Vec2; b: Vec2; construction?: boolean }
+  | { type: "circle"; id: string; c: Vec2; r: number; construction?: boolean }
+  | { type: "arc"; id: string; c: Vec2; r: number; start: number; end: number; construction?: boolean }
+  | { type: "point"; id: string; p: Vec2; construction?: boolean };
 
 /** Dimensional/geometric constraints over sketch entities (solved by planegcs).
  *  `entity`/`a`/`b` reference SketchEntity ids. */
@@ -22,7 +25,10 @@ export type SketchConstraint =
   | { id: string; type: "vertical"; entity: string }
   | { id: string; type: "parallel"; a: string; b: string }
   | { id: string; type: "perpendicular"; a: string; b: string }
-  | { id: string; type: "distance"; entity: string; value: number };
+  | { id: string; type: "equal"; a: string; b: string }
+  | { id: string; type: "distance"; entity: string; value: number }
+  | { id: string; type: "radius"; entity: string; value: number }
+  | { id: string; type: "angle"; a: string; b: string; value: number };
 
 interface FeatureBase {
   id: string;
@@ -56,6 +62,12 @@ export interface SketchFeature extends FeatureBase {
 /** How an extrude combines with the running body set. */
 export type ExtrudeMode = "new" | "add" | "remove";
 
+/** How far an extrude reaches: a fixed `distance` one way ("blind"), `distance`
+ *  split evenly both ways of the profile ("symmetric"), or far enough to fully
+ *  clear the target body regardless of its shape ("throughAll" — add/remove
+ *  only; a target-less extrude falls back to blind using `distance`). */
+export type ExtrudeExtent = "blind" | "symmetric" | "throughAll";
+
 /** What an extrude pulls: a closed region of a sketch, or a planar face of an
  *  existing body (referenced by the feature that produced it + the face id). */
 export type ExtrudeProfile =
@@ -69,10 +81,13 @@ export type ExtrudeProfile =
 export interface ExtrudeFeature extends FeatureBase {
   type: "extrude";
   profile: ExtrudeProfile;
-  /** Blind distance, as an expression string (e.g. "10" or "height/2"). */
+  /** Blind/symmetric distance, as an expression string (e.g. "10" or "height/2").
+   *  Ignored by "throughAll" once it resolves a target. */
   distance: string;
-  /** Reverse the extrusion direction (against the profile normal). */
+  /** Reverse the extrusion direction (against the profile normal). No effect
+   *  when extent is "symmetric" (both directions are always extruded). */
   flip: boolean;
+  extent: ExtrudeExtent;
   mode: ExtrudeMode;
   /** For add/remove: the body (by feature id) to fuse into / cut from. */
   targetId?: string;
@@ -149,6 +164,34 @@ export interface TransformFeature extends FeatureBase {
   hidden?: boolean;
 }
 
+/** Revolve a sketch region around an axis line (in a sketch) to make a solid.
+ *  Like extrude, a body *producer*. (Phase 6.) */
+export interface RevolveFeature extends FeatureBase {
+  type: "revolve";
+  /** The closed sketch region to revolve. */
+  profile: { sketchId: string; regionId: string };
+  /** The rotation axis: a line entity (its two endpoints define the axis). */
+  axis: { sketchId: string; entityId: string };
+  /** Revolve angle in degrees, as an expression (e.g. "360" or "angle/2"). */
+  angle: string;
+  color: number;
+  opacity: number;
+  hidden?: boolean;
+}
+
+/** Mirror a body across a plane, producing a new (reflected) body. The original
+ *  is kept. The mirror plane is a datum / reference plane / planar face. */
+export interface MirrorFeature extends FeatureBase {
+  type: "mirror";
+  /** The body being mirrored (the feature id that produced it). */
+  targetId: string;
+  /** The mirror plane. */
+  plane: SketchPlaneRef;
+  color: number;
+  opacity: number;
+  hidden?: boolean;
+}
+
 /** A body imported from a CAD file (STEP for now). A body *producer*, like a
  *  primitive. The raw file text is stored on the feature (JSON-serializable, so
  *  it round-trips through IndexedDB / `.json`). */
@@ -170,6 +213,8 @@ export type Feature =
   | BooleanFeature
   | PlaneFeature
   | TransformFeature
+  | MirrorFeature
+  | RevolveFeature
   | ImportFeature;
 
 export interface Variable {

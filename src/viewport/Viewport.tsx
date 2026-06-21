@@ -35,6 +35,15 @@ export interface FeatureMesh {
   opacity: number;
 }
 
+/** A would-be result rendered as a translucent "ghost" before the user commits
+ *  (e.g. the Extrude dialog's live preview). It lives in its own group with
+ *  fixed materials, so it's never raycast-pickable and never participates in
+ *  selection highlighting — callers omit the body it stands in for from
+ *  `meshes` themselves. */
+export interface GhostMesh {
+  mesh: ShapeMeshPayload;
+}
+
 export interface RenderSketch {
   id: string;
   frame: PlaneFrameData;
@@ -107,6 +116,15 @@ export function sameSelection(a: Selection | null, b: Selection | null): boolean
 }
 
 export type DatumId = "origin" | SketchPlaneId;
+
+/** Which body-geometry kinds the picker is allowed to return (selection filters).
+ *  Sketch picking while editing a sketch is unaffected. */
+export interface SelectionFilter {
+  body: boolean;
+  face: boolean;
+  edge: boolean;
+  vertex: boolean;
+}
 export type SketchTool =
   | "select"
   | "line"
@@ -159,6 +177,10 @@ interface SceneState {
   sketchGroup: THREE.Group;
   /** User-created reference planes (translucent quads), rebuilt from the prop. */
   planeGroup: THREE.Group;
+  /** The live ghost-preview bodies (rebuilt from the `ghostMeshes` prop). */
+  ghostGroup: THREE.Group;
+  ghostMaterial: THREE.MeshStandardMaterial;
+  ghostLineMaterial: THREE.LineBasicMaterial;
   // The translate/rotate gizmo and the invisible proxy object it drives. The
   // proxy's position/rotation are read back as the Transform feature's values.
   transformControls: TransformControls;
@@ -243,6 +265,7 @@ const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, numb
 
 export function Viewport({
   meshes,
+  ghostMeshes,
   selection,
   highlightBodyIds,
   onSelect,
@@ -261,9 +284,12 @@ export function Viewport({
   draft,
   polygonSides,
   onSketchClick,
+  selectionFilter,
   apiRef,
 }: {
   meshes: FeatureMesh[];
+  /** Live preview bodies to render translucently (empty = none). */
+  ghostMeshes: GhostMesh[];
   selection: Selection[];
   /** Body ids whose whole body should highlight (modifier features resolve to
    *  the body they affect — see App). */
@@ -288,6 +314,7 @@ export function Viewport({
   draft: Vec2[];
   polygonSides: number;
   onSketchClick: (uv: Vec2, hv?: "horizontal" | "vertical") => void;
+  selectionFilter: SelectionFilter;
   apiRef: { current: ViewportApi | null };
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -314,6 +341,8 @@ export function Viewport({
   onPickRef.current = onPick;
   const sketchToolRef = useRef(sketchTool);
   sketchToolRef.current = sketchTool;
+  const selectionFilterRef = useRef(selectionFilter);
+  selectionFilterRef.current = selectionFilter;
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const polygonSidesRef = useRef(polygonSides);
@@ -412,7 +441,19 @@ export function Viewport({
     const group = new THREE.Group();
     const sketchGroup = new THREE.Group();
     const planeGroup = new THREE.Group();
-    scene.add(group, sketchGroup, planeGroup);
+    const ghostGroup = new THREE.Group();
+    scene.add(group, sketchGroup, planeGroup, ghostGroup);
+
+    // Ghost-preview materials: a fixed accent colour (not the body's own
+    // colour) so a preview always reads as "not committed yet," regardless of
+    // what it's standing in for.
+    const ghostMaterial = new THREE.MeshStandardMaterial({
+      color: 0x4fd1ff, metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide,
+      transparent: true, opacity: 0.35, depthWrite: false,
+    });
+    const ghostLineMaterial = new THREE.LineBasicMaterial({
+      color: 0x4fd1ff, transparent: true, opacity: 0.7,
+    });
 
     // Transform gizmo: an invisible proxy object that the TransformControls move,
     // whose position/rotation are read back as the active Transform feature's
@@ -466,6 +507,7 @@ export function Viewport({
       sketchDimActive: false, selectedMaterial, hoverMaterial, lineMaterial,
       highlightMaterial, highlightOverlay, pointMarkers,
       datums, sketchGroup, planeGroup, transformControls, gizmoProxy,
+      ghostGroup, ghostMaterial, ghostLineMaterial,
       previewLine, snapMarker, tween: null,
     };
     stateRef.current = state;
@@ -607,7 +649,10 @@ export function Viewport({
         if (child instanceof THREE.LineSegments) {
           const sid = child.userData.sketchId as string;
           const isActive = sid === activeSketchIdRef.current;
-          (child.material as THREE.LineBasicMaterial).color.set(
+          // material[0] = solid base line; material[1] (if present) = the dashed
+          // construction line, whose amber colour stays fixed.
+          const base = (Array.isArray(child.material) ? child.material[0] : child.material) as THREE.LineBasicMaterial;
+          base.color.set(
             isActive ? (sketchFullyConstrainedRef.current ? 0x4ad07a : 0xeaf0ff) : 0xaeb9e0,
           );
         } else if (child instanceof THREE.Mesh && child.userData.isRegion) {
@@ -687,12 +732,30 @@ export function Viewport({
     // Snap to inferences: points (origin, endpoints/midpoints of any coplanar
     // sketch or body edge), then nearest point on a coplanar edge, then
     // horizontal/vertical relative to the chain start. No grid snapping.
-    const snap = (raw: Vec2, clientX: number, clientY: number): { uv: Vec2; kind: "point" | "edge" | "h" | "v" | "free" } => {
+    const snap = (
+      raw: Vec2,
+      clientX: number,
+      clientY: number,
+    ): { uv: Vec2; kind: "point" | "edge" | "h" | "v" | "free"; hv?: "horizontal" | "vertical" } => {
       const frame = activeFrameRef.current!;
       const distPx = (c: Vec2) => {
         const w = uvToWorld(frame, c[0], c[1]);
         const px = projectToPx(new THREE.Vector3(w[0], w[1], w[2]));
         return Math.hypot(px.x - clientX, px.y - clientY);
+      };
+      const ref = draftRef.current[draftRef.current.length - 1];
+      // Horizontal/vertical of the segment ref -> p (if it's near-axis-aligned).
+      // Derived from the *resolved* endpoint, so it still fires when the endpoint
+      // also snaps to a point/edge — otherwise closing a rectangle onto an
+      // existing corner would silently drop that edge's H/V constraint.
+      const hvOf = (p: Vec2): "horizontal" | "vertical" | undefined => {
+        if (!ref || (p[0] === ref[0] && p[1] === ref[1])) return undefined;
+        const ang = Math.atan2(p[1] - ref[1], p[0] - ref[0]);
+        const dH = Math.min(Math.abs(ang), Math.abs(Math.abs(ang) - Math.PI));
+        const dV = Math.abs(Math.abs(ang) - Math.PI / 2);
+        if (dH < ANGLE_SNAP) return "horizontal";
+        if (dV < ANGLE_SNAP) return "vertical";
+        return undefined;
       };
       // 1. nearest snap point (static candidates + the current draft points)
       let best: Vec2 | null = null;
@@ -705,7 +768,7 @@ export function Viewport({
         const d = distPx(c);
         if (d < bestD) { bestD = d; best = c; }
       }
-      if (best) return { uv: best, kind: "point" };
+      if (best) return { uv: best, kind: "point", hv: hvOf(best) };
       // 2. nearest point on a coplanar edge
       let bestLine: Vec2 | null = null;
       let bestLD = SNAP_PX;
@@ -714,15 +777,14 @@ export function Viewport({
         const d = distPx(q);
         if (d < bestLD) { bestLD = d; bestLine = q; }
       }
-      if (bestLine) return { uv: bestLine, kind: "edge" };
+      if (bestLine) return { uv: bestLine, kind: "edge", hv: hvOf(bestLine) };
       // 3. horizontal / vertical inference relative to the last placed point
-      const ref = draftRef.current[draftRef.current.length - 1];
       if (ref) {
         const ang = Math.atan2(raw[1] - ref[1], raw[0] - ref[0]);
         const dH = Math.min(Math.abs(ang), Math.abs(Math.abs(ang) - Math.PI));
         const dV = Math.abs(Math.abs(ang) - Math.PI / 2);
-        if (dH < ANGLE_SNAP) return { uv: [raw[0], ref[1]], kind: "h" };
-        if (dV < ANGLE_SNAP) return { uv: [ref[0], raw[1]], kind: "v" };
+        if (dH < ANGLE_SNAP) return { uv: [raw[0], ref[1]], kind: "h", hv: "horizontal" };
+        if (dV < ANGLE_SNAP) return { uv: [ref[0], raw[1]], kind: "v", hv: "vertical" };
       }
       return { uv: raw, kind: "free" };
     };
@@ -772,24 +834,28 @@ export function Viewport({
       const sketchHit = raycaster.intersectObjects(sketchSegs, false)[0];
       const regionHit = raycaster.intersectObjects(regionMeshes, false)[0];
 
+      // Selection filters: which body-geometry kinds the picker may return.
+      // (Sketch picks below are unaffected — they belong to sketch editing.)
+      const flt = selectionFilterRef.current;
+
       // Thin elements (body edges, sketch lines) take priority over a face when
       // the cursor is near them and they're not behind that face. Pick the nearer.
       const faceDist = faceHit ? faceHit.distance : Infinity;
       const edgeOk = !!edgeHit && edgeHit.index != null && edgeHit.distance <= faceDist + 1;
       const sketchOk = !!sketchHit && sketchHit.distance <= faceDist + 1;
 
-      if (edgeOk && (!sketchOk || edgeHit!.distance <= sketchHit!.distance)) {
+      if ((flt.edge || flt.vertex) && edgeOk && (!sketchOk || edgeHit!.distance <= sketchHit!.distance)) {
         const mesh = edgeHit!.object as THREE.LineSegments;
         const fid = mesh.userData.featureId as string;
         const pos = mesh.geometry.getAttribute("position");
         const a = new THREE.Vector3().fromBufferAttribute(pos, edgeHit!.index!);
         const bpt = new THREE.Vector3().fromBufferAttribute(pos, edgeHit!.index! + 1);
         const near = a.distanceTo(edgeHit!.point) <= bpt.distanceTo(edgeHit!.point) ? a : bpt;
-        if (near.distanceTo(edgeHit!.point) < VERTEX_PICK_WORLD) {
+        if (flt.vertex && near.distanceTo(edgeHit!.point) < VERTEX_PICK_WORLD) {
           return { kind: "vertex", featureId: fid, point: [near.x, near.y, near.z] };
         }
         const edgeId = getEdgeId(edgeHit!.index!, mesh.geometry);
-        if (edgeId !== undefined) return { kind: "edge", featureId: fid, edgeId };
+        if (flt.edge && edgeId !== undefined) return { kind: "edge", featureId: fid, edgeId };
       }
       if (sketchOk) {
         const obj = sketchHit!.object as THREE.LineSegments;
@@ -825,14 +891,13 @@ export function Viewport({
         const rid = regionHit.object.userData.regionId as string | undefined;
         if (sid && rid) return { kind: "sketchFace", sketchId: sid, regionId: rid };
       }
-      if (faceHit && faceHit.faceIndex != null) {
+      if (faceHit && faceHit.faceIndex != null && (flt.face || flt.body)) {
         const mesh = faceHit.object as THREE.Mesh;
         const fid = mesh.userData.featureId as string | undefined;
         if (fid !== undefined) {
           const faceId = getFaceId(faceHit.faceIndex, mesh.geometry);
-          return faceId === undefined
-            ? { kind: "feature", id: fid }
-            : { kind: "face", featureId: fid, faceId };
+          if (faceId !== undefined && flt.face) return { kind: "face", featureId: fid, faceId };
+          if (flt.body) return { kind: "feature", id: fid };
         }
       }
       return null;
@@ -952,7 +1017,7 @@ export function Viewport({
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) return;
         const s = snap(raw, e.clientX, e.clientY);
-        onSketchClickRef.current(s.uv, s.kind === "h" ? "horizontal" : s.kind === "v" ? "vertical" : undefined);
+        onSketchClickRef.current(s.uv, s.hv);
         return;
       }
       // Selection click (idle, or sketch + Select tool). App accumulates into a
@@ -1010,6 +1075,11 @@ export function Viewport({
           (c.material as THREE.Material).dispose();
         }
       }
+      for (const c of ghostGroup.children) {
+        if (c instanceof THREE.Mesh || c instanceof THREE.LineSegments) c.geometry.dispose();
+      }
+      ghostMaterial.dispose();
+      ghostLineMaterial.dispose();
       previewLine.geometry.dispose();
       snapMarker.geometry.dispose();
       pointMarkers.geometry.dispose();
@@ -1063,6 +1133,27 @@ export function Viewport({
     }
     applyHighlightsRef.current();
   }, [meshes]);
+
+  // Rebuild the ghost-preview bodies independently of the real bodies — their
+  // own group/materials, so they never enter the raycast-pickable or highlight-
+  // eligible sets (those only ever look at `group`/`sketchGroup`/`planeGroup`).
+  useEffect(() => {
+    const state = stateRef.current;
+    if (!state) return;
+    for (const c of state.ghostGroup.children) {
+      if (c instanceof THREE.Mesh || c instanceof THREE.LineSegments) c.geometry.dispose();
+    }
+    state.ghostGroup.clear();
+    ghostMeshes.forEach((ghost, i) => {
+      const [geometry] = syncGeometries(
+        [{ name: `ghost${i}`, faces: ghost.mesh.faces, edges: ghost.mesh.edges }],
+        [],
+      );
+      const faceMesh = new THREE.Mesh(geometry.faces, state.ghostMaterial);
+      const edges = new THREE.LineSegments(geometry.lines, state.ghostLineMaterial);
+      state.ghostGroup.add(faceMesh, edges);
+    });
+  }, [ghostMeshes]);
 
   // Re-apply highlighting when the external selection (or resolved body set)
   // changes.
@@ -1182,18 +1273,19 @@ export function Viewport({
     disposeSketchGroup(state.sketchGroup);
     for (const s of sketches) {
       const pts: number[] = [];
-      const entityGroups: { start: number; count: number; entityId: string }[] = [];
+      const entityGroups: { start: number; count: number; entityId: string; construction: boolean }[] = [];
       for (const e of s.entities) {
         const startVert = pts.length / 3;
         entitySegments(e, s.frame, pts);
         const count = pts.length / 3 - startVert;
-        if (count > 0) entityGroups.push({ start: startVert, count, entityId: e.id });
+        if (count > 0) entityGroups.push({ start: startVert, count, entityId: e.id, construction: !!e.construction });
       }
       if (pts.length === 0) continue;
       const geom = new THREE.BufferGeometry();
       geom.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
       // One geometry group per entity, so individual entities are highlightable.
-      for (const g of entityGroups) geom.addGroup(g.start, g.count, 0);
+      // Material index 1 = construction (dashed amber); 0 = normal solid line.
+      for (const g of entityGroups) geom.addGroup(g.start, g.count, g.construction ? 1 : 0);
       geom.userData.entityGroups = entityGroups;
       // Index 0 = per-sketch base colour (active=white/green, else grey).
       const baseMat = new THREE.LineBasicMaterial({
@@ -1203,7 +1295,11 @@ export function Viewport({
             : 0xeaf0ff
           : 0xaeb9e0,
       });
-      const seg = new THREE.LineSegments(geom, baseMat);
+      const constructionMat = new THREE.LineDashedMaterial({
+        color: 0xe0a64f, dashSize: 1.4, gapSize: 0.9,
+      });
+      const seg = new THREE.LineSegments(geom, [baseMat, constructionMat]);
+      seg.computeLineDistances(); // needed by the dashed construction material
       seg.frustumCulled = false;
       seg.userData.sketchId = s.id;
       seg.userData.frame = s.frame;
@@ -1521,7 +1617,9 @@ function disposeSketchGroup(group: THREE.Group): void {
   for (const child of group.children) {
     if (child instanceof THREE.LineSegments || (child instanceof THREE.Mesh && child.userData.isRegion)) {
       child.geometry.dispose();
-      (child.material as THREE.Material).dispose();
+      const m = child.material as THREE.Material | THREE.Material[];
+      if (Array.isArray(m)) m.forEach((x) => x.dispose());
+      else m.dispose();
     }
   }
   group.clear();

@@ -6,7 +6,7 @@ Open Poly runs entirely in your browser — modeling is powered by the OpenCASCA
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/) 20 or newer
+- [Node.js](https://nodejs.org/) 20.19+ or 22.12+ (required by Vite 8)
 - npm (ships with Node.js)
 
 ## Clone
@@ -39,3 +39,5 @@ Vite will print a local URL (default http://localhost:5173) — open it in your 
 | `npm run dev`     | Start the Vite dev server with hot reloading.    |
 | `npm run build`   | Type-check and build a production bundle.         |
 | `npm run preview` | Serve the production build locally to preview it. |
+| `npm test`        | Run the unit tests once (Vitest).                 |
+| `npm run test:watch` | Run the unit tests in watch mode (Vitest).     |

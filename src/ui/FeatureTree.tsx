@@ -1,12 +1,20 @@
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "../document/featureDefs";
 import type { Document } from "../document/types";
+import type { DatumId } from "../viewport/Viewport";
 import { EyeIcon, SuppressIcon } from "./icons";
 
 interface Props {
   doc: Document;
+  height: number;
+  /** The fixed base datums (origin + standard planes), shown atop the timeline
+   *  as non-removable, non-suppressable rows with only a visibility toggle. */
+  datums: { id: DatumId; kind: string; label: string }[];
+  datumVisibility: Record<DatumId, boolean>;
+  onToggleDatum: (id: DatumId) => void;
   selectedIds: Set<string>;
   errors: Record<string, string>;
   onSelect: (id: string) => void;
+  onDoubleClick: (id: string) => void;
   onDelete: (id: string) => void;
   onToggleSuppress: (id: string) => void;
   onSetRollback: (index: number) => void;
@@ -15,9 +23,14 @@ interface Props {
 
 export function FeatureTree({
   doc,
+  height,
+  datums,
+  datumVisibility,
+  onToggleDatum,
   selectedIds,
   errors,
   onSelect,
+  onDoubleClick,
   onDelete,
   onToggleSuppress,
   onSetRollback,
@@ -26,8 +39,29 @@ export function FeatureTree({
   const { features, rollbackIndex } = doc;
 
   return (
-    <div className="tree">
+    <div className="tree" style={{ height }}>
       <ol className="tree-list">
+        {/* Fixed base datums — always first, above the rollback bar so they're
+            never rolled back, and with no move/delete/suppress affordances. */}
+        {datums.map((d) => {
+          const visible = datumVisibility[d.id];
+          return (
+            <li key={d.id}>
+              <div className={"tree-row datum-row" + (visible ? "" : " dim")}>
+                <span className="row-kind">{d.kind}</span>
+                <span className="row-name">{d.label}</span>
+                <button
+                  className="row-icon"
+                  title={visible ? "Hide" : "Show"}
+                  style={{ opacity: visible ? 1 : 0.35 }}
+                  onClick={() => onToggleDatum(d.id)}
+                >
+                  <EyeIcon />
+                </button>
+              </div>
+            </li>
+          );
+        })}
         <RollbackGutter index={0} active={rollbackIndex === 0} onSet={onSetRollback} />
         {features.map((feature, i) => {
           const rolledBack = i >= rollbackIndex;
@@ -42,6 +76,7 @@ export function FeatureTree({
                   (error ? " error" : "")
                 }
                 onClick={() => onSelect(feature.id)}
+                onDoubleClick={() => onDoubleClick(feature.id)}
               >
                 <span className="row-kind">
                   {feature.type === "sketch"
@@ -58,7 +93,11 @@ export function FeatureTree({
                               ? "Transform"
                               : feature.type === "import"
                                 ? "Import"
-                                : FEATURE_DEFS[feature.kind].label}
+                                : feature.type === "mirror"
+                                  ? "Mirror"
+                                  : feature.type === "revolve"
+                                    ? "Revolve"
+                                    : FEATURE_DEFS[feature.kind].label}
                 </span>
                 <span className="row-name">{feature.name}</span>
                 {error && <span className="row-badge" title={error}>!</span>}

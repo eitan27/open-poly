@@ -54,17 +54,31 @@ export type ResolvedProfile =
 /** How an extrude combines with the running body set. */
 export type ExtrudeMode = "new" | "add" | "remove";
 
+/** How far an extrude reaches — see document/types.ts's ExtrudeExtent for the
+ *  full description; mirrored here since the kernel doesn't import the
+ *  document model. */
+export type ExtrudeExtent = "blind" | "symmetric" | "throughAll";
+
 /** Features with all parameters already resolved to numbers/geometry
  *  (expressions are evaluated in the app layer before reaching the kernel). */
 export type ResolvedFeature =
   | { id: string; type: "primitive"; kind: PrimitiveKind; params: Record<string, number> }
-  | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; mode: ExtrudeMode; targetId?: string }
+  // `previewTool`: emit only the swept tool (the changing portion) as the body,
+  // skipping the fuse/cut — used by the live extrude ghost preview so existing
+  // bodies keep their own colour. Targets are still resolved so "throughAll"
+  // sizes correctly.
+  | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; extent: ExtrudeExtent; mode: ExtrudeMode; targetId?: string; previewTool?: boolean }
   | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; size: number }
   // A boolean combines existing bodies (by id) from the running set.
   | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
   // A rigid transform moves a body (by id) — translate + rotate. `copy` keeps
   // the original and emits the moved body as a NEW body (keyed by this feature).
   | { id: string; type: "transform"; targetId: string; tx: number; ty: number; tz: number; angle: number; axis: "x" | "y" | "z"; pivot: [number, number, number]; copy: boolean }
+  // Mirror a body (by id) across the plane through `origin` with `normal`,
+  // producing a new reflected body (the original is kept).
+  | { id: string; type: "mirror"; targetId: string; origin: [number, number, number]; normal: [number, number, number] }
+  // Revolve a sketch profile around an axis (origin + direction) by an angle.
+  | { id: string; type: "revolve"; profile: ResolvedProfile; angle: number; axisOrigin: [number, number, number]; axisDir: [number, number, number] }
   // A body imported from a CAD file (the raw STEP text).
   | { id: string; type: "import"; source: string };
 

@@ -25,6 +25,9 @@ function signedArea(pts: Vec2[]): number {
 export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
   const regions: SketchRegion[] = [];
 
+  // Construction geometry is reference-only — never a profile boundary.
+  entities = entities.filter((e) => !e.construction);
+
   for (const e of entities) {
     if (e.type !== "circle") continue;
     const outline: Vec2[] = [];

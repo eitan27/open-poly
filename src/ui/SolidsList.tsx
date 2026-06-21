@@ -1,4 +1,4 @@
-import type { BooleanFeature, Document, ExtrudeFeature, Feature, ImportFeature, PrimitiveFeature, TransformFeature } from "../document/types";
+import type { BooleanFeature, Document, ExtrudeFeature, Feature, ImportFeature, MirrorFeature, PrimitiveFeature, RevolveFeature, TransformFeature } from "../document/types";
 import { EyeIcon } from "./icons";
 
 interface Props {
@@ -15,6 +15,9 @@ interface Props {
   onToggleHidden: (id: string, hidden: boolean) => void;
   onExportStep: (id: string) => void;
   onExportStl: (id: string) => void;
+  /** The body currently isolated (only it is shown), or null. */
+  isolatedId: string | null;
+  onIsolate: (id: string) => void;
 }
 
 const toHex = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
@@ -22,11 +25,11 @@ const toHex = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
 /** A feature that owns a body's appearance (color/opacity). A copy-transform
  *  produces a body keyed by its own id; an in-place transform doesn't (its body
  *  keeps the target's id), so the bodyIds filter naturally excludes it. */
-type SolidFeature = PrimitiveFeature | ExtrudeFeature | BooleanFeature | TransformFeature | ImportFeature;
+type SolidFeature = PrimitiveFeature | ExtrudeFeature | BooleanFeature | TransformFeature | MirrorFeature | RevolveFeature | ImportFeature;
 function isSolidFeature(f: Feature): f is SolidFeature {
   return (
     f.type === "primitive" || f.type === "extrude" || f.type === "boolean" ||
-    f.type === "transform" || f.type === "import"
+    f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "import"
   );
 }
 
@@ -38,10 +41,11 @@ export function SolidsList({
   onRename,
   onDelete,
   onColorChange,
-  onOpacityChange,
   onToggleHidden,
   onExportStep,
   onExportStl,
+  isolatedId,
+  onIsolate,
 }: Props) {
   // List the features that have a rendered body and own its appearance. A body
   // consumed by a boolean isn't in `bodyIds` (the fold removed it), so this also
@@ -77,16 +81,6 @@ export function SolidsList({
             title={f.name}
             onChange={(e) => onRename(f.id, e.target.value)}
           />
-          <input
-            type="range"
-            className="solid-opacity"
-            min={0}
-            max={1}
-            step={0.05}
-            value={f.opacity}
-            title={`Opacity ${Math.round(f.opacity * 100)}%`}
-            onChange={(e) => onOpacityChange(f.id, Number(e.target.value))}
-          />
           <button
             className="row-icon"
             type="button"
@@ -98,6 +92,17 @@ export function SolidsList({
             }}
           >
             <EyeIcon />
+          </button>
+          <button
+            className={"row-icon" + (isolatedId === f.id ? " active" : "")}
+            type="button"
+            title={isolatedId === f.id ? "Exit isolate" : "Isolate (show only this)"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onIsolate(f.id);
+            }}
+          >
+            ◎
           </button>
           <button
             className="row-icon export-btn"

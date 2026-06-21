@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
   addBoolean,
@@ -6,7 +6,9 @@ import {
   addExtrude,
   addFeature,
   addImport,
+  addMirror,
   addPlane,
+  addRevolve,
   addSketch,
   addSketchConstraints,
   addSketchEntities,
@@ -17,6 +19,7 @@ import {
   migrateDocument,
   moveFeature,
   removeFeature,
+  removeSketchConstraint,
   removeSketchEntity,
   removeVariable,
   renameFeature,
@@ -35,9 +38,11 @@ import {
 import { DEFAULT_SOLID_COLOR } from "./document/colors";
 import type {
   Document,
+  ExtrudeExtent,
   ExtrudeProfile,
   FeatureKind,
   PlaneFeature,
+  SketchConstraint,
   SketchEntity,
   SketchFeature,
   TransformFeature,
@@ -46,7 +51,7 @@ import type {
 import type { BooleanOp, MeshedEdges, MeshedFaces } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
-import { frameOf, planeRefLabel, uvToWorld, type PlaneFrameData, type SketchPlaneRef } from "./document/planes";
+import { frameOf, planeRefLabel, uvToWorld, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
 import { evaluateExpression } from "./document/expression";
 import { detectSketchRegions } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
@@ -62,9 +67,10 @@ import {
 import { useHistory } from "./hooks/useHistory";
 import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
-import { EyeIcon } from "./ui/icons";
+import { ConstructionIcon, ParallelIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { DraggableDialog } from "./ui/DraggableDialog";
+import { DimensionLabels, type DimLabelSpec } from "./ui/DimensionLabels";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
@@ -74,7 +80,9 @@ import {
   sameSelection,
   type DatumId,
   type FeatureMesh,
+  type GhostMesh,
   type Selection,
+  type SelectionFilter,
   type SketchTool,
   type TransformEdit,
   type TransformMode,
@@ -87,6 +95,20 @@ import "./App.css";
 const fmt = (n: number) => {
   const r = Math.round(n * 1000) / 1000;
   return Number.isInteger(r) ? String(r) : String(r);
+};
+
+/** Human-readable label for a sketch constraint (for the constraints list). */
+const constraintLabel = (c: SketchConstraint): string => {
+  switch (c.type) {
+    case "horizontal": return "Horizontal";
+    case "vertical": return "Vertical";
+    case "parallel": return "Parallel";
+    case "perpendicular": return "Perpendicular";
+    case "equal": return "Equal";
+    case "distance": return `Length ${fmt(c.value)}`;
+    case "radius": return `Radius ${fmt(c.value)}`;
+    case "angle": return `Angle ${fmt(c.value)}°`;
+  }
 };
 
 /** Average position of a tessellated body face — the centroid fallback used to
@@ -283,18 +305,18 @@ export default function App() {
   // Regular clicks accumulate into the set; clicking a selected element removes
   // it; clicking empty space clears.
   const handlePick = (picked: Selection | null) => {
-    // Dimension mode armed: the next picked line becomes the dimension target.
+    // Dimension mode armed: the next picked line/circle is the dimension target.
     if (dimPending) {
       const sk = doc.features.find((f) => f.id === editingSketchId);
       const e =
         picked?.kind === "sketchEntity" && picked.sketchId === editingSketchId && sk?.type === "sketch"
           ? sk.entities.find((x) => x.id === picked.entityId)
           : undefined;
-      if (e?.type === "line") {
+      if (e?.type === "line" || e?.type === "circle") {
         setSelection([picked!]);
         openDimensionFor(e);
       } else {
-        setDimPending(false); // clicked empty / non-line → cancel
+        setDimPending(false); // clicked empty / non-dimensionable → cancel
       }
       return;
     }
@@ -313,23 +335,49 @@ export default function App() {
   // new reference plane.
   const [pickPurpose, setPickPurpose] = useState<"sketch" | "plane">("sketch");
   const [planeDialog, setPlaneDialog] = useState<{ base: SketchPlaneRef; offset: string } | null>(null);
+  // The Mirror dialog: the body to mirror + the chosen plane key (see plane keys).
+  const [mirrorDialog, setMirrorDialog] = useState<{ targetId: string; plane: string } | null>(null);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
   const [draft, setDraft] = useState<Vec2[]>([]);
   const [polygonSides, setPolygonSides] = useState(6);
+  // When on, newly drawn entities are marked as construction (reference) geometry.
+  const [constructionMode, setConstructionMode] = useState(false);
   const [fullyConstrained, setFullyConstrained] = useState(false);
-  // Length-dimension entry: the line being dimensioned, the in-progress text,
-  // and the on-screen position (px, canvas-relative) to anchor the input box.
+  // The last solve reported conflicting/redundant (over-)constraints.
+  const [solveConflict, setSolveConflict] = useState(false);
+  // Dimension entry: the entity being dimensioned, whether it's a line length or
+  // a circle radius, the in-progress text, and the on-screen position (px,
+  // canvas-relative) to anchor the input box.
   const [dimInput, setDimInput] = useState<
-    { entityId: string; value: string; x: number; y: number } | null
+    {
+      entityId: string;
+      /** Second line, for an angle dimension between two lines. */
+      entityId2?: string;
+      kind: "length" | "radius" | "angle";
+      /** The constraint being edited (if reopening an existing one), so its
+       *  on-canvas label is hidden while the input is open. */
+      editId?: string;
+      value: string;
+      x: number;
+      y: number;
+    } | null
   >(null);
   // Armed dimension mode: D was pressed with nothing selected; the next picked
-  // line becomes the dimension target.
+  // line/circle becomes the dimension target.
   const [dimPending, setDimPending] = useState(false);
   // The extrude dialog (anchored at the profile) while choosing parameters.
   const [extrudeDialog, setExtrudeDialog] = useState<
-    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; targetId: string | null; x: number; y: number } | null
+    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; extent: ExtrudeExtent; targetId: string | null; x: number; y: number } | null
   >(null);
+  // Live ghost preview of the extrude dialog's current params: one entry per
+  // body the regen result represents (every new extrude for "new", or the
+  // single chosen target for "add"/"remove") — used to swap those bodies' real
+  // meshes out for the translucent previews while the dialog is open.
+  const [extrudePreview, setExtrudePreview] = useState<{ bodyId: string; mesh: FeatureMesh["mesh"] }[] | null>(
+    null,
+  );
+  const [extrudePreviewError, setExtrudePreviewError] = useState<string | null>(null);
   const [dressUpDialog, setDressUpDialog] = useState<
     { op: "chamfer" | "fillet"; size: string; x: number; y: number } | null
   >(null);
@@ -347,6 +395,27 @@ export default function App() {
   >(null);
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
+  // The Variables section is collapsible (to reclaim panel space). Default:
+  // open for a short list (< 5 variables), collapsed for a long one so it
+  // doesn't dominate the panel. Set from the loaded doc (see the restore effect)
+  // and then left wherever the user puts it.
+  const VARS_OPEN_THRESHOLD = 5;
+  const [variablesOpen, setVariablesOpen] = useState(() => doc.variables.length < VARS_OPEN_THRESHOLD);
+  // Height of the timeline's own scroll box, dragged via the splitter below it.
+  const [timelineHeight, setTimelineHeight] = useState(260);
+  const startTimelineResize = (e: PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = timelineHeight;
+    const move = (ev: globalThis.PointerEvent) =>
+      setTimelineHeight(Math.min(600, Math.max(80, startHeight + ev.clientY - startY)));
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
   const newSolidRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const startDimensionRef = useRef<() => void>(() => {});
@@ -370,6 +439,10 @@ export default function App() {
   // live on the feature and are overlaid in `meshes` below so tweaking them
   // doesn't require re-running the (expensive) kernel regen.
   const [rawMeshes, setRawMeshes] = useState<{ id: string; mesh: FeatureMesh["mesh"] }[]>([]);
+  // When set, only this body is rendered (isolate); others are hidden until exit.
+  const [isolatedBodyId, setIsolatedBodyId] = useState<string | null>(null);
+  // Which geometry kinds clicking can pick (selection filters).
+  const [selFilter, setSelFilter] = useState<SelectionFilter>({ body: true, face: true, edge: true, vertex: true });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
@@ -429,7 +502,10 @@ export default function App() {
         if (cancelled) return;
         if (docs.length > 0) {
           docIdRef.current = docs[0].id;
-          resetDoc(migrateDocument(docs[0].doc));
+          const migrated = migrateDocument(docs[0].doc);
+          resetDoc(migrated);
+          // Default the Variables section open/collapsed by the restored count.
+          setVariablesOpen(migrated.variables.length < VARS_OPEN_THRESHOLD);
         }
       } catch (err) {
         console.warn("could not load saved document:", err);
@@ -591,6 +667,7 @@ export default function App() {
   const meshes = useMemo<FeatureMesh[]>(
     () =>
       rawMeshes.flatMap((m) => {
+        if (isolatedBodyId && m.id !== isolatedBodyId) return []; // isolate mode
         const feature = doc.features.find((f) => f.id === m.id);
         // Primitives, "new" extrusions, booleans, and copy-transforms own a
         // color/opacity/hidden; a body modified in place (add/remove/dressup, or
@@ -600,13 +677,24 @@ export default function App() {
           feature?.type === "extrude" ||
           feature?.type === "boolean" ||
           feature?.type === "transform" ||
+          feature?.type === "mirror" ||
           feature?.type === "import";
         if (owns && feature.hidden) return []; // hidden part — don't render or pick
         const color = owns ? feature.color : DEFAULT_SOLID_COLOR;
         const opacity = owns ? feature.opacity : 1;
         return [{ id: m.id, mesh: m.mesh, color, opacity }];
       }),
-    [rawMeshes, doc],
+    [rawMeshes, doc, isolatedBodyId],
+  );
+
+  // The extrude live preview ghosts only the swept *tool* (the changing
+  // portion), keyed by fresh ids that aren't among the real bodies — so every
+  // existing body stays rendered in its own colour and only the new material
+  // reads as cyan. Hence the viewport just shows all real meshes as usual.
+  const viewportMeshes = meshes;
+  const ghostMeshes = useMemo<GhostMesh[]>(
+    () => (extrudePreview ? extrudePreview.map((p) => ({ mesh: p.mesh })) : []),
+    [extrudePreview],
   );
 
   // Feature ids that produced an actual rendered body — what the Solids list
@@ -621,6 +709,12 @@ export default function App() {
     doc, setDoc, selection, setSelection,
     meshesRef: agentMeshesRef, errorsRef: agentErrorsRef, waitForRegen, viewApiRef,
   });
+
+  // Exit isolate if the isolated body disappears (deleted / consumed / regen).
+  useEffect(() => {
+    if (isolatedBodyId && !bodyIds.has(isolatedBodyId)) setIsolatedBodyId(null);
+  }, [bodyIds, isolatedBodyId]);
+  const handleIsolate = (id: string) => setIsolatedBodyId((cur) => (cur === id ? null : id));
 
   // Bodies available as Boolean operands: features with a rendered body.
   const booleanCandidates = useMemo(
@@ -641,45 +735,110 @@ export default function App() {
     return f && f.type === "sketch" ? f : null;
   }, [doc, editingSketchId]);
 
-  // The single line currently selected inside the active sketch (the target a
-  // length dimension would apply to). Null unless exactly one such line is held.
-  const dimLine = useMemo(() => {
-    if (!editingSketch) return null;
-    const lines = selection.filter(
-      (s): s is Extract<Selection, { kind: "sketchEntity" }> =>
-        s.kind === "sketchEntity" && s.sketchId === editingSketch.id,
+  // The single dimensionable entity selected inside the active sketch (a line →
+  // length, or a circle → radius). Null unless exactly one such entity is held.
+  // The sketch entities currently selected in the active sketch, in pick order.
+  const selectedSketchEntities = useMemo(() => {
+    if (!editingSketch) return [];
+    return selection.flatMap((s) =>
+      s.kind === "sketchEntity" && s.sketchId === editingSketch.id
+        ? (editingSketch.entities.find((x) => x.id === s.entityId) ?? [])
+        : [],
     );
-    if (lines.length !== 1) return null;
-    const e = editingSketch.entities.find((x) => x.id === lines[0].entityId);
-    if (e?.type !== "line") return null;
-    return { entityId: e.id, length: Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) };
   }, [editingSketch, selection]);
+
+  // A single line/circle selected → eligible for a length/radius dimension.
+  const dimEntity = useMemo(() => {
+    if (selectedSketchEntities.length !== 1) return null;
+    const e = selectedSketchEntities[0];
+    return e.type === "line" || e.type === "circle" ? e : null;
+  }, [selectedSketchEntities]);
+
+  // Exactly two lines / two circles selected → eligible for the line-pair
+  // constraints (angle/parallel/perpendicular/equal-length) and equal-radius.
+  const twoSelectedLines = useMemo(() => {
+    const es = selectedSketchEntities;
+    return es.length === 2 && es[0].type === "line" && es[1].type === "line"
+      ? ([es[0], es[1]] as Extract<SketchEntity, { type: "line" }>[])
+      : null;
+  }, [selectedSketchEntities]);
+  const twoSelectedCircles = useMemo(() => {
+    const es = selectedSketchEntities;
+    return es.length === 2 && es[0].type === "circle" && es[1].type === "circle"
+      ? ([es[0], es[1]] as Extract<SketchEntity, { type: "circle" }>[])
+      : null;
+  }, [selectedSketchEntities]);
+
+  // The active sketch's plane frame (uv → world), for placing on-canvas overlays.
+  const dimFrame = useMemo(
+    () => (editingSketch ? frameOf(editingSketch.plane, resolved.planeFrames) : null),
+    [editingSketch, resolved.planeFrames],
+  );
+
+  // On-canvas dimension labels for the active sketch: one per length (line),
+  // radius (circle), or angle (line–line) dimension. The label currently being
+  // edited (its dim-input is open) is dropped so the two don't overlap.
+  const ent = (id: string) => editingSketch?.entities.find((x) => x.id === id);
+  const dimLabels = useMemo<DimLabelSpec[]>(() => {
+    if (!editingSketch) return [];
+    return editingSketch.constraints.flatMap((c): DimLabelSpec[] => {
+      if (c.id === dimInput?.editId) return [];
+      if (c.type === "distance") {
+        const e = ent(c.entity);
+        if (e?.type === "line") return [{ id: c.id, text: fmt(c.value), a: e.a, b: e.b }];
+      } else if (c.type === "radius") {
+        const e = ent(c.entity);
+        if (e?.type === "circle") {
+          // Anchor the label out along a 45° radius leader (centre → rim point).
+          const rim: Vec2 = [e.c[0] + e.r * Math.SQRT1_2, e.c[1] + e.r * Math.SQRT1_2];
+          return [{ id: c.id, text: `R${fmt(c.value)}`, a: e.c, b: rim }];
+        }
+      } else if (c.type === "angle") {
+        const la = ent(c.a);
+        const lb = ent(c.b);
+        if (la?.type === "line" && lb?.type === "line") {
+          const mid = (l: Extract<SketchEntity, { type: "line" }>): Vec2 => [
+            (l.a[0] + l.b[0]) / 2,
+            (l.a[1] + l.b[1]) / 2,
+          ];
+          return [{ id: c.id, text: `${fmt(c.value)}°`, a: mid(la), b: mid(lb) }];
+        }
+      }
+      return [];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingSketch, dimInput]);
 
   const measure = useMemo(
     () => measureSelection(selection, doc, meshes),
     [selection, doc, meshes],
   );
 
-  // A single selected profile an Extrude could consume: a sketch region or a
-  // planar face of an existing body (with its centroid baked in for re-finding).
-  const extrudeProfile = useMemo((): ExtrudeProfile | null => {
-    if (selection.length !== 1) return null;
-    const s = selection[0];
-    if (s.kind === "sketchFace") return { kind: "sketchRegion", sketchId: s.sketchId, regionId: s.regionId };
-    if (s.kind === "face") {
-      const m = meshes.find((x) => x.id === s.featureId);
-      const center = m ? faceCentroid(m.mesh.faces, s.faceId) : null;
-      if (!center) return null;
-      const faceName = m ? faceNameOf(m.mesh.faces, s.faceId) : undefined;
-      return { kind: "bodyFace", featureId: s.featureId, faceId: s.faceId, faceName, center };
+  // Every selected profile an Extrude could consume: sketch regions and/or
+  // planar faces of existing bodies, picked one at a time and accumulated by
+  // the normal multi-select (see handlePick) — one dialog fill-in extrudes or
+  // cuts all of them at once.
+  const extrudeProfiles = useMemo((): ExtrudeProfile[] => {
+    const profiles: ExtrudeProfile[] = [];
+    for (const s of selection) {
+      if (s.kind === "sketchFace") {
+        profiles.push({ kind: "sketchRegion", sketchId: s.sketchId, regionId: s.regionId });
+      } else if (s.kind === "face") {
+        const m = meshes.find((x) => x.id === s.featureId);
+        const center = m ? faceCentroid(m.mesh.faces, s.faceId) : null;
+        if (!center) continue;
+        const faceName = m ? faceNameOf(m.mesh.faces, s.faceId) : undefined;
+        profiles.push({ kind: "bodyFace", featureId: s.featureId, faceId: s.faceId, faceName, center });
+      }
     }
-    return null;
+    return profiles;
   }, [selection, meshes]);
 
   // World-space anchor for the extrude dialog: a body face's centroid, or a
-  // sketch region's centroid mapped to 3D.
+  // sketch region's centroid mapped to 3D. Anchored on the first profile when
+  // several are selected.
   const profileAnchorWorld = (): [number, number, number] | null => {
-    const p = extrudeProfile;
+    const p = extrudeProfiles[0];
     if (!p) return null;
     if (p.kind === "bodyFace") return p.center;
     const sk = doc.features.find((f) => f.id === p.sketchId);
@@ -695,7 +854,7 @@ export default function App() {
   // The solid a sketch-region profile sits on (drawn on its face, or coplanar +
   // overlapping it), if any — so the extrude can default to adding onto it.
   const extrudeHostBody = (): string | null => {
-    const p = extrudeProfile;
+    const p = extrudeProfiles[0];
     if (!p || p.kind !== "sketchRegion") return null;
     const sk = doc.features.find((f) => f.id === p.sketchId);
     if (sk?.type !== "sketch") return null;
@@ -708,7 +867,8 @@ export default function App() {
   };
 
   const openExtrudeDialog = () => {
-    if (!extrudeProfile) return;
+    if (extrudeProfiles.length === 0) return;
+    const first = extrudeProfiles[0];
     const world = profileAnchorWorld();
     const s = (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
     // Default to adding onto the host solid when the profile sits on one:
@@ -716,9 +876,9 @@ export default function App() {
     //  - a sketch region drawn on / coplanar+overlapping a solid's face -> that solid.
     // Otherwise a new body (target = first available, for if the user switches mode).
     const addTarget =
-      extrudeProfile.kind === "bodyFace"
-        ? bodyIds.has(extrudeProfile.featureId)
-          ? extrudeProfile.featureId
+      first.kind === "bodyFace"
+        ? bodyIds.has(first.featureId)
+          ? first.featureId
           : null
         : extrudeHostBody();
     const defaultTarget = addTarget ?? booleanCandidates[0]?.id ?? null;
@@ -726,6 +886,7 @@ export default function App() {
       mode: addTarget ? "add" : "new",
       distance: "10",
       flip: false,
+      extent: "blind",
       targetId: defaultTarget,
       x: s.x,
       y: s.y,
@@ -733,24 +894,107 @@ export default function App() {
   };
 
   const createExtrude = () => {
-    if (!extrudeProfile || !extrudeDialog) return;
+    if (extrudeProfiles.length === 0 || !extrudeDialog) return;
     // Add/Remove require a target body to affect.
     if (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) return;
-    const { doc: next, id } = addExtrude(doc, extrudeProfile, {
-      distance: extrudeDialog.distance,
-      flip: extrudeDialog.flip,
-      mode: extrudeDialog.mode,
-      targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
-    });
-    // Hide the source sketch once it's been consumed by an extrude. It stays in
-    // place and editable — toggle the timeline eye (or edit it) to bring it back.
-    // Folded into the same undo step as the extrude.
-    const updated =
-      extrudeProfile.kind === "sketchRegion" ? setSuppressed(next, extrudeProfile.sketchId, true) : next;
-    setDoc(updated);
-    selectFeature(id);
+    // One Extrude feature per selected profile, sharing the dialog's settings —
+    // folded into a single undo step by threading `next` through every
+    // addExtrude/setSuppressed call before the one setDoc at the end.
+    let next = doc;
+    let lastId = "";
+    for (const profile of extrudeProfiles) {
+      const res = addExtrude(next, profile, {
+        distance: extrudeDialog.distance,
+        flip: extrudeDialog.flip,
+        extent: extrudeDialog.extent,
+        mode: extrudeDialog.mode,
+        targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
+      });
+      // Hide the source sketch once it's been consumed by an extrude. It stays
+      // in place and editable — toggle the timeline eye (or edit it) to bring
+      // it back.
+      next = profile.kind === "sketchRegion" ? setSuppressed(res.doc, profile.sketchId, true) : res.doc;
+      lastId = res.id;
+    }
+    setDoc(next);
+    selectFeature(lastId);
     setExtrudeDialog(null);
   };
+
+  // Live ghost preview of the extrude dialog: mirrors the main regen effect
+  // above, but against a throwaway document (current doc + this draft extrude)
+  // that's never assigned via `setDoc` — no undo entry, no effect on the real
+  // model. Re-runs on every dialog/profile change, same as editing a committed
+  // feature's params already does.
+  useEffect(() => {
+    if (!extrudeDialog || extrudeProfiles.length === 0 || (extrudeDialog.mode !== "new" && !extrudeDialog.targetId)) {
+      setExtrudePreview(null);
+      setExtrudePreviewError(null);
+      return;
+    }
+    const kernel = kernelRef.current;
+    if (!ready || !kernel) return;
+    let cancelled = false;
+
+    // Build a throwaway doc with every selected profile extruded (mirrors
+    // createExtrude), honoring the dialog's extent. Each extrude is regenerated
+    // in `previewTool` mode so the kernel emits only the swept tool (the
+    // changing portion) — the existing bodies are left untouched and keep their
+    // own colour, so only the new material reads as cyan.
+    let previewDoc = doc;
+    const createdIds: string[] = [];
+    for (const profile of extrudeProfiles) {
+      const res = addExtrude(previewDoc, profile, {
+        distance: extrudeDialog.distance,
+        flip: extrudeDialog.flip,
+        extent: extrudeDialog.extent,
+        mode: extrudeDialog.mode,
+        targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
+      });
+      previewDoc = res.doc;
+      createdIds.push(res.id);
+    }
+    const created = new Set(createdIds);
+    const previewResolved = resolveDocument(previewDoc);
+    const resolveErr = createdIds.map((id) => previewResolved.errors[id]).find(Boolean);
+    if (resolveErr) {
+      setExtrudePreview(null);
+      setExtrudePreviewError(resolveErr);
+      return;
+    }
+    const features = previewResolved.features.map((rf) =>
+      rf.type === "extrude" && created.has(rf.id) ? { ...rf, previewTool: true } : rf,
+    );
+
+    kernel
+      .regenerate(features)
+      .then((results) => {
+        if (cancelled) return;
+        const previews: { bodyId: string; mesh: FeatureMesh["mesh"] }[] = [];
+        let failure: string | null = null;
+        for (const id of createdIds) {
+          const hit = results.find((r) => r.id === id);
+          if (hit?.ok) previews.push({ bodyId: id, mesh: hit.mesh });
+          else if (hit && !hit.ok) failure = hit.error;
+        }
+        if (previews.length > 0) {
+          setExtrudePreview(previews);
+          setExtrudePreviewError(failure); // partial failure still surfaces
+        } else {
+          setExtrudePreview(null);
+          setExtrudePreviewError(failure ?? "Preview failed.");
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setExtrudePreview(null);
+        setExtrudePreviewError(String(err?.message ?? err));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [extrudeDialog, extrudeProfiles, doc, ready]);
 
   // One or more selected body edges, all on the same body — what a chamfer or
   // fillet would dress. Resolves each edge to its persistent name.
@@ -803,6 +1047,57 @@ export default function App() {
     const bodies = [...ids].filter((id) => bodyIds.has(id));
     return bodies.length === 1 ? bodies[0] : null;
   }, [selection, doc, bodyIds]);
+
+  // Mirror plane options for the dialog: the three datums + any reference planes.
+  // Keys are "datum:<id>" or "plane:<id>"; parsed back to a SketchPlaneRef.
+  const mirrorPlaneOptions = useMemo(
+    () => [
+      { key: "datum:plane-top", label: "Top" },
+      { key: "datum:plane-front", label: "Front" },
+      { key: "datum:plane-right", label: "Right" },
+      ...userPlanes.map((p) => ({ key: `plane:${p.id}`, label: p.name })),
+    ],
+    [userPlanes],
+  );
+  const planeKeyToRef = (key: string): SketchPlaneRef =>
+    key.startsWith("plane:")
+      ? { kind: "plane", planeId: key.slice(6) }
+      : { kind: "datum", id: key.slice(6) as SketchPlaneId };
+
+  // Revolve needs a profile region + an axis line, both in the same sketch.
+  const revolveInputs = useMemo(() => {
+    let profile: { sketchId: string; regionId: string } | null = null;
+    let axis: { sketchId: string; entityId: string } | null = null;
+    for (const s of selection) {
+      if (s.kind === "sketchFace") profile = { sketchId: s.sketchId, regionId: s.regionId };
+      else if (s.kind === "sketchEntity") {
+        const sk = doc.features.find((f) => f.id === s.sketchId);
+        const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === s.entityId) : undefined;
+        if (e?.type === "line") axis = { sketchId: s.sketchId, entityId: s.entityId };
+      }
+    }
+    return profile && axis && profile.sketchId === axis.sketchId ? { profile, axis } : null;
+  }, [selection, doc]);
+
+  // Create a Revolve (360° by default; edit the angle in the parameter editor).
+  const openRevolve = () => {
+    if (!revolveInputs) return;
+    const { doc: next, id } = addRevolve(doc, revolveInputs.profile, revolveInputs.axis);
+    setDoc(next);
+    selectFeature(id);
+  };
+
+  const openMirror = () => {
+    if (!transformTarget) return;
+    setMirrorDialog({ targetId: transformTarget, plane: "datum:plane-front" });
+  };
+  const createMirror = () => {
+    if (!mirrorDialog) return;
+    const { doc: next, id } = addMirror(doc, mirrorDialog.targetId, planeKeyToRef(mirrorDialog.plane));
+    setDoc(next);
+    setMirrorDialog(null);
+    selectFeature(id);
+  };
 
   // Create a Transform on the selected body and open the gizmo to edit it.
   const openTransform = () => {
@@ -967,6 +1262,16 @@ export default function App() {
     setSelection([]); // so the next click (e.g. a face to extrude) starts fresh
   };
 
+  // Double-clicking a timeline row enters its edit mode directly — sketches and
+  // transforms have a distinct edit mode (gizmo / sketch canvas); every other
+  // feature type already shows editable fields in the param editor on select,
+  // so a double-click there is just a (harmless) select.
+  const handleTreeDoubleClick = (id: string) => {
+    const f = doc.features.find((x) => x.id === id);
+    if (f?.type === "sketch") editSketch(id);
+    else if (f?.type === "transform") editTransform(id);
+  };
+
   // A snapped click on the sketch plane (already in uv coords). Drives the
   // multi-click construction tools. `hv` records a horizontal/vertical inference
   // (line tool) so it can be captured as a constraint.
@@ -977,8 +1282,28 @@ export default function App() {
       setDoc(addSketchEntities(doc, sketchId, entities));
       setFullyConstrained(false); // geometry changed; constraint state unknown
     };
-    const lineEntity = (a: Vec2, b: Vec2): SketchEntity => ({ type: "line", id: genId(), a, b });
+    // Stamp construction (reference) geometry when that draw-mode is on.
+    const mark = <T extends SketchEntity>(e: T): T => (constructionMode ? { ...e, construction: true } : e);
+    const lineEntity = (a: Vec2, b: Vec2): SketchEntity => mark({ type: "line", id: genId(), a, b });
     const loopLines = (pts: Vec2[]) => loopSegments(pts).map(([a, b]) => lineEntity(a, b));
+
+    // Commit a rectangle as 4 looped lines plus the implicit horizontal/vertical
+    // constraints (each edge is axis-aligned, so it's exactly H or V). Without
+    // these a "rectangle" is just four coincident lines, free to shear the
+    // moment any later constraint is added.
+    const commitRect = (pts: Vec2[]) => {
+      const segs = loopSegments(pts);
+      const lines = segs.map(([a, b]) => lineEntity(a, b));
+      let next = addSketchEntities(doc, sketchId, lines);
+      const cons: SketchConstraint[] = segs.map(([a, b], i) => ({
+        id: genId(),
+        type: Math.abs(b[0] - a[0]) >= Math.abs(b[1] - a[1]) ? "horizontal" : "vertical",
+        entity: lines[i].id,
+      }));
+      next = addSketchConstraints(next, sketchId, cons);
+      setDoc(next);
+      setFullyConstrained(false);
+    };
 
     switch (sketchTool) {
       case "line":
@@ -997,14 +1322,14 @@ export default function App() {
       case "rect-corner":
         if (draft.length === 0) setDraft([uv]);
         else {
-          commit(loopLines(rectangleCorners(draft[0], uv)));
+          commitRect(rectangleCorners(draft[0], uv));
           setDraft([]);
         }
         break;
       case "rect-center":
         if (draft.length === 0) setDraft([uv]);
         else {
-          commit(loopLines(rectangleFromCenter(draft[0], uv)));
+          commitRect(rectangleFromCenter(draft[0], uv));
           setDraft([]);
         }
         break;
@@ -1012,7 +1337,7 @@ export default function App() {
         if (draft.length === 0) setDraft([uv]);
         else {
           const r = Math.hypot(uv[0] - draft[0][0], uv[1] - draft[0][1]);
-          commit([{ type: "circle", id: genId(), c: draft[0], r }]);
+          commit([mark({ type: "circle", id: genId(), c: draft[0], r })]);
           setDraft([]);
         }
         break;
@@ -1020,7 +1345,7 @@ export default function App() {
         if (draft.length < 2) setDraft([...draft, uv]);
         else {
           const c = circleFrom3(draft[0], draft[1], uv);
-          if (c) commit([{ type: "circle", id: genId(), c: c.center, r: c.r }]);
+          if (c) commit([mark({ type: "circle", id: genId(), c: c.center, r: c.r })]);
           setDraft([]);
         }
         break;
@@ -1035,7 +1360,7 @@ export default function App() {
         if (draft.length < 2) setDraft([...draft, uv]);
         else {
           const a = arcFrom3(draft[0], uv, draft[1]); // start, mid(uv), end
-          if (a) commit([{ type: "arc", id: genId(), c: a.center, r: a.r, start: a.start, end: a.end }]);
+          if (a) commit([mark({ type: "arc", id: genId(), c: a.center, r: a.r, start: a.start, end: a.end })]);
           setDraft([]);
         }
         break;
@@ -1050,6 +1375,7 @@ export default function App() {
     try {
       const res = await solveSketch(sk.entities, sk.constraints);
       setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+      setSolveConflict(res.hasConflicts);
       return setSketchEntities(docArg, sketchId, res.entities);
     } catch (err) {
       console.error("constraint solve failed:", err);
@@ -1062,38 +1388,130 @@ export default function App() {
     setDoc(await solveSketchIn(doc, editingSketch.id));
   };
 
-  // Open the length-dimension input anchored next to the given line, pre-filled
-  // with its present length.
-  const openDimensionFor = (line: Extract<SketchEntity, { type: "line" }>) => {
-    if (!editingSketch) return;
-    const frame = frameOf(editingSketch.plane, resolved.planeFrames);
-    const world = uvToWorld(frame, (line.a[0] + line.b[0]) / 2, (line.a[1] + line.b[1]) / 2);
-    const s = viewApiRef.current?.worldToScreen(world) ?? { x: 240, y: 120 };
-    const length = Math.hypot(line.b[0] - line.a[0], line.b[1] - line.a[1]);
-    setDimPending(false);
-    setSelection([{ kind: "sketchEntity", sketchId: editingSketch.id, entityId: line.id }]);
-    setDimInput({ entityId: line.id, value: fmt(length), x: s.x, y: s.y });
+  const screenOf = (uv: Vec2) => {
+    const frame = frameOf(editingSketch!.plane, resolved.planeFrames);
+    return viewApiRef.current?.worldToScreen(uvToWorld(frame, uv[0], uv[1])) ?? { x: 240, y: 120 };
   };
 
-  // D (or the ↔ button): dimension the selected line if there is one, otherwise
-  // arm "pick a line to dimension" mode (forcing the Select tool so clicks pick).
+  // Open the dimension input anchored next to the given entity: a line → length
+  // (input next to its midpoint); a circle → radius (input next to its centre).
+  // `editId`/`prefill` are supplied when reopening an existing constraint (its
+  // label hides while the input is open, and the input shows the stored value);
+  // for a fresh dimension the value is computed from the current geometry.
+  const openDimensionFor = (
+    entity: Extract<SketchEntity, { type: "line" | "circle" }>,
+    editId?: string,
+    prefill?: number,
+  ) => {
+    if (!editingSketch) return;
+    const [uv, kind, measured]: [Vec2, "length" | "radius", number] =
+      entity.type === "line"
+        ? [
+            [(entity.a[0] + entity.b[0]) / 2, (entity.a[1] + entity.b[1]) / 2],
+            "length",
+            Math.hypot(entity.b[0] - entity.a[0], entity.b[1] - entity.a[1]),
+          ]
+        : [entity.c, "radius", entity.r];
+    const s = screenOf(uv);
+    setDimPending(false);
+    setSelection([{ kind: "sketchEntity", sketchId: editingSketch.id, entityId: entity.id }]);
+    setDimInput({ entityId: entity.id, kind, editId, value: fmt(prefill ?? measured), x: s.x, y: s.y });
+  };
+
+  // Open the angle input between two lines, anchored between their midpoints.
+  // Reopening shows the stored value (`prefill`); a fresh angle is computed from
+  // the lines' current included angle (which may be the supplement of what a
+  // later constraint settles on, so we never recompute over a stored value).
+  const openAngleFor = (
+    la: Extract<SketchEntity, { type: "line" }>,
+    lb: Extract<SketchEntity, { type: "line" }>,
+    editId?: string,
+    prefill?: number,
+  ) => {
+    if (!editingSketch) return;
+    const mid = (l: typeof la): Vec2 => [(l.a[0] + l.b[0]) / 2, (l.a[1] + l.b[1]) / 2];
+    const angOf = (l: typeof la) => Math.atan2(l.b[1] - l.a[1], l.b[0] - l.a[0]);
+    const deg = prefill ?? ((Math.abs(angOf(lb) - angOf(la)) * 180) / Math.PI) % 180;
+    const ma = mid(la);
+    const mb = mid(lb);
+    const s = screenOf([(ma[0] + mb[0]) / 2, (ma[1] + mb[1]) / 2]);
+    setDimPending(false);
+    setDimInput({ entityId: la.id, entityId2: lb.id, kind: "angle", editId, value: fmt(deg), x: s.x, y: s.y });
+  };
+
+  // D (or the ↔ button): dimension the current selection — a single line/circle
+  // (length/radius), or two lines (angle) — else arm "pick one to dimension"
+  // mode (forcing the Select tool so clicks pick).
   const startDimension = () => {
     if (!editingSketch) return;
-    if (dimLine) {
-      const e = editingSketch.entities.find((x) => x.id === dimLine.entityId);
-      if (e?.type === "line") openDimensionFor(e);
-      return;
-    }
+    if (dimEntity) return openDimensionFor(dimEntity);
+    if (twoSelectedLines) return openAngleFor(twoSelectedLines[0], twoSelectedLines[1]);
     setSketchTool("select");
     setDimPending(true);
   };
   startDimensionRef.current = startDimension;
 
-  // Apply the entered length as a `distance` constraint and immediately re-solve
-  // so the whole sketch updates. Replaces any prior length on the same line.
+  // Add a geometric (non-dimensional) constraint between two entities and re-solve.
+  // No-op if an equivalent constraint already exists (avoids redundant piles).
+  const addGeoConstraint = async (type: "parallel" | "perpendicular" | "equal", a: string, b: string) => {
+    if (!editingSketch) return;
+    const sketchId = editingSketch.id;
+    const exists = editingSketch.constraints.some(
+      (c) => c.type === type && ((c.a === a && c.b === b) || (c.a === b && c.b === a)),
+    );
+    if (exists) return;
+    let next = addSketchConstraints(doc, sketchId, [{ id: genId(), type, a, b }]);
+    next = await solveSketchIn(next, sketchId);
+    setDoc(next);
+    setSelection([]);
+  };
+
+  // Construction (reference) geometry: with a sketch-entity selection, flip those
+  // entities' construction flag; otherwise toggle the draw-mode for new entities.
+  const toggleConstruction = () => {
+    if (!editingSketch) return;
+    if (selectedSketchEntities.length === 0) {
+      setConstructionMode((m) => !m);
+      return;
+    }
+    const ids = new Set(selectedSketchEntities.map((e) => e.id));
+    const makeConstruction = selectedSketchEntities.some((e) => !e.construction);
+    const entities = editingSketch.entities.map((e) =>
+      ids.has(e.id) ? { ...e, construction: makeConstruction } : e,
+    );
+    setDoc(setSketchEntities(doc, editingSketch.id, entities));
+  };
+
+  // Remove a single constraint (from the constraints list) and re-solve.
+  const deleteConstraint = async (id: string) => {
+    if (!editingSketch) return;
+    let next = removeSketchConstraint(doc, editingSketch.id, id);
+    next = await solveSketchIn(next, editingSketch.id);
+    setDoc(next);
+  };
+
+  // Reopen the editor for an existing constraint (double-clicking its label).
+  const editConstraint = (constraintId: string) => {
+    if (!editingSketch) return;
+    const c = editingSketch.constraints.find((x) => x.id === constraintId);
+    if (!c) return;
+    if (c.type === "distance" || c.type === "radius") {
+      const e = ent(c.entity);
+      if (e?.type === "line" || e?.type === "circle") openDimensionFor(e, c.id, c.value);
+    } else if (c.type === "angle") {
+      const la = ent(c.a);
+      const lb = ent(c.b);
+      if (la?.type === "line" && lb?.type === "line") openAngleFor(la, lb, c.id, c.value);
+    }
+  };
+
+  // Apply the entered value as a `distance` (line), `radius` (circle), or `angle`
+  // (line–line) constraint and immediately re-solve. Replaces any prior dimension
+  // of the same kind on the same entity/pair.
   const applyDimension = async () => {
     if (!dimInput || !editingSketch) return;
     const sketchId = editingSketch.id;
+    const { kind, entityId, entityId2 } = dimInput;
     // Evaluate against the variable scope so a number, expression, or variable
     // name all work. (Note: this resolves to a number now; a live expression
     // link that re-evaluates on variable change is a deferred Phase-2 gap.)
@@ -1104,14 +1522,21 @@ export default function App() {
       value = NaN;
     }
     setDimInput(null);
-    if (!Number.isFinite(value) || value <= 0) return;
-    const kept = editingSketch.constraints.filter(
-      (c) => !(c.type === "distance" && c.entity === dimInput.entityId),
-    );
-    let next = setSketchConstraints(doc, sketchId, [
-      ...kept,
-      { id: genId(), type: "distance", entity: dimInput.entityId, value },
-    ]);
+    // Angles accept 0–180; lengths/radii must be positive.
+    if (!Number.isFinite(value) || (kind === "angle" ? value < 0 || value >= 180 : value <= 0)) return;
+
+    const samePair = (a: string, b: string) =>
+      (a === entityId && b === entityId2) || (a === entityId2 && b === entityId);
+    const kept = editingSketch.constraints.filter((c) => {
+      if (kind === "angle") return !(c.type === "angle" && samePair(c.a, c.b));
+      const ctype = kind === "radius" ? "radius" : "distance";
+      return !(c.type === ctype && c.entity === entityId);
+    });
+    const added: SketchConstraint =
+      kind === "angle"
+        ? { id: genId(), type: "angle", a: entityId, b: entityId2!, value }
+        : { id: genId(), type: kind === "radius" ? "radius" : "distance", entity: entityId, value };
+    let next = setSketchConstraints(doc, sketchId, [...kept, added]);
     next = await solveSketchIn(next, sketchId);
     setDoc(next);
     setSelection([]);
@@ -1262,52 +1687,51 @@ export default function App() {
       </header>
       <div className="body">
         <aside className="panel">
-          <h2>Datums</h2>
-          <div className="tree-list">
-            {DATUM_ROWS.map((d) => {
-              const visible = datumVisibility[d.id];
-              return (
-                <div className={"tree-row" + (visible ? "" : " dim")} key={d.id}>
-                  <span className="row-kind">{d.kind}</span>
-                  <span className="row-name">{d.label}</span>
-                  <button
-                    className="row-icon"
-                    title={visible ? "Hide" : "Show"}
-                    style={{ opacity: visible ? 1 : 0.35 }}
-                    onClick={() => setDatumVisibility((v) => ({ ...v, [d.id]: !v[d.id] }))}
-                  >
-                    <EyeIcon />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-          <h2 className="params-heading">Variables</h2>
-          <VariablesPanel
-            variables={doc.variables}
-            scope={resolved.scope}
-            errors={resolved.variableErrors}
-            onAdd={() => {
-              const { doc: next } = addVariable(doc);
-              setDoc(next);
-            }}
-            onChange={(id, field, value) =>
-              setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)
-            }
-            onDelete={(id) => setDoc(removeVariable(doc, id))}
-          />
+          <button
+            className="params-heading collapsible"
+            aria-expanded={variablesOpen}
+            onClick={() => setVariablesOpen((o) => !o)}
+          >
+            <span className={"collapse-caret" + (variablesOpen ? " open" : "")}>▶</span>
+            Variables ({doc.variables.length})
+          </button>
+          {variablesOpen && (
+            <VariablesPanel
+              variables={doc.variables}
+              scope={resolved.scope}
+              errors={resolved.variableErrors}
+              onAdd={() => {
+                const { doc: next } = addVariable(doc);
+                setDoc(next);
+              }}
+              onChange={(id, field, value) =>
+                setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)
+              }
+              onDelete={(id) => setDoc(removeVariable(doc, id))}
+            />
+          )}
           <h2 className="params-heading">Timeline</h2>
           <FeatureTree
             doc={doc}
+            height={timelineHeight}
+            datums={DATUM_ROWS}
+            datumVisibility={datumVisibility}
+            onToggleDatum={(id) => setDatumVisibility((v) => ({ ...v, [id]: !v[id] }))}
             selectedIds={selectedFeatureIds}
             errors={errors}
             onSelect={selectFeature}
+            onDoubleClick={handleTreeDoubleClick}
             onDelete={handleDelete}
             onToggleSuppress={(id) =>
               setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
             }
             onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
             onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
+          />
+          <div
+            className="panel-splitter"
+            title="Drag to resize the timeline"
+            onPointerDown={startTimelineResize}
           />
           <div className="parts-header">
             <h2 className="params-heading">Parts</h2>
@@ -1339,7 +1763,27 @@ export default function App() {
             onToggleHidden={handleSolidHidden}
             onExportStep={handleExportStep}
             onExportStl={handleExportStl}
+            isolatedId={isolatedBodyId}
+            onIsolate={handleIsolate}
           />
+          {editingSketch && editingSketch.constraints.length > 0 && (
+            <>
+              <h2 className="params-heading">
+                Constraints
+                {solveConflict && <span className="constraint-warn" title="Over-constrained / conflicting"> ⚠ conflict</span>}
+              </h2>
+              <ul className="constraint-list">
+                {editingSketch.constraints.map((c) => (
+                  <li key={c.id}>
+                    <span>{constraintLabel(c)}</span>
+                    <button className="cl-del" title="Delete constraint" onClick={() => deleteConstraint(c.id)}>
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <h2 className="params-heading">Parameters</h2>
           <ParamEditor
             feature={selected}
@@ -1356,7 +1800,8 @@ export default function App() {
         </aside>
         <main className="viewport">
           <Viewport
-            meshes={meshes}
+            meshes={viewportMeshes}
+            ghostMeshes={ghostMeshes}
             selection={selection}
             highlightBodyIds={highlightBodyIds}
             onSelect={handlePick}
@@ -1379,6 +1824,7 @@ export default function App() {
             draft={draft}
             polygonSides={polygonSides}
             onSketchClick={handleSketchClick}
+            selectionFilter={selFilter}
             apiRef={viewApiRef}
           />
           <div className="model-toolbar">
@@ -1418,11 +1864,18 @@ export default function App() {
               ⧉ Plane
             </button>
             <button
-              title="Extrude the selected sketch region or face"
-              disabled={!extrudeProfile || !!editingSketch || picking || !!extrudeDialog}
+              title="Extrude the selected sketch region(s) and/or face(s)"
+              disabled={extrudeProfiles.length === 0 || !!editingSketch || picking || !!extrudeDialog}
               onClick={openExtrudeDialog}
             >
               ⬆ Extrude
+            </button>
+            <button
+              title="Revolve a sketch region around an axis line (select both)"
+              disabled={!revolveInputs || !!editingSketch || picking}
+              onClick={openRevolve}
+            >
+              ⟳ Revolve
             </button>
             <button
               title="Chamfer the selected edge(s)"
@@ -1452,6 +1905,13 @@ export default function App() {
             >
               ✥ Transform
             </button>
+            <button
+              title="Mirror the selected body across a plane"
+              disabled={!transformTarget || !!editingSketch || picking}
+              onClick={openMirror}
+            >
+              ⇋ Mirror
+            </button>
           </div>
           {editingSketch && (
             <div className="sketch-toolbar">
@@ -1466,11 +1926,54 @@ export default function App() {
                 </button>
               ))}
               <button
-                title="Dimension a line (D) — pick one if none selected"
+                title="Dimension (D): a line (length), circle (radius), or two lines (angle) — pick one if none selected"
                 className={dimPending ? "active" : ""}
                 onClick={startDimension}
               >
                 ↔
+              </button>
+              <div className="sketch-toolbar-sep" />
+              <button
+                title="Parallel — select two lines"
+                disabled={!twoSelectedLines}
+                onClick={() =>
+                  twoSelectedLines &&
+                  addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id)
+                }
+              >
+                <ParallelIcon />
+              </button>
+              <button
+                title="Perpendicular — select two lines"
+                disabled={!twoSelectedLines}
+                onClick={() =>
+                  twoSelectedLines &&
+                  addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id)
+                }
+              >
+                ⊥
+              </button>
+              <button
+                title="Equal — select two lines (equal length) or two circles (equal radius)"
+                disabled={!twoSelectedLines && !twoSelectedCircles}
+                onClick={() => {
+                  const pair = twoSelectedLines ?? twoSelectedCircles;
+                  if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
+                }}
+              >
+                ＝
+              </button>
+              <div className="sketch-toolbar-sep" />
+              <button
+                title={
+                  selectedSketchEntities.length > 0
+                    ? "Toggle construction (reference) geometry on the selection"
+                    : "Construction geometry: draw reference geometry (toggle)"
+                }
+                className={constructionMode ? "active" : ""}
+                onClick={toggleConstruction}
+              >
+                <ConstructionIcon />
               </button>
               <button title="Solve constraints" onClick={handleSolve}>
                 ⛓
@@ -1491,23 +1994,30 @@ export default function App() {
               )}
               {editingSketch.constraints.length > 0 && (
                 <span
-                  className="constraint-count"
-                  title={`${editingSketch.constraints.length} constraints${fullyConstrained ? " · fully constrained" : ""}`}
+                  className={`constraint-count${solveConflict ? " conflict" : ""}`}
+                  title={
+                    solveConflict
+                      ? "Over-constrained / conflicting constraints"
+                      : `${editingSketch.constraints.length} constraints${fullyConstrained ? " · fully constrained" : ""}`
+                  }
                 >
-                  {fullyConstrained ? "✓" : editingSketch.constraints.length}
+                  {solveConflict ? "⚠" : fullyConstrained ? "✓" : editingSketch.constraints.length}
                 </span>
               )}
             </div>
           )}
           {dimPending && (
-            <div className="dim-hint">Pick a line to dimension · Esc to cancel</div>
+            <div className="dim-hint">Pick a line or circle to dimension · Esc to cancel</div>
           )}
           {dimInput && (
-            <div
+            <DraggableDialog
               className="dim-input"
+              baseTransform="translate(14px, -130%)"
               style={{ left: dimInput.x, top: dimInput.y }}
             >
-              <label>Length</label>
+              <label data-drag-handle>
+                {dimInput.kind === "radius" ? "Radius" : dimInput.kind === "angle" ? "Angle °" : "Length"}
+              </label>
               <input
                 autoFocus
                 value={dimInput.value}
@@ -1521,7 +2031,15 @@ export default function App() {
               <button className="ghost" onClick={() => setDimInput(null)}>
                 ✕
               </button>
-            </div>
+            </DraggableDialog>
+          )}
+          {dimFrame && dimLabels.length > 0 && (
+            <DimensionLabels
+              frame={dimFrame}
+              labels={dimLabels}
+              viewApiRef={viewApiRef}
+              onEdit={editConstraint}
+            />
           )}
           <div className="view-controls">
             {VIEW_BUTTONS.map((v) => (
@@ -1530,6 +2048,30 @@ export default function App() {
               </button>
             ))}
           </div>
+          {!editingSketch && !picking && (
+            <div className="sel-filters" title="Selection filters — what a click can pick">
+              <span className="sel-filters-label">Selection filters</span>
+              <div className="sel-filters-row">
+                {(["body", "face", "edge", "vertex"] as const).map((k) => (
+                  <button
+                    key={k}
+                    className={selFilter[k] ? "active" : ""}
+                    onClick={() => setSelFilter((f) => ({ ...f, [k]: !f[k] }))}
+                  >
+                    {k}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {isolatedBodyId && (
+            <div className="isolate-banner">
+              <span>
+                Isolated · <strong>{doc.features.find((f) => f.id === isolatedBodyId)?.name ?? "body"}</strong>
+              </span>
+              <button onClick={() => setIsolatedBodyId(null)}>Exit isolate</button>
+            </div>
+          )}
           {editingSketch ? (
             <div className="sketch-banner">
               <span>
@@ -1552,13 +2094,19 @@ export default function App() {
           )}
           {extrudeDialog && (
             <DraggableDialog className="extrude-dialog" style={{ left: extrudeDialog.x, top: extrudeDialog.y }}>
-              <div className="ed-title" data-drag-handle>Extrude</div>
+              <div className="ed-title" data-drag-handle>
+                Extrude{extrudeProfiles.length > 1 ? ` (${extrudeProfiles.length} profiles)` : ""}
+              </div>
               <div className="ed-modes">
                 {(["new", "add", "remove"] as const).map((m) => (
                   <button
                     key={m}
                     className={extrudeDialog.mode === m ? "active" : ""}
-                    onClick={() => setExtrudeDialog((d) => (d ? { ...d, mode: m } : d))}
+                    onClick={() =>
+                      setExtrudeDialog((d) =>
+                        d ? { ...d, mode: m, extent: m === "new" && d.extent === "throughAll" ? "blind" : d.extent } : d,
+                      )
+                    }
                   >
                     {m === "new" ? "New" : m === "add" ? "Add" : "Remove"}
                   </button>
@@ -1578,6 +2126,18 @@ export default function App() {
                   </select>
                 </label>
               )}
+              <div className="ed-modes">
+                {(["blind", "symmetric", "throughAll"] as const).map((ex) => (
+                  <button
+                    key={ex}
+                    className={extrudeDialog.extent === ex ? "active" : ""}
+                    disabled={ex === "throughAll" && extrudeDialog.mode === "new"}
+                    onClick={() => setExtrudeDialog((d) => (d ? { ...d, extent: ex } : d))}
+                  >
+                    {ex === "blind" ? "Blind" : ex === "symmetric" ? "Symmetric" : "Through All"}
+                  </button>
+                ))}
+              </div>
               <label className="ed-field">
                 <span>Distance</span>
                 <input
@@ -1590,14 +2150,17 @@ export default function App() {
                   }}
                 />
               </label>
-              <label className="ed-field ed-flip">
-                <span>Flip direction</span>
-                <input
-                  type="checkbox"
-                  checked={extrudeDialog.flip}
-                  onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, flip: e.target.checked } : d))}
-                />
-              </label>
+              {extrudeDialog.extent !== "symmetric" && (
+                <label className="ed-field ed-flip">
+                  <span>Flip direction</span>
+                  <input
+                    type="checkbox"
+                    checked={extrudeDialog.flip}
+                    onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, flip: e.target.checked } : d))}
+                  />
+                </label>
+              )}
+              {extrudePreviewError && <p className="ed-warning">{extrudePreviewError}</p>}
               <div className="ed-actions">
                 <button
                   className="ed-primary"
@@ -1759,6 +2322,27 @@ export default function App() {
           onConfirm={confirmBoolean}
           onCancel={() => setBooleanDialog(null)}
         />
+      )}
+      {mirrorDialog && (
+        <DraggableDialog
+          className="extrude-dialog mirror-dialog"
+          style={{ left: "50%", top: 70 }}
+          baseTransform="translateX(-50%)"
+        >
+          <div className="ed-title" data-drag-handle>Mirror across plane</div>
+          <select
+            value={mirrorDialog.plane}
+            onChange={(e) => setMirrorDialog((d) => (d ? { ...d, plane: e.target.value } : d))}
+          >
+            {mirrorPlaneOptions.map((o) => (
+              <option key={o.key} value={o.key}>{o.label}</option>
+            ))}
+          </select>
+          <div className="mirror-actions">
+            <button onClick={createMirror}>Create</button>
+            <button className="ghost" onClick={() => setMirrorDialog(null)}>Cancel</button>
+          </div>
+        </DraggableDialog>
       )}
     </div>
   );
