@@ -177,6 +177,24 @@ export function ParamEditor({
             <span className="param-static">{(feature.source.length / 1024).toFixed(1)} KB</span>
           </div>
         </div>
+      ) : feature.type === "mirror" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Mirror</span>
+            <span className="param-static">a reflected copy across a plane</span>
+          </div>
+        </div>
+      ) : feature.type === "revolve" ? (
+        <div className="sketch-params">
+          <label className="param-field">
+            <span className="param-label">Angle°</span>
+            <input
+              className="param-input"
+              value={feature.angle}
+              onChange={(e) => onChangeParam(feature.id, "angle", e.target.value)}
+            />
+          </label>
+        </div>
       ) : (
         FEATURE_DEFS[feature.kind].params.map((p) => (
           <label className="param-field" key={p.name}>

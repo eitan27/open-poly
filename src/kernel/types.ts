@@ -65,6 +65,11 @@ export type ResolvedFeature =
   // A rigid transform moves a body (by id) — translate + rotate. `copy` keeps
   // the original and emits the moved body as a NEW body (keyed by this feature).
   | { id: string; type: "transform"; targetId: string; tx: number; ty: number; tz: number; angle: number; axis: "x" | "y" | "z"; pivot: [number, number, number]; copy: boolean }
+  // Mirror a body (by id) across the plane through `origin` with `normal`,
+  // producing a new reflected body (the original is kept).
+  | { id: string; type: "mirror"; targetId: string; origin: [number, number, number]; normal: [number, number, number] }
+  // Revolve a sketch profile around an axis (origin + direction) by an angle.
+  | { id: string; type: "revolve"; profile: ResolvedProfile; angle: number; axisOrigin: [number, number, number]; axisDir: [number, number, number] }
   // A body imported from a CAD file (the raw STEP text).
   | { id: string; type: "import"; source: string };
 

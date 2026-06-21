@@ -6,7 +6,9 @@ import {
   addExtrude,
   addFeature,
   addImport,
+  addMirror,
   addPlane,
+  addRevolve,
   addSketch,
   addSketchConstraints,
   addSketchEntities,
@@ -48,7 +50,7 @@ import type {
 import type { BooleanOp, MeshedEdges, MeshedFaces } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
-import { frameOf, planeRefLabel, uvToWorld, type PlaneFrameData, type SketchPlaneRef } from "./document/planes";
+import { frameOf, planeRefLabel, uvToWorld, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
 import { evaluateExpression } from "./document/expression";
 import { detectSketchRegions } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
@@ -329,6 +331,8 @@ export default function App() {
   // new reference plane.
   const [pickPurpose, setPickPurpose] = useState<"sketch" | "plane">("sketch");
   const [planeDialog, setPlaneDialog] = useState<{ base: SketchPlaneRef; offset: string } | null>(null);
+  // The Mirror dialog: the body to mirror + the chosen plane key (see plane keys).
+  const [mirrorDialog, setMirrorDialog] = useState<{ targetId: string; plane: string } | null>(null);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
   const [draft, setDraft] = useState<Vec2[]>([]);
@@ -591,6 +595,7 @@ export default function App() {
           feature?.type === "extrude" ||
           feature?.type === "boolean" ||
           feature?.type === "transform" ||
+          feature?.type === "mirror" ||
           feature?.type === "import";
         if (owns && feature.hidden) return []; // hidden part — don't render or pick
         const color = owns ? feature.color : DEFAULT_SOLID_COLOR;
@@ -852,6 +857,57 @@ export default function App() {
     const bodies = [...ids].filter((id) => bodyIds.has(id));
     return bodies.length === 1 ? bodies[0] : null;
   }, [selection, doc, bodyIds]);
+
+  // Mirror plane options for the dialog: the three datums + any reference planes.
+  // Keys are "datum:<id>" or "plane:<id>"; parsed back to a SketchPlaneRef.
+  const mirrorPlaneOptions = useMemo(
+    () => [
+      { key: "datum:plane-top", label: "Top" },
+      { key: "datum:plane-front", label: "Front" },
+      { key: "datum:plane-right", label: "Right" },
+      ...userPlanes.map((p) => ({ key: `plane:${p.id}`, label: p.name })),
+    ],
+    [userPlanes],
+  );
+  const planeKeyToRef = (key: string): SketchPlaneRef =>
+    key.startsWith("plane:")
+      ? { kind: "plane", planeId: key.slice(6) }
+      : { kind: "datum", id: key.slice(6) as SketchPlaneId };
+
+  // Revolve needs a profile region + an axis line, both in the same sketch.
+  const revolveInputs = useMemo(() => {
+    let profile: { sketchId: string; regionId: string } | null = null;
+    let axis: { sketchId: string; entityId: string } | null = null;
+    for (const s of selection) {
+      if (s.kind === "sketchFace") profile = { sketchId: s.sketchId, regionId: s.regionId };
+      else if (s.kind === "sketchEntity") {
+        const sk = doc.features.find((f) => f.id === s.sketchId);
+        const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === s.entityId) : undefined;
+        if (e?.type === "line") axis = { sketchId: s.sketchId, entityId: s.entityId };
+      }
+    }
+    return profile && axis && profile.sketchId === axis.sketchId ? { profile, axis } : null;
+  }, [selection, doc]);
+
+  // Create a Revolve (360° by default; edit the angle in the parameter editor).
+  const openRevolve = () => {
+    if (!revolveInputs) return;
+    const { doc: next, id } = addRevolve(doc, revolveInputs.profile, revolveInputs.axis);
+    setDoc(next);
+    selectFeature(id);
+  };
+
+  const openMirror = () => {
+    if (!transformTarget) return;
+    setMirrorDialog({ targetId: transformTarget, plane: "datum:plane-front" });
+  };
+  const createMirror = () => {
+    if (!mirrorDialog) return;
+    const { doc: next, id } = addMirror(doc, mirrorDialog.targetId, planeKeyToRef(mirrorDialog.plane));
+    setDoc(next);
+    setMirrorDialog(null);
+    selectFeature(id);
+  };
 
   // Create a Transform on the selected body and open the gizmo to edit it.
   const openTransform = () => {
@@ -1610,6 +1666,13 @@ export default function App() {
               ⬆ Extrude
             </button>
             <button
+              title="Revolve a sketch region around an axis line (select both)"
+              disabled={!revolveInputs || !!editingSketch || picking}
+              onClick={openRevolve}
+            >
+              ⟳ Revolve
+            </button>
+            <button
               title="Chamfer the selected edge(s)"
               disabled={!dressUpTarget || !!editingSketch || picking}
               onClick={() => openDressUp("chamfer")}
@@ -1636,6 +1699,13 @@ export default function App() {
               onClick={openTransform}
             >
               ✥ Transform
+            </button>
+            <button
+              title="Mirror the selected body across a plane"
+              disabled={!transformTarget || !!editingSketch || picking}
+              onClick={openMirror}
+            >
+              ⇋ Mirror
             </button>
           </div>
           {editingSketch && (
@@ -2023,6 +2093,27 @@ export default function App() {
           onConfirm={confirmBoolean}
           onCancel={() => setBooleanDialog(null)}
         />
+      )}
+      {mirrorDialog && (
+        <DraggableDialog
+          className="extrude-dialog mirror-dialog"
+          style={{ left: "50%", top: 70 }}
+          baseTransform="translateX(-50%)"
+        >
+          <div className="ed-title" data-drag-handle>Mirror across plane</div>
+          <select
+            value={mirrorDialog.plane}
+            onChange={(e) => setMirrorDialog((d) => (d ? { ...d, plane: e.target.value } : d))}
+          >
+            {mirrorPlaneOptions.map((o) => (
+              <option key={o.key} value={o.key}>{o.label}</option>
+            ))}
+          </select>
+          <div className="mirror-actions">
+            <button onClick={createMirror}>Create</button>
+            <button className="ghost" onClick={() => setMirrorDialog(null)}>Cancel</button>
+          </div>
+        </DraggableDialog>
       )}
     </div>
   );

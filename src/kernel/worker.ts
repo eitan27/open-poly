@@ -152,6 +152,62 @@ function prismFromFace(profileFace: Face, dir: Vector, signedDist: number, id: s
   return { shape, names };
 }
 
+/** Revolve a profile face around an axis by `angleRad`, naming the result from
+ *  MakeRevol's history: the swept side faces (one per profile edge) and, for a
+ *  partial revolve, the two caps. */
+function revolveFromFace(
+  profileFace: Face,
+  axisOrigin: number[],
+  axisDir: number[],
+  angleRad: number,
+  id: string,
+): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const pnt = new oc.gp_Pnt_3(axisOrigin[0], axisOrigin[1], axisOrigin[2]);
+  const dir = new oc.gp_Dir_4(axisDir[0], axisDir[1], axisDir[2]);
+  const ax1 = new oc.gp_Ax1_2(pnt, dir);
+  const builder = new oc.BRepPrimAPI_MakeRevol_1(profileFace.wrapped, ax1, angleRad, false);
+  const shape = cast(builder.Shape()) as Shape3D;
+
+  const capHashes = new Map<number, string>();
+  try { capHashes.set(hashOf(builder.FirstShape_1()), `${id}/start`); } catch { /* full revolve: no caps */ }
+  try { capHashes.set(hashOf(builder.LastShape_1()), `${id}/end`); } catch { /* full revolve: no caps */ }
+  const sideByHash = new Map<number, string>();
+  profileFace.edges.forEach((e, i) => {
+    for (const g of drainList(builder.Generated(e.wrapped))) sideByHash.set(hashOf(g), `${id}/side${i}`);
+  });
+
+  const names = new Map<number, string>();
+  for (const f of shape.faces) {
+    const h = f.hashCode;
+    if (capHashes.has(h)) names.set(h, capHashes.get(h)!);
+    else if (sideByHash.has(h)) names.set(h, sideByHash.get(h)!);
+  }
+  builder.delete();
+  ax1.delete();
+  dir.delete();
+  pnt.delete();
+  return { shape, names };
+}
+
+/** Build a face from a baked sketch outline and revolve it around an axis. */
+function revolveSketchRegion(
+  profile: Extract<ResolvedFeature, { type: "revolve" }>["profile"] & { kind: "sketchRegion" },
+  axisOrigin: number[],
+  axisDir: number[],
+  angleRad: number,
+  id: string,
+): NamedShape {
+  const { outline, frame } = profile;
+  if (outline.length < 3) throw new Error("revolve: profile needs at least 3 points");
+  const plane = new Plane(frame.origin, frame.uAxis, frame.normal);
+  let pen = draw().movePointerTo(outline[0]);
+  for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
+  const face = (pen.close().sketchOnPlane(plane) as { face(): Face }).face();
+  return revolveFromFace(face, axisOrigin, axisDir, angleRad, id);
+}
+
 /** Extrude a baked sketch outline along its frame normal (signed by `flip`). */
 function extrudeSketchRegion(
   profile: Extract<ResolvedFeature, { type: "extrude" }>["profile"] & { kind: "sketchRegion" },
@@ -379,6 +435,25 @@ function transformNamed(
   return cur; // owned is always true here (translation step ran)
 }
 
+/** Mirror a named shape across the plane through `origin` with `normal`. A
+ *  reflection is a rigid (topology-preserving) gp_Trsf, so face names re-key 1:1
+ *  through applyTrsf, like a transform. */
+function mirrorNamed(target: NamedShape, origin: number[], normal: number[], _id: string): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const pnt = new oc.gp_Pnt_3(origin[0], origin[1], origin[2]);
+  const dir = new oc.gp_Dir_4(normal[0], normal[1], normal[2]);
+  const ax2 = new oc.gp_Ax2_3(pnt, dir); // its XY-plane is the mirror plane
+  const trsf = new oc.gp_Trsf_1();
+  trsf.SetMirror_3(ax2);
+  const res = applyTrsf(target, trsf);
+  trsf.delete();
+  ax2.delete();
+  dir.delete();
+  pnt.delete();
+  return res;
+}
+
 // Relative epsilon (vs. the larger operand's volume) for "did this boolean
 // actually do anything" — non-overlapping solids that OCCT happily combines
 // into a degenerate result are caught and reported instead.
@@ -523,6 +598,22 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
           target.shape = res.shape;
           target.names = res.names;
         }
+      } else if (feature.type === "mirror") {
+        // Reflect the target across the plane; keep the original, add the
+        // mirrored body as a NEW body keyed by this feature.
+        const src = requireBody(bodies, feature.targetId);
+        const res = mirrorNamed(src, feature.origin, feature.normal, feature.id);
+        bodies.push({ id: feature.id, ...res });
+      } else if (feature.type === "revolve") {
+        if (feature.profile.kind !== "sketchRegion") throw new Error("revolve: profile must be a sketch region");
+        const built = revolveSketchRegion(
+          feature.profile,
+          feature.axisOrigin,
+          feature.axisDir,
+          (feature.angle * Math.PI) / 180,
+          feature.id,
+        );
+        bodies.push({ id: feature.id, ...built });
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: String(err) });
