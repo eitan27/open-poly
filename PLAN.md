@@ -501,6 +501,13 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 - **TODO:** scale; rotation about a datum axis / body edge / arbitrary
   point+direction (today: world axis through the bbox-centre pivot); a pivot
   that re-derives if the body changes upstream (today it's baked at creation).
+- **TODO (perf — verify transforms with many solids):** with many bodies in the
+  document, dragging a transform **doesn't update in real time** — the live
+  gizmo/preview lags or doesn't refresh until release. Each drag re-runs the full
+  running-fold regen over every body, so cost scales with the part count.
+  Investigate: preview only the transformed body during the drag (the rest are
+  rigid/unchanged), throttle/debounce regen, or move the transform preview off the
+  full-document rebuild path. Verify on a doc with many solids.
 
 ### Deferred — Associative face-sketches (sketch follows its host body) ⏸️
 A sketch placed on a **body face** stores its plane as a frozen `frame` snapshot
