@@ -56,6 +56,43 @@ describe("detectSketchRegions", () => {
   });
 });
 
+const arc = (c: Vec2, r: number, start: number, end: number): SketchEntity => ({ type: "arc", id: `a${n++}`, c, r, start, end });
+const spline = (points: Vec2[]): SketchEntity => ({ type: "spline", id: `s${n++}`, points });
+
+describe("detectSketchRegions — arcs & splines as boundaries", () => {
+  it("closes a half-disk from a semicircle arc + its chord", () => {
+    const ents = [arc([0, 0], 2, 0, Math.PI), line([-2, 0], [2, 0])];
+    const regions = detectSketchRegions(ents);
+    expect(regions).toHaveLength(1);
+    // ~π·r²/2 = 6.28, slightly under from the 48-segment tessellation.
+    expect(regions[0].area).toBeGreaterThan(6.1);
+    expect(regions[0].area).toBeLessThan(6.29);
+    expect(regions[0].entityIds).toHaveLength(2);
+  });
+
+  it("closes a region bounded by a spline + a line", () => {
+    const sp = spline([[0, 0], [1, 1.5], [2, 0]]);
+    const ln = line([2, 0], [0, 0]);
+    const regions = detectSketchRegions([sp, ln]);
+    expect(regions).toHaveLength(1);
+    expect(regions[0].area).toBeGreaterThan(0);
+    expect(regions[0].entityIds.sort()).toEqual([sp.id, ln.id].sort());
+  });
+
+  it("ignores an open spline that closes nothing (a sweep path)", () => {
+    expect(detectSketchRegions([spline([[0, 0], [2, 1], [4, 0]])])).toHaveLength(0);
+  });
+
+  it("regionsEnclosedBy works from a curve's edge selection", () => {
+    const a = arc([0, 0], 2, 0, Math.PI);
+    const ln = line([-2, 0], [2, 0]);
+    const found = regionsEnclosedBy([a, ln], new Set([a.id, ln.id]));
+    expect(found).toHaveLength(1);
+    // Missing the chord → not enclosed.
+    expect(regionsEnclosedBy([a, ln], new Set([a.id]))).toHaveLength(0);
+  });
+});
+
 describe("regionsEnclosedBy", () => {
   it("finds the region bounded by exactly the selected lines", () => {
     const square = [line(A, B), line(B, C), line(C, D), line(D, A)];

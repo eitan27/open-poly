@@ -9,28 +9,50 @@ export interface BooleanCandidate {
 
 interface Props {
   op: BooleanOp;
-  operandIds: string[];
   candidates: BooleanCandidate[];
+  /** Operands for union / intersect (a flat list). */
+  operandIds: string[];
+  /** Subtract: the single base part and the accumulating tool parts. */
+  base: string | null;
+  tools: string[];
+  /** Subtract: which slot the next viewport click fills. */
+  armed: "base" | "tools" | null;
   onOpChange: (op: BooleanOp) => void;
+  onArm: (slot: "base" | "tools") => void;
   onRemoveOperand: (id: string) => void;
+  onClearBase: () => void;
+  onRemoveTool: (id: string) => void;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
 export function BooleanDialog({
   op,
-  operandIds,
   candidates,
+  operandIds,
+  base,
+  tools,
+  armed,
   onOpChange,
+  onArm,
   onRemoveOperand,
+  onClearBase,
+  onRemoveTool,
   onConfirm,
   onCancel,
 }: Props) {
-  const canConfirm = operandIds.length >= 2;
   const nameOf = (id: string) => candidates.find((c) => c.id === id)?.name ?? id;
+  const canConfirm = op === "subtract" ? !!base && tools.length >= 1 : operandIds.length >= 2;
+
+  const row = (id: string, onRemove: () => void) => (
+    <div key={id} className="bool-operand-row">
+      <span className="bool-operand-name">{nameOf(id)}</span>
+      <button className="bool-operand-x" title="Remove" onClick={onRemove}>✕</button>
+    </div>
+  );
 
   return (
-    <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
+    <DraggableDialog className="extrude-dialog boolean-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
       <div className="ed-title" data-drag-handle>Boolean operation</div>
       <div className="ed-modes">
         {BOOLEAN_OPS.map((o) => (
@@ -39,26 +61,50 @@ export function BooleanDialog({
           </button>
         ))}
       </div>
-      <div className="ed-hint">
-        Click parts in the viewport to add or remove them.
-        {op === "subtract" && operandIds.length > 0 ? " First = base, rest = tools." : ""}
-      </div>
-      <div className="bool-operands">
-        {operandIds.length === 0 && <p className="ed-hint">No parts chosen yet.</p>}
-        {operandIds.map((id, i) => (
-          <div key={id} className="bool-operand-row">
-            <span className="bool-operand-ord">{i + 1}</span>
-            <span className="bool-operand-name">{nameOf(id)}</span>
-            <button className="bool-operand-x" title="Remove" onClick={() => onRemoveOperand(id)}>
-              ✕
+
+      {op === "subtract" ? (
+        <>
+          <div className="ed-hint">Pick the base part, then the tool part(s) to cut from it.</div>
+          <div className="bool-group-label">Base</div>
+          {base ? (
+            <div className="bool-operand-row">
+              <span className="bool-operand-name">{nameOf(base)}</span>
+              <button className="bool-operand-x" title="Clear" onClick={onClearBase}>✕</button>
+            </div>
+          ) : (
+            <button
+              className={"ed-pick-btn" + (armed === "base" ? " active" : "")}
+              onClick={() => onArm("base")}
+            >
+              {armed === "base" ? "Click a part…" : "Select base part"}
             </button>
-          </div>
-        ))}
-      </div>
+          )}
+          <div className="bool-group-label">Tools</div>
+          {/* The arm button is only needed until the first tool lands; after that
+              the slot stays armed, so more parts add on click without it. */}
+          {tools.length === 0 && (
+            <button
+              className={"ed-pick-btn" + (armed === "tools" ? " active" : "")}
+              onClick={() => onArm("tools")}
+            >
+              {armed === "tools" ? "Click parts…" : "Select tool parts"}
+            </button>
+          )}
+          {tools.length > 0 && <div className="bool-operands">{tools.map((id) => row(id, () => onRemoveTool(id)))}</div>}
+        </>
+      ) : (
+        <>
+          <div className="ed-hint">Click parts in the viewport to add or remove them.</div>
+          {operandIds.length === 0 ? (
+            <p className="ed-hint">No parts chosen yet.</p>
+          ) : (
+            <div className="bool-operands">{operandIds.map((id) => row(id, () => onRemoveOperand(id)))}</div>
+          )}
+        </>
+      )}
+
       <div className="ed-actions">
-        <button className="ed-primary" disabled={!canConfirm} onClick={onConfirm}>
-          Create
-        </button>
+        <button className="ed-primary" disabled={!canConfirm} onClick={onConfirm}>Confirm</button>
         <button onClick={onCancel}>Cancel</button>
       </div>
     </DraggableDialog>

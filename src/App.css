@@ -1289,26 +1289,35 @@
   min-width: 0;
 }
 
+/* The boolean dialog holds three longer op labels (Union/Subtract/Intersect),
+   so it's a bit wider than the default mini-dialog and its op buttons get real
+   horizontal padding instead of the border crowding the text. */
+.extrude-dialog.boolean-dialog {
+  width: 232px;
+}
+.boolean-dialog .ed-modes button {
+  padding: 6px 8px;
+}
+
+/* A small section label ("Base" / "Tools") in the subtract layout. */
+.bool-group-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a8f9c;
+  margin-top: 2px;
+}
+
+/* Chosen operand rows reuse the accented "armed" look (matching .ed-pick-btn.active)
+   so they read clearly against the dialog instead of a low-contrast fill. */
 .bool-operand-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 4px 3px 6px;
+  padding: 3px 4px 3px 8px;
   border-radius: 5px;
-  background: #15171c;
-}
-
-.bool-operand-ord {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  color: #8a8f9c;
-  background: #232730;
-  border-radius: 4px;
+  border: 1px solid #4f8cff;
+  background: #1e2a44;
 }
 
 .bool-operand-name {
@@ -1318,7 +1327,7 @@
      ellipsis never engages. */
   min-width: 0;
   font-size: 13px;
-  color: #e6e8ee;
+  color: #cfe0ff;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1328,7 +1337,7 @@
   flex: 0 0 auto;
   background: none;
   border: none;
-  color: #6f7480;
+  color: #9fb6e6;
   cursor: pointer;
   font-size: 11px;
   padding: 2px 4px;
