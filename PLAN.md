@@ -225,11 +225,19 @@ rough relative sizing, not calendar promises.
 > (`BRepOffsetAPI_MakePipeShell`), loft through 2+ regions
 > (`BRepOffsetAPI_ThruSections`), both with **OCCT history-based face naming**
 > (side faces per profile/section edge + start/end caps), and a `∿` spline tool
-> for freeform sweep paths. Remaining high-value items: the **UI/UX backlog
-> (Phase 8.5)** below (discoverable edit panels, extrude extent dropdown +
-> up-to-face, click-to-populate boolean, keyboard shortcuts, spline), more plane
-> methods, a **multi-document manager**, Sweep/Loft (Phase 6), or **LLM agent
-> integration via local MCP (Phase 9 — fully specced below)**.
+> for freeform sweep paths.
+>
+> **Progress (2026-06-22, later):** the bulk of the **Phase 8.5 UI/UX batch**
+> landed on `main` — extrude **extent dropdown** + **up-to-face** extent,
+> **click-to-populate Boolean** dialog, **keyboard shortcuts** (mode-gated, full
+> coverage; construction = `Q`), tighter Variables heading — plus **extrude by
+> selecting a region's enclosing edges**, **reference-plane hover highlight**, a
+> **Boolean union fix for touching / shared-face bodies** (solid-count
+> validation), and a **Front-plane (left-handed) mirror fix** for
+> sweep/extrude/revolve/loft. Remaining high-value items: Phase 8.5 **#1**
+> (movable Constraints/Parameters panel) and **#5** (timeline formatting); more
+> plane methods; a **multi-document manager**. **LLM agent integration (Phase 9 —
+> fully specced below)** is underway on `feat/phase9-agent` (L0–L3 done).
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -388,22 +396,26 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   - **Profiles:** ✅ sketch regions (`sketchFace`) and planar body faces.
     **Multi-profile — ✅ DONE:** select several regions/faces → one dialog
     extrudes them all in a single undo step (`extrudeProfiles[]` in `App.tsx`).
+    **Enclosed-edges — ✅ DONE:** selecting a region's **bounding edges** (instead
+    of the face) also extrudes it — `regionsEnclosedBy` maps a set of selected
+    sketch edges to the region they enclose (handy when the face is tiny). A
+    circle counts via its single edge.
   - **Result mode** (in the dialog): ✅ **New** / **Add** (join) / **Remove**
     (cut). Add/Remove require choosing an explicit **target body** in the dialog.
     Defaults to **Add** onto a solid when the sketch sits on that solid's face
     (drawn on it, or coplanar + overlapping a face), else **New** — overridable.
   - **Direction:** ✅ flip toggle. **Symmetric/two-sided — ✅ DONE**
     (`ExtrudeExtent="symmetric"` → two opposite prisms fused; flip hidden).
-  - **End condition / extent:** ✅ **Blind** (expression-backed distance),
-    ✅ **Symmetric**, ✅ **Through-all** (add/remove; bbox-sized tool, clipped by
-    the boolean). *(Up-to-face / up-to-next: TODO — UI/UX backlog #3. Through-all
-    additive semantics want clarifying — backlog #2.)*
+  - **End condition / extent** (a **dropdown**): ✅ **Blind** (expression-backed
+    distance), ✅ **Symmetric**, ✅ **Through-all** (**remove/cut only** —
+    bbox-sized tool clipped by the boolean; the option is hidden for new/add),
+    ✅ **Up-to-face** (stop at a chosen planar face's plane — backlog #3).
+    *(Up-to-next: still TODO.)*
   - **Dialog:** ✅ anchored mini-dialog (mode + target + extent + distance +
     flip). **Live ghost preview — ✅ DONE:** the dialog regenerates a throwaway
     doc and renders the **swept tool only** (the changing portion) as a
     translucent cyan ghost (`previewTool` in the kernel) while existing bodies
     keep their own colour; one ghost per profile, updates live with the params.
-    *(Extent UI is buttons today → move to a dropdown, backlog #2.)*
 - **Chamfer + Fillet** — ✅ DONE: edge dress-up via `BRepFilletAPI`, edges
   referenced by **persistent name**. *(Chamfer two-distance/angle variants:
   TODO; currently single distance / single radius.)*
@@ -439,7 +451,12 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 
 ### Phase 5 — Boolean + Reference planes + Pattern + Mirror *(Boolean + offset planes ✅; rest TODO)*
 - Boolean between separate bodies: union / subtract / intersect — **done**
-  (`BooleanFeature`, dialog, volume-verdict validation, name propagation).
+  (`BooleanFeature`, name propagation). The dialog is **click-to-populate** —
+  operands fill in as bodies are clicked in the viewport (click to add in order,
+  click again or ✕ to remove). Union accepts bodies that merely **touch / share
+  a face** (validated by **solid count**, since touching bodies share no volume
+  and so look identical to disjoint by volume); subtract/intersect still use a
+  volume verdict.
 - **Reference / construction planes (create plane).** A parametric `PlaneFeature`
   placed via the **⧉ Plane** toolbar button (right of New Body) → a pick flow
   (select a plane/face to base it on) → a dialog. Methods:
@@ -549,7 +566,9 @@ this — datum / reference-plane sketches stay anchored to their datum.
   `App.tsx` (instant, no regen). **Delete/Backspace** removes a body or sketch
   (or a single sketch line). Suppress (timeline) uses a distinct no-entry icon
   for non-sketch features, separate from hide.
-- Robust selection (faces, edges, bodies; hover highlight) — ✅.
+- Robust selection (faces, edges, bodies; hover highlight) — ✅. During a
+  plane/face pick, **user-created reference planes also highlight on hover** (like
+  the base datums), not just show a pointer cursor.
 - **Isolate — ✅ DONE.** A ◎ button per Parts row renders only that body
   (others hidden, Exit banner, auto-exits if the body disappears).
 - **Selection filters — ✅ DONE.** **Body / Face / Edge / Vertex** chips
@@ -580,7 +599,10 @@ this — datum / reference-plane sketches stay anchored to their datum.
 > **autosaves** — with variables and a working timeline. Validates every hard
 > layer end to end.
 
-### Phase 8.5 — UI/UX backlog (next polish pass) — TODO
+### Phase 8.5 — UI/UX backlog (next polish pass) — IN PROGRESS (6/8 done)
+
+> Remaining: **#1** (relocate Constraints + Parameters into a movable panel) and
+> **#5** (timeline formatting). Items #2, #3, #4, #6, #7, #8 are ✅ DONE.
 
 A focused pass on layout, discoverability, and the two interactions that still
 feel rough (extrude extents, boolean operand picking), plus shortcuts and the
@@ -643,7 +665,8 @@ spline tool. Captured 2026-06-21.
    branches, ignores typing in inputs). Resolved the two flagged letter
    conflicts (New Body vs Boolean → `N`/`B`; Polygon vs Parallel/Perpendicular
    → `P`/`Shift+P`/`N`) and extended coverage to the features shipped since the
-   proposal was written (Loft `L`, Sweep `W`, Mirror `M`, spline `Shift+L`).
+   proposal was written (Loft `L`, Sweep `W`, Mirror `M`, spline `Shift+L`,
+   construction toggle `Q`, digits `1`–`7` for standard views).
    Every bound button's `title` tooltip now names its key. See
    `KEYBOARD_SHORTCUTS.md` for the full scheme and future-conflict notes
    (Pattern, Measurement, multi-doc manager).
@@ -654,7 +677,13 @@ spline tool. Captured 2026-06-21.
 
 ---
 
-## Phase 9 — LLM agent integration (local MCP) — PLANNED
+## Phase 9 — LLM agent integration (local MCP) — IN PROGRESS (on `feat/phase9-agent`)
+
+> Built on the **`feat/phase9-agent`** branch (not yet merged to `main`): the
+> vendor-neutral command/read layer (L0), WebSocket bridge (L1), local stdio MCP
+> server in `mcp-server/` (L2), and regen-await + read/screenshot polish (L3) are
+> in place and validated against a real MCP client. The command/MCP layer tracks
+> the modeling features (incl. up-to-face extrude). See the branch for current state.
 
 **Goal.** Let a local LLM agent (Claude Desktop, Claude Code, Cursor, Cline, Zed,
 …) **drive the live Open Poly browser tab** — sketch, extrude, transform, arrange
