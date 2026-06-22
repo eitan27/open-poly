@@ -291,9 +291,12 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
     gizmo); `FeatureTree.onDoubleClick` → `handleTreeDoubleClick` in `App.tsx`.
   - **Spline tool — ✅ DONE.** A smooth through-point `spline` SketchEntity (the
     `∿` tool: click points, **Enter** to finish; Catmull-Rom render/snap/measure;
-    real B-spline in the kernel). An open curve used mainly as a **sweep path**
-    (Phase 6) — **not yet a closed-region boundary** (region detection still
-    ignores splines, like arcs).
+    real B-spline in the kernel). Used as a **sweep path** (Phase 6) and **now
+    also as a closed-region boundary** — `detectSketchRegions` treats **arcs and
+    splines** as graph edges (curve tangent for the angular traversal, tessellated
+    polyline for the outline), so a loop closed by a curve becomes an extrudable
+    region. *(The face is faceted from the polyline — same as circles today; true
+    curved edges in the kernel profile is a later enhancement.)*
   - **TODO:**
   - Trim/extend.
   - **Cancel a sketch edit (discard changes)** — when re-editing an *existing*
@@ -679,8 +682,9 @@ spline tool. Captured 2026-06-21.
    (Pattern, Measurement, multi-doc manager).
 
 8. **Spline tool in sketch — ✅ DONE** (see Phase 6). Through-point smooth
-   spline `SketchEntity`, the `∿` tool, used as a sweep path. *(Remaining: spline
-   as a closed-region boundary — region detection still ignores splines.)*
+   spline `SketchEntity`, the `∿` tool, used as a sweep path **and as a
+   closed-region boundary** (arcs + splines now bound extrudable regions — see
+   Phase 2a / `regions.ts`).
 
 ---
 
