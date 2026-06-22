@@ -8,6 +8,10 @@ export interface SketchRegion {
   id: string;
   outline: Vec2[]; // closed loop of uv points
   area: number;
+  /** Ids of the sketch entities (lines/circles) that bound this region, so a
+   *  selection of those entities can stand in for a direct pick of the region
+   *  (see `regionsEnclosedBy`). */
+  entityIds: string[];
 }
 
 const key = (p: Vec2) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
@@ -36,7 +40,7 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
       const t = (2 * Math.PI * i) / SEG;
       outline.push([e.c[0] + e.r * Math.cos(t), e.c[1] + e.r * Math.sin(t)]);
     }
-    regions.push({ id: `region-${e.id}`, outline, area: Math.PI * e.r * e.r });
+    regions.push({ id: `region-${e.id}`, outline, area: Math.PI * e.r * e.r, entityIds: [e.id] });
   }
 
   // Find every enclosed region bounded by line entities. Treat the lines as a
@@ -113,9 +117,19 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
     const a = signedArea(loop);
     if (loop.length >= 3 && a > 1e-7) {
       const id = `region-loop-${[...lineIds].sort().join("_")}`;
-      regions.push({ id, outline: loop, area: a });
+      regions.push({ id, outline: loop, area: a, entityIds: [...lineIds] });
     }
   }
 
   return regions;
+}
+
+/** The regions (from `detectSketchRegions`) entirely bounded by `entityIds` —
+ *  i.e. enclosed by a selected set of sketch edges. Lets selecting the edges
+ *  around a loop stand in for clicking the (possibly tiny) face itself, which
+ *  is fiddly in a small sketch. Extra selected entities beyond a region's
+ *  boundary don't disqualify it; missing ones do. */
+export function regionsEnclosedBy(entities: SketchEntity[], entityIds: ReadonlySet<string>): SketchRegion[] {
+  if (entityIds.size === 0) return [];
+  return detectSketchRegions(entities).filter((r) => r.entityIds.every((id) => entityIds.has(id)));
 }

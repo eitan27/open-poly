@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectSketchRegions } from "./regions";
+import { detectSketchRegions, regionsEnclosedBy } from "./regions";
 import type { SketchEntity, Vec2 } from "./types";
 
 let n = 0;
@@ -53,5 +53,48 @@ describe("detectSketchRegions", () => {
     const regions = detectSketchRegions(ents);
     expect(regions).toHaveLength(1);
     expect(regions[0].area).toBeCloseTo(Math.PI * 4, 5);
+  });
+});
+
+describe("regionsEnclosedBy", () => {
+  it("finds the region bounded by exactly the selected lines", () => {
+    const square = [line(A, B), line(B, C), line(C, D), line(D, A)];
+    const ids = new Set(square.map((l) => l.id));
+    const found = regionsEnclosedBy(square, ids);
+    expect(found).toHaveLength(1);
+    expect(found[0].area).toBeCloseTo(4, 5);
+  });
+
+  it("ignores a partial loop (not fully enclosed)", () => {
+    const square = [line(A, B), line(B, C), line(C, D), line(D, A)];
+    const ids = new Set([square[0].id, square[1].id, square[2].id]); // missing D-A
+    expect(regionsEnclosedBy(square, ids)).toHaveLength(0);
+  });
+
+  it("tolerates extra selected entities outside the loop", () => {
+    const square = [line(A, B), line(B, C), line(C, D), line(D, A)];
+    const stray = line(E, F);
+    const ids = new Set([...square.map((l) => l.id), stray.id]);
+    const found = regionsEnclosedBy([...square, stray], ids);
+    expect(found).toHaveLength(1);
+    expect(found[0].area).toBeCloseTo(4, 5);
+  });
+
+  it("finds a circle's region from its own edge selection", () => {
+    const circle: SketchEntity = { type: "circle", id: "c1", c: [0, 0], r: 2 };
+    const found = regionsEnclosedBy([circle], new Set(["c1"]));
+    expect(found).toHaveLength(1);
+    expect(found[0].area).toBeCloseTo(Math.PI * 4, 5);
+  });
+
+  it("finds both bridged regions when all their boundary lines are selected", () => {
+    const ents = [
+      line([0, 0], [2, 0]), line([2, 0], [2, 2]), line([2, 2], [0, 2]), line([0, 2], [0, 0]),
+      line([4, 0], [6, 0]), line([6, 0], [6, 2]), line([6, 2], [4, 2]), line([4, 2], [4, 0]),
+      line([2, 0], [4, 0]), line([4, 2], [2, 2]),
+    ];
+    const ids = new Set(ents.map((l) => l.id));
+    const found = regionsEnclosedBy(ents, ids);
+    expect(found.map((r) => Math.round(r.area * 100) / 100).sort((a, b) => a - b)).toEqual([4, 4, 4]);
   });
 });

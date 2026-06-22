@@ -56,7 +56,7 @@ import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import { frameOf, planeRefLabel, uvToWorld, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
 import { evaluateExpression } from "./document/expression";
-import { detectSketchRegions } from "./document/regions";
+import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
 import { listDocs, saveDoc } from "./storage/db";
 import {
@@ -733,15 +733,35 @@ export default function App() {
     [selection, doc, meshes],
   );
 
-  // Every selected profile an Extrude could consume: sketch regions and/or
-  // planar faces of existing bodies, picked one at a time and accumulated by
-  // the normal multi-select (see handlePick) — one dialog fill-in extrudes or
-  // cuts all of them at once.
+  // Every selected profile an Extrude could consume: sketch regions, planar
+  // faces of existing bodies, or sketch edges that fully enclose a region (so
+  // a tiny/fiddly-to-click face can be picked by its boundary instead) —
+  // picked one at a time and accumulated by the normal multi-select (see
+  // handlePick) — one dialog fill-in extrudes or cuts all of them at once.
   const extrudeProfiles = useMemo((): ExtrudeProfile[] => {
     const profiles: ExtrudeProfile[] = [];
+    const regionKeys = new Set<string>(); // dedupe sketchId/regionId across selection kinds
+    const addRegion = (sketchId: string, regionId: string) => {
+      const key = `${sketchId}/${regionId}`;
+      if (regionKeys.has(key)) return;
+      regionKeys.add(key);
+      profiles.push({ kind: "sketchRegion", sketchId, regionId });
+    };
+    const selectedEntitiesBySketch = new Map<string, Set<string>>();
+    for (const s of selection) {
+      if (s.kind !== "sketchEntity") continue;
+      let ids = selectedEntitiesBySketch.get(s.sketchId);
+      if (!ids) selectedEntitiesBySketch.set(s.sketchId, (ids = new Set()));
+      ids.add(s.entityId);
+    }
+    for (const [sketchId, ids] of selectedEntitiesBySketch) {
+      const sk = doc.features.find((f) => f.id === sketchId);
+      if (sk?.type !== "sketch") continue;
+      for (const region of regionsEnclosedBy(sk.entities, ids)) addRegion(sketchId, region.id);
+    }
     for (const s of selection) {
       if (s.kind === "sketchFace") {
-        profiles.push({ kind: "sketchRegion", sketchId: s.sketchId, regionId: s.regionId });
+        addRegion(s.sketchId, s.regionId);
       } else if (s.kind === "face") {
         const m = meshes.find((x) => x.id === s.featureId);
         const center = m ? faceCentroid(m.mesh.faces, s.faceId) : null;
@@ -751,7 +771,7 @@ export default function App() {
       }
     }
     return profiles;
-  }, [selection, meshes]);
+  }, [selection, meshes, doc]);
 
   // World-space anchor for the extrude dialog: a body face's centroid, or a
   // sketch region's centroid mapped to 3D. Anchored on the first profile when
