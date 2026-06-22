@@ -366,6 +366,7 @@ export function Viewport({
   const snapLinesRef = useRef<[Vec2, Vec2][]>([]);
 
   const hoverPlaneRef = useRef<DatumId | null>(null);
+  const hoverUserPlaneRef = useRef<string | null>(null);
   const hoverBodyRef = useRef<{ mesh: THREE.Mesh; prev: THREE.Material | THREE.Material[] } | null>(null);
 
   useEffect(() => {
@@ -913,6 +914,10 @@ export function Viewport({
         hoverPlaneRef.current = null;
         applyDatumAppearance(state, null);
       }
+      if (hoverUserPlaneRef.current) {
+        hoverUserPlaneRef.current = null;
+        applyUserPlaneAppearance(state, null);
+      }
       renderer.domElement.style.cursor = "";
     };
 
@@ -940,7 +945,8 @@ export function Viewport({
           hoverPlaneRef.current = p.id;
           applyDatumAppearance(state, p.id);
         } else if (p.kind === "userplane") {
-          // cursor already set to pointer; no extra hover material for now
+          hoverUserPlaneRef.current = p.planeId;
+          applyUserPlaneAppearance(state, p.planeId);
         } else if (p.kind === "face" && p.faceId !== undefined && p.featureId) {
           // Highlight just the hovered face (+ its boundary edges), not the body.
           nextHover = { kind: "face", featureId: p.featureId, faceId: p.faceId };
@@ -1600,6 +1606,19 @@ function applyDatumAppearance(state: SceneState, hovered: DatumId | null): void 
     } else {
       d.object.scale.setScalar(hot ? 1.35 : 1);
       d.material.opacity = hot ? 0.85 : d.baseOpacity;
+    }
+  }
+}
+
+// Mirrors applyDatumAppearance for user-created reference planes, which live
+// in state.planeGroup rather than state.datums.
+function applyUserPlaneAppearance(state: SceneState, hovered: string | null): void {
+  for (const c of state.planeGroup.children) {
+    const hot = c.userData.planeId === hovered;
+    if (c instanceof THREE.Mesh) {
+      (c.material as THREE.MeshBasicMaterial).opacity = hot ? 0.3 : 0.1;
+    } else if (c instanceof THREE.LineSegments) {
+      (c.material as THREE.LineBasicMaterial).opacity = hot ? 0.9 : 0.5;
     }
   }
 }

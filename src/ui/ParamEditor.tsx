@@ -61,7 +61,12 @@ export function ParamEditor({
             >
               <option value="blind">Blind</option>
               <option value="symmetric">Symmetric</option>
-              <option value="throughAll" disabled={feature.mode === "new"}>Through All</option>
+              {/* Through All only makes sense as a cut, so it's shown for Remove only. */}
+              {feature.mode === "remove" && <option value="throughAll">Through All</option>}
+              {/* The up-to-face target face is chosen in the extrude dialog at
+                  creation; shown here read-only so a committed feature displays
+                  correctly. */}
+              <option value="upToFace" disabled>Up to face</option>
             </select>
           </label>
           <label className="param-field">

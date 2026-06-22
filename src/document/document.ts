@@ -123,6 +123,7 @@ export function addExtrude(
     extent?: ExtrudeFeature["extent"];
     mode?: ExtrudeFeature["mode"];
     targetId?: string;
+    upTo?: ExtrudeFeature["upTo"];
   } = {},
 ): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "extrude").length + 1;
@@ -137,6 +138,7 @@ export function addExtrude(
     extent: opts.extent ?? "blind",
     mode: opts.mode ?? "new",
     targetId: opts.targetId,
+    upTo: opts.upTo,
     color: randomSolidColor(),
     opacity: 1,
   };
@@ -490,11 +492,13 @@ export function updateParam(
     if (f.type === "extrude") {
       if (name === "distance") return { ...f, distance: value };
       if (name === "flip") return { ...f, flip: value === "true" };
-      if (name === "extent" && (value === "blind" || value === "symmetric" || value === "throughAll")) {
+      if (name === "extent" && (value === "blind" || value === "symmetric" || value === "throughAll" || value === "upToFace")) {
         return { ...f, extent: value };
       }
       if (name === "mode" && (value === "new" || value === "add" || value === "remove")) {
-        return { ...f, mode: value };
+        // Through All is only meaningful for a cut (Remove); leaving New/Add reverts it.
+        const extent = value !== "remove" && f.extent === "throughAll" ? "blind" : f.extent;
+        return { ...f, mode: value, extent };
       }
     }
     if (f.type === "dressup" && name === "size") return { ...f, size: value };
@@ -657,7 +661,13 @@ export function resolveDocument(doc: Document): ResolveResult {
           profile = { kind: "bodyFace" as const, sourceId: prof.featureId, faceName: prof.faceName, center: prof.center };
         }
         // `?? "blind"` guards documents persisted before this field existed.
-        features.push({ id: f.id, type: "extrude", profile, distance, flip: f.flip, extent: f.extent ?? "blind", mode: f.mode, targetId: f.targetId });
+        // For "up to face", pass the target face reference (source body id +
+        // persistent name + centroid fallback); the worker re-finds it.
+        const upTo =
+          f.extent === "upToFace" && f.upTo
+            ? { sourceId: f.upTo.featureId, faceName: f.upTo.faceName, center: f.upTo.center }
+            : undefined;
+        features.push({ id: f.id, type: "extrude", profile, distance, flip: f.flip, extent: f.extent ?? "blind", mode: f.mode, targetId: f.targetId, upTo });
       } else if (f.type === "dressup") {
         features.push({
           id: f.id,

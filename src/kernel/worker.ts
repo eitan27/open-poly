@@ -204,7 +204,7 @@ function revolveSketchRegion(
 ): NamedShape {
   const { outline, frame } = profile;
   if (outline.length < 3) throw new Error("revolve: profile needs at least 3 points");
-  const plane = new Plane(frame.origin, frame.uAxis, frame.normal);
+  const plane = planeOf(frame);
   let pen = draw().movePointerTo(outline[0]);
   for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
   const face = (pen.close().sketchOnPlane(plane) as { face(): Face }).face();
@@ -224,6 +224,16 @@ function frameToWorld(f: ResolvedFrame, p: [number, number]): [number, number, n
     f.origin[1] + p[0] * f.uAxis[1] + p[1] * f.vAxis[1],
     f.origin[2] + p[0] * f.uAxis[2] + p[1] * f.vAxis[2],
   ];
+}
+
+/** Build a replicad Plane whose (x, y) basis is EXACTLY the frame's
+ *  (uAxis, vAxis). replicad derives the plane's y as `normal × xDir`, so we pass
+ *  `normal = uAxis × vAxis` to guarantee y === vAxis. This matters because the
+ *  "front" datum frame is left-handed (its normal = −(uAxis × vAxis)), so passing
+ *  `frame.normal` would mirror all built geometry in v relative to how the sketch
+ *  renders (`uvToWorld` uses the frame's own uAxis/vAxis). */
+function planeOf(f: ResolvedFrame): Plane {
+  return new Plane(f.origin, f.uAxis, vcross(f.uAxis as V3, f.vAxis as V3));
 }
 
 /** Build a closed profile Drawing from a baked outline (uv, on its own frame). */
@@ -257,7 +267,7 @@ function sweepBody(profile: RegionProfile, path: { points: [number, number][]; s
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   // Spine wire from the path points (open drawing → wire).
-  const pathPlane = new Plane(path.frame.origin, path.frame.uAxis, path.frame.normal);
+  const pathPlane = planeOf(path.frame);
   let pen = draw().movePointerTo(path.points[0]);
   for (let i = 1; i < path.points.length; i++) {
     pen = path.smooth ? pen.smoothSplineTo(path.points[i]) : pen.lineTo(path.points[i]);
@@ -302,7 +312,7 @@ function loftBody(profiles: RegionProfile[], id: string): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   const wires = profiles.map(
-    (p) => (profileDrawing(p.outline).sketchOnPlane(new Plane(p.frame.origin, p.frame.uAxis, p.frame.normal)) as unknown as Sketch).wire,
+    (p) => (profileDrawing(p.outline).sketchOnPlane(planeOf(p.frame)) as unknown as Sketch).wire,
   );
   const builder = new oc.BRepOffsetAPI_ThruSections(true, false, 1e-6); // solid, smooth
   for (const w of wires) builder.AddWire(w.wrapped);
@@ -333,7 +343,7 @@ function sketchRegionFace(
 ): { face: Face; normal: Vector } {
   const { outline, frame } = profile;
   if (outline.length < 3) throw new Error("extrude: profile needs at least 3 points");
-  const plane = new Plane(frame.origin, frame.uAxis, frame.normal);
+  const plane = planeOf(frame);
   let pen = draw().movePointerTo(outline[0]);
   for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
   const face = (pen.close().sketchOnPlane(plane) as { face(): Face }).face();
@@ -384,6 +394,27 @@ function throughAllLength(face: Face, target: Shape3D): number {
     fb.center[2] - tb.center[2],
   );
   return centerDist + halfDiagonal(fb.bounds) + halfDiagonal(tb.bounds) + 1;
+}
+
+/** The signed prism length that carries `profileFace` from its plane up to the
+ *  plane of `targetFace`, measured along the extrude direction `dir`. Positive
+ *  or negative — the target face decides the direction, so "up to face" ignores
+ *  the Flip toggle. Throws when the direction is parallel to the target (never
+ *  reaches it) or the target passes through the profile (zero travel). */
+function upToFaceLength(profileFace: Face, dir: Vector, targetFace: Face, targetNormal: Vector): number {
+  const p = profileFace.center.toTuple();
+  const q = targetFace.center.toTuple();
+  const n = dir.normalized().toTuple();
+  const m = targetNormal.normalized().toTuple();
+  const denom = n[0] * m[0] + n[1] * m[1] + n[2] * m[2];
+  if (Math.abs(denom) < 1e-7) {
+    throw new Error("up to face: the extrude direction is parallel to the target face");
+  }
+  const t = ((q[0] - p[0]) * m[0] + (q[1] - p[1]) * m[1] + (q[2] - p[2]) * m[2]) / denom;
+  if (Math.abs(t) < 1e-6) {
+    throw new Error("up to face: the target face passes through the profile");
+  }
+  return t;
 }
 
 /** The signed prism length(s) to build for a given extent — one length for
@@ -611,6 +642,25 @@ const BOOL_OCC: Record<BooleanOp, "fuse" | "cut" | "common"> = {
   intersect: "common",
 };
 
+/** Number of solids in a shape. A successful union of two bodies — whether they
+ *  overlap OR merely touch along a shared face — yields a single connected
+ *  solid; two solids that don't meet at all stay as two solids in a compound.
+ *  Counting solids therefore distinguishes "joined" from "disjoint" where volume
+ *  can't (touching bodies share no volume, so union volume == the sum either way). */
+function countSolids(shape: Shape3D): number {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const exp = new oc.TopExp_Explorer_2(
+    shape.wrapped,
+    oc.TopAbs_ShapeEnum.TopAbs_SOLID,
+    oc.TopAbs_ShapeEnum.TopAbs_SHAPE,
+  );
+  let n = 0;
+  while (exp.More()) { n++; exp.Next(); }
+  exp.delete();
+  return n;
+}
+
 /** Combine operand bodies left-to-right with name propagation, validating that
  *  the solids actually overlap. Returns a fresh NamedShape; the operand bodies'
  *  shapes are left for the caller to dispose (after removing them from the set). */
@@ -625,9 +675,14 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): Nam
     const next = booleanNamed(BOOL_OCC[op], acc, ops[i]);
     const nextVol = measureVolume(next.shape);
     const eps = VOLUME_EPS_REL * Math.max(accVol, toolVol, 1);
+    // A union is valid when it actually joins the bodies into fewer solids —
+    // true for overlapping AND merely-touching (shared-face) bodies, which have
+    // no shared volume and so can't be told apart from disjoint by volume alone.
+    // Subtract/intersect still go by volume (nothing removed / no common volume).
     const bad =
       op === "union"
-        ? nextVol >= accVol + toolVol - eps && "Solids don't overlap — union needs overlapping bodies."
+        ? countSolids(next.shape) >= countSolids(acc.shape) + countSolids(ops[i].shape) &&
+          "Solids don't touch — union needs bodies that overlap or share a face."
         : op === "subtract"
           ? nextVol >= accVol - eps && "Solids don't overlap — nothing to subtract."
           : nextVol <= eps && "Solids don't overlap — no common volume.";
@@ -681,7 +736,16 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
             : bodyProfileFace(requireBody(bodies, profile.sourceId), profile.faceName, profile.center);
 
         const sign = dirFlip ? -1 : 1;
-        const lengths = extrudeLengths(extent, distance, face, targets).map((l) => l * sign);
+        // "Up to face" derives its own signed length (and direction) from the
+        // chosen target face's plane, so it bypasses the Flip/sign handling.
+        let lengths: number[];
+        if (extent === "upToFace" && feature.upTo) {
+          const upBody = requireBody(bodies, feature.upTo.sourceId);
+          const up = bodyProfileFace(upBody, feature.upTo.faceName, feature.upTo.center);
+          lengths = [upToFaceLength(face, normal, up.face, up.normal)];
+        } else {
+          lengths = extrudeLengths(extent, distance, face, targets).map((l) => l * sign);
+        }
         let built: NamedShape = prismFromFace(face, normal, lengths[0], feature.id);
         for (let i = 1; i < lengths.length; i++) {
           const more = prismFromFace(face, normal, lengths[i], feature.id);

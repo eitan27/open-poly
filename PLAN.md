@@ -596,30 +596,38 @@ spline tool. Captured 2026-06-21.
    context panel, a right rail). See Phase 2b "Constraint management" + the
    `ParamEditor`/constraints JSX in `App.tsx`.
 
-2. **Improve Extrude "Through All" + move extents to a dropdown.** The additive
-   ("Add") semantics of through-all are unclear and want rethinking/clarifying
-   (through-all naturally reads as a *cut* operation; what should an additive
-   through-all do?). Also change the extent **buttons** (Blind / Symmetric /
-   Through All) into a **dropdown** to declutter the dialog and make room for #3.
-   (`extent` UI in `App.tsx` extrude dialog; `extrudeLengths`/`throughAllLength`
-   in `kernel/worker.ts`.)
+2. **Improve Extrude "Through All" + move extents to a dropdown — ✅ DONE.**
+   Extent picker moved to a **dropdown** (Blind / Symmetric / Through All / Up to
+   face are now a `<select>` in the extrude mini-dialog, replacing the button
+   row; `ParamEditor` mirrors it). The murky additive case is resolved by
+   **restricting Through All to Remove (cut) only** — the option is **hidden**
+   for New and Add (shown only in Remove), and switching a feature to New/Add
+   reverts a selected Through All back to Blind (`updateParam` guard). Additive "grow until you hit something" is served
+   by **Up to face** (#3) instead. (`extent` UI in `App.tsx` extrude dialog;
+   `extrudeLengths`/`throughAllLength` in `kernel/worker.ts`.)
 
-3. **Add an "Up to face" extrude extent.** New extent option; when chosen a
-   **"Select a face"** button appears. Clicking it arms a pick; the next clicked
-   face fills it in — **validated as an eligible target face** for the extent
-   (planar / facing the extrude direction / actually reachable). The button can
-   be clicked again to re-pick. Needs: an `extent="upToFace"` variant carrying a
-   face reference (persistent name + body id), a kernel path that extrudes the
-   profile up to that face (e.g. `BRepFeat_MakePrism` "until"), and pick-arming
-   UI like the existing sketch/plane pick flows.
+3. **Add an "Up to face" extrude extent — ✅ DONE.** New `extent="upToFace"`
+   option; choosing it shows a **"Select a face"** button that arms a viewport
+   face pick (the next clicked body face fills `upTo` = `{featureId, faceName,
+   center}`; re-clickable to re-pick). The kernel computes the signed prism
+   length from the profile plane to the **plane of the target face** along the
+   extrude direction (so flip/distance are ignored — the face drives both
+   distance and direction), and **rejects faces parallel to the extrude
+   direction** with a clear error (a side face → "extrude direction is parallel
+   to the target face"). Distance/Flip fields hide for this extent. Verified:
+   pillar top lands exactly on the target face's plane. (`ExtrudeExtent` +
+   `UpToFaceRef` in `document/types.ts`; resolve in `document.ts`; `upToFaceLength`
+   in `kernel/worker.ts`; dialog + `pickingUpFace` arming in `App.tsx`.)
+   *Remaining:* trim to the actual (possibly non-planar) face surface rather than
+   its plane; up-front client validation of face eligibility.
 
-4. **Replace the Boolean checkbox dialog with click-to-populate.** Drop the
-   current `BooleanDialog` checklist. Instead: a **small movable dialog** that
-   **fills in operands as bodies are clicked** in the viewport (click a body →
-   added to the operand list; click again → removed), with the op (union /
-   subtract / intersect) chosen there. Mirrors how a CAD user expects to pick
-   tool/target bodies directly. (`ui/BooleanDialog.tsx`, `openBooleanDialog` in
-   `App.tsx`.)
+4. **Replace the Boolean checkbox dialog with click-to-populate — ✅ DONE.** The
+   `BooleanDialog` is now a **small movable dialog** (no modal overlay) that
+   **fills operands as bodies are clicked** in the viewport (click a body → added
+   in order; click again → removed; ✕ per row to remove), with the op
+   (union / subtract / intersect) chosen there and a live ordered operand list
+   (subtract notes "first = base, rest = tools"). (`ui/BooleanDialog.tsx`,
+   `openBooleanDialog`/`handlePick` boolean branch in `App.tsx`.)
 
 5. **Timeline formatting.** Re-evaluate the bordered **box** around the timeline
    — is it needed for the drag-resize affordance, or can the splitter work
@@ -627,15 +635,18 @@ spline tool. Captured 2026-06-21.
    that datums live inside the timeline. (`FeatureTree` `.tree`/`.panel-splitter`
    + `.tree-row`/`.datum-row` spacing in `App.css`.)
 
-6. **Less space above the Variables title.** The `.params-heading.collapsible`
-   top margin (22px) leaves too big a gap above "Variables" (now the first item
-   under Datums-in-timeline). Tighten it.
+6. **Less space above the Variables title — ✅ DONE.** Tightened the
+   `.params-heading.collapsible` top margin from 22px to 10px.
 
-7. **Implement keyboard shortcuts.** Wire up the proposal in
-   `KEYBOARD_SHORTCUTS.md` (modeling toolbar, sketch tools, views, timeline).
-   Resolve the two flagged letter conflicts (New Body vs Boolean; Polygon vs
-   Parallel/Perpendicular). Add a global key handler that respects mode-gating
-   (sketch vs modeling) and ignores typing in inputs.
+7. **Implement keyboard shortcuts. ✅ DONE.** Wired up in a global, mode-gated
+   `useEffect` key handler in `App.tsx` (mutually exclusive modeling vs sketch
+   branches, ignores typing in inputs). Resolved the two flagged letter
+   conflicts (New Body vs Boolean → `N`/`B`; Polygon vs Parallel/Perpendicular
+   → `P`/`Shift+P`/`N`) and extended coverage to the features shipped since the
+   proposal was written (Loft `L`, Sweep `W`, Mirror `M`, spline `Shift+L`).
+   Every bound button's `title` tooltip now names its key. See
+   `KEYBOARD_SHORTCUTS.md` for the full scheme and future-conflict notes
+   (Pattern, Measurement, multi-doc manager).
 
 8. **Spline tool in sketch — ✅ DONE** (see Phase 6). Through-point smooth
    spline `SketchEntity`, the `∿` tool, used as a sweep path. *(Remaining: spline

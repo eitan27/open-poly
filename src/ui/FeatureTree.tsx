@@ -107,7 +107,7 @@ export function FeatureTree({
                 {error && <span className="row-badge" title={error}>!</span>}
                 <button
                   className="row-icon"
-                  title="Move up"
+                  title="Move up (Alt+↑)"
                   disabled={i === 0}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -118,7 +118,7 @@ export function FeatureTree({
                 </button>
                 <button
                   className="row-icon"
-                  title="Move down"
+                  title="Move down (Alt+↓)"
                   disabled={i === features.length - 1}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -129,7 +129,7 @@ export function FeatureTree({
                 </button>
                 <button
                   className="row-icon"
-                  title={feature.suppressed ? "Unsuppress" : "Suppress (exclude from the model)"}
+                  title={feature.suppressed ? "Unsuppress (H)" : "Suppress (H): exclude from the model"}
                   // Eye (sketch): bright = visible, faded = hidden. Suppress icon
                   // (others): faded when active, bright when suppressed.
                   style={{

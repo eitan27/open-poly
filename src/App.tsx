@@ -43,6 +43,7 @@ import type {
   ExtrudeExtent,
   ExtrudeProfile,
   FeatureKind,
+  UpToFaceRef,
   PlaneFeature,
   SketchConstraint,
   SketchEntity,
@@ -55,7 +56,7 @@ import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import { frameOf, planeRefLabel, uvToWorld, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
 import { evaluateExpression } from "./document/expression";
-import { detectSketchRegions } from "./document/regions";
+import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
 import { listDocs, saveDoc } from "./storage/db";
 import {
@@ -239,12 +240,12 @@ const SKETCH_TOOLS: { tool: SketchTool; label: string; title: string }[] = [
   { tool: "select", label: "↖", title: "Select (V)" },
   { tool: "line", label: "╱", title: "Line (L)" },
   { tool: "rect-corner", label: "▭", title: "Rectangle: 2 corners (R)" },
-  { tool: "rect-center", label: "⊞", title: "Rectangle: center + corner" },
+  { tool: "rect-center", label: "⊞", title: "Rectangle: center + corner (Shift+R)" },
   { tool: "circle-center", label: "○", title: "Circle: center + radius (C)" },
-  { tool: "circle-3p", label: "◔", title: "Circle: 3 points" },
+  { tool: "circle-3p", label: "◔", title: "Circle: 3 points (Shift+C)" },
   { tool: "polygon", label: "⬢", title: "Regular polygon (P)" },
   { tool: "arc-3p", label: "⌒", title: "Arc: 3 points (A)" },
-  { tool: "spline", label: "∿", title: "Spline: click points, Enter to finish" },
+  { tool: "spline", label: "∿", title: "Spline (Shift+L): click points, Enter to finish" },
 ];
 
 const VIEW_BUTTONS: { name: ViewName; label: string }[] = [
@@ -308,6 +309,27 @@ export default function App() {
   // Regular clicks accumulate into the set; clicking a selected element removes
   // it; clicking empty space clears.
   const handlePick = (picked: Selection | null) => {
+    // Up-to-face pick armed (from the extrude dialog): the next clicked body
+    // face becomes the extrude's target face; anything else cancels the arming.
+    if (pickingUpFace) {
+      if (picked?.kind === "face") {
+        const m = meshes.find((x) => x.id === picked.featureId);
+        const center = m ? faceCentroid(m.mesh.faces, picked.faceId) : null;
+        if (center) {
+          const faceName = m ? faceNameOf(m.mesh.faces, picked.faceId) : undefined;
+          setExtrudeDialog((d) => (d ? { ...d, upTo: { featureId: picked.featureId, faceName, center } } : d));
+        }
+      }
+      setPickingUpFace(false);
+      return;
+    }
+    // Boolean dialog open: clicking a body toggles it as an operand (add on
+    // first click, remove on the next) rather than changing the normal selection.
+    if (booleanDialog) {
+      const id = picked ? featureIdOf(picked) : null;
+      if (id && booleanCandidates.some((c) => c.id === id)) toggleBooleanOperand(id);
+      return;
+    }
     // Dimension mode armed: the next picked line/circle is the dimension target.
     if (dimPending) {
       const sk = doc.features.find((f) => f.id === editingSketchId);
@@ -371,8 +393,11 @@ export default function App() {
   const [dimPending, setDimPending] = useState(false);
   // The extrude dialog (anchored at the profile) while choosing parameters.
   const [extrudeDialog, setExtrudeDialog] = useState<
-    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; extent: ExtrudeExtent; targetId: string | null; x: number; y: number } | null
+    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; extent: ExtrudeExtent; targetId: string | null; upTo: UpToFaceRef | null; x: number; y: number } | null
   >(null);
+  // True while the extrude dialog's "Select a face" pick is armed: the next
+  // body face clicked in the viewport fills the up-to-face target.
+  const [pickingUpFace, setPickingUpFace] = useState(false);
   // Live ghost preview of the extrude dialog's current params: one entry per
   // body the regen result represents (every new extrude for "new", or the
   // single chosen target for "add"/"remove") — used to swap those bodies' real
@@ -531,63 +556,6 @@ export default function App() {
     }, 600);
     return () => clearTimeout(t);
   }, [doc, persistLoaded]);
-
-  // Undo/redo keyboard shortcuts. Skip while typing so native text-field undo
-  // keeps working inside inputs.
-  useEffect(() => {
-    const SKETCH_KEYS: Record<string, SketchTool> = {
-      v: "select",
-      l: "line",
-      r: "rect-corner",
-      c: "circle-center",
-      p: "polygon",
-      a: "arc-3p",
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (dimInputRef.current) setDimInput(null);
-        else if (dimPendingRef.current) setDimPending(false);
-        else if (planeDialog) setPlaneDialog(null);
-        else if (transformEditId) cancelTransform();
-        else if (picking) setPicking(false);
-        else if (draft.length > 0) setDraft([]); // cancel the in-progress shape
-        else if (editingSketchId) finishSketch();
-        return;
-      }
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if ((e.key === "Delete" || e.key === "Backspace") && selection.length > 0) {
-        e.preventDefault();
-        handleDeleteSelection();
-        return;
-      }
-      if (e.key === "Enter" && draft.length > 0) {
-        // Spline: Enter commits the accumulated points; other tools just abandon.
-        if (!finishSpline()) setDraft([]);
-        return;
-      }
-      // D dimensions the selected line (the standard dimension shortcut).
-      // preventDefault so the keystroke can't leak into the input that opening
-      // the dialog autofocuses synchronously.
-      if (editingSketchId && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === "d") {
-        e.preventDefault();
-        startDimensionRef.current();
-        return;
-      }
-      if (editingSketchId && !e.metaKey && !e.ctrlKey && SKETCH_KEYS[e.key.toLowerCase()]) {
-        setSketchTool(SKETCH_KEYS[e.key.toLowerCase()]);
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [undo, redo, picking, planeDialog, transformEditId, draft, editingSketchId, selection, doc, sketchTool, constructionMode]);
 
   // Close the "New Body" dropdown when clicking anywhere outside it.
   useEffect(() => {
@@ -821,15 +789,35 @@ export default function App() {
     [selection, doc, meshes],
   );
 
-  // Every selected profile an Extrude could consume: sketch regions and/or
-  // planar faces of existing bodies, picked one at a time and accumulated by
-  // the normal multi-select (see handlePick) — one dialog fill-in extrudes or
-  // cuts all of them at once.
+  // Every selected profile an Extrude could consume: sketch regions, planar
+  // faces of existing bodies, or sketch edges that fully enclose a region (so
+  // a tiny/fiddly-to-click face can be picked by its boundary instead) —
+  // picked one at a time and accumulated by the normal multi-select (see
+  // handlePick) — one dialog fill-in extrudes or cuts all of them at once.
   const extrudeProfiles = useMemo((): ExtrudeProfile[] => {
     const profiles: ExtrudeProfile[] = [];
+    const regionKeys = new Set<string>(); // dedupe sketchId/regionId across selection kinds
+    const addRegion = (sketchId: string, regionId: string) => {
+      const key = `${sketchId}/${regionId}`;
+      if (regionKeys.has(key)) return;
+      regionKeys.add(key);
+      profiles.push({ kind: "sketchRegion", sketchId, regionId });
+    };
+    const selectedEntitiesBySketch = new Map<string, Set<string>>();
+    for (const s of selection) {
+      if (s.kind !== "sketchEntity") continue;
+      let ids = selectedEntitiesBySketch.get(s.sketchId);
+      if (!ids) selectedEntitiesBySketch.set(s.sketchId, (ids = new Set()));
+      ids.add(s.entityId);
+    }
+    for (const [sketchId, ids] of selectedEntitiesBySketch) {
+      const sk = doc.features.find((f) => f.id === sketchId);
+      if (sk?.type !== "sketch") continue;
+      for (const region of regionsEnclosedBy(sk.entities, ids)) addRegion(sketchId, region.id);
+    }
     for (const s of selection) {
       if (s.kind === "sketchFace") {
-        profiles.push({ kind: "sketchRegion", sketchId: s.sketchId, regionId: s.regionId });
+        addRegion(s.sketchId, s.regionId);
       } else if (s.kind === "face") {
         const m = meshes.find((x) => x.id === s.featureId);
         const center = m ? faceCentroid(m.mesh.faces, s.faceId) : null;
@@ -839,7 +827,7 @@ export default function App() {
       }
     }
     return profiles;
-  }, [selection, meshes]);
+  }, [selection, meshes, doc]);
 
   // World-space anchor for the extrude dialog: a body face's centroid, or a
   // sketch region's centroid mapped to 3D. Anchored on the first profile when
@@ -895,6 +883,7 @@ export default function App() {
       flip: false,
       extent: "blind",
       targetId: defaultTarget,
+      upTo: null,
       x: s.x,
       y: s.y,
     });
@@ -904,6 +893,8 @@ export default function App() {
     if (extrudeProfiles.length === 0 || !extrudeDialog) return;
     // Add/Remove require a target body to affect.
     if (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) return;
+    // Up to face requires a chosen target face.
+    if (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) return;
     // One Extrude feature per selected profile, sharing the dialog's settings —
     // folded into a single undo step by threading `next` through every
     // addExtrude/setSuppressed call before the one setDoc at the end.
@@ -916,6 +907,7 @@ export default function App() {
         extent: extrudeDialog.extent,
         mode: extrudeDialog.mode,
         targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
+        upTo: extrudeDialog.extent === "upToFace" ? extrudeDialog.upTo ?? undefined : undefined,
       });
       // Hide the source sketch once it's been consumed by an extrude. It stays
       // in place and editable — toggle the timeline eye (or edit it) to bring
@@ -925,7 +917,13 @@ export default function App() {
     }
     setDoc(next);
     selectFeature(lastId);
+    closeExtrudeDialog();
+  };
+
+  // Dismiss the extrude dialog, also disarming any pending up-to-face pick.
+  const closeExtrudeDialog = () => {
     setExtrudeDialog(null);
+    setPickingUpFace(false);
   };
 
   // Live ghost preview of the extrude dialog: mirrors the main regen effect
@@ -934,7 +932,12 @@ export default function App() {
   // model. Re-runs on every dialog/profile change, same as editing a committed
   // feature's params already does.
   useEffect(() => {
-    if (!extrudeDialog || extrudeProfiles.length === 0 || (extrudeDialog.mode !== "new" && !extrudeDialog.targetId)) {
+    if (
+      !extrudeDialog ||
+      extrudeProfiles.length === 0 ||
+      (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) ||
+      (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo)
+    ) {
       setExtrudePreview(null);
       setExtrudePreviewError(null);
       return;
@@ -957,6 +960,7 @@ export default function App() {
         extent: extrudeDialog.extent,
         mode: extrudeDialog.mode,
         targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
+        upTo: extrudeDialog.extent === "upToFace" ? extrudeDialog.upTo ?? undefined : undefined,
       });
       previewDoc = res.doc;
       createdIds.push(res.id);
@@ -1129,6 +1133,203 @@ export default function App() {
       .sort((a, b) => idx(a.sketchId) - idx(b.sketchId))
       .map((s) => ({ sketchId: s.sketchId, regionId: s.regionId }));
   }, [selection, doc]);
+
+  // Global keyboard shortcuts. The modeling toolbar and the sketch toolbar are
+  // mutually exclusive (one is only usable while NOT editing a sketch, the
+  // other only while editing one), so some letters are intentionally reused
+  // across the two branches below — see KEYBOARD_SHORTCUTS.md.
+  useEffect(() => {
+    const SKETCH_KEYS: Record<string, SketchTool> = {
+      v: "select",
+      l: "line",
+      r: "rect-corner",
+      c: "circle-center",
+      p: "polygon",
+      a: "arc-3p",
+    };
+    // Shift-modified variants of an existing tool key (Shift+R/Shift+C/Shift+L).
+    const SKETCH_SHIFT_KEYS: Record<string, SketchTool> = {
+      r: "rect-center",
+      c: "circle-3p",
+      l: "spline",
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (dimInputRef.current) setDimInput(null);
+        else if (dimPendingRef.current) setDimPending(false);
+        else if (planeDialog) setPlaneDialog(null);
+        else if (transformEditId) cancelTransform();
+        else if (picking) setPicking(false);
+        else if (draft.length > 0) setDraft([]); // cancel the in-progress shape
+        else if (editingSketchId) finishSketch();
+        return;
+      }
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if ((e.key === "Delete" || e.key === "Backspace") && selection.length > 0) {
+        e.preventDefault();
+        handleDeleteSelection();
+        return;
+      }
+      if (e.key === "Enter" && draft.length > 0) {
+        // Spline: Enter commits the accumulated points; other tools just abandon.
+        if (!finishSpline()) setDraft([]);
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        importInputRef.current?.click();
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) return; // leave other OS/browser chords alone
+
+      // Standard views: the view-controls bar is visible (and clickable) in
+      // both modeling and sketch mode, so digits 1-7 work in both — letters
+      // were deliberately avoided here (they'd collide with modeling-toolbar
+      // actions live in the same context: T-op/T-ransform, F-ront/F-illet...).
+      if (/^[1-7]$/.test(e.key)) {
+        const v = VIEW_BUTTONS[Number(e.key) - 1];
+        if (v) viewApiRef.current?.setView(v.name);
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+
+      if (editingSketchId) {
+        // ---- Sketch toolbar ----
+        // D dimensions the selected line (the standard dimension shortcut).
+        // preventDefault so the keystroke can't leak into the input that
+        // opening the dialog autofocuses synchronously.
+        if (key === "d") {
+          e.preventDefault();
+          startDimensionRef.current();
+          return;
+        }
+        if (e.shiftKey && SKETCH_SHIFT_KEYS[key]) {
+          setSketchTool(SKETCH_SHIFT_KEYS[key]);
+          return;
+        }
+        if (!e.shiftKey && SKETCH_KEYS[key]) {
+          setSketchTool(SKETCH_KEYS[key]);
+          return;
+        }
+        if (!e.shiftKey && key === "s") {
+          handleSolve();
+          return;
+        }
+        if (!e.shiftKey && key === "q") {
+          toggleConstruction();
+          return;
+        }
+        if (!e.shiftKey && key === "n" && twoSelectedLines) {
+          addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id);
+          return;
+        }
+        if (e.shiftKey && key === "p" && twoSelectedLines) {
+          addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id);
+          return;
+        }
+        if (e.key === "=") {
+          const pair = twoSelectedLines ?? twoSelectedCircles;
+          if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
+        }
+        return;
+      }
+
+      // ---- Modeling toolbar ----
+      if (key === "h" && primaryFeatureId) {
+        setDoc(setSuppressed(doc, primaryFeatureId, !doc.features.find((f) => f.id === primaryFeatureId)?.suppressed));
+        return;
+      }
+      if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && primaryFeatureId) {
+        e.preventDefault();
+        setDoc(moveFeature(doc, primaryFeatureId, e.key === "ArrowUp" ? -1 : 1));
+        return;
+      }
+      if (key === "n") {
+        // New Body ignores `picking`, matching the toolbar button itself.
+        setNewSolidOpen((o) => !o);
+        return;
+      }
+      if (picking) return;
+      // preventDefault before acting: several cases below (e/c/f) synchronously
+      // mount a dialog with an autoFocus text input, and without this the same
+      // keystroke leaks into that input right after it mounts (e.g. "e" turning
+      // the Extrude distance default "10" into "10e").
+      e.preventDefault();
+      switch (key) {
+        case "s":
+          setPickPurpose("sketch");
+          setPicking(true);
+          break;
+        case "p":
+          setPickPurpose("plane");
+          setPicking(true);
+          break;
+        case "e":
+          if (extrudeProfiles.length > 0 && !extrudeDialog) openExtrudeDialog();
+          break;
+        case "r":
+          if (revolveInputs) openRevolve();
+          break;
+        case "w":
+          if (sweepInputs) openSweep();
+          break;
+        case "l":
+          if (loftInputs) openLoft();
+          break;
+        case "c":
+          if (dressUpTarget) openDressUp("chamfer");
+          break;
+        case "f":
+          if (dressUpTarget) openDressUp("fillet");
+          break;
+        case "b":
+          if (bodyIds.size >= 2) openBooleanDialog();
+          break;
+        case "t":
+          if (transformTarget && !transformEditId) openTransform();
+          break;
+        case "m":
+          if (transformTarget) openMirror();
+          break;
+        default:
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    undo,
+    redo,
+    picking,
+    planeDialog,
+    transformEditId,
+    draft,
+    editingSketchId,
+    selection,
+    doc,
+    sketchTool,
+    constructionMode,
+    extrudeProfiles,
+    extrudeDialog,
+    revolveInputs,
+    sweepInputs,
+    loftInputs,
+    dressUpTarget,
+    bodyIds,
+    transformTarget,
+    twoSelectedLines,
+    twoSelectedCircles,
+    primaryFeatureId,
+  ]);
 
   const openLoft = () => {
     if (!loftInputs) return;
@@ -1804,7 +2005,7 @@ export default function App() {
             <button
               className="parts-import"
               type="button"
-              title="Import a STEP file as a new part"
+              title="Import a STEP file as a new part (⌘I / Ctrl+I)"
               onClick={() => importInputRef.current?.click()}
             >
               ⤓ Import STEP
@@ -1895,7 +2096,7 @@ export default function App() {
           />
           <div className="model-toolbar">
             <button
-              title="Start a sketch (pick a plane or face)"
+              title="Sketch (S): start a sketch — pick a plane or face"
               disabled={!!editingSketch || picking}
               onClick={() => { setPickPurpose("sketch"); setPicking(true); }}
             >
@@ -1903,7 +2104,7 @@ export default function App() {
             </button>
             <div className="mt-dropdown" ref={newSolidRef}>
               <button
-                title="Create a new solid body"
+                title="New Body (N): create a new solid body"
                 disabled={!!editingSketch}
                 onClick={() => setNewSolidOpen((o) => !o)}
               >
@@ -1923,70 +2124,70 @@ export default function App() {
               )}
             </div>
             <button
-              title="Create a reference plane (pick a plane or face to offset from)"
+              title="Plane (P): create a reference plane — pick a plane or face to offset from"
               disabled={!!editingSketch || picking}
               onClick={() => { setPickPurpose("plane"); setPicking(true); }}
             >
               ⧉ Plane
             </button>
             <button
-              title="Extrude the selected sketch region(s) and/or face(s)"
+              title="Extrude (E): extrude the selected sketch region(s) and/or face(s)"
               disabled={extrudeProfiles.length === 0 || !!editingSketch || picking || !!extrudeDialog}
               onClick={openExtrudeDialog}
             >
               ⬆ Extrude
             </button>
             <button
-              title="Revolve a sketch region around an axis line (select both)"
+              title="Revolve (R): revolve a sketch region around an axis line (select both)"
               disabled={!revolveInputs || !!editingSketch || picking}
               onClick={openRevolve}
             >
               ⟳ Revolve
             </button>
             <button
-              title="Sweep a sketch region along a path: line / arc / spline (select both)"
+              title="Sweep (W): sweep a sketch region along a path — line / arc / spline (select both)"
               disabled={!sweepInputs || !!editingSketch || picking}
               onClick={openSweep}
             >
               ⊃ Sweep
             </button>
             <button
-              title="Loft through 2+ sketch regions (select the sections)"
+              title="Loft (L): loft through 2+ sketch regions (select the sections)"
               disabled={!loftInputs || !!editingSketch || picking}
               onClick={openLoft}
             >
               ⌧ Loft
             </button>
             <button
-              title="Chamfer the selected edge(s)"
+              title="Chamfer (C): chamfer the selected edge(s)"
               disabled={!dressUpTarget || !!editingSketch || picking}
               onClick={() => openDressUp("chamfer")}
             >
               ◣ Chamfer
             </button>
             <button
-              title="Fillet (round) the selected edge(s)"
+              title="Fillet (F): round the selected edge(s)"
               disabled={!dressUpTarget || !!editingSketch || picking}
               onClick={() => openDressUp("fillet")}
             >
               ◖ Fillet
             </button>
             <button
-              title="Boolean (union / subtract / intersect)"
+              title="Boolean (B): union / subtract / intersect"
               disabled={bodyIds.size < 2 || !!editingSketch || picking}
               onClick={openBooleanDialog}
             >
               ⊕ Boolean
             </button>
             <button
-              title="Move / rotate the selected body"
+              title="Transform (T): move / rotate the selected body"
               disabled={!transformTarget || !!editingSketch || picking || !!transformEditId}
               onClick={openTransform}
             >
               ✥ Transform
             </button>
             <button
-              title="Mirror the selected body across a plane"
+              title="Mirror (M): mirror the selected body across a plane"
               disabled={!transformTarget || !!editingSketch || picking}
               onClick={openMirror}
             >
@@ -2014,7 +2215,7 @@ export default function App() {
               </button>
               <div className="sketch-toolbar-sep" />
               <button
-                title="Parallel — select two lines"
+                title="Parallel (Shift+P) — select two lines"
                 disabled={!twoSelectedLines}
                 onClick={() =>
                   twoSelectedLines &&
@@ -2024,7 +2225,7 @@ export default function App() {
                 <ParallelIcon />
               </button>
               <button
-                title="Perpendicular — select two lines"
+                title="Perpendicular (N) — select two lines"
                 disabled={!twoSelectedLines}
                 onClick={() =>
                   twoSelectedLines &&
@@ -2034,7 +2235,7 @@ export default function App() {
                 ⊥
               </button>
               <button
-                title="Equal — select two lines (equal length) or two circles (equal radius)"
+                title="Equal (=) — select two lines (equal length) or two circles (equal radius)"
                 disabled={!twoSelectedLines && !twoSelectedCircles}
                 onClick={() => {
                   const pair = twoSelectedLines ?? twoSelectedCircles;
@@ -2047,15 +2248,15 @@ export default function App() {
               <button
                 title={
                   selectedSketchEntities.length > 0
-                    ? "Toggle construction (reference) geometry on the selection"
-                    : "Construction geometry: draw reference geometry (toggle)"
+                    ? "Construction (Q): toggle construction (reference) geometry on the selection"
+                    : "Construction (Q): draw reference geometry (toggle)"
                 }
                 className={constructionMode ? "active" : ""}
                 onClick={toggleConstruction}
               >
                 <ConstructionIcon />
               </button>
-              <button title="Solve constraints" onClick={handleSolve}>
+              <button title="Solve constraints (S)" onClick={handleSolve}>
                 ⛓
               </button>
               {sketchTool === "polygon" && (
@@ -2122,8 +2323,12 @@ export default function App() {
             />
           )}
           <div className="view-controls">
-            {VIEW_BUTTONS.map((v) => (
-              <button key={v.name} onClick={() => viewApiRef.current?.setView(v.name)}>
+            {VIEW_BUTTONS.map((v, i) => (
+              <button
+                key={v.name}
+                title={`${v.label} (${i + 1})`}
+                onClick={() => viewApiRef.current?.setView(v.name)}
+              >
                 {v.label}
               </button>
             ))}
@@ -2184,7 +2389,9 @@ export default function App() {
                     className={extrudeDialog.mode === m ? "active" : ""}
                     onClick={() =>
                       setExtrudeDialog((d) =>
-                        d ? { ...d, mode: m, extent: m === "new" && d.extent === "throughAll" ? "blind" : d.extent } : d,
+                        // Through All is only meaningful for a cut (Remove); switching
+                        // to New or Add drops it back to Blind.
+                        d ? { ...d, mode: m, extent: m !== "remove" && d.extent === "throughAll" ? "blind" : d.extent } : d,
                       )
                     }
                   >
@@ -2206,31 +2413,54 @@ export default function App() {
                   </select>
                 </label>
               )}
-              <div className="ed-modes">
-                {(["blind", "symmetric", "throughAll"] as const).map((ex) => (
-                  <button
-                    key={ex}
-                    className={extrudeDialog.extent === ex ? "active" : ""}
-                    disabled={ex === "throughAll" && extrudeDialog.mode === "new"}
-                    onClick={() => setExtrudeDialog((d) => (d ? { ...d, extent: ex } : d))}
-                  >
-                    {ex === "blind" ? "Blind" : ex === "symmetric" ? "Symmetric" : "Through All"}
-                  </button>
-                ))}
-              </div>
               <label className="ed-field">
-                <span>Distance</span>
-                <input
-                  autoFocus
-                  value={extrudeDialog.distance}
-                  onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, distance: e.target.value } : d))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") createExtrude();
-                    else if (e.key === "Escape") setExtrudeDialog(null);
+                <span>Extent</span>
+                <select
+                  value={extrudeDialog.extent}
+                  onChange={(e) => {
+                    const extent = e.target.value as ExtrudeExtent;
+                    setExtrudeDialog((d) => (d ? { ...d, extent } : d));
+                    if (extent !== "upToFace") setPickingUpFace(false);
                   }}
-                />
+                >
+                  <option value="blind">Blind</option>
+                  <option value="symmetric">Symmetric</option>
+                  {/* Through All only makes sense as a cut, so it's shown for Remove only. */}
+                  {extrudeDialog.mode === "remove" && <option value="throughAll">Through All</option>}
+                  <option value="upToFace">Up to face</option>
+                </select>
               </label>
-              {extrudeDialog.extent !== "symmetric" && (
+              {extrudeDialog.extent === "upToFace" && (
+                <label className="ed-field">
+                  <span>Face</span>
+                  <button
+                    type="button"
+                    className={"ed-pick-btn" + (pickingUpFace ? " active" : "")}
+                    onClick={() => setPickingUpFace((v) => !v)}
+                  >
+                    {pickingUpFace
+                      ? "Click a face…"
+                      : extrudeDialog.upTo
+                        ? `On ${doc.features.find((f) => f.id === extrudeDialog.upTo!.featureId)?.name ?? "body"}`
+                        : "Select a face"}
+                  </button>
+                </label>
+              )}
+              {extrudeDialog.extent !== "upToFace" && (
+                <label className="ed-field">
+                  <span>Distance</span>
+                  <input
+                    autoFocus
+                    value={extrudeDialog.distance}
+                    onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, distance: e.target.value } : d))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") createExtrude();
+                      else if (e.key === "Escape") closeExtrudeDialog();
+                    }}
+                  />
+                </label>
+              )}
+              {extrudeDialog.extent !== "symmetric" && extrudeDialog.extent !== "upToFace" && (
                 <label className="ed-field ed-flip">
                   <span>Flip direction</span>
                   <input
@@ -2244,12 +2474,15 @@ export default function App() {
               <div className="ed-actions">
                 <button
                   className="ed-primary"
-                  disabled={extrudeDialog.mode !== "new" && !extrudeDialog.targetId}
+                  disabled={
+                    (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) ||
+                    (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo)
+                  }
                   onClick={createExtrude}
                 >
                   Create
                 </button>
-                <button onClick={() => setExtrudeDialog(null)}>Cancel</button>
+                <button onClick={closeExtrudeDialog}>Cancel</button>
               </div>
             </DraggableDialog>
           )}
@@ -2398,7 +2631,7 @@ export default function App() {
           operandIds={booleanDialog.operandIds}
           candidates={booleanCandidates}
           onOpChange={(op) => setBooleanDialog((d) => (d ? { ...d, op } : d))}
-          onToggleOperand={toggleBooleanOperand}
+          onRemoveOperand={toggleBooleanOperand}
           onConfirm={confirmBoolean}
           onCancel={() => setBooleanDialog(null)}
         />
