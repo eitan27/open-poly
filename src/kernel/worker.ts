@@ -204,7 +204,7 @@ function revolveSketchRegion(
 ): NamedShape {
   const { outline, frame } = profile;
   if (outline.length < 3) throw new Error("revolve: profile needs at least 3 points");
-  const plane = new Plane(frame.origin, frame.uAxis, frame.normal);
+  const plane = planeOf(frame);
   let pen = draw().movePointerTo(outline[0]);
   for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
   const face = (pen.close().sketchOnPlane(plane) as { face(): Face }).face();
@@ -224,6 +224,16 @@ function frameToWorld(f: ResolvedFrame, p: [number, number]): [number, number, n
     f.origin[1] + p[0] * f.uAxis[1] + p[1] * f.vAxis[1],
     f.origin[2] + p[0] * f.uAxis[2] + p[1] * f.vAxis[2],
   ];
+}
+
+/** Build a replicad Plane whose (x, y) basis is EXACTLY the frame's
+ *  (uAxis, vAxis). replicad derives the plane's y as `normal × xDir`, so we pass
+ *  `normal = uAxis × vAxis` to guarantee y === vAxis. This matters because the
+ *  "front" datum frame is left-handed (its normal = −(uAxis × vAxis)), so passing
+ *  `frame.normal` would mirror all built geometry in v relative to how the sketch
+ *  renders (`uvToWorld` uses the frame's own uAxis/vAxis). */
+function planeOf(f: ResolvedFrame): Plane {
+  return new Plane(f.origin, f.uAxis, vcross(f.uAxis as V3, f.vAxis as V3));
 }
 
 /** Build a closed profile Drawing from a baked outline (uv, on its own frame). */
@@ -257,7 +267,7 @@ function sweepBody(profile: RegionProfile, path: { points: [number, number][]; s
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   // Spine wire from the path points (open drawing → wire).
-  const pathPlane = new Plane(path.frame.origin, path.frame.uAxis, path.frame.normal);
+  const pathPlane = planeOf(path.frame);
   let pen = draw().movePointerTo(path.points[0]);
   for (let i = 1; i < path.points.length; i++) {
     pen = path.smooth ? pen.smoothSplineTo(path.points[i]) : pen.lineTo(path.points[i]);
@@ -302,7 +312,7 @@ function loftBody(profiles: RegionProfile[], id: string): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   const wires = profiles.map(
-    (p) => (profileDrawing(p.outline).sketchOnPlane(new Plane(p.frame.origin, p.frame.uAxis, p.frame.normal)) as unknown as Sketch).wire,
+    (p) => (profileDrawing(p.outline).sketchOnPlane(planeOf(p.frame)) as unknown as Sketch).wire,
   );
   const builder = new oc.BRepOffsetAPI_ThruSections(true, false, 1e-6); // solid, smooth
   for (const w of wires) builder.AddWire(w.wrapped);
@@ -333,7 +343,7 @@ function sketchRegionFace(
 ): { face: Face; normal: Vector } {
   const { outline, frame } = profile;
   if (outline.length < 3) throw new Error("extrude: profile needs at least 3 points");
-  const plane = new Plane(frame.origin, frame.uAxis, frame.normal);
+  const plane = planeOf(frame);
   let pen = draw().movePointerTo(outline[0]);
   for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
   const face = (pen.close().sketchOnPlane(plane) as { face(): Face }).face();
