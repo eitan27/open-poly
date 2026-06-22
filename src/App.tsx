@@ -321,11 +321,27 @@ export default function App() {
       setPickingUpFace(false);
       return;
     }
-    // Boolean dialog open: clicking a body toggles it as an operand (add on
-    // first click, remove on the next) rather than changing the normal selection.
+    // Boolean dialog open: a clicked body fills the dialog instead of changing
+    // the normal selection. union/intersect toggle a single operand list;
+    // subtract routes to the armed slot (base = one part; tools accumulate).
     if (booleanDialog) {
       const id = picked ? featureIdOf(picked) : null;
-      if (id && booleanCandidates.some((c) => c.id === id)) toggleBooleanOperand(id);
+      if (!id || !booleanCandidates.some((c) => c.id === id)) return;
+      setBooleanDialog((d) => {
+        if (!d) return d;
+        if (d.op === "subtract") {
+          const slot = d.armed ?? (d.base ? "tools" : "base");
+          if (slot === "base") {
+            // Set the base; it can't also be a tool; advance to picking tools.
+            return { ...d, base: id, tools: d.tools.filter((t) => t !== id), armed: "tools" };
+          }
+          if (id === d.base) return d; // the base can't be a tool
+          const has = d.tools.includes(id);
+          return { ...d, tools: has ? d.tools.filter((t) => t !== id) : [...d.tools, id], armed: "tools" };
+        }
+        const has = d.operandIds.includes(id);
+        return { ...d, operandIds: has ? d.operandIds.filter((x) => x !== id) : [...d.operandIds, id] };
+      });
       return;
     }
     // Dimension mode armed: the next picked line/circle is the dimension target.
@@ -472,9 +488,16 @@ export default function App() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
-  const [booleanDialog, setBooleanDialog] = useState<{ op: BooleanOp; operandIds: string[] } | null>(
-    null,
-  );
+  // Boolean dialog. `operandIds` is the operand list for union/intersect; for
+  // subtract the operands split into a single `base` + accumulating `tools`, with
+  // `armed` saying which subtract slot the next viewport click fills.
+  const [booleanDialog, setBooleanDialog] = useState<{
+    op: BooleanOp;
+    operandIds: string[];
+    base: string | null;
+    tools: string[];
+    armed: "base" | "tools" | null;
+  } | null>(null);
 
   // Own the worker's lifecycle here so each mount cycle (incl. StrictMode's
   // mount/unmount/remount) gets a fresh, live kernel rather than a disposed one.
@@ -1771,33 +1794,60 @@ export default function App() {
   };
 
   // Opens the Boolean dialog, auto-populating operands from whatever solids
-  // are already selected (deduped, in selection order).
+  // are already selected (deduped, in selection order). Defaults to union; the
+  // base/tools split (for subtract) is seeded from the same list.
   const openBooleanDialog = () => {
     const candidateIds = new Set(booleanCandidates.map((c) => c.id));
     const operandIds = [...new Set(selection.map(featureIdOf))].filter((id) =>
       candidateIds.has(id),
     );
-    setBooleanDialog({ op: "union", operandIds });
+    setBooleanDialog({
+      op: "union",
+      operandIds,
+      base: operandIds[0] ?? null,
+      tools: operandIds.slice(1),
+      armed: null,
+    });
   };
 
-  const toggleBooleanOperand = (id: string) => {
+  // Switch op, converting the operand representation between the flat list
+  // (union/intersect) and the base+tools split (subtract) so picks aren't lost.
+  const setBooleanOp = (op: BooleanOp) => {
     setBooleanDialog((d) => {
       if (!d) return d;
-      const has = d.operandIds.includes(id);
-      return {
-        ...d,
-        operandIds: has ? d.operandIds.filter((x) => x !== id) : [...d.operandIds, id],
-      };
+      const flat = d.op === "subtract" ? [d.base, ...d.tools].filter((x): x is string => !!x) : d.operandIds;
+      if (op === "subtract") {
+        const base = flat[0] ?? null;
+        return { ...d, op, base, tools: flat.slice(1), armed: base ? "tools" : "base" };
+      }
+      return { ...d, op, operandIds: flat, armed: null };
     });
   };
 
   const confirmBoolean = () => {
-    if (!booleanDialog || booleanDialog.operandIds.length < 2) return;
-    const { doc: next, id } = addBoolean(doc, booleanDialog.op, booleanDialog.operandIds);
+    if (!booleanDialog) return;
+    const d = booleanDialog;
+    const operands =
+      d.op === "subtract"
+        ? d.base && d.tools.length >= 1 ? [d.base, ...d.tools] : null
+        : d.operandIds.length >= 2 ? d.operandIds : null;
+    if (!operands) return;
+    const { doc: next, id } = addBoolean(doc, d.op, operands);
     setDoc(next);
     selectFeature(id);
     setBooleanDialog(null);
   };
+
+  // Per-operand viewport highlight while the dialog is open: union → all orange;
+  // subtract → base orange, tools cyan; intersect → all cyan (overlap reads
+  // through). Colors are the shared SELECT_COLOR / GHOST_COLOR refs in Viewport.
+  const booleanHighlight = useMemo(() => {
+    const d = booleanDialog;
+    if (!d) return null;
+    if (d.op === "subtract") return { orange: new Set(d.base ? [d.base] : []), cyan: new Set(d.tools) };
+    if (d.op === "intersect") return { orange: new Set<string>(), cyan: new Set(d.operandIds) };
+    return { orange: new Set(d.operandIds), cyan: new Set<string>() };
+  }, [booleanDialog]);
 
   const handleDelete = (id: string) => {
     setDoc(removeFeature(doc, id));
@@ -2010,6 +2060,7 @@ export default function App() {
             ghostMeshes={ghostMeshes}
             selection={selection}
             highlightBodyIds={highlightBodyIds}
+            booleanHighlight={booleanHighlight}
             onSelect={handlePick}
             datumVisibility={datumVisibility}
             userPlanes={userPlanes}
@@ -2567,10 +2618,20 @@ export default function App() {
       {booleanDialog && (
         <BooleanDialog
           op={booleanDialog.op}
-          operandIds={booleanDialog.operandIds}
           candidates={booleanCandidates}
-          onOpChange={(op) => setBooleanDialog((d) => (d ? { ...d, op } : d))}
-          onRemoveOperand={toggleBooleanOperand}
+          operandIds={booleanDialog.operandIds}
+          base={booleanDialog.base}
+          tools={booleanDialog.tools}
+          armed={booleanDialog.armed}
+          onOpChange={setBooleanOp}
+          onArm={(slot) => setBooleanDialog((d) => (d ? { ...d, armed: slot } : d))}
+          onRemoveOperand={(id) =>
+            setBooleanDialog((d) => (d ? { ...d, operandIds: d.operandIds.filter((x) => x !== id) } : d))
+          }
+          onClearBase={() => setBooleanDialog((d) => (d ? { ...d, base: null, armed: "base" } : d))}
+          onRemoveTool={(id) =>
+            setBooleanDialog((d) => (d ? { ...d, tools: d.tools.filter((x) => x !== id) } : d))
+          }
           onConfirm={confirmBoolean}
           onCancel={() => setBooleanDialog(null)}
         />

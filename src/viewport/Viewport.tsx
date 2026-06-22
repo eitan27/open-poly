@@ -198,7 +198,14 @@ const makeBodyMaterial = (color: number) =>
 const VIEW_DISTANCE = 220;
 const TWEEN_MS = 300;
 const SNAP_PX = 12;
-const EDGE_SEL_COLOR = new THREE.Color(0xff9d3c);
+/** Standard whole-body / face selection highlight color. Referenced wherever a
+ *  body is highlighted (selection, union/subtract-base boolean operands) so it
+ *  can change globally in one place. */
+export const SELECT_COLOR = 0xff9d3c;
+/** Translucent "not committed yet" accent — ghost previews and boolean
+ *  tool/intersect operands. */
+export const GHOST_COLOR = 0x4fd1ff;
+const EDGE_SEL_COLOR = new THREE.Color(SELECT_COLOR);
 const EDGE_HOV_COLOR = new THREE.Color(0x36d6c3);
 const EDGE_PICK_WORLD = 1.6; // ray-distance threshold for grabbing an edge
 const VERTEX_PICK_WORLD = 3; // proximity to an edge endpoint that grabs the vertex
@@ -266,6 +273,7 @@ export function Viewport({
   ghostMeshes,
   selection,
   highlightBodyIds,
+  booleanHighlight,
   onSelect,
   datumVisibility,
   userPlanes,
@@ -292,6 +300,10 @@ export function Viewport({
   /** Body ids whose whole body should highlight (modifier features resolve to
    *  the body they affect — see App). */
   highlightBodyIds: Set<string>;
+  /** Boolean-dialog operand highlight (null when the dialog is closed): `orange`
+   *  bodies render in the standard selection color, `cyan` bodies render as a
+   *  translucent ghost. See SELECT_COLOR / GHOST_COLOR. */
+  booleanHighlight: { orange: Set<string>; cyan: Set<string> } | null;
   onSelect: (picked: Selection | null) => void;
   datumVisibility: Record<DatumId, boolean>;
   /** User reference planes to render + make pickable (for sketch / plane base). */
@@ -322,6 +334,8 @@ export function Viewport({
   selectionRef.current = selection;
   const highlightBodyIdsRef = useRef(highlightBodyIds);
   highlightBodyIdsRef.current = highlightBodyIds;
+  const booleanHighlightRef = useRef(booleanHighlight);
+  booleanHighlightRef.current = booleanHighlight;
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
   const userPlanesRef = useRef(userPlanes);
@@ -408,7 +422,7 @@ export function Viewport({
 
     const datums = createDatums(scene);
 
-    const selectedMaterial = makeBodyMaterial(0xff9d3c);
+    const selectedMaterial = makeBodyMaterial(SELECT_COLOR);
     const hoverMaterial = makeBodyMaterial(0x36d6c3);
     const lineMaterial = new THREE.LineBasicMaterial({ color: 0x0d0f14 });
     // Shared sketch entity highlight materials (per-entity geometry groups flip
@@ -447,11 +461,11 @@ export function Viewport({
     // colour) so a preview always reads as "not committed yet," regardless of
     // what it's standing in for.
     const ghostMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4fd1ff, metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide,
+      color: GHOST_COLOR, metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide,
       transparent: true, opacity: 0.35, depthWrite: false,
     });
     const ghostLineMaterial = new THREE.LineBasicMaterial({
-      color: 0x4fd1ff, transparent: true, opacity: 0.7,
+      color: GHOST_COLOR, transparent: true, opacity: 0.7,
     });
 
     // Transform gizmo: an invisible proxy object that the TransformControls move,
@@ -531,12 +545,17 @@ export function Viewport({
         if (!fg) continue;
         const wholeSel = highlightBodyIdsRef.current.has(fid);
         const wholeHov = hovered?.kind === "feature" && hovered.id === fid;
+        // Boolean-dialog operand highlight overrides normal selection: cyan
+        // (ghost, index 3) wins over orange (selected, index 2).
+        const bh = booleanHighlightRef.current;
+        const wholeGhost = bh?.cyan.has(fid) ?? false;
+        const wholeOrange = bh?.orange.has(fid) ?? false;
         let dirty = false;
         geom.groups.forEach((g: { materialIndex?: number }, i: number) => {
           const faceId = fg[i]?.faceId;
           const selF = wholeSel || sels.some((s) => s.kind === "face" && s.featureId === fid && s.faceId === faceId);
           const hovF = wholeHov || (hovered?.kind === "face" && hovered.featureId === fid && hovered.faceId === faceId);
-          const idx = selF ? 2 : hovF ? 1 : 0;
+          const idx = wholeGhost ? 3 : selF || wholeOrange ? 2 : hovF ? 1 : 0;
           if (g.materialIndex !== idx) { g.materialIndex = idx; dirty = true; }
         });
         if (dirty) (geom as THREE.BufferGeometry & { groupsNeedUpdate: boolean }).groupsNeedUpdate = true;
@@ -1108,6 +1127,7 @@ export function Viewport({
         baseMaterial,
         state.hoverMaterial,
         selectedMaterial,
+        state.ghostMaterial, // index 3 = boolean tool / intersect (translucent cyan)
       ]);
       faceMesh.userData.featureId = id;
       // The body's own opacity (pre-dim), so the sketch-dim effect can restore
@@ -1149,7 +1169,7 @@ export function Viewport({
   // changes.
   useEffect(() => {
     applyHighlightsRef.current();
-  }, [selection, highlightBodyIds]);
+  }, [selection, highlightBodyIds, booleanHighlight]);
 
   // Datum visibility (user toggle) + sketch mode (dim solids, hide the inactive
   // planes while editing).
