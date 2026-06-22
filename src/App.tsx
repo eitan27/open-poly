@@ -427,6 +427,9 @@ export default function App() {
   // panel + viewport gizmo are shown while this is set), and which gizmo to show.
   const [transformEditId, setTransformEditId] = useState<string | null>(null);
   const [transformMode, setTransformMode] = useState<TransformMode>("translate");
+  // Live numeric readout during a gizmo drag (display only; cleared on commit).
+  // Kept out of the document so dragging never regenerates the kernel.
+  const [liveTransform, setLiveTransform] = useState<{ tx: number; ty: number; tz: number; angle: number } | null>(null);
   // How the current transform edit began, so Cancel knows what to undo: a
   // just-created transform is dropped entirely; an existing one being re-edited
   // is reverted to the snapshot it had when this edit started.
@@ -1360,6 +1363,9 @@ export default function App() {
     };
     return {
       featureId: f.id,
+      // The body the gizmo visibly moves: a copy is its own body (keyed by the
+      // feature); a move-in-place keeps the source body's id.
+      bodyId: f.copy ? f.id : f.targetId,
       pivot: f.pivot,
       tx: num(f.tx),
       ty: num(f.ty),
@@ -1375,11 +1381,13 @@ export default function App() {
     [doc, transformEditId],
   );
 
-  // Each gizmo drag writes the new numeric values back as the feature's
-  // expressions. A shared coalescing key collapses the whole drag into one
-  // undo step.
+  // A gizmo drag commits ONCE, on release: write the final numeric values back as
+  // the feature's expressions (one regenerate for the whole drag). During the drag
+  // the body is moved locally in the viewport, so the kernel never sees the
+  // intermediate frames — the fix for "stuck regenerating" in a many-solid doc.
   const handleTransformInput = (d: { tx: number; ty: number; tz: number; angle: number }) => {
     if (!transformEditId) return;
+    setLiveTransform(null); // commit supersedes the live readout
     setDoc(
       setTransform(doc, transformEditId, {
         tx: fmt(d.tx),
@@ -1391,10 +1399,17 @@ export default function App() {
     );
   };
 
+  // Per-frame readout while dragging — drives the floating panel's numbers only,
+  // never the document, so it can't trigger a regenerate.
+  const handleTransformPreview = (d: { tx: number; ty: number; tz: number; angle: number }) => {
+    setLiveTransform(d);
+  };
+
   // Close the gizmo, keeping the Transform feature as-is.
   const finishTransform = () => {
     setTransformEditId(null);
     setTransformOrigin(null);
+    setLiveTransform(null);
   };
 
   // Cancel (panel Cancel / Esc): a just-created transform is dropped entirely;
@@ -1410,6 +1425,7 @@ export default function App() {
     }
     setTransformEditId(null);
     setTransformOrigin(null);
+    setLiveTransform(null);
   };
 
   // All visible sketches (so finished sketches stay rendered), each with its frame.
@@ -2067,6 +2083,7 @@ export default function App() {
             transformEdit={transformEdit}
             transformMode={transformMode}
             onTransformInput={handleTransformInput}
+            onTransformPreview={handleTransformPreview}
             picking={picking}
             onPick={handlePickRef}
             activeSketch={
@@ -2541,7 +2558,7 @@ export default function App() {
                   <label className="ed-field" key={k}>
                     <span>Move {k[1].toUpperCase()}</span>
                     <input
-                      value={editingTransform[k]}
+                      value={liveTransform ? fmt(liveTransform[k]) : editingTransform[k]}
                       onChange={(e) =>
                         setDoc(updateParam(doc, editingTransform.id, k, e.target.value), `param:${editingTransform.id}:${k}`)
                       }
@@ -2573,7 +2590,7 @@ export default function App() {
                   <label className="ed-field">
                     <span>Angle°</span>
                     <input
-                      value={editingTransform.angle}
+                      value={liveTransform ? fmt(liveTransform.angle) : editingTransform.angle}
                       onChange={(e) =>
                         setDoc(updateParam(doc, editingTransform.id, "angle", e.target.value), `param:${editingTransform.id}:angle`)
                       }

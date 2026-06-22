@@ -67,6 +67,9 @@ export type TransformMode = "translate" | "rotate";
  *  not expressions — the gizmo is a numeric input device; the dialog owns text. */
 export interface TransformEdit {
   featureId: string;
+  /** Which rendered body the gizmo moves: the source body (move-in-place) or the
+   *  copy keyed by the feature (copy=true). Used for the live drag preview. */
+  bodyId: string;
   pivot: [number, number, number];
   tx: number;
   ty: number;
@@ -183,9 +186,45 @@ interface SceneState {
   // proxy's position/rotation are read back as the Transform feature's values.
   transformControls: TransformControls;
   gizmoProxy: THREE.Object3D;
+  /** Active gizmo drag: the moved body's render objects plus the inverse of the
+   *  transform matrix it had when the drag began. Each frame we re-pose those
+   *  objects with (current matrix · m0⁻¹) — a rigid motion is topology-preserving,
+   *  so the body's geometry is just its committed mesh moved by a matrix, and we
+   *  skip the kernel entirely until the drag is released (one regenerate, not one
+   *  per frame — the difference between instant and stuck in a many-body doc). */
+  liveDrag: { objects: THREE.Object3D[]; m0Inverse: THREE.Matrix4 } | null;
+  /** A just-released drag whose kernel regenerate is still in flight. The commit
+   *  changes the document immediately, which rebuilds the body's objects from the
+   *  STILL-STALE meshes (original position) before the new geometry lands — so we
+   *  re-pin the dragged matrix onto each rebuild until the body's mesh reference
+   *  actually changes (the real geometry), avoiding a flash back to the origin. */
+  pendingCommit: { bodyId: string; delta: THREE.Matrix4; meshRef: unknown } | null;
   previewLine: THREE.Line;
   snapMarker: THREE.Mesh;
   tween: { from: THREE.Vector3; to: THREE.Vector3; up: THREE.Vector3; start: number } | null;
+}
+
+/** Build the world matrix for a transform feature's values, matching the kernel's
+ *  composition exactly: rotate about (pivot, axis) first, then translate (M = T·R).
+ *  Keeps the live drag preview pixel-aligned with what regenerate will bake. */
+function transformMatrix(
+  pivot: [number, number, number],
+  tx: number,
+  ty: number,
+  tz: number,
+  angle: number,
+  axis: "x" | "y" | "z",
+): THREE.Matrix4 {
+  const m = new THREE.Matrix4(); // identity = no rotation
+  if (angle !== 0) {
+    const axisVec = new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
+    const rot = new THREE.Matrix4().makeRotationAxis(axisVec, THREE.MathUtils.degToRad(angle));
+    const toPivot = new THREE.Matrix4().makeTranslation(-pivot[0], -pivot[1], -pivot[2]);
+    const fromPivot = new THREE.Matrix4().makeTranslation(pivot[0], pivot[1], pivot[2]);
+    m.multiply(fromPivot).multiply(rot).multiply(toPivot); // rotation about the pivot
+  }
+  // Translation applies after rotation, so the final matrix is T · R.
+  return new THREE.Matrix4().makeTranslation(tx, ty, tz).multiply(m);
 }
 
 /** Material for a body's faces (base color, hover, or selected highlight). */
@@ -280,6 +319,7 @@ export function Viewport({
   transformEdit,
   transformMode,
   onTransformInput,
+  onTransformPreview,
   picking,
   onPick,
   activeSketch,
@@ -312,8 +352,12 @@ export function Viewport({
   transformEdit: TransformEdit | null;
   /** Which gizmo to show while editing a transform. */
   transformMode: TransformMode;
-  /** Live numeric values emitted as the gizmo is dragged. */
+  /** Committed once when a gizmo drag is released — the single point the kernel
+   *  regenerates (the drag itself is previewed locally, no kernel round-trips). */
   onTransformInput: (delta: TransformDelta) => void;
+  /** Per-frame numeric values during a drag, for display only (the floating
+   *  panel's live readout). Must not trigger a regenerate. */
+  onTransformPreview: (delta: TransformDelta) => void;
   picking: boolean;
   onPick: (ref: SketchPlaneRef) => void;
   activeSketch: { datumId: SketchPlaneId | null } | null;
@@ -344,6 +388,10 @@ export function Viewport({
   transformEditRef.current = transformEdit;
   const onTransformInputRef = useRef(onTransformInput);
   onTransformInputRef.current = onTransformInput;
+  const onTransformPreviewRef = useRef(onTransformPreview);
+  onTransformPreviewRef.current = onTransformPreview;
+  const meshesRef = useRef(meshes);
+  meshesRef.current = meshes;
   const hoverSelRef = useRef<Selection | null>(null);
   const applyHighlightsRef = useRef<() => void>(() => {});
 
@@ -482,23 +530,67 @@ export function Viewport({
     softenGizmo(gizmoHelper); // mute the default pure-RGB arrows to fit the UI
     scene.add(gizmoHelper);
     // Suspend orbiting while a gizmo handle is being dragged.
-    transformControls.addEventListener("dragging-changed", (e) => {
-      controls.enabled = !(e as unknown as { value: boolean }).value;
-    });
-    // On each drag, derive translate/rotate from the proxy and emit upward.
-    transformControls.addEventListener("objectChange", () => {
-      if (!transformControls.dragging) return;
-      const te = transformEditRef.current;
-      if (!te) return;
+    // The gizmo's current translate/rotate, read off the proxy relative to pivot.
+    const proxyDelta = (te: TransformEdit): TransformDelta => {
       const p = gizmoProxy.position;
       const r = gizmoProxy.rotation;
       const rad = te.axis === "x" ? r.x : te.axis === "y" ? r.y : r.z;
-      onTransformInputRef.current({
+      return {
         tx: p.x - te.pivot[0],
         ty: p.y - te.pivot[1],
         tz: p.z - te.pivot[2],
         angle: THREE.MathUtils.radToDeg(rad),
-      });
+      };
+    };
+    transformControls.addEventListener("dragging-changed", (e) => {
+      const dragging = (e as unknown as { value: boolean }).value;
+      controls.enabled = !dragging;
+      const te = transformEditRef.current;
+      if (dragging) {
+        // Drag start: snapshot the body's render objects and the inverse of the
+        // matrix they currently carry, so each frame can re-pose them with a
+        // pure matrix instead of asking the kernel to rebuild the document.
+        if (!te) return;
+        const m0 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis);
+        const objects = state.group.children.filter((c) => c.userData.featureId === te.bodyId);
+        for (const o of objects) o.matrixAutoUpdate = false;
+        state.liveDrag = { objects, m0Inverse: m0.clone().invert() };
+      } else {
+        // Drag end: commit the final values once — that is the only regenerate.
+        const ld = state.liveDrag;
+        state.liveDrag = null;
+        if (!te) return;
+        const d = proxyDelta(te);
+        if (ld) {
+          // Pin the dragged matrix across the stale rebuild that the commit
+          // triggers, until the body's real (re-baked) geometry arrives. Keyed
+          // by the body's current mesh ref, which changes only when regenerate
+          // returns — so the pin releases exactly when the new geometry lands.
+          const m1 = transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis);
+          const delta = m1.multiply(ld.m0Inverse);
+          const entry = meshesRef.current.find((m) => m.id === te.bodyId);
+          state.pendingCommit = { bodyId: te.bodyId, delta, meshRef: entry?.mesh ?? null };
+        }
+        onTransformInputRef.current(d);
+      }
+    });
+    // Each drag frame: re-pose the moved body locally (current matrix · m0⁻¹) and
+    // push numbers to the panel readout — but never to the document/kernel.
+    transformControls.addEventListener("objectChange", () => {
+      if (!transformControls.dragging) return;
+      const te = transformEditRef.current;
+      if (!te) return;
+      const d = proxyDelta(te);
+      const ld = state.liveDrag;
+      if (ld) {
+        const m1 = transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis);
+        const delta = m1.multiply(ld.m0Inverse); // current · committed⁻¹
+        for (const o of ld.objects) {
+          o.matrix.copy(delta);
+          o.matrixWorldNeedsUpdate = true; // matrixAutoUpdate is off; force the world recompute
+        }
+      }
+      onTransformPreviewRef.current(d);
     });
 
     const previewLine = new THREE.Line(
@@ -520,6 +612,8 @@ export function Viewport({
       sketchDimActive: false, selectedMaterial, hoverMaterial, lineMaterial,
       highlightMaterial, highlightOverlay, pointMarkers,
       datums, sketchGroup, planeGroup, transformControls, gizmoProxy,
+      liveDrag: null,
+      pendingCommit: null,
       ghostGroup, ghostMaterial, ghostLineMaterial,
       previewLine, snapMarker, tween: null,
     };
@@ -1140,6 +1234,25 @@ export function Viewport({
       edges.userData.featureId = id;
       edges.userData.isBodyEdges = true;
       state.group.add(edges);
+    }
+    // A drag commit rebuilds the body's objects from the still-stale meshes
+    // (original position) before the regenerate returns; re-pin the dragged
+    // matrix so it doesn't flash back. Once the body's mesh ref changes (real
+    // geometry baked at the new position), release the pin.
+    const pc = state.pendingCommit;
+    if (pc) {
+      const entry = meshes.find((m) => m.id === pc.bodyId);
+      if (entry && entry.mesh === pc.meshRef) {
+        for (const o of state.group.children) {
+          if (o.userData.featureId === pc.bodyId) {
+            o.matrixAutoUpdate = false;
+            o.matrix.copy(pc.delta);
+            o.matrixWorldNeedsUpdate = true;
+          }
+        }
+      } else {
+        state.pendingCommit = null; // real geometry arrived (or body gone)
+      }
     }
     applyHighlightsRef.current();
   }, [meshes]);
