@@ -410,7 +410,8 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     distance), ✅ **Symmetric**, ✅ **Through-all** (**remove/cut only** —
     bbox-sized tool clipped by the boolean; the option is hidden for new/add),
     ✅ **Up-to-face** (stop at a chosen planar face's plane — backlog #3).
-    *(Up-to-next: still TODO.)*
+    *(Up-to-next is considered covered by Up-to-face — pick the next face; no
+    separate extent planned.)*
   - **Dialog:** ✅ anchored mini-dialog (mode + target + extent + distance +
     flip). **Live ghost preview — ✅ DONE:** the dialog regenerates a throwaway
     doc and renders the **swept tool only** (the changing portion) as a
@@ -472,8 +473,8 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     face or plane. **TODO.**
   - **Through geometry** — 3 points, a line + a point, two parallel edges, etc.
     **TODO.**
-  Still TODO for planes overall: show them in the **datums list** (today they're
-  only in the timeline + viewport).
+  (Showing planes in a separate datums list is **not planned** — appearing in the
+  timeline + viewport is enough.)
 - Linear pattern (1- and 2-direction), circular pattern (axis + count + angle).
   **TODO.**
 - **Mirror across a plane/planar face — ✅ DONE.** A `MirrorFeature` reflects a
