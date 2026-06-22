@@ -2200,8 +2200,8 @@ export default function App() {
                 >
                   <option value="blind">Blind</option>
                   <option value="symmetric">Symmetric</option>
-                  {/* Through All only makes sense as a cut (Remove). */}
-                  <option value="throughAll" disabled={extrudeDialog.mode !== "remove"}>Through All</option>
+                  {/* Through All only makes sense as a cut, so it's shown for Remove only. */}
+                  {extrudeDialog.mode === "remove" && <option value="throughAll">Through All</option>}
                   <option value="upToFace">Up to face</option>
                 </select>
               </label>

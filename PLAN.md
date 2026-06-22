@@ -600,9 +600,9 @@ spline tool. Captured 2026-06-21.
    Extent picker moved to a **dropdown** (Blind / Symmetric / Through All / Up to
    face are now a `<select>` in the extrude mini-dialog, replacing the button
    row; `ParamEditor` mirrors it). The murky additive case is resolved by
-   **restricting Through All to Remove (cut) only** — it's disabled for New and
-   Add, and switching a feature to New/Add reverts a selected Through All back to
-   Blind (`updateParam` guard). Additive "grow until you hit something" is served
+   **restricting Through All to Remove (cut) only** — the option is **hidden**
+   for New and Add (shown only in Remove), and switching a feature to New/Add
+   reverts a selected Through All back to Blind (`updateParam` guard). Additive "grow until you hit something" is served
    by **Up to face** (#3) instead. (`extent` UI in `App.tsx` extrude dialog;
    `extrudeLengths`/`throughAllLength` in `kernel/worker.ts`.)
 

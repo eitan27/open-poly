@@ -642,6 +642,25 @@ const BOOL_OCC: Record<BooleanOp, "fuse" | "cut" | "common"> = {
   intersect: "common",
 };
 
+/** Number of solids in a shape. A successful union of two bodies — whether they
+ *  overlap OR merely touch along a shared face — yields a single connected
+ *  solid; two solids that don't meet at all stay as two solids in a compound.
+ *  Counting solids therefore distinguishes "joined" from "disjoint" where volume
+ *  can't (touching bodies share no volume, so union volume == the sum either way). */
+function countSolids(shape: Shape3D): number {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const exp = new oc.TopExp_Explorer_2(
+    shape.wrapped,
+    oc.TopAbs_ShapeEnum.TopAbs_SOLID,
+    oc.TopAbs_ShapeEnum.TopAbs_SHAPE,
+  );
+  let n = 0;
+  while (exp.More()) { n++; exp.Next(); }
+  exp.delete();
+  return n;
+}
+
 /** Combine operand bodies left-to-right with name propagation, validating that
  *  the solids actually overlap. Returns a fresh NamedShape; the operand bodies'
  *  shapes are left for the caller to dispose (after removing them from the set). */
@@ -656,9 +675,14 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): Nam
     const next = booleanNamed(BOOL_OCC[op], acc, ops[i]);
     const nextVol = measureVolume(next.shape);
     const eps = VOLUME_EPS_REL * Math.max(accVol, toolVol, 1);
+    // A union is valid when it actually joins the bodies into fewer solids —
+    // true for overlapping AND merely-touching (shared-face) bodies, which have
+    // no shared volume and so can't be told apart from disjoint by volume alone.
+    // Subtract/intersect still go by volume (nothing removed / no common volume).
     const bad =
       op === "union"
-        ? nextVol >= accVol + toolVol - eps && "Solids don't overlap — union needs overlapping bodies."
+        ? countSolids(next.shape) >= countSolids(acc.shape) + countSolids(ops[i].shape) &&
+          "Solids don't touch — union needs bodies that overlap or share a face."
         : op === "subtract"
           ? nextVol >= accVol - eps && "Solids don't overlap — nothing to subtract."
           : nextVol <= eps && "Solids don't overlap — no common volume.";
