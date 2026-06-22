@@ -596,14 +596,15 @@ spline tool. Captured 2026-06-21.
    context panel, a right rail). See Phase 2b "Constraint management" + the
    `ParamEditor`/constraints JSX in `App.tsx`.
 
-2. **Improve Extrude "Through All" + move extents to a dropdown.** Extent picker
-   moved to a **dropdown** — ✅ DONE (Blind / Symmetric / Through All / Up to
+2. **Improve Extrude "Through All" + move extents to a dropdown — ✅ DONE.**
+   Extent picker moved to a **dropdown** (Blind / Symmetric / Through All / Up to
    face are now a `<select>` in the extrude mini-dialog, replacing the button
-   row; `ParamEditor` mirrors it). *Remaining:* the additive ("Add") semantics
-   of through-all are still unclear and want rethinking (through-all reads
-   naturally as a *cut*; what should an additive through-all do?).
-   (`extent` UI in `App.tsx` extrude dialog; `extrudeLengths`/`throughAllLength`
-   in `kernel/worker.ts`.)
+   row; `ParamEditor` mirrors it). The murky additive case is resolved by
+   **restricting Through All to Remove (cut) only** — it's disabled for New and
+   Add, and switching a feature to New/Add reverts a selected Through All back to
+   Blind (`updateParam` guard). Additive "grow until you hit something" is served
+   by **Up to face** (#3) instead. (`extent` UI in `App.tsx` extrude dialog;
+   `extrudeLengths`/`throughAllLength` in `kernel/worker.ts`.)
 
 3. **Add an "Up to face" extrude extent — ✅ DONE.** New `extent="upToFace"`
    option; choosing it shows a **"Select a face"** button that arms a viewport

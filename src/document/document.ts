@@ -496,7 +496,9 @@ export function updateParam(
         return { ...f, extent: value };
       }
       if (name === "mode" && (value === "new" || value === "add" || value === "remove")) {
-        return { ...f, mode: value };
+        // Through All is only meaningful for a cut (Remove); leaving New/Add reverts it.
+        const extent = value !== "remove" && f.extent === "throughAll" ? "blind" : f.extent;
+        return { ...f, mode: value, extent };
       }
     }
     if (f.type === "dressup" && name === "size") return { ...f, size: value };

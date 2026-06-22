@@ -2164,7 +2164,9 @@ export default function App() {
                     className={extrudeDialog.mode === m ? "active" : ""}
                     onClick={() =>
                       setExtrudeDialog((d) =>
-                        d ? { ...d, mode: m, extent: m === "new" && d.extent === "throughAll" ? "blind" : d.extent } : d,
+                        // Through All is only meaningful for a cut (Remove); switching
+                        // to New or Add drops it back to Blind.
+                        d ? { ...d, mode: m, extent: m !== "remove" && d.extent === "throughAll" ? "blind" : d.extent } : d,
                       )
                     }
                   >
@@ -2198,7 +2200,8 @@ export default function App() {
                 >
                   <option value="blind">Blind</option>
                   <option value="symmetric">Symmetric</option>
-                  <option value="throughAll" disabled={extrudeDialog.mode === "new"}>Through All</option>
+                  {/* Through All only makes sense as a cut (Remove). */}
+                  <option value="throughAll" disabled={extrudeDialog.mode !== "remove"}>Through All</option>
                   <option value="upToFace">Up to face</option>
                 </select>
               </label>
