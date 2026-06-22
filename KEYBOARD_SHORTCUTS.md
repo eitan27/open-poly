@@ -49,7 +49,7 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 | Parallel | `Shift+P` | Resolves conflict #2 (below). |
 | Perpendicular | `N` | Resolves conflict #2. Reuses `N` from New Body (modeling toolbar) — mutually exclusive, safe. |
 | Equal | `=` | Matches the button's own "＝" glyph. |
-| Construction (toggle) | `G` | No strong mnemonic available (`C` taken twice over); picked arbitrarily. |
+| Construction (toggle) | `Q` | No strong mnemonic available (`C` taken twice over); picked arbitrarily. |
 | Solve constraints | `S` | Reuses `S` from Sketch (modeling toolbar) — mutually exclusive, safe. |
 
 ## Standard views

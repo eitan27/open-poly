@@ -1147,7 +1147,7 @@ export default function App() {
           handleSolve();
           return;
         }
-        if (!e.shiftKey && key === "g") {
+        if (!e.shiftKey && key === "q") {
           toggleConstruction();
           return;
         }
@@ -2167,8 +2167,8 @@ export default function App() {
               <button
                 title={
                   selectedSketchEntities.length > 0
-                    ? "Construction (G): toggle construction (reference) geometry on the selection"
-                    : "Construction (G): draw reference geometry (toggle)"
+                    ? "Construction (Q): toggle construction (reference) geometry on the selection"
+                    : "Construction (Q): draw reference geometry (toggle)"
                 }
                 className={constructionMode ? "active" : ""}
                 onClick={toggleConstruction}
