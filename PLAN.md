@@ -410,8 +410,7 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     distance), ✅ **Symmetric**, ✅ **Through-all** (**remove/cut only** —
     bbox-sized tool clipped by the boolean; the option is hidden for new/add),
     ✅ **Up-to-face** (stop at a chosen planar face's plane — backlog #3).
-    *(Up-to-next is considered covered by Up-to-face — pick the next face; no
-    separate extent planned.)*
+    *(Up-to-next: still TODO.)*
   - **Dialog:** ✅ anchored mini-dialog (mode + target + extent + distance +
     flip). **Live ghost preview — ✅ DONE:** the dialog regenerates a throwaway
     doc and renders the **swept tool only** (the changing portion) as a
