@@ -1264,7 +1264,10 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  min-width: 180px;
+  /* Fill the (fixed-width) dialog rather than forcing it wider, so rows — and
+     the trailing ✕ — stay within the dialog's bounds. */
+  align-self: stretch;
+  min-width: 0;
 }
 
 .bool-operand-row {
@@ -1291,6 +1294,10 @@
 
 .bool-operand-name {
   flex: 1 1 auto;
+  /* Without min-width:0 a flex item won't shrink below its text's intrinsic
+     width, so a long body name pushes the ✕ past the dialog edge and the
+     ellipsis never engages. */
+  min-width: 0;
   font-size: 13px;
   color: #e6e8ee;
   overflow: hidden;
