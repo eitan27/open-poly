@@ -12,7 +12,7 @@ interface Props {
   operandIds: string[];
   candidates: BooleanCandidate[];
   onOpChange: (op: BooleanOp) => void;
-  onToggleOperand: (id: string) => void;
+  onRemoveOperand: (id: string) => void;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -22,51 +22,45 @@ export function BooleanDialog({
   operandIds,
   candidates,
   onOpChange,
-  onToggleOperand,
+  onRemoveOperand,
   onConfirm,
   onCancel,
 }: Props) {
   const canConfirm = operandIds.length >= 2;
+  const nameOf = (id: string) => candidates.find((c) => c.id === id)?.name ?? id;
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
-      <DraggableDialog className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3 className="modal-title" data-drag-handle>Boolean operation</h3>
-        <div className="modal-op-row">
-          {BOOLEAN_OPS.map((o) => (
-            <button
-              key={o}
-              type="button"
-              className={"modal-op-btn" + (op === o ? " active" : "")}
-              onClick={() => onOpChange(o)}
-            >
-              {BOOLEAN_OP_LABELS[o]}
+    <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
+      <div className="ed-title" data-drag-handle>Boolean operation</div>
+      <div className="ed-modes">
+        {BOOLEAN_OPS.map((o) => (
+          <button key={o} className={op === o ? "active" : ""} onClick={() => onOpChange(o)}>
+            {BOOLEAN_OP_LABELS[o]}
+          </button>
+        ))}
+      </div>
+      <div className="ed-hint">
+        Click parts in the viewport to add or remove them.
+        {op === "subtract" && operandIds.length > 0 ? " First = base, rest = tools." : ""}
+      </div>
+      <div className="bool-operands">
+        {operandIds.length === 0 && <p className="ed-hint">No parts chosen yet.</p>}
+        {operandIds.map((id, i) => (
+          <div key={id} className="bool-operand-row">
+            <span className="bool-operand-ord">{i + 1}</span>
+            <span className="bool-operand-name">{nameOf(id)}</span>
+            <button className="bool-operand-x" title="Remove" onClick={() => onRemoveOperand(id)}>
+              ✕
             </button>
-          ))}
-        </div>
-        <p className="modal-hint">Select at least two solids.</p>
-        <div className="modal-list">
-          {candidates.length === 0 && <p className="hint">No solids available yet.</p>}
-          {candidates.map((c) => (
-            <label key={c.id} className="modal-list-row">
-              <input
-                type="checkbox"
-                checked={operandIds.includes(c.id)}
-                onChange={() => onToggleOperand(c.id)}
-              />
-              <span>{c.name}</span>
-            </label>
-          ))}
-        </div>
-        <div className="modal-actions">
-          <button type="button" className="ghost" onClick={onCancel}>
-            Cancel
-          </button>
-          <button type="button" disabled={!canConfirm} onClick={onConfirm}>
-            Create
-          </button>
-        </div>
-      </DraggableDialog>
-    </div>
+          </div>
+        ))}
+      </div>
+      <div className="ed-actions">
+        <button className="ed-primary" disabled={!canConfirm} onClick={onConfirm}>
+          Create
+        </button>
+        <button onClick={onCancel}>Cancel</button>
+      </div>
+    </DraggableDialog>
   );
 }

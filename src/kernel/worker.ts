@@ -396,6 +396,27 @@ function throughAllLength(face: Face, target: Shape3D): number {
   return centerDist + halfDiagonal(fb.bounds) + halfDiagonal(tb.bounds) + 1;
 }
 
+/** The signed prism length that carries `profileFace` from its plane up to the
+ *  plane of `targetFace`, measured along the extrude direction `dir`. Positive
+ *  or negative — the target face decides the direction, so "up to face" ignores
+ *  the Flip toggle. Throws when the direction is parallel to the target (never
+ *  reaches it) or the target passes through the profile (zero travel). */
+function upToFaceLength(profileFace: Face, dir: Vector, targetFace: Face, targetNormal: Vector): number {
+  const p = profileFace.center.toTuple();
+  const q = targetFace.center.toTuple();
+  const n = dir.normalized().toTuple();
+  const m = targetNormal.normalized().toTuple();
+  const denom = n[0] * m[0] + n[1] * m[1] + n[2] * m[2];
+  if (Math.abs(denom) < 1e-7) {
+    throw new Error("up to face: the extrude direction is parallel to the target face");
+  }
+  const t = ((q[0] - p[0]) * m[0] + (q[1] - p[1]) * m[1] + (q[2] - p[2]) * m[2]) / denom;
+  if (Math.abs(t) < 1e-6) {
+    throw new Error("up to face: the target face passes through the profile");
+  }
+  return t;
+}
+
 /** The signed prism length(s) to build for a given extent — one length for
  *  "blind"/"throughAll", two (equal and opposite) for "symmetric" whose union
  *  is fused into the final tool. "throughAll" only has a target to size
@@ -691,7 +712,16 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
             : bodyProfileFace(requireBody(bodies, profile.sourceId), profile.faceName, profile.center);
 
         const sign = dirFlip ? -1 : 1;
-        const lengths = extrudeLengths(extent, distance, face, targets).map((l) => l * sign);
+        // "Up to face" derives its own signed length (and direction) from the
+        // chosen target face's plane, so it bypasses the Flip/sign handling.
+        let lengths: number[];
+        if (extent === "upToFace" && feature.upTo) {
+          const upBody = requireBody(bodies, feature.upTo.sourceId);
+          const up = bodyProfileFace(upBody, feature.upTo.faceName, feature.upTo.center);
+          lengths = [upToFaceLength(face, normal, up.face, up.normal)];
+        } else {
+          lengths = extrudeLengths(extent, distance, face, targets).map((l) => l * sign);
+        }
         let built: NamedShape = prismFromFace(face, normal, lengths[0], feature.id);
         for (let i = 1; i < lengths.length; i++) {
           const more = prismFromFace(face, normal, lengths[i], feature.id);

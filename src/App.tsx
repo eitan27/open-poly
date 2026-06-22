@@ -43,6 +43,7 @@ import type {
   ExtrudeExtent,
   ExtrudeProfile,
   FeatureKind,
+  UpToFaceRef,
   PlaneFeature,
   SketchConstraint,
   SketchEntity,
@@ -306,6 +307,27 @@ export default function App() {
   // Regular clicks accumulate into the set; clicking a selected element removes
   // it; clicking empty space clears.
   const handlePick = (picked: Selection | null) => {
+    // Up-to-face pick armed (from the extrude dialog): the next clicked body
+    // face becomes the extrude's target face; anything else cancels the arming.
+    if (pickingUpFace) {
+      if (picked?.kind === "face") {
+        const m = meshes.find((x) => x.id === picked.featureId);
+        const center = m ? faceCentroid(m.mesh.faces, picked.faceId) : null;
+        if (center) {
+          const faceName = m ? faceNameOf(m.mesh.faces, picked.faceId) : undefined;
+          setExtrudeDialog((d) => (d ? { ...d, upTo: { featureId: picked.featureId, faceName, center } } : d));
+        }
+      }
+      setPickingUpFace(false);
+      return;
+    }
+    // Boolean dialog open: clicking a body toggles it as an operand (add on
+    // first click, remove on the next) rather than changing the normal selection.
+    if (booleanDialog) {
+      const id = picked ? featureIdOf(picked) : null;
+      if (id && booleanCandidates.some((c) => c.id === id)) toggleBooleanOperand(id);
+      return;
+    }
     // Dimension mode armed: the next picked line/circle is the dimension target.
     if (dimPending) {
       const sk = doc.features.find((f) => f.id === editingSketchId);
@@ -369,8 +391,11 @@ export default function App() {
   const [dimPending, setDimPending] = useState(false);
   // The extrude dialog (anchored at the profile) while choosing parameters.
   const [extrudeDialog, setExtrudeDialog] = useState<
-    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; extent: ExtrudeExtent; targetId: string | null; x: number; y: number } | null
+    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; extent: ExtrudeExtent; targetId: string | null; upTo: UpToFaceRef | null; x: number; y: number } | null
   >(null);
+  // True while the extrude dialog's "Select a face" pick is armed: the next
+  // body face clicked in the viewport fills the up-to-face target.
+  const [pickingUpFace, setPickingUpFace] = useState(false);
   // Live ghost preview of the extrude dialog's current params: one entry per
   // body the regen result represents (every new extrude for "new", or the
   // single chosen target for "add"/"remove") — used to swap those bodies' real
@@ -839,6 +864,7 @@ export default function App() {
       flip: false,
       extent: "blind",
       targetId: defaultTarget,
+      upTo: null,
       x: s.x,
       y: s.y,
     });
@@ -848,6 +874,8 @@ export default function App() {
     if (extrudeProfiles.length === 0 || !extrudeDialog) return;
     // Add/Remove require a target body to affect.
     if (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) return;
+    // Up to face requires a chosen target face.
+    if (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) return;
     // One Extrude feature per selected profile, sharing the dialog's settings —
     // folded into a single undo step by threading `next` through every
     // addExtrude/setSuppressed call before the one setDoc at the end.
@@ -860,6 +888,7 @@ export default function App() {
         extent: extrudeDialog.extent,
         mode: extrudeDialog.mode,
         targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
+        upTo: extrudeDialog.extent === "upToFace" ? extrudeDialog.upTo ?? undefined : undefined,
       });
       // Hide the source sketch once it's been consumed by an extrude. It stays
       // in place and editable — toggle the timeline eye (or edit it) to bring
@@ -869,7 +898,13 @@ export default function App() {
     }
     setDoc(next);
     selectFeature(lastId);
+    closeExtrudeDialog();
+  };
+
+  // Dismiss the extrude dialog, also disarming any pending up-to-face pick.
+  const closeExtrudeDialog = () => {
     setExtrudeDialog(null);
+    setPickingUpFace(false);
   };
 
   // Live ghost preview of the extrude dialog: mirrors the main regen effect
@@ -878,7 +913,12 @@ export default function App() {
   // model. Re-runs on every dialog/profile change, same as editing a committed
   // feature's params already does.
   useEffect(() => {
-    if (!extrudeDialog || extrudeProfiles.length === 0 || (extrudeDialog.mode !== "new" && !extrudeDialog.targetId)) {
+    if (
+      !extrudeDialog ||
+      extrudeProfiles.length === 0 ||
+      (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) ||
+      (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo)
+    ) {
       setExtrudePreview(null);
       setExtrudePreviewError(null);
       return;
@@ -901,6 +941,7 @@ export default function App() {
         extent: extrudeDialog.extent,
         mode: extrudeDialog.mode,
         targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
+        upTo: extrudeDialog.extent === "upToFace" ? extrudeDialog.upTo ?? undefined : undefined,
       });
       previewDoc = res.doc;
       createdIds.push(res.id);
@@ -2145,31 +2186,53 @@ export default function App() {
                   </select>
                 </label>
               )}
-              <div className="ed-modes">
-                {(["blind", "symmetric", "throughAll"] as const).map((ex) => (
-                  <button
-                    key={ex}
-                    className={extrudeDialog.extent === ex ? "active" : ""}
-                    disabled={ex === "throughAll" && extrudeDialog.mode === "new"}
-                    onClick={() => setExtrudeDialog((d) => (d ? { ...d, extent: ex } : d))}
-                  >
-                    {ex === "blind" ? "Blind" : ex === "symmetric" ? "Symmetric" : "Through All"}
-                  </button>
-                ))}
-              </div>
               <label className="ed-field">
-                <span>Distance</span>
-                <input
-                  autoFocus
-                  value={extrudeDialog.distance}
-                  onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, distance: e.target.value } : d))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") createExtrude();
-                    else if (e.key === "Escape") setExtrudeDialog(null);
+                <span>Extent</span>
+                <select
+                  value={extrudeDialog.extent}
+                  onChange={(e) => {
+                    const extent = e.target.value as ExtrudeExtent;
+                    setExtrudeDialog((d) => (d ? { ...d, extent } : d));
+                    if (extent !== "upToFace") setPickingUpFace(false);
                   }}
-                />
+                >
+                  <option value="blind">Blind</option>
+                  <option value="symmetric">Symmetric</option>
+                  <option value="throughAll" disabled={extrudeDialog.mode === "new"}>Through All</option>
+                  <option value="upToFace">Up to face</option>
+                </select>
               </label>
-              {extrudeDialog.extent !== "symmetric" && (
+              {extrudeDialog.extent === "upToFace" && (
+                <label className="ed-field">
+                  <span>Face</span>
+                  <button
+                    type="button"
+                    className={"ed-pick-btn" + (pickingUpFace ? " active" : "")}
+                    onClick={() => setPickingUpFace((v) => !v)}
+                  >
+                    {pickingUpFace
+                      ? "Click a face…"
+                      : extrudeDialog.upTo
+                        ? `On ${doc.features.find((f) => f.id === extrudeDialog.upTo!.featureId)?.name ?? "body"}`
+                        : "Select a face"}
+                  </button>
+                </label>
+              )}
+              {extrudeDialog.extent !== "upToFace" && (
+                <label className="ed-field">
+                  <span>Distance</span>
+                  <input
+                    autoFocus
+                    value={extrudeDialog.distance}
+                    onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, distance: e.target.value } : d))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") createExtrude();
+                      else if (e.key === "Escape") closeExtrudeDialog();
+                    }}
+                  />
+                </label>
+              )}
+              {extrudeDialog.extent !== "symmetric" && extrudeDialog.extent !== "upToFace" && (
                 <label className="ed-field ed-flip">
                   <span>Flip direction</span>
                   <input
@@ -2183,12 +2246,15 @@ export default function App() {
               <div className="ed-actions">
                 <button
                   className="ed-primary"
-                  disabled={extrudeDialog.mode !== "new" && !extrudeDialog.targetId}
+                  disabled={
+                    (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) ||
+                    (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo)
+                  }
                   onClick={createExtrude}
                 >
                   Create
                 </button>
-                <button onClick={() => setExtrudeDialog(null)}>Cancel</button>
+                <button onClick={closeExtrudeDialog}>Cancel</button>
               </div>
             </DraggableDialog>
           )}
@@ -2337,7 +2403,7 @@ export default function App() {
           operandIds={booleanDialog.operandIds}
           candidates={booleanCandidates}
           onOpChange={(op) => setBooleanDialog((d) => (d ? { ...d, op } : d))}
-          onToggleOperand={toggleBooleanOperand}
+          onRemoveOperand={toggleBooleanOperand}
           onConfirm={confirmBoolean}
           onCancel={() => setBooleanDialog(null)}
         />

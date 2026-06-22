@@ -57,7 +57,15 @@ export type ExtrudeMode = "new" | "add" | "remove";
 /** How far an extrude reaches — see document/types.ts's ExtrudeExtent for the
  *  full description; mirrored here since the kernel doesn't import the
  *  document model. */
-export type ExtrudeExtent = "blind" | "symmetric" | "throughAll";
+export type ExtrudeExtent = "blind" | "symmetric" | "throughAll" | "upToFace";
+
+/** Resolved "up to face" target: the body (by id) and the face on it, found by
+ *  persistent name (preferred) or nearest centroid inside the worker. */
+export interface ResolvedUpToFace {
+  sourceId: string;
+  faceName?: string;
+  center: [number, number, number];
+}
 
 /** Features with all parameters already resolved to numbers/geometry
  *  (expressions are evaluated in the app layer before reaching the kernel). */
@@ -67,7 +75,7 @@ export type ResolvedFeature =
   // skipping the fuse/cut — used by the live extrude ghost preview so existing
   // bodies keep their own colour. Targets are still resolved so "throughAll"
   // sizes correctly.
-  | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; extent: ExtrudeExtent; mode: ExtrudeMode; targetId?: string; previewTool?: boolean }
+  | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; extent: ExtrudeExtent; mode: ExtrudeMode; targetId?: string; upTo?: ResolvedUpToFace; previewTool?: boolean }
   | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; size: number }
   // A boolean combines existing bodies (by id) from the running set.
   | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
