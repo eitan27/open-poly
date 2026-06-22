@@ -638,11 +638,15 @@ spline tool. Captured 2026-06-21.
 6. **Less space above the Variables title — ✅ DONE.** Tightened the
    `.params-heading.collapsible` top margin from 22px to 10px.
 
-7. **Implement keyboard shortcuts.** Wire up the proposal in
-   `KEYBOARD_SHORTCUTS.md` (modeling toolbar, sketch tools, views, timeline).
-   Resolve the two flagged letter conflicts (New Body vs Boolean; Polygon vs
-   Parallel/Perpendicular). Add a global key handler that respects mode-gating
-   (sketch vs modeling) and ignores typing in inputs.
+7. **Implement keyboard shortcuts. ✅ DONE.** Wired up in a global, mode-gated
+   `useEffect` key handler in `App.tsx` (mutually exclusive modeling vs sketch
+   branches, ignores typing in inputs). Resolved the two flagged letter
+   conflicts (New Body vs Boolean → `N`/`B`; Polygon vs Parallel/Perpendicular
+   → `P`/`Shift+P`/`N`) and extended coverage to the features shipped since the
+   proposal was written (Loft `L`, Sweep `W`, Mirror `M`, spline `Shift+L`).
+   Every bound button's `title` tooltip now names its key. See
+   `KEYBOARD_SHORTCUTS.md` for the full scheme and future-conflict notes
+   (Pattern, Measurement, multi-doc manager).
 
 8. **Spline tool in sketch — ✅ DONE** (see Phase 6). Through-point smooth
    spline `SketchEntity`, the `∿` tool, used as a sweep path. *(Remaining: spline

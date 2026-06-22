@@ -1,14 +1,16 @@
-# Keyboard shortcut proposal
+# Keyboard shortcuts
 
 A scan of every clickable action in the app (`src/App.tsx` toolbars, the sketch
 toolbar, the feature timeline, and the Parts list), grouped by when each
-action is actually available, with a recommended key for the ones that would
-benefit from one. Two real letter collisions turned up between functions that
-are simultaneously available — see **Conflicts to resolve** below.
+action is actually available. **All shortcuts below are wired up** (global
+key handler in `src/App.tsx`, mode-gated on `editingSketchId`) and each
+bound button's `title` tooltip names its key, so the UI itself is the source
+of discoverability.
 
-This is a proposal only; nothing here is wired up yet.
+This doc was last reassessed after Loft, Sweep, Mirror, and the sketch
+Spline tool shipped (none of which had shortcuts in the prior revision).
 
-## Already shipped (for reference, not proposed)
+## Already shipped
 
 | Action | Shortcut |
 |---|---|
@@ -16,60 +18,62 @@ This is a proposal only; nothing here is wired up yet.
 | Delete selection | `Delete` / `Backspace` |
 | Cancel current mode / dialog | `Esc` |
 | Dimension selected line/circle | `D` (sketch mode) |
-| Select / Line / Rectangle (2-corner) / Circle (center) / Polygon / Arc | `V` `L` `R` `C` `P` `A` (sketch mode) |
+| Spline: commit accumulated points | `Enter` (sketch mode, spline tool) |
 
-## Proposed: modeling toolbar (available whenever you're not editing a sketch)
+## Modeling toolbar (available whenever you're not editing a sketch)
 
-| Action | Proposed key | Notes |
+| Action | Key | Notes |
 |---|---|---|
-| Start a sketch | `S` | |
-| New Body (open the box/cylinder/sphere menu) | `N` | See conflict #1 — not `B`. |
-| Reference plane | `P` | Reuses `P` from Polygon (sketch mode); safe, the two modes are mutually exclusive — see footnote. |
+| Sketch | `S` | Pick a plane/face to start a sketch. |
+| New Body | `N` | Opens the Box/Cylinder/Sphere menu (item itself stays mouse-only — 3-item pick isn't worth 3 more bindings). Ignores `picking`, same as the button. |
+| Plane | `P` | Reuses `P` from Polygon (sketch mode) — mutually exclusive, safe. |
 | Extrude | `E` | |
-| Chamfer | `C` | Reuses `C` from Circle (sketch mode); safe, mutually exclusive — see footnote. |
+| Revolve | `R` | Reuses `R` from Rectangle (sketch mode) — mutually exclusive, safe. |
+| Sweep | `W` | `S` was already taken by Sketch, so this uses the next distinctive letter in "s**w**eep" — weakest mnemonic in this table. |
+| Loft | `L` | Reuses `L` from Line (sketch mode) — mutually exclusive, safe. |
+| Chamfer | `C` | Reuses `C` from Circle-center (sketch mode) — mutually exclusive, safe. |
 | Fillet | `F` | |
-| Boolean | `B` | See conflict #1. |
+| Boolean | `B` | Resolves conflict #1 (below). |
 | Transform | `T` | |
+| Mirror | `M` | |
 
-`New Body`'s menu itself (Box/Cylinder/Sphere) isn't proposed per-item
-shortcuts — `N` opens it, then it's a 3-item mouse/arrow pick, which doesn't
-seem worth three more bindings.
+## Sketch toolbar (only available while editing a sketch)
 
-## Proposed: sketch toolbar (only available while editing a sketch)
-
-| Action | Proposed key | Notes |
+| Action | Key | Notes |
 |---|---|---|
-| Rectangle: center + corner | `Shift+R` | Variant of the existing `R`. |
-| Circle: 3 points | `Shift+C` | Variant of the existing `C`. |
-| Parallel constraint | `Shift+P` | See conflict #2 — not plain `P` (taken by Polygon). |
-| Perpendicular constraint | `N` | See conflict #2. Reuses `N` from New Body (modeling toolbar); safe, mutually exclusive. |
-| Equal constraint | `=` | Matches the button's own "＝" glyph; sidesteps the letter scheme entirely. |
-| Solve constraints | `S` | Reuses `S` from Sketch (modeling toolbar); safe, mutually exclusive. |
+| Select / Line / Rectangle (2-corner) / Circle (center) / Polygon / Arc | `V` `L` `R` `C` `P` `A` | Already shipped. |
+| Rectangle: center + corner | `Shift+R` | Variant of `R`. |
+| Circle: 3 points | `Shift+C` | Variant of `C`. |
+| Spline | `Shift+L` | Variant of `L` — a "freeform line". |
+| Dimension | `D` | Already shipped. |
+| Parallel | `Shift+P` | Resolves conflict #2 (below). |
+| Perpendicular | `N` | Resolves conflict #2. Reuses `N` from New Body (modeling toolbar) — mutually exclusive, safe. |
+| Equal | `=` | Matches the button's own "＝" glyph. |
+| Construction (toggle) | `G` | No strong mnemonic available (`C` taken twice over); picked arbitrarily. |
+| Solve constraints | `S` | Reuses `S` from Sketch (modeling toolbar) — mutually exclusive, safe. |
 
-## Proposed: standard views
+## Standard views
 
-| Action | Proposed key |
+| Action | Key |
 |---|---|
 | Top / Front / Right / Back / Left / Bottom / Iso | `1`–`7` |
 
-Recommending numbers instead of first letters here on purpose: first letters
-would collide on **B** (Back vs. Bottom) and, worse, would also collide with
-modeling-toolbar letters that are active in the same context — `T`op vs.
-`T`ransform, `F`ront vs. `F`illet, `L`eft vs. `L`ine, `R`ight vs. `R`ectangle
-(the last two only matter while sketching, but views stay clickable then
-too). Numbered views sidestep all of that and match the common SolidWorks/
-Fusion 360 convention, so this isn't filed as an open conflict — flagging the
-reasoning in case you'd rather keep letters and resolve those four instead.
+Numbers instead of first letters, on purpose: first letters would collide on
+**B** (Back vs. Bottom) and, worse, with modeling-toolbar letters that stay
+live in the same context — `T`op vs. `T`ransform, `F`ront vs. `F`illet, `L`eft
+vs. `L`oft/`L`ine, `R`ight vs. `R`evolve/`R`ectangle. The view-controls bar is
+visible and clickable in *both* modeling and sketch mode, so digits work in
+both, unlike every other binding in this doc.
 
-## Proposed: timeline / Parts list
+## Timeline / Parts list
 
-| Action | Proposed key | Notes |
+| Action | Key | Notes |
 |---|---|---|
-| Move selected feature up/down | `Alt+↑` / `Alt+↓` | Acts on the single selected timeline row. |
-| Toggle suppress/hide on selected feature | `H` | Matches the row's own eye icon. |
+| Move selected feature up/down | `Alt+↑` / `Alt+↓` | Acts on the single selected timeline row (`primaryFeatureId`); no-ops at the ends. |
+| Toggle suppress/hide on selected feature | `H` | Matches the row's own eye/suppress icon. |
 | Import STEP | `⌘I` / `Ctrl+I` | Opens the file picker, same as the toolbar button. |
 
-## Not proposed
+## Not bound
 
 - **Rename, color, opacity** (Parts list) — continuous/text inputs, not
   toggles; a shortcut wouldn't replace typing or dragging a slider.
@@ -77,33 +81,50 @@ reasoning in case you'd rather keep letters and resolve those four instead.
   already one click once a part is selected.
 - **Edit sketch / Finish sketch / Edit in viewport** — already reachable via
   double-click on the timeline row, and `Esc` already finishes/cancels.
+- **Polygon sides** (`n` input next to the Polygon tool) — a number field, not
+  a toggle.
 
-## Conflicts to resolve
+## Conflicts resolved
 
 **#1 — New Body vs. Boolean (both naturally "B"), modeling toolbar.**
 Both buttons are live at the same time (not mode-gated against each other),
-so they can't share a key. Recommendation: give `B` to **Boolean** (no good
-alternative letter for it) and move **New Body** to `N`. Flagging in case you
-have a different preference (e.g. `⊕` is also evocative of "plus" → some
-apps bind "new" actions to `+`/`Ctrl+N`).
+so they can't share a key. Resolved: `B` → **Boolean**, **New Body** → `N`.
 
 **#2 — Polygon / Parallel / Perpendicular all naturally "P", sketch toolbar.**
-All three are visible and clickable together while sketching. `Polygon`
-already ships as `P`, so it keeps it. For the other two, recommendation:
-`Parallel` → `Shift+P` (modifier on the contended letter, consistent with how
-`Shift+R`/`Shift+C` are used above for tool variants) and `Perpendicular` →
-`N` (this is also FreeCAD's convention when `P` is unavailable). Weakest
-mnemonics in this whole list — open to alternatives if you'd rather not lean
-on `Shift+P`.
+All three are visible and clickable together while sketching. `Polygon` kept
+`P` (shipped first). Resolved: `Parallel` → `Shift+P` (modifier on the
+contended letter, consistent with how `Shift+R`/`Shift+C`/`Shift+L` are used
+for tool variants) and `Perpendicular` → `N` (also FreeCAD's convention when
+`P` is unavailable).
 
 ## Footnote: intentional same-letter reuse across mutually exclusive modes
 
 These pairs share a letter but are never both clickable at once (one is in
 the modeling toolbar, the other in the sketch toolbar, and you can't be in
-both at the same time), so there's no real conflict — listed for visibility
-only:
+both at the same time):
 
 - `P`: Plane (modeling) / Polygon (sketch)
 - `C`: Chamfer (modeling) / Circle-center (sketch)
 - `S`: Sketch (modeling) / Solve (sketch)
 - `N`: New Body (modeling) / Perpendicular (sketch)
+- `R`: Revolve (modeling) / Rectangle: 2 corners (sketch)
+- `L`: Loft (modeling) / Line (sketch)
+
+## Future conflicts to watch (from `PLAN.md`'s roadmap)
+
+- **Pattern (linear/circular)** — Phase 5, still TODO. Its natural letter `P`
+  is already double-claimed (Plane in modeling, Polygon in sketch), so it
+  can't get a bare letter when it ships. It'll sit in the modeling toolbar
+  near Mirror/Transform; recommend treating it as a Mirror variant —
+  `Shift+M` — since both are "duplicate the body" operations, consistent
+  with this doc's Shift-for-variant convention.
+- **Measurement tools** — Phase 8 backlog, still TODO. Its natural letter `M`
+  is already claimed by Mirror in the modeling toolbar. Will need an
+  alternate letter (or a non-letter glyph, as Equal does with `=`) once it
+  has a concrete toolbar button to attach a key to.
+- **Multi-document manager** (new/open/rename/duplicate/delete documents) —
+  Phase 8 backlog, still TODO. The obvious bindings `Ctrl+N` / `Ctrl+O` are
+  both browser-reserved (new window / open file); will need different
+  combinations (e.g. `Ctrl+Shift+N`) or to live menu-only with no shortcut.
+- **Section view, appearance** — Phase 8 backlog, still TODO, no concrete UI
+  yet to attach letters to; revisit once they have toolbar buttons.

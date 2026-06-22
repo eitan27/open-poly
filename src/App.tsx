@@ -238,12 +238,12 @@ const SKETCH_TOOLS: { tool: SketchTool; label: string; title: string }[] = [
   { tool: "select", label: "↖", title: "Select (V)" },
   { tool: "line", label: "╱", title: "Line (L)" },
   { tool: "rect-corner", label: "▭", title: "Rectangle: 2 corners (R)" },
-  { tool: "rect-center", label: "⊞", title: "Rectangle: center + corner" },
+  { tool: "rect-center", label: "⊞", title: "Rectangle: center + corner (Shift+R)" },
   { tool: "circle-center", label: "○", title: "Circle: center + radius (C)" },
-  { tool: "circle-3p", label: "◔", title: "Circle: 3 points" },
+  { tool: "circle-3p", label: "◔", title: "Circle: 3 points (Shift+C)" },
   { tool: "polygon", label: "⬢", title: "Regular polygon (P)" },
   { tool: "arc-3p", label: "⌒", title: "Arc: 3 points (A)" },
-  { tool: "spline", label: "∿", title: "Spline: click points, Enter to finish" },
+  { tool: "spline", label: "∿", title: "Spline (Shift+L): click points, Enter to finish" },
 ];
 
 const VIEW_BUTTONS: { name: ViewName; label: string }[] = [
@@ -526,63 +526,6 @@ export default function App() {
     }, 600);
     return () => clearTimeout(t);
   }, [doc, persistLoaded]);
-
-  // Undo/redo keyboard shortcuts. Skip while typing so native text-field undo
-  // keeps working inside inputs.
-  useEffect(() => {
-    const SKETCH_KEYS: Record<string, SketchTool> = {
-      v: "select",
-      l: "line",
-      r: "rect-corner",
-      c: "circle-center",
-      p: "polygon",
-      a: "arc-3p",
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (dimInputRef.current) setDimInput(null);
-        else if (dimPendingRef.current) setDimPending(false);
-        else if (planeDialog) setPlaneDialog(null);
-        else if (transformEditId) cancelTransform();
-        else if (picking) setPicking(false);
-        else if (draft.length > 0) setDraft([]); // cancel the in-progress shape
-        else if (editingSketchId) finishSketch();
-        return;
-      }
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if ((e.key === "Delete" || e.key === "Backspace") && selection.length > 0) {
-        e.preventDefault();
-        handleDeleteSelection();
-        return;
-      }
-      if (e.key === "Enter" && draft.length > 0) {
-        // Spline: Enter commits the accumulated points; other tools just abandon.
-        if (!finishSpline()) setDraft([]);
-        return;
-      }
-      // D dimensions the selected line (the standard dimension shortcut).
-      // preventDefault so the keystroke can't leak into the input that opening
-      // the dialog autofocuses synchronously.
-      if (editingSketchId && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === "d") {
-        e.preventDefault();
-        startDimensionRef.current();
-        return;
-      }
-      if (editingSketchId && !e.metaKey && !e.ctrlKey && SKETCH_KEYS[e.key.toLowerCase()]) {
-        setSketchTool(SKETCH_KEYS[e.key.toLowerCase()]);
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [undo, redo, picking, planeDialog, transformEditId, draft, editingSketchId, selection, doc, sketchTool, constructionMode]);
 
   // Close the "New Body" dropdown when clicking anywhere outside it.
   useEffect(() => {
@@ -1114,6 +1057,203 @@ export default function App() {
       .sort((a, b) => idx(a.sketchId) - idx(b.sketchId))
       .map((s) => ({ sketchId: s.sketchId, regionId: s.regionId }));
   }, [selection, doc]);
+
+  // Global keyboard shortcuts. The modeling toolbar and the sketch toolbar are
+  // mutually exclusive (one is only usable while NOT editing a sketch, the
+  // other only while editing one), so some letters are intentionally reused
+  // across the two branches below — see KEYBOARD_SHORTCUTS.md.
+  useEffect(() => {
+    const SKETCH_KEYS: Record<string, SketchTool> = {
+      v: "select",
+      l: "line",
+      r: "rect-corner",
+      c: "circle-center",
+      p: "polygon",
+      a: "arc-3p",
+    };
+    // Shift-modified variants of an existing tool key (Shift+R/Shift+C/Shift+L).
+    const SKETCH_SHIFT_KEYS: Record<string, SketchTool> = {
+      r: "rect-center",
+      c: "circle-3p",
+      l: "spline",
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (dimInputRef.current) setDimInput(null);
+        else if (dimPendingRef.current) setDimPending(false);
+        else if (planeDialog) setPlaneDialog(null);
+        else if (transformEditId) cancelTransform();
+        else if (picking) setPicking(false);
+        else if (draft.length > 0) setDraft([]); // cancel the in-progress shape
+        else if (editingSketchId) finishSketch();
+        return;
+      }
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if ((e.key === "Delete" || e.key === "Backspace") && selection.length > 0) {
+        e.preventDefault();
+        handleDeleteSelection();
+        return;
+      }
+      if (e.key === "Enter" && draft.length > 0) {
+        // Spline: Enter commits the accumulated points; other tools just abandon.
+        if (!finishSpline()) setDraft([]);
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        importInputRef.current?.click();
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) return; // leave other OS/browser chords alone
+
+      // Standard views: the view-controls bar is visible (and clickable) in
+      // both modeling and sketch mode, so digits 1-7 work in both — letters
+      // were deliberately avoided here (they'd collide with modeling-toolbar
+      // actions live in the same context: T-op/T-ransform, F-ront/F-illet...).
+      if (/^[1-7]$/.test(e.key)) {
+        const v = VIEW_BUTTONS[Number(e.key) - 1];
+        if (v) viewApiRef.current?.setView(v.name);
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+
+      if (editingSketchId) {
+        // ---- Sketch toolbar ----
+        // D dimensions the selected line (the standard dimension shortcut).
+        // preventDefault so the keystroke can't leak into the input that
+        // opening the dialog autofocuses synchronously.
+        if (key === "d") {
+          e.preventDefault();
+          startDimensionRef.current();
+          return;
+        }
+        if (e.shiftKey && SKETCH_SHIFT_KEYS[key]) {
+          setSketchTool(SKETCH_SHIFT_KEYS[key]);
+          return;
+        }
+        if (!e.shiftKey && SKETCH_KEYS[key]) {
+          setSketchTool(SKETCH_KEYS[key]);
+          return;
+        }
+        if (!e.shiftKey && key === "s") {
+          handleSolve();
+          return;
+        }
+        if (!e.shiftKey && key === "g") {
+          toggleConstruction();
+          return;
+        }
+        if (!e.shiftKey && key === "n" && twoSelectedLines) {
+          addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id);
+          return;
+        }
+        if (e.shiftKey && key === "p" && twoSelectedLines) {
+          addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id);
+          return;
+        }
+        if (e.key === "=") {
+          const pair = twoSelectedLines ?? twoSelectedCircles;
+          if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
+        }
+        return;
+      }
+
+      // ---- Modeling toolbar ----
+      if (key === "h" && primaryFeatureId) {
+        setDoc(setSuppressed(doc, primaryFeatureId, !doc.features.find((f) => f.id === primaryFeatureId)?.suppressed));
+        return;
+      }
+      if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && primaryFeatureId) {
+        e.preventDefault();
+        setDoc(moveFeature(doc, primaryFeatureId, e.key === "ArrowUp" ? -1 : 1));
+        return;
+      }
+      if (key === "n") {
+        // New Body ignores `picking`, matching the toolbar button itself.
+        setNewSolidOpen((o) => !o);
+        return;
+      }
+      if (picking) return;
+      // preventDefault before acting: several cases below (e/c/f) synchronously
+      // mount a dialog with an autoFocus text input, and without this the same
+      // keystroke leaks into that input right after it mounts (e.g. "e" turning
+      // the Extrude distance default "10" into "10e").
+      e.preventDefault();
+      switch (key) {
+        case "s":
+          setPickPurpose("sketch");
+          setPicking(true);
+          break;
+        case "p":
+          setPickPurpose("plane");
+          setPicking(true);
+          break;
+        case "e":
+          if (extrudeProfiles.length > 0 && !extrudeDialog) openExtrudeDialog();
+          break;
+        case "r":
+          if (revolveInputs) openRevolve();
+          break;
+        case "w":
+          if (sweepInputs) openSweep();
+          break;
+        case "l":
+          if (loftInputs) openLoft();
+          break;
+        case "c":
+          if (dressUpTarget) openDressUp("chamfer");
+          break;
+        case "f":
+          if (dressUpTarget) openDressUp("fillet");
+          break;
+        case "b":
+          if (bodyIds.size >= 2) openBooleanDialog();
+          break;
+        case "t":
+          if (transformTarget && !transformEditId) openTransform();
+          break;
+        case "m":
+          if (transformTarget) openMirror();
+          break;
+        default:
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    undo,
+    redo,
+    picking,
+    planeDialog,
+    transformEditId,
+    draft,
+    editingSketchId,
+    selection,
+    doc,
+    sketchTool,
+    constructionMode,
+    extrudeProfiles,
+    extrudeDialog,
+    revolveInputs,
+    sweepInputs,
+    loftInputs,
+    dressUpTarget,
+    bodyIds,
+    transformTarget,
+    twoSelectedLines,
+    twoSelectedCircles,
+    primaryFeatureId,
+  ]);
 
   const openLoft = () => {
     if (!loftInputs) return;
@@ -1784,7 +1924,7 @@ export default function App() {
             <button
               className="parts-import"
               type="button"
-              title="Import a STEP file as a new part"
+              title="Import a STEP file as a new part (⌘I / Ctrl+I)"
               onClick={() => importInputRef.current?.click()}
             >
               ⤓ Import STEP
@@ -1875,7 +2015,7 @@ export default function App() {
           />
           <div className="model-toolbar">
             <button
-              title="Start a sketch (pick a plane or face)"
+              title="Sketch (S): start a sketch — pick a plane or face"
               disabled={!!editingSketch || picking}
               onClick={() => { setPickPurpose("sketch"); setPicking(true); }}
             >
@@ -1883,7 +2023,7 @@ export default function App() {
             </button>
             <div className="mt-dropdown" ref={newSolidRef}>
               <button
-                title="Create a new solid body"
+                title="New Body (N): create a new solid body"
                 disabled={!!editingSketch}
                 onClick={() => setNewSolidOpen((o) => !o)}
               >
@@ -1903,70 +2043,70 @@ export default function App() {
               )}
             </div>
             <button
-              title="Create a reference plane (pick a plane or face to offset from)"
+              title="Plane (P): create a reference plane — pick a plane or face to offset from"
               disabled={!!editingSketch || picking}
               onClick={() => { setPickPurpose("plane"); setPicking(true); }}
             >
               ⧉ Plane
             </button>
             <button
-              title="Extrude the selected sketch region(s) and/or face(s)"
+              title="Extrude (E): extrude the selected sketch region(s) and/or face(s)"
               disabled={extrudeProfiles.length === 0 || !!editingSketch || picking || !!extrudeDialog}
               onClick={openExtrudeDialog}
             >
               ⬆ Extrude
             </button>
             <button
-              title="Revolve a sketch region around an axis line (select both)"
+              title="Revolve (R): revolve a sketch region around an axis line (select both)"
               disabled={!revolveInputs || !!editingSketch || picking}
               onClick={openRevolve}
             >
               ⟳ Revolve
             </button>
             <button
-              title="Sweep a sketch region along a path: line / arc / spline (select both)"
+              title="Sweep (W): sweep a sketch region along a path — line / arc / spline (select both)"
               disabled={!sweepInputs || !!editingSketch || picking}
               onClick={openSweep}
             >
               ⊃ Sweep
             </button>
             <button
-              title="Loft through 2+ sketch regions (select the sections)"
+              title="Loft (L): loft through 2+ sketch regions (select the sections)"
               disabled={!loftInputs || !!editingSketch || picking}
               onClick={openLoft}
             >
               ⌧ Loft
             </button>
             <button
-              title="Chamfer the selected edge(s)"
+              title="Chamfer (C): chamfer the selected edge(s)"
               disabled={!dressUpTarget || !!editingSketch || picking}
               onClick={() => openDressUp("chamfer")}
             >
               ◣ Chamfer
             </button>
             <button
-              title="Fillet (round) the selected edge(s)"
+              title="Fillet (F): round the selected edge(s)"
               disabled={!dressUpTarget || !!editingSketch || picking}
               onClick={() => openDressUp("fillet")}
             >
               ◖ Fillet
             </button>
             <button
-              title="Boolean (union / subtract / intersect)"
+              title="Boolean (B): union / subtract / intersect"
               disabled={bodyIds.size < 2 || !!editingSketch || picking}
               onClick={openBooleanDialog}
             >
               ⊕ Boolean
             </button>
             <button
-              title="Move / rotate the selected body"
+              title="Transform (T): move / rotate the selected body"
               disabled={!transformTarget || !!editingSketch || picking || !!transformEditId}
               onClick={openTransform}
             >
               ✥ Transform
             </button>
             <button
-              title="Mirror the selected body across a plane"
+              title="Mirror (M): mirror the selected body across a plane"
               disabled={!transformTarget || !!editingSketch || picking}
               onClick={openMirror}
             >
@@ -1994,7 +2134,7 @@ export default function App() {
               </button>
               <div className="sketch-toolbar-sep" />
               <button
-                title="Parallel — select two lines"
+                title="Parallel (Shift+P) — select two lines"
                 disabled={!twoSelectedLines}
                 onClick={() =>
                   twoSelectedLines &&
@@ -2004,7 +2144,7 @@ export default function App() {
                 <ParallelIcon />
               </button>
               <button
-                title="Perpendicular — select two lines"
+                title="Perpendicular (N) — select two lines"
                 disabled={!twoSelectedLines}
                 onClick={() =>
                   twoSelectedLines &&
@@ -2014,7 +2154,7 @@ export default function App() {
                 ⊥
               </button>
               <button
-                title="Equal — select two lines (equal length) or two circles (equal radius)"
+                title="Equal (=) — select two lines (equal length) or two circles (equal radius)"
                 disabled={!twoSelectedLines && !twoSelectedCircles}
                 onClick={() => {
                   const pair = twoSelectedLines ?? twoSelectedCircles;
@@ -2027,15 +2167,15 @@ export default function App() {
               <button
                 title={
                   selectedSketchEntities.length > 0
-                    ? "Toggle construction (reference) geometry on the selection"
-                    : "Construction geometry: draw reference geometry (toggle)"
+                    ? "Construction (G): toggle construction (reference) geometry on the selection"
+                    : "Construction (G): draw reference geometry (toggle)"
                 }
                 className={constructionMode ? "active" : ""}
                 onClick={toggleConstruction}
               >
                 <ConstructionIcon />
               </button>
-              <button title="Solve constraints" onClick={handleSolve}>
+              <button title="Solve constraints (S)" onClick={handleSolve}>
                 ⛓
               </button>
               {sketchTool === "polygon" && (
@@ -2102,8 +2242,12 @@ export default function App() {
             />
           )}
           <div className="view-controls">
-            {VIEW_BUTTONS.map((v) => (
-              <button key={v.name} onClick={() => viewApiRef.current?.setView(v.name)}>
+            {VIEW_BUTTONS.map((v, i) => (
+              <button
+                key={v.name}
+                title={`${v.label} (${i + 1})`}
+                onClick={() => viewApiRef.current?.setView(v.name)}
+              >
                 {v.label}
               </button>
             ))}
