@@ -501,16 +501,24 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   name map by each face's image so the body's names survive the move.
 - **Copy ✅ DONE:** a "Keep original" checkbox makes the transform emit the
   moved/rotated body as a NEW part (own colour) instead of moving in place.
+- **Live drag preview ✅ DONE (perf):** dragging the gizmo used to re-run the full
+  running-fold regen over every body each frame, so in a many-solid doc it stalled
+  the kernel for the whole drag. A rigid motion preserves topology 1:1, so the drag
+  now re-poses **only the moved body's** three.js objects with a matrix
+  (`current · committed⁻¹`, matching the kernel's rotate-about-pivot-then-translate)
+  and never touches the kernel; the drag commits **once, on release** (the only
+  regenerate). The commit's delta is pinned across the stale rebuilds the doc change
+  triggers and released the instant the body's mesh ref changes (real re-baked
+  geometry), so there's no flash back to the origin. The panel's numeric readout
+  stays live via a display-only state that never feeds the kernel. Verified on a
+  40-body doc: 0 regens during the drag, 1 on release; no flash-back.
 - **TODO:** scale; rotation about a datum axis / body edge / arbitrary
   point+direction (today: world axis through the bbox-centre pivot); a pivot
   that re-derives if the body changes upstream (today it's baked at creation).
-- **TODO (perf — verify transforms with many solids):** with many bodies in the
-  document, dragging a transform **doesn't update in real time** — the live
-  gizmo/preview lags or doesn't refresh until release. Each drag re-runs the full
-  running-fold regen over every body, so cost scales with the part count.
-  Investigate: preview only the transformed body during the drag (the rest are
-  rigid/unchanged), throttle/debounce regen, or move the transform preview off the
-  full-document rebuild path. Verify on a doc with many solids.
+- **TODO (perf, follow-up):** the single commit regenerate still rebuilds the whole
+  timeline (~225ms for 40 simple boxes; more with fillets/booleans). To make the
+  *release* itself instant in heavy docs, cache unchanged bodies' OCCT shapes in the
+  worker (incremental regen). Bigger change; not needed for interactive dragging.
 
 ### Deferred — Associative face-sketches (sketch follows its host body) ⏸️
 A sketch placed on a **body face** stores its plane as a frozen `frame` snapshot
