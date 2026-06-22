@@ -49,7 +49,7 @@ If an op errors, read the message, fix the cause, and retry — don't loop blind
   through-point curve, a sweep path); mark an entity `construction:true` to make
   it reference-only — snapping / a revolve axis, never extruded),
   `add_extrude` (profile + distance + mode `new|add|remove` + extent
-  `blind|symmetric|throughAll`), `add_revolve` (region + axis line + angle),
+  `blind|symmetric|throughAll|upToFace`), `add_revolve` (region + axis line + angle),
   `add_sweep` (region + path entity), `add_loft` (2+ regions), `add_mirror`
   (body + plane), `add_plane`, `transform` (translate/rotate, optional `copy`),
   `boolean`, `dress_up` (chamfer/fillet), `set_param`, `set_appearance`,
@@ -70,9 +70,17 @@ All mutations route through undo, so the human can revert anything you do.
 - **Pocket / hole:** same, but `mode: "remove"` — a removal cuts **into** the body
   by default (the direction is implicitly inward; the `flip` flag reverses it).
   For a hole/pocket that must pass entirely through, set `extent: "throughAll"`
-  (with the `targetId`) instead of guessing a distance.
+  (with the `targetId`) instead of guessing a distance. **`throughAll` is for
+  cuts only** (`mode: "remove"`) — it's not offered for new/add.
 - **Two-sided / centered feature:** `add_extrude` with `extent: "symmetric"` —
   the profile extrudes `distance` equally both ways (centered on the sketch).
+- **Extrude up to a face:** `add_extrude` with `extent: "upToFace"` and
+  `upTo: { bodyId, faceName }` (a planar face from `get_scene_summary`) — the
+  profile grows until it reaches that face's plane; `distance`/`flip` are ignored
+  (the face sets both length and direction). The target face must not be parallel
+  to the extrude direction. Prefer this over a guessed distance when one body
+  should meet another. Two bodies that end up **sharing a face** (touching, no
+  overlap) still `boolean` `union` into one — touching counts as joined.
 - **Revolved part (shaft, ring, bowl):** `add_sketch` with the **profile region**
   to one side of an axis **line** (mark the axis `construction:true` so it isn't
   part of the region and isn't a wall); then `add_revolve` with that region +
@@ -122,10 +130,10 @@ You are also the project's feedback loop. When something blocks or surprises you
 **do not fake geometry or silently work around it** — call **`report_issue`**:
 
 - `kind: "missing_feature"` — the operation you need isn't expressible with the
-  available tools (e.g. linear/circular pattern, "up to face" extrude extent,
-  variable-radius fillet, a constraint type, a midplane/angle reference plane,
-  trim/extend, mirroring sketch entities). *(Revolve, mirror, sweep, loft, the
-  spline tool, and symmetric / through-all extrude all exist now — use those
+  available tools (e.g. linear/circular pattern, variable-radius fillet, a
+  constraint type, a midplane/angle reference plane, trim/extend, mirroring
+  sketch entities). *(Revolve, mirror, sweep, loft, the spline tool, and
+  symmetric / through-all / up-to-face extrude all exist now — use those
   tools.)* Include the goal, what you tried, and a suggested API.
 - `kind: "bug"` — a tool did the wrong thing or errored unexpectedly (e.g. a
   remove that didn't cut, a name that didn't resolve, a regen error). Include what

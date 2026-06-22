@@ -105,8 +105,14 @@ export const operationSchema = z.discriminatedUnion("op", [
     flip: z.boolean().optional(),
     /** How far it reaches: blind = `distance` one way; symmetric = `distance`
      *  split evenly both ways (flip ignored); throughAll = clear through the
-     *  target (add/remove only — needs a targetId). Defaults to blind. */
-    extent: z.enum(["blind", "symmetric", "throughAll"]).optional(),
+     *  target (**remove/cut only** — needs a targetId); upToFace = stop at the
+     *  plane of `upTo` (distance/flip ignored — the face sets length+direction).
+     *  Defaults to blind. */
+    extent: z.enum(["blind", "symmetric", "throughAll", "upToFace"]).optional(),
+    /** Required when extent is "upToFace": the planar target face to reach, by
+     *  body (feature id) + persistent face name (from get_scene_summary). The
+     *  face must not be parallel to the extrude direction. */
+    upTo: z.object({ bodyId: z.string(), faceName: z.string() }).optional(),
     mode: z.enum(["new", "add", "remove"]).optional(),
     /** For add/remove: the body (feature id) to fuse into / cut from. */
     targetId: z.string().optional(),

@@ -25,7 +25,7 @@ const UNITS = " Conventions: millimetres, world is Z-up. Reference geometry by t
 const OP_DESCRIPTIONS: Record<string, string> = {
   addPrimitive: "Add a primitive solid body (box | cylinder | sphere); override params with numbers or expressions.",
   addSketch: "Add a 2D sketch on a plane (datum top/front/right, a reference plane, or a body face by name). Entities are sugar shapes (rect/circle/polygon/line/arc/spline/point) in the plane's (u,v) coords; a spline is an open through-point curve handy as a sweep path.",
-  addExtrude: "Extrude a sketch region (or a body face) into a solid. mode new|add|remove (remove cuts inward by default); extent blind|symmetric|throughAll (throughAll needs a targetId).",
+  addExtrude: "Extrude a sketch region (or a body face) into a solid. mode new|add|remove (remove cuts inward by default); extent blind|symmetric|throughAll|upToFace. throughAll is for remove/cut only and needs a targetId. upToFace stops at the plane of `upTo` ({bodyId, faceName} from get_scene_summary) — distance/flip are ignored and the target face must not be parallel to the extrude direction.",
   addRevolve: "Revolve a sketch region around an axis line in the same sketch by an angle (default 360). Make the axis a construction line and keep the region off the axis. Get the axis entity id from get_scene_summary's sketch entities.",
   addMirror: "Mirror a body across a plane (datum/reference plane/body face) into a new body; the original is kept.",
   addSweep: "Sweep a sketch region (cross-section) along a path entity (line/arc/spline, possibly in another sketch) into a solid. Get the path entityId from get_scene_summary's sketch entities; the profile is placed perpendicular to the path start.",

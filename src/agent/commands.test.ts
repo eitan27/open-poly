@@ -155,6 +155,52 @@ describe("applyOperation — construction, extent, revolve, mirror", () => {
     expect(f && f.type === "extrude" && f.extent).toBe("symmetric");
   });
 
+  it("addExtrude upToFace resolves the target face's name + centroid", async () => {
+    // ctx with one body exposing a named planar face (the up-to-face target).
+    let d = createDocument();
+    let sel: Selection[] = [];
+    const ctx: AgentContext = {
+      getDoc: () => d, setDoc: (n) => { d = n; },
+      getSelection: () => sel, setSelection: (s) => { sel = s; },
+      getMeshes: () => [{
+        id: "target-body",
+        mesh: {
+          name: "target-body",
+          faces: {
+            vertices: [0, 0, 30, 10, 0, 30, 0, 10, 30],
+            triangles: [0, 1, 2],
+            normals: [0, 0, -1, 0, 0, -1, 0, 0, -1],
+            faceGroups: [{ start: 0, count: 3, faceId: 7, name: "target-body/-z" }],
+          },
+          edges: { lines: [] },
+        },
+      }],
+      getErrors: () => resolveDocument(d).errors,
+      waitForRegen: async () => ({ errors: resolveDocument(d).errors }),
+      getViewport: () => null,
+    };
+    const sk = await apply(ctx, { op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "rect", center: [0, 0], w: 10, h: 10 }] });
+    const ex = await apply(ctx, {
+      op: "addExtrude", profile: { sketchId: sk.createdId! }, distance: 1,
+      extent: "upToFace", upTo: { bodyId: "target-body", faceName: "target-body/-z" },
+    });
+    const f = d.features.find((x) => x.id === ex.createdId);
+    expect(f && f.type === "extrude" && f.extent).toBe("upToFace");
+    expect(f && f.type === "extrude" && f.upTo).toMatchObject({
+      featureId: "target-body", faceName: "target-body/-z",
+    });
+    // Centroid of the three sample verts, all at z=30.
+    expect(f && f.type === "extrude" && f.upTo?.center[2]).toBeCloseTo(30, 5);
+  });
+
+  it("addExtrude upToFace errors without a target face", async () => {
+    const { ctx } = makeCtx();
+    const sk = await apply(ctx, { op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "rect", center: [0, 0], w: 10, h: 10 }] });
+    const r = await apply(ctx, { op: "addExtrude", profile: { sketchId: sk.createdId! }, distance: 1, extent: "upToFace" });
+    expect(r.ok).toBe(false);
+    expect(r.errorKind).toBe("invalid_op");
+  });
+
   it("addRevolve revolves a region around a construction axis line", async () => {
     const { ctx, doc } = makeCtx();
     const sk = await apply(ctx, {

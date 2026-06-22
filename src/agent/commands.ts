@@ -188,6 +188,20 @@ function resolveProfile(ctx: AgentContext, spec: ProfileSpec): ExtrudeProfile {
   return { kind: "bodyFace", featureId: spec.bodyId, faceId: fg.faceId, faceName: spec.faceName, center: fg.center };
 }
 
+/** Resolve an "up to face" target (body id + persistent face name) to the
+ *  reference the document model expects: the source body + name + centroid
+ *  (read back from the tessellation, like a body-face profile). */
+function resolveUpToFace(
+  ctx: AgentContext,
+  spec: { bodyId: string; faceName: string },
+): { featureId: string; faceName: string; center: [number, number, number] } {
+  const mesh = ctx.getMeshes().find((m) => m.id === spec.bodyId);
+  if (!mesh) throw new OpError("not_found", `No body "${spec.bodyId}" for the up-to-face target.`);
+  const fg = faceGeomByName(mesh.mesh.faces, spec.faceName);
+  if (!fg) throw new OpError("not_found", `Face "${spec.faceName}" not found on body "${spec.bodyId}".`);
+  return { featureId: spec.bodyId, faceName: spec.faceName, center: fg.center };
+}
+
 function requireFeature(doc: Document, id: string): Feature {
   const f = doc.features.find((x) => x.id === id);
   if (!f) throw new OpError("not_found", `No feature "${id}".`);
@@ -229,12 +243,17 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       }
       case "addExtrude": {
         const profile = resolveProfile(ctx, op.profile);
+        if (op.extent === "upToFace" && !op.upTo) {
+          throw new OpError("invalid_op", 'extent "upToFace" requires `upTo` (the target face).');
+        }
+        const upTo = op.extent === "upToFace" && op.upTo ? resolveUpToFace(ctx, op.upTo) : undefined;
         const r = addExtrude(doc, profile, {
           distance: op.distance,
           flip: op.flip,
           extent: op.extent,
           mode: op.mode,
           targetId: op.targetId,
+          upTo,
         });
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;
