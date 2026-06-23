@@ -524,7 +524,13 @@ export default function App() {
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
   const [draft, setDraft] = useState<Vec2[]>([]);
+  // The committed polygon side count (used when drawing). The dialog edits a
+  // free-text draft and commits it via Set, so typing isn't fought by live clamping.
   const [polygonSides, setPolygonSides] = useState(6);
+  const [polySidesText, setPolySidesText] = useState("6");
+  // The polygon "Sides" dialog is a one-shot prompt: it opens when the polygon
+  // tool is selected and closes on Set/Cancel, so the next viewport click draws.
+  const [polySidesOpen, setPolySidesOpen] = useState(false);
   // When on, newly drawn entities are marked as construction (reference) geometry.
   const [constructionMode, setConstructionMode] = useState(false);
   const [fullyConstrained, setFullyConstrained] = useState(false);
@@ -633,6 +639,10 @@ export default function App() {
   const setSketchTool = (t: SketchTool) => {
     setSketchToolState(t);
     setDraft([]); // starting a new tool abandons any in-progress points
+    // Selecting the polygon tool (re)opens its Sides prompt, seeded with the
+    // committed count; any other tool dismisses it.
+    if (t === "polygon") { setPolySidesText(String(polygonSides)); setPolySidesOpen(true); }
+    else setPolySidesOpen(false);
   };
   // Geometry from the last kernel regen, keyed by feature id. Color/opacity
   // live on the feature and are overlaid in `meshes` below so tweaking them
@@ -1297,6 +1307,7 @@ export default function App() {
       if (e.key === "Escape") {
         if (dimInputRef.current) setDimInput(null);
         else if (dimPendingRef.current) setDimPending(false);
+        else if (polySidesOpen) setPolySidesOpen(false);
         else if (planeDialog) closePlaneDialog();
         else if (transformEditId) cancelTransform();
         else if (picking) setPicking(false);
@@ -1464,6 +1475,7 @@ export default function App() {
     twoSelectedLines,
     twoSelectedCircles,
     primaryFeatureId,
+    polySidesOpen,
   ]);
 
   const openLoft = () => {
@@ -2552,20 +2564,6 @@ export default function App() {
               >
                 <ConstructionIcon />
               </button>
-              {sketchTool === "polygon" && (
-                <label className="poly-sides" title="Polygon sides">
-                  <span>n</span>
-                  <input
-                    type="number"
-                    min={3}
-                    max={24}
-                    value={polygonSides}
-                    onChange={(e) =>
-                      setPolygonSides(Math.max(3, Math.min(24, Number(e.target.value) || 3)))
-                    }
-                  />
-                </label>
-              )}
               {editingSketch.constraints.length > 0 && (
                 <span
                   className={`constraint-count${solveConflict ? " conflict" : ""}`}
@@ -2607,6 +2605,31 @@ export default function App() {
               </button>
             </DraggableDialog>
           )}
+          {/* Polygon tool: a one-shot floating "Sides" box (like the dimension
+              input). The draft is free text; Set (enabled only for an integer in
+              3..24) commits the count and closes the box so the next viewport click
+              draws. Cancel/✕/Esc just closes it, keeping the previous count. */}
+          {editingSketch && sketchTool === "polygon" && polySidesOpen && (() => {
+            const n = Number(polySidesText);
+            const valid = Number.isInteger(n) && n >= 3 && n <= 24;
+            const commit = () => { if (valid) { setPolygonSides(n); setPolySidesOpen(false); } };
+            return (
+              <DraggableDialog className="dim-input" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
+                <label data-drag-handle>Sides</label>
+                <input
+                  autoFocus
+                  value={polySidesText}
+                  onChange={(e) => setPolySidesText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commit();
+                    else if (e.key === "Escape") setPolySidesOpen(false);
+                  }}
+                />
+                <button onClick={commit} disabled={!valid}>Set</button>
+                <button className="ghost" onClick={() => setPolySidesOpen(false)}>✕</button>
+              </DraggableDialog>
+            );
+          })()}
           {dimFrame && dimSpecs.length > 0 && (
             <DimensionOverlay
               frame={dimFrame}
