@@ -482,7 +482,13 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 - **Mirror across a plane/planar face — ✅ DONE.** A `MirrorFeature` reflects a
   body across a datum / reference plane into a **new** body (original kept) via
   `gp_Trsf.SetMirror` (reuses `applyTrsf`; names re-key 1:1). `⇋ Mirror` button
-  + plane-pick dialog. *(Mirror about a planar body face: future.)*
+  + plane-pick dialog. **Mirror about a planar body face ✅ DONE:** the dialog's
+  plane dropdown has a **"Body face…"** option that arms a face pick (`Select a
+  face` button, like up-to-face); the picked face's plane is derived via
+  `deriveFaceFrame` (centroid + `faceNormal`) and stored as a `kind:"face"` ref
+  (a frozen frame snapshot — won't follow the source body if it later changes).
+  **Non-planar faces are rejected** (`faceNormal` returns null when the face
+  verts aren't coplanar within 0.05mm, so a cylinder side can't be picked).
 - Patterns/booleans multiply topology — re-stress naming/selection here.
 
 ### Phase 5.5 — Transform (move + rotate bodies) — ✅ DONE

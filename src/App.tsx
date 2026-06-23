@@ -54,7 +54,7 @@ import type {
 import type { BooleanOp, MeshedEdges, MeshedFaces } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
-import { frameOf, planeRefLabel, uvToWorld, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
+import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
 import { evaluateExpression } from "./document/expression";
 import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
@@ -130,6 +130,46 @@ function faceCentroid(
     n++;
   }
   return n ? [sx / n, sy / n, sz / n] : null;
+}
+
+/** Unit normal of a tessellated body face, or null if the face is non-planar
+ *  (vertices not coplanar within tolerance — e.g. a cylinder side). Prefers the
+ *  meshed per-vertex normals, falling back to the first non-degenerate triangle's
+ *  geometric normal. Used to derive a mirror plane from a picked planar face. */
+function faceNormal(faces: MeshedFaces, faceId: number): [number, number, number] | null {
+  const g = faces.faceGroups?.find((fg) => fg.faceId === faceId);
+  if (!g) return null;
+  const { triangles, vertices, normals } = faces;
+  let n: [number, number, number] | null = null;
+  if (normals && normals.length) {
+    let nx = 0, ny = 0, nz = 0;
+    for (let k = g.start; k < g.start + g.count; k++) {
+      const vi = triangles[k] * 3;
+      nx += normals[vi]; ny += normals[vi + 1]; nz += normals[vi + 2];
+    }
+    const l = Math.hypot(nx, ny, nz);
+    if (l > 1e-9) n = [nx / l, ny / l, nz / l];
+  }
+  if (!n) {
+    for (let k = g.start; k + 2 < g.start + g.count; k += 3) {
+      const a = triangles[k] * 3, b = triangles[k + 1] * 3, c = triangles[k + 2] * 3;
+      const ux = vertices[b] - vertices[a], uy = vertices[b + 1] - vertices[a + 1], uz = vertices[b + 2] - vertices[a + 2];
+      const vx = vertices[c] - vertices[a], vy = vertices[c + 1] - vertices[a + 1], vz = vertices[c + 2] - vertices[a + 2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const l = Math.hypot(nx, ny, nz);
+      if (l > 1e-9) { n = [nx / l, ny / l, nz / l]; break; }
+    }
+  }
+  if (!n) return null;
+  // Reject a non-planar face: every vertex must lie on the plane (point + n).
+  const a0 = triangles[g.start] * 3;
+  const px = vertices[a0], py = vertices[a0 + 1], pz = vertices[a0 + 2];
+  for (let k = g.start; k < g.start + g.count; k++) {
+    const vi = triangles[k] * 3;
+    const d = (vertices[vi] - px) * n[0] + (vertices[vi + 1] - py) * n[1] + (vertices[vi + 2] - pz) * n[2];
+    if (Math.abs(d) > 0.05) return null; // mm tolerance
+  }
+  return n;
 }
 
 /** Bounding-box centre of a tessellated body — the default rotation pivot for a
@@ -321,6 +361,22 @@ export default function App() {
       setPickingUpFace(false);
       return;
     }
+    // Mirror-face pick armed (from the Mirror dialog): the next clicked planar
+    // body face becomes the mirror plane. A non-planar face (faceNormal → null)
+    // is ignored so the arming stays active for another try.
+    if (pickingMirrorFace) {
+      if (picked?.kind === "face") {
+        const m = meshes.find((x) => x.id === picked.featureId);
+        const center = m ? faceCentroid(m.mesh.faces, picked.faceId) : null;
+        const normal = m ? faceNormal(m.mesh.faces, picked.faceId) : null;
+        if (center && normal) {
+          const frame = deriveFaceFrame(center, normal);
+          setMirrorDialog((d) => (d ? { ...d, plane: "face", faceRef: { featureId: picked.featureId, frame } } : d));
+          setPickingMirrorFace(false);
+        }
+      }
+      return;
+    }
     // Boolean dialog open: a clicked body fills the dialog instead of changing
     // the normal selection. union/intersect toggle a single operand list;
     // subtract routes to the armed slot (base = one part; tools accumulate).
@@ -375,7 +431,13 @@ export default function App() {
   const [pickPurpose, setPickPurpose] = useState<"sketch" | "plane">("sketch");
   const [planeDialog, setPlaneDialog] = useState<{ base: SketchPlaneRef; offset: string } | null>(null);
   // The Mirror dialog: the body to mirror + the chosen plane key (see plane keys).
-  const [mirrorDialog, setMirrorDialog] = useState<{ targetId: string; plane: string } | null>(null);
+  // `plane === "face"` mirrors across a picked planar body face, stored in
+  // `faceRef` (a frozen frame snapshot, like a sketch-on-face placement).
+  const [mirrorDialog, setMirrorDialog] = useState<
+    { targetId: string; plane: string; faceRef: { featureId: string; frame: PlaneFrameData } | null } | null
+  >(null);
+  // Armed by the Mirror dialog: the next clicked planar body face is the plane.
+  const [pickingMirrorFace, setPickingMirrorFace] = useState(false);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
   const [draft, setDraft] = useState<Vec2[]>([]);
@@ -1037,6 +1099,7 @@ export default function App() {
       { key: "datum:plane-front", label: "Front" },
       { key: "datum:plane-right", label: "Right" },
       ...userPlanes.map((p) => ({ key: `plane:${p.id}`, label: p.name })),
+      { key: "face", label: "Body face…" },
     ],
     [userPlanes],
   );
@@ -1310,13 +1373,24 @@ export default function App() {
 
   const openMirror = () => {
     if (!transformTarget) return;
-    setMirrorDialog({ targetId: transformTarget, plane: "datum:plane-front" });
+    setMirrorDialog({ targetId: transformTarget, plane: "datum:plane-front", faceRef: null });
+  };
+  const closeMirror = () => {
+    setMirrorDialog(null);
+    setPickingMirrorFace(false);
   };
   const createMirror = () => {
     if (!mirrorDialog) return;
-    const { doc: next, id } = addMirror(doc, mirrorDialog.targetId, planeKeyToRef(mirrorDialog.plane));
+    const ref: SketchPlaneRef | null =
+      mirrorDialog.plane === "face"
+        ? mirrorDialog.faceRef
+          ? { kind: "face", featureId: mirrorDialog.faceRef.featureId, frame: mirrorDialog.faceRef.frame }
+          : null
+        : planeKeyToRef(mirrorDialog.plane);
+    if (!ref) return; // a face plane was chosen but none picked yet
+    const { doc: next, id } = addMirror(doc, mirrorDialog.targetId, ref);
     setDoc(next);
-    setMirrorDialog(null);
+    closeMirror();
     selectFeature(id);
   };
 
@@ -2662,15 +2736,33 @@ export default function App() {
           <div className="ed-title" data-drag-handle>Mirror across plane</div>
           <select
             value={mirrorDialog.plane}
-            onChange={(e) => setMirrorDialog((d) => (d ? { ...d, plane: e.target.value } : d))}
+            onChange={(e) => {
+              const plane = e.target.value;
+              setMirrorDialog((d) => (d ? { ...d, plane } : d));
+              setPickingMirrorFace(plane === "face" && !mirrorDialog.faceRef);
+            }}
           >
             {mirrorPlaneOptions.map((o) => (
               <option key={o.key} value={o.key}>{o.label}</option>
             ))}
           </select>
+          {mirrorDialog.plane === "face" && (
+            <button
+              className={"ed-pick-btn" + (pickingMirrorFace ? " active" : "")}
+              onClick={() => setPickingMirrorFace((v) => !v)}
+            >
+              {pickingMirrorFace
+                ? "Click a planar face…"
+                : mirrorDialog.faceRef
+                  ? `Face on ${doc.features.find((f) => f.id === mirrorDialog.faceRef!.featureId)?.name ?? "body"}`
+                  : "Select a face"}
+            </button>
+          )}
           <div className="mirror-actions">
-            <button onClick={createMirror}>Create</button>
-            <button className="ghost" onClick={() => setMirrorDialog(null)}>Cancel</button>
+            <button onClick={createMirror} disabled={mirrorDialog.plane === "face" && !mirrorDialog.faceRef}>
+              Create
+            </button>
+            <button className="ghost" onClick={closeMirror}>Cancel</button>
           </div>
         </DraggableDialog>
       )}
