@@ -238,6 +238,18 @@ rough relative sizing, not calendar promises.
 > (movable Constraints/Parameters panel) and **#5** (timeline formatting); more
 > plane methods; a **multi-document manager**. **LLM agent integration (Phase 9 —
 > fully specced below)** is underway on `feat/phase9-agent` (L0–L3 done).
+>
+> **Progress (2026-06-24):** another **sketch-constraint batch** landed on `main`
+> — **tangent**, **coincident** (+ point-on-line + origin-anchoring), and auto
+> **point-on-line / midpoint** on snapped endpoints; the **origin is fixed
+> ground**; **arcs are now solver-aware** and **equal** extends to arcs; plus
+> **variable-name validation** + **dimension var-name autocomplete**, a **dashed
+> construction-line highlight** (`Q` syncs the toolbar toggle), and two fixes
+> (length-dimension side-flicker on symmetric sketches; loops that close at the
+> origin now enclose). Separately, **drag-to-move unconstrained sketch geometry**
+> + a **blue (under-constrained) → green (fully constrained) line styling** are
+> **in progress** on `claude/sketch-unconstrained-dragging` — **not yet merged**
+> (kinks to work out).
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -305,13 +317,29 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
     sketch as a cancel (drops it) — there's no way to back out of edits made to an
     existing sketch. Needs snapshotting the sketch on edit-entry and restoring it
     on Cancel/Esc (Finish/⏎ keeps changes as now).
-- **2b:** ✅ constraints via **`planegcs`** (auto H/V capture, ⛓ Solve, fully-
+- **2b:** ✅ constraints via **`planegcs`** (auto H/V capture, fully-
   constrained→green) + **interactive length / radius / angle dimensions** (press
   D, accepts number/expr/variable) with **on-canvas labels + double-click-to-
   edit**, plus a **manual-constraint UI** (∥ parallel, ⊥ perpendicular, ＝ equal
-  — toolbar buttons enabled on the matching selection). **TODO (catalogued
-  below):** point-to-point / point-to-line distance, diameter variant, and the
-  remaining geometric constraints (coincident/tangent/concentric/symmetric/…).
+  — toolbar buttons enabled on the matching selection). **Drawing now auto-solves:**
+  every draw commit (line/rect/polygon/circle/spline, incl. auto-H/V) runs the
+  solver immediately (chained lines continue from the *solved* endpoint), so the
+  sketch is always consistent and the ✓/⚠ status is always live — the manual
+  **⛓ Solve button is gone**. **Conflict feedback:** a dimension or geometric
+  constraint the solver can't satisfy is **rejected** (not saved as a dead
+  constraint) with a named banner — the dimension reject (like the geometric one)
+  fires on a conflict, a failed/invalid solve, **or a degenerate result** (a line
+  collapsed to ~0), and geometric rejects also catch already-implied (redundant)
+  ones. **Angle dimensions target the INTERIOR angle:** the on-canvas value is the
+  interior angle at the lines' shared vertex (not the obtuse supplement), and the
+  solver converts it to the directed l2l angle using the lines' orientation +
+  current side, so setting a value lands on that interior angle and stays on the
+  current side instead of flipping the sketch to the supplement; an impossible
+  angle (e.g. a second right angle in a triangle) degenerates → rejected.
+  **Coincident / tangent / point-on-line / midpoint are now in** (see the 2b
+  status notes below); **TODO (still catalogued below):** point-to-point /
+  point-to-line distance, the diameter variant, and the remaining geometric
+  constraints (concentric / symmetric / collinear / general fix-lock).
 - **Exit criteria** (a fully-constrained closed profile that updates when a
   driving variable changes): met.
 
@@ -329,13 +357,30 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 >
 > **Dimensions update (2026-06-20):** dimensions now cover **line length**,
 > **circle radius**, and **line–line angle** (degrees). Each draws an **on-canvas
-> label** that tracks the camera (`ui/DimensionLabels.tsx`, repositioned per-frame
-> via `worldToScreen` with no React re-render), and **double-clicking a label**
-> reopens its editor pre-filled with the stored value. The dimension input box is
-> now a `DraggableDialog` (movable by its label, like Extrude/Chamfer). Circles
-> are now mapped into planegcs (centre point + solvable radius), so a radius
-> constraint drives them and a sketch with a circle is correctly under-constrained
-> until pinned.
+> label** that tracks the camera (repositioned per-frame via `worldToScreen` with
+> no React re-render), and **double-clicking a label** reopens its editor
+> pre-filled with the stored value. The dimension input box is now a
+> `DraggableDialog` (movable by its label, like Extrude/Chamfer). Circles are now
+> mapped into planegcs (centre point + solvable radius), so a radius constraint
+> drives them and a sketch with a circle is correctly under-constrained until
+> pinned.
+>
+> **Technical-drawing dimension visuals (2026-06-23):** dimensions now render
+> like a drafting annotation instead of a bare floating label —
+> `ui/DimensionOverlay.tsx` replaces `ui/DimensionLabels.tsx`. A **length**
+> dimension gets witness (extension) lines off both endpoints and a parallel
+> dimension line with arrowheads, offset to whichever side reads outside the
+> profile (picked from the sketch's bounding-box centroid). A **radius**
+> dimension gets a leader from the centre to just past the rim with an arrowhead
+> at the rim. An **angle** dimension gets an arc swept between the two lines'
+> rays from their (possibly extended) intersection, tangent arrowheads at both
+> ends, and the value at the arc's midpoint — except a **right angle**, which
+> instead gets the conventional small corner box (no arc/label needed). All
+> graphics are plain SVG in screen space, repositioned imperatively each frame
+> alongside the labels (same no-re-render pattern as before). Interaction is now
+> uniform: **double-click** a label (or a right-angle box) reopens its editor;
+> **single-click to focus, then Delete/Backspace** removes the constraint —
+> previously only double-click-to-edit existed, with no on-canvas delete.
 >
 > **Constraint integrity fix (2026-06-21):** auto H/V capture now also fires when
 > a line's endpoint snaps to an existing point. Previously the snap resolved early
@@ -353,10 +398,13 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 >   variable change is still deferred). p2p distance is entangled with the
 >   point-identity gap below (it needs robust point references).
 > - **Geometric constraints now in the UI:** auto H/V (on draw), **parallel**,
->   **perpendicular**, **equal** (lines→equal length, circles→equal radius), and
->   **angle** (as a dimension). **Still not exposed / mapped:** coincident,
->   tangent, concentric, symmetric, midpoint, collinear, fix/lock (and `equal`
->   only covers lines + circles, not arcs).
+>   **perpendicular**, **equal** (lines→equal length, circles/arcs→equal radius,
+>   any mix), **angle** (as a dimension), **tangent** + **coincident** (toolbar
+>   buttons — coincident also does **point-on-line** and **origin-anchoring**),
+>   and **point-on-line / midpoint** auto-attached when a drawn endpoint snaps
+>   onto an edge or its midpoint. The **origin is fixed ground** in the solver.
+>   **Still not exposed / mapped:** concentric, symmetric, collinear, and a
+>   general fix/lock of an arbitrary entity.
 > - **Constraint management & feedback — ✅ DONE (2026-06-21).** A **Constraints
 >   list** (sidebar, while editing a sketch) shows each constraint with a per-row
 >   **✕ delete** (wires the previously-unused `removeSketchConstraint` →
@@ -370,8 +418,11 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 > - **Sketch operations missing:** mirror (of sketch entities), use/project
 >   (convert body edges into the sketch), offset, trim/extend. *(Construction
 >   geometry and splines are now done — see 2a.)*
-> - **Arcs and splines** still pass through the solver unchanged (not
->   constrained); circles are now mapped + radius-constrainable.
+> - **Arcs are now solver-aware** (mapped as centre + two endpoint points +
+>   radius + start/end angles, tied by `arc_rules`, so an arc constrains and
+>   moves as a real curve and its endpoints merge with coincident line/arc ends);
+>   circles are mapped + radius-constrainable. **Only splines** still pass through
+>   the solver unchanged (not constrained).
 
 > **Reprioritized 2026-06-18 (user):** Extrude is the single most important
 > solid op and is the headline of Phase 3; **Chamfer (and Fillet)** matter more
@@ -469,12 +520,23 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     plane can sit on an earlier plane); `SketchPlaneRef` gained a
     `{kind:"plane"}` variant; planes render as translucent amber quads and are
     **selectable for sketching** (offset is editable → re-derives on change).
-  - **Midplane** — halfway between two references (face↔plane, face↔face, or
-    plane↔plane). **TODO.**
-  - **At an angle** — rotated by an angle about an edge/axis, relative to a
-    face or plane. **TODO.**
-  - **Through geometry** — 3 points, a line + a point, two parallel edges, etc.
-    **TODO.**
+  - **Midplane — ✅ DONE.** Halfway between two references (datum / face /
+    reference plane). Origin at the midpoint of the two frame origins, normal the
+    aligned average (the second normal is flipped if it faces away, so two faces
+    pointing at each other still give a sensible between-plane). `midplaneFrame`.
+  - **At an angle — ✅ DONE.** The base hinged on its own u- or v-axis (through
+    the base origin) by an angle in degrees (expression-backed, re-derives on
+    change). `angledFrame` (Rodrigues rotation). *(Hinging on an arbitrary picked
+    edge/axis rather than the base's own axis is a future refinement.)*
+  - **Through geometry — ✅ DONE (3 points).** Plane through three picked points
+    (body vertices or sketch points); origin = first point, normal =
+    (p1-p0)×(p2-p0), collinear points rejected. `planeThrough3Points`. *(Other
+    inputs — line+point, two parallel edges — are future.)*
+  - The **⧉ Plane dialog is now method-first**: a Method dropdown (Offset /
+    Midplane / At angle / Through 3 points) with per-method pick buttons (base /
+    second reference / 3 points) + inputs; `ParamEditor` shows the right fields per
+    method. `PlaneFeature` gained `method` + `refB`/`angleAxis`/`angle`/`points`
+    (legacy planes with no `method` resolve as offset).
   (Showing planes in a separate datums list is **not planned** — appearing in the
   timeline + viewport is enough.)
 - Linear pattern (1- and 2-direction), circular pattern (axis + count + angle).
@@ -482,7 +544,13 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 - **Mirror across a plane/planar face — ✅ DONE.** A `MirrorFeature` reflects a
   body across a datum / reference plane into a **new** body (original kept) via
   `gp_Trsf.SetMirror` (reuses `applyTrsf`; names re-key 1:1). `⇋ Mirror` button
-  + plane-pick dialog. *(Mirror about a planar body face: future.)*
+  + plane-pick dialog. **Mirror about a planar body face ✅ DONE:** the dialog's
+  plane dropdown has a **"Body face…"** option that arms a face pick (`Select a
+  face` button, like up-to-face); the picked face's plane is derived via
+  `deriveFaceFrame` (centroid + `faceNormal`) and stored as a `kind:"face"` ref
+  (a frozen frame snapshot — won't follow the source body if it later changes).
+  **Non-planar faces are rejected** (`faceNormal` returns null when the face
+  verts aren't coplanar within 0.05mm, so a cylinder side can't be picked).
 - Patterns/booleans multiply topology — re-stress naming/selection here.
 
 ### Phase 5.5 — Transform (move + rotate bodies) — ✅ DONE
@@ -501,16 +569,24 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   name map by each face's image so the body's names survive the move.
 - **Copy ✅ DONE:** a "Keep original" checkbox makes the transform emit the
   moved/rotated body as a NEW part (own colour) instead of moving in place.
+- **Live drag preview ✅ DONE (perf):** dragging the gizmo used to re-run the full
+  running-fold regen over every body each frame, so in a many-solid doc it stalled
+  the kernel for the whole drag. A rigid motion preserves topology 1:1, so the drag
+  now re-poses **only the moved body's** three.js objects with a matrix
+  (`current · committed⁻¹`, matching the kernel's rotate-about-pivot-then-translate)
+  and never touches the kernel; the drag commits **once, on release** (the only
+  regenerate). The commit's delta is pinned across the stale rebuilds the doc change
+  triggers and released the instant the body's mesh ref changes (real re-baked
+  geometry), so there's no flash back to the origin. The panel's numeric readout
+  stays live via a display-only state that never feeds the kernel. Verified on a
+  40-body doc: 0 regens during the drag, 1 on release; no flash-back.
 - **TODO:** scale; rotation about a datum axis / body edge / arbitrary
   point+direction (today: world axis through the bbox-centre pivot); a pivot
   that re-derives if the body changes upstream (today it's baked at creation).
-- **TODO (perf — verify transforms with many solids):** with many bodies in the
-  document, dragging a transform **doesn't update in real time** — the live
-  gizmo/preview lags or doesn't refresh until release. Each drag re-runs the full
-  running-fold regen over every body, so cost scales with the part count.
-  Investigate: preview only the transformed body during the drag (the rest are
-  rigid/unchanged), throttle/debounce regen, or move the transform preview off the
-  full-document rebuild path. Verify on a doc with many solids.
+- **TODO (perf, follow-up):** the single commit regenerate still rebuilds the whole
+  timeline (~225ms for 40 simple boxes; more with fillets/booleans). To make the
+  *release* itself instant in heavy docs, cache unchanged bodies' OCCT shapes in the
+  worker (incremental regen). Bigger change; not needed for interactive dragging.
 
 ### Deferred — Associative face-sketches (sketch follows its host body) ⏸️
 A sketch placed on a **body face** stores its plane as a frozen `frame` snapshot

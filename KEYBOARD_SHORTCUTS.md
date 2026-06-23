@@ -44,13 +44,16 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 | Select / Line / Rectangle (2-corner) / Circle (center) / Polygon / Arc | `V` `L` `R` `C` `P` `A` | Already shipped. |
 | Rectangle: center + corner | `Shift+R` | Variant of `R`. |
 | Circle: 3 points | `Shift+C` | Variant of `C`. |
-| Spline | `Shift+L` | Variant of `L` — a "freeform line". |
+| Spline | `S` | `S` = **S**pline (freed up in sketch mode when the Solve shortcut was removed). |
 | Dimension | `D` | Already shipped. |
 | Parallel | `Shift+P` | Resolves conflict #2 (below). |
 | Perpendicular | `N` | Resolves conflict #2. Reuses `N` from New Body (modeling toolbar) — mutually exclusive, safe. |
 | Equal | `=` | Matches the button's own "＝" glyph. |
 | Construction (toggle) | `Q` | No strong mnemonic available (`C` taken twice over); picked arbitrarily. |
-| Solve constraints | `S` | Reuses `S` from Sketch (modeling toolbar) — mutually exclusive, safe. |
+
+*(There is no longer a "Solve constraints" shortcut: drawing and editing
+constraints now solve automatically, so the manual ⛓ Solve button and its `S`
+binding were removed. `S` in sketch mode now selects the **Spline** tool.)*
 
 ## Standard views
 
@@ -93,7 +96,7 @@ so they can't share a key. Resolved: `B` → **Boolean**, **New Body** → `N`.
 **#2 — Polygon / Parallel / Perpendicular all naturally "P", sketch toolbar.**
 All three are visible and clickable together while sketching. `Polygon` kept
 `P` (shipped first). Resolved: `Parallel` → `Shift+P` (modifier on the
-contended letter, consistent with how `Shift+R`/`Shift+C`/`Shift+L` are used
+contended letter, consistent with how `Shift+R`/`Shift+C` are used
 for tool variants) and `Perpendicular` → `N` (also FreeCAD's convention when
 `P` is unavailable).
 
@@ -105,7 +108,7 @@ both at the same time):
 
 - `P`: Plane (modeling) / Polygon (sketch)
 - `C`: Chamfer (modeling) / Circle-center (sketch)
-- `S`: Sketch (modeling) / Solve (sketch)
+- `S`: Sketch (modeling) / Spline (sketch)
 - `N`: New Body (modeling) / Perpendicular (sketch)
 - `R`: Revolve (modeling) / Rectangle: 2 corners (sketch)
 - `L`: Loft (modeling) / Line (sketch)

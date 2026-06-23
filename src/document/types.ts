@@ -21,6 +21,14 @@ export type SketchEntity =
   | { type: "spline"; id: string; points: Vec2[]; construction?: boolean }
   | { type: "point"; id: string; p: Vec2; construction?: boolean };
 
+/** A reference to a specific point in a sketch: a named vertex of an entity
+ *  (a line's "a"/"b" end, a circle/arc's "c" centre), or the sketch origin.
+ *  Resolved to live coordinates at solve time, so it survives re-solves that
+ *  move the geometry. */
+export type PointRef =
+  | { entity: string; at: "a" | "b" | "c" }
+  | { origin: true };
+
 /** Dimensional/geometric constraints over sketch entities (solved by planegcs).
  *  `entity`/`a`/`b` reference SketchEntity ids. */
 export type SketchConstraint =
@@ -31,7 +39,16 @@ export type SketchConstraint =
   | { id: string; type: "equal"; a: string; b: string }
   | { id: string; type: "distance"; entity: string; value: number }
   | { id: string; type: "radius"; entity: string; value: number }
-  | { id: string; type: "angle"; a: string; b: string; value: number };
+  | { id: string; type: "angle"; a: string; b: string; value: number }
+  // Tangent between a line+circle or two circles (entity ids).
+  | { id: string; type: "tangent"; a: string; b: string }
+  // Two points made coincident (one may be the sketch origin, which anchors
+  // the other point there).
+  | { id: string; type: "coincident"; a: PointRef; b: PointRef }
+  // A point (entity vertex or origin) constrained to lie on a line entity.
+  | { id: string; type: "pointOnLine"; point: PointRef; line: string }
+  // A point constrained to the midpoint of a line, or the mid-arc point of an arc.
+  | { id: string; type: "midpoint"; point: PointRef; target: string };
 
 interface FeatureBase {
   id: string;
@@ -139,14 +156,30 @@ export interface DressUpFeature extends FeatureBase {
   size: string;
 }
 
-/** A user-created reference / construction plane. v1: offset (parallel) from a
- *  base datum / face / earlier plane by a (signed) distance. More placement
- *  methods (midplane, angle, through-geometry) come later. */
+/** How a reference plane is placed. Older documents stored only offset planes and
+ *  have no `method`, so a missing method is treated as "offset". */
+export type PlaneMethod = "offset" | "midplane" | "angle" | "through";
+
+/** A user-created reference / construction plane. Placement methods:
+ *  - offset: parallel to `base`, by signed `offset` distance along its normal;
+ *  - midplane: halfway between `base` and `refB`;
+ *  - angle: `base` hinged on its u/v axis (`angleAxis`) by `angle` degrees;
+ *  - through: through three world `points`. */
 export interface PlaneFeature extends FeatureBase {
   type: "plane";
+  /** Placement method; absent on legacy docs ⇒ treated as "offset". */
+  method?: PlaneMethod;
+  /** offset / angle base, or the first reference of a midplane. */
   base: SketchPlaneRef;
   /** Offset distance along the base's normal, as an expression string. */
   offset: string;
+  /** Midplane: the second reference. */
+  refB?: SketchPlaneRef;
+  /** At-angle: which base axis to hinge on, and the tilt in degrees (expression). */
+  angleAxis?: "u" | "v";
+  angle?: string;
+  /** Through-geometry: three world points the plane passes through. */
+  points?: [number, number, number][];
   /** Display color (0xRRGGBB), assigned once at creation from the pastel bank. */
   color: number;
 }

@@ -120,3 +120,57 @@ export function deriveFaceFrame(point: Vec3, normal: Vec3): PlaneFrameData {
   const origin: Vec3 = [n[0] * d, n[1] * d, n[2] * d];
   return { origin, uAxis: u, vAxis: v, normal: n };
 }
+
+/** Build a frame from an explicit origin + normal (origin is kept as-is, unlike
+ *  deriveFaceFrame which snaps it to the foot of the perpendicular from world 0). */
+export function frameFromPointNormal(origin: Vec3, normal: Vec3): PlaneFrameData {
+  const n = norm(normal);
+  const ref: Vec3 = Math.abs(n[2]) > 0.9 ? [1, 0, 0] : [0, 0, 1];
+  const u = norm(cross(ref, n));
+  const v = norm(cross(n, u));
+  return { origin, uAxis: u, vAxis: v, normal: n };
+}
+
+const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const add3 = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const sub3 = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const scale3 = (a: Vec3, s: number): Vec3 => [a[0] * s, a[1] * s, a[2] * s];
+
+/** Midplane between two plane frames: origin at the midpoint of the two frame
+ *  origins, normal the aligned average (B's normal is flipped if it faces away,
+ *  so two faces pointing at each other still give a sensible between-plane). */
+export function midplaneFrame(a: PlaneFrameData, b: PlaneFrameData): PlaneFrameData {
+  const alignedB = dot3(a.normal, b.normal) < 0 ? scale3(b.normal, -1) : b.normal;
+  const n = add3(a.normal, alignedB);
+  const normal = Math.hypot(n[0], n[1], n[2]) < 1e-9 ? a.normal : n;
+  return frameFromPointNormal(scale3(add3(a.origin, b.origin), 0.5), normal);
+}
+
+/** Rotate vector v about unit axis k by `ang` radians (Rodrigues' formula). */
+function rotateAbout(v: Vec3, k: Vec3, ang: number): Vec3 {
+  const c = Math.cos(ang), s = Math.sin(ang);
+  const kxv = cross(k, v);
+  const kdv = dot3(k, v) * (1 - c);
+  return [
+    v[0] * c + kxv[0] * s + k[0] * kdv,
+    v[1] * c + kxv[1] * s + k[1] * kdv,
+    v[2] * c + kxv[2] * s + k[2] * kdv,
+  ];
+}
+
+/** A plane hinged on the base's u- or v-axis (through the base origin), tilted by
+ *  `angleDeg` away from the base plane. The hinge axis becomes the new u-axis. */
+export function angledFrame(base: PlaneFrameData, axis: "u" | "v", angleDeg: number): PlaneFrameData {
+  const k = norm(axis === "u" ? base.uAxis : base.vAxis);
+  const normal = rotateAbout(base.normal, k, (angleDeg * Math.PI) / 180);
+  const v = cross(normal, k);
+  return { origin: base.origin, uAxis: k, vAxis: norm(v), normal: norm(normal) };
+}
+
+/** Plane through three points (origin p0, normal (p1-p0)×(p2-p0)); null if the
+ *  points are collinear. */
+export function planeThrough3Points(p0: Vec3, p1: Vec3, p2: Vec3): PlaneFrameData | null {
+  const n = cross(sub3(p1, p0), sub3(p2, p0));
+  if (Math.hypot(n[0], n[1], n[2]) < 1e-9) return null;
+  return frameFromPointNormal(p0, n);
+}

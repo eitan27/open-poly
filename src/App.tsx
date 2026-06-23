@@ -45,6 +45,8 @@ import type {
   FeatureKind,
   UpToFaceRef,
   PlaneFeature,
+  PlaneMethod,
+  PointRef,
   SketchConstraint,
   SketchEntity,
   SketchFeature,
@@ -54,7 +56,7 @@ import type {
 import type { BooleanOp, MeshedEdges, MeshedFaces } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
-import { frameOf, planeRefLabel, uvToWorld, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
+import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
 import { evaluateExpression } from "./document/expression";
 import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
@@ -73,7 +75,8 @@ import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, ParallelIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { DraggableDialog } from "./ui/DraggableDialog";
-import { DimensionLabels, type DimLabelSpec } from "./ui/DimensionLabels";
+import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
+import { DimValueInput, type VarOption } from "./ui/DimValueInput";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
@@ -111,6 +114,10 @@ const constraintLabel = (c: SketchConstraint): string => {
     case "distance": return `Length ${fmt(c.value)}`;
     case "radius": return `Radius ${fmt(c.value)}`;
     case "angle": return `Angle ${fmt(c.value)}°`;
+    case "tangent": return "Tangent";
+    case "coincident": return "origin" in c.a || "origin" in c.b ? "Coincident (origin)" : "Coincident";
+    case "pointOnLine": return "origin" in c.point ? "On line (origin)" : "Point on line";
+    case "midpoint": return "Midpoint";
   }
 };
 
@@ -134,6 +141,46 @@ function faceCentroid(
   return n ? [sx / n, sy / n, sz / n] : null;
 }
 
+/** Unit normal of a tessellated body face, or null if the face is non-planar
+ *  (vertices not coplanar within tolerance — e.g. a cylinder side). Prefers the
+ *  meshed per-vertex normals, falling back to the first non-degenerate triangle's
+ *  geometric normal. Used to derive a mirror plane from a picked planar face. */
+function faceNormal(faces: MeshedFaces, faceId: number): [number, number, number] | null {
+  const g = faces.faceGroups?.find((fg) => fg.faceId === faceId);
+  if (!g) return null;
+  const { triangles, vertices, normals } = faces;
+  let n: [number, number, number] | null = null;
+  if (normals && normals.length) {
+    let nx = 0, ny = 0, nz = 0;
+    for (let k = g.start; k < g.start + g.count; k++) {
+      const vi = triangles[k] * 3;
+      nx += normals[vi]; ny += normals[vi + 1]; nz += normals[vi + 2];
+    }
+    const l = Math.hypot(nx, ny, nz);
+    if (l > 1e-9) n = [nx / l, ny / l, nz / l];
+  }
+  if (!n) {
+    for (let k = g.start; k + 2 < g.start + g.count; k += 3) {
+      const a = triangles[k] * 3, b = triangles[k + 1] * 3, c = triangles[k + 2] * 3;
+      const ux = vertices[b] - vertices[a], uy = vertices[b + 1] - vertices[a + 1], uz = vertices[b + 2] - vertices[a + 2];
+      const vx = vertices[c] - vertices[a], vy = vertices[c + 1] - vertices[a + 1], vz = vertices[c + 2] - vertices[a + 2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const l = Math.hypot(nx, ny, nz);
+      if (l > 1e-9) { n = [nx / l, ny / l, nz / l]; break; }
+    }
+  }
+  if (!n) return null;
+  // Reject a non-planar face: every vertex must lie on the plane (point + n).
+  const a0 = triangles[g.start] * 3;
+  const px = vertices[a0], py = vertices[a0 + 1], pz = vertices[a0 + 2];
+  for (let k = g.start; k < g.start + g.count; k++) {
+    const vi = triangles[k] * 3;
+    const d = (vertices[vi] - px) * n[0] + (vertices[vi + 1] - py) * n[1] + (vertices[vi + 2] - pz) * n[2];
+    if (Math.abs(d) > 0.05) return null; // mm tolerance
+  }
+  return n;
+}
+
 /** Bounding-box centre of a tessellated body — the default rotation pivot for a
  *  Transform (intuitive: the body spins about its own middle). */
 function bodyCenter(faces: MeshedFaces): [number, number, number] {
@@ -155,6 +202,58 @@ function pointInTriangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2): boolean {
   const cross = (o: Vec2, u: Vec2, w: Vec2) => (u[0] - o[0]) * (w[1] - o[1]) - (u[1] - o[1]) * (w[0] - o[0]);
   const d1 = cross(p, a, b), d2 = cross(p, b, c), d3 = cross(p, c, a);
   return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+}
+
+/** Where two infinite lines (uv space) cross, or null if they're parallel
+ *  (within ~0.006°) — the corner an angle dimension's arc/box is anchored on. */
+function lineLineIntersection(a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2): Vec2 | null {
+  const d1x = b1[0] - a1[0], d1y = b1[1] - a1[1];
+  const d2x = b2[0] - a2[0], d2y = b2[1] - a2[1];
+  const len1 = Math.hypot(d1x, d1y) || 1, len2 = Math.hypot(d2x, d2y) || 1;
+  const ux1 = d1x / len1, uy1 = d1y / len1, ux2 = d2x / len2, uy2 = d2y / len2;
+  const denom = ux1 * uy2 - uy1 * ux2;
+  if (Math.abs(denom) < 1e-4) return null;
+  const t = ((a2[0] - a1[0]) * uy2 - (a2[1] - a1[1]) * ux2) / denom;
+  return [a1[0] + t * ux1, a1[1] + t * uy1];
+}
+
+/** Unit direction from corner `p` toward whichever endpoint of `line` is
+ *  farther from it — the ray along which the line's segment actually runs
+ *  away from the corner, for sweeping an angle dimension's arc. */
+function rayFromCorner(line: Extract<SketchEntity, { type: "line" }>, p: Vec2): Vec2 {
+  const da = Math.hypot(line.a[0] - p[0], line.a[1] - p[1]);
+  const db = Math.hypot(line.b[0] - p[0], line.b[1] - p[1]);
+  const far = da > db ? line.a : line.b;
+  const dx = far[0] - p[0], dy = far[1] - p[1];
+  const l = Math.hypot(dx, dy) || 1;
+  return [dx / l, dy / l];
+}
+
+/** Rough uv-space centre of a sketch's geometry (bounding-box midpoint) — lets
+ *  a length dimension pick the offset side that reads outside the profile
+ *  rather than across it. */
+function sketchBoundsCenter(entities: SketchEntity[]): Vec2 {
+  let minU = Infinity, minV = Infinity, maxU = -Infinity, maxV = -Infinity;
+  const visit = (u: number, v: number) => {
+    if (u < minU) minU = u;
+    if (u > maxU) maxU = u;
+    if (v < minV) minV = v;
+    if (v > maxV) maxV = v;
+  };
+  for (const e of entities) {
+    if (e.type === "line") {
+      visit(e.a[0], e.a[1]);
+      visit(e.b[0], e.b[1]);
+    } else if (e.type === "circle" || e.type === "arc") {
+      visit(e.c[0] - e.r, e.c[1] - e.r);
+      visit(e.c[0] + e.r, e.c[1] + e.r);
+    } else if (e.type === "spline") {
+      for (const p of e.points) visit(p[0], p[1]);
+    } else if (e.type === "point") {
+      visit(e.p[0], e.p[1]);
+    }
+  }
+  return Number.isFinite(minU) ? [(minU + maxU) / 2, (minV + maxV) / 2] : [0, 0];
 }
 
 /** The id of a rendered body that has a planar face **coplanar** with `frame`
@@ -245,7 +344,7 @@ const SKETCH_TOOLS: { tool: SketchTool; label: string; title: string }[] = [
   { tool: "circle-3p", label: "◔", title: "Circle: 3 points (Shift+C)" },
   { tool: "polygon", label: "⬢", title: "Regular polygon (P)" },
   { tool: "arc-3p", label: "⌒", title: "Arc: 3 points (A)" },
-  { tool: "spline", label: "∿", title: "Spline (Shift+L): click points, Enter to finish" },
+  { tool: "spline", label: "∿", title: "Spline (S): click points, Enter to finish" },
 ];
 
 const VIEW_BUTTONS: { name: ViewName; label: string }[] = [
@@ -323,6 +422,38 @@ export default function App() {
       setPickingUpFace(false);
       return;
     }
+    // Mirror-face pick armed (from the Mirror dialog): the next clicked planar
+    // body face becomes the mirror plane. A non-planar face (faceNormal → null)
+    // is ignored so the arming stays active for another try.
+    if (pickingMirrorFace) {
+      if (picked?.kind === "face") {
+        const m = meshes.find((x) => x.id === picked.featureId);
+        const center = m ? faceCentroid(m.mesh.faces, picked.faceId) : null;
+        const normal = m ? faceNormal(m.mesh.faces, picked.faceId) : null;
+        if (center && normal) {
+          const frame = deriveFaceFrame(center, normal);
+          setMirrorDialog((d) => (d ? { ...d, plane: "face", faceRef: { featureId: picked.featureId, frame } } : d));
+          setPickingMirrorFace(false);
+        }
+      }
+      return;
+    }
+    // Through-3-points plane pick armed: read a world point from the clicked
+    // vertex or sketch point and append it (up to 3); ignore anything else.
+    if (planePick === "point") {
+      let wp: [number, number, number] | null = null;
+      if (picked?.kind === "vertex") wp = picked.point;
+      else if (picked?.kind === "sketchPoint") {
+        const sk = doc.features.find((f) => f.id === picked.sketchId);
+        if (sk?.type === "sketch") {
+          wp = uvToWorld(frameOf(sk.plane, resolved.planeFrames), picked.point[0], picked.point[1]);
+        }
+      }
+      if (wp) {
+        setPlaneDialog((d) => (d && d.points.length < 3 ? { ...d, points: [...d.points, wp!] } : d));
+      }
+      return;
+    }
     // Boolean dialog open: a clicked body fills the dialog instead of changing
     // the normal selection. union/intersect toggle a single operand list;
     // subtract routes to the armed slot (base = one part; tools accumulate).
@@ -346,14 +477,14 @@ export default function App() {
       });
       return;
     }
-    // Dimension mode armed: the next picked line/circle is the dimension target.
+    // Dimension mode armed: the next picked line/circle/arc is the target.
     if (dimPending) {
       const sk = doc.features.find((f) => f.id === editingSketchId);
       const e =
         picked?.kind === "sketchEntity" && picked.sketchId === editingSketchId && sk?.type === "sketch"
           ? sk.entities.find((x) => x.id === picked.entityId)
           : undefined;
-      if (e?.type === "line" || e?.type === "circle") {
+      if (e?.type === "line" || e?.type === "circle" || e?.type === "arc") {
         setSelection([picked!]);
         openDimensionFor(e);
       } else {
@@ -375,18 +506,58 @@ export default function App() {
   // What the plane/face pick flow is for: starting a sketch, or the base of a
   // new reference plane.
   const [pickPurpose, setPickPurpose] = useState<"sketch" | "plane">("sketch");
-  const [planeDialog, setPlaneDialog] = useState<{ base: SketchPlaneRef; offset: string } | null>(null);
+  // The reference-plane dialog. `method` chooses the placement; the relevant
+  // fields are filled by picks (base/refB planes-or-faces; points) or text inputs.
+  const [planeDialog, setPlaneDialog] = useState<{
+    method: PlaneMethod;
+    base: SketchPlaneRef | null;
+    offset: string;
+    refB: SketchPlaneRef | null;
+    angleAxis: "u" | "v";
+    angle: string;
+    points: [number, number, number][];
+  } | null>(null);
+  // What the next viewport pick fills in the plane dialog (null = not arming a
+  // plane pick). "base"/"refB" use plane/face pick mode; "point" reads a vertex /
+  // sketch point from a normal click.
+  const [planePick, setPlanePick] = useState<"base" | "refB" | "point" | null>(null);
   // The Mirror dialog: the body to mirror + the chosen plane key (see plane keys).
-  const [mirrorDialog, setMirrorDialog] = useState<{ targetId: string; plane: string } | null>(null);
+  // `plane === "face"` mirrors across a picked planar body face, stored in
+  // `faceRef` (a frozen frame snapshot, like a sketch-on-face placement).
+  const [mirrorDialog, setMirrorDialog] = useState<
+    { targetId: string; plane: string; faceRef: { featureId: string; frame: PlaneFrameData } | null } | null
+  >(null);
+  // Armed by the Mirror dialog: the next clicked planar body face is the plane.
+  const [pickingMirrorFace, setPickingMirrorFace] = useState(false);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
   const [draft, setDraft] = useState<Vec2[]>([]);
+  // Line tool: the active-sketch entity (if any) that the *current* draft start
+  // point landed on, and whether it was that entity's midpoint — so the first
+  // segment's start gets a point-on-line / midpoint constraint (the end of each
+  // segment is constrained from its own snap).
+  const lineStartOnRef = useRef<{ id: string; mid: boolean } | undefined>(undefined);
+  // The committed polygon side count (used when drawing). The dialog edits a
+  // free-text draft and commits it via Set, so typing isn't fought by live clamping.
   const [polygonSides, setPolygonSides] = useState(6);
+  const [polySidesText, setPolySidesText] = useState("6");
+  // The polygon "Sides" dialog is a one-shot prompt: it opens when the polygon
+  // tool is selected and closes on Set/Cancel, so the next viewport click draws.
+  const [polySidesOpen, setPolySidesOpen] = useState(false);
   // When on, newly drawn entities are marked as construction (reference) geometry.
   const [constructionMode, setConstructionMode] = useState(false);
   const [fullyConstrained, setFullyConstrained] = useState(false);
   // The last solve reported conflicting/redundant (over-)constraints.
   const [solveConflict, setSolveConflict] = useState(false);
+  // A transient banner shown over the sketch (e.g. a rejected, conflicting
+  // dimension), auto-dismissed after a few seconds.
+  const [sketchMsg, setSketchMsg] = useState<string | null>(null);
+  const sketchMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashSketchMsg = (text: string) => {
+    setSketchMsg(text);
+    if (sketchMsgTimer.current) clearTimeout(sketchMsgTimer.current);
+    sketchMsgTimer.current = setTimeout(() => setSketchMsg(null), 4000);
+  };
   // Dimension entry: the entity being dimensioned, whether it's a line length or
   // a circle radius, the in-progress text, and the on-screen position (px,
   // canvas-relative) to anchor the input box.
@@ -429,6 +600,9 @@ export default function App() {
   // panel + viewport gizmo are shown while this is set), and which gizmo to show.
   const [transformEditId, setTransformEditId] = useState<string | null>(null);
   const [transformMode, setTransformMode] = useState<TransformMode>("translate");
+  // Live numeric readout during a gizmo drag (display only; cleared on commit).
+  // Kept out of the document so dragging never regenerates the kernel.
+  const [liveTransform, setLiveTransform] = useState<{ tx: number; ty: number; tz: number; angle: number } | null>(null);
   // How the current transform edit began, so Cancel knows what to undo: a
   // just-created transform is dropped entirely; an existing one being re-edited
   // is reverted to the snapshot it had when this edit started.
@@ -478,6 +652,10 @@ export default function App() {
   const setSketchTool = (t: SketchTool) => {
     setSketchToolState(t);
     setDraft([]); // starting a new tool abandons any in-progress points
+    // Selecting the polygon tool (re)opens its Sides prompt, seeded with the
+    // committed count; any other tool dismisses it.
+    if (t === "polygon") { setPolySidesText(String(polygonSides)); setPolySidesOpen(true); }
+    else setPolySidesOpen(false);
   };
   // Geometry from the last kernel regen, keyed by feature id. Color/opacity
   // live on the feature and are overlaid in `meshes` below so tweaking them
@@ -745,11 +923,11 @@ export default function App() {
     );
   }, [editingSketch, selection]);
 
-  // A single line/circle selected → eligible for a length/radius dimension.
+  // A single line (length), circle or arc (radius) selected → dimensionable.
   const dimEntity = useMemo(() => {
     if (selectedSketchEntities.length !== 1) return null;
     const e = selectedSketchEntities[0];
-    return e.type === "line" || e.type === "circle" ? e : null;
+    return e.type === "line" || e.type === "circle" || e.type === "arc" ? e : null;
   }, [selectedSketchEntities]);
 
   // Exactly two lines / two circles selected → eligible for the line-pair
@@ -760,12 +938,38 @@ export default function App() {
       ? ([es[0], es[1]] as Extract<SketchEntity, { type: "line" }>[])
       : null;
   }, [selectedSketchEntities]);
-  const twoSelectedCircles = useMemo(() => {
+  // Exactly two circles/arcs (any mix) selected → eligible for equal-radius.
+  const twoRadiusEntities = useMemo(() => {
     const es = selectedSketchEntities;
-    return es.length === 2 && es[0].type === "circle" && es[1].type === "circle"
-      ? ([es[0], es[1]] as Extract<SketchEntity, { type: "circle" }>[])
-      : null;
+    const isR = (e: SketchEntity) => e.type === "circle" || e.type === "arc";
+    return es.length === 2 && isR(es[0]) && isR(es[1]) ? [es[0], es[1]] : null;
   }, [selectedSketchEntities]);
+
+  // Two entities selected with at least one curve (circle/arc) — eligible for a
+  // tangent constraint (any pair except line+line). The solver normalizes order.
+  const tangentPair = useMemo(() => {
+    const es = selectedSketchEntities;
+    if (es.length !== 2) return null;
+    const [a, b] = es;
+    const ok = (e: SketchEntity) => e.type === "line" || e.type === "circle" || e.type === "arc";
+    const curve = (e: SketchEntity) => e.type === "circle" || e.type === "arc";
+    if (ok(a) && ok(b) && (curve(a) || curve(b)) && !(a.type === "line" && b.type === "line")) return [a, b];
+    return null;
+  }, [selectedSketchEntities]);
+
+  // Sketch points (endpoints/centres/origin) currently selected in this sketch.
+  const selectedSketchPoints = useMemo<Vec2[]>(() => {
+    if (!editingSketch) return [];
+    return selection.flatMap((s) =>
+      s.kind === "sketchPoint" && s.sketchId === editingSketch.id ? [s.point] : [],
+    );
+  }, [editingSketch, selection]);
+
+  // Selected line entities in this sketch (for the point-on-line coincidence).
+  const selectedSketchLines = useMemo(
+    () => selectedSketchEntities.filter((e): e is Extract<SketchEntity, { type: "line" }> => e.type === "line"),
+    [selectedSketchEntities],
+  );
 
   // The active sketch's plane frame (uv → world), for placing on-canvas overlays.
   const dimFrame = useMemo(
@@ -773,33 +977,58 @@ export default function App() {
     [editingSketch, resolved.planeFrames],
   );
 
-  // On-canvas dimension labels for the active sketch: one per length (line),
-  // radius (circle), or angle (line–line) dimension. The label currently being
-  // edited (its dim-input is open) is dropped so the two don't overlap.
+  // On-canvas dimensions for the active sketch: one per length (line), radius
+  // (circle), or angle (line–line) constraint, drawn as technical-drawing-style
+  // annotations. The dimension currently being edited (its dim-input is open)
+  // is dropped so the two don't overlap.
   const ent = (id: string) => editingSketch?.entities.find((x) => x.id === id);
-  const dimLabels = useMemo<DimLabelSpec[]>(() => {
+  const dimCentroid = useMemo<Vec2>(
+    () => sketchBoundsCenter(editingSketch?.entities ?? []),
+    [editingSketch],
+  );
+  // Variables (well-named, evaluated) offered as autocomplete in the dimension
+  // value field — a dimension may be a number, an expression, or a variable.
+  const dimVarOptions = useMemo<VarOption[]>(
+    () =>
+      doc.variables
+        .filter((v) => resolved.scope[v.name] !== undefined)
+        .map((v) => ({ name: v.name, value: resolved.scope[v.name] })),
+    [doc.variables, resolved.scope],
+  );
+  const dimSpecs = useMemo<DimSpec[]>(() => {
     if (!editingSketch) return [];
-    return editingSketch.constraints.flatMap((c): DimLabelSpec[] => {
+    return editingSketch.constraints.flatMap((c): DimSpec[] => {
       if (c.id === dimInput?.editId) return [];
       if (c.type === "distance") {
         const e = ent(c.entity);
-        if (e?.type === "line") return [{ id: c.id, text: fmt(c.value), a: e.a, b: e.b }];
+        if (e?.type === "line") return [{ id: c.id, kind: "length", text: fmt(c.value), a: e.a, b: e.b }];
       } else if (c.type === "radius") {
         const e = ent(c.entity);
-        if (e?.type === "circle") {
-          // Anchor the label out along a 45° radius leader (centre → rim point).
-          const rim: Vec2 = [e.c[0] + e.r * Math.SQRT1_2, e.c[1] + e.r * Math.SQRT1_2];
-          return [{ id: c.id, text: `R${fmt(c.value)}`, a: e.c, b: rim }];
-        }
+        if (e?.type === "circle" || e?.type === "arc")
+          return [{ id: c.id, kind: "radius", text: `R${fmt(c.value)}`, c: e.c, r: e.r }];
       } else if (c.type === "angle") {
         const la = ent(c.a);
         const lb = ent(c.b);
         if (la?.type === "line" && lb?.type === "line") {
+          const p = lineLineIntersection(la.a, la.b, lb.a, lb.b);
+          if (p) {
+            return [
+              {
+                id: c.id,
+                kind: "angle",
+                text: `${fmt(c.value)}°`,
+                p,
+                dir1: rayFromCorner(la, p),
+                dir2: rayFromCorner(lb, p),
+                isRight: Math.abs(c.value - 90) < 1e-6,
+              },
+            ];
+          }
           const mid = (l: Extract<SketchEntity, { type: "line" }>): Vec2 => [
             (l.a[0] + l.b[0]) / 2,
             (l.a[1] + l.b[1]) / 2,
           ];
-          return [{ id: c.id, text: `${fmt(c.value)}°`, a: mid(la), b: mid(lb) }];
+          return [{ id: c.id, kind: "free", text: `${fmt(c.value)}°`, a: mid(la), b: mid(lb) }];
         }
       }
       return [];
@@ -1090,6 +1319,7 @@ export default function App() {
       { key: "datum:plane-front", label: "Front" },
       { key: "datum:plane-right", label: "Right" },
       ...userPlanes.map((p) => ({ key: `plane:${p.id}`, label: p.name })),
+      { key: "face", label: "Body face…" },
     ],
     [userPlanes],
   );
@@ -1169,18 +1399,19 @@ export default function App() {
       c: "circle-center",
       p: "polygon",
       a: "arc-3p",
+      s: "spline", // S = Spline (freed up when the Solve shortcut was removed)
     };
-    // Shift-modified variants of an existing tool key (Shift+R/Shift+C/Shift+L).
+    // Shift-modified variants of an existing tool key (Shift+R/Shift+C).
     const SKETCH_SHIFT_KEYS: Record<string, SketchTool> = {
       r: "rect-center",
       c: "circle-3p",
-      l: "spline",
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (dimInputRef.current) setDimInput(null);
         else if (dimPendingRef.current) setDimPending(false);
-        else if (planeDialog) setPlaneDialog(null);
+        else if (polySidesOpen) setPolySidesOpen(false);
+        else if (planeDialog) closePlaneDialog();
         else if (transformEditId) cancelTransform();
         else if (picking) setPicking(false);
         else if (draft.length > 0) setDraft([]); // cancel the in-progress shape
@@ -1242,10 +1473,6 @@ export default function App() {
           setSketchTool(SKETCH_KEYS[key]);
           return;
         }
-        if (!e.shiftKey && key === "s") {
-          handleSolve();
-          return;
-        }
         if (!e.shiftKey && key === "q") {
           toggleConstruction();
           return;
@@ -1259,7 +1486,7 @@ export default function App() {
           return;
         }
         if (e.key === "=") {
-          const pair = twoSelectedLines ?? twoSelectedCircles;
+          const pair = twoSelectedLines ?? twoRadiusEntities;
           if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
         }
         return;
@@ -1292,8 +1519,7 @@ export default function App() {
           setPicking(true);
           break;
         case "p":
-          setPickPurpose("plane");
-          setPicking(true);
+          openPlaneDialog();
           break;
         case "e":
           if (extrudeProfiles.length > 0 && !extrudeDialog) openExtrudeDialog();
@@ -1350,8 +1576,9 @@ export default function App() {
     bodyIds,
     transformTarget,
     twoSelectedLines,
-    twoSelectedCircles,
+    twoRadiusEntities,
     primaryFeatureId,
+    polySidesOpen,
   ]);
 
   const openLoft = () => {
@@ -1363,13 +1590,24 @@ export default function App() {
 
   const openMirror = () => {
     if (!transformTarget) return;
-    setMirrorDialog({ targetId: transformTarget, plane: "datum:plane-front" });
+    setMirrorDialog({ targetId: transformTarget, plane: "datum:plane-front", faceRef: null });
+  };
+  const closeMirror = () => {
+    setMirrorDialog(null);
+    setPickingMirrorFace(false);
   };
   const createMirror = () => {
     if (!mirrorDialog) return;
-    const { doc: next, id } = addMirror(doc, mirrorDialog.targetId, planeKeyToRef(mirrorDialog.plane));
+    const ref: SketchPlaneRef | null =
+      mirrorDialog.plane === "face"
+        ? mirrorDialog.faceRef
+          ? { kind: "face", featureId: mirrorDialog.faceRef.featureId, frame: mirrorDialog.faceRef.frame }
+          : null
+        : planeKeyToRef(mirrorDialog.plane);
+    if (!ref) return; // a face plane was chosen but none picked yet
+    const { doc: next, id } = addMirror(doc, mirrorDialog.targetId, ref);
     setDoc(next);
-    setMirrorDialog(null);
+    closeMirror();
     selectFeature(id);
   };
 
@@ -1416,6 +1654,9 @@ export default function App() {
     };
     return {
       featureId: f.id,
+      // The body the gizmo visibly moves: a copy is its own body (keyed by the
+      // feature); a move-in-place keeps the source body's id.
+      bodyId: f.copy ? f.id : f.targetId,
       pivot: f.pivot,
       tx: num(f.tx),
       ty: num(f.ty),
@@ -1431,11 +1672,13 @@ export default function App() {
     [doc, transformEditId],
   );
 
-  // Each gizmo drag writes the new numeric values back as the feature's
-  // expressions. A shared coalescing key collapses the whole drag into one
-  // undo step.
+  // A gizmo drag commits ONCE, on release: write the final numeric values back as
+  // the feature's expressions (one regenerate for the whole drag). During the drag
+  // the body is moved locally in the viewport, so the kernel never sees the
+  // intermediate frames — the fix for "stuck regenerating" in a many-solid doc.
   const handleTransformInput = (d: { tx: number; ty: number; tz: number; angle: number }) => {
     if (!transformEditId) return;
+    setLiveTransform(null); // commit supersedes the live readout
     setDoc(
       setTransform(doc, transformEditId, {
         tx: fmt(d.tx),
@@ -1447,10 +1690,17 @@ export default function App() {
     );
   };
 
+  // Per-frame readout while dragging — drives the floating panel's numbers only,
+  // never the document, so it can't trigger a regenerate.
+  const handleTransformPreview = (d: { tx: number; ty: number; tz: number; angle: number }) => {
+    setLiveTransform(d);
+  };
+
   // Close the gizmo, keeping the Transform feature as-is.
   const finishTransform = () => {
     setTransformEditId(null);
     setTransformOrigin(null);
+    setLiveTransform(null);
   };
 
   // Cancel (panel Cancel / Esc): a just-created transform is dropped entirely;
@@ -1466,6 +1716,7 @@ export default function App() {
     }
     setTransformEditId(null);
     setTransformOrigin(null);
+    setLiveTransform(null);
   };
 
   // All visible sketches (so finished sketches stay rendered), each with its frame.
@@ -1496,12 +1747,28 @@ export default function App() {
     viewApiRef.current?.lookAtFrame(frameOf(ref, resolved.planeFrames));
   };
 
-  // The plane/face pick resolved: either start a sketch on it, or use it as the
-  // base for a new reference plane (open the offset dialog).
+  // Open the reference-plane dialog and arm the base pick (offset is the default
+  // method; the dropdown switches to midplane / at-angle / through 3 points).
+  const openPlaneDialog = () => {
+    setPlaneDialog({ method: "offset", base: null, offset: "20", refB: null, angleAxis: "u", angle: "30", points: [] });
+    setPickPurpose("plane");
+    setPlanePick("base");
+    setPicking(true);
+  };
+  const closePlaneDialog = () => {
+    setPlaneDialog(null);
+    setPlanePick(null);
+    setPicking(false);
+  };
+
+  // The plane/face pick resolved: start a sketch on it, or fill the plane
+  // dialog's base / second reference (whichever slot is armed).
   const handlePickRef = (ref: SketchPlaneRef) => {
     if (pickPurpose === "plane") {
       setPicking(false);
-      setPlaneDialog({ base: ref, offset: "20" });
+      if (planePick === "refB") setPlaneDialog((d) => (d ? { ...d, refB: ref } : d));
+      else setPlaneDialog((d) => (d ? { ...d, base: ref } : d));
+      setPlanePick(null);
     } else {
       startSketchOn(ref);
     }
@@ -1509,10 +1776,27 @@ export default function App() {
 
   const createPlane = () => {
     if (!planeDialog) return;
-    const { doc: next, id } = addPlane(doc, planeDialog.base, planeDialog.offset);
+    const { method, base, offset, refB, angleAxis, angle, points } = planeDialog;
+    // Each method needs its own inputs filled before it can build a frame.
+    if (method === "through") {
+      if (points.length !== 3) return;
+    } else if (!base) {
+      return;
+    } else if (method === "midplane" && !refB) {
+      return;
+    }
+    const { doc: next, id } = addPlane(doc, {
+      method,
+      base: base ?? { kind: "datum", id: "plane-top" }, // unused for "through"
+      offset,
+      refB: refB ?? undefined,
+      angleAxis,
+      angle,
+      points: method === "through" ? points : undefined,
+    });
     setDoc(next);
     selectFeature(id);
-    setPlaneDialog(null);
+    closePlaneDialog();
   };
 
   const editSketch = (id: string) => {
@@ -1549,13 +1833,24 @@ export default function App() {
   // A snapped click on the sketch plane (already in uv coords). Drives the
   // multi-click construction tools. `hv` records a horizontal/vertical inference
   // (line tool) so it can be captured as a constraint.
-  const handleSketchClick = (uv: Vec2, hv?: "horizontal" | "vertical") => {
+  const handleSketchClick = (uv: Vec2, hv?: "horizontal" | "vertical", on?: { id: string; mid: boolean }) => {
     if (!editingSketchId || sketchTool === "select") return;
     const sketchId = editingSketchId;
-    const commit = (entities: SketchEntity[]) => {
-      setDoc(addSketchEntities(doc, sketchId, entities));
-      setFullyConstrained(false); // geometry changed; constraint state unknown
+    // Drawing solves immediately: the constraints captured while drawing (auto
+    // H/V, rectangle edges, shared corners) are enforced on the spot, the geometry
+    // snaps clean, and the fully-constrained / conflict status stays live — so
+    // there's no separate "Solve" step. For the chained line tool, the next
+    // segment continues from the *solved* endpoint so the chain stays coincident.
+    const applyAndSolve = async (mutated: Document, chainLineId?: string) => {
+      const solved = await solveSketchIn(mutated, sketchId);
+      setDoc(solved);
+      if (chainLineId) {
+        const sk = solved.features.find((f) => f.id === sketchId);
+        const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === chainLineId) : undefined;
+        if (e?.type === "line") setDraft([e.b]);
+      }
     };
+    const commit = (entities: SketchEntity[]) => void applyAndSolve(addSketchEntities(doc, sketchId, entities));
     // Stamp construction (reference) geometry when that draw-mode is on.
     const mark = <T extends SketchEntity>(e: T): T => (constructionMode ? { ...e, construction: true } : e);
     const lineEntity = (a: Vec2, b: Vec2): SketchEntity => mark({ type: "line", id: genId(), a, b });
@@ -1575,22 +1870,34 @@ export default function App() {
         entity: lines[i].id,
       }));
       next = addSketchConstraints(next, sketchId, cons);
-      setDoc(next);
-      setFullyConstrained(false);
+      void applyAndSolve(next);
     };
 
     switch (sketchTool) {
       case "line":
-        if (draft.length === 0) setDraft([uv]);
-        else {
+        if (draft.length === 0) {
+          setDraft([uv]);
+          lineStartOnRef.current = on; // remember an entity the start landed on
+        } else {
           const line = lineEntity(draft[0], uv);
           let next = addSketchEntities(doc, sketchId, [line]);
-          if (hv) {
-            next = addSketchConstraints(next, sketchId, [{ id: genId(), type: hv, entity: line.id }]);
-          }
-          setDoc(next);
-          setFullyConstrained(false);
-          setDraft([uv]); // chain
+          const cons: SketchConstraint[] = [];
+          if (hv) cons.push({ id: genId(), type: hv, entity: line.id });
+          // Keep an endpoint attached to whatever it was snapped onto: a line's
+          // body → point-on-line; a line/arc midpoint → midpoint — so a later
+          // dimension can't slide it off.
+          const attach = (at: "a" | "b", t: { id: string; mid: boolean }): SketchConstraint =>
+            t.mid
+              ? { id: genId(), type: "midpoint", point: { entity: line.id, at }, target: t.id }
+              : { id: genId(), type: "pointOnLine", point: { entity: line.id, at }, line: t.id };
+          if (lineStartOnRef.current) cons.push(attach("a", lineStartOnRef.current));
+          if (on) cons.push(attach("b", on));
+          if (cons.length) next = addSketchConstraints(next, sketchId, cons);
+          // The chain continues from this end; it's now constrained, so the next
+          // segment's start needs no further attachment.
+          lineStartOnRef.current = undefined;
+          setDraft([uv]); // chain optimistically; applyAndSolve resets to the solved endpoint
+          void applyAndSolve(next, line.id);
         }
         break;
       case "rect-corner":
@@ -1651,31 +1958,38 @@ export default function App() {
   const finishSpline = () => {
     if (!editingSketchId || sketchTool !== "spline" || draft.length < 2) return false;
     const e: SketchEntity = { type: "spline", id: genId(), points: draft };
-    setDoc(addSketchEntities(doc, editingSketchId, [constructionMode ? { ...e, construction: true } : e]));
-    setFullyConstrained(false);
+    const sketchId = editingSketchId;
+    const mutated = addSketchEntities(doc, sketchId, [constructionMode ? { ...e, construction: true } : e]);
+    void solveSketchIn(mutated, sketchId).then(setDoc);
     setDraft([]);
     return true;
   };
 
-  // Solve the given doc's sketch with planegcs, apply the moved geometry, and
-  // refresh the fully-constrained indicator. Returns the updated doc.
-  const solveSketchIn = async (docArg: Document, sketchId: string): Promise<Document> => {
+  // Solve a sketch and fold the new coordinates back in, returning both the
+  // updated document and the raw solve result (null if the solve threw or the
+  // sketch is gone) so callers can react to conflicts before committing.
+  const runSolve = async (
+    docArg: Document,
+    sketchId: string,
+  ): Promise<{ doc: Document; res: Awaited<ReturnType<typeof solveSketch>> | null }> => {
     const sk = docArg.features.find((f) => f.id === sketchId);
-    if (sk?.type !== "sketch") return docArg;
+    if (sk?.type !== "sketch") return { doc: docArg, res: null };
     try {
       const res = await solveSketch(sk.entities, sk.constraints);
-      setFullyConstrained(res.dof === 0 && !res.hasConflicts);
-      setSolveConflict(res.hasConflicts);
-      return setSketchEntities(docArg, sketchId, res.entities);
+      return { doc: setSketchEntities(docArg, sketchId, res.entities), res };
     } catch (err) {
       console.error("constraint solve failed:", err);
-      return docArg;
+      return { doc: docArg, res: null };
     }
   };
 
-  const handleSolve = async () => {
-    if (!editingSketch) return;
-    setDoc(await solveSketchIn(doc, editingSketch.id));
+  const solveSketchIn = async (docArg: Document, sketchId: string): Promise<Document> => {
+    const { doc: solved, res } = await runSolve(docArg, sketchId);
+    if (res) {
+      setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+      setSolveConflict(res.hasConflicts);
+    }
+    return solved;
   };
 
   const screenOf = (uv: Vec2) => {
@@ -1684,12 +1998,12 @@ export default function App() {
   };
 
   // Open the dimension input anchored next to the given entity: a line → length
-  // (input next to its midpoint); a circle → radius (input next to its centre).
-  // `editId`/`prefill` are supplied when reopening an existing constraint (its
-  // label hides while the input is open, and the input shows the stored value);
-  // for a fresh dimension the value is computed from the current geometry.
+  // (input next to its midpoint); a circle or arc → radius (input next to its
+  // centre). `editId`/`prefill` are supplied when reopening an existing
+  // constraint (its label hides while the input is open, and the input shows the
+  // stored value); for a fresh dimension the value is computed from the geometry.
   const openDimensionFor = (
-    entity: Extract<SketchEntity, { type: "line" | "circle" }>,
+    entity: Extract<SketchEntity, { type: "line" | "circle" | "arc" }>,
     editId?: string,
     prefill?: number,
   ) => {
@@ -1721,7 +2035,25 @@ export default function App() {
     if (!editingSketch) return;
     const mid = (l: typeof la): Vec2 => [(l.a[0] + l.b[0]) / 2, (l.a[1] + l.b[1]) / 2];
     const angOf = (l: typeof la) => Math.atan2(l.b[1] - l.a[1], l.b[0] - l.a[0]);
-    const deg = prefill ?? ((Math.abs(angOf(lb) - angOf(la)) * 180) / Math.PI) % 180;
+    // The interior angle at the lines' shared vertex (vectors pointing away from
+    // it) — the angle the user actually sees, not the supplement. Falls back to the
+    // folded direction angle when the lines don't touch.
+    const interiorDeg = (): number => {
+      const k = (p: Vec2) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+      let shared: Vec2 | null = null;
+      for (const p of [la.a, la.b]) for (const q of [lb.a, lb.b]) if (k(p) === k(q)) shared = p;
+      if (!shared) {
+        const phi = ((Math.abs(angOf(lb) - angOf(la)) * 180) / Math.PI) % 360;
+        return phi > 180 ? 360 - phi : phi;
+      }
+      const away = (l: typeof la): Vec2 => (k(l.a) === k(shared!) ? l.b : l.a);
+      const va = [away(la)[0] - shared[0], away(la)[1] - shared[1]];
+      const vb = [away(lb)[0] - shared[0], away(lb)[1] - shared[1]];
+      const dot = va[0] * vb[0] + va[1] * vb[1];
+      const m = Math.hypot(va[0], va[1]) * Math.hypot(vb[0], vb[1]) || 1;
+      return (Math.acos(Math.max(-1, Math.min(1, dot / m))) * 180) / Math.PI;
+    };
+    const deg = prefill ?? interiorDeg();
     const ma = mid(la);
     const mb = mid(lb);
     const s = screenOf([(ma[0] + mb[0]) / 2, (ma[1] + mb[1]) / 2]);
@@ -1741,19 +2073,124 @@ export default function App() {
   };
   startDimensionRef.current = startDimension;
 
-  // Add a geometric (non-dimensional) constraint between two entities and re-solve.
-  // No-op if an equivalent constraint already exists (avoids redundant piles).
-  const addGeoConstraint = async (type: "parallel" | "perpendicular" | "equal", a: string, b: string) => {
+  // Add one geometric (non-dimensional) constraint and re-solve. Like a
+  // dimension, one the solver can't satisfy is rejected (not saved as a dead
+  // constraint) and reported by `name` instead of silently freezing the
+  // geometry; a redundant (already-implied) one is dropped.
+  const commitConstraint = async (constraint: SketchConstraint, name: string) => {
     if (!editingSketch) return;
     const sketchId = editingSketch.id;
+    const candidate = addSketchConstraints(doc, sketchId, [constraint]);
+    const { doc: solved, res } = await runSolve(candidate, sketchId);
+    if (res) {
+      // A contradictory geometric constraint (e.g. forcing a horizontal and a
+      // vertical line parallel) often isn't flagged as a formal conflict —
+      // planegcs "satisfies" it by collapsing a line to zero length. So reject on
+      // a conflict, a failed/invalid solve, OR a degenerate (near-zero) entity.
+      const sk = solved.features.find((f) => f.id === sketchId);
+      const degenerate =
+        sk?.type === "sketch" &&
+        sk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
+      if (res.hasConflicts || res.status >= 2 || degenerate) {
+        flashSketchMsg(`${name} conflicts with existing constraints — not applied. Edit or remove the conflicting one instead.`);
+        setSelection([]);
+        return;
+      }
+      if (res.hasRedundant) {
+        flashSketchMsg(`${name} is already implied by existing constraints — not added.`);
+        setSelection([]);
+        return;
+      }
+      setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+      setSolveConflict(res.hasConflicts);
+    }
+    setDoc(solved);
+    setSelection([]);
+  };
+
+  // Add a geometric constraint between two entities (no-op if an equivalent one
+  // already exists, to avoid redundant piles).
+  const addGeoConstraint = async (type: "parallel" | "perpendicular" | "equal" | "tangent", a: string, b: string) => {
+    if (!editingSketch) return;
     const exists = editingSketch.constraints.some(
-      (c) => c.type === type && ((c.a === a && c.b === b) || (c.a === b && c.b === a)),
+      (c) =>
+        (c.type === "parallel" || c.type === "perpendicular" || c.type === "equal" || c.type === "tangent") &&
+        c.type === type &&
+        ((c.a === a && c.b === b) || (c.a === b && c.b === a)),
     );
     if (exists) return;
-    let next = addSketchConstraints(doc, sketchId, [{ id: genId(), type, a, b }]);
-    next = await solveSketchIn(next, sketchId);
-    setDoc(next);
-    setSelection([]);
+    const name = { parallel: "Parallel", perpendicular: "Perpendicular", equal: "Equal", tangent: "Tangent" }[type];
+    await commitConstraint({ id: genId(), type, a, b }, name);
+  };
+
+  // Resolve a selected sketch point (uv) to a PointRef: an entity's named vertex
+  // if one sits there, else the sketch origin.
+  const pointRefAt = (uv: Vec2): PointRef | null => {
+    if (!editingSketch) return null;
+    const near = (p: Vec2) => Math.hypot(p[0] - uv[0], p[1] - uv[1]) < 1e-4;
+    for (const e of editingSketch.entities) {
+      if (e.type === "line") {
+        if (near(e.a)) return { entity: e.id, at: "a" };
+        if (near(e.b)) return { entity: e.id, at: "b" };
+      } else if (e.type === "circle") {
+        if (near(e.c)) return { entity: e.id, at: "c" };
+      } else if (e.type === "arc") {
+        if (near(e.c)) return { entity: e.id, at: "c" };
+        // Arc endpoints ("a" = start angle, "b" = end angle).
+        if (near([e.c[0] + e.r * Math.cos(e.start), e.c[1] + e.r * Math.sin(e.start)])) return { entity: e.id, at: "a" };
+        if (near([e.c[0] + e.r * Math.cos(e.end), e.c[1] + e.r * Math.sin(e.end)])) return { entity: e.id, at: "b" };
+      }
+    }
+    if (Math.hypot(uv[0], uv[1]) < 1e-4) return { origin: true };
+    return null;
+  };
+
+  const samePointRef = (x: PointRef, y: PointRef) =>
+    "origin" in x || "origin" in y ? "origin" in x && "origin" in y : x.entity === y.entity && x.at === y.at;
+
+  // Coincident, dispatched on the selection:
+  //  • one point + one line → the point lies ON the line (point-on-line). This
+  //    is the "select a square's edge + the origin" case (origin pulled onto it),
+  //    and "select a point + an edge" (point attached to the edge).
+  //  • two points → make them coincident.
+  //  • one point → anchor it to the origin.
+  const addCoincident = async () => {
+    const pts = selectedSketchPoints;
+    const lines = selectedSketchLines;
+
+    // Point-on-line: exactly one selected point and one selected line.
+    if (pts.length === 1 && lines.length === 1) {
+      const point = pointRefAt(pts[0]);
+      const line = lines[0].id;
+      if (!point) return;
+      // A point that's an endpoint of the very line it's snapping to is moot.
+      if (!("origin" in point) && point.entity === line) return;
+      const exists = editingSketch?.constraints.some(
+        (c) => c.type === "pointOnLine" && c.line === line && samePointRef(c.point, point),
+      );
+      if (exists) return;
+      await commitConstraint({ id: genId(), type: "pointOnLine", point, line }, "Point on line");
+      return;
+    }
+
+    let a: PointRef | null = null;
+    let b: PointRef | null = null;
+    if (pts.length === 1) {
+      a = pointRefAt(pts[0]);
+      b = { origin: true };
+    } else if (pts.length === 2) {
+      a = pointRefAt(pts[0]);
+      b = pointRefAt(pts[1]);
+    }
+    if (!a || !b) return;
+    if (samePointRef(a, b)) return;
+    const exists = editingSketch?.constraints.some(
+      (c) =>
+        c.type === "coincident" &&
+        ((samePointRef(c.a, a!) && samePointRef(c.b, b!)) || (samePointRef(c.a, b!) && samePointRef(c.b, a!))),
+    );
+    if (exists) return;
+    await commitConstraint({ id: genId(), type: "coincident", a, b }, "Coincident");
   };
 
   // Construction (reference) geometry: with a sketch-entity selection, flip those
@@ -1770,6 +2207,9 @@ export default function App() {
       ids.has(e.id) ? { ...e, construction: makeConstruction } : e,
     );
     setDoc(setSketchEntities(doc, editingSketch.id, entities));
+    // Keep the draw-mode button in sync with what the selection just became, so
+    // the toolbar reflects the current construction state.
+    setConstructionMode(makeConstruction);
   };
 
   // Remove a single constraint (from the constraints list) and re-solve.
@@ -1787,7 +2227,7 @@ export default function App() {
     if (!c) return;
     if (c.type === "distance" || c.type === "radius") {
       const e = ent(c.entity);
-      if (e?.type === "line" || e?.type === "circle") openDimensionFor(e, c.id, c.value);
+      if (e?.type === "line" || e?.type === "circle" || e?.type === "arc") openDimensionFor(e, c.id, c.value);
     } else if (c.type === "angle") {
       const la = ent(c.a);
       const lb = ent(c.b);
@@ -1826,14 +2266,37 @@ export default function App() {
       kind === "angle"
         ? { id: genId(), type: "angle", a: entityId, b: entityId2!, value }
         : { id: genId(), type: kind === "radius" ? "radius" : "distance", entity: entityId, value };
-    let next = setSketchConstraints(doc, sketchId, [...kept, added]);
-    next = await solveSketchIn(next, sketchId);
-    setDoc(next);
+    const candidate = setSketchConstraints(doc, sketchId, [...kept, added]);
+    const { doc: solved, res } = await runSolve(candidate, sketchId);
+    // A dimension the solver can't satisfy would otherwise be saved as a dead
+    // constraint that silently freezes (or wrecks) the geometry. Reject it and tell
+    // the user — the sketch is left exactly as it was. As with geometric
+    // constraints, an over-constraint shows as `hasConflicts`, but an impossible
+    // one (e.g. a second right angle in a triangle) instead fails the solve or
+    // collapses a line to zero length, so check those too.
+    if (res) {
+      const sk = solved.features.find((f) => f.id === sketchId);
+      const degenerate =
+        sk?.type === "sketch" &&
+        sk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
+      if (res.hasConflicts || res.status >= 2 || degenerate) {
+        flashSketchMsg(
+          `That ${kind} can't be satisfied with the existing constraints — not applied. Edit or remove a conflicting one instead.`,
+        );
+        setSelection([]);
+        return;
+      }
+      setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+      setSolveConflict(res.hasConflicts);
+    }
+    setDoc(solved);
     setSelection([]);
   };
 
   const errorCount =
-    Object.keys(errors).length + Object.keys(resolved.variableErrors).length;
+    Object.keys(errors).length +
+    Object.keys(resolved.variableErrors).length +
+    Object.keys(resolved.variableNameErrors).length;
   const status = fatal
     ? "kernel error"
     : busy
@@ -2017,6 +2480,7 @@ export default function App() {
               variables={doc.variables}
               scope={resolved.scope}
               errors={resolved.variableErrors}
+              nameErrors={resolved.variableNameErrors}
               onAdd={() => {
                 const { doc: next } = addVariable(doc);
                 setDoc(next);
@@ -2128,6 +2592,7 @@ export default function App() {
             transformEdit={transformEdit}
             transformMode={transformMode}
             onTransformInput={handleTransformInput}
+            onTransformPreview={handleTransformPreview}
             picking={picking}
             onPick={handlePickRef}
             activeSketch={
@@ -2175,9 +2640,9 @@ export default function App() {
               )}
             </div>
             <button
-              title="Plane (P): create a reference plane — pick a plane or face to offset from"
-              disabled={!!editingSketch || picking}
-              onClick={() => { setPickPurpose("plane"); setPicking(true); }}
+              title="Plane (P): create a reference plane (offset, midplane, at-angle, or through 3 points)"
+              disabled={!!editingSketch || picking || !!planeDialog}
+              onClick={openPlaneDialog}
             >
               ⧉ Plane
             </button>
@@ -2286,14 +2751,34 @@ export default function App() {
                 ⊥
               </button>
               <button
-                title="Equal (=) — select two lines (equal length) or two circles (equal radius)"
-                disabled={!twoSelectedLines && !twoSelectedCircles}
+                title="Equal (=) — select two lines (equal length) or two circles/arcs (equal radius)"
+                disabled={!twoSelectedLines && !twoRadiusEntities}
                 onClick={() => {
-                  const pair = twoSelectedLines ?? twoSelectedCircles;
+                  const pair = twoSelectedLines ?? twoRadiusEntities;
                   if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
                 }}
               >
                 ＝
+              </button>
+              <button
+                title="Coincident — a point + a line puts the point on the line; one point anchors it to the origin; two points make them coincident"
+                disabled={
+                  !(
+                    (selectedSketchPoints.length === 1 && selectedSketchLines.length === 1) ||
+                    ((selectedSketchPoints.length === 1 || selectedSketchPoints.length === 2) &&
+                      selectedSketchLines.length === 0)
+                  )
+                }
+                onClick={addCoincident}
+              >
+                ⌖
+              </button>
+              <button
+                title="Tangent — select two curves (circle/arc) or a line and a curve"
+                disabled={!tangentPair}
+                onClick={() => tangentPair && addGeoConstraint("tangent", tangentPair[0].id, tangentPair[1].id)}
+              >
+                ◯⌐
               </button>
               <div className="sketch-toolbar-sep" />
               <button
@@ -2307,23 +2792,6 @@ export default function App() {
               >
                 <ConstructionIcon />
               </button>
-              <button title="Solve constraints (S)" onClick={handleSolve}>
-                ⛓
-              </button>
-              {sketchTool === "polygon" && (
-                <label className="poly-sides" title="Polygon sides">
-                  <span>n</span>
-                  <input
-                    type="number"
-                    min={3}
-                    max={24}
-                    value={polygonSides}
-                    onChange={(e) =>
-                      setPolygonSides(Math.max(3, Math.min(24, Number(e.target.value) || 3)))
-                    }
-                  />
-                </label>
-              )}
               {editingSketch.constraints.length > 0 && (
                 <span
                   className={`constraint-count${solveConflict ? " conflict" : ""}`}
@@ -2350,14 +2818,12 @@ export default function App() {
               <label data-drag-handle>
                 {dimInput.kind === "radius" ? "Radius" : dimInput.kind === "angle" ? "Angle °" : "Length"}
               </label>
-              <input
-                autoFocus
+              <DimValueInput
                 value={dimInput.value}
-                onChange={(e) => setDimInput((d) => (d ? { ...d, value: e.target.value } : d))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") applyDimension();
-                  else if (e.key === "Escape") setDimInput(null);
-                }}
+                variables={dimVarOptions}
+                onChange={(v) => setDimInput((d) => (d ? { ...d, value: v } : d))}
+                onSubmit={applyDimension}
+                onCancel={() => setDimInput(null)}
               />
               <button onClick={applyDimension}>Set</button>
               <button className="ghost" onClick={() => setDimInput(null)}>
@@ -2365,14 +2831,42 @@ export default function App() {
               </button>
             </DraggableDialog>
           )}
-          {dimFrame && dimLabels.length > 0 && (
-            <DimensionLabels
+          {/* Polygon tool: a one-shot floating "Sides" box (like the dimension
+              input). The draft is free text; Set (enabled only for an integer in
+              3..24) commits the count and closes the box so the next viewport click
+              draws. Cancel/✕/Esc just closes it, keeping the previous count. */}
+          {editingSketch && sketchTool === "polygon" && polySidesOpen && (() => {
+            const n = Number(polySidesText);
+            const valid = Number.isInteger(n) && n >= 3 && n <= 24;
+            const commit = () => { if (valid) { setPolygonSides(n); setPolySidesOpen(false); } };
+            return (
+              <DraggableDialog className="dim-input" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
+                <label data-drag-handle>Sides</label>
+                <input
+                  autoFocus
+                  value={polySidesText}
+                  onChange={(e) => setPolySidesText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commit();
+                    else if (e.key === "Escape") setPolySidesOpen(false);
+                  }}
+                />
+                <button onClick={commit} disabled={!valid}>Set</button>
+                <button className="ghost" onClick={() => setPolySidesOpen(false)}>✕</button>
+              </DraggableDialog>
+            );
+          })()}
+          {dimFrame && dimSpecs.length > 0 && (
+            <DimensionOverlay
               frame={dimFrame}
-              labels={dimLabels}
+              specs={dimSpecs}
+              centroid={dimCentroid}
               viewApiRef={viewApiRef}
               onEdit={editConstraint}
+              onDelete={deleteConstraint}
             />
           )}
+          {editingSketch && sketchMsg && <div className="sketch-msg" role="alert">⚠ {sketchMsg}</div>}
           <div className="view-controls">
             {VIEW_BUTTONS.map((v, i) => (
               <button
@@ -2561,25 +3055,115 @@ export default function App() {
           {planeDialog && (
             <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
               <div className="ed-title" data-drag-handle>Reference plane</div>
-              <div className="ed-field">
-                <span>On</span>
-                <span className="ed-static">{planeRefLabel(planeDialog.base)}</span>
-              </div>
               <label className="ed-field">
-                <span>Offset</span>
-                <input
-                  autoFocus
-                  value={planeDialog.offset}
-                  onChange={(e) => setPlaneDialog((d) => (d ? { ...d, offset: e.target.value } : d))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") createPlane();
-                    else if (e.key === "Escape") setPlaneDialog(null);
+                <span>Method</span>
+                <select
+                  value={planeDialog.method}
+                  onChange={(e) => {
+                    const method = e.target.value as PlaneMethod;
+                    setPlaneDialog((d) => (d ? { ...d, method } : d));
+                    // Arm the first pick the method needs: a plane/face for all but
+                    // "through", which collects vertices/sketch points via clicks.
+                    if (method === "through") { setPlanePick("point"); setPicking(false); }
+                    else { setPlanePick("base"); setPickPurpose("plane"); setPicking(true); }
                   }}
-                />
+                >
+                  <option value="offset">Offset</option>
+                  <option value="midplane">Midplane</option>
+                  <option value="angle">At angle</option>
+                  <option value="through">Through 3 points</option>
+                </select>
               </label>
+
+              {planeDialog.method !== "through" && (
+                <div className="ed-field">
+                  <span>{planeDialog.method === "midplane" ? "First" : "Base"}</span>
+                  <button
+                    className={"ed-pick-btn" + (planePick === "base" ? " active" : "")}
+                    onClick={() => { setPlanePick("base"); setPickPurpose("plane"); setPicking(true); }}
+                  >
+                    {planePick === "base" ? "Click a plane/face…" : planeDialog.base ? planeRefLabel(planeDialog.base) : "Select plane/face"}
+                  </button>
+                </div>
+              )}
+
+              {planeDialog.method === "offset" && (
+                <label className="ed-field">
+                  <span>Offset</span>
+                  <input
+                    value={planeDialog.offset}
+                    onChange={(e) => setPlaneDialog((d) => (d ? { ...d, offset: e.target.value } : d))}
+                    onKeyDown={(e) => { if (e.key === "Enter") createPlane(); else if (e.key === "Escape") closePlaneDialog(); }}
+                  />
+                </label>
+              )}
+
+              {planeDialog.method === "midplane" && (
+                <div className="ed-field">
+                  <span>Second</span>
+                  <button
+                    className={"ed-pick-btn" + (planePick === "refB" ? " active" : "")}
+                    onClick={() => { setPlanePick("refB"); setPickPurpose("plane"); setPicking(true); }}
+                  >
+                    {planePick === "refB" ? "Click a plane/face…" : planeDialog.refB ? planeRefLabel(planeDialog.refB) : "Select plane/face"}
+                  </button>
+                </div>
+              )}
+
+              {planeDialog.method === "angle" && (
+                <>
+                  <div className="ed-field">
+                    <span>Hinge</span>
+                    <div className="ed-modes" style={{ width: 112 }}>
+                      {(["u", "v"] as const).map((ax) => (
+                        <button
+                          key={ax}
+                          className={planeDialog.angleAxis === ax ? "active" : ""}
+                          onClick={() => setPlaneDialog((d) => (d ? { ...d, angleAxis: ax } : d))}
+                        >
+                          {ax.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="ed-field">
+                    <span>Angle°</span>
+                    <input
+                      value={planeDialog.angle}
+                      onChange={(e) => setPlaneDialog((d) => (d ? { ...d, angle: e.target.value } : d))}
+                      onKeyDown={(e) => { if (e.key === "Enter") createPlane(); else if (e.key === "Escape") closePlaneDialog(); }}
+                    />
+                  </label>
+                </>
+              )}
+
+              {planeDialog.method === "through" && (
+                <div className="ed-field">
+                  <span>Points</span>
+                  <button
+                    className={"ed-pick-btn" + (planePick === "point" ? " active" : "")}
+                    onClick={() => { setPlanePick("point"); setPicking(false); }}
+                  >
+                    {`${planeDialog.points.length}/3 picked`}{planePick === "point" ? " · click vertices/points…" : ""}
+                  </button>
+                </div>
+              )}
+
               <div className="ed-actions">
-                <button className="ed-primary" onClick={createPlane}>Create</button>
-                <button onClick={() => setPlaneDialog(null)}>Cancel</button>
+                <button
+                  className="ed-primary"
+                  disabled={
+                    planeDialog.method === "through"
+                      ? planeDialog.points.length !== 3
+                      : planeDialog.method === "midplane"
+                        ? !planeDialog.base || !planeDialog.refB
+                        : !planeDialog.base
+                  }
+                  onClick={createPlane}
+                >
+                  Create
+                </button>
+                <button onClick={closePlaneDialog}>Cancel</button>
               </div>
             </DraggableDialog>
           )}
@@ -2602,7 +3186,7 @@ export default function App() {
                   <label className="ed-field" key={k}>
                     <span>Move {k[1].toUpperCase()}</span>
                     <input
-                      value={editingTransform[k]}
+                      value={liveTransform ? fmt(liveTransform[k]) : editingTransform[k]}
                       onChange={(e) =>
                         setDoc(updateParam(doc, editingTransform.id, k, e.target.value), `param:${editingTransform.id}:${k}`)
                       }
@@ -2634,7 +3218,7 @@ export default function App() {
                   <label className="ed-field">
                     <span>Angle°</span>
                     <input
-                      value={editingTransform.angle}
+                      value={liveTransform ? fmt(liveTransform.angle) : editingTransform.angle}
                       onChange={(e) =>
                         setDoc(updateParam(doc, editingTransform.id, "angle", e.target.value), `param:${editingTransform.id}:angle`)
                       }
@@ -2706,15 +3290,33 @@ export default function App() {
           <div className="ed-title" data-drag-handle>Mirror across plane</div>
           <select
             value={mirrorDialog.plane}
-            onChange={(e) => setMirrorDialog((d) => (d ? { ...d, plane: e.target.value } : d))}
+            onChange={(e) => {
+              const plane = e.target.value;
+              setMirrorDialog((d) => (d ? { ...d, plane } : d));
+              setPickingMirrorFace(plane === "face" && !mirrorDialog.faceRef);
+            }}
           >
             {mirrorPlaneOptions.map((o) => (
               <option key={o.key} value={o.key}>{o.label}</option>
             ))}
           </select>
+          {mirrorDialog.plane === "face" && (
+            <button
+              className={"ed-pick-btn" + (pickingMirrorFace ? " active" : "")}
+              onClick={() => setPickingMirrorFace((v) => !v)}
+            >
+              {pickingMirrorFace
+                ? "Click a planar face…"
+                : mirrorDialog.faceRef
+                  ? `Face on ${doc.features.find((f) => f.id === mirrorDialog.faceRef!.featureId)?.name ?? "body"}`
+                  : "Select a face"}
+            </button>
+          )}
           <div className="mirror-actions">
-            <button onClick={createMirror}>Create</button>
-            <button className="ghost" onClick={() => setMirrorDialog(null)}>Cancel</button>
+            <button onClick={createMirror} disabled={mirrorDialog.plane === "face" && !mirrorDialog.faceRef}>
+              Create
+            </button>
+            <button className="ghost" onClick={closeMirror}>Cancel</button>
           </div>
         </DraggableDialog>
       )}

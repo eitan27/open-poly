@@ -2,8 +2,17 @@
 // new Document (immutable updates) so React state and undo/redo stay simple.
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "./featureDefs";
 import { randomSolidColor } from "./colors";
-import { evaluateExpression, type Scope } from "./expression";
-import { frameOf, offsetFrame, uvToWorld, type PlaneFrameData, type SketchPlaneRef } from "./planes";
+import { evaluateExpression, RESERVED_NAMES, type Scope } from "./expression";
+import {
+  angledFrame,
+  frameOf,
+  midplaneFrame,
+  offsetFrame,
+  planeThrough3Points,
+  uvToWorld,
+  type PlaneFrameData,
+  type SketchPlaneRef,
+} from "./planes";
 import { detectSketchRegions } from "./regions";
 import type {
   BooleanFeature,
@@ -17,12 +26,14 @@ import type {
   LoftFeature,
   MirrorFeature,
   PlaneFeature,
+  PlaneMethod,
   RevolveFeature,
   SketchConstraint,
   SketchEntity,
   SketchFeature,
   SweepFeature,
   TransformFeature,
+  Variable,
 } from "./types";
 import type { BooleanOp, ResolvedFeature } from "../kernel/types";
 import { sampleArc } from "./sketchTools";
@@ -198,8 +209,15 @@ export function addDressUp(
 
 export function addPlane(
   doc: Document,
-  base: SketchPlaneRef,
-  offset = "20",
+  spec: {
+    method: PlaneMethod;
+    base: SketchPlaneRef;
+    offset?: string;
+    refB?: SketchPlaneRef;
+    angleAxis?: "u" | "v";
+    angle?: string;
+    points?: [number, number, number][];
+  },
 ): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "plane").length + 1;
   const feature: PlaneFeature = {
@@ -207,8 +225,13 @@ export function addPlane(
     type: "plane",
     name: `Plane ${ordinal}`,
     suppressed: false,
-    base,
-    offset,
+    method: spec.method,
+    base: spec.base,
+    offset: spec.offset ?? "20",
+    refB: spec.refB,
+    angleAxis: spec.angleAxis,
+    angle: spec.angle,
+    points: spec.points,
     color: randomSolidColor(),
   };
   return insertFeature(doc, feature);
@@ -357,10 +380,20 @@ export function resolvePlanes(doc: Document, scope: Scope): Map<string, PlaneFra
   for (const f of doc.features) {
     if (f.type !== "plane" || f.suppressed) continue;
     try {
-      const dist = evaluateExpression(f.offset, scope);
-      planes.set(f.id, offsetFrame(frameOf(f.base, planes), dist));
+      const method = f.method ?? "offset";
+      if (method === "midplane" && f.refB) {
+        planes.set(f.id, midplaneFrame(frameOf(f.base, planes), frameOf(f.refB, planes)));
+      } else if (method === "angle") {
+        planes.set(f.id, angledFrame(frameOf(f.base, planes), f.angleAxis ?? "u", evaluateExpression(f.angle ?? "0", scope)));
+      } else if (method === "through" && f.points?.length === 3) {
+        const fr = planeThrough3Points(f.points[0], f.points[1], f.points[2]);
+        if (fr) planes.set(f.id, fr);
+      } else {
+        // offset (and the fallback for any incomplete spec)
+        planes.set(f.id, offsetFrame(frameOf(f.base, planes), evaluateExpression(f.offset, scope)));
+      }
     } catch {
-      // base unresolved (suppressed/missing reference) — skip this plane
+      // a reference is unresolved (suppressed/missing) — skip this plane
     }
   }
   return planes;
@@ -438,8 +471,20 @@ function constraintRefsEntity(c: SketchConstraint, entityId: string): boolean {
     case "perpendicular":
     case "equal":
     case "angle":
+    case "tangent":
       return c.a === entityId || c.b === entityId;
-    default:
+    case "coincident": {
+      const refs = (r: typeof c.a) => !("origin" in r) && r.entity === entityId;
+      return refs(c.a) || refs(c.b);
+    }
+    case "pointOnLine":
+      return c.line === entityId || (!("origin" in c.point) && c.point.entity === entityId);
+    case "midpoint":
+      return c.target === entityId || (!("origin" in c.point) && c.point.entity === entityId);
+    case "horizontal":
+    case "vertical":
+    case "distance":
+    case "radius":
       return c.entity === entityId;
   }
 }
@@ -504,6 +549,7 @@ export function updateParam(
     if (f.type === "dressup" && name === "size") return { ...f, size: value };
     if (f.type === "revolve" && name === "angle") return { ...f, angle: value };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
+    if (f.type === "plane" && name === "angle") return { ...f, angle: value };
     if (f.type === "transform") {
       if (name === "tx" || name === "ty" || name === "tz" || name === "angle") {
         return { ...f, [name]: value };
@@ -552,10 +598,46 @@ export function setRollbackIndex(doc: Document, index: number): Document {
 
 // --- Variables ------------------------------------------------------------
 
+/** The n-th letters-only name (0→a … 25→z, 26→aa …). Variable names can't
+ *  contain digits, so we can't fall back to `var1`-style numbering. */
+function letterName(n: number): string {
+  let s = "";
+  let k = n + 1;
+  while (k > 0) {
+    k--;
+    s = String.fromCharCode(97 + (k % 26)) + s;
+    k = Math.floor(k / 26);
+  }
+  return s;
+}
+
 export function addVariable(doc: Document): { doc: Document; id: string } {
+  const used = new Set(doc.variables.map((v) => v.name));
+  let i = 0;
+  while (used.has(letterName(i)) || RESERVED_NAMES.has(letterName(i))) i++;
   const id = uid();
-  const variable = { id, name: `var${doc.variables.length + 1}`, expression: "0" };
+  const variable = { id, name: letterName(i), expression: "0" };
   return { doc: { ...doc, variables: [...doc.variables, variable] }, id };
+}
+
+/** Validate a variable's name. Names may contain letters only (no digits,
+ *  spaces, or symbols), must be non-empty, can't collide with a built-in
+ *  constant/function, and must be unique. Returns one error message per
+ *  offending variable id (keyed for the panel to flag the name field). */
+export function validateVariableNames(variables: Variable[]): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const firstByName = new Map<string, string>();
+  for (const v of variables) {
+    const name = v.name;
+    if (name.trim() === "") errors[v.id] = "Name can't be empty";
+    else if (/\s/.test(name)) errors[v.id] = "Name can't contain spaces";
+    else if (/[0-9]/.test(name)) errors[v.id] = "Name can't contain numbers";
+    else if (!/^[A-Za-z]+$/.test(name)) errors[v.id] = "Name can't contain special characters";
+    else if (RESERVED_NAMES.has(name)) errors[v.id] = `"${name}" is a reserved name`;
+    else if (firstByName.has(name)) errors[v.id] = `Duplicate variable name "${name}"`;
+    if (!firstByName.has(name)) firstByName.set(name, v.id);
+  }
+  return errors;
 }
 
 export function updateVariable(
@@ -584,6 +666,8 @@ export interface ResolveResult {
   scope: Scope;
   /** variableId -> error message (cycle / unknown reference / bad expression). */
   variableErrors: Record<string, string>;
+  /** variableId -> error message for an invalid variable *name*. */
+  variableNameErrors: Record<string, string>;
   /** Reference-plane frames (planeId -> frame), for rendering + sketch placement. */
   planeFrames: Map<string, PlaneFrameData>;
 }
@@ -596,7 +680,10 @@ function evaluateVariables(doc: Document): {
 } {
   const scope: Scope = {};
   const errors: Record<string, string> = {};
-  let remaining = doc.variables.filter((v) => v.name.trim() !== "");
+  // Only well-named variables enter scope; an invalid name is flagged on the
+  // name field separately (variableNameErrors) and isn't evaluated.
+  const nameErrors = validateVariableNames(doc.variables);
+  let remaining = doc.variables.filter((v) => !nameErrors[v.id]);
 
   let progressed = true;
   while (remaining.length > 0 && progressed) {
@@ -626,6 +713,7 @@ function evaluateVariables(doc: Document): {
 /** Resolve the active (non-suppressed, pre-rollback) features to numeric params. */
 export function resolveDocument(doc: Document): ResolveResult {
   const { scope, errors: variableErrors } = evaluateVariables(doc);
+  const variableNameErrors = validateVariableNames(doc.variables);
   const planeFrames = resolvePlanes(doc, scope);
 
   const active = doc.features
@@ -764,5 +852,5 @@ export function resolveDocument(doc: Document): ResolveResult {
     }
   }
 
-  return { features, errors, scope, variableErrors, planeFrames };
+  return { features, errors, scope, variableErrors, variableNameErrors, planeFrames };
 }
