@@ -447,6 +447,15 @@ export default function App() {
   const [fullyConstrained, setFullyConstrained] = useState(false);
   // The last solve reported conflicting/redundant (over-)constraints.
   const [solveConflict, setSolveConflict] = useState(false);
+  // A transient banner shown over the sketch (e.g. a rejected, conflicting
+  // dimension), auto-dismissed after a few seconds.
+  const [sketchMsg, setSketchMsg] = useState<string | null>(null);
+  const sketchMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashSketchMsg = (text: string) => {
+    setSketchMsg(text);
+    if (sketchMsgTimer.current) clearTimeout(sketchMsgTimer.current);
+    sketchMsgTimer.current = setTimeout(() => setSketchMsg(null), 4000);
+  };
   // Dimension entry: the entity being dimensioned, whether it's a line length or
   // a circle radius, the in-progress text, and the on-screen position (px,
   // canvas-relative) to anchor the input box.
@@ -1693,18 +1702,31 @@ export default function App() {
 
   // Solve the given doc's sketch with planegcs, apply the moved geometry, and
   // refresh the fully-constrained indicator. Returns the updated doc.
-  const solveSketchIn = async (docArg: Document, sketchId: string): Promise<Document> => {
+  // Solve a sketch and fold the new coordinates back in, returning both the
+  // updated document and the raw solve result (null if the solve threw or the
+  // sketch is gone) so callers can react to conflicts before committing.
+  const runSolve = async (
+    docArg: Document,
+    sketchId: string,
+  ): Promise<{ doc: Document; res: Awaited<ReturnType<typeof solveSketch>> | null }> => {
     const sk = docArg.features.find((f) => f.id === sketchId);
-    if (sk?.type !== "sketch") return docArg;
+    if (sk?.type !== "sketch") return { doc: docArg, res: null };
     try {
       const res = await solveSketch(sk.entities, sk.constraints);
-      setFullyConstrained(res.dof === 0 && !res.hasConflicts);
-      setSolveConflict(res.hasConflicts);
-      return setSketchEntities(docArg, sketchId, res.entities);
+      return { doc: setSketchEntities(docArg, sketchId, res.entities), res };
     } catch (err) {
       console.error("constraint solve failed:", err);
-      return docArg;
+      return { doc: docArg, res: null };
     }
+  };
+
+  const solveSketchIn = async (docArg: Document, sketchId: string): Promise<Document> => {
+    const { doc: solved, res } = await runSolve(docArg, sketchId);
+    if (res) {
+      setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+      setSolveConflict(res.hasConflicts);
+    }
+    return solved;
   };
 
   const handleSolve = async () => {
@@ -1776,7 +1798,9 @@ export default function App() {
   startDimensionRef.current = startDimension;
 
   // Add a geometric (non-dimensional) constraint between two entities and re-solve.
-  // No-op if an equivalent constraint already exists (avoids redundant piles).
+  // No-op if an equivalent constraint already exists (avoids redundant piles). Like
+  // a dimension, one the solver can't satisfy is rejected (not saved as a dead
+  // constraint) and reported by name instead of silently freezing the geometry.
   const addGeoConstraint = async (type: "parallel" | "perpendicular" | "equal", a: string, b: string) => {
     if (!editingSketch) return;
     const sketchId = editingSketch.id;
@@ -1784,9 +1808,32 @@ export default function App() {
       (c) => c.type === type && ((c.a === a && c.b === b) || (c.a === b && c.b === a)),
     );
     if (exists) return;
-    let next = addSketchConstraints(doc, sketchId, [{ id: genId(), type, a, b }]);
-    next = await solveSketchIn(next, sketchId);
-    setDoc(next);
+    const name = { parallel: "Parallel", perpendicular: "Perpendicular", equal: "Equal" }[type];
+    const candidate = addSketchConstraints(doc, sketchId, [{ id: genId(), type, a, b }]);
+    const { doc: solved, res } = await runSolve(candidate, sketchId);
+    if (res) {
+      // A contradictory geometric constraint (e.g. forcing a horizontal and a
+      // vertical line parallel) often isn't flagged as a formal conflict —
+      // planegcs "satisfies" it by collapsing a line to zero length. So reject on
+      // a conflict, a failed/invalid solve, OR a degenerate (near-zero) entity.
+      const sk = solved.features.find((f) => f.id === sketchId);
+      const degenerate =
+        sk?.type === "sketch" &&
+        sk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
+      if (res.hasConflicts || res.status >= 2 || degenerate) {
+        flashSketchMsg(`${name} conflicts with existing constraints — not applied. Edit or remove the conflicting one instead.`);
+        setSelection([]);
+        return;
+      }
+      if (res.hasRedundant) {
+        flashSketchMsg(`${name} is already implied by existing constraints — not added.`);
+        setSelection([]);
+        return;
+      }
+      setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+      setSolveConflict(res.hasConflicts);
+    }
+    setDoc(solved);
     setSelection([]);
   };
 
@@ -1860,9 +1907,24 @@ export default function App() {
       kind === "angle"
         ? { id: genId(), type: "angle", a: entityId, b: entityId2!, value }
         : { id: genId(), type: kind === "radius" ? "radius" : "distance", entity: entityId, value };
-    let next = setSketchConstraints(doc, sketchId, [...kept, added]);
-    next = await solveSketchIn(next, sketchId);
-    setDoc(next);
+    const candidate = setSketchConstraints(doc, sketchId, [...kept, added]);
+    const { doc: solved, res } = await runSolve(candidate, sketchId);
+    // A dimension that the solver can't satisfy (e.g. dimensioning the opposite,
+    // already-coupled side of a rectangle) would otherwise be saved as a dead
+    // constraint that silently freezes the geometry. Reject it instead and tell
+    // the user — the sketch is left exactly as it was.
+    if (res?.hasConflicts) {
+      flashSketchMsg(
+        `That ${kind} conflicts with existing constraints — not applied. Edit or remove the conflicting one instead.`,
+      );
+      setSelection([]);
+      return;
+    }
+    if (res) {
+      setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+      setSolveConflict(res.hasConflicts);
+    }
+    setDoc(solved);
     setSelection([]);
   };
 
@@ -2403,6 +2465,7 @@ export default function App() {
               onEdit={editConstraint}
             />
           )}
+          {editingSketch && sketchMsg && <div className="sketch-msg" role="alert">⚠ {sketchMsg}</div>}
           <div className="view-controls">
             {VIEW_BUTTONS.map((v, i) => (
               <button

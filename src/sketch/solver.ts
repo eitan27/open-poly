@@ -26,6 +26,13 @@ export interface SolveResult {
   dof: number;
   ok: boolean;
   hasConflicts: boolean;
+  /** Redundant (already-implied) constraints were detected. */
+  hasRedundant: boolean;
+  /** planegcs SolveStatus: 0 Success, 1 Converged, 2 Failed, 3 SolutionInvalid.
+   *  A failed / invalid solve means the just-added constraint can't be satisfied
+   *  (e.g. forcing a horizontal and a vertical line parallel), even when planegcs
+   *  doesn't flag it as a formal "conflict". */
+  status: number;
 }
 
 // planegcs SketchPrimitive objects are loosely typed here to avoid coupling to
@@ -116,11 +123,12 @@ export async function solveSketch(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   wrapper.push_primitives_and_params(prims as any);
-  wrapper.solve();
+  const status = wrapper.solve();
   wrapper.apply_solution();
 
   const dof = wrapper.gcs.dof();
   const hasConflicts = wrapper.has_gcs_conflicting_constraints();
+  const hasRedundant = wrapper.has_gcs_redundant_constraints();
 
   // Read solved point coordinates back per key.
   const solvedByKey = new Map<string, Vec2>();
@@ -141,5 +149,5 @@ export async function solveSketch(
     return e;
   });
 
-  return { entities: updated, dof, ok: true, hasConflicts };
+  return { entities: updated, dof, ok: true, hasConflicts, hasRedundant, status };
 }

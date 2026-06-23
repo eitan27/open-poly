@@ -569,6 +569,25 @@
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
+.sketch-msg {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 460px;
+  padding: 9px 14px;
+  background: rgba(60, 38, 18, 0.95);
+  border: 1px solid #d98a3a;
+  color: #ffd9a8;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  z-index: 40;
+  pointer-events: none;
+}
+
 .view-controls {
   position: absolute;
   top: 12px;
