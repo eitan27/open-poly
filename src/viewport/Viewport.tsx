@@ -277,6 +277,7 @@ const makeBodyMaterial = (color: number) =>
 const VIEW_DISTANCE = 220;
 const TWEEN_MS = 300;
 const SNAP_PX = 12;
+const DRAG_START_PX = 3; // pointer travel before a sketch press becomes a drag
 /** Standard whole-body / face selection highlight color. Referenced wherever a
  *  body is highlighted (selection, union/subtract-base boolean operands) so it
  *  can change globally in one place. */
@@ -310,6 +311,21 @@ const EDGE_PICK_PX = 6;
 // cursor if it's within this of the face hit — covers tessellation seams where a
 // face's own boundary edge sits a hair behind the triangles.
 const PICK_DEPTH_TOL = 1;
+
+// Sketch-line colours. The active sketch reads its constrained state: a vivid
+// blue while it still has free degrees of freedom (under-constrained) and a
+// vivid green once it is fully constrained — the pronounced blue→green shift
+// mirrors Onshape/Fusion and makes "this is solved" obvious at a glance.
+// Inactive sketches stay a muted grey so they recede behind the active one.
+const SKETCH_COLOR_UNDER = 0x4d8dff; // active, under-constrained (free DOF)
+const SKETCH_COLOR_FULL = 0x33d27a; // active, fully constrained
+const SKETCH_COLOR_IDLE = 0x9aa6cc; // not the active sketch
+/** On-screen width (px) of solid sketch lines — a touch heavier than the 1px
+ *  default so entities read clearly and the constrained-state colour is easy to
+ *  see. Drawn as fat lines (LineMaterial), since LineBasicMaterial ignores it. */
+const SKETCH_LINE_WIDTH = 2.0;
+const sketchBaseColor = (active: boolean, fullyConstrained: boolean): number =>
+  active ? (fullyConstrained ? SKETCH_COLOR_FULL : SKETCH_COLOR_UNDER) : SKETCH_COLOR_IDLE;
 
 const posKey = (x: number, y: number, z: number) =>
   `${Math.round(x * 1000)},${Math.round(y * 1000)},${Math.round(z * 1000)}`;
@@ -394,6 +410,8 @@ export function Viewport({
   draft,
   polygonSides,
   onSketchClick,
+  onSketchDragMove,
+  onSketchDragEnd,
   selectionFilter,
   apiRef,
 }: {
@@ -437,6 +455,12 @@ export function Viewport({
   draft: Vec2[];
   polygonSides: number;
   onSketchClick: (uv: Vec2, hv?: "horizontal" | "vertical", on?: { id: string; mid: boolean }) => void;
+  /** Live drag of unconstrained sketch geometry: each frame reports the points
+   *  being moved (by original uv → target uv); App re-solves so constraints stay
+   *  satisfied while free DOF follow the cursor. */
+  onSketchDragMove: (points: { from: Vec2; to: Vec2 }[]) => void;
+  /** Drag released — App finalizes the move (drops the pre-drag snapshot). */
+  onSketchDragEnd: () => void;
   selectionFilter: SelectionFilter;
   apiRef: { current: ViewportApi | null };
 }) {
@@ -488,6 +512,10 @@ export function Viewport({
   sketchesRef.current = sketches;
   const onSketchClickRef = useRef(onSketchClick);
   onSketchClickRef.current = onSketchClick;
+  const onSketchDragMoveRef = useRef(onSketchDragMove);
+  onSketchDragMoveRef.current = onSketchDragMove;
+  const onSketchDragEndRef = useRef(onSketchDragEnd);
+  onSketchDragEndRef.current = onSketchDragEnd;
   // derived from sketches + activeSketchId in the render effect
   const activeFrameRef = useRef<PlaneFrameData | null>(null);
   const activeEntitiesRef = useRef<SketchEntity[]>([]);
@@ -878,15 +906,21 @@ export function Viewport({
 
       // Sketch base colours (lines) + region fill highlight (faces).
       for (const child of sketchGroup.children) {
-        if (child instanceof THREE.LineSegments) {
+        if (child.userData.isSketchDisplay) {
+          // Fat solid display line — recoloured live as the active sketch's
+          // constrained state changes (under-constrained blue ⇄ solved green).
           const sid = child.userData.sketchId as string;
           const isActive = sid === activeSketchIdRef.current;
-          // material[0] = solid base line; material[1] (if present) = the dashed
-          // construction line, whose amber colour stays fixed.
-          const base = (Array.isArray(child.material) ? child.material[0] : child.material) as THREE.LineBasicMaterial;
-          base.color.set(
-            isActive ? (sketchFullyConstrainedRef.current ? 0x4ad07a : 0xeaf0ff) : 0xaeb9e0,
+          ((child as LineSegments2).material as LineMaterial).color.set(
+            sketchBaseColor(isActive, sketchFullyConstrainedRef.current),
           );
+        } else if (child instanceof THREE.LineSegments) {
+          const sid = child.userData.sketchId as string;
+          const isActive = sid === activeSketchIdRef.current;
+          // material[0] = solid base line (invisible; the fat display line draws
+          // it), material[1] = the dashed construction line (fixed amber).
+          const base = (Array.isArray(child.material) ? child.material[0] : child.material) as THREE.LineBasicMaterial;
+          base.color.set(sketchBaseColor(isActive, sketchFullyConstrainedRef.current));
         } else if (child instanceof THREE.Mesh && child.userData.isRegion) {
           const sid = child.userData.sketchId as string;
           const rid = child.userData.regionId as string;
@@ -979,6 +1013,14 @@ export function Viewport({
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     let down: { x: number; y: number } | null = null;
+    // An in-progress drag of unconstrained sketch geometry (Select tool, inside a
+    // sketch). `origins` are the pre-drag uv of the points being moved; `single`
+    // distinguishes a one-vertex drag (snap to cursor) from a body/region
+    // translate (every point shifts by the same delta). `moved` gates the click
+    // vs. drag decision so a tap still selects.
+    let sketchDrag:
+      | { startClient: { x: number; y: number }; grab: Vec2; origins: Vec2[]; single: boolean; moved: boolean }
+      | null = null;
 
     const projectToPx = (world: THREE.Vector3) => {
       const v = world.clone().project(camera);
@@ -1239,6 +1281,80 @@ export function Viewport({
       }
       return null;
     };
+    // What a press inside the active sketch (Select tool) would grab to drag: a
+    // single vertex, an entity body, or an enclosed region — else null.
+    const pickSketchDrag = (
+      clientX: number,
+      clientY: number,
+    ): { origins: Vec2[]; grab: Vec2; single: boolean } | null => {
+      const sid = activeSketchIdRef.current;
+      const frame = activeFrameRef.current;
+      if (!sid || !frame) return null;
+      const sketch = sketchesRef.current.find((s) => s.id === sid);
+      if (!sketch) return null;
+      const grab = planeHitUv(clientX, clientY);
+      if (!grab) return null;
+
+      // 1. A single draggable vertex near the cursor → move just that point.
+      let best: Vec2 | null = null;
+      let bestD = SNAP_PX;
+      for (const uv of draggableVertices(sketch)) {
+        const w = uvToWorld(frame, uv[0], uv[1]);
+        const px = projectToPx(new THREE.Vector3(w[0], w[1], w[2]));
+        const d = Math.hypot(px.x - clientX, px.y - clientY);
+        if (d < bestD) { bestD = d; best = uv; }
+      }
+      if (best) return { origins: [best], grab, single: true };
+
+      // Otherwise raycast the active sketch's lines + region fills.
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      raycaster.params.Line = { threshold: EDGE_PICK_WORLD };
+
+      // 2. An entity body → translate all of its points.
+      const seg = sketchGroup.children.find(
+        (c): c is THREE.LineSegments => c instanceof THREE.LineSegments && c.userData.sketchId === sid,
+      );
+      if (seg) {
+        const hit = raycaster.intersectObject(seg, false)[0];
+        if (hit && hit.index != null) {
+          const eg = seg.geometry.userData.entityGroups as
+            | { start: number; count: number; entityId: string }[]
+            | undefined;
+          const g = eg?.find((x) => hit.index! >= x.start && hit.index! < x.start + x.count);
+          const e = g && sketch.entities.find((x) => x.id === g.entityId);
+          if (e) return { origins: entityDragPoints(e), grab, single: false };
+        }
+      }
+
+      // 3. An enclosed region (polygon/face interior) → translate the whole loop.
+      const regions = sketchGroup.children.filter(
+        (c): c is THREE.Mesh =>
+          c instanceof THREE.Mesh && c.userData.isRegion === true && c.userData.sketchId === sid,
+      );
+      const rHit = raycaster.intersectObjects(regions, false)[0];
+      if (rHit) {
+        const rid = rHit.object.userData.regionId as string | undefined;
+        const region = sketch.regions.find((r) => r.id === rid);
+        if (region) {
+          const seen = new Set<string>();
+          const origins: Vec2[] = [];
+          for (const id of region.entityIds) {
+            const e = sketch.entities.find((x) => x.id === id);
+            if (!e) continue;
+            for (const p of entityDragPoints(e)) {
+              const k = `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+              if (!seen.has(k)) { seen.add(k); origins.push(p); }
+            }
+          }
+          if (origins.length) return { origins, grab, single: false };
+        }
+      }
+      return null;
+    };
+
     const clearHover = () => {
       if (hoverBodyRef.current) {
         hoverBodyRef.current.mesh.material = hoverBodyRef.current.prev;
@@ -1256,6 +1372,25 @@ export function Viewport({
     };
 
     const onMove = (e: PointerEvent) => {
+      // An active sketch drag owns the pointer: move the grabbed geometry and let
+      // App re-solve. Wait for a few px of travel before the first solve so a tap
+      // still reads as a click (handled in onUp).
+      if (sketchDrag) {
+        if (!sketchDrag.moved) {
+          const d = Math.hypot(e.clientX - sketchDrag.startClient.x, e.clientY - sketchDrag.startClient.y);
+          if (d < DRAG_START_PX) return;
+          sketchDrag.moved = true;
+        }
+        const cur = planeHitUv(e.clientX, e.clientY);
+        if (!cur) return;
+        const dx = cur[0] - sketchDrag.grab[0];
+        const dy = cur[1] - sketchDrag.grab[1];
+        const points = sketchDrag.single
+          ? [{ from: sketchDrag.origins[0], to: cur }]
+          : sketchDrag.origins.map((o) => ({ from: o, to: [o[0] + dx, o[1] + dy] as Vec2 }));
+        onSketchDragMoveRef.current(points);
+        return;
+      }
       // Selection (hover) is active when idle OR editing a sketch with the Select
       // tool. Drop a stale hover when neither applies.
       const selecting =
@@ -1332,8 +1467,35 @@ export function Viewport({
     };
     const onDown = (e: PointerEvent) => {
       down = { x: e.clientX, y: e.clientY };
+      // Inside a sketch with the Select tool, a press on grabbable geometry arms a
+      // drag. Suspend orbiting and capture the pointer until release; whether it
+      // actually moves (drag) or not (click) is decided in onUp.
+      if (!pickingRef.current && activeFrameRef.current && sketchToolRef.current === "select") {
+        const grabbed = pickSketchDrag(e.clientX, e.clientY);
+        if (grabbed) {
+          sketchDrag = { startClient: { x: e.clientX, y: e.clientY }, ...grabbed, moved: false };
+          controls.enabled = false;
+          renderer.domElement.setPointerCapture(e.pointerId);
+          renderer.domElement.style.cursor = "grabbing";
+        }
+      }
     };
     const onUp = (e: PointerEvent) => {
+      // Finish (or cancel) a sketch drag. A press that never travelled far enough
+      // to become a drag falls through to a normal selection click.
+      if (sketchDrag) {
+        const wasDrag = sketchDrag.moved;
+        sketchDrag = null;
+        controls.enabled = true;
+        if (renderer.domElement.hasPointerCapture(e.pointerId)) {
+          renderer.domElement.releasePointerCapture(e.pointerId);
+        }
+        renderer.domElement.style.cursor = "";
+        down = null;
+        if (wasDrag) onSketchDragEndRef.current();
+        else onSelectRef.current(pickSelection(e.clientX, e.clientY));
+        return;
+      }
       if (!down) return;
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       down = null;
@@ -1399,6 +1561,12 @@ export function Viewport({
       camera.updateProjectionMatrix();
       highlightMaterial.resolution.set(w, h); // fat-line width is in screen pixels
       highlightMaterialDash.resolution.set(w, h);
+      // Sketch display lines are fat lines too — keep their screen-space width.
+      for (const child of sketchGroup.children) {
+        if (child.userData.isSketchDisplay) {
+          ((child as LineSegments2).material as LineMaterial).resolution.set(w, h);
+        }
+      }
     };
     resize();
     const observer = new ResizeObserver(resize);
@@ -1683,13 +1851,11 @@ export function Viewport({
       // geometry); 0 = normal solid line. Derived takes priority over construction.
       for (const g of entityGroups) geom.addGroup(g.start, g.count, g.derived ? 2 : g.construction ? 1 : 0);
       geom.userData.entityGroups = entityGroups;
-      // Index 0 = per-sketch base colour (active=white/green, else grey).
+      // Index 0 = per-sketch base colour (kept invisible — the fat display line
+      // below actually draws the solid entities; this thin line stays for picking
+      // and as the selection-overlay source). Index 1 = dashed construction.
       const baseMat = new THREE.LineBasicMaterial({
-        color: s.id === activeSketchId
-          ? sketchFullyConstrainedRef.current
-            ? 0x4ad07a
-            : 0xeaf0ff
-          : 0xaeb9e0,
+        color: sketchBaseColor(s.id === activeSketchId, sketchFullyConstrainedRef.current),
       });
       const constructionMat = new THREE.LineDashedMaterial({
         color: 0xe0a64f, dashSize: 1.4, gapSize: 0.9,
@@ -1702,7 +1868,46 @@ export function Viewport({
       seg.frustumCulled = false;
       seg.userData.sketchId = s.id;
       seg.userData.frame = s.frame;
+      // The thin LineSegments stays the source of truth for picking + the
+      // selection/hover overlay (it owns the per-entity geometry groups and a
+      // plain `position` attribute). Its solid lines are drawn over by a fat
+      // display line below, so make material[0] invisible to avoid z-fighting the
+      // two; the dashed construction material (index 1) stays visible as-is.
+      baseMat.transparent = true;
+      baseMat.opacity = 0;
       state.sketchGroup.add(seg);
+
+      // Fat display line: the solid (non-construction) entity segments rendered a
+      // touch thicker via LineMaterial, coloured by the sketch's constrained
+      // state. Construction geometry keeps its thin dashed look from `seg`.
+      const solidPts = pts.filter((_, i) => {
+        const vert = Math.floor(i / 3);
+        const g = entityGroups.find((eg) => vert >= eg.start && vert < eg.start + eg.count);
+        return g != null && !g.construction;
+      });
+      if (solidPts.length >= 6) {
+        const fatGeom = new LineSegmentsGeometry();
+        fatGeom.setPositions(solidPts);
+        const fatMat = new LineMaterial({
+          color: sketchBaseColor(s.id === activeSketchId, sketchFullyConstrainedRef.current),
+          linewidth: SKETCH_LINE_WIDTH,
+          worldUnits: false,
+          // Nudge toward the camera so the fat line wins over the (coincident)
+          // thin line without turning depth testing off — sketches behind a solid
+          // body still read as occluded.
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+          polygonOffsetUnits: -2,
+        });
+        const size = state.renderer.getSize(new THREE.Vector2());
+        fatMat.resolution.set(size.x, size.y);
+        const fat = new LineSegments2(fatGeom, fatMat);
+        fat.frustumCulled = false;
+        fat.renderOrder = 4;
+        fat.userData.sketchId = s.id;
+        fat.userData.isSketchDisplay = true;
+        state.sketchGroup.add(fat);
+      }
 
       // Enclosed regions ("sketch faces"): a transparent, pickable fill that
       // only shows on hover/selection.
@@ -1912,6 +2117,28 @@ function sketchPointCandidates(sketch: RenderSketch): Vec2[] {
   return out;
 }
 
+/** The sketch points that translate when an entity is dragged by its body. Lines
+ *  move both endpoints; circles/arcs move their centre (radius/angles ride along);
+ *  splines move every control point; a point moves itself. Identifying them by uv
+ *  means a vertex shared with another entity (a chained corner) moves on both. */
+function entityDragPoints(e: SketchEntity): Vec2[] {
+  switch (e.type) {
+    case "line": return [e.a, e.b];
+    case "circle": return [e.c];
+    case "arc": return [e.c];
+    case "spline": return e.points;
+    case "point": return [e.p];
+  }
+}
+
+/** Sketch vertices a user can grab to drag a single point (line endpoints, circle
+ *  centres, arc centres, spline control points, points). Arc *endpoints* are
+ *  omitted — they're derived from centre/radius/angles, so dragging them isn't a
+ *  simple point move. */
+function draggableVertices(sketch: RenderSketch): Vec2[] {
+  return sketch.entities.flatMap(entityDragPoints);
+}
+
 /** Closest point on segment a-b to p, all in 2D (uv). */
 function nearestOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
   const abx = b[0] - a[0];
@@ -2078,9 +2305,13 @@ function disposeGroup(group: THREE.Group): void {
 
 function disposeSketchGroup(group: THREE.Group): void {
   for (const child of group.children) {
-    if (child instanceof THREE.LineSegments || (child instanceof THREE.Mesh && child.userData.isRegion)) {
-      child.geometry.dispose();
-      const m = child.material as THREE.Material | THREE.Material[];
+    if (
+      child instanceof THREE.LineSegments ||
+      child.userData.isSketchDisplay ||
+      (child instanceof THREE.Mesh && child.userData.isRegion)
+    ) {
+      (child as LineSegments2).geometry.dispose();
+      const m = (child as THREE.Mesh).material as THREE.Material | THREE.Material[];
       if (Array.isArray(m)) m.forEach((x) => x.dispose());
       else m.dispose();
     }

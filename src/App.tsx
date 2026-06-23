@@ -275,6 +275,32 @@ function sketchBoundsCenter(entities: SketchEntity[]): Vec2 {
   return Number.isFinite(minU) ? [(minU + maxU) / 2, (minV + maxV) / 2] : [0, 0];
 }
 
+/** Relocate sketch points for a live drag: any vertex whose current coordinate
+ *  matches a `from` is moved to the matching `to` (matched by rounded key, so a
+ *  vertex shared by several entities — a chained corner — moves on all of them,
+ *  preserving their coincidence). The result is fed straight to the solver, which
+ *  pulls the rest of the geometry back into agreement with the constraints; free
+ *  degrees of freedom simply follow the cursor. Lines/circles/arcs are
+ *  solver-driven; splines aren't mapped by the solver, so moving their stored
+ *  points here translates them directly. */
+function moveSketchPoints(
+  entities: SketchEntity[],
+  points: { from: Vec2; to: Vec2 }[],
+): SketchEntity[] {
+  const key = (p: Vec2) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+  const moves = new Map(points.map((m) => [key(m.from), m.to]));
+  const mv = (p: Vec2): Vec2 => moves.get(key(p)) ?? p;
+  return entities.map((e) => {
+    switch (e.type) {
+      case "line": return { ...e, a: mv(e.a), b: mv(e.b) };
+      case "circle": return { ...e, c: mv(e.c) };
+      case "arc": return { ...e, c: mv(e.c) };
+      case "spline": return { ...e, points: e.points.map(mv) };
+      case "point": return { ...e, p: mv(e.p) };
+    }
+  });
+}
+
 /** The id of a rendered body that has a planar face **coplanar** with `frame`
  *  which the region (`outline`, in uv) **overlaps** — i.e. the sketch sits on
  *  that solid's face, so an extrude should default to adding onto it. null if
@@ -2708,6 +2734,72 @@ export default function App() {
     return solved;
   };
 
+  // --- Live sketch dragging -------------------------------------------------
+  // Every frame solves from a snapshot of the geometry taken when the drag began
+  // (so repeated frames don't accumulate) with the grabbed points relocated to
+  // their cursor targets. Only one solve runs at a time; the latest request waits
+  // and supersedes any earlier pending one (coalescing fast pointer moves).
+  const dragBaseRef = useRef<{ sketchId: string; key: string; entities: SketchEntity[]; constraints: SketchConstraint[] } | null>(null);
+  const dragActiveRef = useRef(false);
+  const dragBusyRef = useRef(false);
+  const dragPendingRef = useRef<{ from: Vec2; to: Vec2 }[] | null>(null);
+  const dragSeqRef = useRef(0);
+
+  const pumpSketchDrag = async () => {
+    dragBusyRef.current = true;
+    try {
+      // Drain to the latest pending frame — including the final one after the
+      // pointer is released — so the committed geometry matches where the drag
+      // actually ended, not one frame behind.
+      while (dragPendingRef.current) {
+        const points = dragPendingRef.current;
+        dragPendingRef.current = null;
+        const base = dragBaseRef.current;
+        if (!base) break;
+        let res: Awaited<ReturnType<typeof solveSketch>>;
+        try {
+          res = await solveSketch(moveSketchPoints(base.entities, points), base.constraints);
+        } catch (err) {
+          console.error("drag solve failed:", err);
+          continue;
+        }
+        // Coalesce every frame of one drag into a single undo step (the key is
+        // unique per drag, so separate drags stay separate undo steps).
+        setDoc((prev) => setSketchEntities(prev, base.sketchId, res.entities), base.key);
+        setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+        setSolveConflict(res.hasConflicts);
+      }
+    } finally {
+      dragBusyRef.current = false;
+    }
+  };
+
+  const handleSketchDragMove = (points: { from: Vec2; to: Vec2 }[]) => {
+    const sketchId = editingSketchId;
+    if (!sketchId) return;
+    // Snapshot the pre-drag geometry once, at the start of each drag; every frame
+    // re-solves from this base so repeated frames don't accumulate.
+    if (!dragActiveRef.current) {
+      const sk = doc.features.find((f) => f.id === sketchId);
+      if (sk?.type !== "sketch") return;
+      dragBaseRef.current = {
+        sketchId,
+        key: `sketch-drag:${sketchId}:${++dragSeqRef.current}`,
+        entities: sk.entities,
+        constraints: sk.constraints,
+      };
+      dragActiveRef.current = true;
+    }
+    dragPendingRef.current = points;
+    if (!dragBusyRef.current) void pumpSketchDrag();
+  };
+
+  // Mark the drag finished; the pump keeps the base alive until it has applied
+  // the last queued frame, so the released position is the one that's committed.
+  const handleSketchDragEnd = () => {
+    dragActiveRef.current = false;
+  };
+
   const screenOf = (uv: Vec2) => {
     const frame = frameOf(editingSketch!.plane, resolved.planeFrames);
     return viewApiRef.current?.worldToScreen(uvToWorld(frame, uv[0], uv[1])) ?? { x: 240, y: 120 };
@@ -3480,6 +3572,8 @@ export default function App() {
             draft={draft}
             polygonSides={polygonSides}
             onSketchClick={handleSketchClick}
+            onSketchDragMove={handleSketchDragMove}
+            onSketchDragEnd={handleSketchDragEnd}
             selectionFilter={selFilter}
             apiRef={viewApiRef}
           />
