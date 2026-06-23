@@ -336,7 +336,7 @@ const SKETCH_TOOLS: { tool: SketchTool; label: string; title: string }[] = [
   { tool: "circle-3p", label: "◔", title: "Circle: 3 points (Shift+C)" },
   { tool: "polygon", label: "⬢", title: "Regular polygon (P)" },
   { tool: "arc-3p", label: "⌒", title: "Arc: 3 points (A)" },
-  { tool: "spline", label: "∿", title: "Spline (Shift+L): click points, Enter to finish" },
+  { tool: "spline", label: "∿", title: "Spline (S): click points, Enter to finish" },
 ];
 
 const VIEW_BUTTONS: { name: ViewName; label: string }[] = [
@@ -1286,12 +1286,12 @@ export default function App() {
       c: "circle-center",
       p: "polygon",
       a: "arc-3p",
+      s: "spline", // S = Spline (freed up when the Solve shortcut was removed)
     };
-    // Shift-modified variants of an existing tool key (Shift+R/Shift+C/Shift+L).
+    // Shift-modified variants of an existing tool key (Shift+R/Shift+C).
     const SKETCH_SHIFT_KEYS: Record<string, SketchTool> = {
       r: "rect-center",
       c: "circle-3p",
-      l: "spline",
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {

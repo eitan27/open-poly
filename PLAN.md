@@ -315,8 +315,15 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
   sketch is always consistent and the ✓/⚠ status is always live — the manual
   **⛓ Solve button is gone**. **Conflict feedback:** a dimension or geometric
   constraint the solver can't satisfy is **rejected** (not saved as a dead
-  constraint) with a named banner — geometric rejects also catch contradictions
-  that degenerate a line to zero length and already-implied (redundant) ones.
+  constraint) with a named banner — the dimension reject (like the geometric one)
+  fires on a conflict, a failed/invalid solve, **or a degenerate result** (a line
+  collapsed to ~0), and geometric rejects also catch already-implied (redundant)
+  ones. **Angle dimensions target the INTERIOR angle:** the on-canvas value is the
+  interior angle at the lines' shared vertex (not the obtuse supplement), and the
+  solver converts it to the directed l2l angle using the lines' orientation +
+  current side, so setting a value lands on that interior angle and stays on the
+  current side instead of flipping the sketch to the supplement; an impossible
+  angle (e.g. a second right angle in a triangle) degenerates → rejected.
   **TODO (catalogued below):** point-to-point / point-to-line distance, diameter
   variant, and the remaining geometric constraints
   (coincident/tangent/concentric/symmetric/…).
