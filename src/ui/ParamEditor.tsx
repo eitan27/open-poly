@@ -136,18 +136,45 @@ export function ParamEditor({
         </div>
       ) : feature.type === "plane" ? (
         <div className="sketch-params">
-          <div className="param-field">
-            <span className="param-label">On</span>
-            <span className="param-static">{planeRefLabel(feature.base)}</span>
-          </div>
-          <label className="param-field">
-            <span className="param-label">Offset</span>
-            <input
-              className="param-input"
-              value={feature.offset}
-              onChange={(e) => onChangeParam(feature.id, "offset", e.target.value)}
-            />
-          </label>
+          {(feature.method ?? "offset") === "through" ? (
+            <div className="param-field">
+              <span className="param-label">Plane</span>
+              <span className="param-static">Through 3 points</span>
+            </div>
+          ) : (feature.method ?? "offset") === "midplane" ? (
+            <div className="param-field">
+              <span className="param-label">Midplane</span>
+              <span className="param-static">
+                {planeRefLabel(feature.base)} ↔ {feature.refB ? planeRefLabel(feature.refB) : "—"}
+              </span>
+            </div>
+          ) : (
+            <>
+              <div className="param-field">
+                <span className="param-label">On</span>
+                <span className="param-static">{planeRefLabel(feature.base)}</span>
+              </div>
+              {(feature.method ?? "offset") === "angle" ? (
+                <label className="param-field">
+                  <span className="param-label">Angle°</span>
+                  <input
+                    className="param-input"
+                    value={feature.angle ?? "0"}
+                    onChange={(e) => onChangeParam(feature.id, "angle", e.target.value)}
+                  />
+                </label>
+              ) : (
+                <label className="param-field">
+                  <span className="param-label">Offset</span>
+                  <input
+                    className="param-input"
+                    value={feature.offset}
+                    onChange={(e) => onChangeParam(feature.id, "offset", e.target.value)}
+                  />
+                </label>
+              )}
+            </>
+          )}
         </div>
       ) : feature.type === "transform" ? (
         <div className="sketch-params">

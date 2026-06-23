@@ -3,7 +3,16 @@
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "./featureDefs";
 import { randomSolidColor } from "./colors";
 import { evaluateExpression, type Scope } from "./expression";
-import { frameOf, offsetFrame, uvToWorld, type PlaneFrameData, type SketchPlaneRef } from "./planes";
+import {
+  angledFrame,
+  frameOf,
+  midplaneFrame,
+  offsetFrame,
+  planeThrough3Points,
+  uvToWorld,
+  type PlaneFrameData,
+  type SketchPlaneRef,
+} from "./planes";
 import { detectSketchRegions } from "./regions";
 import type {
   BooleanFeature,
@@ -17,6 +26,7 @@ import type {
   LoftFeature,
   MirrorFeature,
   PlaneFeature,
+  PlaneMethod,
   RevolveFeature,
   SketchConstraint,
   SketchEntity,
@@ -198,8 +208,15 @@ export function addDressUp(
 
 export function addPlane(
   doc: Document,
-  base: SketchPlaneRef,
-  offset = "20",
+  spec: {
+    method: PlaneMethod;
+    base: SketchPlaneRef;
+    offset?: string;
+    refB?: SketchPlaneRef;
+    angleAxis?: "u" | "v";
+    angle?: string;
+    points?: [number, number, number][];
+  },
 ): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "plane").length + 1;
   const feature: PlaneFeature = {
@@ -207,8 +224,13 @@ export function addPlane(
     type: "plane",
     name: `Plane ${ordinal}`,
     suppressed: false,
-    base,
-    offset,
+    method: spec.method,
+    base: spec.base,
+    offset: spec.offset ?? "20",
+    refB: spec.refB,
+    angleAxis: spec.angleAxis,
+    angle: spec.angle,
+    points: spec.points,
     color: randomSolidColor(),
   };
   return insertFeature(doc, feature);
@@ -357,10 +379,20 @@ export function resolvePlanes(doc: Document, scope: Scope): Map<string, PlaneFra
   for (const f of doc.features) {
     if (f.type !== "plane" || f.suppressed) continue;
     try {
-      const dist = evaluateExpression(f.offset, scope);
-      planes.set(f.id, offsetFrame(frameOf(f.base, planes), dist));
+      const method = f.method ?? "offset";
+      if (method === "midplane" && f.refB) {
+        planes.set(f.id, midplaneFrame(frameOf(f.base, planes), frameOf(f.refB, planes)));
+      } else if (method === "angle") {
+        planes.set(f.id, angledFrame(frameOf(f.base, planes), f.angleAxis ?? "u", evaluateExpression(f.angle ?? "0", scope)));
+      } else if (method === "through" && f.points?.length === 3) {
+        const fr = planeThrough3Points(f.points[0], f.points[1], f.points[2]);
+        if (fr) planes.set(f.id, fr);
+      } else {
+        // offset (and the fallback for any incomplete spec)
+        planes.set(f.id, offsetFrame(frameOf(f.base, planes), evaluateExpression(f.offset, scope)));
+      }
     } catch {
-      // base unresolved (suppressed/missing reference) — skip this plane
+      // a reference is unresolved (suppressed/missing) — skip this plane
     }
   }
   return planes;
@@ -504,6 +536,7 @@ export function updateParam(
     if (f.type === "dressup" && name === "size") return { ...f, size: value };
     if (f.type === "revolve" && name === "angle") return { ...f, angle: value };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
+    if (f.type === "plane" && name === "angle") return { ...f, angle: value };
     if (f.type === "transform") {
       if (name === "tx" || name === "ty" || name === "tz" || name === "angle") {
         return { ...f, [name]: value };

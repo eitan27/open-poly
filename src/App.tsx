@@ -45,6 +45,7 @@ import type {
   FeatureKind,
   UpToFaceRef,
   PlaneFeature,
+  PlaneMethod,
   SketchConstraint,
   SketchEntity,
   SketchFeature,
@@ -377,6 +378,22 @@ export default function App() {
       }
       return;
     }
+    // Through-3-points plane pick armed: read a world point from the clicked
+    // vertex or sketch point and append it (up to 3); ignore anything else.
+    if (planePick === "point") {
+      let wp: [number, number, number] | null = null;
+      if (picked?.kind === "vertex") wp = picked.point;
+      else if (picked?.kind === "sketchPoint") {
+        const sk = doc.features.find((f) => f.id === picked.sketchId);
+        if (sk?.type === "sketch") {
+          wp = uvToWorld(frameOf(sk.plane, resolved.planeFrames), picked.point[0], picked.point[1]);
+        }
+      }
+      if (wp) {
+        setPlaneDialog((d) => (d && d.points.length < 3 ? { ...d, points: [...d.points, wp!] } : d));
+      }
+      return;
+    }
     // Boolean dialog open: a clicked body fills the dialog instead of changing
     // the normal selection. union/intersect toggle a single operand list;
     // subtract routes to the armed slot (base = one part; tools accumulate).
@@ -429,7 +446,21 @@ export default function App() {
   // What the plane/face pick flow is for: starting a sketch, or the base of a
   // new reference plane.
   const [pickPurpose, setPickPurpose] = useState<"sketch" | "plane">("sketch");
-  const [planeDialog, setPlaneDialog] = useState<{ base: SketchPlaneRef; offset: string } | null>(null);
+  // The reference-plane dialog. `method` chooses the placement; the relevant
+  // fields are filled by picks (base/refB planes-or-faces; points) or text inputs.
+  const [planeDialog, setPlaneDialog] = useState<{
+    method: PlaneMethod;
+    base: SketchPlaneRef | null;
+    offset: string;
+    refB: SketchPlaneRef | null;
+    angleAxis: "u" | "v";
+    angle: string;
+    points: [number, number, number][];
+  } | null>(null);
+  // What the next viewport pick fills in the plane dialog (null = not arming a
+  // plane pick). "base"/"refB" use plane/face pick mode; "point" reads a vertex /
+  // sketch point from a normal click.
+  const [planePick, setPlanePick] = useState<"base" | "refB" | "point" | null>(null);
   // The Mirror dialog: the body to mirror + the chosen plane key (see plane keys).
   // `plane === "face"` mirrors across a picked planar body face, stored in
   // `faceRef` (a frozen frame snapshot, like a sketch-on-face placement).
@@ -1199,7 +1230,7 @@ export default function App() {
       if (e.key === "Escape") {
         if (dimInputRef.current) setDimInput(null);
         else if (dimPendingRef.current) setDimPending(false);
-        else if (planeDialog) setPlaneDialog(null);
+        else if (planeDialog) closePlaneDialog();
         else if (transformEditId) cancelTransform();
         else if (picking) setPicking(false);
         else if (draft.length > 0) setDraft([]); // cancel the in-progress shape
@@ -1261,10 +1292,6 @@ export default function App() {
           setSketchTool(SKETCH_KEYS[key]);
           return;
         }
-        if (!e.shiftKey && key === "s") {
-          handleSolve();
-          return;
-        }
         if (!e.shiftKey && key === "q") {
           toggleConstruction();
           return;
@@ -1311,8 +1338,7 @@ export default function App() {
           setPicking(true);
           break;
         case "p":
-          setPickPurpose("plane");
-          setPicking(true);
+          openPlaneDialog();
           break;
         case "e":
           if (extrudeProfiles.length > 0 && !extrudeDialog) openExtrudeDialog();
@@ -1539,12 +1565,28 @@ export default function App() {
     viewApiRef.current?.lookAtFrame(frameOf(ref, resolved.planeFrames));
   };
 
-  // The plane/face pick resolved: either start a sketch on it, or use it as the
-  // base for a new reference plane (open the offset dialog).
+  // Open the reference-plane dialog and arm the base pick (offset is the default
+  // method; the dropdown switches to midplane / at-angle / through 3 points).
+  const openPlaneDialog = () => {
+    setPlaneDialog({ method: "offset", base: null, offset: "20", refB: null, angleAxis: "u", angle: "30", points: [] });
+    setPickPurpose("plane");
+    setPlanePick("base");
+    setPicking(true);
+  };
+  const closePlaneDialog = () => {
+    setPlaneDialog(null);
+    setPlanePick(null);
+    setPicking(false);
+  };
+
+  // The plane/face pick resolved: start a sketch on it, or fill the plane
+  // dialog's base / second reference (whichever slot is armed).
   const handlePickRef = (ref: SketchPlaneRef) => {
     if (pickPurpose === "plane") {
       setPicking(false);
-      setPlaneDialog({ base: ref, offset: "20" });
+      if (planePick === "refB") setPlaneDialog((d) => (d ? { ...d, refB: ref } : d));
+      else setPlaneDialog((d) => (d ? { ...d, base: ref } : d));
+      setPlanePick(null);
     } else {
       startSketchOn(ref);
     }
@@ -1552,10 +1594,27 @@ export default function App() {
 
   const createPlane = () => {
     if (!planeDialog) return;
-    const { doc: next, id } = addPlane(doc, planeDialog.base, planeDialog.offset);
+    const { method, base, offset, refB, angleAxis, angle, points } = planeDialog;
+    // Each method needs its own inputs filled before it can build a frame.
+    if (method === "through") {
+      if (points.length !== 3) return;
+    } else if (!base) {
+      return;
+    } else if (method === "midplane" && !refB) {
+      return;
+    }
+    const { doc: next, id } = addPlane(doc, {
+      method,
+      base: base ?? { kind: "datum", id: "plane-top" }, // unused for "through"
+      offset,
+      refB: refB ?? undefined,
+      angleAxis,
+      angle,
+      points: method === "through" ? points : undefined,
+    });
     setDoc(next);
     selectFeature(id);
-    setPlaneDialog(null);
+    closePlaneDialog();
   };
 
   const editSketch = (id: string) => {
@@ -1595,10 +1654,21 @@ export default function App() {
   const handleSketchClick = (uv: Vec2, hv?: "horizontal" | "vertical") => {
     if (!editingSketchId || sketchTool === "select") return;
     const sketchId = editingSketchId;
-    const commit = (entities: SketchEntity[]) => {
-      setDoc(addSketchEntities(doc, sketchId, entities));
-      setFullyConstrained(false); // geometry changed; constraint state unknown
+    // Drawing solves immediately: the constraints captured while drawing (auto
+    // H/V, rectangle edges, shared corners) are enforced on the spot, the geometry
+    // snaps clean, and the fully-constrained / conflict status stays live — so
+    // there's no separate "Solve" step. For the chained line tool, the next
+    // segment continues from the *solved* endpoint so the chain stays coincident.
+    const applyAndSolve = async (mutated: Document, chainLineId?: string) => {
+      const solved = await solveSketchIn(mutated, sketchId);
+      setDoc(solved);
+      if (chainLineId) {
+        const sk = solved.features.find((f) => f.id === sketchId);
+        const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === chainLineId) : undefined;
+        if (e?.type === "line") setDraft([e.b]);
+      }
     };
+    const commit = (entities: SketchEntity[]) => void applyAndSolve(addSketchEntities(doc, sketchId, entities));
     // Stamp construction (reference) geometry when that draw-mode is on.
     const mark = <T extends SketchEntity>(e: T): T => (constructionMode ? { ...e, construction: true } : e);
     const lineEntity = (a: Vec2, b: Vec2): SketchEntity => mark({ type: "line", id: genId(), a, b });
@@ -1618,8 +1688,7 @@ export default function App() {
         entity: lines[i].id,
       }));
       next = addSketchConstraints(next, sketchId, cons);
-      setDoc(next);
-      setFullyConstrained(false);
+      void applyAndSolve(next);
     };
 
     switch (sketchTool) {
@@ -1631,9 +1700,8 @@ export default function App() {
           if (hv) {
             next = addSketchConstraints(next, sketchId, [{ id: genId(), type: hv, entity: line.id }]);
           }
-          setDoc(next);
-          setFullyConstrained(false);
-          setDraft([uv]); // chain
+          setDraft([uv]); // chain optimistically; applyAndSolve resets to the solved endpoint
+          void applyAndSolve(next, line.id);
         }
         break;
       case "rect-corner":
@@ -1694,14 +1762,13 @@ export default function App() {
   const finishSpline = () => {
     if (!editingSketchId || sketchTool !== "spline" || draft.length < 2) return false;
     const e: SketchEntity = { type: "spline", id: genId(), points: draft };
-    setDoc(addSketchEntities(doc, editingSketchId, [constructionMode ? { ...e, construction: true } : e]));
-    setFullyConstrained(false);
+    const sketchId = editingSketchId;
+    const mutated = addSketchEntities(doc, sketchId, [constructionMode ? { ...e, construction: true } : e]);
+    void solveSketchIn(mutated, sketchId).then(setDoc);
     setDraft([]);
     return true;
   };
 
-  // Solve the given doc's sketch with planegcs, apply the moved geometry, and
-  // refresh the fully-constrained indicator. Returns the updated doc.
   // Solve a sketch and fold the new coordinates back in, returning both the
   // updated document and the raw solve result (null if the solve threw or the
   // sketch is gone) so callers can react to conflicts before committing.
@@ -1727,11 +1794,6 @@ export default function App() {
       setSolveConflict(res.hasConflicts);
     }
     return solved;
-  };
-
-  const handleSolve = async () => {
-    if (!editingSketch) return;
-    setDoc(await solveSketchIn(doc, editingSketch.id));
   };
 
   const screenOf = (uv: Vec2) => {
@@ -2267,9 +2329,9 @@ export default function App() {
               )}
             </div>
             <button
-              title="Plane (P): create a reference plane — pick a plane or face to offset from"
-              disabled={!!editingSketch || picking}
-              onClick={() => { setPickPurpose("plane"); setPicking(true); }}
+              title="Plane (P): create a reference plane (offset, midplane, at-angle, or through 3 points)"
+              disabled={!!editingSketch || picking || !!planeDialog}
+              onClick={openPlaneDialog}
             >
               ⧉ Plane
             </button>
@@ -2398,9 +2460,6 @@ export default function App() {
                 onClick={toggleConstruction}
               >
                 <ConstructionIcon />
-              </button>
-              <button title="Solve constraints (S)" onClick={handleSolve}>
-                ⛓
               </button>
               {sketchTool === "polygon" && (
                 <label className="poly-sides" title="Polygon sides">
@@ -2654,25 +2713,115 @@ export default function App() {
           {planeDialog && (
             <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
               <div className="ed-title" data-drag-handle>Reference plane</div>
-              <div className="ed-field">
-                <span>On</span>
-                <span className="ed-static">{planeRefLabel(planeDialog.base)}</span>
-              </div>
               <label className="ed-field">
-                <span>Offset</span>
-                <input
-                  autoFocus
-                  value={planeDialog.offset}
-                  onChange={(e) => setPlaneDialog((d) => (d ? { ...d, offset: e.target.value } : d))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") createPlane();
-                    else if (e.key === "Escape") setPlaneDialog(null);
+                <span>Method</span>
+                <select
+                  value={planeDialog.method}
+                  onChange={(e) => {
+                    const method = e.target.value as PlaneMethod;
+                    setPlaneDialog((d) => (d ? { ...d, method } : d));
+                    // Arm the first pick the method needs: a plane/face for all but
+                    // "through", which collects vertices/sketch points via clicks.
+                    if (method === "through") { setPlanePick("point"); setPicking(false); }
+                    else { setPlanePick("base"); setPickPurpose("plane"); setPicking(true); }
                   }}
-                />
+                >
+                  <option value="offset">Offset</option>
+                  <option value="midplane">Midplane</option>
+                  <option value="angle">At angle</option>
+                  <option value="through">Through 3 points</option>
+                </select>
               </label>
+
+              {planeDialog.method !== "through" && (
+                <div className="ed-field">
+                  <span>{planeDialog.method === "midplane" ? "First" : "Base"}</span>
+                  <button
+                    className={"ed-pick-btn" + (planePick === "base" ? " active" : "")}
+                    onClick={() => { setPlanePick("base"); setPickPurpose("plane"); setPicking(true); }}
+                  >
+                    {planePick === "base" ? "Click a plane/face…" : planeDialog.base ? planeRefLabel(planeDialog.base) : "Select plane/face"}
+                  </button>
+                </div>
+              )}
+
+              {planeDialog.method === "offset" && (
+                <label className="ed-field">
+                  <span>Offset</span>
+                  <input
+                    value={planeDialog.offset}
+                    onChange={(e) => setPlaneDialog((d) => (d ? { ...d, offset: e.target.value } : d))}
+                    onKeyDown={(e) => { if (e.key === "Enter") createPlane(); else if (e.key === "Escape") closePlaneDialog(); }}
+                  />
+                </label>
+              )}
+
+              {planeDialog.method === "midplane" && (
+                <div className="ed-field">
+                  <span>Second</span>
+                  <button
+                    className={"ed-pick-btn" + (planePick === "refB" ? " active" : "")}
+                    onClick={() => { setPlanePick("refB"); setPickPurpose("plane"); setPicking(true); }}
+                  >
+                    {planePick === "refB" ? "Click a plane/face…" : planeDialog.refB ? planeRefLabel(planeDialog.refB) : "Select plane/face"}
+                  </button>
+                </div>
+              )}
+
+              {planeDialog.method === "angle" && (
+                <>
+                  <div className="ed-field">
+                    <span>Hinge</span>
+                    <div className="ed-modes" style={{ width: 112 }}>
+                      {(["u", "v"] as const).map((ax) => (
+                        <button
+                          key={ax}
+                          className={planeDialog.angleAxis === ax ? "active" : ""}
+                          onClick={() => setPlaneDialog((d) => (d ? { ...d, angleAxis: ax } : d))}
+                        >
+                          {ax.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="ed-field">
+                    <span>Angle°</span>
+                    <input
+                      value={planeDialog.angle}
+                      onChange={(e) => setPlaneDialog((d) => (d ? { ...d, angle: e.target.value } : d))}
+                      onKeyDown={(e) => { if (e.key === "Enter") createPlane(); else if (e.key === "Escape") closePlaneDialog(); }}
+                    />
+                  </label>
+                </>
+              )}
+
+              {planeDialog.method === "through" && (
+                <div className="ed-field">
+                  <span>Points</span>
+                  <button
+                    className={"ed-pick-btn" + (planePick === "point" ? " active" : "")}
+                    onClick={() => { setPlanePick("point"); setPicking(false); }}
+                  >
+                    {`${planeDialog.points.length}/3 picked`}{planePick === "point" ? " · click vertices/points…" : ""}
+                  </button>
+                </div>
+              )}
+
               <div className="ed-actions">
-                <button className="ed-primary" onClick={createPlane}>Create</button>
-                <button onClick={() => setPlaneDialog(null)}>Cancel</button>
+                <button
+                  className="ed-primary"
+                  disabled={
+                    planeDialog.method === "through"
+                      ? planeDialog.points.length !== 3
+                      : planeDialog.method === "midplane"
+                        ? !planeDialog.base || !planeDialog.refB
+                        : !planeDialog.base
+                  }
+                  onClick={createPlane}
+                >
+                  Create
+                </button>
+                <button onClick={closePlaneDialog}>Cancel</button>
               </div>
             </DraggableDialog>
           )}

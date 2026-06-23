@@ -139,14 +139,30 @@ export interface DressUpFeature extends FeatureBase {
   size: string;
 }
 
-/** A user-created reference / construction plane. v1: offset (parallel) from a
- *  base datum / face / earlier plane by a (signed) distance. More placement
- *  methods (midplane, angle, through-geometry) come later. */
+/** How a reference plane is placed. Older documents stored only offset planes and
+ *  have no `method`, so a missing method is treated as "offset". */
+export type PlaneMethod = "offset" | "midplane" | "angle" | "through";
+
+/** A user-created reference / construction plane. Placement methods:
+ *  - offset: parallel to `base`, by signed `offset` distance along its normal;
+ *  - midplane: halfway between `base` and `refB`;
+ *  - angle: `base` hinged on its u/v axis (`angleAxis`) by `angle` degrees;
+ *  - through: through three world `points`. */
 export interface PlaneFeature extends FeatureBase {
   type: "plane";
+  /** Placement method; absent on legacy docs ⇒ treated as "offset". */
+  method?: PlaneMethod;
+  /** offset / angle base, or the first reference of a midplane. */
   base: SketchPlaneRef;
   /** Offset distance along the base's normal, as an expression string. */
   offset: string;
+  /** Midplane: the second reference. */
+  refB?: SketchPlaneRef;
+  /** At-angle: which base axis to hinge on, and the tilt in degrees (expression). */
+  angleAxis?: "u" | "v";
+  angle?: string;
+  /** Through-geometry: three world points the plane passes through. */
+  points?: [number, number, number][];
   /** Display color (0xRRGGBB), assigned once at creation from the pastel bank. */
   color: number;
 }

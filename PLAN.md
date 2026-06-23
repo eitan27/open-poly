@@ -305,13 +305,21 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
     sketch as a cancel (drops it) — there's no way to back out of edits made to an
     existing sketch. Needs snapshotting the sketch on edit-entry and restoring it
     on Cancel/Esc (Finish/⏎ keeps changes as now).
-- **2b:** ✅ constraints via **`planegcs`** (auto H/V capture, ⛓ Solve, fully-
+- **2b:** ✅ constraints via **`planegcs`** (auto H/V capture, fully-
   constrained→green) + **interactive length / radius / angle dimensions** (press
   D, accepts number/expr/variable) with **on-canvas labels + double-click-to-
   edit**, plus a **manual-constraint UI** (∥ parallel, ⊥ perpendicular, ＝ equal
-  — toolbar buttons enabled on the matching selection). **TODO (catalogued
-  below):** point-to-point / point-to-line distance, diameter variant, and the
-  remaining geometric constraints (coincident/tangent/concentric/symmetric/…).
+  — toolbar buttons enabled on the matching selection). **Drawing now auto-solves:**
+  every draw commit (line/rect/polygon/circle/spline, incl. auto-H/V) runs the
+  solver immediately (chained lines continue from the *solved* endpoint), so the
+  sketch is always consistent and the ✓/⚠ status is always live — the manual
+  **⛓ Solve button is gone**. **Conflict feedback:** a dimension or geometric
+  constraint the solver can't satisfy is **rejected** (not saved as a dead
+  constraint) with a named banner — geometric rejects also catch contradictions
+  that degenerate a line to zero length and already-implied (redundant) ones.
+  **TODO (catalogued below):** point-to-point / point-to-line distance, diameter
+  variant, and the remaining geometric constraints
+  (coincident/tangent/concentric/symmetric/…).
 - **Exit criteria** (a fully-constrained closed profile that updates when a
   driving variable changes): met.
 
@@ -469,12 +477,23 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     plane can sit on an earlier plane); `SketchPlaneRef` gained a
     `{kind:"plane"}` variant; planes render as translucent amber quads and are
     **selectable for sketching** (offset is editable → re-derives on change).
-  - **Midplane** — halfway between two references (face↔plane, face↔face, or
-    plane↔plane). **TODO.**
-  - **At an angle** — rotated by an angle about an edge/axis, relative to a
-    face or plane. **TODO.**
-  - **Through geometry** — 3 points, a line + a point, two parallel edges, etc.
-    **TODO.**
+  - **Midplane — ✅ DONE.** Halfway between two references (datum / face /
+    reference plane). Origin at the midpoint of the two frame origins, normal the
+    aligned average (the second normal is flipped if it faces away, so two faces
+    pointing at each other still give a sensible between-plane). `midplaneFrame`.
+  - **At an angle — ✅ DONE.** The base hinged on its own u- or v-axis (through
+    the base origin) by an angle in degrees (expression-backed, re-derives on
+    change). `angledFrame` (Rodrigues rotation). *(Hinging on an arbitrary picked
+    edge/axis rather than the base's own axis is a future refinement.)*
+  - **Through geometry — ✅ DONE (3 points).** Plane through three picked points
+    (body vertices or sketch points); origin = first point, normal =
+    (p1-p0)×(p2-p0), collinear points rejected. `planeThrough3Points`. *(Other
+    inputs — line+point, two parallel edges — are future.)*
+  - The **⧉ Plane dialog is now method-first**: a Method dropdown (Offset /
+    Midplane / At angle / Through 3 points) with per-method pick buttons (base /
+    second reference / 3 points) + inputs; `ParamEditor` shows the right fields per
+    method. `PlaneFeature` gained `method` + `refB`/`angleAxis`/`angle`/`points`
+    (legacy planes with no `method` resolve as offset).
   (Showing planes in a separate datums list is **not planned** — appearing in the
   timeline + viewport is enough.)
 - Linear pattern (1- and 2-direction), circular pattern (axis + count + angle).
