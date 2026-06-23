@@ -105,8 +105,10 @@ All mutations route through undo, so the human can revert anything you do.
 - **Combine two bodies:** `boolean` (union/subtract/intersect) by body ids.
 - **Place/duplicate a body:** `transform` (translate + single-axis rotate). Set
   `copy: true` to keep the original and emit a moved copy as a new part.
-- **Sketch off the base planes:** `add_plane` (offset from a datum/face) → sketch
-  on it.
+- **Sketch off the base planes:** `add_plane` → sketch on it. Methods: `offset`
+  (parallel to a datum/face at a distance — the default), `midplane` (halfway
+  between `base` and `refB`), `angle` (base hinged on its `u`/`v` axis by `angle`
+  degrees), or `through` (3 world points).
 - **Bring in external CAD:** `import_step` with the file's STEP text.
 
 ## Best practices
@@ -131,10 +133,10 @@ You are also the project's feedback loop. When something blocks or surprises you
 
 - `kind: "missing_feature"` — the operation you need isn't expressible with the
   available tools (e.g. linear/circular pattern, variable-radius fillet, a
-  constraint type, a midplane/angle reference plane, trim/extend, mirroring
-  sketch entities). *(Revolve, mirror, sweep, loft, the spline tool, and
-  symmetric / through-all / up-to-face extrude all exist now — use those
-  tools.)* Include the goal, what you tried, and a suggested API.
+  constraint type, trim/extend, mirroring sketch entities). *(Revolve, mirror,
+  sweep, loft, the spline tool, symmetric / through-all / up-to-face extrude, and
+  all `add_plane` methods — offset / midplane / angle / through-3-points — exist
+  now; use those tools.)* Include the goal, what you tried, and a suggested API.
 - `kind: "bug"` — a tool did the wrong thing or errored unexpectedly (e.g. a
   remove that didn't cut, a name that didn't resolve, a regen error). Include what
   you did, what you **expected**, what you **observed**, and a minimal repro.

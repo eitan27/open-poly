@@ -158,8 +158,19 @@ export const operationSchema = z.discriminatedUnion("op", [
   }),
   z.object({
     op: z.literal("addPlane"),
-    base: planeRefSchema,
-    offset: expr,
+    /** Placement method (default "offset"). */
+    method: z.enum(["offset", "midplane", "angle", "through"]).optional(),
+    /** offset/angle base, or the FIRST reference of a midplane. Omit for "through". */
+    base: planeRefSchema.optional(),
+    /** offset: signed distance along the base's normal. */
+    offset: expr.optional(),
+    /** midplane: the second reference (halfway between `base` and `refB`). */
+    refB: planeRefSchema.optional(),
+    /** angle: hinge on the base's `u` or `v` axis (default `u`), tilted by `angle` degrees. */
+    angleAxis: z.enum(["u", "v"]).optional(),
+    angle: expr.optional(),
+    /** through: exactly 3 world points the plane passes through. */
+    points: z.array(vec3).optional(),
     name: z.string().optional(),
   }),
   z.object({

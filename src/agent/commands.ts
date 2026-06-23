@@ -309,8 +309,26 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         break;
       }
       case "addPlane": {
-        const base = resolvePlaneRef(ctx, op.base);
-        const r = addPlane(doc, base, op.offset);
+        const method = op.method ?? "offset";
+        let r;
+        if (method === "through") {
+          if (!op.points || op.points.length !== 3) {
+            throw new OpError("invalid_op", "addPlane 'through' needs exactly 3 points.");
+          }
+          // `base` is unused for through-geometry; pass a datum to satisfy the shape.
+          r = addPlane(doc, { method, base: { kind: "datum", id: "plane-top" }, points: op.points });
+        } else {
+          if (!op.base) throw new OpError("invalid_op", `addPlane '${method}' needs a base.`);
+          const base = resolvePlaneRef(ctx, op.base);
+          if (method === "midplane") {
+            if (!op.refB) throw new OpError("invalid_op", "addPlane 'midplane' needs a second reference (refB).");
+            r = addPlane(doc, { method, base, refB: resolvePlaneRef(ctx, op.refB) });
+          } else if (method === "angle") {
+            r = addPlane(doc, { method, base, angleAxis: op.angleAxis ?? "u", angle: op.angle ?? "30" });
+          } else {
+            r = addPlane(doc, { method: "offset", base, offset: op.offset ?? "20" });
+          }
+        }
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;
         break;

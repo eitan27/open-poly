@@ -30,7 +30,7 @@ const OP_DESCRIPTIONS: Record<string, string> = {
   addMirror: "Mirror a body across a plane (datum/reference plane/body face) into a new body; the original is kept.",
   addSweep: "Sweep a sketch region (cross-section) along a path entity (line/arc/spline, possibly in another sketch) into a solid. Get the path entityId from get_scene_summary's sketch entities; the profile is placed perpendicular to the path start.",
   addLoft: "Loft through 2+ sketch regions (sections, in the given order) into a solid. Put the sections on different planes (e.g. a base datum + an offset plane).",
-  addPlane: "Add an offset reference plane parallel to a base (datum/plane/face) at a signed distance.",
+  addPlane: "Add a reference plane. method (default 'offset'): 'offset' = parallel to base at a signed distance; 'midplane' = halfway between base and refB; 'angle' = base hinged on its u/v axis (angleAxis) by angle degrees; 'through' = through exactly 3 world points. base/refB are datum/plane/face refs; 'through' uses points and ignores base.",
   transform: "Rigid-move a body (translate + single-axis rotate). copy:true keeps the original and emits a moved copy.",
   boolean: "Combine two or more bodies (union/subtract/intersect) by id. For subtract, the first operand is the base.",
   dressUp: "Chamfer or fillet edges of a body, referencing edges by their persistent names from the summary.",

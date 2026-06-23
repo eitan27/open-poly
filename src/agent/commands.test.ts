@@ -330,3 +330,48 @@ describe("getSceneSummary", () => {
     expect(s.featureCount).toBe(1);
   });
 });
+
+describe("applyOperation — reference plane methods", () => {
+  const frame = (ctx: AgentContext, id: string) => resolveDocument(ctx.getDoc()).planeFrames.get(id);
+
+  it("offset (default method) is parallel to the base at a distance", async () => {
+    const { ctx } = makeCtx();
+    const r = await apply(ctx, { op: "addPlane", base: { datum: "top" }, offset: 40 });
+    const f = frame(ctx, r.createdId!);
+    expect(f?.origin[2]).toBeCloseTo(40);
+    expect(f?.normal).toEqual([0, 0, 1]);
+  });
+
+  it("midplane sits halfway between the two references", async () => {
+    const { ctx } = makeCtx();
+    const top = await apply(ctx, { op: "addPlane", base: { datum: "top" }, offset: 40 });
+    const mid = await apply(ctx, {
+      op: "addPlane", method: "midplane", base: { datum: "top" }, refB: { planeId: top.createdId! },
+    });
+    expect(frame(ctx, mid.createdId!)?.origin[2]).toBeCloseTo(20);
+  });
+
+  it("angle tilts the base about its u-axis", async () => {
+    const { ctx } = makeCtx();
+    const r = await apply(ctx, { op: "addPlane", method: "angle", base: { datum: "top" }, angleAxis: "u", angle: 45 });
+    const n = frame(ctx, r.createdId!)!.normal;
+    expect(n[1]).toBeCloseTo(-Math.SQRT1_2);
+    expect(n[2]).toBeCloseTo(Math.SQRT1_2);
+  });
+
+  it("through-3-points builds the plane those points span", async () => {
+    const { ctx } = makeCtx();
+    const r = await apply(ctx, { op: "addPlane", method: "through", points: [[0, 0, 5], [10, 0, 5], [0, 10, 5]] });
+    const f = frame(ctx, r.createdId!)!;
+    expect(f.origin[2]).toBeCloseTo(5);
+    expect(Math.abs(f.normal[2])).toBeCloseTo(1);
+  });
+
+  it("rejects midplane without refB and through without 3 points", async () => {
+    const { ctx } = makeCtx();
+    const noRefB = await apply(ctx, { op: "addPlane", method: "midplane", base: { datum: "top" } });
+    expect(noRefB).toMatchObject({ ok: false, errorKind: "invalid_op" });
+    const badPts = await apply(ctx, { op: "addPlane", method: "through", points: [[0, 0, 0], [1, 0, 0]] });
+    expect(badPts).toMatchObject({ ok: false, errorKind: "invalid_op" });
+  });
+});
