@@ -1906,7 +1906,25 @@ export default function App() {
     if (!editingSketch) return;
     const mid = (l: typeof la): Vec2 => [(l.a[0] + l.b[0]) / 2, (l.a[1] + l.b[1]) / 2];
     const angOf = (l: typeof la) => Math.atan2(l.b[1] - l.a[1], l.b[0] - l.a[0]);
-    const deg = prefill ?? ((Math.abs(angOf(lb) - angOf(la)) * 180) / Math.PI) % 180;
+    // The interior angle at the lines' shared vertex (vectors pointing away from
+    // it) — the angle the user actually sees, not the supplement. Falls back to the
+    // folded direction angle when the lines don't touch.
+    const interiorDeg = (): number => {
+      const k = (p: Vec2) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+      let shared: Vec2 | null = null;
+      for (const p of [la.a, la.b]) for (const q of [lb.a, lb.b]) if (k(p) === k(q)) shared = p;
+      if (!shared) {
+        const phi = ((Math.abs(angOf(lb) - angOf(la)) * 180) / Math.PI) % 360;
+        return phi > 180 ? 360 - phi : phi;
+      }
+      const away = (l: typeof la): Vec2 => (k(l.a) === k(shared!) ? l.b : l.a);
+      const va = [away(la)[0] - shared[0], away(la)[1] - shared[1]];
+      const vb = [away(lb)[0] - shared[0], away(lb)[1] - shared[1]];
+      const dot = va[0] * vb[0] + va[1] * vb[1];
+      const m = Math.hypot(va[0], va[1]) * Math.hypot(vb[0], vb[1]) || 1;
+      return (Math.acos(Math.max(-1, Math.min(1, dot / m))) * 180) / Math.PI;
+    };
+    const deg = prefill ?? interiorDeg();
     const ma = mid(la);
     const mb = mid(lb);
     const s = screenOf([(ma[0] + mb[0]) / 2, (ma[1] + mb[1]) / 2]);
@@ -2038,18 +2056,24 @@ export default function App() {
         : { id: genId(), type: kind === "radius" ? "radius" : "distance", entity: entityId, value };
     const candidate = setSketchConstraints(doc, sketchId, [...kept, added]);
     const { doc: solved, res } = await runSolve(candidate, sketchId);
-    // A dimension that the solver can't satisfy (e.g. dimensioning the opposite,
-    // already-coupled side of a rectangle) would otherwise be saved as a dead
-    // constraint that silently freezes the geometry. Reject it instead and tell
-    // the user — the sketch is left exactly as it was.
-    if (res?.hasConflicts) {
-      flashSketchMsg(
-        `That ${kind} conflicts with existing constraints — not applied. Edit or remove the conflicting one instead.`,
-      );
-      setSelection([]);
-      return;
-    }
+    // A dimension the solver can't satisfy would otherwise be saved as a dead
+    // constraint that silently freezes (or wrecks) the geometry. Reject it and tell
+    // the user — the sketch is left exactly as it was. As with geometric
+    // constraints, an over-constraint shows as `hasConflicts`, but an impossible
+    // one (e.g. a second right angle in a triangle) instead fails the solve or
+    // collapses a line to zero length, so check those too.
     if (res) {
+      const sk = solved.features.find((f) => f.id === sketchId);
+      const degenerate =
+        sk?.type === "sketch" &&
+        sk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
+      if (res.hasConflicts || res.status >= 2 || degenerate) {
+        flashSketchMsg(
+          `That ${kind} can't be satisfied with the existing constraints — not applied. Edit or remove a conflicting one instead.`,
+        );
+        setSelection([]);
+        return;
+      }
       setFullyConstrained(res.dof === 0 && !res.hasConflicts);
       setSolveConflict(res.hasConflicts);
     }

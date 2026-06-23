@@ -110,14 +110,28 @@ export async function solveSketch(
         prims.push({ id, type: "equal_radius_cc", c1_id: circleIdByEntity.get(c.a), c2_id: circleIdByEntity.get(c.b) });
       }
     } else if (c.type === "angle" && lineIdByEntity.has(c.a) && lineIdByEntity.has(c.b)) {
-      // Our angle constraints are stored in degrees; planegcs works in radians.
-      prims.push({
-        id,
-        type: "l2l_angle_ll",
-        l1_id: lineIdByEntity.get(c.a),
-        l2_id: lineIdByEntity.get(c.b),
-        angle: (c.value * Math.PI) / 180,
-      });
+      // `c.value` is the INTERIOR angle the user sees (degrees). planegcs's
+      // l2l_angle_ll constrains the *directed* angle between the two line
+      // direction vectors (a→b), which equals the interior angle only when both
+      // lines point away from (or both toward) their shared vertex; if one points
+      // toward it, the directed angle is the supplement. So convert to the directed
+      // target, and carry the current directed angle's sign so the solver keeps the
+      // line on the side it's already on (no flip to the supplement / rearrange).
+      const la = entities.find((x) => x.id === c.a);
+      const lb = entities.find((x) => x.id === c.b);
+      if (la?.type === "line" && lb?.type === "line") {
+        const d1: Vec2 = [la.b[0] - la.a[0], la.b[1] - la.a[1]];
+        const d2: Vec2 = [lb.b[0] - lb.a[0], lb.b[1] - lb.a[1]];
+        const phi0 = Math.atan2(d1[0] * d2[1] - d1[1] * d2[0], d1[0] * d2[0] + d1[1] * d2[1]);
+        const k = (p: Vec2) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+        let shared: Vec2 | null = null;
+        for (const p of [la.a, la.b]) for (const q of [lb.a, lb.b]) if (k(p) === k(q)) shared = p;
+        const opposed = shared ? (k(la.a) === k(shared) ? 1 : -1) * (k(lb.a) === k(shared) ? 1 : -1) < 0 : false;
+        const interior = (c.value * Math.PI) / 180;
+        const magnitude = opposed ? Math.PI - interior : interior;
+        const angle = (phi0 >= 0 ? 1 : -1) * magnitude;
+        prims.push({ id, type: "l2l_angle_ll", l1_id: lineIdByEntity.get(c.a), l2_id: lineIdByEntity.get(c.b), angle });
+      }
     }
   }
 
