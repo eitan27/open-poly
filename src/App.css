@@ -1096,6 +1096,63 @@
   color: #fff;
 }
 
+.dim-label:focus,
+.dim-right-angle:focus {
+  outline: none;
+  border-color: #4f8cff;
+  box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.32);
+}
+
+/* Technical-drawing-style graphics (witness/dimension lines, arrows, angle arcs
+   and right-angle corner boxes) drawn behind the labels above. Plain SVG,
+   repositioned imperatively each frame — see DimensionOverlay.tsx. */
+.dim-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 14;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.dim-ext,
+.dim-line,
+.dim-arc {
+  stroke: #6f8fd1;
+  stroke-width: 1.1;
+  fill: none;
+}
+
+.dim-arrow {
+  fill: #6f8fd1;
+}
+
+.dim-box {
+  stroke: #6f8fd1;
+  stroke-width: 1.3;
+  fill: none;
+}
+
+/* The double-clickable/deletable corner mark standing in for a right-angle
+   dimension's value — same interaction model as .dim-label, no visible text. */
+.dim-right-angle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 15;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 3px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.dim-right-angle:hover {
+  border-color: #4f8cff;
+  background: rgba(79, 140, 255, 0.12);
+}
+
 .poly-sides {
   display: flex;
   align-items: center;

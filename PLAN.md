@@ -337,13 +337,30 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 >
 > **Dimensions update (2026-06-20):** dimensions now cover **line length**,
 > **circle radius**, and **line–line angle** (degrees). Each draws an **on-canvas
-> label** that tracks the camera (`ui/DimensionLabels.tsx`, repositioned per-frame
-> via `worldToScreen` with no React re-render), and **double-clicking a label**
-> reopens its editor pre-filled with the stored value. The dimension input box is
-> now a `DraggableDialog` (movable by its label, like Extrude/Chamfer). Circles
-> are now mapped into planegcs (centre point + solvable radius), so a radius
-> constraint drives them and a sketch with a circle is correctly under-constrained
-> until pinned.
+> label** that tracks the camera (repositioned per-frame via `worldToScreen` with
+> no React re-render), and **double-clicking a label** reopens its editor
+> pre-filled with the stored value. The dimension input box is now a
+> `DraggableDialog` (movable by its label, like Extrude/Chamfer). Circles are now
+> mapped into planegcs (centre point + solvable radius), so a radius constraint
+> drives them and a sketch with a circle is correctly under-constrained until
+> pinned.
+>
+> **Technical-drawing dimension visuals (2026-06-23):** dimensions now render
+> like a drafting annotation instead of a bare floating label —
+> `ui/DimensionOverlay.tsx` replaces `ui/DimensionLabels.tsx`. A **length**
+> dimension gets witness (extension) lines off both endpoints and a parallel
+> dimension line with arrowheads, offset to whichever side reads outside the
+> profile (picked from the sketch's bounding-box centroid). A **radius**
+> dimension gets a leader from the centre to just past the rim with an arrowhead
+> at the rim. An **angle** dimension gets an arc swept between the two lines'
+> rays from their (possibly extended) intersection, tangent arrowheads at both
+> ends, and the value at the arc's midpoint — except a **right angle**, which
+> instead gets the conventional small corner box (no arc/label needed). All
+> graphics are plain SVG in screen space, repositioned imperatively each frame
+> alongside the labels (same no-re-render pattern as before). Interaction is now
+> uniform: **double-click** a label (or a right-angle box) reopens its editor;
+> **single-click to focus, then Delete/Backspace** removes the constraint —
+> previously only double-click-to-edit existed, with no on-canvas delete.
 >
 > **Constraint integrity fix (2026-06-21):** auto H/V capture now also fires when
 > a line's endpoint snaps to an existing point. Previously the snap resolved early

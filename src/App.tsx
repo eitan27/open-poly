@@ -72,7 +72,7 @@ import { useHistory } from "./hooks/useHistory";
 import { ConstructionIcon, ParallelIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { DraggableDialog } from "./ui/DraggableDialog";
-import { DimensionLabels, type DimLabelSpec } from "./ui/DimensionLabels";
+import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
@@ -194,6 +194,58 @@ function pointInTriangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2): boolean {
   const cross = (o: Vec2, u: Vec2, w: Vec2) => (u[0] - o[0]) * (w[1] - o[1]) - (u[1] - o[1]) * (w[0] - o[0]);
   const d1 = cross(p, a, b), d2 = cross(p, b, c), d3 = cross(p, c, a);
   return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+}
+
+/** Where two infinite lines (uv space) cross, or null if they're parallel
+ *  (within ~0.006°) — the corner an angle dimension's arc/box is anchored on. */
+function lineLineIntersection(a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2): Vec2 | null {
+  const d1x = b1[0] - a1[0], d1y = b1[1] - a1[1];
+  const d2x = b2[0] - a2[0], d2y = b2[1] - a2[1];
+  const len1 = Math.hypot(d1x, d1y) || 1, len2 = Math.hypot(d2x, d2y) || 1;
+  const ux1 = d1x / len1, uy1 = d1y / len1, ux2 = d2x / len2, uy2 = d2y / len2;
+  const denom = ux1 * uy2 - uy1 * ux2;
+  if (Math.abs(denom) < 1e-4) return null;
+  const t = ((a2[0] - a1[0]) * uy2 - (a2[1] - a1[1]) * ux2) / denom;
+  return [a1[0] + t * ux1, a1[1] + t * uy1];
+}
+
+/** Unit direction from corner `p` toward whichever endpoint of `line` is
+ *  farther from it — the ray along which the line's segment actually runs
+ *  away from the corner, for sweeping an angle dimension's arc. */
+function rayFromCorner(line: Extract<SketchEntity, { type: "line" }>, p: Vec2): Vec2 {
+  const da = Math.hypot(line.a[0] - p[0], line.a[1] - p[1]);
+  const db = Math.hypot(line.b[0] - p[0], line.b[1] - p[1]);
+  const far = da > db ? line.a : line.b;
+  const dx = far[0] - p[0], dy = far[1] - p[1];
+  const l = Math.hypot(dx, dy) || 1;
+  return [dx / l, dy / l];
+}
+
+/** Rough uv-space centre of a sketch's geometry (bounding-box midpoint) — lets
+ *  a length dimension pick the offset side that reads outside the profile
+ *  rather than across it. */
+function sketchBoundsCenter(entities: SketchEntity[]): Vec2 {
+  let minU = Infinity, minV = Infinity, maxU = -Infinity, maxV = -Infinity;
+  const visit = (u: number, v: number) => {
+    if (u < minU) minU = u;
+    if (u > maxU) maxU = u;
+    if (v < minV) minV = v;
+    if (v > maxV) maxV = v;
+  };
+  for (const e of entities) {
+    if (e.type === "line") {
+      visit(e.a[0], e.a[1]);
+      visit(e.b[0], e.b[1]);
+    } else if (e.type === "circle" || e.type === "arc") {
+      visit(e.c[0] - e.r, e.c[1] - e.r);
+      visit(e.c[0] + e.r, e.c[1] + e.r);
+    } else if (e.type === "spline") {
+      for (const p of e.points) visit(p[0], p[1]);
+    } else if (e.type === "point") {
+      visit(e.p[0], e.p[1]);
+    }
+  }
+  return Number.isFinite(minU) ? [(minU + maxU) / 2, (minV + maxV) / 2] : [0, 0];
 }
 
 /** The id of a rendered body that has a planar face **coplanar** with `frame`
@@ -822,33 +874,48 @@ export default function App() {
     [editingSketch, resolved.planeFrames],
   );
 
-  // On-canvas dimension labels for the active sketch: one per length (line),
-  // radius (circle), or angle (line–line) dimension. The label currently being
-  // edited (its dim-input is open) is dropped so the two don't overlap.
+  // On-canvas dimensions for the active sketch: one per length (line), radius
+  // (circle), or angle (line–line) constraint, drawn as technical-drawing-style
+  // annotations. The dimension currently being edited (its dim-input is open)
+  // is dropped so the two don't overlap.
   const ent = (id: string) => editingSketch?.entities.find((x) => x.id === id);
-  const dimLabels = useMemo<DimLabelSpec[]>(() => {
+  const dimCentroid = useMemo<Vec2>(
+    () => sketchBoundsCenter(editingSketch?.entities ?? []),
+    [editingSketch],
+  );
+  const dimSpecs = useMemo<DimSpec[]>(() => {
     if (!editingSketch) return [];
-    return editingSketch.constraints.flatMap((c): DimLabelSpec[] => {
+    return editingSketch.constraints.flatMap((c): DimSpec[] => {
       if (c.id === dimInput?.editId) return [];
       if (c.type === "distance") {
         const e = ent(c.entity);
-        if (e?.type === "line") return [{ id: c.id, text: fmt(c.value), a: e.a, b: e.b }];
+        if (e?.type === "line") return [{ id: c.id, kind: "length", text: fmt(c.value), a: e.a, b: e.b }];
       } else if (c.type === "radius") {
         const e = ent(c.entity);
-        if (e?.type === "circle") {
-          // Anchor the label out along a 45° radius leader (centre → rim point).
-          const rim: Vec2 = [e.c[0] + e.r * Math.SQRT1_2, e.c[1] + e.r * Math.SQRT1_2];
-          return [{ id: c.id, text: `R${fmt(c.value)}`, a: e.c, b: rim }];
-        }
+        if (e?.type === "circle") return [{ id: c.id, kind: "radius", text: `R${fmt(c.value)}`, c: e.c, r: e.r }];
       } else if (c.type === "angle") {
         const la = ent(c.a);
         const lb = ent(c.b);
         if (la?.type === "line" && lb?.type === "line") {
+          const p = lineLineIntersection(la.a, la.b, lb.a, lb.b);
+          if (p) {
+            return [
+              {
+                id: c.id,
+                kind: "angle",
+                text: `${fmt(c.value)}°`,
+                p,
+                dir1: rayFromCorner(la, p),
+                dir2: rayFromCorner(lb, p),
+                isRight: Math.abs(c.value - 90) < 1e-6,
+              },
+            ];
+          }
           const mid = (l: Extract<SketchEntity, { type: "line" }>): Vec2 => [
             (l.a[0] + l.b[0]) / 2,
             (l.a[1] + l.b[1]) / 2,
           ];
-          return [{ id: c.id, text: `${fmt(c.value)}°`, a: mid(la), b: mid(lb) }];
+          return [{ id: c.id, kind: "free", text: `${fmt(c.value)}°`, a: mid(la), b: mid(lb) }];
         }
       }
       return [];
@@ -2516,12 +2583,14 @@ export default function App() {
               </button>
             </DraggableDialog>
           )}
-          {dimFrame && dimLabels.length > 0 && (
-            <DimensionLabels
+          {dimFrame && dimSpecs.length > 0 && (
+            <DimensionOverlay
               frame={dimFrame}
-              labels={dimLabels}
+              specs={dimSpecs}
+              centroid={dimCentroid}
               viewApiRef={viewApiRef}
               onEdit={editConstraint}
+              onDelete={deleteConstraint}
             />
           )}
           {editingSketch && sketchMsg && <div className="sketch-msg" role="alert">⚠ {sketchMsg}</div>}
