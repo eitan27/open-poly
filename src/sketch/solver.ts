@@ -6,9 +6,11 @@
 // coordinate key, so coincident endpoints (chained lines, snapped points) merge
 // into one solver point. This is correct immediately after drawing; a proper
 // point-based sketch model would make coincidence robust across repeated solves.
-// Lines and circles are mapped (a circle's centre + radius are solvable, so a
-// radius constraint drives it); arcs still pass through unchanged. Constraints
-// mapped: horizontal/vertical/parallel/perpendicular/equal/distance/radius/angle.
+// Lines, circles, and arcs are all mapped (a circle's/arc's centre + radius are
+// solvable; an arc also has solvable endpoints + start/end angles tied by
+// arc_rules). Constraints mapped: horizontal/vertical/parallel/perpendicular/
+// equal/distance/radius/angle/tangent/coincident/point-on-line/midpoint, across
+// lines, circles, and arcs where meaningful.
 
 import { make_gcs_wrapper, type GcsWrapper } from "@salusoft89/planegcs";
 import wasmUrl from "@salusoft89/planegcs/dist/planegcs_dist/planegcs.wasm?url";
@@ -51,8 +53,15 @@ export async function solveSketch(
   const keyToCoord = new Map<string, Vec2>();
   const lineIdByEntity = new Map<string, string>();
   const circleIdByEntity = new Map<string, string>();
+  const arcIdByEntity = new Map<string, string>();
   let pc = 0;
   let cc = 0;
+
+  // The two endpoints of an arc, in uv, at its current start/end angles.
+  const arcEnds = (a: Extract<SketchEntity, { type: "arc" }>): { start: Vec2; end: Vec2 } => ({
+    start: [a.c[0] + a.r * Math.cos(a.start), a.c[1] + a.r * Math.sin(a.start)],
+    end: [a.c[0] + a.r * Math.cos(a.end), a.c[1] + a.r * Math.sin(a.end)],
+  });
 
   const key = (p: Vec2) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
   // The sketch origin is fixed ground: any point that sits exactly on it is
@@ -67,7 +76,12 @@ export async function solveSketch(
     const e = entities.find((x) => x.id === ref.entity);
     if (!e) return null;
     if (e.type === "line") return ref.at === "a" ? e.a : e.b;
-    if (e.type === "circle" || e.type === "arc") return e.c;
+    if (e.type === "circle") return e.c;
+    if (e.type === "arc") {
+      if (ref.at === "c") return e.c;
+      const ends = arcEnds(e);
+      return ref.at === "a" ? ends.start : ends.end;
+    }
     return null;
   };
   const ensurePoint = (p: Vec2): string => {
@@ -97,6 +111,28 @@ export async function solveSketch(
       const id = `ci_${e.id}`;
       circleIdByEntity.set(e.id, id);
       prims.push({ id, type: "circle", c_id: cId, radius: e.r });
+    } else if (e.type === "arc") {
+      // An arc maps to a planegcs arc: centre + two endpoint points + radius +
+      // start/end angles, tied together by `arc_rules` (so the endpoints stay on
+      // the circle at those angles). The endpoints are solver points, so they
+      // merge with coincident line/arc ends and the arc moves as a real curve.
+      const ends = arcEnds(e);
+      const cId = ensurePoint(e.c);
+      const sId = ensurePoint(ends.start);
+      const eId = ensurePoint(ends.end);
+      const id = `ar_${e.id}`;
+      arcIdByEntity.set(e.id, id);
+      prims.push({
+        id,
+        type: "arc",
+        c_id: cId,
+        start_id: sId,
+        end_id: eId,
+        start_angle: e.start,
+        end_angle: e.end,
+        radius: e.r,
+      });
+      prims.push({ id: `arules_${e.id}`, type: "arc_rules", a_id: id });
     }
   }
 
@@ -117,12 +153,22 @@ export async function solveSketch(
       }
     } else if (c.type === "radius" && circleIdByEntity.has(c.entity)) {
       prims.push({ id, type: "circle_radius", c_id: circleIdByEntity.get(c.entity), radius: c.value });
+    } else if (c.type === "radius" && arcIdByEntity.has(c.entity)) {
+      prims.push({ id, type: "arc_radius", a_id: arcIdByEntity.get(c.entity), radius: c.value });
     } else if (c.type === "equal") {
-      // Equal applies to two lines (equal length) or two circles (equal radius).
+      // Equal applies to two lines (equal length) or two of {circle, arc} (equal
+      // radius, any mix).
       if (lineIdByEntity.has(c.a) && lineIdByEntity.has(c.b)) {
         prims.push({ id, type: "equal_length", l1_id: lineIdByEntity.get(c.a), l2_id: lineIdByEntity.get(c.b) });
-      } else if (circleIdByEntity.has(c.a) && circleIdByEntity.has(c.b)) {
-        prims.push({ id, type: "equal_radius_cc", c1_id: circleIdByEntity.get(c.a), c2_id: circleIdByEntity.get(c.b) });
+      } else {
+        const ra = circleIdByEntity.has(c.a) ? "c" : arcIdByEntity.has(c.a) ? "a" : null;
+        const rb = circleIdByEntity.has(c.b) ? "c" : arcIdByEntity.has(c.b) ? "a" : null;
+        const idA = ra === "c" ? circleIdByEntity.get(c.a) : arcIdByEntity.get(c.a);
+        const idB = rb === "c" ? circleIdByEntity.get(c.b) : arcIdByEntity.get(c.b);
+        if (ra === "c" && rb === "c") prims.push({ id, type: "equal_radius_cc", c1_id: idA, c2_id: idB });
+        else if (ra === "a" && rb === "a") prims.push({ id, type: "equal_radius_aa", a1_id: idA, a2_id: idB });
+        else if (ra === "c" && rb === "a") prims.push({ id, type: "equal_radius_ca", c1_id: idA, a2_id: idB });
+        else if (ra === "a" && rb === "c") prims.push({ id, type: "equal_radius_ca", c1_id: idB, a2_id: idA });
       }
     } else if (c.type === "angle" && lineIdByEntity.has(c.a) && lineIdByEntity.has(c.b)) {
       // `c.value` is the INTERIOR angle the user sees (degrees). planegcs's
@@ -148,17 +194,20 @@ export async function solveSketch(
         prims.push({ id, type: "l2l_angle_ll", l1_id: lineIdByEntity.get(c.a), l2_id: lineIdByEntity.get(c.b), angle });
       }
     } else if (c.type === "tangent") {
-      // Tangency between a line and a circle, or two circles. (Arcs aren't
-      // mapped to solver primitives yet, so they're not supported here.)
+      // Tangency between any two of {line, circle, arc}.
       const a = entities.find((x) => x.id === c.a);
       const b = entities.find((x) => x.id === c.b);
+      const lid = (e: SketchEntity) => lineIdByEntity.get(e.id);
+      const cid = (e: SketchEntity) => circleIdByEntity.get(e.id);
+      const aid = (e: SketchEntity) => arcIdByEntity.get(e.id);
       if (a && b) {
-        if (a.type === "line" && b.type === "circle")
-          prims.push({ id, type: "tangent_lc", l_id: lineIdByEntity.get(a.id), c_id: circleIdByEntity.get(b.id) });
-        else if (a.type === "circle" && b.type === "line")
-          prims.push({ id, type: "tangent_lc", l_id: lineIdByEntity.get(b.id), c_id: circleIdByEntity.get(a.id) });
-        else if (a.type === "circle" && b.type === "circle")
-          prims.push({ id, type: "tangent_cc", c1_id: circleIdByEntity.get(a.id), c2_id: circleIdByEntity.get(b.id) });
+        const [p, q] = [a, b].sort((x, y) => x.type.localeCompare(y.type)); // arc < circle < line
+        const t = `${p.type}-${q.type}`;
+        if (t === "circle-line") prims.push({ id, type: "tangent_lc", l_id: lid(q), c_id: cid(p) });
+        else if (t === "circle-circle") prims.push({ id, type: "tangent_cc", c1_id: cid(p), c2_id: cid(q) });
+        else if (t === "arc-line") prims.push({ id, type: "tangent_la", l_id: lid(q), a_id: aid(p) });
+        else if (t === "arc-circle") prims.push({ id, type: "tangent_ca", c_id: cid(q), a_id: aid(p) });
+        else if (t === "arc-arc") prims.push({ id, type: "tangent_aa", a1_id: aid(p), a2_id: aid(q) });
       }
     } else if (c.type === "coincident") {
       const pa = refCoord(c.a);
@@ -201,15 +250,20 @@ export async function solveSketch(
           p2_id: ensurePoint(target.b),
           p_id: ensurePoint(p),
         });
-      } else if (p && target?.type === "arc") {
-        // Arcs aren't mapped to solver primitives (they're immovable here), so
-        // the arc's mid-arc point is a fixed coordinate — lock the point there.
-        const mid = (target.start + target.end) / 2;
-        const mx = target.c[0] + target.r * Math.cos(mid);
-        const my = target.c[1] + target.r * Math.sin(mid);
+      } else if (p && target?.type === "arc" && arcIdByEntity.has(target.id)) {
+        // Mid-arc point: on the arc, and on the perpendicular bisector of the
+        // chord (= equidistant from the two ends ⇒ the angular midpoint). Both are
+        // arc-relative, so the point tracks the arc as it moves/resizes.
+        const ends = arcEnds(target);
         const pid = ensurePoint(p);
-        prims.push({ id, type: "coordinate_x", p_id: pid, x: mx });
-        prims.push({ id: `c${cc++}`, type: "coordinate_y", p_id: pid, y: my });
+        prims.push({ id, type: "point_on_arc", p_id: pid, a_id: arcIdByEntity.get(target.id) });
+        prims.push({
+          id: `c${cc++}`,
+          type: "point_on_perp_bisector_ppp",
+          p_id: pid,
+          lp1_id: ensurePoint(ends.start),
+          lp2_id: ensurePoint(ends.end),
+        });
       }
     }
   }
@@ -238,6 +292,22 @@ export async function solveSketch(
       if (!cid) return e;
       const ci = wrapper.sketch_index.get_sketch_circle(cid);
       return { ...e, c: movePoint(e.c), r: ci.radius };
+    }
+    if (e.type === "arc" && arcIdByEntity.has(e.id)) {
+      // Rebuild centre/radius/angles from the solved centre + endpoints (which
+      // also carry any coincidence with connected geometry). Keep the sweep close
+      // to the original so a minor arc never flips to its major complement.
+      const ends = arcEnds(e);
+      const c = movePoint(e.c);
+      const sp = movePoint(ends.start);
+      const ep = movePoint(ends.end);
+      const r = (Math.hypot(sp[0] - c[0], sp[1] - c[1]) + Math.hypot(ep[0] - c[0], ep[1] - c[1])) / 2;
+      const start = Math.atan2(sp[1] - c[1], sp[0] - c[0]);
+      const origSweep = e.end - e.start;
+      let sweep = Math.atan2(ep[1] - c[1], ep[0] - c[0]) - start;
+      while (sweep - origSweep > Math.PI) sweep -= 2 * Math.PI;
+      while (origSweep - sweep > Math.PI) sweep += 2 * Math.PI;
+      return { ...e, c, r, start, end: start + sweep };
     }
     return e;
   });

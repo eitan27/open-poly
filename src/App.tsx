@@ -475,14 +475,14 @@ export default function App() {
       });
       return;
     }
-    // Dimension mode armed: the next picked line/circle is the dimension target.
+    // Dimension mode armed: the next picked line/circle/arc is the target.
     if (dimPending) {
       const sk = doc.features.find((f) => f.id === editingSketchId);
       const e =
         picked?.kind === "sketchEntity" && picked.sketchId === editingSketchId && sk?.type === "sketch"
           ? sk.entities.find((x) => x.id === picked.entityId)
           : undefined;
-      if (e?.type === "line" || e?.type === "circle") {
+      if (e?.type === "line" || e?.type === "circle" || e?.type === "arc") {
         setSelection([picked!]);
         openDimensionFor(e);
       } else {
@@ -867,11 +867,11 @@ export default function App() {
     );
   }, [editingSketch, selection]);
 
-  // A single line/circle selected → eligible for a length/radius dimension.
+  // A single line (length), circle or arc (radius) selected → dimensionable.
   const dimEntity = useMemo(() => {
     if (selectedSketchEntities.length !== 1) return null;
     const e = selectedSketchEntities[0];
-    return e.type === "line" || e.type === "circle" ? e : null;
+    return e.type === "line" || e.type === "circle" || e.type === "arc" ? e : null;
   }, [selectedSketchEntities]);
 
   // Exactly two lines / two circles selected → eligible for the line-pair
@@ -882,21 +882,22 @@ export default function App() {
       ? ([es[0], es[1]] as Extract<SketchEntity, { type: "line" }>[])
       : null;
   }, [selectedSketchEntities]);
-  const twoSelectedCircles = useMemo(() => {
+  // Exactly two circles/arcs (any mix) selected → eligible for equal-radius.
+  const twoRadiusEntities = useMemo(() => {
     const es = selectedSketchEntities;
-    return es.length === 2 && es[0].type === "circle" && es[1].type === "circle"
-      ? ([es[0], es[1]] as Extract<SketchEntity, { type: "circle" }>[])
-      : null;
+    const isR = (e: SketchEntity) => e.type === "circle" || e.type === "arc";
+    return es.length === 2 && isR(es[0]) && isR(es[1]) ? [es[0], es[1]] : null;
   }, [selectedSketchEntities]);
 
-  // A line + a circle, or two circles, selected → eligible for a tangent
-  // constraint (order-normalized to [line, circle] when mixed).
+  // Two entities selected with at least one curve (circle/arc) — eligible for a
+  // tangent constraint (any pair except line+line). The solver normalizes order.
   const tangentPair = useMemo(() => {
     const es = selectedSketchEntities;
     if (es.length !== 2) return null;
     const [a, b] = es;
-    if ((a.type === "line" && b.type === "circle") || (a.type === "circle" && b.type === "circle")) return [a, b];
-    if (a.type === "circle" && b.type === "line") return [b, a];
+    const ok = (e: SketchEntity) => e.type === "line" || e.type === "circle" || e.type === "arc";
+    const curve = (e: SketchEntity) => e.type === "circle" || e.type === "arc";
+    if (ok(a) && ok(b) && (curve(a) || curve(b)) && !(a.type === "line" && b.type === "line")) return [a, b];
     return null;
   }, [selectedSketchEntities]);
 
@@ -947,7 +948,8 @@ export default function App() {
         if (e?.type === "line") return [{ id: c.id, kind: "length", text: fmt(c.value), a: e.a, b: e.b }];
       } else if (c.type === "radius") {
         const e = ent(c.entity);
-        if (e?.type === "circle") return [{ id: c.id, kind: "radius", text: `R${fmt(c.value)}`, c: e.c, r: e.r }];
+        if (e?.type === "circle" || e?.type === "arc")
+          return [{ id: c.id, kind: "radius", text: `R${fmt(c.value)}`, c: e.c, r: e.r }];
       } else if (c.type === "angle") {
         const la = ent(c.a);
         const lb = ent(c.b);
@@ -1428,7 +1430,7 @@ export default function App() {
           return;
         }
         if (e.key === "=") {
-          const pair = twoSelectedLines ?? twoSelectedCircles;
+          const pair = twoSelectedLines ?? twoRadiusEntities;
           if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
         }
         return;
@@ -1518,7 +1520,7 @@ export default function App() {
     bodyIds,
     transformTarget,
     twoSelectedLines,
-    twoSelectedCircles,
+    twoRadiusEntities,
     primaryFeatureId,
     polySidesOpen,
   ]);
@@ -1940,12 +1942,12 @@ export default function App() {
   };
 
   // Open the dimension input anchored next to the given entity: a line → length
-  // (input next to its midpoint); a circle → radius (input next to its centre).
-  // `editId`/`prefill` are supplied when reopening an existing constraint (its
-  // label hides while the input is open, and the input shows the stored value);
-  // for a fresh dimension the value is computed from the current geometry.
+  // (input next to its midpoint); a circle or arc → radius (input next to its
+  // centre). `editId`/`prefill` are supplied when reopening an existing
+  // constraint (its label hides while the input is open, and the input shows the
+  // stored value); for a fresh dimension the value is computed from the geometry.
   const openDimensionFor = (
-    entity: Extract<SketchEntity, { type: "line" | "circle" }>,
+    entity: Extract<SketchEntity, { type: "line" | "circle" | "arc" }>,
     editId?: string,
     prefill?: number,
   ) => {
@@ -2074,8 +2076,13 @@ export default function App() {
       if (e.type === "line") {
         if (near(e.a)) return { entity: e.id, at: "a" };
         if (near(e.b)) return { entity: e.id, at: "b" };
-      } else if (e.type === "circle" || e.type === "arc") {
+      } else if (e.type === "circle") {
         if (near(e.c)) return { entity: e.id, at: "c" };
+      } else if (e.type === "arc") {
+        if (near(e.c)) return { entity: e.id, at: "c" };
+        // Arc endpoints ("a" = start angle, "b" = end angle).
+        if (near([e.c[0] + e.r * Math.cos(e.start), e.c[1] + e.r * Math.sin(e.start)])) return { entity: e.id, at: "a" };
+        if (near([e.c[0] + e.r * Math.cos(e.end), e.c[1] + e.r * Math.sin(e.end)])) return { entity: e.id, at: "b" };
       }
     }
     if (Math.hypot(uv[0], uv[1]) < 1e-4) return { origin: true };
@@ -2161,7 +2168,7 @@ export default function App() {
     if (!c) return;
     if (c.type === "distance" || c.type === "radius") {
       const e = ent(c.entity);
-      if (e?.type === "line" || e?.type === "circle") openDimensionFor(e, c.id, c.value);
+      if (e?.type === "line" || e?.type === "circle" || e?.type === "arc") openDimensionFor(e, c.id, c.value);
     } else if (c.type === "angle") {
       const la = ent(c.a);
       const lb = ent(c.b);
@@ -2680,10 +2687,10 @@ export default function App() {
                 ⊥
               </button>
               <button
-                title="Equal (=) — select two lines (equal length) or two circles (equal radius)"
-                disabled={!twoSelectedLines && !twoSelectedCircles}
+                title="Equal (=) — select two lines (equal length) or two circles/arcs (equal radius)"
+                disabled={!twoSelectedLines && !twoRadiusEntities}
                 onClick={() => {
-                  const pair = twoSelectedLines ?? twoSelectedCircles;
+                  const pair = twoSelectedLines ?? twoRadiusEntities;
                   if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
                 }}
               >
@@ -2703,7 +2710,7 @@ export default function App() {
                 ⌖
               </button>
               <button
-                title="Tangent — select a line and a circle, or two circles"
+                title="Tangent — select two curves (circle/arc) or a line and a curve"
                 disabled={!tangentPair}
                 onClick={() => tangentPair && addGeoConstraint("tangent", tangentPair[0].id, tangentPair[1].id)}
               >

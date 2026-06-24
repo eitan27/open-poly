@@ -107,21 +107,72 @@ describe("solveSketch midpoint", () => {
     expect(d.b[1]).toBeCloseTo((e.a[1] + e.b[1]) / 2, 3);
   });
 
-  it("locks a drawn endpoint to an arc's mid-arc point", async () => {
-    // A quarter arc centred at origin (0..90°); its mid-arc point is at 45°. A
-    // drawn line's end starts off it and is pulled onto the mid-arc point.
-    const r = 10;
-    const arc: SketchEntity = { type: "arc", id: "A", c: [0, 0], r, start: 0, end: Math.PI / 2 };
+  it("locks a drawn endpoint to an arc's mid-arc point (arc-relative)", async () => {
+    // A quarter arc and a drawn line whose end is locked to the arc's midpoint.
+    // The arc is solver-aware now, so assert the geometric invariant: the point
+    // is on the arc and equidistant from its two ends (⇒ the angular midpoint).
+    const arc: SketchEntity = { type: "arc", id: "A", c: [0, 0], r: 10, start: 0, end: Math.PI / 2 };
     const drawn: SketchEntity = { type: "line", id: "D", a: [0, 20], b: [5, 5] };
     const res = await solveSketch([arc, drawn], [
       { id: "m", type: "midpoint", point: { entity: "D", at: "b" }, target: "A" },
     ]);
     expect(res.hasConflicts).toBe(false);
+    const a = res.entities.find((x) => x.id === "A");
     const d = res.entities.find((x) => x.id === "D");
-    if (d?.type !== "line") throw new Error("line");
-    const mid = Math.PI / 4;
-    expect(d.b[0]).toBeCloseTo(r * Math.cos(mid), 3);
-    expect(d.b[1]).toBeCloseTo(r * Math.sin(mid), 3);
+    if (a?.type !== "arc" || d?.type !== "line") throw new Error("bad result");
+    const onArc = Math.hypot(d.b[0] - a.c[0], d.b[1] - a.c[1]);
+    expect(onArc).toBeCloseTo(a.r, 3); // on the arc's circle
+    const s: [number, number] = [a.c[0] + a.r * Math.cos(a.start), a.c[1] + a.r * Math.sin(a.start)];
+    const e: [number, number] = [a.c[0] + a.r * Math.cos(a.end), a.c[1] + a.r * Math.sin(a.end)];
+    expect(Math.hypot(d.b[0] - s[0], d.b[1] - s[1])).toBeCloseTo(Math.hypot(d.b[0] - e[0], d.b[1] - e[1]), 3);
+  });
+});
+
+describe("solveSketch arcs (solver-aware)", () => {
+  it("drives an arc's radius with a radius constraint", async () => {
+    const arc: SketchEntity = { type: "arc", id: "A", c: [20, 0], r: 5, start: 0, end: Math.PI / 2 };
+    const res = await solveSketch([arc], [{ id: "r", type: "radius", entity: "A", value: 8 }]);
+    expect(res.hasConflicts).toBe(false);
+    const a = res.entities.find((x) => x.id === "A");
+    if (a?.type !== "arc") throw new Error("arc");
+    expect(a.r).toBeCloseTo(8, 3);
+  });
+
+  it("keeps a line connected to an arc endpoint as the line is lengthened", async () => {
+    // Line from the origin to [10,0]; an arc whose start endpoint is also [10,0]
+    // (coincident via shared coordinate). Growing the line drags the shared point,
+    // and the arc reshapes to keep its endpoint attached.
+    const line: SketchEntity = { type: "line", id: "L", a: [0, 0], b: [10, 0] };
+    const arc: SketchEntity = { type: "arc", id: "A", c: [10, 5], r: 5, start: -Math.PI / 2, end: 0 };
+    const res = await solveSketch([line, arc], [
+      { id: "h", type: "horizontal", entity: "L" },
+      { id: "d", type: "distance", entity: "L", value: 20 },
+    ]);
+    expect(res.hasConflicts).toBe(false);
+    const l = res.entities.find((x) => x.id === "L");
+    const a = res.entities.find((x) => x.id === "A");
+    if (l?.type !== "line" || a?.type !== "arc") throw new Error("bad result");
+    expect(l.b[0]).toBeCloseTo(20, 3); // line grew (origin-fixed a)
+    // The arc's start endpoint followed the shared point to the line's new end.
+    const startPt: [number, number] = [a.c[0] + a.r * Math.cos(a.start), a.c[1] + a.r * Math.sin(a.start)];
+    expect(startPt[0]).toBeCloseTo(l.b[0], 2);
+    expect(startPt[1]).toBeCloseTo(l.b[1], 2);
+  });
+
+  it("makes a line tangent to an arc", async () => {
+    const line: SketchEntity = { type: "line", id: "L", a: [-10, 5], b: [10, 5] };
+    const arc: SketchEntity = { type: "arc", id: "A", c: [0, 0], r: 3, start: 0, end: Math.PI };
+    const res = await solveSketch([line, arc], [
+      { id: "h", type: "horizontal", entity: "L" },
+      { id: "r", type: "radius", entity: "A", value: 3 }, // pin the arc radius
+      { id: "t", type: "tangent", a: "L", b: "A" },
+    ]);
+    expect(res.hasConflicts).toBe(false);
+    const l = res.entities.find((x) => x.id === "L");
+    const a = res.entities.find((x) => x.id === "A");
+    if (l?.type !== "line" || a?.type !== "arc") throw new Error("bad result");
+    // Horizontal line tangent to the arc's circle ⇒ |line.y − centre.y| = radius.
+    expect(Math.abs(l.a[1] - a.c[1])).toBeCloseTo(a.r, 2);
   });
 });
 
