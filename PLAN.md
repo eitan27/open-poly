@@ -238,6 +238,18 @@ rough relative sizing, not calendar promises.
 > (movable Constraints/Parameters panel) and **#5** (timeline formatting); more
 > plane methods; a **multi-document manager**. **LLM agent integration (Phase 9 —
 > fully specced below)** is underway on `feat/phase9-agent` (L0–L3 done).
+>
+> **Progress (2026-06-24):** another **sketch-constraint batch** landed on `main`
+> — **tangent**, **coincident** (+ point-on-line + origin-anchoring), and auto
+> **point-on-line / midpoint** on snapped endpoints; the **origin is fixed
+> ground**; **arcs are now solver-aware** and **equal** extends to arcs; plus
+> **variable-name validation** + **dimension var-name autocomplete**, a **dashed
+> construction-line highlight** (`Q` syncs the toolbar toggle), and two fixes
+> (length-dimension side-flicker on symmetric sketches; loops that close at the
+> origin now enclose). Separately, **drag-to-move unconstrained sketch geometry**
+> + a **blue (under-constrained) → green (fully constrained) line styling** are
+> **in progress** on `claude/sketch-unconstrained-dragging` — **not yet merged**
+> (kinks to work out).
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -324,9 +336,10 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
   current side, so setting a value lands on that interior angle and stays on the
   current side instead of flipping the sketch to the supplement; an impossible
   angle (e.g. a second right angle in a triangle) degenerates → rejected.
-  **TODO (catalogued below):** point-to-point / point-to-line distance, diameter
-  variant, and the remaining geometric constraints
-  (coincident/tangent/concentric/symmetric/…).
+  **Coincident / tangent / point-on-line / midpoint are now in** (see the 2b
+  status notes below); **TODO (still catalogued below):** point-to-point /
+  point-to-line distance, the diameter variant, and the remaining geometric
+  constraints (concentric / symmetric / collinear / general fix-lock).
 - **Exit criteria** (a fully-constrained closed profile that updates when a
   driving variable changes): met.
 
@@ -385,10 +398,13 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 >   variable change is still deferred). p2p distance is entangled with the
 >   point-identity gap below (it needs robust point references).
 > - **Geometric constraints now in the UI:** auto H/V (on draw), **parallel**,
->   **perpendicular**, **equal** (lines→equal length, circles→equal radius), and
->   **angle** (as a dimension). **Still not exposed / mapped:** coincident,
->   tangent, concentric, symmetric, midpoint, collinear, fix/lock (and `equal`
->   only covers lines + circles, not arcs).
+>   **perpendicular**, **equal** (lines→equal length, circles/arcs→equal radius,
+>   any mix), **angle** (as a dimension), **tangent** + **coincident** (toolbar
+>   buttons — coincident also does **point-on-line** and **origin-anchoring**),
+>   and **point-on-line / midpoint** auto-attached when a drawn endpoint snaps
+>   onto an edge or its midpoint. The **origin is fixed ground** in the solver.
+>   **Still not exposed / mapped:** concentric, symmetric, collinear, and a
+>   general fix/lock of an arbitrary entity.
 > - **Constraint management & feedback — ✅ DONE (2026-06-21).** A **Constraints
 >   list** (sidebar, while editing a sketch) shows each constraint with a per-row
 >   **✕ delete** (wires the previously-unused `removeSketchConstraint` →
@@ -402,8 +418,11 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 > - **Sketch operations missing:** mirror (of sketch entities), use/project
 >   (convert body edges into the sketch), offset, trim/extend. *(Construction
 >   geometry and splines are now done — see 2a.)*
-> - **Arcs and splines** still pass through the solver unchanged (not
->   constrained); circles are now mapped + radius-constrainable.
+> - **Arcs are now solver-aware** (mapped as centre + two endpoint points +
+>   radius + start/end angles, tied by `arc_rules`, so an arc constrains and
+>   moves as a real curve and its endpoints merge with coincident line/arc ends);
+>   circles are mapped + radius-constrainable. **Only splines** still pass through
+>   the solver unchanged (not constrained).
 
 > **Reprioritized 2026-06-18 (user):** Extrude is the single most important
 > solid op and is the headline of Phase 3; **Chamfer (and Fillet)** matter more
