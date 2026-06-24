@@ -2151,6 +2151,9 @@ export default function App() {
       ids.has(e.id) ? { ...e, construction: makeConstruction } : e,
     );
     setDoc(setSketchEntities(doc, editingSketch.id, entities));
+    // Keep the draw-mode button in sync with what the selection just became, so
+    // the toolbar reflects the current construction state.
+    setConstructionMode(makeConstruction);
   };
 
   // Remove a single constraint (from the constraints list) and re-solve.

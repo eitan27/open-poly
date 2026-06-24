@@ -172,6 +172,9 @@ interface SceneState {
   // Fat-line overlay that draws highlighted body edges + sketch entities on top.
   highlightMaterial: LineMaterial;
   highlightOverlay: LineSegments2;
+  // Dashed twin of the overlay, used for construction (reference) sketch geometry.
+  highlightMaterialDash: LineMaterial;
+  highlightOverlayDash: LineSegments2;
   // Highlighted vertices / sketch points (selected + hovered) as coloured points.
   pointMarkers: THREE.Points;
   datums: DatumEntry[];
@@ -495,6 +498,26 @@ export function Viewport({
     highlightOverlay.visible = false;
     scene.add(highlightOverlay);
 
+    // Construction-geometry highlight: same fat line, but dashed so a selected /
+    // hovered reference entity reads as dashed (matching its base appearance).
+    const highlightMaterialDash = new LineMaterial({
+      vertexColors: true,
+      linewidth: 3,
+      worldUnits: false,
+      dashed: true,
+      // Match the base construction material's dash period so the highlight
+      // dashes sit over the line's own dashes instead of beating against them.
+      dashSize: 1.4,
+      gapSize: 0.9,
+      depthTest: false,
+      transparent: true,
+    });
+    const highlightOverlayDash = new LineSegments2(new LineSegmentsGeometry(), highlightMaterialDash);
+    highlightOverlayDash.renderOrder = 11;
+    highlightOverlayDash.frustumCulled = false;
+    highlightOverlayDash.visible = false;
+    scene.add(highlightOverlayDash);
+
     const pointMarkers = new THREE.Points(
       new THREE.BufferGeometry(),
       new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, vertexColors: true, depthTest: false }),
@@ -615,7 +638,7 @@ export function Viewport({
     const state: SceneState = {
       renderer, scene, camera, controls, group,
       sketchDimActive: false, selectedMaterial, hoverMaterial, lineMaterial,
-      highlightMaterial, highlightOverlay, pointMarkers,
+      highlightMaterial, highlightOverlay, highlightMaterialDash, highlightOverlayDash, pointMarkers,
       datums, sketchGroup, planeGroup, transformControls, gizmoProxy,
       liveDrag: null,
       pendingCommit: null,
@@ -661,13 +684,18 @@ export function Viewport({
       }
 
       // Fat-line overlay: body edges + sketch entities + whole sketches.
+      // Construction (reference) geometry routes to a dashed twin overlay.
       const overlayPos: number[] = [];
       const overlayCol: number[] = [];
-      const pushRange = (geom: THREE.BufferGeometry, start: number, count: number, c: THREE.Color) => {
+      const overlayPosDash: number[] = [];
+      const overlayColDash: number[] = [];
+      const pushRange = (geom: THREE.BufferGeometry, start: number, count: number, c: THREE.Color, dashed = false) => {
         const pos = geom.getAttribute("position");
+        const tp = dashed ? overlayPosDash : overlayPos;
+        const tc = dashed ? overlayColDash : overlayCol;
         for (let v = start; v < start + count; v++) {
-          overlayPos.push(pos.getX(v), pos.getY(v), pos.getZ(v));
-          overlayCol.push(c.r, c.g, c.b);
+          tp.push(pos.getX(v), pos.getY(v), pos.getZ(v));
+          tc.push(c.r, c.g, c.b);
         }
       };
       const sketchChild = (sid: string) =>
@@ -685,12 +713,17 @@ export function Viewport({
           if (child && g) pushRange(child.geometry, g.start, g.count, c);
         } else if (s.kind === "sketchEntity") {
           const child = sketchChild(s.sketchId);
-          const eg = child?.geometry.userData.entityGroups as { start: number; count: number; entityId: string }[] | undefined;
+          const eg = child?.geometry.userData.entityGroups as { start: number; count: number; entityId: string; construction?: boolean }[] | undefined;
           const g = eg?.find((x) => x.entityId === s.entityId);
-          if (child && g) pushRange(child.geometry, g.start, g.count, c);
+          if (child && g) pushRange(child.geometry, g.start, g.count, c, !!g.construction);
         } else if (s.kind === "feature" && isSketchId(s.id)) {
           const child = sketchChild(s.id);
-          if (child) pushRange(child.geometry, 0, child.geometry.getAttribute("position").count, c);
+          const eg = child?.geometry.userData.entityGroups as { start: number; count: number; entityId: string; construction?: boolean }[] | undefined;
+          if (child && eg) {
+            for (const g of eg) pushRange(child.geometry, g.start, g.count, c, !!g.construction);
+          } else if (child) {
+            pushRange(child.geometry, 0, child.geometry.getAttribute("position").count, c);
+          }
         } else if (s.kind === "face") {
           // Also highlight the face's boundary edges.
           const faceMesh = group.children.find(
@@ -731,6 +764,17 @@ export function Viewport({
         highlightOverlay.visible = true;
       } else {
         highlightOverlay.visible = false;
+      }
+      if (overlayPosDash.length >= 6) {
+        const og = new LineSegmentsGeometry();
+        og.setPositions(overlayPosDash);
+        og.setColors(overlayColDash);
+        highlightOverlayDash.geometry.dispose();
+        highlightOverlayDash.geometry = og;
+        highlightOverlayDash.computeLineDistances(); // needed by the dashed material
+        highlightOverlayDash.visible = true;
+      } else {
+        highlightOverlayDash.visible = false;
       }
 
       // Point markers: vertices + sketch points.
@@ -1177,6 +1221,7 @@ export function Viewport({
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       highlightMaterial.resolution.set(w, h); // fat-line width is in screen pixels
+      highlightMaterialDash.resolution.set(w, h);
     };
     resize();
     const observer = new ResizeObserver(resize);
@@ -1230,6 +1275,8 @@ export function Viewport({
       lineMaterial.dispose();
       highlightMaterial.dispose();
       highlightOverlay.geometry.dispose();
+      highlightMaterialDash.dispose();
+      highlightOverlayDash.geometry.dispose();
       renderer.dispose();
       container.removeChild(renderer.domElement);
       apiRef.current = null;
