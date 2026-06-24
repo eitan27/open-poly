@@ -63,7 +63,15 @@ export async function solveSketch(
     end: [a.c[0] + a.r * Math.cos(a.end), a.c[1] + a.r * Math.sin(a.end)],
   });
 
-  const key = (p: Vec2) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+  // Round to 4dp for point identity, normalizing "-0.0000" → "0.0000" so a tiny
+  // negative coordinate near the origin still merges with a point at exactly 0
+  // (otherwise an arc endpoint and a coincident line endpoint decouple at the
+  // origin across re-solves).
+  const coord = (v: number) => {
+    const s = v.toFixed(4);
+    return s === "-0.0000" ? "0.0000" : s;
+  };
+  const key = (p: Vec2) => `${coord(p[0])},${coord(p[1])}`;
   // The sketch origin is fixed ground: any point that sits exactly on it is
   // pinned (like Onshape's automatic origin coincidence). Without this, a line
   // drawn *from* the origin and then lengthened drifts — the solver grows it

@@ -20,7 +20,15 @@ export interface SketchRegion {
   entityIds: string[];
 }
 
-const key = (p: Vec2) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+// Round to 4dp for vertex identity, normalizing "-0.0000" → "0.0000" so a tiny
+// negative coordinate (e.g. an arc endpoint that the solver places at ~0 with a
+// sub-epsilon negative sign) still matches a point at exactly 0. Without this, a
+// loop closing at the origin can fail to enclose. */
+const coord = (v: number) => {
+  const s = v.toFixed(4);
+  return s === "-0.0000" ? "0.0000" : s;
+};
+const key = (p: Vec2) => `${coord(p[0])},${coord(p[1])}`;
 
 /** Signed area (CCW positive) via the shoelace formula. */
 function signedArea(pts: Vec2[]): number {
