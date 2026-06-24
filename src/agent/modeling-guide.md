@@ -116,6 +116,10 @@ All mutations route through undo, so the human can revert anything you do.
 - **Parameterize with variables.** Prefer named variables and expressions
   (`width`, `wall = width/2 - 2`) over magic numbers, so the model stays editable.
   Define the variables first, then reference them in params/dimensions.
+  **Variable names must be letters only** — no digits, spaces, underscores, or
+  other symbols, not a reserved math name (`pi`, `sin`, …), and unique. Use
+  `wallThickness` / `holeDia` / `outerR`, **not** `wall_thickness`, `r1`, or
+  `hole2`; an invalid name is rejected.
 - **Constrain sketches** (horizontal/vertical/dimension) so profiles are
   predictable; aim for fully-constrained where it matters.
 - **Exploit symmetry** and reference planes instead of repeating manual placement.

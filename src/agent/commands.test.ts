@@ -86,6 +86,16 @@ describe("applyOperation — variables", () => {
     expect(doc().variables).toHaveLength(1);
     expect(doc().variables[0].expression).toBe("60");
   });
+
+  it("setVariable rejects an invalid name (letters-only rule) without creating it", async () => {
+    const { ctx, doc } = makeCtx();
+    for (const name of ["wall_thickness", "r1", "hole2", "pi", "my var"]) {
+      const r = await apply(ctx, { op: "setVariable", name, expression: "5" });
+      expect(r.ok).toBe(false);
+      expect(r.errorKind).toBe("invalid_op");
+    }
+    expect(doc().variables).toHaveLength(0); // none of the bad names were created
+  });
 });
 
 describe("applyOperation — sketch + extrude (no kernel)", () => {

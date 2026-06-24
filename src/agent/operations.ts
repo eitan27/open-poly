@@ -205,7 +205,11 @@ export const operationSchema = z.discriminatedUnion("op", [
   }),
   z.object({
     // Create-or-update a named variable by name (agent-friendly: variables are
-    // keyed by name everywhere expressions reference them).
+    // keyed by name everywhere expressions reference them). The name must be
+    // **letters only** (no digits, spaces, underscores, or other symbols), not a
+    // reserved math name (pi, sin, cos, …), and unique — e.g. `wallThickness`
+    // or `holeDia`, not `wall_thickness`, `r1`, or `hole2`. An invalid name is
+    // rejected with an error.
     op: z.literal("setVariable"),
     name: z.string(),
     expression: expr,

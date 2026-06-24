@@ -33,6 +33,7 @@ import {
   setRollbackIndex,
   updateParam,
   updateVariable,
+  validateVariableNames,
 } from "../document/document";
 import { detectSketchRegions } from "../document/regions";
 import {
@@ -41,7 +42,7 @@ import {
   type SketchPlaneId,
   type SketchPlaneRef,
 } from "../document/planes";
-import type { Document, ExtrudeProfile, Feature, PrimitiveFeature } from "../document/types";
+import type { Document, ExtrudeProfile, Feature, PrimitiveFeature, Variable } from "../document/types";
 import type { MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 import type { Selection, ViewName } from "../viewport/Viewport";
 import {
@@ -369,6 +370,17 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           next = updateVariable(doc, existing.id, "expression", op.expression);
           createdId = existing.id;
         } else {
+          // Validate the new name up front (letters-only, non-reserved, unique)
+          // so the agent gets a clear error rather than a variable that's
+          // silently dropped from scope at regen.
+          const candidate: Variable[] = [...doc.variables, { id: "__candidate__", name: op.name, expression: op.expression }];
+          const nameError = validateVariableNames(candidate)["__candidate__"];
+          if (nameError) {
+            throw new OpError(
+              "invalid_op",
+              `Invalid variable name "${op.name}": ${nameError}. Variable names must be letters only — no digits, spaces, underscores, or reserved math names (pi, sin, …).`,
+            );
+          }
           const r = addVariable(doc);
           next = updateVariable(updateVariable(r.doc, r.id, "name", op.name), r.id, "expression", op.expression);
           createdId = r.id;
