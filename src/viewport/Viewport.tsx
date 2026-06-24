@@ -367,7 +367,7 @@ export function Viewport({
   sketchFullyConstrained: boolean;
   draft: Vec2[];
   polygonSides: number;
-  onSketchClick: (uv: Vec2, hv?: "horizontal" | "vertical") => void;
+  onSketchClick: (uv: Vec2, hv?: "horizontal" | "vertical", on?: { id: string; mid: boolean }) => void;
   selectionFilter: SelectionFilter;
   apiRef: { current: ViewportApi | null };
 }) {
@@ -420,8 +420,13 @@ export function Viewport({
   const activeEntitiesRef = useRef<SketchEntity[]>([]);
   // snap candidates on the active plane (in uv): points (origin, endpoints,
   // midpoints from any sketch or body edge) and lines (coplanar edges).
-  const snapPointsRef = useRef<Vec2[]>([]);
-  const snapLinesRef = useRef<[Vec2, Vec2][]>([]);
+  //  • a point with `midpointOf` = an *active-sketch* line/arc whose midpoint it
+  //    is → snapping there gives a midpoint constraint.
+  //  • a line with `id` = an *active-sketch* line entity → snapping onto its body
+  //    gives a point-on-line constraint.
+  // Undefined for body edges / other-sketch geometry (not constrainable here).
+  const snapPointsRef = useRef<{ uv: Vec2; midpointOf?: string }[]>([]);
+  const snapLinesRef = useRef<{ a: Vec2; b: Vec2; id?: string }[]>([]);
 
   const hoverPlaneRef = useRef<DatumId | null>(null);
   const hoverUserPlaneRef = useRef<string | null>(null);
@@ -834,7 +839,14 @@ export function Viewport({
       raw: Vec2,
       clientX: number,
       clientY: number,
-    ): { uv: Vec2; kind: "point" | "edge" | "h" | "v" | "free"; hv?: "horizontal" | "vertical" } => {
+    ): {
+      uv: Vec2;
+      kind: "point" | "edge" | "h" | "v" | "free";
+      hv?: "horizontal" | "vertical";
+      /** What an active-sketch entity the snapped point should attach to: its
+       *  midpoint (`mid: true`) or a point on its body (`mid: false`). */
+      on?: { id: string; mid: boolean };
+    } => {
       const frame = activeFrameRef.current!;
       const distPx = (c: Vec2) => {
         const w = uvToWorld(frame, c[0], c[1]);
@@ -856,26 +868,39 @@ export function Viewport({
         return undefined;
       };
       // 1. nearest snap point (static candidates + the current draft points)
-      let best: Vec2 | null = null;
+      let best: { uv: Vec2; midpointOf?: string } | null = null;
       let bestD = SNAP_PX;
       for (const c of snapPointsRef.current) {
-        const d = distPx(c);
+        const d = distPx(c.uv);
         if (d < bestD) { bestD = d; best = c; }
       }
       for (const c of draftRef.current) {
         const d = distPx(c);
-        if (d < bestD) { bestD = d; best = c; }
+        if (d < bestD) { bestD = d; best = { uv: c }; }
       }
-      if (best) return { uv: best, kind: "point", hv: hvOf(best) };
+      if (best)
+        return {
+          uv: best.uv,
+          kind: "point",
+          hv: hvOf(best.uv),
+          on: best.midpointOf ? { id: best.midpointOf, mid: true } : undefined,
+        };
       // 2. nearest point on a coplanar edge
       let bestLine: Vec2 | null = null;
+      let bestLineId: string | undefined;
       let bestLD = SNAP_PX;
-      for (const [a, b] of snapLinesRef.current) {
-        const q = nearestOnSegment(raw, a, b);
+      for (const seg of snapLinesRef.current) {
+        const q = nearestOnSegment(raw, seg.a, seg.b);
         const d = distPx(q);
-        if (d < bestLD) { bestLD = d; bestLine = q; }
+        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = seg.id; }
       }
-      if (bestLine) return { uv: bestLine, kind: "edge", hv: hvOf(bestLine) };
+      if (bestLine)
+        return {
+          uv: bestLine,
+          kind: "edge",
+          hv: hvOf(bestLine),
+          on: bestLineId ? { id: bestLineId, mid: false } : undefined,
+        };
       // 3. horizontal / vertical inference relative to the last placed point
       if (ref) {
         const ang = Math.atan2(raw[1] - ref[1], raw[0] - ref[0]);
@@ -916,6 +941,19 @@ export function Viewport({
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       raycaster.params.Line = { threshold: EDGE_PICK_WORLD };
+
+      // The sketch origin is selectable anywhere (not only when a sketch line is
+      // under the cursor), so it can be the anchor for a coincident / point-on-
+      // line constraint. Highest priority — a click right on it picks the origin.
+      const activeSid = activeSketchIdRef.current;
+      const activeFrame = activeFrameRef.current;
+      if (activeSid && activeFrame) {
+        const ow = uvToWorld(activeFrame, 0, 0);
+        const px = projectToPx(new THREE.Vector3(ow[0], ow[1], ow[2]));
+        if (Math.hypot(px.x - clientX, px.y - clientY) < SNAP_PX) {
+          return { kind: "sketchPoint", sketchId: activeSid, point: [0, 0] };
+        }
+      }
 
       const faceMeshes = group.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
       const bodyEdges = group.children.filter(
@@ -1120,7 +1158,7 @@ export function Viewport({
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) return;
         const s = snap(raw, e.clientX, e.clientY);
-        onSketchClickRef.current(s.uv, s.hv);
+        onSketchClickRef.current(s.uv, s.hv, s.on);
         return;
       }
       // Selection click (idle, or sketch + Select tool). App accumulates into a
@@ -1492,31 +1530,36 @@ export function Viewport({
       const d = w.clone().sub(O);
       return [d.dot(U), d.dot(V)];
     };
-    const points: Vec2[] = [[0, 0]];
-    const lines: [Vec2, Vec2][] = [];
-    const addSeg = (aw: THREE.Vector3, bw: THREE.Vector3) => {
+    const points: { uv: Vec2; midpointOf?: string }[] = [{ uv: [0, 0] }];
+    const lines: { a: Vec2; b: Vec2; id?: string }[] = [];
+    // `id` is the active-sketch line entity this segment belongs to (so a drawn
+    // endpoint landing on its body → point-on-line, on its midpoint → midpoint).
+    const addSeg = (aw: THREE.Vector3, bw: THREE.Vector3, id?: string) => {
       const aOn = onPlane(aw);
       const bOn = onPlane(bw);
-      if (aOn) points.push(toUv(aw));
-      if (bOn) points.push(toUv(bw));
+      if (aOn) points.push({ uv: toUv(aw) });
+      if (bOn) points.push({ uv: toUv(bw) });
       if (aOn && bOn) {
         const a = toUv(aw);
         const b = toUv(bw);
-        points.push([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]); // midpoint
-        lines.push([a, b]);
+        points.push({ uv: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], midpointOf: id }); // midpoint
+        lines.push({ a, b, id });
       }
     };
-    const addPoint = (uv: Vec2) => {
+    const addPoint = (uv: Vec2, midpointOf?: string) => {
       const w = new THREE.Vector3(...uvToWorld(active.frame, uv[0], uv[1]));
-      if (onPlane(w)) points.push(toUv(w));
+      if (onPlane(w)) points.push({ uv: toUv(w), midpointOf });
     };
     for (const s of sketches) {
       const sameFrame = s.frame === active.frame;
+      // Only the active sketch's own lines/arcs are constrainable from this sketch.
+      const activeId = s.id === activeSketchId;
       for (const e of s.entities) {
         if (e.type === "line") {
           addSeg(
             new THREE.Vector3(...uvToWorld(s.frame, e.a[0], e.a[1])),
             new THREE.Vector3(...uvToWorld(s.frame, e.b[0], e.b[1])),
+            activeId ? e.id : undefined,
           );
         } else if (sameFrame && e.type === "circle") {
           addPoint(e.c); // centre (radius/quadrant snaps are a later refinement)
@@ -1524,6 +1567,9 @@ export function Viewport({
           addPoint(e.c);
           addPoint([e.c[0] + e.r * Math.cos(e.start), e.c[1] + e.r * Math.sin(e.start)]);
           addPoint([e.c[0] + e.r * Math.cos(e.end), e.c[1] + e.r * Math.sin(e.end)]);
+          // Mid-arc point (snapping here locks to the arc's midpoint).
+          const m = (e.start + e.end) / 2;
+          addPoint([e.c[0] + e.r * Math.cos(m), e.c[1] + e.r * Math.sin(m)], activeId ? e.id : undefined);
         }
       }
     }
@@ -1602,7 +1648,10 @@ function previewPolyline(tool: SketchTool, draft: Vec2[], cursor: Vec2, sides: n
 
 /** Selectable points of a sketch: line endpoints, circle centres, arc ends. */
 function sketchPointCandidates(sketch: RenderSketch): Vec2[] {
-  const out: Vec2[] = [];
+  // The sketch origin (0,0) is always selectable — so it can be picked as the
+  // anchor for a coincident / point-on-line constraint even when no entity
+  // vertex sits there.
+  const out: Vec2[] = [[0, 0]];
   for (const e of sketch.entities) {
     if (e.type === "line") out.push(e.a, e.b);
     else if (e.type === "circle") out.push(e.c);

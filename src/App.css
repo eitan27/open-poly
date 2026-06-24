@@ -209,6 +209,16 @@
   border-color: #b04545;
 }
 
+.var-name.invalid {
+  border-color: #e0524f;
+  color: #f0a8a6;
+}
+
+.var-expr:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .var-value {
   font-size: 12px;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -1053,6 +1063,49 @@
   border-radius: 5px;
   padding: 4px 6px;
   font-size: 13px;
+}
+
+.dim-value {
+  position: relative;
+  display: flex;
+}
+
+.dim-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 120px;
+  margin: 0;
+  padding: 3px;
+  list-style: none;
+  background: rgba(20, 22, 28, 0.98);
+  border: 1px solid #3a3f4b;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  z-index: 30;
+}
+
+.dim-suggest li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 7px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  cursor: pointer;
+}
+
+.dim-suggest li.active {
+  background: #1e2a44;
+}
+
+.dim-suggest-name {
+  color: #b9d0ff;
+}
+
+.dim-suggest-val {
+  color: #6fcf97;
 }
 
 .dim-input button {

@@ -46,6 +46,7 @@ import type {
   UpToFaceRef,
   PlaneFeature,
   PlaneMethod,
+  PointRef,
   SketchConstraint,
   SketchEntity,
   SketchFeature,
@@ -73,6 +74,7 @@ import { ConstructionIcon, ParallelIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { DraggableDialog } from "./ui/DraggableDialog";
 import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
+import { DimValueInput, type VarOption } from "./ui/DimValueInput";
 import { FeatureTree } from "./ui/FeatureTree";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
@@ -110,6 +112,10 @@ const constraintLabel = (c: SketchConstraint): string => {
     case "distance": return `Length ${fmt(c.value)}`;
     case "radius": return `Radius ${fmt(c.value)}`;
     case "angle": return `Angle ${fmt(c.value)}°`;
+    case "tangent": return "Tangent";
+    case "coincident": return "origin" in c.a || "origin" in c.b ? "Coincident (origin)" : "Coincident";
+    case "pointOnLine": return "origin" in c.point ? "On line (origin)" : "Point on line";
+    case "midpoint": return "Midpoint";
   }
 };
 
@@ -524,6 +530,11 @@ export default function App() {
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
   const [draft, setDraft] = useState<Vec2[]>([]);
+  // Line tool: the active-sketch entity (if any) that the *current* draft start
+  // point landed on, and whether it was that entity's midpoint — so the first
+  // segment's start gets a point-on-line / midpoint constraint (the end of each
+  // segment is constrained from its own snap).
+  const lineStartOnRef = useRef<{ id: string; mid: boolean } | undefined>(undefined);
   // The committed polygon side count (used when drawing). The dialog edits a
   // free-text draft and commits it via Set, so typing isn't fought by live clamping.
   const [polygonSides, setPolygonSides] = useState(6);
@@ -878,6 +889,31 @@ export default function App() {
       : null;
   }, [selectedSketchEntities]);
 
+  // A line + a circle, or two circles, selected → eligible for a tangent
+  // constraint (order-normalized to [line, circle] when mixed).
+  const tangentPair = useMemo(() => {
+    const es = selectedSketchEntities;
+    if (es.length !== 2) return null;
+    const [a, b] = es;
+    if ((a.type === "line" && b.type === "circle") || (a.type === "circle" && b.type === "circle")) return [a, b];
+    if (a.type === "circle" && b.type === "line") return [b, a];
+    return null;
+  }, [selectedSketchEntities]);
+
+  // Sketch points (endpoints/centres/origin) currently selected in this sketch.
+  const selectedSketchPoints = useMemo<Vec2[]>(() => {
+    if (!editingSketch) return [];
+    return selection.flatMap((s) =>
+      s.kind === "sketchPoint" && s.sketchId === editingSketch.id ? [s.point] : [],
+    );
+  }, [editingSketch, selection]);
+
+  // Selected line entities in this sketch (for the point-on-line coincidence).
+  const selectedSketchLines = useMemo(
+    () => selectedSketchEntities.filter((e): e is Extract<SketchEntity, { type: "line" }> => e.type === "line"),
+    [selectedSketchEntities],
+  );
+
   // The active sketch's plane frame (uv → world), for placing on-canvas overlays.
   const dimFrame = useMemo(
     () => (editingSketch ? frameOf(editingSketch.plane, resolved.planeFrames) : null),
@@ -892,6 +928,15 @@ export default function App() {
   const dimCentroid = useMemo<Vec2>(
     () => sketchBoundsCenter(editingSketch?.entities ?? []),
     [editingSketch],
+  );
+  // Variables (well-named, evaluated) offered as autocomplete in the dimension
+  // value field — a dimension may be a number, an expression, or a variable.
+  const dimVarOptions = useMemo<VarOption[]>(
+    () =>
+      doc.variables
+        .filter((v) => resolved.scope[v.name] !== undefined)
+        .map((v) => ({ name: v.name, value: resolved.scope[v.name] })),
+    [doc.variables, resolved.scope],
   );
   const dimSpecs = useMemo<DimSpec[]>(() => {
     if (!editingSketch) return [];
@@ -1730,7 +1775,7 @@ export default function App() {
   // A snapped click on the sketch plane (already in uv coords). Drives the
   // multi-click construction tools. `hv` records a horizontal/vertical inference
   // (line tool) so it can be captured as a constraint.
-  const handleSketchClick = (uv: Vec2, hv?: "horizontal" | "vertical") => {
+  const handleSketchClick = (uv: Vec2, hv?: "horizontal" | "vertical", on?: { id: string; mid: boolean }) => {
     if (!editingSketchId || sketchTool === "select") return;
     const sketchId = editingSketchId;
     // Drawing solves immediately: the constraints captured while drawing (auto
@@ -1772,13 +1817,27 @@ export default function App() {
 
     switch (sketchTool) {
       case "line":
-        if (draft.length === 0) setDraft([uv]);
-        else {
+        if (draft.length === 0) {
+          setDraft([uv]);
+          lineStartOnRef.current = on; // remember an entity the start landed on
+        } else {
           const line = lineEntity(draft[0], uv);
           let next = addSketchEntities(doc, sketchId, [line]);
-          if (hv) {
-            next = addSketchConstraints(next, sketchId, [{ id: genId(), type: hv, entity: line.id }]);
-          }
+          const cons: SketchConstraint[] = [];
+          if (hv) cons.push({ id: genId(), type: hv, entity: line.id });
+          // Keep an endpoint attached to whatever it was snapped onto: a line's
+          // body → point-on-line; a line/arc midpoint → midpoint — so a later
+          // dimension can't slide it off.
+          const attach = (at: "a" | "b", t: { id: string; mid: boolean }): SketchConstraint =>
+            t.mid
+              ? { id: genId(), type: "midpoint", point: { entity: line.id, at }, target: t.id }
+              : { id: genId(), type: "pointOnLine", point: { entity: line.id, at }, line: t.id };
+          if (lineStartOnRef.current) cons.push(attach("a", lineStartOnRef.current));
+          if (on) cons.push(attach("b", on));
+          if (cons.length) next = addSketchConstraints(next, sketchId, cons);
+          // The chain continues from this end; it's now constrained, so the next
+          // segment's start needs no further attachment.
+          lineStartOnRef.current = undefined;
           setDraft([uv]); // chain optimistically; applyAndSolve resets to the solved endpoint
           void applyAndSolve(next, line.id);
         }
@@ -1956,19 +2015,14 @@ export default function App() {
   };
   startDimensionRef.current = startDimension;
 
-  // Add a geometric (non-dimensional) constraint between two entities and re-solve.
-  // No-op if an equivalent constraint already exists (avoids redundant piles). Like
-  // a dimension, one the solver can't satisfy is rejected (not saved as a dead
-  // constraint) and reported by name instead of silently freezing the geometry.
-  const addGeoConstraint = async (type: "parallel" | "perpendicular" | "equal", a: string, b: string) => {
+  // Add one geometric (non-dimensional) constraint and re-solve. Like a
+  // dimension, one the solver can't satisfy is rejected (not saved as a dead
+  // constraint) and reported by `name` instead of silently freezing the
+  // geometry; a redundant (already-implied) one is dropped.
+  const commitConstraint = async (constraint: SketchConstraint, name: string) => {
     if (!editingSketch) return;
     const sketchId = editingSketch.id;
-    const exists = editingSketch.constraints.some(
-      (c) => c.type === type && ((c.a === a && c.b === b) || (c.a === b && c.b === a)),
-    );
-    if (exists) return;
-    const name = { parallel: "Parallel", perpendicular: "Perpendicular", equal: "Equal" }[type];
-    const candidate = addSketchConstraints(doc, sketchId, [{ id: genId(), type, a, b }]);
+    const candidate = addSketchConstraints(doc, sketchId, [constraint]);
     const { doc: solved, res } = await runSolve(candidate, sketchId);
     if (res) {
       // A contradictory geometric constraint (e.g. forcing a horizontal and a
@@ -1994,6 +2048,86 @@ export default function App() {
     }
     setDoc(solved);
     setSelection([]);
+  };
+
+  // Add a geometric constraint between two entities (no-op if an equivalent one
+  // already exists, to avoid redundant piles).
+  const addGeoConstraint = async (type: "parallel" | "perpendicular" | "equal" | "tangent", a: string, b: string) => {
+    if (!editingSketch) return;
+    const exists = editingSketch.constraints.some(
+      (c) =>
+        (c.type === "parallel" || c.type === "perpendicular" || c.type === "equal" || c.type === "tangent") &&
+        c.type === type &&
+        ((c.a === a && c.b === b) || (c.a === b && c.b === a)),
+    );
+    if (exists) return;
+    const name = { parallel: "Parallel", perpendicular: "Perpendicular", equal: "Equal", tangent: "Tangent" }[type];
+    await commitConstraint({ id: genId(), type, a, b }, name);
+  };
+
+  // Resolve a selected sketch point (uv) to a PointRef: an entity's named vertex
+  // if one sits there, else the sketch origin.
+  const pointRefAt = (uv: Vec2): PointRef | null => {
+    if (!editingSketch) return null;
+    const near = (p: Vec2) => Math.hypot(p[0] - uv[0], p[1] - uv[1]) < 1e-4;
+    for (const e of editingSketch.entities) {
+      if (e.type === "line") {
+        if (near(e.a)) return { entity: e.id, at: "a" };
+        if (near(e.b)) return { entity: e.id, at: "b" };
+      } else if (e.type === "circle" || e.type === "arc") {
+        if (near(e.c)) return { entity: e.id, at: "c" };
+      }
+    }
+    if (Math.hypot(uv[0], uv[1]) < 1e-4) return { origin: true };
+    return null;
+  };
+
+  const samePointRef = (x: PointRef, y: PointRef) =>
+    "origin" in x || "origin" in y ? "origin" in x && "origin" in y : x.entity === y.entity && x.at === y.at;
+
+  // Coincident, dispatched on the selection:
+  //  • one point + one line → the point lies ON the line (point-on-line). This
+  //    is the "select a square's edge + the origin" case (origin pulled onto it),
+  //    and "select a point + an edge" (point attached to the edge).
+  //  • two points → make them coincident.
+  //  • one point → anchor it to the origin.
+  const addCoincident = async () => {
+    const pts = selectedSketchPoints;
+    const lines = selectedSketchLines;
+
+    // Point-on-line: exactly one selected point and one selected line.
+    if (pts.length === 1 && lines.length === 1) {
+      const point = pointRefAt(pts[0]);
+      const line = lines[0].id;
+      if (!point) return;
+      // A point that's an endpoint of the very line it's snapping to is moot.
+      if (!("origin" in point) && point.entity === line) return;
+      const exists = editingSketch?.constraints.some(
+        (c) => c.type === "pointOnLine" && c.line === line && samePointRef(c.point, point),
+      );
+      if (exists) return;
+      await commitConstraint({ id: genId(), type: "pointOnLine", point, line }, "Point on line");
+      return;
+    }
+
+    let a: PointRef | null = null;
+    let b: PointRef | null = null;
+    if (pts.length === 1) {
+      a = pointRefAt(pts[0]);
+      b = { origin: true };
+    } else if (pts.length === 2) {
+      a = pointRefAt(pts[0]);
+      b = pointRefAt(pts[1]);
+    }
+    if (!a || !b) return;
+    if (samePointRef(a, b)) return;
+    const exists = editingSketch?.constraints.some(
+      (c) =>
+        c.type === "coincident" &&
+        ((samePointRef(c.a, a!) && samePointRef(c.b, b!)) || (samePointRef(c.a, b!) && samePointRef(c.b, a!))),
+    );
+    if (exists) return;
+    await commitConstraint({ id: genId(), type: "coincident", a, b }, "Coincident");
   };
 
   // Construction (reference) geometry: with a sketch-entity selection, flip those
@@ -2094,7 +2228,9 @@ export default function App() {
   };
 
   const errorCount =
-    Object.keys(errors).length + Object.keys(resolved.variableErrors).length;
+    Object.keys(errors).length +
+    Object.keys(resolved.variableErrors).length +
+    Object.keys(resolved.variableNameErrors).length;
   const status = fatal
     ? "kernel error"
     : busy
@@ -2273,6 +2409,7 @@ export default function App() {
               variables={doc.variables}
               scope={resolved.scope}
               errors={resolved.variableErrors}
+              nameErrors={resolved.variableNameErrors}
               onAdd={() => {
                 const { doc: next } = addVariable(doc);
                 setDoc(next);
@@ -2552,6 +2689,26 @@ export default function App() {
               >
                 ＝
               </button>
+              <button
+                title="Coincident — a point + a line puts the point on the line; one point anchors it to the origin; two points make them coincident"
+                disabled={
+                  !(
+                    (selectedSketchPoints.length === 1 && selectedSketchLines.length === 1) ||
+                    ((selectedSketchPoints.length === 1 || selectedSketchPoints.length === 2) &&
+                      selectedSketchLines.length === 0)
+                  )
+                }
+                onClick={addCoincident}
+              >
+                ⌖
+              </button>
+              <button
+                title="Tangent — select a line and a circle, or two circles"
+                disabled={!tangentPair}
+                onClick={() => tangentPair && addGeoConstraint("tangent", tangentPair[0].id, tangentPair[1].id)}
+              >
+                ◯⌐
+              </button>
               <div className="sketch-toolbar-sep" />
               <button
                 title={
@@ -2590,14 +2747,12 @@ export default function App() {
               <label data-drag-handle>
                 {dimInput.kind === "radius" ? "Radius" : dimInput.kind === "angle" ? "Angle °" : "Length"}
               </label>
-              <input
-                autoFocus
+              <DimValueInput
                 value={dimInput.value}
-                onChange={(e) => setDimInput((d) => (d ? { ...d, value: e.target.value } : d))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") applyDimension();
-                  else if (e.key === "Escape") setDimInput(null);
-                }}
+                variables={dimVarOptions}
+                onChange={(v) => setDimInput((d) => (d ? { ...d, value: v } : d))}
+                onSubmit={applyDimension}
+                onCancel={() => setDimInput(null)}
               />
               <button onClick={applyDimension}>Set</button>
               <button className="ghost" onClick={() => setDimInput(null)}>

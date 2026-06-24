@@ -2,7 +2,7 @@
 // new Document (immutable updates) so React state and undo/redo stay simple.
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "./featureDefs";
 import { randomSolidColor } from "./colors";
-import { evaluateExpression, type Scope } from "./expression";
+import { evaluateExpression, RESERVED_NAMES, type Scope } from "./expression";
 import {
   angledFrame,
   frameOf,
@@ -33,6 +33,7 @@ import type {
   SketchFeature,
   SweepFeature,
   TransformFeature,
+  Variable,
 } from "./types";
 import type { BooleanOp, ResolvedFeature } from "../kernel/types";
 import { sampleArc } from "./sketchTools";
@@ -470,8 +471,20 @@ function constraintRefsEntity(c: SketchConstraint, entityId: string): boolean {
     case "perpendicular":
     case "equal":
     case "angle":
+    case "tangent":
       return c.a === entityId || c.b === entityId;
-    default:
+    case "coincident": {
+      const refs = (r: typeof c.a) => !("origin" in r) && r.entity === entityId;
+      return refs(c.a) || refs(c.b);
+    }
+    case "pointOnLine":
+      return c.line === entityId || (!("origin" in c.point) && c.point.entity === entityId);
+    case "midpoint":
+      return c.target === entityId || (!("origin" in c.point) && c.point.entity === entityId);
+    case "horizontal":
+    case "vertical":
+    case "distance":
+    case "radius":
       return c.entity === entityId;
   }
 }
@@ -585,10 +598,46 @@ export function setRollbackIndex(doc: Document, index: number): Document {
 
 // --- Variables ------------------------------------------------------------
 
+/** The n-th letters-only name (0→a … 25→z, 26→aa …). Variable names can't
+ *  contain digits, so we can't fall back to `var1`-style numbering. */
+function letterName(n: number): string {
+  let s = "";
+  let k = n + 1;
+  while (k > 0) {
+    k--;
+    s = String.fromCharCode(97 + (k % 26)) + s;
+    k = Math.floor(k / 26);
+  }
+  return s;
+}
+
 export function addVariable(doc: Document): { doc: Document; id: string } {
+  const used = new Set(doc.variables.map((v) => v.name));
+  let i = 0;
+  while (used.has(letterName(i)) || RESERVED_NAMES.has(letterName(i))) i++;
   const id = uid();
-  const variable = { id, name: `var${doc.variables.length + 1}`, expression: "0" };
+  const variable = { id, name: letterName(i), expression: "0" };
   return { doc: { ...doc, variables: [...doc.variables, variable] }, id };
+}
+
+/** Validate a variable's name. Names may contain letters only (no digits,
+ *  spaces, or symbols), must be non-empty, can't collide with a built-in
+ *  constant/function, and must be unique. Returns one error message per
+ *  offending variable id (keyed for the panel to flag the name field). */
+export function validateVariableNames(variables: Variable[]): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const firstByName = new Map<string, string>();
+  for (const v of variables) {
+    const name = v.name;
+    if (name.trim() === "") errors[v.id] = "Name can't be empty";
+    else if (/\s/.test(name)) errors[v.id] = "Name can't contain spaces";
+    else if (/[0-9]/.test(name)) errors[v.id] = "Name can't contain numbers";
+    else if (!/^[A-Za-z]+$/.test(name)) errors[v.id] = "Name can't contain special characters";
+    else if (RESERVED_NAMES.has(name)) errors[v.id] = `"${name}" is a reserved name`;
+    else if (firstByName.has(name)) errors[v.id] = `Duplicate variable name "${name}"`;
+    if (!firstByName.has(name)) firstByName.set(name, v.id);
+  }
+  return errors;
 }
 
 export function updateVariable(
@@ -617,6 +666,8 @@ export interface ResolveResult {
   scope: Scope;
   /** variableId -> error message (cycle / unknown reference / bad expression). */
   variableErrors: Record<string, string>;
+  /** variableId -> error message for an invalid variable *name*. */
+  variableNameErrors: Record<string, string>;
   /** Reference-plane frames (planeId -> frame), for rendering + sketch placement. */
   planeFrames: Map<string, PlaneFrameData>;
 }
@@ -629,7 +680,10 @@ function evaluateVariables(doc: Document): {
 } {
   const scope: Scope = {};
   const errors: Record<string, string> = {};
-  let remaining = doc.variables.filter((v) => v.name.trim() !== "");
+  // Only well-named variables enter scope; an invalid name is flagged on the
+  // name field separately (variableNameErrors) and isn't evaluated.
+  const nameErrors = validateVariableNames(doc.variables);
+  let remaining = doc.variables.filter((v) => !nameErrors[v.id]);
 
   let progressed = true;
   while (remaining.length > 0 && progressed) {
@@ -659,6 +713,7 @@ function evaluateVariables(doc: Document): {
 /** Resolve the active (non-suppressed, pre-rollback) features to numeric params. */
 export function resolveDocument(doc: Document): ResolveResult {
   const { scope, errors: variableErrors } = evaluateVariables(doc);
+  const variableNameErrors = validateVariableNames(doc.variables);
   const planeFrames = resolvePlanes(doc, scope);
 
   const active = doc.features
@@ -797,5 +852,5 @@ export function resolveDocument(doc: Document): ResolveResult {
     }
   }
 
-  return { features, errors, scope, variableErrors, planeFrames };
+  return { features, errors, scope, variableErrors, variableNameErrors, planeFrames };
 }

@@ -21,6 +21,14 @@ export type SketchEntity =
   | { type: "spline"; id: string; points: Vec2[]; construction?: boolean }
   | { type: "point"; id: string; p: Vec2; construction?: boolean };
 
+/** A reference to a specific point in a sketch: a named vertex of an entity
+ *  (a line's "a"/"b" end, a circle/arc's "c" centre), or the sketch origin.
+ *  Resolved to live coordinates at solve time, so it survives re-solves that
+ *  move the geometry. */
+export type PointRef =
+  | { entity: string; at: "a" | "b" | "c" }
+  | { origin: true };
+
 /** Dimensional/geometric constraints over sketch entities (solved by planegcs).
  *  `entity`/`a`/`b` reference SketchEntity ids. */
 export type SketchConstraint =
@@ -31,7 +39,16 @@ export type SketchConstraint =
   | { id: string; type: "equal"; a: string; b: string }
   | { id: string; type: "distance"; entity: string; value: number }
   | { id: string; type: "radius"; entity: string; value: number }
-  | { id: string; type: "angle"; a: string; b: string; value: number };
+  | { id: string; type: "angle"; a: string; b: string; value: number }
+  // Tangent between a line+circle or two circles (entity ids).
+  | { id: string; type: "tangent"; a: string; b: string }
+  // Two points made coincident (one may be the sketch origin, which anchors
+  // the other point there).
+  | { id: string; type: "coincident"; a: PointRef; b: PointRef }
+  // A point (entity vertex or origin) constrained to lie on a line entity.
+  | { id: string; type: "pointOnLine"; point: PointRef; line: string }
+  // A point constrained to the midpoint of a line, or the mid-arc point of an arc.
+  | { id: string; type: "midpoint"; point: PointRef; target: string };
 
 interface FeatureBase {
   id: string;
