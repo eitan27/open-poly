@@ -108,7 +108,6 @@ export function DimensionOverlay({
       const api = viewApiRef.current;
       if (api) {
         const toScreen = (p: Vec2): Pt => api.worldToScreen(uvToWorld(frame, p[0], p[1]));
-        const sCentroid = toScreen(centroid);
 
         for (const spec of specs) {
           const label = labelNodes.current.get(spec.id);
@@ -131,7 +130,23 @@ export function DimensionOverlay({
             const u = unit(sub(sb, sa));
             const n = unit(perp(u));
             const mid = scale(add(sa, sb), 0.5);
-            const sign = n.x * (mid.x - sCentroid.x) + n.y * (mid.y - sCentroid.y) >= 0 ? 1 : -1;
+            // Choose which side the dimension sits on in UV (sketch) space, which
+            // is camera-independent — so the choice is identical every frame and
+            // can't flip with sub-pixel projection jitter. (Doing this in screen
+            // space made symmetric sketches, where the line sits ~on the centroid,
+            // flicker between both sides.) A tie — centroid exactly on the line —
+            // resolves to a deterministic +1. Then map that fixed UV outward
+            // direction onto the screen normal's sign by projecting a unit step.
+            const midUv: Vec2 = [(spec.a[0] + spec.b[0]) / 2, (spec.a[1] + spec.b[1]) / 2];
+            let nUvx = -(spec.b[1] - spec.a[1]);
+            let nUvy = spec.b[0] - spec.a[0];
+            const nUvLen = Math.hypot(nUvx, nUvy) || 1;
+            nUvx /= nUvLen;
+            nUvy /= nUvLen;
+            const sideUv = nUvx * (midUv[0] - centroid[0]) + nUvy * (midUv[1] - centroid[1]) >= 0 ? 1 : -1;
+            const sOut = toScreen([midUv[0] + nUvx * sideUv, midUv[1] + nUvy * sideUv]);
+            const screenOut = sub(sOut, mid);
+            const sign = n.x * screenOut.x + n.y * screenOut.y >= 0 ? 1 : -1;
             const d1 = add(sa, scale(n, OFFSET * sign));
             const d2 = add(sb, scale(n, OFFSET * sign));
             setLine(g, "ext1", add(sa, scale(n, EXT_GAP * sign)), add(sa, scale(n, (OFFSET + EXT_OVERSHOOT) * sign)));
