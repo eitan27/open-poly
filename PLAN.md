@@ -307,8 +307,10 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
     also as a closed-region boundary** — `detectSketchRegions` treats **arcs and
     splines** as graph edges (curve tangent for the angular traversal, tessellated
     polyline for the outline), so a loop closed by a curve becomes an extrudable
-    region. *(The face is faceted from the polyline — same as circles today; true
-    curved edges in the kernel profile is a later enhancement.)*
+    region. *(Extrude/revolve still build the face from the tessellated polyline —
+    faceted, same as circles. **Sweep & loft now rebuild the profile from exact
+    curve segments** (`regionProfileSegments`), so a circular/arc cross-section is
+    smooth; extending that to extrude/revolve is a later enhancement.)*
   - **TODO:**
   - Trim/extend.
   - **Cancel a sketch edit (discard changes)** — when re-editing an *existing*
@@ -623,8 +625,12 @@ this — datum / reference-plane sketches stay anchored to their datum.
   entity** (line / arc / **spline**, possibly in a different sketch) — `⊃ Sweep`
   enables when a region + a path entity are selected. Kernel `sweepBody` uses raw
   OCCT `BRepOffsetAPI_MakePipeShell` (profile placed perpendicular to the spine
-  start; B-spline spine when the path is smooth) with **history-based naming**
-  (one side face per profile edge via `Generated`, + `start`/`end` caps).
+  start). The **profile is rebuilt from exact curve segments** (so a circular/arc
+  cross-section sweeps as a smooth tube, not a 48-facet polygon) and a **spline
+  path's spine is rebuilt from the exact cubic-Bézier spans the sketch draws**
+  (`splineBeziers`; an arc path fits one interpolating B-spline) — so the solid
+  follows the drawn curve exactly. **History-based naming** (one side face per
+  profile edge via `Generated`, + `start`/`end` caps).
   *(Twist / multiple profiles along the path: future.)*
 - **Loft — ✅ DONE.** A `LoftFeature` lofts through **2+ sketch regions** (ordered
   by timeline position) — `⌧ Loft` enables when ≥2 regions are selected. Kernel
@@ -634,8 +640,9 @@ this — datum / reference-plane sketches stay anchored to their datum.
 - **Spline sketch tool — ✅ DONE** (was UI/UX backlog #8). A `spline`
   `SketchEntity` (smooth Catmull-Rom through control points): the `∿` sketch tool
   (click points, **Enter** to finish), rendered/snapped/measured; an open curve
-  (not a region boundary) used mainly as a **sweep path** (kernel builds a real
-  B-spline via `smoothSplineTo`).
+  used mainly as a **sweep path**. The on-screen curve and the swept spine share
+  one definition — `splineBeziers` (the Catmull-Rom curve as exact cubic-Bézier
+  spans) — so the solid's centerline matches the drawn path exactly.
 - **Revolve — ✅ DONE.** A `RevolveFeature` revolves a **sketch region** around
   an **axis line** (both in the same sketch) by an expression-backed **angle**
   (default 360°). `⟳ Revolve` enables when a region + a line in one sketch are
