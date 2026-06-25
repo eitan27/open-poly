@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectSketchRegions, regionsEnclosedBy } from "./regions";
+import { detectSketchRegions, regionProfileSegments, regionsEnclosedBy } from "./regions";
 import type { SketchEntity, Vec2 } from "./types";
 
 let n = 0;
@@ -133,5 +133,57 @@ describe("regionsEnclosedBy", () => {
     const ids = new Set(ents.map((l) => l.id));
     const found = regionsEnclosedBy(ents, ids);
     expect(found.map((r) => Math.round(r.area * 100) / 100).sort((a, b) => a - b)).toEqual([4, 4, 4]);
+  });
+});
+
+describe("regionProfileSegments", () => {
+  const seg = (ents: SketchEntity[]) => {
+    const r = detectSketchRegions(ents)[0];
+    return regionProfileSegments(r, ents);
+  };
+
+  it("turns a lone circle into two half-arcs forming a true circle", () => {
+    const ents: SketchEntity[] = [{ type: "circle", id: "c", c: [3, 1], r: 2 }];
+    const res = seg(ents)!;
+    expect(res.start).toEqual([5, 1]); // c + (r, 0)
+    expect(res.segments).toEqual([
+      { kind: "arc", mid: [3, 3], to: [1, 1] }, // through the top
+      { kind: "arc", mid: [3, -1], to: [5, 1] }, // through the bottom, back to start
+    ]);
+  });
+
+  it("chains a line/arc loop into one closed, oriented sequence", () => {
+    // A half-disc: diameter line from (-2,0)→(2,0) + a semicircle arc back.
+    const ents: SketchEntity[] = [
+      { type: "line", id: "l", a: [-2, 0], b: [2, 0] },
+      { type: "arc", id: "a", c: [0, 0], r: 2, start: 0, end: Math.PI },
+    ];
+    const res = seg(ents)!;
+    expect(res.segments).toHaveLength(2);
+    // Walk the chain and confirm it returns to the start.
+    let cur = res.start;
+    for (const s of res.segments) cur = s.to;
+    expect(Math.hypot(cur[0] - res.start[0], cur[1] - res.start[1])).toBeLessThan(1e-9);
+    expect(res.segments.some((s) => s.kind === "arc")).toBe(true);
+  });
+
+  it("keeps a pure polygon as exact line segments", () => {
+    const ents: SketchEntity[] = [
+      { type: "line", id: "a", a: [0, 0], b: [2, 0] },
+      { type: "line", id: "b", a: [2, 0], b: [2, 2] },
+      { type: "line", id: "c", a: [2, 2], b: [0, 2] },
+      { type: "line", id: "d", a: [0, 2], b: [0, 0] },
+    ];
+    const res = seg(ents)!;
+    expect(res.segments).toHaveLength(4);
+    expect(res.segments.every((s) => s.kind === "line")).toBe(true);
+  });
+
+  it("falls back (undefined) when the boundary contains a spline", () => {
+    const ents: SketchEntity[] = [
+      { type: "spline", id: "s", points: [[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]] },
+    ];
+    const r = detectSketchRegions(ents)[0];
+    expect(r ? regionProfileSegments(r, ents) : undefined).toBeUndefined();
   });
 });

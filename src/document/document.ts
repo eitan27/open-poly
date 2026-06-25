@@ -13,7 +13,7 @@ import {
   type PlaneFrameData,
   type SketchPlaneRef,
 } from "./planes";
-import { detectSketchRegions } from "./regions";
+import { detectSketchRegions, regionProfileSegments } from "./regions";
 import type {
   BooleanFeature,
   Document,
@@ -827,10 +827,13 @@ export function resolveDocument(doc: Document): ResolveResult {
         else if (pe.type === "spline") { points = pe.points; smooth = true; }
         else throw new Error("sweep: path must be a line, arc, or spline");
         if (points.length < 2) throw new Error("sweep: path needs at least 2 points");
+        // Prefer exact boundary curves so a circular/arc cross-section sweeps as
+        // a smooth tube, not a faceted polygon; fall back to the polyline outline.
+        const curves = regionProfileSegments(region, sketch.entities);
         features.push({
           id: f.id,
           type: "sweep",
-          profile: { kind: "sketchRegion", outline: region.outline, frame },
+          profile: { kind: "sketchRegion", outline: region.outline, frame, ...(curves && { segmentStart: curves.start, segments: curves.segments }) },
           path: { points, smooth, frame: frameOf(pathSketch.plane, planeFrames) },
         });
       } else if (f.type === "loft") {

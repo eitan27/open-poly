@@ -8,6 +8,7 @@
 // boundaries are emitted as fine polylines (the kernel builds faceted faces, same
 // as it already does for circles).
 import type { SketchEntity, Vec2 } from "./types";
+import type { ProfileSegment } from "../kernel/types";
 import { sampleArc, sampleSpline } from "./sketchTools";
 
 export interface SketchRegion {
@@ -180,6 +181,74 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
   }
 
   return regions;
+}
+
+/** Rebuild a region's boundary as an ordered, oriented list of exact curve
+ *  segments (lines + arcs), so a sweep/loft profile is a TRUE circle/arc rather
+ *  than the faceted `outline` polyline. Returns `undefined` when the boundary
+ *  can't be expressed exactly (e.g. it contains a spline, an entity is missing,
+ *  or the edges don't chain into a single closed loop) — callers fall back to
+ *  the polyline. A lone circle becomes two half-arcs (a full circle can't be one
+ *  three-point arc). */
+export function regionProfileSegments(
+  region: SketchRegion,
+  entities: SketchEntity[],
+): { start: Vec2; segments: ProfileSegment[] } | undefined {
+  const byId = new Map(entities.map((e) => [e.id, e]));
+  const ents = region.entityIds.map((id) => byId.get(id));
+  if (ents.some((e) => !e)) return undefined;
+  const found = ents as SketchEntity[];
+
+  // A lone circle: two half-arcs through the top and bottom of the circle.
+  if (found.length === 1 && found[0].type === "circle") {
+    const { c, r } = found[0];
+    return {
+      start: [c[0] + r, c[1]],
+      segments: [
+        { kind: "arc", mid: [c[0], c[1] + r], to: [c[0] - r, c[1]] },
+        { kind: "arc", mid: [c[0], c[1] - r], to: [c[0] + r, c[1]] },
+      ],
+    };
+  }
+
+  // Line/arc loops: collect each edge's endpoints (and an on-curve mid for arcs),
+  // then chain them end-to-end into one closed loop.
+  type Edge = { from: Vec2; to: Vec2; mid?: Vec2 };
+  const edges: Edge[] = [];
+  for (const e of found) {
+    if (e.type === "line") edges.push({ from: e.a, to: e.b });
+    else if (e.type === "arc") {
+      let sweep = e.end - e.start;
+      while (sweep <= 0) sweep += 2 * Math.PI; // arcs run CCW from start to end
+      const at = (t: number): Vec2 => [e.c[0] + e.r * Math.cos(t), e.c[1] + e.r * Math.sin(t)];
+      edges.push({ from: at(e.start), to: at(e.end), mid: at(e.start + sweep / 2) });
+    } else return undefined; // spline/point → not exactly expressible here
+  }
+
+  const eps = 1e-4;
+  const eq = (p: Vec2, q: Vec2) => Math.hypot(p[0] - q[0], p[1] - q[1]) < eps;
+  const used = new Array(edges.length).fill(false);
+  used[0] = true;
+  const start = edges[0].from;
+  const chain: Edge[] = [edges[0]];
+  let cur = edges[0].to;
+  for (let n = 1; n < edges.length; n++) {
+    let next: Edge | undefined;
+    for (let i = 0; i < edges.length; i++) {
+      if (used[i]) continue;
+      if (eq(edges[i].from, cur)) { used[i] = true; next = edges[i]; break; }
+      if (eq(edges[i].to, cur)) { used[i] = true; next = { from: edges[i].to, to: edges[i].from, mid: edges[i].mid }; break; }
+    }
+    if (!next) return undefined; // a gap → not a single chain
+    chain.push(next);
+    cur = next.to;
+  }
+  if (!eq(cur, start)) return undefined; // not closed
+
+  return {
+    start,
+    segments: chain.map((e) => (e.mid ? { kind: "arc", mid: e.mid, to: e.to } : { kind: "line", to: e.to })),
+  };
 }
 
 /** The regions (from `detectSketchRegions`) entirely bounded by `entityIds` —

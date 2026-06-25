@@ -42,11 +42,23 @@ export interface ResolvedFrame {
   normal: [number, number, number];
 }
 
+/** An ordered, oriented boundary segment of a sketch-region profile, used to
+ *  rebuild the profile with TRUE curves so a circular/arc cross-section sweeps as
+ *  a smooth tube instead of a faceted polygon. `to` is the segment's end point in
+ *  loop order; an arc also carries a `mid` point lying on the curve (so it's
+ *  built orientation-free via a three-point arc). The loop starts at the
+ *  profile's `segmentStart`. */
+export type ProfileSegment =
+  | { kind: "line"; to: [number, number] }
+  | { kind: "arc"; mid: [number, number]; to: [number, number] };
+
 /** A profile to extrude, resolved for the kernel: either a baked sketch outline
  *  (closed loop in u,v on a frame) or a reference to a face of a running body
- *  (resolved against the body set inside the worker, where the B-rep lives). */
+ *  (resolved against the body set inside the worker, where the B-rep lives).
+ *  `segments`/`segmentStart`, when present, give the same loop as exact curves
+ *  (lines + arcs) — the kernel prefers them over the faceted `outline`. */
 export type ResolvedProfile =
-  | { kind: "sketchRegion"; outline: [number, number][]; frame: ResolvedFrame }
+  | { kind: "sketchRegion"; outline: [number, number][]; frame: ResolvedFrame; segmentStart?: [number, number]; segments?: ProfileSegment[] }
   // `faceName` is the persistent topological name (preferred); `center` is the
   // centroid fallback for faces that don't have a name yet.
   | { kind: "bodyFace"; sourceId: string; faceName?: string; center: [number, number, number] };
