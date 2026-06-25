@@ -236,8 +236,18 @@ function planeOf(f: ResolvedFrame): Plane {
   return new Plane(f.origin, f.uAxis, vcross(f.uAxis as V3, f.vAxis as V3));
 }
 
-/** Build a closed profile Drawing from a baked outline (uv, on its own frame). */
-function profileDrawing(outline: [number, number][]) {
+/** Build a closed profile Drawing for a region. Prefers the exact curve
+ *  `segments` (true lines + arcs → a smooth circular/arc cross-section) and
+ *  falls back to the faceted polyline `outline`. */
+function profileDrawing(profile: RegionProfile) {
+  if (profile.segments && profile.segmentStart) {
+    let pen = draw().movePointerTo(profile.segmentStart);
+    for (const s of profile.segments) {
+      pen = s.kind === "line" ? pen.lineTo(s.to) : pen.threePointsArcTo(s.to, s.mid);
+    }
+    return pen.close();
+  }
+  const outline = profile.outline;
   if (outline.length < 3) throw new Error("profile needs at least 3 points");
   let pen = draw().movePointerTo(outline[0]);
   for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
@@ -282,7 +292,7 @@ function sweepBody(profile: RegionProfile, path: { points: [number, number][]; s
   const ref: V3 = Math.abs(tangent[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
   const uAxis = vunit(vcross(ref, tangent));
   // MakePipeShell sweeps a profile WIRE (then MakeSolid caps it).
-  const profileWire = (profileDrawing(profile.outline).sketchOnPlane(new Plane(start, uAxis, tangent)) as unknown as Sketch).wire;
+  const profileWire = (profileDrawing(profile).sketchOnPlane(new Plane(start, uAxis, tangent)) as unknown as Sketch).wire;
 
   const builder = new oc.BRepOffsetAPI_MakePipeShell(spineWire.wrapped);
   builder.Add_1(profileWire.wrapped, false, true);
@@ -312,7 +322,7 @@ function loftBody(profiles: RegionProfile[], id: string): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   const wires = profiles.map(
-    (p) => (profileDrawing(p.outline).sketchOnPlane(planeOf(p.frame)) as unknown as Sketch).wire,
+    (p) => (profileDrawing(p).sketchOnPlane(planeOf(p.frame)) as unknown as Sketch).wire,
   );
   const builder = new oc.BRepOffsetAPI_ThruSections(true, false, 1e-6); // solid, smooth
   for (const w of wires) builder.AddWire(w.wrapped);
