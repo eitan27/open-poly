@@ -5,7 +5,7 @@
 import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
 import {
-  setOC, makeBaseBox, makeCylinder, makeSphere, draw, Plane,
+  setOC, makeBaseBox, makeCylinder, makeSphere, draw, drawPointsInterpolation, Plane,
   cast, getOC, Vector, HASH_CODE_MAX, exportSTEP, measureVolume,
 } from "replicad";
 import type { Shape3D, Face, Sketch } from "replicad";
@@ -276,13 +276,21 @@ function sweepBody(profile: RegionProfile, path: { points: [number, number][]; s
   if (path.points.length < 2) throw new Error("sweep: path needs at least 2 points");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
-  // Spine wire from the path points (open drawing → wire).
+  // Spine wire from the path points (open drawing → wire). For a smooth path,
+  // fit ONE continuous interpolating spline through all the samples — chaining
+  // per-segment `smoothSplineTo` has no global view of the points and collapses
+  // to a near-polyline (straight segments + kinks). A straight path stays a
+  // polyline.
   const pathPlane = planeOf(path.frame);
-  let pen = draw().movePointerTo(path.points[0]);
-  for (let i = 1; i < path.points.length; i++) {
-    pen = path.smooth ? pen.smoothSplineTo(path.points[i]) : pen.lineTo(path.points[i]);
+  let spineDrawing;
+  if (path.smooth && path.points.length >= 3) {
+    spineDrawing = drawPointsInterpolation(path.points);
+  } else {
+    let pen = draw().movePointerTo(path.points[0]);
+    for (let i = 1; i < path.points.length; i++) pen = pen.lineTo(path.points[i]);
+    spineDrawing = pen.done();
   }
-  const spineWire = (pen.done().sketchOnPlane(pathPlane) as unknown as Sketch).wire;
+  const spineWire = (spineDrawing.sketchOnPlane(pathPlane) as unknown as Sketch).wire;
 
   // Place the profile at the spine start, perpendicular to the start tangent
   // (a frame with normal = tangent), then sweep it along the spine.

@@ -36,7 +36,7 @@ import type {
   Variable,
 } from "./types";
 import type { BooleanOp, ResolvedFeature } from "../kernel/types";
-import { sampleArc } from "./sketchTools";
+import { sampleArc, sampleSpline } from "./sketchTools";
 
 function uid(): string {
   return crypto.randomUUID();
@@ -822,9 +822,12 @@ export function resolveDocument(doc: Document): ResolveResult {
         if (!pe) throw new Error("sweep: path entity not found");
         let points: [number, number][];
         let smooth = false;
+        // For curved paths, sample the SAME curve the sketch displays (so the
+        // swept solid follows the path the user sees) and flag it `smooth` so the
+        // kernel fits one continuous spine through the samples.
         if (pe.type === "line") points = [pe.a, pe.b];
         else if (pe.type === "arc") { points = sampleArc(pe.c, pe.r, pe.start, pe.end, 32); smooth = true; }
-        else if (pe.type === "spline") { points = pe.points; smooth = true; }
+        else if (pe.type === "spline") { points = sampleSpline(pe.points); smooth = true; }
         else throw new Error("sweep: path must be a line, arc, or spline");
         if (points.length < 2) throw new Error("sweep: path needs at least 2 points");
         // Prefer exact boundary curves so a circular/arc cross-section sweeps as
