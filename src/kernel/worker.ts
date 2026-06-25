@@ -272,18 +272,22 @@ function namesFromHistory(shape: Shape3D, id: string, caps: Map<number, string>,
  *  B-spline when `smooth`, else a polyline). Built on raw OCCT
  *  `BRepOffsetAPI_MakePipeShell` so the result's faces are named from history:
  *  one side face per profile edge (`Generated`) + the two caps. */
-function sweepBody(profile: RegionProfile, path: { points: [number, number][]; smooth: boolean; frame: ResolvedFrame }, id: string): NamedShape {
+function sweepBody(profile: RegionProfile, path: Extract<ResolvedFeature, { type: "sweep" }>["path"], id: string): NamedShape {
   if (path.points.length < 2) throw new Error("sweep: path needs at least 2 points");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
-  // Spine wire from the path points (open drawing → wire). For a smooth path,
-  // fit ONE continuous interpolating spline through all the samples — chaining
-  // per-segment `smoothSplineTo` has no global view of the points and collapses
-  // to a near-polyline (straight segments + kinks). A straight path stays a
-  // polyline.
+  // Spine wire from the path (open drawing → wire). A spline path is rebuilt
+  // from its exact cubic-Bézier spans, so the spine is geometrically identical
+  // to the curve the sketch shows. An arc fits ONE continuous interpolating
+  // spline through its samples (chaining per-segment `smoothSplineTo` has no
+  // global view and collapses to a near-polyline). A line stays a polyline.
   const pathPlane = planeOf(path.frame);
   let spineDrawing;
-  if (path.smooth && path.points.length >= 3) {
+  if (path.beziers && path.beziers.length) {
+    let pen = draw().movePointerTo(path.points[0]);
+    for (const b of path.beziers) pen = pen.cubicBezierCurveTo(b.end, b.c1, b.c2);
+    spineDrawing = pen.done();
+  } else if (path.smooth && path.points.length >= 3) {
     spineDrawing = drawPointsInterpolation(path.points);
   } else {
     let pen = draw().movePointerTo(path.points[0]);
