@@ -36,7 +36,7 @@ import type {
   Variable,
 } from "./types";
 import type { BooleanOp, ResolvedFeature } from "../kernel/types";
-import { sampleArc, sampleSpline } from "./sketchTools";
+import { sampleArc, splineBeziers } from "./sketchTools";
 
 function uid(): string {
   return crypto.randomUUID();
@@ -822,12 +822,19 @@ export function resolveDocument(doc: Document): ResolveResult {
         if (!pe) throw new Error("sweep: path entity not found");
         let points: [number, number][];
         let smooth = false;
-        // For curved paths, sample the SAME curve the sketch displays (so the
-        // swept solid follows the path the user sees) and flag it `smooth` so the
-        // kernel fits one continuous spine through the samples.
+        // A spline path carries its exact cubic-Bézier spans (the SAME curve the
+        // sketch draws — see `splineBeziers`), so the spine matches the sketch
+        // exactly. An arc is sampled + `smooth` (kernel fits a B-spline); a line
+        // is a plain polyline.
+        let beziers: { c1: [number, number]; c2: [number, number]; end: [number, number] }[] | undefined;
         if (pe.type === "line") points = [pe.a, pe.b];
         else if (pe.type === "arc") { points = sampleArc(pe.c, pe.r, pe.start, pe.end, 32); smooth = true; }
-        else if (pe.type === "spline") { points = sampleSpline(pe.points); smooth = true; }
+        else if (pe.type === "spline") {
+          const { start, spans } = splineBeziers(pe.points);
+          points = [start, ...spans.map((s) => s.end)];
+          beziers = spans;
+          smooth = true;
+        }
         else throw new Error("sweep: path must be a line, arc, or spline");
         if (points.length < 2) throw new Error("sweep: path needs at least 2 points");
         // Prefer exact boundary curves so a circular/arc cross-section sweeps as
@@ -837,7 +844,7 @@ export function resolveDocument(doc: Document): ResolveResult {
           id: f.id,
           type: "sweep",
           profile: { kind: "sketchRegion", outline: region.outline, frame, ...(curves && { segmentStart: curves.start, segments: curves.segments }) },
-          path: { points, smooth, frame: frameOf(pathSketch.plane, planeFrames) },
+          path: { points, smooth, beziers, frame: frameOf(pathSketch.plane, planeFrames) },
         });
       } else if (f.type === "loft") {
         if (f.profiles.length < 2) throw new Error("loft: needs at least 2 sections");

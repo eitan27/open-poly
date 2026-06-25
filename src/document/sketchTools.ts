@@ -103,23 +103,48 @@ export function loopSegments(points: Vec2[]): [Vec2, Vec2][] {
 /** Tessellate a smooth (Catmull-Rom) spline through `points` into a polyline,
  *  for sketch rendering/preview. The kernel builds the actual B-spline, so this
  *  is just a visual approximation of the same control points. */
-export function sampleSpline(points: Vec2[], segsPerSpan = 16): Vec2[] {
-  if (points.length < 3) return points.slice();
-  const out: Vec2[] = [points[0]];
+/** One cubic-Bézier span of a spline: control points `c1`/`c2` and the span end
+ *  (its start is the previous span's end, or the curve start for the first). */
+export interface SplineBezier { c1: Vec2; c2: Vec2; end: Vec2; }
+
+/** The canonical through-point spline as cubic-Bézier spans — the SINGLE source
+ *  of truth shared by the on-screen curve (`sampleSpline`) and the swept spine
+ *  the kernel builds, so the swept solid follows exactly the path that's drawn.
+ *  A uniform Catmull-Rom (tension 0.5) with clamped ends (first/last control
+ *  point doubled): a Catmull-Rom segment P1→P2 is exactly the cubic Bézier with
+ *  controls P1, P1+(P2−P0)/6, P2−(P3−P1)/6, P2 (same endpoints and tangents). */
+export function splineBeziers(points: Vec2[]): { start: Vec2; spans: SplineBezier[] } {
+  const spans: SplineBezier[] = [];
   for (let i = 0; i < points.length - 1; i++) {
     const p0 = points[i - 1] ?? points[i];
     const p1 = points[i];
     const p2 = points[i + 1];
     const p3 = points[i + 2] ?? points[i + 1];
+    spans.push({
+      c1: [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6],
+      c2: [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6],
+      end: p2,
+    });
+  }
+  return { start: points[0], spans };
+}
+
+export function sampleSpline(points: Vec2[], segsPerSpan = 16): Vec2[] {
+  if (points.length < 3) return points.slice();
+  const { start, spans } = splineBeziers(points);
+  const out: Vec2[] = [start];
+  let p0 = start;
+  for (const { c1, c2, end } of spans) {
     for (let s = 1; s <= segsPerSpan; s++) {
       const t = s / segsPerSpan;
-      const t2 = t * t;
-      const t3 = t2 * t;
-      // Catmull-Rom basis (tension 0.5).
-      const x = 0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3);
-      const y = 0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3);
-      out.push([x, y]);
+      const mt = 1 - t;
+      const a = mt * mt * mt, b = 3 * mt * mt * t, c = 3 * mt * t * t, d = t * t * t;
+      out.push([
+        a * p0[0] + b * c1[0] + c * c2[0] + d * end[0],
+        a * p0[1] + b * c1[1] + c * c2[1] + d * end[1],
+      ]);
     }
+    p0 = end;
   }
   return out;
 }
