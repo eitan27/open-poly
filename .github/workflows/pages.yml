@@ -1,7 +1,7 @@
 name: Deploy landing page to GitHub Pages
 
 # Publishes the static landing page in `landing/` to GitHub Pages.
-# Pages must be enabled with "Source: GitHub Actions" in the repo settings.
+# Enable Pages: repo Settings → Pages → Build and deployment → Source → "GitHub Actions"
 
 on:
   push:
