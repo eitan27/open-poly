@@ -192,33 +192,10 @@
           background: #3a3a3c;
         }
       }
-      .window__canvas {
-        position: relative;
-        aspect-ratio: 16 / 9;
-        display: grid;
-        place-items: center;
-        background: radial-gradient(
-            120% 120% at 50% 0%,
-            color-mix(in srgb, var(--accent) 16%, transparent),
-            transparent 60%
-          ),
-          var(--bg-soft);
-        overflow: hidden;
-      }
-      .window__canvas svg {
-        width: 46%;
-        max-width: 360px;
-        filter: drop-shadow(0 24px 40px rgba(0, 0, 0, 0.28));
-      }
-      .grid-lines {
-        position: absolute;
-        inset: 0;
-        background-image: linear-gradient(var(--hairline) 1px, transparent 1px),
-          linear-gradient(90deg, var(--hairline) 1px, transparent 1px);
-        background-size: 44px 44px;
-        mask-image: radial-gradient(closest-side, #000 60%, transparent);
-        -webkit-mask-image: radial-gradient(closest-side, #000 60%, transparent);
-        opacity: 0.5;
+      .window__shot {
+        display: block;
+        width: 100%;
+        height: auto;
       }
 
       /* ---------- Features ---------- */
@@ -320,29 +297,11 @@
           <span class="dot"></span>
           <span class="dot"></span>
         </div>
-        <div class="window__canvas">
-          <div class="grid-lines"></div>
-          <svg viewBox="0 0 200 200" aria-hidden="true">
-            <defs>
-              <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0" stop-color="#5ea0ff" />
-                <stop offset="1" stop-color="#0071e3" />
-              </linearGradient>
-              <linearGradient id="left" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#0a64c9" />
-                <stop offset="1" stop-color="#064a98" />
-              </linearGradient>
-              <linearGradient id="right" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#3a86ec" />
-                <stop offset="1" stop-color="#0a64c9" />
-              </linearGradient>
-            </defs>
-            <!-- isometric cube -->
-            <polygon points="100,20 175,62 100,104 25,62" fill="url(#top)" />
-            <polygon points="25,62 100,104 100,188 25,146" fill="url(#left)" />
-            <polygon points="175,62 100,104 100,188 175,146" fill="url(#right)" />
-          </svg>
-        </div>
+        <img
+          class="window__shot"
+          src="preview/app.png"
+          alt="Open Poly running in the browser — a 3D box on the modeling canvas with the timeline and toolbar"
+        />
       </div>
     </section>
 
