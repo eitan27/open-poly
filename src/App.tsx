@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type ReactNode } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
   addBoolean,
@@ -11,6 +11,8 @@ import {
   addPlane,
   addRevolve,
   addSweep,
+  addDerivedOp,
+  setDerivedOffsetDistance,
   addSketch,
   addSketchConstraints,
   addSketchEntities,
@@ -37,8 +39,16 @@ import {
   updateParam,
   updateVariable,
 } from "./document/document";
+import {
+  applyDerivedToSketch,
+  projectedEntityFromPolyline,
+  projectedPointEntity,
+  sameProjectedEntities,
+} from "./document/derived";
 import { DEFAULT_SOLID_COLOR } from "./document/colors";
 import type {
+  DerivedOp,
+  ProjectRef,
   Document,
   ExtrudeExtent,
   ExtrudeProfile,
@@ -47,6 +57,7 @@ import type {
   PlaneFeature,
   PlaneMethod,
   PointRef,
+  RevolveAxis,
   SketchConstraint,
   SketchEntity,
   SketchFeature,
@@ -56,7 +67,7 @@ import type {
 import type { BooleanOp, MeshedEdges, MeshedFaces } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
-import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
+import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, worldToUv, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
 import { evaluateExpression } from "./document/expression";
 import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
@@ -64,15 +75,22 @@ import { listDocs, saveDoc } from "./storage/db";
 import {
   arcFrom3,
   circleFrom3,
+  detectSingleChain,
+  fitProjectedPolyline,
   loopSegments,
+  mirrorEntity,
+  offsetChain,
   rectangleCorners,
   rectangleFromCenter,
   regularPolygon,
+  type ChainEdge,
+  type FittedProjection,
+  type OffsetPrimitive,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
 import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
-import { ConstructionIcon, ParallelIcon } from "./ui/icons";
+import { ConstructionIcon, OffsetIcon, ParallelIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { DraggableDialog } from "./ui/DraggableDialog";
 import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
@@ -87,6 +105,7 @@ import {
   type DatumId,
   type FeatureMesh,
   type GhostMesh,
+  type RevolveAxisPick,
   type Selection,
   type SelectionFilter,
   type SketchTool,
@@ -335,8 +354,8 @@ const DATUM_ROWS: { id: DatumId; kind: string; label: string }[] = [
   { id: "plane-right", kind: "Plane", label: "Right" },
 ];
 
-const SKETCH_TOOLS: { tool: SketchTool; label: string; title: string }[] = [
-  { tool: "select", label: "↖", title: "Select (V)" },
+const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; title: string }[] = [
+  { tool: "select", label: "↖", title: "Select (S)" },
   { tool: "line", label: "╱", title: "Line (L)" },
   { tool: "rect-corner", label: "▭", title: "Rectangle: 2 corners (R)" },
   { tool: "rect-center", label: "⊞", title: "Rectangle: center + corner (Shift+R)" },
@@ -344,8 +363,34 @@ const SKETCH_TOOLS: { tool: SketchTool; label: string; title: string }[] = [
   { tool: "circle-3p", label: "◔", title: "Circle: 3 points (Shift+C)" },
   { tool: "polygon", label: "⬢", title: "Regular polygon (P)" },
   { tool: "arc-3p", label: "⌒", title: "Arc: 3 points (A)" },
-  { tool: "spline", label: "∿", title: "Spline (S): click points, Enter to finish" },
+  { tool: "spline", label: "∿", title: "Spline (Shift+S): click points, Esc to finish" },
+  { tool: "offset", label: <OffsetIcon />, title: "Offset (O): select a single chain of edges, then drag / type the distance" },
+  { tool: "mirror", label: "◫", title: "Mirror (M): click a line to arm the mirror axis, then click entities to mirror; Enter commits, Esc cancels" },
+  { tool: "project", label: "⧉", title: "Project / Convert (U): click body edges & vertices to project them onto the sketch; Enter commits, Esc cancels" },
+  { tool: "text", label: "T", title: "Text (T): click to place, then type the text & height; Enter commits, Esc cancels" },
 ];
+
+/** Turn a raw offset primitive into a committable SketchEntity (fresh id). */
+function offsetPrimToEntity(p: OffsetPrimitive, construction: boolean, id = genId()): SketchEntity {
+  const base = construction ? { construction: true as const } : {};
+  if (p.type === "line") return { type: "line", id, a: p.a, b: p.b, ...base };
+  if (p.type === "circle") return { type: "circle", id, c: p.c, r: p.r, ...base };
+  return { type: "arc", id, c: p.c, r: p.r, start: p.start, end: p.end, ...base };
+}
+
+/** Turn a fitted projected edge (Project/Convert tool) into a SketchEntity. */
+function fittedToEntity(f: FittedProjection, id = genId()): SketchEntity {
+  switch (f.type) {
+    case "line":
+      return { type: "line", id, a: f.a, b: f.b };
+    case "circle":
+      return { type: "circle", id, c: f.c, r: f.r };
+    case "arc":
+      return { type: "arc", id, c: f.c, r: f.r, start: f.start, end: f.end };
+    case "spline":
+      return { type: "spline", id, points: f.points };
+  }
+}
 
 const VIEW_BUTTONS: { name: ViewName; label: string }[] = [
   { name: "top", label: "Top" },
@@ -477,6 +522,17 @@ export default function App() {
       });
       return;
     }
+    // Revolve dialog open: arming the PROFILE (a sketch region) happens here via
+    // the normal selection raycaster. Arming the AXIS uses picking mode instead
+    // (→ handleAxisPick), so one click stream can take a sketch line, a body
+    // face, or a datum/reference plane.
+    if (revolveDialog && revolveDialog.armed === "profile") {
+      if (picked?.kind === "sketchFace") {
+        const profile = { sketchId: picked.sketchId, regionId: picked.regionId };
+        setRevolveDialog((d) => (d ? { ...d, profile, armed: null } : d));
+      }
+      return;
+    }
     // Dimension mode armed: the next picked line/circle/arc is the target.
     if (dimPending) {
       const sk = doc.features.find((f) => f.id === editingSketchId);
@@ -492,6 +548,88 @@ export default function App() {
       }
       return;
     }
+    // Sketch Mirror tool active: the first line clicked arms the mirror axis;
+    // each entity clicked afterwards is mirrored across it (re-clicking a
+    // mirrored source toggles it off). Clicks here never change the normal
+    // selection. Enter commits the previews; Esc cancels (see the key handler).
+    if (mirrorSessionRef.current && sketchTool === "mirror") {
+      const s = mirrorSessionRef.current;
+      const sk = doc.features.find((f) => f.id === editingSketchId);
+      const ent =
+        picked?.kind === "sketchEntity" && picked.sketchId === editingSketchId && sk?.type === "sketch"
+          ? sk.entities.find((x) => x.id === picked.entityId)
+          : undefined;
+      if (!ent) return; // empty / non-sketch click: keep the session armed
+      // Not yet armed: only a line can be the mirror axis. Highlight it (via the
+      // normal selection) so the armed axis reads clearly.
+      if (!s.axisEntityId) {
+        if (ent.type !== "line") {
+          flashSketchMsg("Click a line to set the mirror axis.");
+          return;
+        }
+        setMirrorSession({ ...s, axisEntityId: ent.id });
+        setSelection([{ kind: "sketchEntity", sketchId: editingSketchId!, entityId: ent.id }]);
+        return;
+      }
+      if (ent.id === s.axisEntityId) return; // the axis can't mirror itself
+      const axis = sk?.type === "sketch" ? sk.entities.find((x) => x.id === s.axisEntityId) : undefined;
+      if (!axis || axis.type !== "line") return;
+      const idx = s.sourceIds.indexOf(ent.id);
+      if (idx >= 0) {
+        // Toggle this source off: drop its id and its paired preview.
+        setMirrorSession({
+          ...s,
+          sourceIds: s.sourceIds.filter((_, i) => i !== idx),
+          previews: s.previews.filter((_, i) => i !== idx),
+        });
+        return;
+      }
+      const mirrored = mirrorEntity(ent, axis.a, axis.b, genId());
+      setMirrorSession({ ...s, sourceIds: [...s.sourceIds, ent.id], previews: [...s.previews, mirrored] });
+      return;
+    }
+    // Project/Convert tool active: clicking an existing body edge or vertex
+    // projects it orthographically onto the active sketch plane as a new entity.
+    // Each pick is previewed; Enter commits, Esc cancels. Re-clicking a source
+    // toggles its projection off. Clicks never change the normal selection.
+    if (projectSessionRef.current && sketchTool === "project") {
+      const s = projectSessionRef.current;
+      const sk = doc.features.find((f) => f.id === editingSketchId);
+      if (sk?.type !== "sketch") return;
+      const frame = frameOf(sk.plane, resolved.planeFrames);
+      let key: string | null = null;
+      let entity: SketchEntity | null = null;
+      let ref: ProjectRef | null = null;
+      if (picked?.kind === "vertex") {
+        key = `v:${picked.point.join(",")}`;
+        entity = { type: "point", id: genId(), p: worldToUv(frame, picked.point) };
+        ref = { kind: "vertex", featureId: picked.featureId, point: picked.point };
+      } else if (picked?.kind === "edge") {
+        key = `e:${picked.featureId}:${picked.edgeId}`;
+        const poly = viewApiRef.current?.getEdgeWorldPolyline(picked.featureId, picked.edgeId);
+        if (poly && poly.length >= 2) {
+          const fit = fitProjectedPolyline(poly.map((p) => worldToUv(frame, p)));
+          if (fit) entity = fittedToEntity(fit, genId());
+        }
+        // Capture the persistent edge name so the projection re-resolves to the
+        // SAME edge after a rebuild (build-local edgeId can renumber).
+        const edgeName = viewApiRef.current?.getEdgeName(picked.featureId, picked.edgeId);
+        ref = { kind: "edge", featureId: picked.featureId, edgeName, edgeId: picked.edgeId };
+      }
+      if (!key || !ref) return; // empty space / a face: keep the session armed
+      const idx = s.keys.indexOf(key);
+      if (idx >= 0) {
+        setProjectSession({
+          refs: s.refs.filter((_, i) => i !== idx),
+          keys: s.keys.filter((_, i) => i !== idx),
+          previews: s.previews.filter((_, i) => i !== idx),
+        });
+        return;
+      }
+      if (!entity) { flashSketchMsg("Couldn't project that edge."); return; }
+      setProjectSession({ refs: [...s.refs, ref], keys: [...s.keys, key], previews: [...s.previews, entity] });
+      return;
+    }
     if (!picked) {
       setSelection([]);
       return;
@@ -505,7 +643,7 @@ export default function App() {
   const [picking, setPicking] = useState(false);
   // What the plane/face pick flow is for: starting a sketch, or the base of a
   // new reference plane.
-  const [pickPurpose, setPickPurpose] = useState<"sketch" | "plane">("sketch");
+  const [pickPurpose, setPickPurpose] = useState<"sketch" | "plane" | "revolveAxis">("sketch");
   // The reference-plane dialog. `method` chooses the placement; the relevant
   // fields are filled by picks (base/refB planes-or-faces; points) or text inputs.
   const [planeDialog, setPlaneDialog] = useState<{
@@ -546,6 +684,52 @@ export default function App() {
   const [polySidesOpen, setPolySidesOpen] = useState(false);
   // When on, newly drawn entities are marked as construction (reference) geometry.
   const [constructionMode, setConstructionMode] = useState(false);
+  // The active Offset session: the validated single chain to offset, the live
+  // signed distance (expression text), and a uv anchor + unit normal for placing
+  // the on-canvas input box and its draggable arrow handle. Null = no offset in
+  // progress. See beginOffset / commitOffset.
+  const [offsetSession, setOffsetSession] = useState<{
+    chain: ChainEdge[];
+    value: string;
+    anchor: Vec2;
+    normal: Vec2;
+  } | null>(null);
+  const offsetSessionRef = useRef(offsetSession);
+  offsetSessionRef.current = offsetSession;
+  // The active sketch Mirror session (the 2D sketch tool — distinct from the
+  // modeling-mode body MirrorFeature). `axisEntityId` is the armed mirror line
+  // (null until the user clicks one); `previews` are the live mirrored copies,
+  // committed on Enter and discarded on Esc. Null = no mirror in progress.
+  const [mirrorSession, setMirrorSession] = useState<{
+    axisEntityId: string | null;
+    /** Source entity ids already mirrored (so re-clicking toggles them off). */
+    sourceIds: string[];
+    previews: SketchEntity[];
+  } | null>(null);
+  const mirrorSessionRef = useRef(mirrorSession);
+  mirrorSessionRef.current = mirrorSession;
+  // Set below once commitMirror is defined; the key handler calls it via this
+  // ref so Enter always commits using the latest doc/session (no stale closure).
+  const commitMirrorRef = useRef<() => void>(() => {});
+  // The active Project/Convert session: live previews of existing 3D body
+  // edges/vertices projected onto the active sketch plane. `keys` tracks the
+  // source pick of each preview (featureId/edgeId or vertex) so re-clicking a
+  // source toggles it off. Committed on Enter, discarded on Esc. Null = none.
+  const [projectSession, setProjectSession] = useState<{ refs: ProjectRef[]; keys: string[]; previews: SketchEntity[] } | null>(null);
+  const projectSessionRef = useRef(projectSession);
+  projectSessionRef.current = projectSession;
+  const commitProjectRef = useRef<() => void>(() => {});
+  // Text tool: after clicking the plane to set the anchor, the user types the
+  // string + height in a floating box. Live-previewed; committed on Enter,
+  // discarded on Esc. Null = no placement in progress.
+  // `editId` set ⇒ editing an existing text entity in place (re-edit), else a
+  // fresh placement.
+  const [textDraft, setTextDraft] = useState<{ anchor: Vec2; value: string; height: string; editId?: string } | null>(null);
+  const textDraftRef = useRef(textDraft);
+  textDraftRef.current = textDraft;
+  // In-progress edit of a committed offset op's distance (keyed by op id). Shown
+  // when a single derived offset entity is selected; null = not editing.
+  const [offsetEdit, setOffsetEdit] = useState<{ opId: string; value: string } | null>(null);
   const [fullyConstrained, setFullyConstrained] = useState(false);
   // The last solve reported conflicting/redundant (over-)constraints.
   const [solveConflict, setSolveConflict] = useState(false);
@@ -593,8 +777,28 @@ export default function App() {
     null,
   );
   const [extrudePreviewError, setExtrudePreviewError] = useState<string | null>(null);
+  // Live ghost of the revolve dialog's currently-armed inputs (translucent solid
+  // of the would-be result), and its build/resolve error if any.
+  const [revolvePreview, setRevolvePreview] = useState<FeatureMesh["mesh"] | null>(null);
+  const [revolvePreviewError, setRevolvePreviewError] = useState<string | null>(null);
   const [dressUpDialog, setDressUpDialog] = useState<
     { op: "chamfer" | "fillet"; size: string; x: number; y: number } | null
+  >(null);
+  // Revolve dialog. The user arms a profile face and an axis (a sketch line or a
+  // plane) by clicking in the viewport — like the Boolean dialog — then sets the
+  // angle (Full 360° vs. a specified angle + optional symmetric sweep). `armed`
+  // says which role the next viewport click fills.
+  const [revolveDialog, setRevolveDialog] = useState<
+    {
+      profile: { sketchId: string; regionId: string } | null;
+      axis: RevolveAxis | null;
+      armed: "profile" | "axis" | null;
+      mode: "full" | "angle";
+      degrees: string;
+      symmetric: boolean;
+      x: number;
+      y: number;
+    } | null
   >(null);
   // The Transform feature currently being edited with the gizmo (a floating
   // panel + viewport gizmo are shown while this is set), and which gizmo to show.
@@ -650,6 +854,51 @@ export default function App() {
   const viewApiRef = useRef<ViewportApi | null>(null);
 
   const setSketchTool = (t: SketchTool) => {
+    // Activating Text with a single text entity selected re-opens it for editing
+    // (pre-filled), instead of starting a fresh placement.
+    if (t === "text") {
+      const sel = selectedSketchEntities;
+      const existing = sel.length === 1 && sel[0].type === "text" ? sel[0] : null;
+      setProjectSession(null);
+      setOffsetSession(null);
+      setMirrorSession(null);
+      setSketchToolState("text");
+      setDraft([]);
+      setPolySidesOpen(false);
+      setTextDraft(
+        existing
+          ? { anchor: existing.p, value: existing.value, height: String(existing.height), editId: existing.id }
+          : null,
+      );
+      return;
+    }
+    setTextDraft(null); // switching tools abandons any in-progress text placement
+    // Offset isn't a free-draw tool: it acts on the current selection. Validate
+    // it forms a single chain and open the offset session (or flash the error
+    // and stay in Select). beginOffset is defined below — a closure, so it's
+    // initialised by the time any click/keypress calls this.
+    if (t === "offset") { setProjectSession(null); beginOffsetRef.current(); return; }
+    setOffsetSession(null);
+    // Mirror opens a session that arms an axis on the next line click, then
+    // mirrors each subsequently clicked entity. Starting any other tool ends it.
+    if (t === "mirror") {
+      setProjectSession(null);
+      setMirrorSession({ axisEntityId: null, sourceIds: [], previews: [] });
+      setSketchToolState("mirror");
+      setDraft([]);
+      setPolySidesOpen(false);
+      return;
+    }
+    setMirrorSession(null);
+    // Project/Convert: clicking body edges/vertices projects them onto the plane.
+    if (t === "project") {
+      setProjectSession({ refs: [], keys: [], previews: [] });
+      setSketchToolState("project");
+      setDraft([]);
+      setPolySidesOpen(false);
+      return;
+    }
+    setProjectSession(null);
     setSketchToolState(t);
     setDraft([]); // starting a new tool abandons any in-progress points
     // Selecting the polygon tool (re)opens its Sides prompt, seeded with the
@@ -657,6 +906,7 @@ export default function App() {
     if (t === "polygon") { setPolySidesText(String(polygonSides)); setPolySidesOpen(true); }
     else setPolySidesOpen(false);
   };
+  const beginOffsetRef = useRef<() => void>(() => {});
   // Geometry from the last kernel regen, keyed by feature id. Color/opacity
   // live on the feature and are overlaid in `meshes` below so tweaking them
   // doesn't require re-running the (expensive) kernel regen.
@@ -771,6 +1021,13 @@ export default function App() {
   // Resolution (variables + params -> numbers) is synchronous and pure; memoize
   // it so the UI can read evaluated values without re-running the kernel.
   const resolved = useMemo(() => resolveDocument(doc), [doc]);
+  // Latest doc/resolved for effects that fire off async kernel builds (the
+  // reproject effect runs after a regen and must read the current state, not a
+  // closure captured when the effect was registered).
+  const docRef = useRef(doc);
+  docRef.current = doc;
+  const resolvedRef = useRef(resolved);
+  resolvedRef.current = resolved;
 
   // User-created reference planes that resolved to a frame — rendered in the
   // viewport and selectable for sketching / as a base for further planes.
@@ -835,6 +1092,75 @@ export default function App() {
     };
   }, [resolved, ready]);
 
+  // Associative Project/Convert ("Use"): after every kernel build, re-project each
+  // `project` DerivedOp's source body edges/vertices onto its sketch plane and
+  // refresh the generated entities, so projected geometry tracks the source body
+  // (Onshape/Fusion behaviour). This is IMPURE — it reads the live world-space
+  // edge polylines off the rendered bodies, by persistent edge name — so it can't
+  // live in pure `applyDerived`. It runs after a regen settles (rawMeshes), once
+  // the viewport (a child) has rebuilt its scene, so the edges are current.
+  //
+  // No infinite loop: we only `setDoc` when the freshly-projected entities DIFFER
+  // from the stored ones. A source-body change → the first post-build reproject
+  // writes new geometry (changed) → that triggers a regen, but those bodies
+  // rebuild identically (a sketch's projected geometry is not an input to them) →
+  // the next reproject yields identical geometry (unchanged) → no write → settles.
+  // So it converges in at most one extra regen.
+  useEffect(() => {
+    const view = viewApiRef.current;
+    if (!view) return;
+    const cur = docRef.current;
+    const planeFrames = resolvedRef.current.planeFrames;
+    let dangling = false;
+    let changed = false;
+    const features = cur.features.map((f) => {
+      if (f.type !== "sketch") return f;
+      const projOps = (f.derived ?? []).filter((o) => o.kind === "project");
+      if (projOps.length === 0) return f;
+      let frame: PlaneFrameData;
+      try {
+        frame = frameOf(f.plane, planeFrames);
+      } catch {
+        return f; // sketch plane not resolvable yet — leave its projections alone
+      }
+      const projOpIds = new Set(projOps.map((o) => o.id));
+      const fresh: SketchEntity[] = [];
+      for (const op of projOps) {
+        if (op.kind !== "project") continue;
+        op.refs.forEach((ref, i) => {
+          const id = `${op.id}:${i}`;
+          if (ref.kind === "vertex") {
+            // Vertices have no stable identity across rebuilds; re-project the
+            // stored world point (best-effort — tracks the plane, not the body).
+            fresh.push(projectedPointEntity(frame, ref.point, id, op.id));
+            return;
+          }
+          // Resolve the edge by its persistent name (stable across rebuilds);
+          // fall back to the build-local id for legacy/unnamed edges.
+          const poly =
+            (ref.edgeName ? view.getEdgeWorldPolylineByName(ref.featureId, ref.edgeName) : null) ??
+            view.getEdgeWorldPolyline(ref.featureId, ref.edgeId);
+          if (!poly || poly.length < 2) {
+            dangling = true; // source edge gone / topology changed (a dangling projection)
+            return;
+          }
+          const e = projectedEntityFromPolyline(frame, poly, id, op.id);
+          if (e) fresh.push(e);
+        });
+      }
+      const old = f.entities.filter((e) => e.derivedFrom && projOpIds.has(e.derivedFrom));
+      if (sameProjectedEntities(old, fresh)) return f; // converged — no rewrite
+      changed = true;
+      const rest = f.entities.filter((e) => !(e.derivedFrom && projOpIds.has(e.derivedFrom)));
+      return { ...f, entities: [...rest, ...fresh] };
+    });
+    // Only warn when a dangling source actually changed the result (avoids
+    // re-flashing the same banner on every settled rebuild).
+    if (changed && dangling) flashSketchMsg("A projected edge's source is missing.");
+    if (changed) setDoc({ ...cur, features });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawMeshes]);
+
   // Overlay each body's current color/opacity from the document onto its
   // cached geometry — so changing appearance is instant, not a regen round-trip.
   const meshes = useMemo<FeatureMesh[]>(
@@ -869,8 +1195,11 @@ export default function App() {
   // reads as cyan. Hence the viewport just shows all real meshes as usual.
   const viewportMeshes = meshes;
   const ghostMeshes = useMemo<GhostMesh[]>(
-    () => (extrudePreview ? extrudePreview.map((p) => ({ mesh: p.mesh })) : []),
-    [extrudePreview],
+    () => [
+      ...(extrudePreview ? extrudePreview.map((p) => ({ mesh: p.mesh })) : []),
+      ...(revolvePreview ? [{ mesh: revolvePreview }] : []),
+    ],
+    [extrudePreview, revolvePreview],
   );
 
   // Feature ids that produced an actual rendered body — what the Solids list
@@ -923,10 +1252,23 @@ export default function App() {
     );
   }, [editingSketch, selection]);
 
+  // When exactly one selected sketch entity is a generated offset output, expose
+  // its op so the user can re-edit the offset distance after the fact.
+  const selectedOffsetOp = useMemo(() => {
+    if (!editingSketch || selectedSketchEntities.length !== 1) return null;
+    const e = selectedSketchEntities[0];
+    if (!e.derivedFrom) return null;
+    const op = (editingSketch.derived ?? []).find((o) => o.id === e.derivedFrom);
+    return op && op.kind === "offset" ? { op, entity: e } : null;
+  }, [editingSketch, selectedSketchEntities]);
+
   // A single line (length), circle or arc (radius) selected → dimensionable.
   const dimEntity = useMemo(() => {
     if (selectedSketchEntities.length !== 1) return null;
     const e = selectedSketchEntities[0];
+    // Derived (offset/mirror) outputs aren't free geometry — the solver ignores
+    // them, so they can't carry dimensions/constraints.
+    if (e.derivedFrom) return null;
     return e.type === "line" || e.type === "circle" || e.type === "arc" ? e : null;
   }, [selectedSketchEntities]);
 
@@ -1066,6 +1408,12 @@ export default function App() {
       const sk = doc.features.find((f) => f.id === sketchId);
       if (sk?.type !== "sketch") continue;
       for (const region of regionsEnclosedBy(sk.entities, ids)) addRegion(sketchId, region.id);
+      // A selected text entity extrudes on its own (the kernel bakes its glyph
+      // wires with counters/holes) — no enclosing region needed.
+      for (const id of ids) {
+        const ent = sk.entities.find((e) => e.id === id);
+        if (ent?.type === "text" && ent.value.trim()) profiles.push({ kind: "sketchText", sketchId, textId: id });
+      }
     }
     for (const s of selection) {
       if (s.kind === "sketchFace") {
@@ -1090,6 +1438,11 @@ export default function App() {
     if (p.kind === "bodyFace") return p.center;
     const sk = doc.features.find((f) => f.id === p.sketchId);
     if (sk?.type !== "sketch") return null;
+    if (p.kind === "sketchText") {
+      const ent = sk.entities.find((e) => e.id === p.textId);
+      if (ent?.type !== "text") return null;
+      return uvToWorld(frameOf(sk.plane, resolved.planeFrames), ent.p[0], ent.p[1]);
+    }
     const region = detectSketchRegions(sk.entities).find((r) => r.id === p.regionId);
     if (!region || region.outline.length === 0) return null;
     let u = 0, v = 0;
@@ -1164,7 +1517,10 @@ export default function App() {
       // Hide the source sketch once it's been consumed by an extrude. It stays
       // in place and editable — toggle the timeline eye (or edit it) to bring
       // it back.
-      next = profile.kind === "sketchRegion" ? setSuppressed(res.doc, profile.sketchId, true) : res.doc;
+      next =
+        profile.kind === "sketchRegion" || profile.kind === "sketchText"
+          ? setSuppressed(res.doc, profile.sketchId, true)
+          : res.doc;
       lastId = res.id;
     }
     setDoc(next);
@@ -1259,6 +1615,56 @@ export default function App() {
     };
   }, [extrudeDialog, extrudeProfiles, doc, ready]);
 
+  // Live ghost preview of the revolve dialog: once a profile + axis are armed,
+  // build a throwaway doc with that revolve (mirrors createRevolve, minus the
+  // setDoc / hide-sketch), regenerate just the new body, and show it translucent.
+  // Re-runs as the angle / symmetric / arming change. Debounced so dragging the
+  // angle field stays responsive.
+  useEffect(() => {
+    if (!revolveDialog || !revolveDialog.profile || !revolveDialog.axis) {
+      setRevolvePreview(null);
+      setRevolvePreviewError(null);
+      return;
+    }
+    const kernel = kernelRef.current;
+    if (!ready || !kernel) return;
+    const angle = revolveDialog.mode === "full" ? "360" : revolveDialog.degrees;
+    const symmetric = revolveDialog.mode === "angle" && revolveDialog.symmetric;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      const { doc: previewDoc, id } = addRevolve(doc, revolveDialog.profile!, revolveDialog.axis!, angle, symmetric);
+      const previewResolved = resolveDocument(previewDoc);
+      const resolveErr = previewResolved.errors[id];
+      if (resolveErr) {
+        setRevolvePreview(null);
+        setRevolvePreviewError(resolveErr);
+        return;
+      }
+      kernel
+        .regenerate(previewResolved.features)
+        .then((results) => {
+          if (cancelled) return;
+          const hit = results.find((r) => r.id === id);
+          if (hit?.ok) {
+            setRevolvePreview(hit.mesh);
+            setRevolvePreviewError(null);
+          } else {
+            setRevolvePreview(null);
+            setRevolvePreviewError(hit && !hit.ok ? hit.error : "Preview failed.");
+          }
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setRevolvePreview(null);
+          setRevolvePreviewError(String(err?.message ?? err));
+        });
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [revolveDialog, doc, ready]);
+
   // One or more selected body edges, all on the same body — what a chamfer or
   // fillet would dress. Resolves each edge to its persistent name.
   const dressUpTarget = useMemo(() => {
@@ -1343,12 +1749,46 @@ export default function App() {
     return profile && axis && profile.sketchId === axis.sketchId ? { profile, axis } : null;
   }, [selection, doc]);
 
-  // Create a Revolve (360° by default; edit the angle in the parameter editor).
+  // Open the Revolve dialog. Always available: profile + axis are armed inside
+  // the dialog by clicking the viewport. If a profile region + axis line happen
+  // to be pre-selected, they prefill the roles; otherwise the profile role is
+  // armed and waiting for the first click.
   const openRevolve = () => {
-    if (!revolveInputs) return;
-    const { doc: next, id } = addRevolve(doc, revolveInputs.profile, revolveInputs.axis);
+    const pre = revolveInputs;
+    const world = profileAnchorWorld();
+    const s = (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
+    setRevolveDialog({
+      profile: pre?.profile ?? null,
+      axis: pre?.axis ?? null,
+      armed: pre ? null : "profile",
+      mode: "full",
+      degrees: "90",
+      symmetric: false,
+      x: s.x,
+      y: s.y,
+    });
+  };
+
+  const closeRevolveDialog = () => {
+    setRevolveDialog(null);
+    // Drop any in-flight "pick a plane for the axis" mode the dialog armed.
+    if (pickPurpose === "revolveAxis") {
+      setPicking(false);
+      setPickPurpose("sketch");
+    }
+  };
+
+  const createRevolve = () => {
+    if (!revolveDialog || !revolveDialog.profile || !revolveDialog.axis) return;
+    // Full revolve = 360°; symmetric is meaningless there, so force it off.
+    const angle = revolveDialog.mode === "full" ? "360" : revolveDialog.degrees;
+    const symmetric = revolveDialog.mode === "angle" && revolveDialog.symmetric;
+    const { doc: created, id } = addRevolve(doc, revolveDialog.profile, revolveDialog.axis, angle, symmetric);
+    // Hide the originating sketch once it's been consumed (like extrude does).
+    const next = setSuppressed(created, revolveDialog.profile.sketchId, true);
     setDoc(next);
     selectFeature(id);
+    closeRevolveDialog();
   };
 
   // Sweep needs a profile region + a path entity (line / arc / spline). They may
@@ -1393,41 +1833,64 @@ export default function App() {
   // across the two branches below — see KEYBOARD_SHORTCUTS.md.
   useEffect(() => {
     const SKETCH_KEYS: Record<string, SketchTool> = {
-      v: "select",
+      s: "select", // S = Select (the sketch-mode pointer; modeling-mode S = Sketch)
       l: "line",
       r: "rect-corner",
       c: "circle-center",
       p: "polygon",
       a: "arc-3p",
-      s: "spline", // S = Spline (freed up when the Solve shortcut was removed)
+      o: "offset",
+      m: "mirror", // M = sketch Mirror (modeling-mode M = body Mirror feature)
+      u: "project", // U = "Use" (Project/Convert existing geometry into the sketch)
+      t: "text", // T = Text (sketch-mode only; modeling-mode T = Transform)
     };
-    // Shift-modified variants of an existing tool key (Shift+R/Shift+C).
+    // Shift-modified variants of an existing tool key (Shift+R/Shift+C/Shift+S).
     const SKETCH_SHIFT_KEYS: Record<string, SketchTool> = {
       r: "rect-center",
       c: "circle-3p",
+      s: "spline", // Shift+S = Spline (bare S now selects the Select tool)
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (dimInputRef.current) setDimInput(null);
+        if (offsetSessionRef.current) { setOffsetSession(null); setSketchToolState("select"); }
+        else if (mirrorSessionRef.current) { setMirrorSession(null); setSelection([]); setSketchToolState("select"); }
+        else if (projectSessionRef.current) { setProjectSession(null); setSketchToolState("select"); }
+        else if (textDraftRef.current) setTextDraft(null);
+        else if (dimInputRef.current) setDimInput(null);
         else if (dimPendingRef.current) setDimPending(false);
         else if (polySidesOpen) setPolySidesOpen(false);
         else if (planeDialog) closePlaneDialog();
+        // While the revolve dialog is arming a plane axis, Esc cancels just that
+        // pick (keeping the dialog); a second Esc then closes the dialog.
+        else if (revolveDialog && picking) { setPicking(false); setPickPurpose("sketch"); }
+        else if (revolveDialog) closeRevolveDialog();
         else if (transformEditId) cancelTransform();
         else if (picking) setPicking(false);
-        else if (draft.length > 0) setDraft([]); // cancel the in-progress shape
+        // Esc finishes an in-progress draft: the spline commits its accumulated
+        // points (like ending a polyline); every other tool just abandons the
+        // draft. finishSpline() returns false unless the spline tool has ≥2
+        // points, so non-spline drafts fall through to setDraft([]).
+        else if (draft.length > 0) { if (!finishSpline()) setDraft([]); }
         else if (editingSketchId) finishSketch();
         return;
       }
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // Enter commits the in-progress sketch Mirror (its previews → real entities).
+      if (e.key === "Enter" && mirrorSessionRef.current) {
+        e.preventDefault();
+        commitMirrorRef.current();
+        return;
+      }
+      // Enter commits the in-progress Project/Convert previews.
+      if (e.key === "Enter" && projectSessionRef.current) {
+        e.preventDefault();
+        commitProjectRef.current();
+        return;
+      }
       if ((e.key === "Delete" || e.key === "Backspace") && selection.length > 0) {
         e.preventDefault();
         handleDeleteSelection();
-        return;
-      }
-      if (e.key === "Enter" && draft.length > 0) {
-        // Spline: Enter commits the accumulated points; other tools just abandon.
-        if (!finishSpline()) setDraft([]);
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
@@ -1465,11 +1928,17 @@ export default function App() {
           startDimensionRef.current();
           return;
         }
+        // preventDefault on the tool keys too: tools like Offset/Text open an
+        // input that autofocuses synchronously, and without this the same
+        // keystroke leaks into that input (e.g. "o" → offset distance "o",
+        // which used to throw in the expression parser and crash the app).
         if (e.shiftKey && SKETCH_SHIFT_KEYS[key]) {
+          e.preventDefault();
           setSketchTool(SKETCH_SHIFT_KEYS[key]);
           return;
         }
         if (!e.shiftKey && SKETCH_KEYS[key]) {
+          e.preventDefault();
           setSketchTool(SKETCH_KEYS[key]);
           return;
         }
@@ -1525,7 +1994,7 @@ export default function App() {
           if (extrudeProfiles.length > 0 && !extrudeDialog) openExtrudeDialog();
           break;
         case "r":
-          if (revolveInputs) openRevolve();
+          if (!revolveDialog) openRevolve();
           break;
         case "w":
           if (sweepInputs) openSweep();
@@ -1570,6 +2039,7 @@ export default function App() {
     extrudeProfiles,
     extrudeDialog,
     revolveInputs,
+    revolveDialog,
     sweepInputs,
     loftInputs,
     dressUpTarget,
@@ -1736,6 +2206,67 @@ export default function App() {
     [doc, editingSketchId, resolved.planeFrames],
   );
 
+  // Live dashed preview of the in-progress offset, rebuilt as the distance
+  // changes. Marked construction so it routes to the dashed overlay for free.
+  const offsetPreview = useMemo<SketchEntity[]>(() => {
+    if (!offsetSession) return [];
+    try {
+      // The eval is INSIDE the try: a partially-typed / non-numeric distance
+      // (e.g. "1+" or "o") throws in the parser — that must yield no preview,
+      // never crash the render.
+      const d = evaluateExpression(offsetSession.value, resolved.scope);
+      if (!Number.isFinite(d) || Math.abs(d) < 1e-9) return [];
+      return offsetChain(offsetSession.chain, d).map((p, i) => offsetPrimToEntity(p, true, `__offsetpv${i}`));
+    } catch {
+      return [];
+    }
+  }, [offsetSession, resolved.scope]);
+
+  // The sketches handed to the Viewport, plus a transient synthetic sketch
+  // carrying the offset preview (on the active sketch's frame) when one is live.
+  const renderSketchesWithPreview = useMemo(() => {
+    const mirrorPreview = mirrorSession?.previews ?? [];
+    const projectPreview = projectSession?.previews ?? [];
+    // In-progress text: a live (solid) preview entity so the user sees the glyphs
+    // as they type, before committing.
+    let textPreview: SketchEntity[] = [];
+    if (textDraft && textDraft.value.trim()) {
+      // Guard the eval: a half-typed / non-numeric height must not throw and
+      // crash this render memo — just skip the preview until it's valid.
+      let h = NaN;
+      try { h = evaluateExpression(textDraft.height, resolved.scope); } catch { h = NaN; }
+      if (Number.isFinite(h) && h > 0)
+        textPreview = [{ type: "text", id: "__textpv", p: textDraft.anchor, value: textDraft.value, height: h }];
+    }
+    if (
+      (offsetPreview.length === 0 && mirrorPreview.length === 0 && projectPreview.length === 0 && textPreview.length === 0) ||
+      !dimFrame
+    )
+      return renderSketches;
+    const extra: typeof renderSketches = [];
+    if (textPreview.length > 0)
+      extra.push({ id: "__text_preview__", frame: dimFrame, entities: textPreview, regions: [] });
+    if (offsetPreview.length > 0)
+      extra.push({ id: "__offset_preview__", frame: dimFrame, entities: offsetPreview, regions: [] });
+    if (mirrorPreview.length > 0)
+      extra.push({
+        id: "__mirror_preview__",
+        frame: dimFrame,
+        // Force construction so the preview routes to the dashed overlay; the
+        // committed entities (commitMirror) keep their real construction flag.
+        entities: mirrorPreview.map((e) => ({ ...e, construction: true })),
+        regions: [],
+      });
+    if (projectPreview.length > 0)
+      extra.push({
+        id: "__project_preview__",
+        frame: dimFrame,
+        entities: projectPreview.map((e) => ({ ...e, construction: true })),
+        regions: [],
+      });
+    return [...renderSketches, ...extra];
+  }, [renderSketches, offsetPreview, mirrorSession, projectSession, textDraft, resolved.scope, dimFrame]);
+
   const startSketchOn = (ref: SketchPlaneRef) => {
     const { doc: next, id } = addSketch(doc, ref);
     setDoc(next);
@@ -1772,6 +2303,27 @@ export default function App() {
     } else {
       startSketchOn(ref);
     }
+  };
+
+  // The revolve "Select axis" arming resolved: fill the dialog's axis role from a
+  // sketch line, a body face, or a datum/reference plane (one unified pick path).
+  const handleAxisPick = (pick: RevolveAxisPick) => {
+    if (pick.kind === "line") {
+      const sk = doc.features.find((f) => f.id === pick.sketchId);
+      const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === pick.entityId) : undefined;
+      if (e?.type !== "line") { flashSketchMsg("The axis must be a straight edge, a plane, or a face."); return; }
+      setRevolveDialog((d) => (d ? { ...d, axis: { sketchId: pick.sketchId, entityId: pick.entityId } } : d));
+    } else if (pick.kind === "bodyFace") {
+      const m = meshes.find((x) => x.id === pick.featureId);
+      const center = m ? faceCentroid(m.mesh.faces, pick.faceId) : null;
+      if (!center) return;
+      const faceName = m ? faceNameOf(m.mesh.faces, pick.faceId) : undefined;
+      setRevolveDialog((d) => (d ? { ...d, axis: { face: { featureId: pick.featureId, faceId: pick.faceId, faceName, center } } } : d));
+    } else {
+      setRevolveDialog((d) => (d ? { ...d, axis: { plane: pick.ref } } : d));
+    }
+    setPicking(false);
+    setPickPurpose("sketch");
   };
 
   const createPlane = () => {
@@ -1817,6 +2369,9 @@ export default function App() {
     }
     setEditingSketchId(null);
     setDraft([]);
+    setOffsetSession(null);
+    setProjectSession(null);
+    setTextDraft(null);
     setSelection([]); // so the next click (e.g. a face to extrude) starts fresh
   };
 
@@ -1834,7 +2389,7 @@ export default function App() {
   // multi-click construction tools. `hv` records a horizontal/vertical inference
   // (line tool) so it can be captured as a constraint.
   const handleSketchClick = (uv: Vec2, hv?: "horizontal" | "vertical", on?: { id: string; mid: boolean }) => {
-    if (!editingSketchId || sketchTool === "select") return;
+    if (!editingSketchId || sketchTool === "select" || sketchTool === "offset") return;
     const sketchId = editingSketchId;
     // Drawing solves immediately: the constraints captured while drawing (auto
     // H/V, rectangle edges, shared corners) are enforced on the spot, the geometry
@@ -1946,15 +2501,53 @@ export default function App() {
         }
         break;
       case "spline":
-        // Accumulate control points; the spline is committed on Enter / Finish
+        // Accumulate control points; the spline is committed on Esc / Finish
         // (see finishSpline) so it can take any number of points.
         setDraft([...draft, uv]);
+        break;
+      case "text":
+        // Click sets/repositions the baseline anchor and opens the floating
+        // editor; the string + height are typed there and committed on Enter.
+        // Re-positioning keeps any in-progress value/height and edit target.
+        setTextDraft({ anchor: uv, value: textDraft?.value ?? "", height: textDraft?.height ?? "10", editId: textDraft?.editId });
         break;
     }
   };
 
+  // Commit the in-progress text placement as a `text` entity (no solve needed —
+  // text isn't a constraint participant). Empty string → cancel.
+  const commitText = () => {
+    const td = textDraftRef.current;
+    if (!editingSketchId || !td) return;
+    let h = NaN;
+    try { h = evaluateExpression(td.height, resolved.scope); } catch { h = NaN; }
+    if (!td.value.trim() || !Number.isFinite(h) || h <= 0) { setTextDraft(null); return; }
+    if (td.editId) {
+      // Re-edit: update the existing text entity in place (preserving its
+      // construction flag), so its glyphs / any extrude of it follow.
+      const sk = doc.features.find((f) => f.id === editingSketchId);
+      if (sk?.type === "sketch") {
+        const entities = sk.entities.map((en) =>
+          en.id === td.editId && en.type === "text"
+            ? { ...en, p: td.anchor, value: td.value, height: h }
+            : en,
+        );
+        setDoc(setSketchEntities(doc, editingSketchId, entities));
+      }
+      setTextDraft(null);
+      return;
+    }
+    const e: SketchEntity = constructionMode
+      ? { type: "text", id: genId(), p: td.anchor, value: td.value, height: h, construction: true }
+      : { type: "text", id: genId(), p: td.anchor, value: td.value, height: h };
+    setDoc(addSketchEntities(doc, editingSketchId, [e]));
+    setTextDraft(null);
+  };
+  const commitTextRef = useRef<() => void>(() => {});
+  commitTextRef.current = commitText;
+
   // Commit the in-progress spline (≥2 points) as a spline entity, then clear the
-  // draft. Called from Enter while the spline tool is active.
+  // draft. Called from Esc while the spline tool is active (Finish path).
   const finishSpline = () => {
     if (!editingSketchId || sketchTool !== "spline" || draft.length < 2) return false;
     const e: SketchEntity = { type: "spline", id: genId(), points: draft };
@@ -1976,7 +2569,11 @@ export default function App() {
     if (sk?.type !== "sketch") return { doc: docArg, res: null };
     try {
       const res = await solveSketch(sk.entities, sk.constraints);
-      return { doc: setSketchEntities(docArg, sketchId, res.entities), res };
+      // Fold the solved (free) geometry back in, then regenerate this sketch's
+      // derived entities (offset/mirror) from those solved sources so the editor
+      // shows associative geometry updating live.
+      const solved = setSketchEntities(docArg, sketchId, res.entities);
+      return { doc: applyDerivedToSketch(solved, sketchId, resolved.scope), res };
     } catch (err) {
       console.error("constraint solve failed:", err);
       return { doc: docArg, res: null };
@@ -1996,6 +2593,142 @@ export default function App() {
     const frame = frameOf(editingSketch!.plane, resolved.planeFrames);
     return viewApiRef.current?.worldToScreen(uvToWorld(frame, uv[0], uv[1])) ?? { x: 240, y: 120 };
   };
+
+  // Offset: validate the current selection is a single chain and open the
+  // session (anchored at the first edge's midpoint, with the right-of-travel
+  // normal as the drag axis); otherwise flash the one-chain error.
+  const beginOffset = () => {
+    if (!editingSketch) return;
+    const chain = detectSingleChain(selectedSketchEntities);
+    if (!chain) {
+      flashSketchMsg("Can only offset a single chain at once.");
+      setSketchToolState("select");
+      return;
+    }
+    const e0 = chain[0];
+    let anchor: Vec2;
+    let normal: Vec2;
+    if (e0.type === "line") {
+      anchor = [(e0.a[0] + e0.b[0]) / 2, (e0.a[1] + e0.b[1]) / 2];
+      const dx = e0.b[0] - e0.a[0], dy = e0.b[1] - e0.a[1], len = Math.hypot(dx, dy) || 1;
+      normal = [dy / len, -dx / len]; // right of travel (positive offset side)
+    } else if (e0.type === "arc") {
+      const mid = (e0.start + e0.end) / 2;
+      anchor = [e0.c[0] + e0.r * Math.cos(mid), e0.c[1] + e0.r * Math.sin(mid)];
+      normal = [Math.cos(mid), Math.sin(mid)];
+    } else {
+      anchor = [e0.c[0] + e0.r, e0.c[1]];
+      normal = [1, 0];
+    }
+    setOffsetSession({ chain, value: "5", anchor, normal });
+    setSketchToolState("offset");
+  };
+  beginOffsetRef.current = beginOffset;
+
+  const cancelOffset = () => {
+    setOffsetSession(null);
+    setSketchToolState("select");
+  };
+
+  const commitOffset = async () => {
+    const sess = offsetSession;
+    if (!sess || !editingSketch) return;
+    let d = NaN;
+    try { d = evaluateExpression(sess.value, resolved.scope); } catch { d = NaN; }
+    // A non-numeric / unparseable distance: flag it and keep the box open so the
+    // user can correct it (don't throw, don't silently discard the chain).
+    if (!Number.isFinite(d)) { flashSketchMsg("Enter a numeric offset distance."); return; }
+    if (Math.abs(d) < 1e-9) { cancelOffset(); return; }
+    const allConstruction = sess.chain.every((e) => !!e.construction);
+    // Commit as an associative DerivedOp (not a static snapshot): the offset
+    // re-computes from its source chain whenever they move. solveSketchIn →
+    // applyDerived seeds the output entities. `value` is kept as an expression.
+    const op: DerivedOp = {
+      id: genId(),
+      kind: "offset",
+      sourceIds: sess.chain.map((e) => e.id),
+      distance: sess.value,
+      ...(allConstruction ? { construction: true } : {}),
+    };
+    const sketchId = editingSketch.id;
+    const next = addDerivedOp(doc, sketchId, op);
+    setOffsetSession(null);
+    setSketchToolState("select");
+    setDoc(await solveSketchIn(next, sketchId));
+  };
+
+  // Re-edit a committed offset op's distance: write the new expression and
+  // re-solve (which re-runs applyDerived, shifting the offset edges).
+  const commitOffsetEdit = async () => {
+    if (!offsetEdit || !editingSketch) return;
+    const sketchId = editingSketch.id;
+    const next = setDerivedOffsetDistance(doc, sketchId, offsetEdit.opId, offsetEdit.value);
+    setOffsetEdit(null);
+    setDoc(await solveSketchIn(next, sketchId));
+  };
+
+  const cancelMirror = () => {
+    setMirrorSession(null);
+    setSelection([]);
+    setSketchToolState("select");
+  };
+
+  // Commit the sketch Mirror previews as real entities (mirroring the offset
+  // commit path: add the new entities, then re-solve). The previews already
+  // carry fresh ids from handlePick, so they commit as-is.
+  const commitMirror = async () => {
+    const sess = mirrorSession;
+    if (!sess || !editingSketch) return;
+    if (sess.previews.length === 0 || !sess.axisEntityId || sess.sourceIds.length === 0) {
+      cancelMirror();
+      return;
+    }
+    // Commit as an associative DerivedOp: the mirrored copies re-compute from
+    // their sources + axis whenever they move (applyDerived runs on solve/regen).
+    const op: DerivedOp = {
+      id: genId(),
+      kind: "mirror",
+      axisId: sess.axisEntityId,
+      sourceIds: sess.sourceIds,
+    };
+    const sketchId = editingSketch.id;
+    const next = addDerivedOp(doc, sketchId, op);
+    setMirrorSession(null);
+    setSelection([]);
+    setSketchToolState("select");
+    setDoc(await solveSketchIn(next, sketchId));
+  };
+  commitMirrorRef.current = commitMirror;
+
+  const cancelProject = () => {
+    setProjectSession(null);
+    setSketchToolState("select");
+  };
+
+  // Commit the Project/Convert previews as an associative `project` DerivedOp:
+  // it stores the source edges/vertices (by persistent name) and re-projects them
+  // after every kernel build (see the reproject effect), so projected geometry
+  // tracks the source body. We seed the op's initial output entities from the
+  // live previews (identical geometry, stable `${op.id}:${i}` ids) so there's no
+  // flash and the first reproject finds them unchanged.
+  const commitProject = async () => {
+    const sess = projectSession;
+    if (!sess || !editingSketch) return;
+    if (sess.refs.length === 0) { cancelProject(); return; }
+    const sketchId = editingSketch.id;
+    const op: DerivedOp = { id: genId(), kind: "project", refs: sess.refs };
+    const seeded: SketchEntity[] = sess.previews.map((e, i) => ({
+      ...e,
+      id: `${op.id}:${i}`,
+      derivedFrom: op.id,
+    }));
+    let next = addDerivedOp(doc, sketchId, op);
+    next = addSketchEntities(next, sketchId, seeded);
+    setProjectSession(null);
+    setSketchToolState("select");
+    setDoc(await solveSketchIn(next, sketchId));
+  };
+  commitProjectRef.current = commitProject;
 
   // Open the dimension input anchored next to the given entity: a line → length
   // (input next to its midpoint); a circle or arc → radius (input next to its
@@ -2595,13 +3328,15 @@ export default function App() {
             onTransformPreview={handleTransformPreview}
             picking={picking}
             onPick={handlePickRef}
+            axisPick={picking && pickPurpose === "revolveAxis"}
+            onAxisPick={handleAxisPick}
             activeSketch={
               editingSketch
                 ? { datumId: editingSketch.plane.kind === "datum" ? editingSketch.plane.id : null }
                 : null
             }
             sketchTool={sketchTool}
-            sketches={renderSketches}
+            sketches={renderSketchesWithPreview}
             activeSketchId={editingSketchId}
             sketchFullyConstrained={fullyConstrained}
             draft={draft}
@@ -2654,8 +3389,8 @@ export default function App() {
               ⬆ Extrude
             </button>
             <button
-              title="Revolve (R): revolve a sketch region around an axis line (select both)"
-              disabled={!revolveInputs || !!editingSketch || picking}
+              title="Revolve (R): arm a profile face + an axis (edge or plane) in the dialog"
+              disabled={!!editingSketch || picking || !!revolveDialog}
               onClick={openRevolve}
             >
               ⟳ Revolve
@@ -2831,6 +3566,180 @@ export default function App() {
               </button>
             </DraggableDialog>
           )}
+          {/* Offset tool: a floating distance box (like the dimension input) plus
+              a draggable arrow handle anchored on the chain. Dragging the arrow
+              changes the signed distance live (cross to the other side → negative);
+              the dashed offset preview updates as it moves. Set/Enter commits,
+              ✕/Esc cancels. */}
+          {editingSketch && offsetSession && (() => {
+            // Guarded: a half-typed / non-numeric distance must not throw here.
+            let raw = NaN;
+            try { raw = evaluateExpression(offsetSession.value, resolved.scope); } catch { raw = NaN; }
+            const dv = Number.isFinite(raw) ? raw : 0;
+            const a0 = screenOf(offsetSession.anchor);
+            const a1 = screenOf([offsetSession.anchor[0] + offsetSession.normal[0], offsetSession.anchor[1] + offsetSession.normal[1]]);
+            const axisX = a1.x - a0.x, axisY = a1.y - a0.y, axisLen2 = axisX * axisX + axisY * axisY || 1;
+            const handle = screenOf([offsetSession.anchor[0] + offsetSession.normal[0] * dv, offsetSession.anchor[1] + offsetSession.normal[1] * dv]);
+            // Point the arrow along the (screen-space) drag axis, flipping 180°
+            // when the offset has gone negative — like the Transform gizmo's
+            // translate handle pointing in the drag direction.
+            const arrowAng = (Math.atan2(axisY, axisX) * 180) / Math.PI + (dv < 0 ? 180 : 0);
+            const onDrag = (ev: React.PointerEvent) => {
+              ev.preventDefault();
+              ev.stopPropagation();
+              const sx = ev.clientX, sy = ev.clientY, d0 = dv;
+              const move = (m: WindowEventMap["pointermove"]) => {
+                const proj = ((m.clientX - sx) * axisX + (m.clientY - sy) * axisY) / axisLen2;
+                setOffsetSession((s) => (s ? { ...s, value: (d0 + proj).toFixed(2) } : s));
+              };
+              const up = () => {
+                window.removeEventListener("pointermove", move);
+                window.removeEventListener("pointerup", up);
+              };
+              window.addEventListener("pointermove", move);
+              window.addEventListener("pointerup", up);
+            };
+            return (
+              <>
+                <svg
+                  className="offset-arrow"
+                  onPointerDown={onDrag}
+                  width={48}
+                  height={18}
+                  viewBox="0 0 48 18"
+                  style={{ left: handle.x, top: handle.y, transform: `translate(-50%, -50%) rotate(${arrowAng}deg)` }}
+                >
+                  <title>Drag to set the offset distance (cross over to flip the side)</title>
+                  <line className="offset-arrow-shaft" x1="3" y1="9" x2="31" y2="9" />
+                  <path className="offset-arrow-head" d="M30 2.5 L45 9 L30 15.5 Z" />
+                </svg>
+                <DraggableDialog className="dim-input" baseTransform="translate(14px, -130%)" style={{ left: a0.x, top: a0.y }}>
+                  <label data-drag-handle>Offset</label>
+                  <DimValueInput
+                    value={offsetSession.value}
+                    variables={dimVarOptions}
+                    onChange={(v) => setOffsetSession((s) => (s ? { ...s, value: v } : s))}
+                    onSubmit={commitOffset}
+                    onCancel={cancelOffset}
+                  />
+                  <button onClick={commitOffset}>Set</button>
+                  <button className="ghost" onClick={cancelOffset}>
+                    ✕
+                  </button>
+                </DraggableDialog>
+              </>
+            );
+          })()}
+          {/* Re-edit a committed offset's distance: shown when a single generated
+              offset entity is selected. Editing re-runs applyDerived. */}
+          {editingSketch && !offsetSession && selectedOffsetOp && (() => {
+            const e = selectedOffsetOp.entity;
+            const uv: Vec2 =
+              e.type === "line"
+                ? [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2]
+                : e.type === "circle"
+                  ? [e.c[0], e.c[1]]
+                  : e.type === "arc"
+                    ? [e.c[0] + e.r * Math.cos((e.start + e.end) / 2), e.c[1] + e.r * Math.sin((e.start + e.end) / 2)]
+                    : [0, 0];
+            const a0 = screenOf(uv);
+            const shown = offsetEdit?.opId === selectedOffsetOp.op.id ? offsetEdit.value : selectedOffsetOp.op.distance;
+            return (
+              <DraggableDialog className="dim-input" baseTransform="translate(14px, -130%)" style={{ left: a0.x, top: a0.y }}>
+                <label data-drag-handle>Offset</label>
+                <DimValueInput
+                  value={shown}
+                  variables={dimVarOptions}
+                  onChange={(v) => setOffsetEdit({ opId: selectedOffsetOp.op.id, value: v })}
+                  onSubmit={commitOffsetEdit}
+                  onCancel={() => setOffsetEdit(null)}
+                />
+                <button onClick={commitOffsetEdit}>Set</button>
+              </DraggableDialog>
+            );
+          })()}
+          {/* Mirror tool: a floating prompt. Before an axis is armed it asks the
+              user to click a line; once armed it shows the live mirrored count and
+              Done/Cancel. Enter commits, Esc cancels (see the key handler). */}
+          {editingSketch && mirrorSession && (() => {
+            const sk = doc.features.find((f) => f.id === editingSketchId);
+            const axis =
+              mirrorSession.axisEntityId && sk?.type === "sketch"
+                ? sk.entities.find((x) => x.id === mirrorSession.axisEntityId)
+                : undefined;
+            const anchorUv: Vec2 =
+              axis && axis.type === "line"
+                ? [(axis.a[0] + axis.b[0]) / 2, (axis.a[1] + axis.b[1]) / 2]
+                : [0, 0];
+            const a0 = screenOf(anchorUv);
+            return (
+              <DraggableDialog className="dim-input" baseTransform="translate(14px, -130%)" style={{ left: a0.x, top: a0.y }}>
+                <label data-drag-handle>Mirror</label>
+                {!mirrorSession.axisEntityId ? (
+                  <span style={{ padding: "0 6px" }}>Click a line to set the axis</span>
+                ) : (
+                  <span style={{ padding: "0 6px" }}>
+                    {mirrorSession.previews.length} mirrored — click entities to add
+                  </span>
+                )}
+                <button onClick={commitMirror} disabled={mirrorSession.previews.length === 0}>
+                  Done
+                </button>
+                <button className="ghost" onClick={cancelMirror}>
+                  ✕
+                </button>
+              </DraggableDialog>
+            );
+          })()}
+          {/* Project/Convert tool: a fixed floating prompt. There's no single
+              anchor (the user clicks body edges/vertices anywhere), so it sits at
+              the top. Done commits the projected previews; ✕/Esc discards them. */}
+          {editingSketch && projectSession && (
+            <DraggableDialog className="dim-input" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
+              <label data-drag-handle>Project</label>
+              <span style={{ padding: "0 6px" }}>
+                {projectSession.previews.length > 0
+                  ? `${projectSession.previews.length} projected — click more edges/vertices`
+                  : "Click body edges or vertices to project"}
+              </span>
+              <button onClick={commitProject} disabled={projectSession.previews.length === 0}>
+                Done
+              </button>
+              <button className="ghost" onClick={cancelProject}>
+                ✕
+              </button>
+            </DraggableDialog>
+          )}
+          {/* Text tool: once the anchor is clicked, a floating box takes the
+              string + height. Enter commits, ✕/Esc cancels. The text is live-
+              previewed in the sketch (see renderSketchesWithPreview). */}
+          {editingSketch && textDraft && (() => {
+            const a0 = screenOf(textDraft.anchor);
+            return (
+              <DraggableDialog className="dim-input" baseTransform="translate(14px, -130%)" style={{ left: a0.x, top: a0.y }}>
+                <label data-drag-handle>Text</label>
+                <input
+                  autoFocus
+                  value={textDraft.value}
+                  placeholder="Type text…"
+                  style={{ width: 120 }}
+                  onChange={(ev) => setTextDraft((s) => (s ? { ...s, value: ev.target.value } : s))}
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Enter") { ev.preventDefault(); commitText(); }
+                  }}
+                />
+                <DimValueInput
+                  value={textDraft.height}
+                  variables={dimVarOptions}
+                  onChange={(v) => setTextDraft((s) => (s ? { ...s, height: v } : s))}
+                  onSubmit={commitText}
+                  onCancel={() => setTextDraft(null)}
+                />
+                <button onClick={commitText} disabled={!textDraft.value.trim()}>Set</button>
+                <button className="ghost" onClick={() => setTextDraft(null)}>✕</button>
+              </DraggableDialog>
+            );
+          })()}
           {/* Polygon tool: a one-shot floating "Sides" box (like the dimension
               input). The draft is free text; Set (enabled only for an integer in
               3..24) commits the count and closes the box so the next viewport click
@@ -2914,11 +3823,13 @@ export default function App() {
             picking && (
               <div className="sketch-banner pick">
                 <span>
-                  {pickPurpose === "plane"
-                    ? "Select a plane or planar face to offset the new plane from"
-                    : "Select a plane or planar face for the sketch"}
+                  {pickPurpose === "revolveAxis"
+                    ? "Click an edge, plane, or face to revolve around"
+                    : pickPurpose === "plane"
+                      ? "Select a plane or planar face to offset the new plane from"
+                      : "Select a plane or planar face for the sketch"}
                 </span>
-                <button onClick={() => setPicking(false)}>Cancel (Esc)</button>
+                <button onClick={() => { setPicking(false); if (pickPurpose === "revolveAxis") setPickPurpose("sketch"); }}>Cancel (Esc)</button>
               </div>
             )
           )}
@@ -3052,6 +3963,105 @@ export default function App() {
               </div>
             </DraggableDialog>
           )}
+          {revolveDialog && (() => {
+            const profileLabel = revolveDialog.profile
+              ? doc.features.find((f) => f.id === revolveDialog.profile!.sketchId)?.name ?? "Region"
+              : null;
+            const ax = revolveDialog.axis;
+            const axisLabel = !ax
+              ? null
+              : "plane" in ax
+                ? planeRefLabel(ax.plane)
+                : "face" in ax
+                  ? (doc.features.find((f) => f.id === ax.face.featureId)?.name ?? "Body") + " · face"
+                  : (doc.features.find((f) => f.id === ax.sketchId)?.name ?? "Edge") + " · edge";
+            const axisArming = picking && pickPurpose === "revolveAxis";
+            const armAxis = () => {
+              setRevolveDialog((d) => (d ? { ...d, armed: null } : d));
+              setPickPurpose("revolveAxis");
+              setPicking(true);
+            };
+            return (
+            <DraggableDialog className="extrude-dialog" style={{ left: revolveDialog.x, top: revolveDialog.y }}>
+              <div className="ed-title" data-drag-handle>Revolve</div>
+              <div className="ed-hint">Arm a profile face, then an axis — a sketch line, a plane, or a body face.</div>
+              <div className="bool-group-label">Profile</div>
+              {profileLabel ? (
+                <div className="bool-operand-row">
+                  <span className="bool-operand-name">{profileLabel}</span>
+                  <button className="bool-operand-x" title="Re-pick" onClick={() => setRevolveDialog((d) => (d ? { ...d, profile: null, armed: "profile" } : d))}>✕</button>
+                </div>
+              ) : (
+                <button
+                  className={"ed-pick-btn" + (revolveDialog.armed === "profile" ? " active" : "")}
+                  onClick={() => setRevolveDialog((d) => (d ? { ...d, armed: "profile" } : d))}
+                >
+                  {revolveDialog.armed === "profile" ? "Click a region…" : "Select profile face"}
+                </button>
+              )}
+              <div className="bool-group-label">Axis</div>
+              {axisLabel ? (
+                <div className="bool-operand-row">
+                  <span className="bool-operand-name">{axisLabel}</span>
+                  <button className="bool-operand-x" title="Re-pick" onClick={() => { setRevolveDialog((d) => (d ? { ...d, axis: null } : d)); armAxis(); }}>✕</button>
+                </div>
+              ) : (
+                <button
+                  className={"ed-pick-btn" + (axisArming ? " active" : "")}
+                  onClick={armAxis}
+                >
+                  {axisArming ? "Click an edge, plane, or face…" : "Select axis"}
+                </button>
+              )}
+              <div className="ed-modes">
+                {(["full", "angle"] as const).map((m) => (
+                  <button
+                    key={m}
+                    className={revolveDialog.mode === m ? "active" : ""}
+                    onClick={() => setRevolveDialog((d) => (d ? { ...d, mode: m } : d))}
+                  >
+                    {m === "full" ? "Full (360°)" : "Angle"}
+                  </button>
+                ))}
+              </div>
+              {revolveDialog.mode === "angle" && (
+                <>
+                  <label className="ed-field">
+                    <span>Angle (°)</span>
+                    <input
+                      autoFocus
+                      value={revolveDialog.degrees}
+                      onChange={(e) => setRevolveDialog((d) => (d ? { ...d, degrees: e.target.value } : d))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") createRevolve();
+                        else if (e.key === "Escape") closeRevolveDialog();
+                      }}
+                    />
+                  </label>
+                  <label className="ed-field ed-flip">
+                    <span>Symmetric</span>
+                    <input
+                      type="checkbox"
+                      checked={revolveDialog.symmetric}
+                      onChange={(e) => setRevolveDialog((d) => (d ? { ...d, symmetric: e.target.checked } : d))}
+                    />
+                  </label>
+                </>
+              )}
+              {revolvePreviewError && <p className="ed-warning">{revolvePreviewError}</p>}
+              <div className="ed-actions">
+                <button
+                  className="ed-primary"
+                  disabled={!revolveDialog.profile || !revolveDialog.axis}
+                  onClick={createRevolve}
+                >
+                  Create
+                </button>
+                <button onClick={closeRevolveDialog}>Cancel</button>
+              </div>
+            </DraggableDialog>
+            );
+          })()}
           {planeDialog && (
             <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
               <div className="ed-title" data-drag-handle>Reference plane</div>

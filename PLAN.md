@@ -302,7 +302,8 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
     timeline row enters its edit mode (sketch → edit sketch, transform → edit
     gizmo); `FeatureTree.onDoubleClick` → `handleTreeDoubleClick` in `App.tsx`.
   - **Spline tool — ✅ DONE.** A smooth through-point `spline` SketchEntity (the
-    `∿` tool: click points, **Enter** to finish; Catmull-Rom render/snap/measure;
+    `∿` tool: click points, **Esc** to finish — matching the polyline, changed
+    2026-06-29; Catmull-Rom render/snap/measure;
     real B-spline in the kernel). Used as a **sweep path** (Phase 6) and **now
     also as a closed-region boundary** — `detectSketchRegions` treats **arcs and
     splines** as graph edges (curve tangent for the angular traversal, tessellated
@@ -417,14 +418,51 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
 > - **Point identity is by coordinate key** (see `solver.ts`): coincident
 >   endpoints merge by position, robust only until the first solve moves them —
 >   wants a real point-based sketch model before heavy constraint editing.
-> - **Sketch operations missing:** mirror (of sketch entities), use/project
->   (convert body edges into the sketch), offset, trim/extend. *(Construction
->   geometry and splines are now done — see 2a.)*
+> - **Sketch operations:** **mirror** (of sketch entities), **use/project**
+>   (convert body edges into the sketch), **offset**, and a **text** tool are now
+>   ✅ DONE (2026-06-29 batch — see the note below); **trim/extend** is the
+>   remaining gap. *(Construction geometry and splines were already done — see 2a.)*
 > - **Arcs are now solver-aware** (mapped as centre + two endpoint points +
 >   radius + start/end angles, tied by `arc_rules`, so an arc constrains and
 >   moves as a real curve and its endpoints merge with coincident line/arc ends);
 >   circles are mapped + radius-constrainable. **Only splines** still pass through
 >   the solver unchanged (not constrained).
+
+> **Sketch tooling + derived geometry batch (2026-06-29, branch
+> `feat/phase9-agent`):** a major sketch-tool expansion landed.
+> - **New sketch tools:** **Offset** (`O` — a single connected chain → a
+>   concentric/parallel copy at a signed distance, set via an inline input + a
+>   Transform-style drag arrow; rejects multi-chain selections with "Can only
+>   offset a single chain at once."); **Mirror** (`M` — arm a mirror line, then
+>   click entities to reflect them live; cancellable); **Project/Convert** ("Use",
+>   `U` — project body edges/vertices onto the active sketch plane); **Text** (`T`
+>   — glyph outlines via opentype.js + a bundled **Inter** TTF; a `text`
+>   `SketchEntity` `{p,value,height,rotation?}`).
+> - **Parametric / associative derived geometry** (`document/derived.ts`):
+>   Offset/Mirror/Project are stored as `DerivedOp`s on the sketch (outputs tagged
+>   `derivedFrom`, excluded from the solver, non-constrainable, rendered a distinct
+>   **purple** as "driven"). They **recompute when their sources change**.
+>   **Project is live-associative** (Onshape/Fusion behaviour): it stores
+>   persistent edge **names** and re-projects after each rebuild, gated by a
+>   change-detection guard that converges (no regen feedback loop). **Text is
+>   re-editable** in place.
+> - **Text is extrudable:** an `ExtrudeProfile` `{kind:"sketchText"}` baked in the
+>   worker via replicad `textBlueprints` (even-odd counters/holes handled),
+>   per-glyph face naming; selecting a text entity feeds the Extrude dialog and
+>   hides the sketch on success.
+> - **Shortcut remap:** sketch-mode **Select = `S`** (was `V`), **Spline =
+>   `Shift+S`** (was `S`); the **spline finishes on `Esc`** now (was `Enter`),
+>   matching the polyline. Added `Offset O` / `Mirror M` / `Use U` / `Text T`.
+>   `KEYBOARD_SHORTCUTS.md` updated.
+> - **Small-edge picking fix:** small edges are now directly selectable — the
+>   vertex-grab radius was a fixed **world-space** distance that swallowed any edge
+>   shorter than ~6 units (and ignored zoom); it's now **screen-space (10px)**.
+> - **Layout fix:** the **New Body** toolbar button now matches its siblings'
+>   height (its `.mt-dropdown` wrapper stretched but the inner `<button>` didn't →
+>   `display:flex`).
+> - **Revolve** gained its arming dialog + ghost + symmetric + axis-by-plane/face
+>   in the same batch — see Phase 6.
+> - **Test suite** grew **68 → 123** over the batch.
 
 > **Reprioritized 2026-06-18 (user):** Extrude is the single most important
 > solid op and is the headline of Phase 3; **Chamfer (and Fillet)** matter more
@@ -639,16 +677,26 @@ this — datum / reference-plane sketches stay anchored to their datum.
   caps). *(Ruled option / guide rails / point-capped ends: future.)*
 - **Spline sketch tool — ✅ DONE** (was UI/UX backlog #8). A `spline`
   `SketchEntity` (smooth Catmull-Rom through control points): the `∿` sketch tool
-  (click points, **Enter** to finish), rendered/snapped/measured; an open curve
+  (click points, **Esc** to finish), rendered/snapped/measured; an open curve
   used mainly as a **sweep path**. The on-screen curve and the swept spine share
   one definition — `splineBeziers` (the Catmull-Rom curve as exact cubic-Bézier
   spans) — so the solid's centerline matches the drawn path exactly.
-- **Revolve — ✅ DONE.** A `RevolveFeature` revolves a **sketch region** around
-  an **axis line** (both in the same sketch) by an expression-backed **angle**
-  (default 360°). `⟳ Revolve` enables when a region + a line in one sketch are
-  selected. Kernel `revolveFromFace` uses `BRepPrimAPI_MakeRevol` with
-  history-based naming (swept side faces per profile edge + start/end caps for a
-  partial revolve). *(Axis from a body edge / datum axis: future.)*
+- **Revolve — ✅ DONE** (dialog overhauled 2026-06-29). A `RevolveFeature`
+  revolves a **sketch region** around an **axis** by an expression-backed
+  **angle**. The `⟳ Revolve` button is **always enabled** and opens an **arming
+  dialog** (Boolean-style): arm a **profile** region, then arm an **axis** from a
+  single "Select axis" target that accepts a **sketch line**, a **datum/reference
+  plane** (→ its intersection line with the profile plane, `planeIntersectionLine`),
+  or a **body face** (planar → intersection line; cylindrical/conical → that
+  surface's central axis, read in the worker). The dialog offers **Full (360°)**
+  vs a specified **angle** + a **Symmetric** option (straddles the profile plane,
+  ±angle/2, via a −angle/2 pre-rotation of the face), and shows a **translucent
+  ghost** of the result (reusing the extrude ghost pipeline, debounced). On
+  success the **originating sketch is hidden**, like extrude. `RevolveAxis` is a
+  union (`{sketchId,entityId}` | `{plane}` | `{face}`); edge/plane axes resolve in
+  the document layer, face axes in the worker. Kernel `revolveFromFace` uses
+  `BRepPrimAPI_MakeRevol` with history-based naming (swept side faces per profile
+  edge + start/end caps for a partial revolve).
 
 ### Phase 7 — Multi-body, parts, selection UX — ✅ DONE
 - Multiple bodies/parts in one document — ✅. A **Parts** panel

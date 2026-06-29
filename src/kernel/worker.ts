@@ -6,7 +6,7 @@ import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
 import {
   setOC, makeBaseBox, makeCylinder, makeSphere, draw, drawPointsInterpolation, Plane,
-  cast, getOC, Vector, HASH_CODE_MAX, exportSTEP, measureVolume,
+  cast, getOC, Vector, HASH_CODE_MAX, exportSTEP, measureVolume, loadFont, textBlueprints,
 } from "replicad";
 import type { Shape3D, Face, Sketch } from "replicad";
 
@@ -35,6 +35,20 @@ function ensureOC(): Promise<void> {
     });
   }
   return ocReady;
+}
+
+// The bundled sketch font, loaded into replicad's text system once (lazily, only
+// when a document actually extrudes text). Same asset the UI renders glyph
+// previews from (`src/document/text.ts`), so the solid matches the preview.
+const FONT_URL = `${import.meta.env.BASE_URL}fonts/Inter-Regular.ttf`;
+let fontReady: Promise<void> | null = null;
+function ensureFont(): Promise<void> {
+  if (!fontReady) {
+    fontReady = fetch(FONT_URL)
+      .then((r) => r.arrayBuffer())
+      .then((buf) => loadFont(buf).then(() => undefined));
+  }
+  return fontReady;
 }
 
 const MESH_OPTS = { tolerance: 0.05, angularTolerance: 30 };
@@ -163,6 +177,7 @@ function revolveFromFace(
   axisOrigin: number[],
   axisDir: number[],
   angleRad: number,
+  symmetric: boolean,
   id: string,
 ): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -170,14 +185,34 @@ function revolveFromFace(
   const pnt = new oc.gp_Pnt_3(axisOrigin[0], axisOrigin[1], axisOrigin[2]);
   const dir = new oc.gp_Dir_4(axisDir[0], axisDir[1], axisDir[2]);
   const ax1 = new oc.gp_Ax1_2(pnt, dir);
-  const builder = new oc.BRepPrimAPI_MakeRevol_1(profileFace.wrapped, ax1, angleRad, false);
+
+  // For a symmetric revolve, pre-rotate the profile by −angle/2 about the axis,
+  // then sweep +angle, so the solid straddles the profile plane (it spans
+  // −angle/2 .. +angle/2 instead of 0 .. +angle). We rebind `face` to the
+  // rotated face so the side-naming below keys off the edges that are actually
+  // revolved — the transform produces fresh TopoDS_Edges, but the rigid rotation
+  // preserves the wire's edge order, so `side{i}` indices stay consistent with
+  // the non-symmetric case.
+  let face = profileFace;
+  let rotated: Face | null = null;
+  if (symmetric) {
+    const trsf = new oc.gp_Trsf_1();
+    trsf.SetRotation_1(ax1, -angleRad / 2);
+    const xf = new oc.BRepBuilderAPI_Transform_2(profileFace.wrapped, trsf, true);
+    rotated = cast(xf.Shape()) as Face;
+    face = rotated;
+    xf.delete();
+    trsf.delete();
+  }
+
+  const builder = new oc.BRepPrimAPI_MakeRevol_1(face.wrapped, ax1, angleRad, false);
   const shape = cast(builder.Shape()) as Shape3D;
 
   const capHashes = new Map<number, string>();
   try { capHashes.set(hashOf(builder.FirstShape_1()), `${id}/start`); } catch { /* full revolve: no caps */ }
   try { capHashes.set(hashOf(builder.LastShape_1()), `${id}/end`); } catch { /* full revolve: no caps */ }
   const sideByHash = new Map<number, string>();
-  profileFace.edges.forEach((e, i) => {
+  face.edges.forEach((e, i) => {
     for (const g of drainList(builder.Generated(e.wrapped))) sideByHash.set(hashOf(g), `${id}/side${i}`);
   });
 
@@ -191,6 +226,7 @@ function revolveFromFace(
   ax1.delete();
   dir.delete();
   pnt.delete();
+  rotated?.delete();
   return { shape, names };
 }
 
@@ -200,6 +236,7 @@ function revolveSketchRegion(
   axisOrigin: number[],
   axisDir: number[],
   angleRad: number,
+  symmetric: boolean,
   id: string,
 ): NamedShape {
   const { outline, frame } = profile;
@@ -208,7 +245,7 @@ function revolveSketchRegion(
   let pen = draw().movePointerTo(outline[0]);
   for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
   const face = (pen.close().sketchOnPlane(plane) as { face(): Face }).face();
-  return revolveFromFace(face, axisOrigin, axisDir, angleRad, id);
+  return revolveFromFace(face, axisOrigin, axisDir, angleRad, symmetric, id);
 }
 
 type RegionProfile = Extract<ResolvedProfile, { kind: "sketchRegion" }>;
@@ -372,6 +409,25 @@ function sketchRegionFace(
   return { face, normal: new Vector(frame.normal) };
 }
 
+/** Bake a text profile to one OCCT face per glyph (each glyph face already
+ *  carries its counters as inner hole wires — replicad `textBlueprints` resolves
+ *  even-odd fill), plus the sketch-plane normal. The blueprint is built at the
+ *  origin, baseline-left, then rotated (CCW about the anchor) and translated to
+ *  the entity's u,v anchor — matching the on-screen preview's placement. Requires
+ *  `ensureFont()` to have resolved first. */
+function sketchTextFaces(
+  profile: Extract<ResolvedFeature, { type: "extrude" }>["profile"] & { kind: "sketchText" },
+): { faces: Face[]; normal: Vector } {
+  const { value, height, rotation, anchor, frame } = profile;
+  let bp = textBlueprints(value, { fontSize: height, startX: 0, startY: 0 });
+  if (rotation) bp = bp.rotate((rotation * 180) / Math.PI, [0, 0]);
+  bp = bp.translate(anchor[0], anchor[1]);
+  const sketches = bp.sketchOnPlane(planeOf(frame));
+  const faces = (sketches.faces() as Shape3D).faces;
+  if (faces.length === 0) throw new Error("extrude: text produced no glyphs");
+  return { faces, normal: new Vector(frame.normal) };
+}
+
 /** Resolve a body-face profile to its OCCT face and outward normal. The face
  *  is re-found by its persistent name, else by nearest centroid. */
 function bodyProfileFace(
@@ -395,6 +451,58 @@ function bodyProfileFace(
   }
   if (!best) throw new Error("extrude: source body has no faces");
   return { face: best, normal: best.normalAt() };
+}
+
+/** The line two planes (each `origin` + `normal`) share, or null if parallel —
+ *  same math as `planeIntersectionLine` in document/planes.ts. `origin` is the
+ *  foot of the perpendicular from the world origin onto that line. */
+function intersectPlanes(
+  o1: V3, n1: V3, o2: V3, n2: V3,
+): { origin: V3; dir: V3 } | null {
+  const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const dir = cross(n1, n2);
+  const denom = dot(dir, dir);
+  if (denom < 1e-12) return null;
+  const d1 = dot(n1, o1), d2 = dot(n2, o2);
+  const t1 = cross(n2, dir), t2 = cross(dir, n1);
+  const origin: V3 = [
+    (d1 * t1[0] + d2 * t2[0]) / denom,
+    (d1 * t1[1] + d2 * t2[1]) / denom,
+    (d1 * t1[2] + d2 * t2[2]) / denom,
+  ];
+  return { origin, dir };
+}
+
+/** Resolve a body face armed as a revolve axis to a world line (origin + dir):
+ *  a planar face → the line where its plane meets the profile plane; a
+ *  cylindrical/conical face → that surface's own central axis. */
+function faceRevolveAxis(
+  body: Body,
+  faceName: string | undefined,
+  center: V3,
+  profileFrame: RegionProfile["frame"],
+): { origin: V3; dir: V3 } {
+  const { face } = bodyProfileFace(body, faceName, center);
+  const gt = face.geomType;
+  if (gt === "CYLINDRE" || gt === "CONE") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const oc = getOC() as any;
+    const ad = new oc.BRepAdaptor_Surface_2(face.wrapped, false);
+    const ax1 = gt === "CYLINDRE" ? ad.Cylinder().Axis() : ad.Cone().Axis();
+    const loc = ax1.Location();
+    const d = ax1.Direction();
+    const out = { origin: [loc.X(), loc.Y(), loc.Z()] as V3, dir: [d.X(), d.Y(), d.Z()] as V3 };
+    ad.delete();
+    return out;
+  }
+  // Planar (or any other) face: intersect its plane with the profile plane.
+  const line = intersectPlanes(
+    face.center.toTuple(), face.normalAt().toTuple(),
+    profileFrame.origin, profileFrame.normal,
+  );
+  if (!line) throw new Error("revolve: axis face is parallel to the profile plane (no intersection line)");
+  return line;
 }
 
 /** A prism length, starting anywhere on `face`, guaranteed to clear past every
@@ -752,10 +860,20 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
           mode !== "new" ? feature.targetId ?? (profile.kind === "bodyFace" ? profile.sourceId : undefined) : undefined;
         const targets = targetId ? bodies.filter((b) => b.id === targetId) : [];
 
-        const { face, normal } =
-          profile.kind === "sketchRegion"
-            ? sketchRegionFace(profile)
-            : bodyProfileFace(requireBody(bodies, profile.sourceId), profile.faceName, profile.center);
+        // One profile face for region/body-face; many (one per glyph) for text.
+        let faces: Face[];
+        let normal: Vector;
+        if (profile.kind === "sketchRegion") {
+          const r = sketchRegionFace(profile);
+          faces = [r.face]; normal = r.normal;
+        } else if (profile.kind === "sketchText") {
+          const r = sketchTextFaces(profile);
+          faces = r.faces; normal = r.normal;
+        } else {
+          const r = bodyProfileFace(requireBody(bodies, profile.sourceId), profile.faceName, profile.center);
+          faces = [r.face]; normal = r.normal;
+        }
+        const face = faces[0]; // representative for through-all / up-to-face sizing
 
         const sign = dirFlip ? -1 : 1;
         // "Up to face" derives its own signed length (and direction) from the
@@ -768,14 +886,26 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
         } else {
           lengths = extrudeLengths(extent, distance, face, targets).map((l) => l * sign);
         }
-        let built: NamedShape = prismFromFace(face, normal, lengths[0], feature.id);
-        for (let i = 1; i < lengths.length; i++) {
-          const more = prismFromFace(face, normal, lengths[i], feature.id);
-          const fused = booleanNamed("fuse", built, more);
-          built.shape.delete();
-          more.shape.delete();
-          built = fused;
+        // Prism every face (one per glyph for text) at every length (two for
+        // symmetric), fusing into one named solid. A single-face profile keeps the
+        // feature id as its name prefix; text scopes each glyph as `${id}/g{n}` so
+        // the glyph faces stay distinct.
+        let built: NamedShape | null = null;
+        for (let gi = 0; gi < faces.length; gi++) {
+          const prefix = faces.length > 1 ? `${feature.id}/g${gi}` : feature.id;
+          for (const len of lengths) {
+            const piece = prismFromFace(faces[gi], normal, len, prefix);
+            if (built === null) {
+              built = piece;
+            } else {
+              const fused = booleanNamed("fuse", built, piece);
+              built.shape.delete();
+              piece.shape.delete();
+              built = fused;
+            }
+          }
         }
+        if (built === null) throw new Error("extrude: profile produced no geometry");
 
         if (feature.previewTool) {
           // Live-preview ghost: emit just the swept tool (the changing portion),
@@ -856,11 +986,23 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
         bodies.push({ id: feature.id, ...res });
       } else if (feature.type === "revolve") {
         if (feature.profile.kind !== "sketchRegion") throw new Error("revolve: profile must be a sketch region");
+        // A body-face axis is resolved here (needs the built body + profile frame);
+        // sketch-line/plane axes arrive pre-baked as axisOrigin/axisDir.
+        let axisOrigin = feature.axisOrigin;
+        let axisDir = feature.axisDir;
+        if (feature.axisFace) {
+          const axBody = requireBody(bodies, feature.axisFace.sourceId);
+          const line = faceRevolveAxis(axBody, feature.axisFace.faceName, feature.axisFace.center, feature.profile.frame);
+          axisOrigin = line.origin;
+          axisDir = line.dir;
+        }
+        if (!axisOrigin || !axisDir) throw new Error("revolve: missing axis");
         const built = revolveSketchRegion(
           feature.profile,
-          feature.axisOrigin,
-          feature.axisDir,
+          axisOrigin,
+          axisDir,
           (feature.angle * Math.PI) / 180,
+          feature.symmetric,
           feature.id,
         );
         bodies.push({ id: feature.id, ...built });
@@ -928,6 +1070,14 @@ ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
   const req = event.data;
   try {
     await ensureOC();
+    // Load the text font only when a feature actually bakes text (keeps the
+    // 340 KB asset off the critical path for text-free documents).
+    if (
+      "features" in req &&
+      req.features.some((f) => f.type === "extrude" && f.profile.kind === "sketchText")
+    ) {
+      await ensureFont();
+    }
     let res: KernelResponse;
     switch (req.op) {
       case "regenerate":

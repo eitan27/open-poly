@@ -18,7 +18,7 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 | Delete selection | `Delete` / `Backspace` |
 | Cancel current mode / dialog | `Esc` |
 | Dimension selected line/circle | `D` (sketch mode) |
-| Spline: commit accumulated points | `Enter` (sketch mode, spline tool) |
+| Spline: finish + commit accumulated points | `Esc` (sketch mode, spline tool — matches how the line tool ends a chain; `Esc` with no draft still cancels the tool) |
 
 ## Modeling toolbar (available whenever you're not editing a sketch)
 
@@ -41,10 +41,14 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 
 | Action | Key | Notes |
 |---|---|---|
-| Select / Line / Rectangle (2-corner) / Circle (center) / Polygon / Arc | `V` `L` `R` `C` `P` `A` | Already shipped. |
+| Select / Line / Rectangle (2-corner) / Circle (center) / Polygon / Arc | `S` `L` `R` `C` `P` `A` | Already shipped. (Select moved `V`→`S`.) |
 | Rectangle: center + corner | `Shift+R` | Variant of `R`. |
 | Circle: 3 points | `Shift+C` | Variant of `C`. |
-| Spline | `S` | `S` = **S**pline (freed up in sketch mode when the Solve shortcut was removed). |
+| Spline | `Shift+S` | Variant of `S` (which now selects the **Select** tool). Moved `S`→`Shift+S` so the bare letter goes to the more frequently used Select pointer. |
+| Offset | `O` | **O**ffset. Acts on the current selection (must be a single chain); opens an on-canvas distance box + a draggable arrow. |
+| Mirror (sketch) | `M` | **M**irror. Click a line to arm the mirror axis, then click entities to mirror them across it (live dashed previews); `Enter` commits, `Esc` cancels. Distinct from the modeling-toolbar `M` (body Mirror) — mutually exclusive, safe. |
+| Project / Convert | `U` | "**U**se" existing geometry. Click body edges & vertices to project them onto the sketch plane as new entities (live dashed previews); `Enter` commits, `Esc` cancels. Straight edges → lines, planar circular edges → circles/arcs, anything else → splines. |
+| Text | `T` | **T**ext. Click to place the baseline anchor, then type the string + height in the floating box; the glyphs preview live. `Enter` commits, `Esc` cancels. Sketch-mode only — distinct from the modeling-toolbar `T` (Transform), mutually exclusive, safe. |
 | Dimension | `D` | Already shipped. |
 | Parallel | `Shift+P` | Resolves conflict #2 (below). |
 | Perpendicular | `N` | Resolves conflict #2. Reuses `N` from New Body (modeling toolbar) — mutually exclusive, safe. |
@@ -53,7 +57,8 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 
 *(There is no longer a "Solve constraints" shortcut: drawing and editing
 constraints now solve automatically, so the manual ⛓ Solve button and its `S`
-binding were removed. `S` in sketch mode now selects the **Spline** tool.)*
+binding were removed. `S` in sketch mode now selects the **Select** tool (the
+pointer), and the **Spline** tool moved to `Shift+S`.)*
 
 ## Standard views
 
@@ -108,10 +113,13 @@ both at the same time):
 
 - `P`: Plane (modeling) / Polygon (sketch)
 - `C`: Chamfer (modeling) / Circle-center (sketch)
-- `S`: Sketch (modeling) / Spline (sketch)
+- `S`: Sketch (modeling) / Select (sketch)
 - `N`: New Body (modeling) / Perpendicular (sketch)
 - `R`: Revolve (modeling) / Rectangle: 2 corners (sketch)
 - `L`: Loft (modeling) / Line (sketch)
+- `M`: Mirror body (modeling) / Mirror sketch entities (sketch) — same verb, two contexts
+- `T`: Transform (modeling) / Text (sketch)
+- `U`: (unused in modeling) / Project-Convert "Use" (sketch)
 
 ## Future conflicts to watch (from `PLAN.md`'s roadmap)
 

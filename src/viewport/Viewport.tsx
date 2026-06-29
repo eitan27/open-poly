@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
@@ -26,6 +26,7 @@ import {
   sampleCircle,
   sampleSpline,
 } from "../document/sketchTools";
+import { getSketchFont, loadSketchFont, textToContours } from "../document/text";
 
 export interface FeatureMesh {
   id: string;
@@ -100,6 +101,13 @@ export type Selection =
   | { kind: "sketchPoint"; sketchId: string; point: [number, number] }
   | { kind: "sketchFace"; sketchId: string; regionId: string };
 
+/** A revolve-axis pick from the unified "Select axis" arming: a sketch line, a
+ *  body face (resolved to a line in the kernel), or a datum/reference plane. */
+export type RevolveAxisPick =
+  | { kind: "line"; sketchId: string; entityId: string }
+  | { kind: "bodyFace"; featureId: string; faceId: number }
+  | { kind: "plane"; ref: SketchPlaneRef };
+
 export function sameSelection(a: Selection | null, b: Selection | null): boolean {
   if (a === b) return true;
   if (!a || !b || a.kind !== b.kind) return false;
@@ -138,7 +146,19 @@ export type SketchTool =
   | "circle-3p"
   | "polygon"
   | "arc-3p"
-  | "spline";
+  | "spline"
+  | "offset"
+  | "mirror"
+  | "project"
+  | "text";
+/** Tools that pick/click existing entities (entity selection) rather than draw
+ *  new geometry on the plane: Select, the Mirror tool (which clicks an axis line
+ *  and then entities to reflect), and Project/Convert (which clicks body edges /
+ *  vertices to pull into the sketch). Routes clicks to onSelect, not
+ *  onSketchClick, and keeps selection-hover highlighting live. */
+function isPickTool(t: SketchTool): boolean {
+  return t === "select" || t === "mirror" || t === "project";
+}
 export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
 
 export interface ViewportApi {
@@ -146,6 +166,19 @@ export interface ViewportApi {
   lookAtFrame(frame: PlaneFrameData): void;
   /** Project a world point to pixel coords relative to the canvas top-left. */
   worldToScreen(p: [number, number, number]): { x: number; y: number };
+  /** The ordered world-space polyline of a body edge (by feature + edge id), as
+   *  drawn — the source geometry the Project/Convert sketch tool projects onto
+   *  the active plane. Null if that edge isn't currently rendered. */
+  getEdgeWorldPolyline(featureId: string, edgeId: number): [number, number, number][] | null;
+  /** The persistent topological name of a body edge (stable across rebuilds),
+   *  captured when an edge is picked for an associative projection. Undefined if
+   *  the edge has no name or isn't rendered. */
+  getEdgeName(featureId: string, edgeId: number): string | undefined;
+  /** Like `getEdgeWorldPolyline` but resolves the edge by its persistent name —
+   *  used to re-project associative geometry after a rebuild (the build-local
+   *  `edgeId` can renumber, the name doesn't). Null if no edge with that name is
+   *  currently rendered (a dangling projection). */
+  getEdgeWorldPolylineByName(featureId: string, name: string): [number, number, number][] | null;
   /** Render the current scene and return it as a PNG data URL — the agent's
    *  visual feedback (Phase 9). Finalizes any in-flight camera tween first so a
    *  preceding setView is reflected immediately. */
@@ -254,7 +287,13 @@ export const GHOST_COLOR = 0x4fd1ff;
 const EDGE_SEL_COLOR = new THREE.Color(SELECT_COLOR);
 const EDGE_HOV_COLOR = new THREE.Color(0x36d6c3);
 const EDGE_PICK_WORLD = 1.6; // ray-distance threshold for grabbing an edge
-const VERTEX_PICK_WORLD = 3; // proximity to an edge endpoint that grabs the vertex
+// Screen-space (pixel) radius around an edge endpoint that grabs the vertex
+// instead of the edge. Must be in pixels, NOT world units: a fixed world radius
+// swallows the whole of any edge shorter than ~2× that radius (every point on it
+// is within reach of an endpoint), so small edges become unselectable — and
+// because the radius is in world space, zooming in can't separate the endpoints
+// to expose a pickable middle. In pixels, zooming in grows the gap as expected.
+const VERTEX_PICK_PX = 10;
 
 const posKey = (x: number, y: number, z: number) =>
   `${Math.round(x * 1000)},${Math.round(y * 1000)},${Math.round(z * 1000)}`;
@@ -329,6 +368,8 @@ export function Viewport({
   onTransformPreview,
   picking,
   onPick,
+  axisPick,
+  onAxisPick,
   activeSketch,
   sketchTool,
   sketches,
@@ -367,6 +408,11 @@ export function Viewport({
   onTransformPreview: (delta: TransformDelta) => void;
   picking: boolean;
   onPick: (ref: SketchPlaneRef) => void;
+  /** When true (during a revolve "Select axis" arming), a pick in `picking` mode
+   *  is routed to `onAxisPick` instead of `onPick`, accepting a sketch line, a
+   *  body face, or a datum/reference plane from one click stream. */
+  axisPick: boolean;
+  onAxisPick: (pick: RevolveAxisPick) => void;
   activeSketch: { datumId: SketchPlaneId | null } | null;
   sketchTool: SketchTool;
   sketches: RenderSketch[];
@@ -406,6 +452,10 @@ export function Viewport({
   pickingRef.current = picking;
   const onPickRef = useRef(onPick);
   onPickRef.current = onPick;
+  const axisPickRef = useRef(axisPick);
+  axisPickRef.current = axisPick;
+  const onAxisPickRef = useRef(onAxisPick);
+  onAxisPickRef.current = onAxisPick;
   const sketchToolRef = useRef(sketchTool);
   sketchToolRef.current = sketchTool;
   const selectionFilterRef = useRef(selectionFilter);
@@ -837,6 +887,36 @@ export function Viewport({
       state.tween = { from: camera.position.clone(), to, up, start: performance.now() };
       controls.target.copy(target);
     };
+    // --- Body-edge lookup (shared by the Project/Convert tool's id- and
+    // name-based edge queries). Edge groups carry a build-local `edgeId` and a
+    // persistent `name`; the LineSegments buffer is consecutive world-space pairs
+    // [p0,p1, p1,p2, …] (no mesh transform). ---
+    type EdgeGroup = { start: number; count: number; edgeId: number; name?: string };
+    const bodyEdgeGroups = (featureId: string): EdgeGroup[] | undefined => {
+      const child = group.children.find(
+        (x): x is THREE.LineSegments =>
+          x instanceof THREE.LineSegments && x.userData.isBodyEdges && x.userData.featureId === featureId,
+      );
+      return child?.geometry.userData.edgeGroups as EdgeGroup[] | undefined;
+    };
+    const edgePolyline = (
+      featureId: string,
+      match: (g: EdgeGroup) => boolean,
+    ): [number, number, number][] | null => {
+      const child = group.children.find(
+        (x): x is THREE.LineSegments =>
+          x instanceof THREE.LineSegments && x.userData.isBodyEdges && x.userData.featureId === featureId,
+      );
+      const g = (child?.geometry.userData.edgeGroups as EdgeGroup[] | undefined)?.find(match);
+      if (!child || !g) return null;
+      const pos = child.geometry.getAttribute("position");
+      // First segment's start, then the end of every segment → ordered polyline.
+      const pts: [number, number, number][] = [[pos.getX(g.start), pos.getY(g.start), pos.getZ(g.start)]];
+      for (let i = g.start + 1; i < g.start + g.count; i += 2) {
+        pts.push([pos.getX(i), pos.getY(i), pos.getZ(i)]);
+      }
+      return pts;
+    };
     apiRef.current = {
       setView(name) {
         const v = VIEWS[name];
@@ -852,6 +932,16 @@ export function Viewport({
         const v = new THREE.Vector3(p[0], p[1], p[2]).project(camera);
         const rect = renderer.domElement.getBoundingClientRect();
         return { x: (v.x * 0.5 + 0.5) * rect.width, y: (-v.y * 0.5 + 0.5) * rect.height };
+      },
+      getEdgeWorldPolyline(featureId, edgeId) {
+        return edgePolyline(featureId, (g) => g.edgeId === edgeId);
+      },
+      getEdgeName(featureId, edgeId) {
+        const eg = bodyEdgeGroups(featureId);
+        return eg?.find((x) => x.edgeId === edgeId)?.name;
+      },
+      getEdgeWorldPolylineByName(featureId, name) {
+        return edgePolyline(featureId, (g) => g.name === name);
       },
       capturePNG() {
         // Snap to the end of any in-flight view tween so the requested camera is
@@ -1049,8 +1139,14 @@ export function Viewport({
         const a = new THREE.Vector3().fromBufferAttribute(pos, edgeHit!.index!);
         const bpt = new THREE.Vector3().fromBufferAttribute(pos, edgeHit!.index! + 1);
         const near = a.distanceTo(edgeHit!.point) <= bpt.distanceTo(edgeHit!.point) ? a : bpt;
-        if (flt.vertex && near.distanceTo(edgeHit!.point) < VERTEX_PICK_WORLD) {
-          return { kind: "vertex", featureId: fid, point: [near.x, near.y, near.z] };
+        // Grab the endpoint vertex only when the cursor is within a pixel radius
+        // of it (screen-space, so it scales with zoom — see VERTEX_PICK_PX). On a
+        // small edge this leaves a pickable band in the middle for the edge itself.
+        if (flt.vertex) {
+          const nearPx = projectToPx(near);
+          if (Math.hypot(nearPx.x - clientX, nearPx.y - clientY) < VERTEX_PICK_PX) {
+            return { kind: "vertex", featureId: fid, point: [near.x, near.y, near.z] };
+          }
         }
         const edgeId = getEdgeId(edgeHit!.index!, mesh.geometry);
         if (flt.edge && edgeId !== undefined) return { kind: "edge", featureId: fid, edgeId };
@@ -1121,7 +1217,7 @@ export function Viewport({
       // tool. Drop a stale hover when neither applies.
       const selecting =
         !pickingRef.current &&
-        (activeFrameRef.current === null || sketchToolRef.current === "select");
+        (activeFrameRef.current === null || isPickTool(sketchToolRef.current));
       if (!selecting && hoverSelRef.current) {
         hoverSelRef.current = null;
         applyHighlights();
@@ -1153,7 +1249,7 @@ export function Viewport({
         return;
       }
       const frame = activeFrameRef.current;
-      if (frame && sketchToolRef.current !== "select") {
+      if (frame && !isPickTool(sketchToolRef.current)) {
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) {
           state.previewLine.visible = false;
@@ -1200,6 +1296,26 @@ export function Viewport({
       down = null;
       if (moved > 5) return;
       if (pickingRef.current) {
+        // Revolve "Select axis" arming: one click stream accepts a sketch line or
+        // a body face (both via the normal selection raycaster) or, falling back,
+        // a datum/reference plane (only the picking raycaster sees those).
+        if (axisPickRef.current) {
+          const sel = pickSelection(e.clientX, e.clientY);
+          clearHover();
+          if (hoverSelRef.current) { hoverSelRef.current = null; applyHighlightsRef.current(); }
+          if (sel?.kind === "sketchEntity") { onAxisPickRef.current({ kind: "line", sketchId: sel.sketchId, entityId: sel.entityId }); return; }
+          if (sel?.kind === "face") { onAxisPickRef.current({ kind: "bodyFace", featureId: sel.featureId, faceId: sel.faceId }); return; }
+          const pp = pick(e.clientX, e.clientY);
+          if (!pp) return;
+          if (pp.kind === "datum") { if (pp.id !== "origin") onAxisPickRef.current({ kind: "plane", ref: { kind: "datum", id: pp.id } }); }
+          else if (pp.kind === "userplane") onAxisPickRef.current({ kind: "plane", ref: { kind: "plane", planeId: pp.planeId } });
+          else {
+            const featureId = (pp.mesh.userData.featureId as string) ?? "";
+            const frame = deriveFaceFrame([pp.point.x, pp.point.y, pp.point.z], [pp.normal.x, pp.normal.y, pp.normal.z]);
+            onAxisPickRef.current({ kind: "plane", ref: { kind: "face", featureId, frame } });
+          }
+          return;
+        }
         const p = pick(e.clientX, e.clientY);
         clearHover();
         if (hoverSelRef.current) { hoverSelRef.current = null; applyHighlightsRef.current(); }
@@ -1216,7 +1332,7 @@ export function Viewport({
         return;
       }
       const frame = activeFrameRef.current;
-      if (frame && sketchToolRef.current !== "select") {
+      if (frame && !isPickTool(sketchToolRef.current)) {
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) return;
         const s = snap(raw, e.clientX, e.clientY);
@@ -1491,6 +1607,15 @@ export function Viewport({
     tc.attach(proxy);
   }, [transformEdit, transformMode]);
 
+  // Load the sketch font once; bumping `fontTick` re-runs the sketch render so
+  // any text entities (which render nothing until the font is ready) appear.
+  const [fontTick, setFontTick] = useState(0);
+  useEffect(() => {
+    let live = true;
+    void loadSketchFont().then(() => { if (live) setFontTick((t) => t + 1); });
+    return () => { live = false; };
+  }, []);
+
   // Render every sketch (so finished sketches stay visible); set the active
   // frame/entities used for drawing.
   useEffect(() => {
@@ -1499,19 +1624,21 @@ export function Viewport({
     disposeSketchGroup(state.sketchGroup);
     for (const s of sketches) {
       const pts: number[] = [];
-      const entityGroups: { start: number; count: number; entityId: string; construction: boolean }[] = [];
+      const entityGroups: { start: number; count: number; entityId: string; construction: boolean; derived: boolean }[] = [];
       for (const e of s.entities) {
         const startVert = pts.length / 3;
         entitySegments(e, s.frame, pts);
         const count = pts.length / 3 - startVert;
-        if (count > 0) entityGroups.push({ start: startVert, count, entityId: e.id, construction: !!e.construction });
+        if (count > 0) entityGroups.push({ start: startVert, count, entityId: e.id, construction: !!e.construction, derived: !!e.derivedFrom });
       }
       if (pts.length === 0) continue;
       const geom = new THREE.BufferGeometry();
       geom.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
       // One geometry group per entity, so individual entities are highlightable.
-      // Material index 1 = construction (dashed amber); 0 = normal solid line.
-      for (const g of entityGroups) geom.addGroup(g.start, g.count, g.construction ? 1 : 0);
+      // Material index 1 = construction (dashed amber); 2 = derived/associative
+      // (offset/mirror/project — a distinct purple, like Onshape's projected
+      // geometry); 0 = normal solid line. Derived takes priority over construction.
+      for (const g of entityGroups) geom.addGroup(g.start, g.count, g.derived ? 2 : g.construction ? 1 : 0);
       geom.userData.entityGroups = entityGroups;
       // Index 0 = per-sketch base colour (active=white/green, else grey).
       const baseMat = new THREE.LineBasicMaterial({
@@ -1524,7 +1651,10 @@ export function Viewport({
       const constructionMat = new THREE.LineDashedMaterial({
         color: 0xe0a64f, dashSize: 1.4, gapSize: 0.9,
       });
-      const seg = new THREE.LineSegments(geom, [baseMat, constructionMat]);
+      // Associative/derived geometry (offset/mirror/projected) — a distinct
+      // purple so it reads as driven, not free, geometry.
+      const derivedMat = new THREE.LineBasicMaterial({ color: 0xb46bff });
+      const seg = new THREE.LineSegments(geom, [baseMat, constructionMat, derivedMat]);
       seg.computeLineDistances(); // needed by the dashed construction material
       seg.frustumCulled = false;
       seg.userData.sketchId = s.id;
@@ -1641,7 +1771,7 @@ export function Viewport({
     for (const [aw, bw] of collectBodyEdges(state.group)) addSeg(aw, bw);
     snapPointsRef.current = points;
     snapLinesRef.current = lines;
-  }, [sketches, activeSketchId, meshes, sketchFullyConstrained]);
+  }, [sketches, activeSketchId, meshes, sketchFullyConstrained, fontTick]);
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
@@ -1670,6 +1800,15 @@ function entitySegments(e: SketchEntity, frame: PlaneFrameData, out: number[]) {
   } else if (e.type === "spline") {
     const pts = sampleSpline(e.points);
     for (let i = 0; i + 1 < pts.length; i++) push(pts[i], pts[i + 1]);
+  } else if (e.type === "text") {
+    const font = getSketchFont();
+    if (font) {
+      // Each glyph contour is a closed loop; emit its segments (including the
+      // closing edge back to the contour start).
+      for (const c of textToContours(e.value, e.height, font, { anchor: e.p, rotation: e.rotation ?? 0 })) {
+        for (let i = 0; i < c.length; i++) push(c[i], c[(i + 1) % c.length]);
+      }
+    }
   }
 }
 

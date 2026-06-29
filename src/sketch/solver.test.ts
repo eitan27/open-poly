@@ -195,3 +195,31 @@ describe("solveSketch tangent", () => {
     expect(Math.abs(l.a[1] - c.c[1])).toBeCloseTo(c.r, 3);
   });
 });
+
+describe("solveSketch text", () => {
+  it("passes a text entity through unchanged (not a constraint participant)", async () => {
+    const ents: SketchEntity[] = [
+      { type: "line", id: "L", a: [0, 0], b: [10, 0] },
+      { type: "text", id: "T", p: [2, 2], value: "Hi", height: 5 },
+    ];
+    const res = await solveSketch(ents, [{ id: "h", type: "horizontal", entity: "L" }]);
+    const t = res.entities.find((e) => e.id === "T");
+    expect(t).toEqual(ents[1]); // identical object content — solver left it alone
+  });
+});
+
+describe("solveSketch derived geometry", () => {
+  it("ignores derivedFrom entities (no DOF, returned untouched)", async () => {
+    // A free, fully-constrained line plus a generated (derived) line. The derived
+    // line must not enter the GCS problem: it adds no DOF and is returned as-is.
+    const derived: SketchEntity = { type: "line", id: "D", a: [3, 7], b: [9, 7], derivedFrom: "op1" };
+    const constraints: SketchConstraint[] = [
+      { id: "h", type: "horizontal", entity: "L" },
+      { id: "d", type: "distance", entity: "L", value: 40 },
+    ];
+    const res = await solveSketch([line, derived], constraints);
+    expect(res.dof).toBe(0); // only L's DOF; D contributes none
+    const d = res.entities.find((e) => e.id === "D");
+    expect(d).toEqual(derived); // identical content — solver left it alone
+  });
+});

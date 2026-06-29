@@ -99,6 +99,20 @@ export function uvToWorld(frame: PlaneFrameData, u: number, v: number): Vec3 {
   ];
 }
 
+/** Orthographic projection of a world point onto a frame's plane → its 2D (u, v)
+ *  sketch coordinates. The inverse of `uvToWorld`, dropping the normal component
+ *  (so points off the plane fall to their foot of perpendicular). Used by the
+ *  Project/Convert sketch tool to pull existing 3D geometry into a sketch. */
+export function worldToUv(frame: PlaneFrameData, p: Vec3): [number, number] {
+  const dx = p[0] - frame.origin[0];
+  const dy = p[1] - frame.origin[1];
+  const dz = p[2] - frame.origin[2];
+  return [
+    dx * frame.uAxis[0] + dy * frame.uAxis[1] + dz * frame.uAxis[2],
+    dx * frame.vAxis[0] + dy * frame.vAxis[1] + dz * frame.vAxis[2],
+  ];
+}
+
 const norm = (v: Vec3): Vec3 => {
   const l = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / l, v[1] / l, v[2] / l];
@@ -173,4 +187,27 @@ export function planeThrough3Points(p0: Vec3, p1: Vec3, p2: Vec3): PlaneFrameDat
   const n = cross(sub3(p1, p0), sub3(p2, p0));
   if (Math.hypot(n[0], n[1], n[2]) < 1e-9) return null;
   return frameFromPointNormal(p0, n);
+}
+
+/** The line where two planes meet: direction = n_a × n_b, plus the point on the
+ *  line closest to the world origin. Returns null if the planes are parallel
+ *  (|n_a × n_b| ≈ 0, no intersection line). Used to turn a plane armed as a
+ *  revolve axis into a concrete rotation axis (the plane ∩ the profile plane). */
+export function planeIntersectionLine(
+  a: PlaneFrameData,
+  b: PlaneFrameData,
+): { origin: Vec3; dir: Vec3 } | null {
+  const dir = cross(a.normal, b.normal);
+  const denom = dot3(dir, dir);
+  if (denom < 1e-12) return null; // parallel planes
+  // Plane offsets d = n·origin (planes are n·x = d).
+  const da = dot3(a.normal, a.origin);
+  const db = dot3(b.normal, b.origin);
+  // p0 = ( da (n_b × dir) + db (dir × n_a) ) / |dir|²  — the foot of the
+  // perpendicular from the origin onto the intersection line.
+  const origin = scale3(
+    add3(scale3(cross(b.normal, dir), da), scale3(cross(dir, a.normal), db)),
+    1 / denom,
+  );
+  return { origin, dir };
 }

@@ -8,14 +8,17 @@ import {
   frameOf,
   midplaneFrame,
   offsetFrame,
+  planeIntersectionLine,
   planeThrough3Points,
   uvToWorld,
   type PlaneFrameData,
   type SketchPlaneRef,
 } from "./planes";
 import { detectSketchRegions, regionProfileSegments } from "./regions";
+import { applyDerived } from "./derived";
 import type {
   BooleanFeature,
+  DerivedOp,
   Document,
   DressUpFeature,
   ExtrudeFeature,
@@ -27,6 +30,7 @@ import type {
   MirrorFeature,
   PlaneFeature,
   PlaneMethod,
+  RevolveAxis,
   RevolveFeature,
   SketchConstraint,
   SketchEntity,
@@ -73,6 +77,11 @@ export function migrateDocument(doc: Document): Document {
     if (feat.type === "plane" && f.color === undefined) {
       changed = true;
       return { ...feat, color: randomSolidColor() };
+    }
+    // Revolve gained a `symmetric` flag (one-sided was the only prior behavior).
+    if (feat.type === "revolve" && f.symmetric === undefined) {
+      changed = true;
+      return { ...feat, symmetric: false };
     }
     return feat;
   });
@@ -277,8 +286,9 @@ export function setTransform(
 export function addRevolve(
   doc: Document,
   profile: { sketchId: string; regionId: string },
-  axis: { sketchId: string; entityId: string },
+  axis: RevolveAxis,
   angle = "360",
+  symmetric = false,
 ): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "revolve").length + 1;
   const feature: RevolveFeature = {
@@ -289,6 +299,7 @@ export function addRevolve(
     profile,
     axis,
     angle,
+    symmetric,
     color: randomSolidColor(),
     opacity: 1,
   };
@@ -489,16 +500,68 @@ function constraintRefsEntity(c: SketchConstraint, entityId: string): boolean {
   }
 }
 
+/** Append an associative derived-geometry op (offset/mirror) to a sketch. Its
+ *  output entities are seeded by the next `applyDerived` (run on solve/regen). */
+export function addDerivedOp(doc: Document, sketchId: string, op: DerivedOp): Document {
+  return mapSketch(doc, sketchId, (s) => ({ ...s, derived: [...(s.derived ?? []), op] }));
+}
+
+/** Edit an offset op's distance expression after the fact (re-evaluated by the
+ *  next `applyDerived`, so the offset edges shift to the new distance). */
+export function setDerivedOffsetDistance(
+  doc: Document,
+  sketchId: string,
+  opId: string,
+  distance: string,
+): Document {
+  return mapSketch(doc, sketchId, (s) => ({
+    ...s,
+    derived: (s.derived ?? []).map((o) =>
+      o.id === opId && o.kind === "offset" ? { ...o, distance } : o,
+    ),
+  }));
+}
+
 export function removeSketchEntity(
   doc: Document,
   sketchId: string,
   entityId: string,
 ): Document {
-  return mapSketch(doc, sketchId, (s) => ({
-    ...s,
-    entities: s.entities.filter((e) => e.id !== entityId),
-    constraints: s.constraints.filter((c) => !constraintRefsEntity(c, entityId)),
-  }));
+  return mapSketch(doc, sketchId, (s) => {
+    const ent = s.entities.find((e) => e.id === entityId);
+    // Deleting a generated (derived) entity removes its whole op — and with it
+    // every sibling output that op produced.
+    if (ent?.derivedFrom) {
+      const opId = ent.derivedFrom;
+      return {
+        ...s,
+        derived: (s.derived ?? []).filter((o) => o.id !== opId),
+        entities: s.entities.filter((e) => e.derivedFrom !== opId),
+      };
+    }
+    // Deleting a source entity also drops any derived op that referenced it (its
+    // outputs would be meaningless), plus those outputs and the entity's own
+    // constraints.
+    const deadOpIds = new Set(
+      (s.derived ?? [])
+        .filter((o) =>
+          o.kind === "offset"
+            ? o.sourceIds.includes(entityId)
+            : o.kind === "mirror"
+              ? o.axisId === entityId || o.sourceIds.includes(entityId)
+              : false, // project ops reference body edges, not sketch entities
+        )
+        .map((o) => o.id),
+    );
+    return {
+      ...s,
+      derived: (s.derived ?? []).filter((o) => !deadOpIds.has(o.id)),
+      entities: s.entities.filter(
+        (e) => e.id !== entityId && !(e.derivedFrom && deadOpIds.has(e.derivedFrom)),
+      ),
+      constraints: s.constraints.filter((c) => !constraintRefsEntity(c, entityId)),
+    };
+  });
 }
 
 export function removeFeature(doc: Document, id: string): Document {
@@ -716,6 +779,15 @@ export function resolveDocument(doc: Document): ResolveResult {
   const variableNameErrors = validateVariableNames(doc.variables);
   const planeFrames = resolvePlanes(doc, scope);
 
+  // Regenerate every sketch's derived geometry (offset/mirror) from its current
+  // sources BEFORE region/profile detection, so extrude/revolve/sweep/loft see
+  // up-to-date offset & mirror entities. `dDoc` is `doc` with derived sketches
+  // applied; the per-feature lookups below read sketch geometry from it.
+  const dDoc: Document = {
+    ...doc,
+    features: doc.features.map((f) => (f.type === "sketch" ? applyDerived(f, scope) : f)),
+  };
+
   const active = doc.features
     .slice(0, doc.rollbackIndex)
     .filter((f) => !f.suppressed);
@@ -738,11 +810,27 @@ export function resolveDocument(doc: Document): ResolveResult {
         if (prof.kind === "sketchRegion") {
           // Bake the sketch region's outline + plane frame so the kernel sees
           // only numbers.
-          const sketch = doc.features.find((x) => x.id === prof.sketchId);
+          const sketch = dDoc.features.find((x) => x.id === prof.sketchId);
           if (sketch?.type !== "sketch") throw new Error("extrude: profile sketch not found");
           const region = detectSketchRegions(sketch.entities).find((r) => r.id === prof.regionId);
           if (!region) throw new Error("extrude: profile region not found");
           profile = { kind: "sketchRegion" as const, outline: region.outline, frame: frameOf(sketch.plane, planeFrames) };
+        } else if (prof.kind === "sketchText") {
+          // Bake the text entity's value/height/rotation/anchor + plane frame; the
+          // worker re-builds the glyph wires (with counters/holes) and extrudes.
+          const sketch = dDoc.features.find((x) => x.id === prof.sketchId);
+          if (sketch?.type !== "sketch") throw new Error("extrude: text sketch not found");
+          const ent = sketch.entities.find((e) => e.id === prof.textId);
+          if (ent?.type !== "text") throw new Error("extrude: text entity not found");
+          if (!ent.value.trim()) throw new Error("extrude: text is empty");
+          profile = {
+            kind: "sketchText" as const,
+            value: ent.value,
+            height: ent.height,
+            rotation: ent.rotation ?? 0,
+            anchor: ent.p,
+            frame: frameOf(sketch.plane, planeFrames),
+          };
         } else {
           // A body face: pass the source + persistent name (+ centroid fallback);
           // the worker re-finds the face against the running body set.
@@ -787,36 +875,52 @@ export function resolveDocument(doc: Document): ResolveResult {
         features.push({ id: f.id, type: "mirror", targetId: f.targetId, origin: frame.origin, normal: frame.normal });
       } else if (f.type === "revolve") {
         const angle = evaluateExpression(f.angle, scope);
-        const sketch = doc.features.find((x) => x.id === f.profile.sketchId);
+        const sketch = dDoc.features.find((x) => x.id === f.profile.sketchId);
         if (sketch?.type !== "sketch") throw new Error("revolve: profile sketch not found");
         const region = detectSketchRegions(sketch.entities).find((r) => r.id === f.profile.regionId);
         if (!region) throw new Error("revolve: profile region not found");
         const frame = frameOf(sketch.plane, planeFrames);
-        // Bake the axis line's two endpoints to world → origin + direction.
-        const axisSketch = doc.features.find((x) => x.id === f.axis.sketchId);
-        if (axisSketch?.type !== "sketch") throw new Error("revolve: axis sketch not found");
-        const axisEnt = axisSketch.entities.find((e) => e.id === f.axis.entityId);
-        if (axisEnt?.type !== "line") throw new Error("revolve: axis must be a line");
-        const axisFrame = frameOf(axisSketch.plane, planeFrames);
-        const a = uvToWorld(axisFrame, axisEnt.a[0], axisEnt.a[1]);
-        const b = uvToWorld(axisFrame, axisEnt.b[0], axisEnt.b[1]);
-        const dir: [number, number, number] = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        // Bake the axis. A sketch line (its two endpoints) or a plane (the line
+        // where it meets the profile plane) resolve here to a world line; a body
+        // face can't be resolved without kernel geometry, so its reference is
+        // carried through and resolved by the worker against the profile frame.
+        const axis = f.axis;
+        let axisPart:
+          | { axisOrigin: [number, number, number]; axisDir: [number, number, number] }
+          | { axisFace: { sourceId: string; faceName?: string; center: [number, number, number] } };
+        if ("face" in axis) {
+          axisPart = { axisFace: { sourceId: axis.face.featureId, faceName: axis.face.faceName, center: axis.face.center } };
+        } else if ("plane" in axis) {
+          const axisFrame = frameOf(axis.plane, planeFrames);
+          const line = planeIntersectionLine(axisFrame, frame);
+          if (!line) throw new Error("revolve: axis plane is parallel to the profile plane (no intersection line)");
+          axisPart = { axisOrigin: line.origin, axisDir: line.dir };
+        } else {
+          const axisSketch = dDoc.features.find((x) => x.id === axis.sketchId);
+          if (axisSketch?.type !== "sketch") throw new Error("revolve: axis sketch not found");
+          const axisEnt = axisSketch.entities.find((e) => e.id === axis.entityId);
+          if (axisEnt?.type !== "line") throw new Error("revolve: axis must be a line");
+          const axisFrame = frameOf(axisSketch.plane, planeFrames);
+          const a = uvToWorld(axisFrame, axisEnt.a[0], axisEnt.a[1]);
+          const b = uvToWorld(axisFrame, axisEnt.b[0], axisEnt.b[1]);
+          axisPart = { axisOrigin: a, axisDir: [b[0] - a[0], b[1] - a[1], b[2] - a[2]] };
+        }
         features.push({
           id: f.id,
           type: "revolve",
           profile: { kind: "sketchRegion", outline: region.outline, frame },
           angle,
-          axisOrigin: a,
-          axisDir: dir,
+          symmetric: f.symmetric ?? false,
+          ...axisPart,
         });
       } else if (f.type === "sweep") {
-        const sketch = doc.features.find((x) => x.id === f.profile.sketchId);
+        const sketch = dDoc.features.find((x) => x.id === f.profile.sketchId);
         if (sketch?.type !== "sketch") throw new Error("sweep: profile sketch not found");
         const region = detectSketchRegions(sketch.entities).find((r) => r.id === f.profile.regionId);
         if (!region) throw new Error("sweep: profile region not found");
         const frame = frameOf(sketch.plane, planeFrames);
         // Bake the path entity to 2D points (+ a smooth flag) in its own frame.
-        const pathSketch = doc.features.find((x) => x.id === f.path.sketchId);
+        const pathSketch = dDoc.features.find((x) => x.id === f.path.sketchId);
         if (pathSketch?.type !== "sketch") throw new Error("sweep: path sketch not found");
         const pe = pathSketch.entities.find((e) => e.id === f.path.entityId);
         if (!pe) throw new Error("sweep: path entity not found");
@@ -849,7 +953,7 @@ export function resolveDocument(doc: Document): ResolveResult {
       } else if (f.type === "loft") {
         if (f.profiles.length < 2) throw new Error("loft: needs at least 2 sections");
         const profiles = f.profiles.map((p) => {
-          const sketch = doc.features.find((x) => x.id === p.sketchId);
+          const sketch = dDoc.features.find((x) => x.id === p.sketchId);
           if (sketch?.type !== "sketch") throw new Error("loft: section sketch not found");
           const region = detectSketchRegions(sketch.entities).find((r) => r.id === p.regionId);
           if (!region) throw new Error("loft: section region not found");

@@ -61,7 +61,11 @@ export type ResolvedProfile =
   | { kind: "sketchRegion"; outline: [number, number][]; frame: ResolvedFrame; segmentStart?: [number, number]; segments?: ProfileSegment[] }
   // `faceName` is the persistent topological name (preferred); `center` is the
   // centroid fallback for faces that don't have a name yet.
-  | { kind: "bodyFace"; sourceId: string; faceName?: string; center: [number, number, number] };
+  | { kind: "bodyFace"; sourceId: string; faceName?: string; center: [number, number, number] }
+  // A text run, baked to glyph faces in the worker (replicad `textBlueprints`,
+  // which does even-odd counters/holes). `anchor` is the baseline-left in u,v,
+  // `rotation` in radians (CCW about the anchor), `height` the em size.
+  | { kind: "sketchText"; value: string; height: number; rotation: number; anchor: [number, number]; frame: ResolvedFrame };
 
 /** How an extrude combines with the running body set. */
 export type ExtrudeMode = "new" | "add" | "remove";
@@ -97,8 +101,12 @@ export type ResolvedFeature =
   // Mirror a body (by id) across the plane through `origin` with `normal`,
   // producing a new reflected body (the original is kept).
   | { id: string; type: "mirror"; targetId: string; origin: [number, number, number]; normal: [number, number, number] }
-  // Revolve a sketch profile around an axis (origin + direction) by an angle.
-  | { id: string; type: "revolve"; profile: ResolvedProfile; angle: number; axisOrigin: [number, number, number]; axisDir: [number, number, number] }
+  // Revolve a sketch profile around an axis by an angle. The axis is either a
+  // baked world line (`axisOrigin`+`axisDir`, for sketch-line and plane axes,
+  // resolved in the document layer) OR a body face (`axisFace`, resolved in the
+  // kernel against the profile `frame` — planar → plane∩profile, cylinder/cone →
+  // the surface axis). Exactly one form is present.
+  | { id: string; type: "revolve"; profile: ResolvedProfile; angle: number; symmetric: boolean; axisOrigin?: [number, number, number]; axisDir?: [number, number, number]; axisFace?: { sourceId: string; faceName?: string; center: [number, number, number] } }
   // Sweep a sketch profile along a path (baked to 2D points on a frame). For a
   // spline, `beziers` carries the exact cubic-Bézier spans of the drawn curve
   // (the spine is built from them, so it matches the sketch exactly); otherwise

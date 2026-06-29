@@ -41,6 +41,29 @@ export function ParallelIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+/** Two nested right angles (an inner L and a slightly larger, parallel outer L)
+ *  — an edge and its offset copy. Used for the sketch Offset tool. */
+export function OffsetIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.4}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {/* inner right angle (corner at bottom-left, opening up/right) */}
+      <path d="M6 4.5 L6 10 L11.5 10" />
+      {/* outer right angle, offset out & down, edges slightly longer */}
+      <path d="M3 2.5 L3 13 L14 13" />
+    </svg>
+  );
+}
+
 /** A dashed diagonal line — used for the sketch Construction-geometry toggle. */
 export function ConstructionIcon({ size = 16 }: { size?: number }) {
   return (
