@@ -341,6 +341,102 @@ describe("getSceneSummary", () => {
   });
 });
 
+describe("applyOperation — revolve options, text, offset, mirror", () => {
+  it("addRevolve carries the symmetric flag", async () => {
+    const { ctx, doc } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch", plane: { datum: "front" },
+      entities: [
+        { shape: "rect", corner: [10, 0], w: 5, h: 20 },
+        { shape: "line", a: [0, 0], b: [0, 20], construction: true },
+      ],
+    });
+    const axis = getSceneSummary(ctx).sketches[0].entities.find((e) => e.type === "line" && e.construction);
+    const rev = await apply(ctx, {
+      op: "addRevolve", profile: { sketchId: sk.createdId! },
+      axis: { sketchId: sk.createdId!, entityId: axis!.id }, angle: 90, symmetric: true,
+    });
+    expect(rev.ok).toBe(true);
+    const f = doc().features.find((x) => x.id === rev.createdId);
+    expect(f && f.type === "revolve" && f.symmetric).toBe(true);
+  });
+
+  it("addRevolve accepts a plane as the axis", async () => {
+    const { ctx, doc } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch", plane: { datum: "front" },
+      entities: [{ shape: "rect", corner: [10, 0], w: 5, h: 20 }],
+    });
+    const rev = await apply(ctx, {
+      op: "addRevolve", profile: { sketchId: sk.createdId! }, axis: { plane: { datum: "right" } },
+    });
+    expect(rev.ok).toBe(true);
+    const f = doc().features.find((x) => x.id === rev.createdId);
+    expect(f && f.type === "revolve" && "plane" in f.axis).toBe(true);
+  });
+
+  it("places a text entity and extrudes it via a sketchText profile", async () => {
+    const { ctx, doc } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch", plane: { datum: "top" },
+      entities: [{ shape: "text", p: [0, 0], value: "AB", height: 8 }],
+    });
+    const txt = getSceneSummary(ctx).sketches[0].entities.find((e) => e.type === "text");
+    expect(txt).toBeTruthy();
+    const ex = await apply(ctx, {
+      op: "addExtrude", profile: { sketchId: sk.createdId!, textId: txt!.id }, distance: 3,
+    });
+    expect(ex.ok).toBe(true);
+    const f = doc().features.find((x) => x.id === ex.createdId);
+    expect(f && f.type === "extrude" && f.profile.kind).toBe("sketchText");
+  });
+
+  it("addOffset appends an associative offset op and the output shows up", async () => {
+    const { ctx, doc } = makeCtx();
+    const sk = await apply(ctx, { op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "circle", c: [0, 0], r: 10 }] });
+    const circ = getSceneSummary(ctx).sketches[0].entities.find((e) => e.type === "circle");
+    const off = await apply(ctx, { op: "addOffset", sketchId: sk.createdId!, sourceIds: [circ!.id], distance: 2 });
+    expect(off.ok).toBe(true);
+    const s = doc().features.find((x) => x.id === sk.createdId);
+    expect(s && s.type === "sketch" && s.derived?.[0].kind).toBe("offset");
+    // The driven offset circle is visible in the summary (a 2nd region) marked derived.
+    const summary = getSceneSummary(ctx).sketches[0];
+    expect(summary.regions.length).toBe(2);
+    expect(summary.entities.some((e) => e.derived)).toBe(true);
+  });
+
+  it("addOffset rejects a non-offsettable source (spline)", async () => {
+    const { ctx } = makeCtx();
+    const sk = await apply(ctx, { op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "spline", points: [[0, 0], [10, 5], [20, 0]] }] });
+    const sp = getSceneSummary(ctx).sketches[0].entities.find((e) => e.type === "spline");
+    const off = await apply(ctx, { op: "addOffset", sketchId: sk.createdId!, sourceIds: [sp!.id], distance: 2 });
+    expect(off).toMatchObject({ ok: false, errorKind: "invalid_op" });
+  });
+
+  it("addSketchMirror appends a mirror op across a sketch line", async () => {
+    const { ctx, doc } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch", plane: { datum: "top" },
+      entities: [{ shape: "line", a: [0, -10], b: [0, 10], construction: true }, { shape: "circle", c: [5, 0], r: 2 }],
+    });
+    const ents = getSceneSummary(ctx).sketches[0].entities;
+    const axis = ents.find((e) => e.type === "line");
+    const circ = ents.find((e) => e.type === "circle");
+    const m = await apply(ctx, { op: "addSketchMirror", sketchId: sk.createdId!, axisId: axis!.id, sourceIds: [circ!.id] });
+    expect(m.ok).toBe(true);
+    const s = doc().features.find((x) => x.id === sk.createdId);
+    expect(s && s.type === "sketch" && s.derived?.[0].kind).toBe("mirror");
+  });
+
+  it("addSketchMirror rejects a non-line axis", async () => {
+    const { ctx } = makeCtx();
+    const sk = await apply(ctx, { op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "circle", c: [0, 0], r: 4 }] });
+    const circ = getSceneSummary(ctx).sketches[0].entities.find((e) => e.type === "circle");
+    const m = await apply(ctx, { op: "addSketchMirror", sketchId: sk.createdId!, axisId: circ!.id, sourceIds: [circ!.id] });
+    expect(m).toMatchObject({ ok: false, errorKind: "invalid_op" });
+  });
+});
+
 describe("applyOperation — reference plane methods", () => {
   const frame = (ctx: AgentContext, id: string) => resolveDocument(ctx.getDoc()).planeFrames.get(id);
 

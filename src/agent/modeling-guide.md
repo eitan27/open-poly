@@ -1,10 +1,9 @@
 # Open Poly — Agent Modeling Guide
 
-> **Status: DRAFT.** This is the "skill" an LLM agent loads to model in Open Poly
-> via the MCP tools (Phase 9). Tool names below match the planned command layer
-> and will be finalized once L0/L2 land — keep this file in sync with the actual
-> tools. Delivered to clients as an MCP **prompt** + **resource** (and a
-> `get_modeling_guide` tool).
+> This is the "skill" an LLM agent loads to model in Open Poly via the MCP tools
+> (Phase 9). Tool names match the live command layer (`src/agent/operations.ts`)
+> — keep this file in sync with it. Delivered to clients as an MCP **prompt** +
+> **resource** (and a `get_modeling_guide` tool).
 
 You are operating **Open Poly**, a parametric, feature-tree CAD app, by calling
 tools. A human is watching the same browser. Model deliberately and verifiably.
@@ -46,13 +45,17 @@ If an op errors, read the message, fix the cause, and retry — don't loop blind
 - **Read:** `get_scene_summary`, `get_document`, `get_selection`, `screenshot`.
 - **Create/modify (each maps to one document operation):** `add_primitive`,
   `add_sketch` (plane + entities in uv — sugar shapes incl. `spline` (open
-  through-point curve, a sweep path); mark an entity `construction:true` to make
-  it reference-only — snapping / a revolve axis, never extruded),
-  `add_extrude` (profile + distance + mode `new|add|remove` + extent
-  `blind|symmetric|throughAll|upToFace`), `add_revolve` (region + axis line + angle),
-  `add_sweep` (region + path entity), `add_loft` (2+ regions), `add_mirror`
-  (body + plane), `add_plane`, `transform` (translate/rotate, optional `copy`),
-  `boolean`, `dress_up` (chamfer/fillet), `set_param`, `set_appearance`,
+  through-point curve, a sweep path) and `text` (a run you can extrude); mark an
+  entity `construction:true` to make it reference-only — snapping / a revolve
+  axis, never extruded), `add_extrude` (profile + distance + mode
+  `new|add|remove` + extent `blind|symmetric|throughAll|upToFace`; profile may be
+  a region, a body face, or a `text` entity), `add_revolve` (region + axis +
+  angle + optional `symmetric`; axis = a sketch line, a plane, or a body face),
+  `add_sweep` (region + path entity), `add_loft` (2+ regions),
+  `add_offset` / `add_sketch_mirror` (associative DRIVEN sketch geometry —
+  offset a chain, or mirror entities across a sketch line), `add_mirror`
+  (3D body + plane), `add_plane`, `transform` (translate/rotate, optional
+  `copy`), `boolean`, `dress_up` (chamfer/fillet), `set_param`, `set_appearance`,
   `rename`, `delete`, `select`, `import_step`.
 - **Feedback:** `report_issue` — see below.
 
@@ -82,11 +85,15 @@ All mutations route through undo, so the human can revert anything you do.
   should meet another. Two bodies that end up **sharing a face** (touching, no
   overlap) still `boolean` `union` into one — touching counts as joined.
 - **Revolved part (shaft, ring, bowl):** `add_sketch` with the **profile region**
-  to one side of an axis **line** (mark the axis `construction:true` so it isn't
-  part of the region and isn't a wall); then `add_revolve` with that region +
-  `axis: {sketchId, entityId}` (get the line's `entityId` from the sketch's
-  `entities` in `get_scene_summary`) and an `angle` (360 for a full solid of
-  revolution, less for a partial). The profile must **not cross** the axis.
+  to one side of an axis (mark a sketch axis line `construction:true` so it isn't
+  part of the region and isn't a wall); then `add_revolve` with that region + an
+  `axis` and an `angle` (360 for a full solid of revolution, less for a partial;
+  add `symmetric:true` to grow the partial evenly both ways of the profile
+  plane). The **axis** is whichever is handy: a sketch line `{sketchId,
+  entityId}` (get the id from `get_scene_summary`); a plane `{plane: …}` (the axis
+  is where it meets the profile plane); or a body face `{bodyId, faceName}`
+  (planar face → that intersection; a cylinder/cone face → its own axis, e.g. to
+  revolve around an existing shaft). The profile must **not cross** the axis.
 - **Mirror a body across a plane:** `add_mirror` (body + plane) → a reflected
   **new** body, original kept. Use it for symmetric parts: build one half, mirror
   it, then `boolean` `union` if you need a single body.
@@ -100,6 +107,24 @@ All mutations route through undo, so the human can revert anything you do.
   **section region** on its own plane (use `add_plane` offsets so they're at
   different heights), then `add_loft` with `profiles: [{sketchId, regionId}, …]`
   in order. Sections on the **same** plane won't loft — give them distinct planes.
+- **Embossed / engraved text:** `add_sketch` with a `text` entity (`{shape:
+  "text", p: <baseline-left>, value: "ACME", height: 8, rotation?}`), then
+  `add_extrude` with profile `{sketchId, textId}` — `mode:"new"` for standalone
+  letters, `add` to emboss onto a face, `remove` to engrave into one. The kernel
+  bakes the glyph outlines with their counters/holes (the inside of an "O" stays
+  hollow), so you don't place any curves yourself.
+- **Offset / inset a profile:** `add_offset` (one connected chain of edges +
+  signed `distance`) makes a parallel DRIVEN copy that tracks the source — e.g.
+  inset a wall, or make a concentric ring (offset a circle, then extrude the
+  region between). Output edges are `derived:true` in the summary; don't
+  dimension/constrain them, edit the source instead.
+- **Mirror sketch geometry:** `add_sketch_mirror` (a sketch line `axisId` + the
+  `sourceIds` to reflect) for symmetric profiles — draw half, mirror the rest;
+  the copies track the originals. (To mirror a whole solid, use `add_mirror`.)
+- **Reuse model geometry in a sketch (project/convert):** projecting existing
+  body edges onto the sketch plane is available in the UI (Onshape's "Use") and
+  is associative, but there's **no agent op for it yet** — reference the geometry
+  you need directly (sketch the profile, or use a body face) instead.
 - **Round/bevel an edge:** `dress_up` (`fillet`/`chamfer`) referencing the edge by
   its **name** from the scene summary.
 - **Combine two bodies:** `boolean` (union/subtract/intersect) by body ids.
@@ -137,10 +162,12 @@ You are also the project's feedback loop. When something blocks or surprises you
 
 - `kind: "missing_feature"` — the operation you need isn't expressible with the
   available tools (e.g. linear/circular pattern, variable-radius fillet, a
-  constraint type, trim/extend, mirroring sketch entities). *(Revolve, mirror,
-  sweep, loft, the spline tool, symmetric / through-all / up-to-face extrude, and
-  all `add_plane` methods — offset / midplane / angle / through-3-points — exist
-  now; use those tools.)* Include the goal, what you tried, and a suggested API.
+  constraint type, trim/extend, projecting model edges into a sketch). *(Revolve
+  — incl. symmetric + plane/face axes, 3D mirror, sweep, loft, the spline tool,
+  **text** + text-extrude, **offset** and **sketch-mirror** (driven), symmetric /
+  through-all / up-to-face extrude, and all `add_plane` methods — offset /
+  midplane / angle / through-3-points — exist now; use those tools.)* Include the
+  goal, what you tried, and a suggested API.
 - `kind: "bug"` — a tool did the wrong thing or errored unexpectedly (e.g. a
   remove that didn't cut, a name that didn't resolve, a regen error). Include what
   you did, what you **expected**, what you **observed**, and a minimal repro.

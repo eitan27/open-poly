@@ -38,8 +38,12 @@ export const planeRefSchema = z.union([
 export type PlaneRefSpec = z.infer<typeof planeRefSchema>;
 
 /** What an extrude pulls: a closed region of a sketch (omit `regionId` to use
- *  the sketch's sole region) or a planar body face by persistent name. */
+ *  the sketch's sole region), a planar body face by persistent name, or a `text`
+ *  entity in a sketch (the kernel bakes its glyph wires — counters/holes and
+ *  all — at build time). The text form is tried first (it requires `textId`), so
+ *  a plain `{sketchId}` still resolves to a region. */
 export const profileSchema = z.union([
+  z.object({ sketchId: z.string(), textId: z.string() }),
   z.object({ sketchId: z.string(), regionId: z.string().optional() }),
   z.object({ bodyId: z.string(), faceName: z.string() }),
 ]);
@@ -62,6 +66,10 @@ export const entitySchema = z.discriminatedUnion("shape", [
   // path, not a region boundary.
   z.object({ shape: z.literal("spline"), points: z.array(vec2).min(2), construction }),
   z.object({ shape: z.literal("point"), p: vec2, construction }),
+  // A run of text placed at baseline-left anchor `p`, `height` ems tall (sketch
+  // units), optionally rotated `rotation` degrees. Extrude it with add_extrude
+  // using a `{sketchId, textId}` profile — the kernel bakes the glyphs.
+  z.object({ shape: z.literal("text"), p: vec2, value: z.string().min(1), height: z.number().positive(), rotation: z.number().optional(), construction }),
 ]);
 export type EntitySpec = z.infer<typeof entitySchema>;
 
@@ -122,12 +130,25 @@ export const operationSchema = z.discriminatedUnion("op", [
     op: z.literal("addRevolve"),
     /** The closed sketch region to revolve (omit regionId for the sole region). */
     profile: z.object({ sketchId: z.string(), regionId: z.string().optional() }),
-    /** The rotation axis: a **line** entity in the *same* sketch (its two
-     *  endpoints define the axis). The profile must not cross it. Make the axis a
-     *  `construction` line so it isn't part of the region. */
-    axis: z.object({ sketchId: z.string(), entityId: z.string() }),
-    /** Revolve angle in degrees (number or expression). Defaults to 360. */
+    /** The rotation axis — one of:
+     *  - a sketch **line** entity `{sketchId, entityId}` in the profile's sketch
+     *    (its endpoints define the axis; make it a `construction` line so it
+     *    isn't part of the region, and the region must not cross it);
+     *  - a **plane** `{plane: <datum|planeId|bodyFace>}` — the axis is the line
+     *    where that plane meets the profile's plane;
+     *  - a body **face** `{bodyId, faceName}` — a planar face uses that same
+     *    plane-intersection rule; a cylindrical/conical face uses its own
+     *    central axis (e.g. "revolve around this cylinder"). */
+    axis: z.union([
+      z.object({ sketchId: z.string(), entityId: z.string() }),
+      z.object({ plane: planeRefSchema }),
+      z.object({ bodyId: z.string(), faceName: z.string() }),
+    ]),
+    /** Revolve angle in degrees (number or expression). Defaults to 360 (full). */
     angle: expr.optional(),
+    /** Revolve evenly to BOTH sides of the profile plane (spans ±angle/2)
+     *  instead of one direction. Ignored at a full 360. Defaults to false. */
+    symmetric: z.boolean().optional(),
     name: z.string().optional(),
   }),
   z.object({
@@ -154,6 +175,36 @@ export const operationSchema = z.discriminatedUnion("op", [
     /** Ordered closed sections to loft through (≥2), each a sketch region (omit
      *  regionId for a sketch's sole region). Put them on different planes. */
     profiles: z.array(z.object({ sketchId: z.string(), regionId: z.string().optional() })).min(2),
+    name: z.string().optional(),
+  }),
+  z.object({
+    // Associative OFFSET of a single connected chain of sketch edges (lines/arcs,
+    // or one circle) by a signed distance. The new edges track their sources and
+    // are driven (non-editable) — like Onshape's offset. Output edges appear
+    // tagged `derived` in the scene summary; a closed offset makes a region you
+    // can extrude.
+    op: z.literal("addOffset"),
+    sketchId: z.string(),
+    /** The source chain's entity ids (lines/arcs forming one chain, or a single
+     *  circle). Must be a single connected chain. */
+    sourceIds: z.array(z.string()).min(1),
+    /** Signed offset distance (number or expression). Positive offsets to the
+     *  right of the chain's travel (outward for a CCW loop); negative the other. */
+    distance: expr,
+    /** Make the offset edges construction (reference-only). */
+    construction: z.boolean().optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
+    // Associative 2D MIRROR of sketch entities across a sketch line. The copies
+    // track their sources and are driven. Distinct from `addMirror`, which
+    // mirrors a whole 3D body across a plane.
+    op: z.literal("addSketchMirror"),
+    sketchId: z.string(),
+    /** The mirror axis: a **line** entity id in the same sketch. */
+    axisId: z.string(),
+    /** The entity ids to reflect across the axis. */
+    sourceIds: z.array(z.string()).min(1),
     name: z.string().optional(),
   }),
   z.object({
@@ -285,8 +336,9 @@ export interface SceneSummary {
     plane: string;
     entityCount: number;
     /** Entities by id + type (+ construction flag) so the agent can reference a
-     *  specific one — e.g. a `line` entity as a revolve axis. */
-    entities: { id: string; type: string; construction?: boolean }[];
+     *  specific one — e.g. a `line` entity as a revolve axis. `derived` marks
+     *  driven offset/mirror/project output (don't edit/constrain it directly). */
+    entities: { id: string; type: string; construction?: boolean; derived?: boolean }[];
     regions: { id: string; area: number }[];
   }[];
   planes: { id: string; name: string }[];
@@ -338,6 +390,9 @@ export function expandEntities(specs: EntitySpec[]): SketchEntity[] {
         break;
       case "point":
         out.push(mark({ type: "point", id: genId(), p: s.p }, s.construction));
+        break;
+      case "text":
+        out.push(mark({ type: "text", id: genId(), p: s.p, value: s.value, height: s.height, ...(s.rotation !== undefined ? { rotation: s.rotation } : {}) }, s.construction));
         break;
     }
   }

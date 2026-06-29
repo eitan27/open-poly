@@ -11,6 +11,7 @@
 // we surface the synchronous resolve errors (bad expressions, missing refs).
 import {
   addBoolean,
+  addDerivedOp,
   addDressUp,
   addExtrude,
   addImport,
@@ -23,6 +24,7 @@ import {
   addSketchEntities,
   addTransform,
   addVariable,
+  genId,
   makeFeature,
   removeFeature,
   renameFeature,
@@ -36,13 +38,14 @@ import {
   validateVariableNames,
 } from "../document/document";
 import { detectSketchRegions } from "../document/regions";
+import { applyDerived } from "../document/derived";
 import {
   deriveFaceFrame,
   planeRefLabel,
   type SketchPlaneId,
   type SketchPlaneRef,
 } from "../document/planes";
-import type { Document, ExtrudeProfile, Feature, PrimitiveFeature, Variable } from "../document/types";
+import type { Document, ExtrudeProfile, Feature, PrimitiveFeature, RevolveAxis, Variable } from "../document/types";
 import type { MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 import type { Selection, ViewName } from "../viewport/Viewport";
 import {
@@ -166,6 +169,14 @@ function resolvePlaneRef(ctx: AgentContext, spec: PlaneRefSpec): SketchPlaneRef 
 }
 
 function resolveProfile(ctx: AgentContext, spec: ProfileSpec): ExtrudeProfile {
+  if ("textId" in spec) {
+    const sketch = ctx.getDoc().features.find((f) => f.id === spec.sketchId);
+    if (sketch?.type !== "sketch") throw new OpError("not_found", `No sketch "${spec.sketchId}".`);
+    const ent = sketch.entities.find((e) => e.id === spec.textId);
+    if (!ent) throw new OpError("not_found", `No entity "${spec.textId}" in sketch "${spec.sketchId}".`);
+    if (ent.type !== "text") throw new OpError("invalid_op", `Entity "${spec.textId}" is not text.`);
+    return { kind: "sketchText", sketchId: spec.sketchId, textId: spec.textId };
+  }
   if ("sketchId" in spec) {
     const sketch = ctx.getDoc().features.find((f) => f.id === spec.sketchId);
     if (sketch?.type !== "sketch") throw new OpError("not_found", `No sketch "${spec.sketchId}".`);
@@ -262,15 +273,29 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       }
       case "addRevolve": {
         // Validate the region (so the agent gets a clear error, not a kernel
-        // failure) and the axis line, both in the same sketch.
+        // failure). The axis is one of: a sketch line, a plane, or a body face.
         const prof = resolveProfile(ctx, op.profile);
         if (prof.kind !== "sketchRegion") throw new OpError("invalid_op", "revolve profile must be a sketch region.");
-        const axisSketch = requireFeature(doc, op.axis.sketchId);
-        if (axisSketch.type !== "sketch") throw new OpError("not_found", `Axis "${op.axis.sketchId}" is not a sketch.`);
-        const axisEnt = axisSketch.entities.find((e) => e.id === op.axis.entityId);
-        if (!axisEnt) throw new OpError("not_found", `No entity "${op.axis.entityId}" in sketch "${op.axis.sketchId}".`);
-        if (axisEnt.type !== "line") throw new OpError("invalid_op", "revolve axis must be a line entity.");
-        const r = addRevolve(doc, { sketchId: prof.sketchId, regionId: prof.regionId }, op.axis, op.angle);
+        let axis: RevolveAxis;
+        // Bind to a const so the `in`-narrowing survives the .find() closures.
+        const ax = op.axis;
+        if ("entityId" in ax) {
+          const axisSketch = requireFeature(doc, ax.sketchId);
+          if (axisSketch.type !== "sketch") throw new OpError("not_found", `Axis "${ax.sketchId}" is not a sketch.`);
+          const axisEnt = axisSketch.entities.find((e) => e.id === ax.entityId);
+          if (!axisEnt) throw new OpError("not_found", `No entity "${ax.entityId}" in sketch "${ax.sketchId}".`);
+          if (axisEnt.type !== "line") throw new OpError("invalid_op", "revolve axis must be a line entity.");
+          axis = { sketchId: ax.sketchId, entityId: ax.entityId };
+        } else if ("plane" in ax) {
+          axis = { plane: resolvePlaneRef(ctx, ax.plane) };
+        } else {
+          const mesh = ctx.getMeshes().find((m) => m.id === ax.bodyId);
+          if (!mesh) throw new OpError("not_found", `No body "${ax.bodyId}" for the revolve axis.`);
+          const fg = faceGeomByName(mesh.mesh.faces, ax.faceName);
+          if (!fg) throw new OpError("not_found", `Face "${ax.faceName}" not found on body "${ax.bodyId}".`);
+          axis = { face: { featureId: ax.bodyId, faceName: ax.faceName, faceId: fg.faceId, center: fg.center } };
+        }
+        const r = addRevolve(doc, { sketchId: prof.sketchId, regionId: prof.regionId }, axis, op.angle, op.symmetric);
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;
         break;
@@ -307,6 +332,35 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         const r = addLoft(doc, sections);
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;
+        break;
+      }
+      case "addOffset": {
+        const sketch = requireFeature(doc, op.sketchId);
+        if (sketch.type !== "sketch") throw new OpError("invalid_op", `"${op.sketchId}" is not a sketch.`);
+        for (const id of op.sourceIds) {
+          const e = sketch.entities.find((x) => x.id === id);
+          if (!e) throw new OpError("not_found", `No entity "${id}" in sketch "${op.sketchId}".`);
+          if (e.type !== "line" && e.type !== "arc" && e.type !== "circle") {
+            throw new OpError("invalid_op", `Offset sources must be lines/arcs/circles; "${id}" is a ${e.type}.`);
+          }
+        }
+        const opId = genId();
+        next = addDerivedOp(doc, op.sketchId, { id: opId, kind: "offset", sourceIds: op.sourceIds, distance: op.distance, ...(op.construction ? { construction: true } : {}) });
+        createdId = opId;
+        break;
+      }
+      case "addSketchMirror": {
+        const sketch = requireFeature(doc, op.sketchId);
+        if (sketch.type !== "sketch") throw new OpError("invalid_op", `"${op.sketchId}" is not a sketch.`);
+        const axis = sketch.entities.find((e) => e.id === op.axisId);
+        if (!axis) throw new OpError("not_found", `No entity "${op.axisId}" in sketch "${op.sketchId}".`);
+        if (axis.type !== "line") throw new OpError("invalid_op", "the mirror axis must be a line entity.");
+        for (const id of op.sourceIds) {
+          if (!sketch.entities.some((x) => x.id === id)) throw new OpError("not_found", `No entity "${id}" in sketch "${op.sketchId}".`);
+        }
+        const opId = genId();
+        next = addDerivedOp(doc, op.sketchId, { id: opId, kind: "mirror", axisId: op.axisId, sourceIds: op.sourceIds });
+        createdId = opId;
         break;
       }
       case "addPlane": {
@@ -483,17 +537,22 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
     .filter((f) => f.type === "sketch")
     .map((f) => {
       const s = f as Extract<Feature, { type: "sketch" }>;
+      // Apply derived geometry (offset/mirror) so the agent SEES the generated
+      // edges + any region they close — otherwise it couldn't reference/extrude
+      // them. (Project outputs are already stored on `entities`.)
+      const ds = applyDerived(s, resolved.scope);
       return {
         id: s.id,
         name: s.name,
         plane: planeRefLabel(s.plane),
-        entityCount: s.entities.length,
-        entities: s.entities.map((e) => ({
+        entityCount: ds.entities.length,
+        entities: ds.entities.map((e) => ({
           id: e.id,
           type: e.type,
           ...(e.construction ? { construction: true } : {}),
+          ...(e.derivedFrom ? { derived: true } : {}),
         })),
-        regions: detectSketchRegions(s.entities).map((r) => ({ id: r.id, area: r.area })),
+        regions: detectSketchRegions(ds.entities).map((r) => ({ id: r.id, area: r.area })),
       };
     });
 
