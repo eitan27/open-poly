@@ -283,199 +283,98 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
   body for the **viewport highlight** only (`highlightBodyIds`); tree/params keep
   showing the modifier feature.
 
-### Phase 2 — Sketching (geometry first, then constraints) — *core ✅ DONE; some tools below are follow-ons*
-- **2.0 — Navigation & datums prep** — ✅ DONE: clickable/snappable **origin
-  point**; the three datum **planes (Top/Front/Right)** rendered faintly,
-  hover/click-selectable (selecting one starts a sketch); **standard view
-  navigation** (Front/Back/Left/Right/Top/Bottom/Iso). (A true interactive
-  ViewCube is still a later nicety.)
-- **2a:** ✅ mostly done — pick a plane/planar face → sketch mode (camera
-  normal-to); draw **line, rectangle (2-corner + center), circle (center +
-  3-pt), arc (3-pt), regular polygon, spline**; snapping (endpoints/midpoints/
-  origin/coplanar edges); delete.
-  - **Construction toggle — ✅ DONE.** Mark any sketch entity as *construction*
-    (reference geometry: used for dimensions/constraints/snapping but ignored
-    when detecting profile regions and never extruded). Toolbar toggle while
-    drawing **and** per-selection convert; rendered dashed amber
-    (`regions.ts` filters it; `Viewport` dashes it via a material array).
-  - **Double-click to edit in the timeline — ✅ DONE.** Double-clicking a
-    timeline row enters its edit mode (sketch → edit sketch, transform → edit
-    gizmo); `FeatureTree.onDoubleClick` → `handleTreeDoubleClick` in `App.tsx`.
-  - **Spline tool — ✅ DONE.** A smooth through-point `spline` SketchEntity (the
-    `∿` tool: click points, **Esc** to finish — matching the polyline, changed
-    2026-06-29; Catmull-Rom render/snap/measure;
-    real B-spline in the kernel). Used as a **sweep path** (Phase 6) and **now
-    also as a closed-region boundary** — `detectSketchRegions` treats **arcs and
-    splines** as graph edges (curve tangent for the angular traversal, tessellated
-    polyline for the outline), so a loop closed by a curve becomes an extrudable
-    region. *(Extrude/revolve still build the face from the tessellated polyline —
-    faceted, same as circles. **Sweep & loft now rebuild the profile from exact
-    curve segments** (`regionProfileSegments`), so a circular/arc cross-section is
-    smooth; extending that to extrude/revolve is a later enhancement.)*
-  - **TODO:**
-  - Trim/extend.
-  - **Cancel a sketch edit (discard changes)** — when re-editing an *existing*
-    sketch, exiting should be able to **discard** all changes. Today every edit
-    applies live via `setDoc`, and `finishSketch` only treats a brand-new *empty*
-    sketch as a cancel (drops it) — there's no way to back out of edits made to an
-    existing sketch. Needs snapshotting the sketch on edit-entry and restoring it
-    on Cancel/Esc (Finish/⏎ keeps changes as now).
-- **2b:** ✅ constraints via **`planegcs`** (auto H/V capture, fully-
-  constrained→green) + **interactive length / radius / angle dimensions** (press
-  D, accepts number/expr/variable) with **on-canvas labels + double-click-to-
-  edit**, plus a **manual-constraint UI** (∥ parallel, ⊥ perpendicular, ＝ equal
-  — toolbar buttons enabled on the matching selection). **Drawing now auto-solves:**
-  every draw commit (line/rect/polygon/circle/spline, incl. auto-H/V) runs the
-  solver immediately (chained lines continue from the *solved* endpoint), so the
-  sketch is always consistent and the ✓/⚠ status is always live — the manual
-  **⛓ Solve button is gone**. **Conflict feedback:** a dimension or geometric
-  constraint the solver can't satisfy is **rejected** (not saved as a dead
-  constraint) with a named banner — the dimension reject (like the geometric one)
-  fires on a conflict, a failed/invalid solve, **or a degenerate result** (a line
-  collapsed to ~0), and geometric rejects also catch already-implied (redundant)
-  ones. **Angle dimensions target the INTERIOR angle:** the on-canvas value is the
-  interior angle at the lines' shared vertex (not the obtuse supplement), and the
-  solver converts it to the directed l2l angle using the lines' orientation +
-  current side, so setting a value lands on that interior angle and stays on the
-  current side instead of flipping the sketch to the supplement; an impossible
-  angle (e.g. a second right angle in a triangle) degenerates → rejected.
-  **Coincident / tangent / point-on-line / midpoint are now in** (see the 2b
-  status notes below); **TODO (still catalogued below):** point-to-point /
-  point-to-line distance, the diameter variant, and the remaining geometric
-  constraints (concentric / symmetric / collinear / general fix-lock).
-- **Exit criteria** (a fully-constrained closed profile that updates when a
-  driving variable changes): met.
+### Phase 2 — Sketching (geometry + constraints) — ✅ core DONE
+Pick a datum plane or planar face → sketch mode (camera normal-to); draw a
+profile, constrain it, and it becomes a region that extrude/revolve/sweep/loft
+consume. Exit criterion — a fully-constrained closed profile that updates when a
+driving variable changes — is **met**.
 
-> **2b status (2026-06-18):** the solver (`planegcs`) maps lines +
-> horizontal/vertical/parallel/perpendicular/distance. Auto H/V capture on line
-> draw, a manual ⛓ Solve button, and fully-constrained→green coloring are in.
-> **Length dimension is now interactive**: press **D** (or the ↔ toolbar button)
-> with a line selected to open a length input anchored next to the line, or with
-> nothing selected to arm "pick a line to dimension" mode. The field accepts a
-> number, an arithmetic expression, or a variable name (evaluated against the
-> variable scope at entry). Submitting adds/replaces a `distance` constraint and
-> immediately re-solves so the whole sketch updates. (The value is stored as a
-> resolved number — a *live* expression link that re-evaluates when the variable
-> changes is still a deferred gap, below.)
->
-> **Dimensions update (2026-06-20):** dimensions now cover **line length**,
-> **circle radius**, and **line–line angle** (degrees). Each draws an **on-canvas
-> label** that tracks the camera (repositioned per-frame via `worldToScreen` with
-> no React re-render), and **double-clicking a label** reopens its editor
-> pre-filled with the stored value. The dimension input box is now a
-> `DraggableDialog` (movable by its label, like Extrude/Chamfer). Circles are now
-> mapped into planegcs (centre point + solvable radius), so a radius constraint
-> drives them and a sketch with a circle is correctly under-constrained until
-> pinned.
->
-> **Technical-drawing dimension visuals (2026-06-23):** dimensions now render
-> like a drafting annotation instead of a bare floating label —
-> `ui/DimensionOverlay.tsx` replaces `ui/DimensionLabels.tsx`. A **length**
-> dimension gets witness (extension) lines off both endpoints and a parallel
-> dimension line with arrowheads, offset to whichever side reads outside the
-> profile (picked from the sketch's bounding-box centroid). A **radius**
-> dimension gets a leader from the centre to just past the rim with an arrowhead
-> at the rim. An **angle** dimension gets an arc swept between the two lines'
-> rays from their (possibly extended) intersection, tangent arrowheads at both
-> ends, and the value at the arc's midpoint — except a **right angle**, which
-> instead gets the conventional small corner box (no arc/label needed). All
-> graphics are plain SVG in screen space, repositioned imperatively each frame
-> alongside the labels (same no-re-render pattern as before). Interaction is now
-> uniform: **double-click** a label (or a right-angle box) reopens its editor;
-> **single-click to focus, then Delete/Backspace** removes the constraint —
-> previously only double-click-to-edit existed, with no on-canvas delete.
->
-> **Constraint integrity fix (2026-06-21):** auto H/V capture now also fires when
-> a line's endpoint snaps to an existing point. Previously the snap resolved early
-> on a point/edge hit, so the *closing* edge of a line-drawn rectangle (which
-> lands on the first corner) silently lost its H/V constraint — leaving the
-> "square" under-constrained and free to **shear** the moment any other
-> constraint (e.g. an angle dimension on a corner line) was added. The
-> **rectangle tool** now also emits H/V on all four edges (previously it created
-> the four lines with *zero* constraints), so a rect-drawn square is rigid too.
->
-> **Known gaps in Phase 2 sketch constraints (deferred):**
-> - **Dimensions:** no point-to-point / point-to-line distance, no *diameter*
->   variant of the circle dimension, and no driven-by-expression dimension values
->   (the value is stored as a resolved number; a *live* link that re-evaluates on
->   variable change is still deferred). p2p distance is entangled with the
->   point-identity gap below (it needs robust point references).
-> - **Geometric constraints now in the UI:** auto H/V (on draw), **parallel**,
->   **perpendicular**, **equal** (lines→equal length, circles/arcs→equal radius,
->   any mix), **angle** (as a dimension), **tangent** + **coincident** (toolbar
->   buttons — coincident also does **point-on-line** and **origin-anchoring**),
->   and **point-on-line / midpoint** auto-attached when a drawn endpoint snaps
->   onto an edge or its midpoint. The **origin is fixed ground** in the solver.
->   **Still not exposed / mapped:** concentric, symmetric, collinear, and a
->   general fix/lock of an arbitrary entity.
-> - **Constraint management & feedback — ✅ DONE (2026-06-21).** A **Constraints
->   list** (sidebar, while editing a sketch) shows each constraint with a per-row
->   **✕ delete** (wires the previously-unused `removeSketchConstraint` →
->   re-solve), and **over-constrained/conflict is surfaced**: `solveConflict`
->   (from `res.hasConflicts`) drives a red **⚠ conflict** badge on the heading +
->   the constraint count chip. *(Discoverability: the list sits below Parts —
->   relocating it is UI/UX backlog #1.)*
-> - **Point identity is by coordinate key** (see `solver.ts`): coincident
->   endpoints merge by position, robust only until the first solve moves them —
->   wants a real point-based sketch model before heavy constraint editing.
-> - **Sketch operations:** **mirror** (of sketch entities), **use/project**
->   (convert body edges into the sketch), **offset**, and a **text** tool are now
->   ✅ DONE (2026-06-29 batch — see the note below); **trim/extend** is the
->   remaining gap. *(Construction geometry and splines were already done — see 2a.)*
-> - **Arcs are now solver-aware** (mapped as centre + two endpoint points +
->   radius + start/end angles, tied by `arc_rules`, so an arc constrains and
->   moves as a real curve and its endpoints merge with coincident line/arc ends);
->   circles are mapped + radius-constrainable. **Only splines** still pass through
->   the solver unchanged (not constrained).
+**Done — navigation & entry**
+- Clickable/snappable **origin point**; the three datum **planes** (Top/Front/
+  Right) rendered faintly, hover/click-selectable (selecting one starts a sketch);
+  **standard view navigation** (digits `1`–`7`). (A true interactive ViewCube is a
+  later nicety.)
+- Pick a plane/planar face → sketch (camera normal-to); **snapping** (endpoints /
+  midpoints / origin / coplanar edges); delete; **double-click** a timeline row to
+  edit its feature.
 
-> **Sketch tooling + derived geometry batch (2026-06-29, branch
-> `feat/phase9-agent`):** a major sketch-tool expansion landed.
-> - **New sketch tools:** **Offset** (`O` — a single connected chain → a
->   concentric/parallel copy at a signed distance, set via an inline input + a
->   Transform-style drag arrow; rejects multi-chain selections with "Can only
->   offset a single chain at once."); **Mirror** (`M` — arm a mirror line, then
->   click entities to reflect them live; cancellable); **Project/Convert** ("Use",
->   `U` — project body edges/vertices onto the active sketch plane); **Text** (`T`
->   — glyph outlines via opentype.js + a bundled **Inter** TTF; a `text`
->   `SketchEntity` `{p,value,height,rotation?}`).
-> - **Parametric / associative derived geometry** (`document/derived.ts`):
->   Offset/Mirror/Project are stored as `DerivedOp`s on the sketch (outputs tagged
->   `derivedFrom`, excluded from the solver, non-constrainable, rendered a distinct
->   **purple** as "driven"). They **recompute when their sources change**.
->   **Project is live-associative** (Onshape/Fusion behaviour): it stores
->   persistent edge **names** and re-projects after each rebuild, gated by a
->   change-detection guard that converges (no regen feedback loop). **Text is
->   re-editable** in place.
-> - **Text is extrudable:** an `ExtrudeProfile` `{kind:"sketchText"}` baked in the
->   worker via replicad `textBlueprints` (even-odd counters/holes handled),
->   per-glyph face naming; selecting a text entity feeds the Extrude dialog and
->   hides the sketch on success.
-> - **Shortcut remap:** sketch-mode **Select = `S`** (was `V`), **Spline =
->   `Shift+S`** (was `S`); the **spline finishes on `Esc`** now (was `Enter`),
->   matching the polyline. Added `Offset O` / `Mirror M` / `Use U` / `Text T`.
->   `KEYBOARD_SHORTCUTS.md` updated.
-> - **Small-edge picking fix:** small edges are now directly selectable — the
->   vertex-grab radius was a fixed **world-space** distance that swallowed any edge
->   shorter than ~6 units (and ignored zoom); it's now **screen-space (10px)**.
-> - **Layout fix:** the **New Body** toolbar button now matches its siblings'
->   height (its `.mt-dropdown` wrapper stretched but the inner `<button>` didn't →
->   `display:flex`).
-> - **Revolve** gained its arming dialog + ghost + symmetric + axis-by-plane/face
->   in the same batch — see Phase 6.
-> - **Test suite** grew **68 → 123** over the batch.
+**Done — drawing tools**
+- **line, rectangle** (2-corner + center), **circle** (center + 3-pt), **arc**
+  (3-pt), regular **polygon**, **spline** (smooth through-point curve; the `∿`
+  tool, **Esc** to finish).
+- **Construction toggle** — mark any entity as reference geometry (used for
+  dimensions/constraints/snapping, ignored by region detection, never extruded;
+  dashed amber). Toolbar toggle while drawing **and** per-selection convert.
+- **Spline** doubles as a **sweep path** and a **closed-region boundary**
+  (`detectSketchRegions` treats arcs + splines as graph edges). Sweep & loft
+  rebuild the profile from **exact curve segments** (`regionProfileSegments`);
+  extrude/revolve still build the face from the tessellated (faceted) polyline —
+  a later enhancement (see backlog).
+- **Offset** (`O`), **Mirror** (`M`), **Project/Convert** ("Use", `U`), and
+  **Text** (`T`) — the 2026-06-29 tool expansion. Offset/Mirror/Project are
+  **parametric/associative**: stored as `DerivedOp`s (`document/derived.ts`),
+  their generated outputs are tagged `derivedFrom`, excluded from the solver,
+  non-constrainable, drawn purple as "driven", and **recompute when their sources
+  change**. Project is live-associative (persistent edge **names** +
+  re-project-after-rebuild, change-detection guarded). **Text** is a `text`
+  SketchEntity (opentype glyph outlines, bundled Inter TTF), re-editable in place
+  and **extrudable** (`ExtrudeProfile {kind:"sketchText"}`; counters/holes via
+  replicad `textBlueprints`).
+- Sketch-mode **shortcuts**: Select `S`, Line `L`, Rect `R`/`Shift+R`, Circle
+  `C`/`Shift+C`, Polygon `P`, Arc `A`, Spline `Shift+S`, Offset `O`, Mirror `M`,
+  Use `U`, Text `T`, Dimension `D`, construction `Q` (full scheme in
+  `KEYBOARD_SHORTCUTS.md`).
 
-> **Reprioritized 2026-06-18 (user):** Extrude is the single most important
-> solid op and is the headline of Phase 3; **Chamfer (and Fillet)** matter more
-> than Revolve, so they join Phase 3. **Revolve moves to the Sweep/Loft phase**
-> near the end. **Export (STL/STEP) is pulled up to Phase 4** to validate an
-> end-to-end workflow as early as possible. Boolean-between-bodies, Pattern, and
-> Mirror shift back accordingly.
->
-> **Color rule (from the pastel-colors work):** every solid-producing feature
-> that creates a NEW body (primitive, extrude-New) should set a `color` via
-> `randomSolidColor()` (`document/colors.ts`). Add/Remove and chamfer/fillet
-> modify a body in place and keep its existing color; a future Boolean union's
-> result should take the first operand's color (see the note in `colors.ts`).
+**Done — constraints & dimensions** (`planegcs`, `src/sketch/solver.ts`)
+- **Auto H/V capture** on draw (including a line-rect's closing edge + all four
+  rectangle edges); **drawing auto-solves** on every commit (chained lines
+  continue from the solved endpoint); **fully-constrained → green**; the manual
+  Solve button is gone. The **origin is fixed ground** in the solver.
+- **Conflict/redundant rejection:** a dimension or constraint the solver can't
+  satisfy — a conflict, a failed/invalid solve, a degenerate ~0-length line, or an
+  already-implied one — is **rejected** (never saved as a dead constraint) with a
+  named banner.
+- **Dimensions:** length, **radius**, **angle** (the true interior angle, not the
+  supplement). Each renders as a **drafting annotation** (`ui/DimensionOverlay.tsx`
+  — witness lines + arrows; radius leader; angle arc; right-angle corner box),
+  positioned imperatively each frame (no React re-render). Values accept a number
+  / expression / variable; **double-click** to edit, **click + Delete** to remove.
+- **Geometric constraints** (toolbar buttons, enabled on the matching selection):
+  parallel, perpendicular, equal (length/radius, any line/circle/arc mix), tangent
+  (line/circle/arc), coincident (also point-on-line + origin-anchoring), midpoint.
+  Point-on-line / midpoint are **auto-attached** when a drawn endpoint snaps onto
+  an edge or its midpoint.
+- **Arcs and circles are solver-mapped** (centre + endpoints + radius + angles),
+  so they constrain and move as real curves. A **Constraints list** (sidebar while
+  sketching) shows each with a per-row ✕ delete; over-constraint shows a red ⚠
+  conflict badge.
+
+**Backlog (deferred)**
+- **Trim / extend.**
+- **Cancel a sketch edit (discard changes)** — re-editing applies live via
+  `setDoc`, and only a brand-new *empty* sketch cancels on exit; backing out of
+  edits to an *existing* sketch needs snapshot-on-entry + restore on Esc (Finish
+  keeps changes).
+- **Dimensions:** point-to-point / point-to-line distance, the **diameter**
+  variant, and **live expression-linked** values (a value is stored as a resolved
+  number, not a link that re-evaluates when its variable changes).
+- **Geometric constraints not yet mapped:** concentric, symmetric, collinear, and
+  a general fix/lock of an arbitrary entity.
+- **Splines** still pass through the solver **unconstrained** (only line / arc /
+  circle are mapped).
+- **Point identity is by coordinate key** (`solver.ts`): coincident endpoints
+  merge by rounded position, robust only until a solve moves them — a real
+  point-based sketch model is wanted before heavy constraint editing (it blocks
+  p2p distance + robust coincident editing).
+- **Project tool gaps:** **vertex** projection is **best-effort** — vertices have
+  no stable cross-rebuild identity, so a projected vertex re-projects its stored
+  world point (tracks the sketch plane, **not** changes to the source body),
+  unlike projected **edges** which are fully associative; and there is **no
+  agent/MCP op for Project yet** (UI-only — see Phase 9).
+- Extrude/revolve build faces from the **faceted** polyline for curved profiles
+  (sweep/loft already use exact curves).
+- **Discoverability:** the Constraints + Parameters panels sit below Parts —
+  relocating them into a movable panel is **UI/UX backlog #1** (Phase 8.5).
 
 ### Phase 3 — First solids: Extrude + Chamfer/Fillet — ✅ DONE
 This phase built the **running-result model** (Phase 1.5): the kernel folds
@@ -831,9 +730,15 @@ After L3 a mutating op **awaits the kernel regen** before returning, so a single
 follow-up read/screenshot sees the result (no polling) and a failed build
 surfaces as `kernel_error` for the agent to self-correct. Wired for Claude Code
 via a committed root `.mcp.json`; setup in `mcp-server/README.md`. See the L0–L3
-entries under *Delivery steps*. **All Phase 9 work lives on branch
-`feat/phase9-agent`** (to merge once the whole feature is validated). The
-command/MCP layer also exposes **up-to-face extrude**. **L4 (robustness: token
+entries under *Delivery steps*. **Phase 9 work was merged to `main` on
+2026-06-29** (branch `feat/phase9-agent` deleted). Beyond the core ops, the
+command/MCP layer exposes **up-to-face extrude**, **revolve** (symmetric +
+edge/plane/face axis), **extrudable text**, and the **`add_offset` /
+`add_sketch_mirror`** derived-geometry ops (`get_scene_summary` applies derived
+geometry, so generated edges are referenceable/extrudable). **Project/Convert has
+no agent op yet** — it's UI-only because its persistent-edge-name capture +
+post-rebuild reprojection loop doesn't map onto a one-shot document op; the guide
+tells the agent to reference faces/edges directly instead. **L4 (robustness: token
 auth, multi-tab, error taxonomy, list/open/new_document) is next.**
 
 **Goal.** Let a local LLM agent (Claude Desktop, Claude Code, Cursor, Cline, Zed,
