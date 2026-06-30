@@ -6,9 +6,11 @@ import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
 import {
   setOC, makeBaseBox, makeCylinder, makeSphere, draw, drawPointsInterpolation, Plane,
-  cast, getOC, Vector, HASH_CODE_MAX, exportSTEP, measureVolume, loadFont, textBlueprints,
+  cast, getOC, Vector, HASH_CODE_MAX, exportSTEP, measureVolume, loadFont,
+  Blueprint, BlueprintSketcher, CompoundBlueprint,
 } from "replicad";
 import type { Shape3D, Face, Sketch } from "replicad";
+import type { Font as OpentypeFont, PathCommand } from "opentype.js";
 
 import type { KernelRequest, KernelResponse } from "./protocol";
 import type {
@@ -41,12 +43,16 @@ function ensureOC(): Promise<void> {
 // when a document actually extrudes text). Same asset the UI renders glyph
 // previews from (`src/document/text.ts`), so the solid matches the preview.
 const FONT_URL = `${import.meta.env.BASE_URL}fonts/Inter-Regular.ttf`;
+let sketchFont: OpentypeFont | null = null;
 let fontReady: Promise<void> | null = null;
 function ensureFont(): Promise<void> {
   if (!fontReady) {
     fontReady = fetch(FONT_URL)
       .then((r) => r.arrayBuffer())
-      .then((buf) => loadFont(buf).then(() => undefined));
+      .then((buf) => loadFont(buf))
+      .then((font) => {
+        sketchFont = font;
+      });
   }
   return fontReady;
 }
@@ -409,21 +415,114 @@ function sketchRegionFace(
   return { face, normal: new Vector(frame.normal) };
 }
 
-/** Bake a text profile to one OCCT face per glyph (each glyph face already
- *  carries its counters as inner hole wires — replicad `textBlueprints` resolves
- *  even-odd fill), plus the sketch-plane normal. The blueprint is built at the
- *  origin, baseline-left, then rotated (CCW about the anchor) and translated to
- *  the entity's u,v anchor — matching the on-screen preview's placement. Requires
- *  `ensureFont()` to have resolved first. */
+/** One M..Z segment of a glyph path turned into a closed 2D blueprint, in the
+ *  sketch's u,v convention (x unchanged, y flipped — opentype lays glyphs out
+ *  with y pointing down from the baseline; see src/document/text.ts). Skips
+ *  zero-length segments (some glyphs emit duplicate points) since the sketcher
+ *  rejects degenerate curves. */
+function* glyphContours(commands: PathCommand[]): Generator<Blueprint> {
+  let sk: BlueprintSketcher | null = null;
+  let lastPoint: [number, number] | null = null;
+  for (const command of commands) {
+    if (command.type === "Z") {
+      if (sk) yield sk.close();
+      sk = null;
+      lastPoint = null;
+      continue;
+    }
+    const p: [number, number] = [command.x, -command.y];
+    if (command.type === "M") {
+      sk = new BlueprintSketcher();
+      sk.movePointerTo(p);
+      lastPoint = p;
+      continue;
+    }
+    if (!sk) continue;
+    if (lastPoint && Math.abs(p[0] - lastPoint[0]) < 1e-9 && Math.abs(p[1] - lastPoint[1]) < 1e-9) continue;
+    if (command.type === "L") sk.lineTo(p);
+    else if (command.type === "C") sk.cubicBezierCurveTo(p, [command.x1, -command.y1], [command.x2, -command.y2]);
+    else if (command.type === "Q") sk.quadraticBezierCurveTo(p, [command.x1, -command.y1]);
+    lastPoint = p;
+  }
+}
+
+/** Group a glyph string's raw contours into outer pieces with their holes,
+ *  using each contour's winding direction (not just point-in-polygon
+ *  containment) to tell a true hole — the counter of an "o" or "e" — apart
+ *  from a same-direction piece that merely overlaps another's bounding area
+ *  without nesting inside it. The latter is exactly what trips up replicad's
+ *  own `textBlueprints`/`organiseBlueprints`: it samples a single point and
+ *  treats any contour whose sample falls inside another as a hole, which
+ *  misreads the "t"'s crossbar (it overlaps, but does not nest inside, the
+ *  stem) as a hole and punches a gap through the letter at the join. Here a
+ *  contour is only ever a hole of the smallest opposite-winding contour it
+ *  sits inside; every other contour becomes its own outer piece, and the 3D
+ *  fuse in `buildBodies` merges overlapping outer pieces back into one solid
+ *  once they're extruded. */
+function groupGlyphContours(contours: Blueprint[]): { outer: Blueprint; holes: Blueprint[] }[] {
+  const area = (bp: Blueprint) => bp.boundingBox.width * bp.boundingBox.height;
+  const parent: number[] = contours.map(() => -1);
+  for (let i = 0; i < contours.length; i++) {
+    let bestArea = Infinity;
+    for (let j = 0; j < contours.length; j++) {
+      if (i === j || contours[i].orientation === contours[j].orientation) continue;
+      if (!contours[j].isInside(contours[i].firstPoint)) continue;
+      const a = area(contours[j]);
+      if (a < bestArea) {
+        bestArea = a;
+        parent[i] = j;
+      }
+    }
+  }
+  const rootOf = (i: number): number => {
+    const seen = new Set<number>();
+    let cur = i;
+    while (parent[cur] !== -1 && !seen.has(cur)) {
+      seen.add(cur);
+      cur = parent[cur];
+    }
+    return cur;
+  };
+  const groups = new Map<number, { outer: Blueprint; holes: Blueprint[] }>();
+  for (let i = 0; i < contours.length; i++) {
+    if (parent[i] === -1) groups.set(i, { outer: contours[i], holes: [] });
+  }
+  for (let i = 0; i < contours.length; i++) {
+    if (parent[i] === -1) continue;
+    groups.get(rootOf(i))?.holes.push(contours[i]);
+  }
+  return Array.from(groups.values());
+}
+
+/** Bake a text profile to one OCCT face per outer glyph piece (each carrying
+ *  its true counters as inner hole wires), plus the sketch-plane normal. Each
+ *  piece is built at the origin, baseline-left, then rotated (CCW about the
+ *  anchor) and translated to the entity's u,v anchor — matching the
+ *  on-screen preview's placement. Requires `ensureFont()` to have resolved
+ *  first. */
 function sketchTextFaces(
   profile: Extract<ResolvedFeature, { type: "extrude" }>["profile"] & { kind: "sketchText" },
 ): { faces: Face[]; normal: Vector } {
   const { value, height, rotation, anchor, frame } = profile;
-  let bp = textBlueprints(value, { fontSize: height, startX: 0, startY: 0 });
-  if (rotation) bp = bp.rotate((rotation * 180) / Math.PI, [0, 0]);
-  bp = bp.translate(anchor[0], anchor[1]);
-  const sketches = bp.sketchOnPlane(planeOf(frame));
-  const faces = (sketches.faces() as Shape3D).faces;
+  if (!sketchFont) throw new Error("extrude: text font not loaded");
+  const path = sketchFont.getPath(value, 0, 0, height);
+  const rotationDeg = (rotation * 180) / Math.PI;
+  const plane = planeOf(frame);
+  const faces: Face[] = [];
+  for (const { outer, holes } of groupGlyphContours(Array.from(glyphContours(path.commands)))) {
+    let placedOuter = outer;
+    let placedHoles = holes;
+    if (rotation) {
+      placedOuter = placedOuter.rotate(rotationDeg, [0, 0]);
+      placedHoles = placedHoles.map((h) => h.rotate(rotationDeg, [0, 0]));
+    }
+    placedOuter = placedOuter.translate(anchor[0], anchor[1]);
+    placedHoles = placedHoles.map((h) => h.translate(anchor[0], anchor[1]));
+    const sketch = placedHoles.length
+      ? new CompoundBlueprint([placedOuter, ...placedHoles]).sketchOnPlane(plane)
+      : placedOuter.sketchOnPlane(plane);
+    faces.push(sketch.face());
+  }
   if (faces.length === 0) throw new Error("extrude: text produced no glyphs");
   return { faces, normal: new Vector(frame.normal) };
 }
