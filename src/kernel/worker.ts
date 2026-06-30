@@ -10,7 +10,8 @@ import {
   Blueprint, BlueprintSketcher, CompoundBlueprint,
 } from "replicad";
 import type { Shape3D, Face, Sketch } from "replicad";
-import type { Font as OpentypeFont, PathCommand } from "opentype.js";
+import type { Font as OpentypeFont } from "opentype.js";
+import { glyphFillPolygons } from "./glyphFill";
 
 import type { KernelRequest, KernelResponse } from "./protocol";
 import type {
@@ -147,6 +148,23 @@ function importStepNamed(source: string, id: string): NamedShape {
     names.set(f.hashCode, nm);
   });
   return { shape, names };
+}
+
+/** Combine several disjoint named solids into one body as an OCCT compound — no
+ *  boolean (so it stays cheap for dozens of glyph lumps). Face hashCodes are
+ *  preserved when added to a compound, so the merged name map stays valid. */
+function compoundOf(pieces: NamedShape[]): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const comp = new oc.TopoDS_Compound();
+  const builder = new oc.TopoDS_Builder();
+  builder.MakeCompound(comp);
+  const names = new Map<number, string>();
+  for (const p of pieces) {
+    builder.Add(comp, p.shape.wrapped);
+    for (const [h, n] of p.names) names.set(h, n);
+  }
+  return { shape: cast(comp) as Shape3D, names };
 }
 
 /** Extrude a profile face along `dir` and name the result from MakePrism's
@@ -415,112 +433,50 @@ function sketchRegionFace(
   return { face, normal: new Vector(frame.normal) };
 }
 
-/** One M..Z segment of a glyph path turned into a closed 2D blueprint, in the
- *  sketch's u,v convention (x unchanged, y flipped — opentype lays glyphs out
- *  with y pointing down from the baseline; see src/document/text.ts). Skips
- *  zero-length segments (some glyphs emit duplicate points) since the sketcher
- *  rejects degenerate curves. */
-function* glyphContours(commands: PathCommand[]): Generator<Blueprint> {
-  let sk: BlueprintSketcher | null = null;
-  let lastPoint: [number, number] | null = null;
-  for (const command of commands) {
-    if (command.type === "Z") {
-      if (sk) yield sk.close();
-      sk = null;
-      lastPoint = null;
-      continue;
-    }
-    const p: [number, number] = [command.x, -command.y];
-    if (command.type === "M") {
-      sk = new BlueprintSketcher();
-      sk.movePointerTo(p);
-      lastPoint = p;
-      continue;
-    }
-    if (!sk) continue;
-    if (lastPoint && Math.abs(p[0] - lastPoint[0]) < 1e-9 && Math.abs(p[1] - lastPoint[1]) < 1e-9) continue;
-    if (command.type === "L") sk.lineTo(p);
-    else if (command.type === "C") sk.cubicBezierCurveTo(p, [command.x1, -command.y1], [command.x2, -command.y2]);
-    else if (command.type === "Q") sk.quadraticBezierCurveTo(p, [command.x1, -command.y1]);
-    lastPoint = p;
-  }
+/** Build a closed 2D blueprint from a flattened polygon ring (already in the
+ *  sketch's u,v convention), dropping the clipper's duplicated closing point. */
+function ringToBlueprint(ring: [number, number][]): Blueprint {
+  const closed =
+    ring.length > 1 &&
+    ring[0][0] === ring[ring.length - 1][0] &&
+    ring[0][1] === ring[ring.length - 1][1];
+  const pts = closed ? ring.slice(0, -1) : ring;
+  const sk = new BlueprintSketcher();
+  sk.movePointerTo(pts[0]);
+  for (let i = 1; i < pts.length; i++) sk.lineTo(pts[i]);
+  return sk.close();
 }
 
-/** Group a glyph string's raw contours into outer pieces with their holes,
- *  using each contour's winding direction (not just point-in-polygon
- *  containment) to tell a true hole — the counter of an "o" or "e" — apart
- *  from a same-direction piece that merely overlaps another's bounding area
- *  without nesting inside it. The latter is exactly what trips up replicad's
- *  own `textBlueprints`/`organiseBlueprints`: it samples a single point and
- *  treats any contour whose sample falls inside another as a hole, which
- *  misreads the "t"'s crossbar (it overlaps, but does not nest inside, the
- *  stem) as a hole and punches a gap through the letter at the join. Here a
- *  contour is only ever a hole of the smallest opposite-winding contour it
- *  sits inside; every other contour becomes its own outer piece, and the 3D
- *  fuse in `buildBodies` merges overlapping outer pieces back into one solid
- *  once they're extruded. */
-function groupGlyphContours(contours: Blueprint[]): { outer: Blueprint; holes: Blueprint[] }[] {
-  const area = (bp: Blueprint) => bp.boundingBox.width * bp.boundingBox.height;
-  const parent: number[] = contours.map(() => -1);
-  for (let i = 0; i < contours.length; i++) {
-    let bestArea = Infinity;
-    for (let j = 0; j < contours.length; j++) {
-      if (i === j || contours[i].orientation === contours[j].orientation) continue;
-      if (!contours[j].isInside(contours[i].firstPoint)) continue;
-      const a = area(contours[j]);
-      if (a < bestArea) {
-        bestArea = a;
-        parent[i] = j;
-      }
-    }
-  }
-  const rootOf = (i: number): number => {
-    const seen = new Set<number>();
-    let cur = i;
-    while (parent[cur] !== -1 && !seen.has(cur)) {
-      seen.add(cur);
-      cur = parent[cur];
-    }
-    return cur;
-  };
-  const groups = new Map<number, { outer: Blueprint; holes: Blueprint[] }>();
-  for (let i = 0; i < contours.length; i++) {
-    if (parent[i] === -1) groups.set(i, { outer: contours[i], holes: [] });
-  }
-  for (let i = 0; i < contours.length; i++) {
-    if (parent[i] === -1) continue;
-    groups.get(rootOf(i))?.holes.push(contours[i]);
-  }
-  return Array.from(groups.values());
-}
-
-/** Bake a text profile to one OCCT face per outer glyph piece (each carrying
- *  its true counters as inner hole wires), plus the sketch-plane normal. Each
- *  piece is built at the origin, baseline-left, then rotated (CCW about the
- *  anchor) and translated to the entity's u,v anchor — matching the
- *  on-screen preview's placement. Requires `ensureFont()` to have resolved
- *  first. */
+/** Bake a text profile to OCCT faces — one per fillable glyph polygon, each
+ *  carrying its counters as inner hole wires — plus the sketch-plane normal.
+ *  The glyph outlines are resolved in 2D first (`glyphFillPolygons`) so that
+ *  overlapping / self-intersecting strokes fill correctly (the stem∩arch of
+ *  h/m/n, the crossing strokes of v/w/x/y, the bowl of e, the t crossbar; see
+ *  src/kernel/glyphFill.ts for the root cause). Curves become fine polylines.
+ *  Each polygon is built at the origin baseline-left, then rotated (CCW about
+ *  the anchor) and translated to the entity's u,v anchor — matching the
+ *  on-screen preview. Requires `ensureFont()` to have resolved first. */
 function sketchTextFaces(
   profile: Extract<ResolvedFeature, { type: "extrude" }>["profile"] & { kind: "sketchText" },
 ): { faces: Face[]; normal: Vector } {
   const { value, height, rotation, anchor, frame } = profile;
   if (!sketchFont) throw new Error("extrude: text font not loaded");
   const path = sketchFont.getPath(value, 0, 0, height);
+  // Flatten tolerance scales with text height so facets stay small but the face
+  // count stays modest (a denser flatten makes the per-glyph extrude/mesh slow).
+  const polygons = glyphFillPolygons(path.commands, Math.max(0.1, height * 0.04));
   const rotationDeg = (rotation * 180) / Math.PI;
   const plane = planeOf(frame);
   const faces: Face[] = [];
-  for (const { outer, holes } of groupGlyphContours(Array.from(glyphContours(path.commands)))) {
-    let placedOuter = outer;
-    let placedHoles = holes;
-    if (rotation) {
-      placedOuter = placedOuter.rotate(rotationDeg, [0, 0]);
-      placedHoles = placedHoles.map((h) => h.rotate(rotationDeg, [0, 0]));
-    }
-    placedOuter = placedOuter.translate(anchor[0], anchor[1]);
-    placedHoles = placedHoles.map((h) => h.translate(anchor[0], anchor[1]));
-    const sketch = placedHoles.length
-      ? new CompoundBlueprint([placedOuter, ...placedHoles]).sketchOnPlane(plane)
-      : placedOuter.sketchOnPlane(plane);
+  for (const polygon of polygons) {
+    const rings = polygon.filter((r) => r.length >= 3); // [outer, ...holes]
+    if (rings.length === 0) continue;
+    let bps = rings.map(ringToBlueprint);
+    if (rotation) bps = bps.map((b) => b.rotate(rotationDeg, [0, 0]));
+    bps = bps.map((b) => b.translate(anchor[0], anchor[1]));
+    const sketch = bps.length > 1
+      ? new CompoundBlueprint(bps).sketchOnPlane(plane)
+      : bps[0].sketchOnPlane(plane);
     faces.push(sketch.face());
   }
   if (faces.length === 0) throw new Error("extrude: text produced no glyphs");
@@ -986,24 +942,33 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
           lengths = extrudeLengths(extent, distance, face, targets).map((l) => l * sign);
         }
         // Prism every face (one per glyph for text) at every length (two for
-        // symmetric), fusing into one named solid. A single-face profile keeps the
-        // feature id as its name prefix; text scopes each glyph as `${id}/g{n}` so
-        // the glyph faces stay distinct.
-        let built: NamedShape | null = null;
+        // symmetric). The symmetric halves of a SINGLE face touch at the profile
+        // plane, so they're fused into one solid; distinct glyph faces are
+        // disjoint, so they're collected into a COMPOUND rather than boolean-fused
+        // (fusing dozens of glyphs is the bottleneck that made long text time out).
+        // A single-face profile keeps the feature id as its name prefix; text
+        // scopes each glyph as `${id}/g{n}` so the glyph faces stay distinct.
+        const glyphSolids: NamedShape[] = [];
         for (let gi = 0; gi < faces.length; gi++) {
           const prefix = faces.length > 1 ? `${feature.id}/g${gi}` : feature.id;
+          let glyph: NamedShape | null = null;
           for (const len of lengths) {
             const piece = prismFromFace(faces[gi], normal, len, prefix);
-            if (built === null) {
-              built = piece;
+            if (glyph === null) {
+              glyph = piece;
             } else {
-              const fused = booleanNamed("fuse", built, piece);
-              built.shape.delete();
+              const fused = booleanNamed("fuse", glyph, piece);
+              glyph.shape.delete();
               piece.shape.delete();
-              built = fused;
+              glyph = fused;
             }
           }
+          if (glyph) glyphSolids.push(glyph);
         }
+        let built: NamedShape | null =
+          glyphSolids.length === 0 ? null
+          : glyphSolids.length === 1 ? glyphSolids[0]
+          : compoundOf(glyphSolids);
         if (built === null) throw new Error("extrude: profile produced no geometry");
 
         if (feature.previewTool) {
