@@ -3649,14 +3649,14 @@ export default function App() {
                 disabled={!oneSelectedLine}
                 onClick={() => oneSelectedLine && addHVConstraint("horizontal", oneSelectedLine.id)}
               >
-                <HorizontalIcon />
+                <HorizontalIcon />{kbd("H")}
               </button>
               <button
                 title="Vertical (V) — select a line"
                 disabled={!oneSelectedLine}
                 onClick={() => oneSelectedLine && addHVConstraint("vertical", oneSelectedLine.id)}
               >
-                <VerticalIcon />
+                <VerticalIcon />{kbd("V")}
               </button>
               <button
                 title="Parallel (Shift+P) — select two lines"
