@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type ReactNode } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
   addBoolean,
@@ -822,6 +822,37 @@ export default function App() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const kbd = (sc: string): ReactNode =>
     showShortcuts ? <span className="kbd-hint">&nbsp;({sc})</span> : null;
+  // When the (left-anchored, horizontal) modeling toolbar grows wide enough to
+  // run under the (right-anchored) camera selector — e.g. once shortcut hints
+  // widen it, or on a narrow viewport — drop the camera selector below the
+  // toolbar so nothing is obstructed. Measured live because the trigger (toolbar
+  // width, viewport width) is dynamic.
+  const modelToolbarRef = useRef<HTMLDivElement>(null);
+  const viewControlsRef = useRef<HTMLDivElement>(null);
+  const [viewControlsTop, setViewControlsTop] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const tb = modelToolbarRef.current;
+    const vc = viewControlsRef.current;
+    if (!tb || !vc) return;
+    const TOP = 12; // matches the CSS resting top of both toolbars
+    const GAP = 8;
+    const measure = () => {
+      const t = tb.getBoundingClientRect();
+      const v = vc.getBoundingClientRect();
+      // The selector is right-anchored, so its left/width don't depend on its
+      // own `top` — testing the toolbar's right edge against it is stable (no
+      // oscillation once we've moved the selector down).
+      const wouldOverlap = t.left + t.width + GAP > v.left;
+      const top = wouldOverlap ? TOP + t.height + GAP : TOP;
+      setViewControlsTop(top === TOP ? null : top);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(tb);
+    ro.observe(vc);
+    window.addEventListener("resize", measure);
+    return () => { ro.disconnect(); window.removeEventListener("resize", measure); };
+  }, []);
   // The Variables section is collapsible (to reclaim panel space). Default:
   // open for a short list (< 5 variables), collapsed for a long one so it
   // doesn't dominate the panel. Set from the loaded doc (see the restore effect)
@@ -3364,7 +3395,7 @@ export default function App() {
             selectionFilter={selFilter}
             apiRef={viewApiRef}
           />
-          <div className="model-toolbar">
+          <div className="model-toolbar" ref={modelToolbarRef}>
             <button
               title="Sketch (S): start a sketch — pick a plane or face"
               disabled={!!editingSketch || picking}
@@ -3795,7 +3826,11 @@ export default function App() {
             />
           )}
           {editingSketch && sketchMsg && <div className="sketch-msg" role="alert">⚠ {sketchMsg}</div>}
-          <div className="view-controls">
+          <div
+            className="view-controls"
+            ref={viewControlsRef}
+            style={viewControlsTop != null ? { top: viewControlsTop } : undefined}
+          >
             {VIEW_BUTTONS.map((v, i) => (
               <button
                 key={v.name}
