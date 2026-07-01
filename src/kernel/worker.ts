@@ -240,12 +240,13 @@ function revolveFromFace(
     for (const g of drainList(builder.Generated(e.wrapped))) sideByHash.set(hashOf(g), `${id}/side${i}`);
   });
 
-  const names = new Map<number, string>();
-  for (const f of shape.faces) {
-    const h = f.hashCode;
-    if (capHashes.has(h)) names.set(h, capHashes.get(h)!);
-    else if (sideByHash.has(h)) names.set(h, sideByHash.get(h)!);
-  }
+  // namesFromHistory gives any face NOT reported by Generated a stable `f{n}`
+  // fallback. This matters for a full 360° revolve: OCCT's Generated() reports
+  // the swept cylindrical/conical faces but NOT the planar ones (disks/annuli
+  // swept by radial profile edges), so without a fallback those faces stay
+  // unnamed — and an edge is only nameable when BOTH its faces are named, so
+  // their circular edges couldn't be chamfered/filleted.
+  const { names } = namesFromHistory(shape, id, capHashes, sideByHash);
   builder.delete();
   ax1.delete();
   dir.delete();
