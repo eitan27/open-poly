@@ -41,6 +41,42 @@ export function ParallelIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+/** A single horizontal line — used for the sketch Horizontal constraint. */
+export function HorizontalIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <line x1="3" y1="8" x2="13" y2="8" />
+    </svg>
+  );
+}
+
+/** A single vertical line — used for the sketch Vertical constraint. */
+export function VerticalIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <line x1="8" y1="3" x2="8" y2="13" />
+    </svg>
+  );
+}
+
 /** Two nested right angles (an inner L and a slightly larger, parallel outer L)
  *  — an edge and its offset copy. Used for the sketch Offset tool. */
 export function OffsetIcon({ size = 16 }: { size?: number }) {

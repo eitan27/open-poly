@@ -50,6 +50,8 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 | Project / Convert | `U` | "**U**se" existing geometry. Click body edges & vertices to project them onto the sketch plane as new entities (live dashed previews); `Enter` commits, `Esc` cancels. Straight edges → lines, planar circular edges → circles/arcs, anything else → splines. |
 | Text | `T` | **T**ext. Click to place the baseline anchor, then type the string + height in the floating box; the glyphs preview live. `Enter` commits, `Esc` cancels. Sketch-mode only — distinct from the modeling-toolbar `T` (Transform), mutually exclusive, safe. |
 | Dimension | `D` | Already shipped. |
+| Horizontal | `H` | Select a single line. |
+| Vertical | `V` | Select a single line. |
 | Parallel | `Shift+P` | Resolves conflict #2 (below). |
 | Perpendicular | `N` | Resolves conflict #2. Reuses `N` from New Body (modeling toolbar) — mutually exclusive, safe. |
 | Equal | `=` | Matches the button's own "＝" glyph. |
@@ -120,6 +122,8 @@ both at the same time):
 - `M`: Mirror body (modeling) / Mirror sketch entities (sketch) — same verb, two contexts
 - `T`: Transform (modeling) / Text (sketch)
 - `U`: (unused in modeling) / Project-Convert "Use" (sketch)
+- `H`: Toggle suppress/hide on selected feature (Timeline, modeling mode only) / Horizontal constraint (sketch)
+- `V`: (unused in modeling) / Vertical constraint (sketch)
 
 ## Future conflicts to watch (from `PLAN.md`'s roadmap)
 

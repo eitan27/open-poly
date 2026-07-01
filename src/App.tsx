@@ -90,7 +90,7 @@ import {
 import { useHistory } from "./hooks/useHistory";
 import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
-import { ConstructionIcon, OffsetIcon, ParallelIcon } from "./ui/icons";
+import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { DraggableDialog } from "./ui/DraggableDialog";
 import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
@@ -1373,6 +1373,9 @@ export default function App() {
     return e.type === "line" || e.type === "circle" || e.type === "arc" ? e : null;
   }, [selectedSketchEntities]);
 
+  // A single line selected → eligible for the Horizontal/Vertical constraints.
+  const oneSelectedLine = dimEntity?.type === "line" ? dimEntity : null;
+
   // Exactly two lines / two circles selected → eligible for the line-pair
   // constraints (angle/parallel/perpendicular/equal-length) and equal-radius.
   const twoSelectedLines = useMemo(() => {
@@ -2057,6 +2060,14 @@ export default function App() {
           addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id);
           return;
         }
+        if (!e.shiftKey && key === "h" && oneSelectedLine) {
+          addHVConstraint("horizontal", oneSelectedLine.id);
+          return;
+        }
+        if (!e.shiftKey && key === "v" && oneSelectedLine) {
+          addHVConstraint("vertical", oneSelectedLine.id);
+          return;
+        }
         if (e.shiftKey && key === "p" && twoSelectedLines) {
           addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id);
           return;
@@ -2154,6 +2165,7 @@ export default function App() {
     transformTarget,
     twoSelectedLines,
     twoRadiusEntities,
+    oneSelectedLine,
     primaryFeatureId,
     polySidesOpen,
   ]);
@@ -2963,6 +2975,17 @@ export default function App() {
     await commitConstraint({ id: genId(), type, a, b }, name);
   };
 
+  // Add a Horizontal/Vertical constraint to a single line (no-op if it already
+  // has that exact constraint; the opposite one is caught by commitConstraint's
+  // own conflict detection, same as any other contradictory pair).
+  const addHVConstraint = async (type: "horizontal" | "vertical", entity: string) => {
+    if (!editingSketch) return;
+    const exists = editingSketch.constraints.some((c) => c.type === type && c.entity === entity);
+    if (exists) return;
+    const name = type === "horizontal" ? "Horizontal" : "Vertical";
+    await commitConstraint({ id: genId(), type, entity }, name);
+  };
+
   // Resolve a selected sketch point (uv) to a PointRef: an entity's named vertex
   // if one sits there, else the sketch origin.
   const pointRefAt = (uv: Vec2): PointRef | null => {
@@ -3621,6 +3644,20 @@ export default function App() {
                 ↔{kbd("D")}
               </button>
               <div className="sketch-toolbar-sep" />
+              <button
+                title="Horizontal (H) — select a line"
+                disabled={!oneSelectedLine}
+                onClick={() => oneSelectedLine && addHVConstraint("horizontal", oneSelectedLine.id)}
+              >
+                <HorizontalIcon />
+              </button>
+              <button
+                title="Vertical (V) — select a line"
+                disabled={!oneSelectedLine}
+                onClick={() => oneSelectedLine && addHVConstraint("vertical", oneSelectedLine.id)}
+              >
+                <VerticalIcon />
+              </button>
               <button
                 title="Parallel (Shift+P) — select two lines"
                 disabled={!twoSelectedLines}
