@@ -354,20 +354,20 @@ const DATUM_ROWS: { id: DatumId; kind: string; label: string }[] = [
   { id: "plane-right", kind: "Plane", label: "Right" },
 ];
 
-const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; title: string }[] = [
-  { tool: "select", label: "↖", title: "Select (S)" },
-  { tool: "line", label: "╱", title: "Line (L)" },
-  { tool: "rect-corner", label: "▭", title: "Rectangle: 2 corners (R)" },
-  { tool: "rect-center", label: "⊞", title: "Rectangle: center + corner (Shift+R)" },
-  { tool: "circle-center", label: "○", title: "Circle: center + radius (C)" },
-  { tool: "circle-3p", label: "◔", title: "Circle: 3 points (Shift+C)" },
-  { tool: "polygon", label: "⬢", title: "Regular polygon (P)" },
-  { tool: "arc-3p", label: "⌒", title: "Arc: 3 points (A)" },
-  { tool: "spline", label: "∿", title: "Spline (Shift+S): click points, Esc to finish" },
-  { tool: "offset", label: <OffsetIcon />, title: "Offset (O): select a single chain of edges, then drag / type the distance" },
-  { tool: "mirror", label: "◫", title: "Mirror (M): click a line to arm the mirror axis, then click entities to mirror; Enter commits, Esc cancels" },
-  { tool: "project", label: "⧉", title: "Project / Convert (U): click body edges & vertices to project them onto the sketch; Enter commits, Esc cancels" },
-  { tool: "text", label: "T", title: "Text (T): click to place, then type the text & height; Enter commits, Esc cancels" },
+const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; title: string; sc: string }[] = [
+  { tool: "select", label: "↖", title: "Select (S)", sc: "S" },
+  { tool: "line", label: "╱", title: "Line (L)", sc: "L" },
+  { tool: "rect-corner", label: "▭", title: "Rectangle: 2 corners (R)", sc: "R" },
+  { tool: "rect-center", label: "⊞", title: "Rectangle: center + corner (Shift+R)", sc: "⇧R" },
+  { tool: "circle-center", label: "○", title: "Circle: center + radius (C)", sc: "C" },
+  { tool: "circle-3p", label: "◔", title: "Circle: 3 points (Shift+C)", sc: "⇧C" },
+  { tool: "polygon", label: "⬢", title: "Regular polygon (P)", sc: "P" },
+  { tool: "arc-3p", label: "⌒", title: "Arc: 3 points (A)", sc: "A" },
+  { tool: "spline", label: "∿", title: "Spline (Shift+S): click points, Esc to finish", sc: "⇧S" },
+  { tool: "offset", label: <OffsetIcon />, title: "Offset (O): select a single chain of edges, then drag / type the distance", sc: "O" },
+  { tool: "mirror", label: "◫", title: "Mirror (M): click a line to arm the mirror axis, then click entities to mirror; Enter commits, Esc cancels", sc: "M" },
+  { tool: "project", label: "⧉", title: "Project / Convert (U): click body edges & vertices to project them onto the sketch; Enter commits, Esc cancels", sc: "U" },
+  { tool: "text", label: "T", title: "Text (T): click to place, then type the text & height; Enter commits, Esc cancels", sc: "T" },
 ];
 
 /** Turn a raw offset primitive into a committable SketchEntity (fresh id). */
@@ -817,6 +817,11 @@ export default function App() {
   >(null);
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
+  // Toggle (via the "?" button in the topbar, or the "?" key) that appends each
+  // toolbar button's keyboard shortcut to its label, e.g. "⬆ Extrude (E)".
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const kbd = (sc: string): ReactNode =>
+    showShortcuts ? <span className="kbd-hint">&nbsp;({sc})</span> : null;
   // The Variables section is collapsible (to reclaim panel space). Default:
   // open for a short list (< 5 variables), collapsed for a long one so it
   // doesn't dominate the panel. Set from the loaded doc (see the restore effect)
@@ -1876,6 +1881,12 @@ export default function App() {
       }
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // "?" toggles the keyboard-shortcut hints appended to toolbar labels.
+      if (e.key === "?") {
+        e.preventDefault();
+        setShowShortcuts((s) => !s);
+        return;
+      }
       // Enter commits the in-progress sketch Mirror (its previews → real entities).
       if (e.key === "Enter" && mirrorSessionRef.current) {
         e.preventDefault();
@@ -3188,6 +3199,14 @@ export default function App() {
           <button className="tool-btn" onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)">
             ↷
           </button>
+          <button
+            className={"tool-btn" + (showShortcuts ? " active" : "")}
+            onClick={() => setShowShortcuts((s) => !s)}
+            title="Show keyboard shortcuts in button labels (?)"
+            aria-pressed={showShortcuts}
+          >
+            ?
+          </button>
         </div>
         {agentStatus === "connected" && (
           <span className="agent-badge" title="An LLM agent is connected to this tab">
@@ -3351,7 +3370,7 @@ export default function App() {
               disabled={!!editingSketch || picking}
               onClick={() => { setPickPurpose("sketch"); setPicking(true); }}
             >
-              ✎ Sketch
+              ✎ Sketch{kbd("S")}
             </button>
             <div className="mt-dropdown" ref={newSolidRef}>
               <button
@@ -3359,7 +3378,7 @@ export default function App() {
                 disabled={!!editingSketch}
                 onClick={() => setNewSolidOpen((o) => !o)}
               >
-                ◧ New Body ▾
+                ◧ New Body ▾{kbd("N")}
               </button>
               {newSolidOpen && (
                 <div className="mt-menu">
@@ -3379,70 +3398,70 @@ export default function App() {
               disabled={!!editingSketch || picking || !!planeDialog}
               onClick={openPlaneDialog}
             >
-              ⧉ Plane
+              ⧉ Plane{kbd("P")}
             </button>
             <button
               title="Extrude (E): extrude the selected sketch region(s) and/or face(s)"
               disabled={extrudeProfiles.length === 0 || !!editingSketch || picking || !!extrudeDialog}
               onClick={openExtrudeDialog}
             >
-              ⬆ Extrude
+              ⬆ Extrude{kbd("E")}
             </button>
             <button
               title="Revolve (R): arm a profile face + an axis (edge or plane) in the dialog"
               disabled={!!editingSketch || picking || !!revolveDialog}
               onClick={openRevolve}
             >
-              ⟳ Revolve
+              ⟳ Revolve{kbd("R")}
             </button>
             <button
               title="Sweep (W): sweep a sketch region along a path — line / arc / spline (select both)"
               disabled={!sweepInputs || !!editingSketch || picking}
               onClick={openSweep}
             >
-              ⊃ Sweep
+              ⊃ Sweep{kbd("W")}
             </button>
             <button
               title="Loft (L): loft through 2+ sketch regions (select the sections)"
               disabled={!loftInputs || !!editingSketch || picking}
               onClick={openLoft}
             >
-              ⌧ Loft
+              ⌧ Loft{kbd("L")}
             </button>
             <button
               title="Chamfer (C): chamfer the selected edge(s)"
               disabled={!dressUpTarget || !!editingSketch || picking}
               onClick={() => openDressUp("chamfer")}
             >
-              ◣ Chamfer
+              ◣ Chamfer{kbd("C")}
             </button>
             <button
               title="Fillet (F): round the selected edge(s)"
               disabled={!dressUpTarget || !!editingSketch || picking}
               onClick={() => openDressUp("fillet")}
             >
-              ◖ Fillet
+              ◖ Fillet{kbd("F")}
             </button>
             <button
               title="Boolean (B): union / subtract / intersect"
               disabled={bodyIds.size < 2 || !!editingSketch || picking}
               onClick={openBooleanDialog}
             >
-              ⊕ Boolean
+              ⊕ Boolean{kbd("B")}
             </button>
             <button
               title="Transform (T): move / rotate the selected body"
               disabled={!transformTarget || !!editingSketch || picking || !!transformEditId}
               onClick={openTransform}
             >
-              ✥ Transform
+              ✥ Transform{kbd("T")}
             </button>
             <button
               title="Mirror (M): mirror the selected body across a plane"
               disabled={!transformTarget || !!editingSketch || picking}
               onClick={openMirror}
             >
-              ⇋ Mirror
+              ⇋ Mirror{kbd("M")}
             </button>
           </div>
           {editingSketch && (
@@ -3454,7 +3473,7 @@ export default function App() {
                   title={t.title}
                   onClick={() => setSketchTool(t.tool)}
                 >
-                  {t.label}
+                  {t.label}{kbd(t.sc)}
                 </button>
               ))}
               <button
@@ -3462,7 +3481,7 @@ export default function App() {
                 className={dimPending ? "active" : ""}
                 onClick={startDimension}
               >
-                ↔
+                ↔{kbd("D")}
               </button>
               <div className="sketch-toolbar-sep" />
               <button
@@ -3473,7 +3492,7 @@ export default function App() {
                   addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id)
                 }
               >
-                <ParallelIcon />
+                <ParallelIcon />{kbd("⇧P")}
               </button>
               <button
                 title="Perpendicular (N) — select two lines"
@@ -3483,7 +3502,7 @@ export default function App() {
                   addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id)
                 }
               >
-                ⊥
+                ⊥{kbd("N")}
               </button>
               <button
                 title="Equal (=) — select two lines (equal length) or two circles/arcs (equal radius)"
@@ -3493,7 +3512,7 @@ export default function App() {
                   if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
                 }}
               >
-                ＝
+                ＝{kbd("=")}
               </button>
               <button
                 title="Coincident — a point + a line puts the point on the line; one point anchors it to the origin; two points make them coincident"
@@ -3525,7 +3544,7 @@ export default function App() {
                 className={constructionMode ? "active" : ""}
                 onClick={toggleConstruction}
               >
-                <ConstructionIcon />
+                <ConstructionIcon />{kbd("Q")}
               </button>
               {editingSketch.constraints.length > 0 && (
                 <span

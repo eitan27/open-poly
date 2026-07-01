@@ -286,14 +286,30 @@ export const SELECT_COLOR = 0xff9d3c;
 export const GHOST_COLOR = 0x4fd1ff;
 const EDGE_SEL_COLOR = new THREE.Color(SELECT_COLOR);
 const EDGE_HOV_COLOR = new THREE.Color(0x36d6c3);
-const EDGE_PICK_WORLD = 1.6; // ray-distance threshold for grabbing an edge
-// Screen-space (pixel) radius around an edge endpoint that grabs the vertex
-// instead of the edge. Must be in pixels, NOT world units: a fixed world radius
-// swallows the whole of any edge shorter than ~2× that radius (every point on it
-// is within reach of an endpoint), so small edges become unselectable — and
-// because the radius is in world space, zooming in can't separate the endpoints
-// to expose a pickable middle. In pixels, zooming in grows the gap as expected.
-const VERTEX_PICK_PX = 10;
+// Edge/vertex picking is done entirely in SCREEN space (pixels), at every stage,
+// so it behaves identically at any zoom. The old design used a world-space ray
+// threshold (EDGE_PICK_WORLD = 1.6 mm) for edge *detection*, which had two flaws:
+//   • zoomed out, 1.6 mm is only a pixel or two, so edges were hard to click and
+//     you had to nudge the cursor to hit them;
+//   • zoomed in, 1.6 mm is tens of pixels, so an edge's grab band ballooned and
+//     swallowed the whole interior of any narrow face (a 2–3 mm rib / L-flange),
+//     which then stayed unpickable no matter how far you zoomed.
+// Instead we set the raycaster threshold to PICK_DETECT_PX *pixels* worth of
+// world units at the cursor's depth, then gate the result by exact pixel
+// distance. PICK_DETECT_PX is a hair wider than the gates so detection never
+// clips the true (pixel-gated) boundary.
+const PICK_DETECT_PX = 12;
+// A click within VERTEX_PICK_PX px of an edge endpoint selects the vertex; within
+// EDGE_PICK_PX px of the edge polyline selects the edge. Vertex ≥ edge so an
+// endpoint reliably wins over the edge body. Both are small so a face only needs
+// ~2×EDGE_PICK_PX px of on-screen width to expose a pickable interior — i.e. a
+// 2–3 mm face becomes selectable with only modest zoom.
+const VERTEX_PICK_PX = 8;
+const EDGE_PICK_PX = 6;
+// Depth slack (world mm): an edge/line counts as "in front of" the face under the
+// cursor if it's within this of the face hit — covers tessellation seams where a
+// face's own boundary edge sits a hair behind the triangles.
+const PICK_DEPTH_TOL = 1;
 
 const posKey = (x: number, y: number, z: number) =>
   `${Math.round(x * 1000)},${Math.round(y * 1000)},${Math.round(z * 1000)}`;
@@ -1093,7 +1109,6 @@ export function Viewport({
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
-      raycaster.params.Line = { threshold: EDGE_PICK_WORLD };
 
       // The sketch origin is selectable anywhere (not only when a sketch line is
       // under the cursor), so it can be the anchor for a coincident / point-on-
@@ -1118,39 +1133,66 @@ export function Viewport({
       const regionMeshes = sketchGroup.children.filter(
         (c): c is THREE.Mesh => c instanceof THREE.Mesh && c.userData.isRegion === true,
       );
+      // Faces/regions first (they don't use the Line threshold) to learn the
+      // depth under the cursor, then size the edge/line raycast so its search
+      // radius equals PICK_DETECT_PX *pixels* at that depth — making edge/vertex
+      // detection zoom-independent (see the constants above).
       const faceHit = raycaster.intersectObjects(faceMeshes, false)[0];
+      const regionHit = raycaster.intersectObjects(regionMeshes, false)[0];
+      const depth = faceHit ? faceHit.distance : camera.position.distanceTo(controls.target);
+      const worldPerPx = (2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / rect.height;
+      raycaster.params.Line = { threshold: worldPerPx * PICK_DETECT_PX };
       const edgeHit = raycaster.intersectObjects(bodyEdges, false)[0];
       const sketchHit = raycaster.intersectObjects(sketchSegs, false)[0];
-      const regionHit = raycaster.intersectObjects(regionMeshes, false)[0];
 
       // Selection filters: which body-geometry kinds the picker may return.
       // (Sketch picks below are unaffected — they belong to sketch editing.)
       const flt = selectionFilterRef.current;
 
       // Thin elements (body edges, sketch lines) take priority over a face when
-      // the cursor is near them and they're not behind that face. Pick the nearer.
+      // the cursor is near them (in pixels) and they're not behind that face.
       const faceDist = faceHit ? faceHit.distance : Infinity;
-      const edgeOk = !!edgeHit && edgeHit.index != null && edgeHit.distance <= faceDist + 1;
-      const sketchOk = !!sketchHit && sketchHit.distance <= faceDist + 1;
 
-      if ((flt.edge || flt.vertex) && edgeOk && (!sketchOk || edgeHit!.distance <= sketchHit!.distance)) {
-        const mesh = edgeHit!.object as THREE.LineSegments;
-        const fid = mesh.userData.featureId as string;
+      // Resolve the nearest body edge into its pixel gaps: edgePx = distance to
+      // the edge polyline, vertexPx = distance to its nearer endpoint. Vertex and
+      // edge are then *independent* pixel gates (vertex ≥ edge), so a click by an
+      // endpoint reliably selects the vertex even when the edge body has already
+      // fallen outside EDGE_PICK_PX.
+      let edgeInfo:
+        | { fid: string; edgeId: number | undefined; near: THREE.Vector3; edgePx: number; vertexPx: number }
+        | null = null;
+      if (edgeHit && edgeHit.index != null && edgeHit.distance <= faceDist + PICK_DEPTH_TOL) {
+        const mesh = edgeHit.object as THREE.LineSegments;
         const pos = mesh.geometry.getAttribute("position");
-        const a = new THREE.Vector3().fromBufferAttribute(pos, edgeHit!.index!);
-        const bpt = new THREE.Vector3().fromBufferAttribute(pos, edgeHit!.index! + 1);
-        const near = a.distanceTo(edgeHit!.point) <= bpt.distanceTo(edgeHit!.point) ? a : bpt;
-        // Grab the endpoint vertex only when the cursor is within a pixel radius
-        // of it (screen-space, so it scales with zoom — see VERTEX_PICK_PX). On a
-        // small edge this leaves a pickable band in the middle for the edge itself.
-        if (flt.vertex) {
-          const nearPx = projectToPx(near);
-          if (Math.hypot(nearPx.x - clientX, nearPx.y - clientY) < VERTEX_PICK_PX) {
-            return { kind: "vertex", featureId: fid, point: [near.x, near.y, near.z] };
-          }
-        }
-        const edgeId = getEdgeId(edgeHit!.index!, mesh.geometry);
-        if (flt.edge && edgeId !== undefined) return { kind: "edge", featureId: fid, edgeId };
+        const a = new THREE.Vector3().fromBufferAttribute(pos, edgeHit.index);
+        const bpt = new THREE.Vector3().fromBufferAttribute(pos, edgeHit.index + 1);
+        const near = a.distanceTo(edgeHit.point) <= bpt.distanceTo(edgeHit.point) ? a : bpt;
+        const ep = projectToPx(edgeHit.point);
+        const np = projectToPx(near);
+        edgeInfo = {
+          fid: mesh.userData.featureId as string,
+          edgeId: getEdgeId(edgeHit.index, mesh.geometry),
+          near,
+          edgePx: Math.hypot(ep.x - clientX, ep.y - clientY),
+          vertexPx: Math.hypot(np.x - clientX, np.y - clientY),
+        };
+      }
+      // Sketch line gated the same way (pixel gap to the line), so it doesn't
+      // steal a wide band from the sketch region behind it.
+      const sketchPx = sketchHit
+        ? (() => { const p = projectToPx(sketchHit.point); return Math.hypot(p.x - clientX, p.y - clientY); })()
+        : Infinity;
+      const sketchOk = !!sketchHit && sketchHit.distance <= faceDist + PICK_DEPTH_TOL && sketchPx <= EDGE_PICK_PX;
+
+      // Vertex is the highest-priority element (a point beats any edge/face/line).
+      if (flt.vertex && edgeInfo && edgeInfo.vertexPx <= VERTEX_PICK_PX) {
+        const n = edgeInfo.near;
+        return { kind: "vertex", featureId: edgeInfo.fid, point: [n.x, n.y, n.z] };
+      }
+      // Then the edge — unless a sketch line is both in range and nearer.
+      const edgeOk = !!edgeInfo && edgeInfo.edgePx <= EDGE_PICK_PX && edgeInfo.edgeId !== undefined;
+      if (flt.edge && edgeOk && (!sketchOk || edgeHit!.distance <= sketchHit!.distance)) {
+        return { kind: "edge", featureId: edgeInfo!.fid, edgeId: edgeInfo!.edgeId! };
       }
       if (sketchOk) {
         const obj = sketchHit!.object as THREE.LineSegments;
@@ -1181,7 +1223,7 @@ export function Viewport({
         }
       }
       // Enclosed sketch region (face) — below sketch lines, above body faces.
-      if (regionHit && regionHit.distance <= faceDist + 1) {
+      if (regionHit && regionHit.distance <= faceDist + PICK_DEPTH_TOL) {
         const sid = regionHit.object.userData.sketchId as string | undefined;
         const rid = regionHit.object.userData.regionId as string | undefined;
         if (sid && rid) return { kind: "sketchFace", sketchId: sid, regionId: rid };
