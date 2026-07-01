@@ -848,6 +848,30 @@
   cursor: default;
 }
 
+/* Collapsed circle/rectangle flyout. The collapsed button sits in-flow (so the
+   vertical bar keeps its width); clicking it opens the variants as a horizontal
+   flyout that overlays the button and extends to the right — expanding
+   horizontally without reflowing the column. */
+.sketch-group {
+  position: relative;
+  display: flex;
+}
+.sketch-group > button {
+  flex: 1;
+}
+.sketch-group > button.expanded {
+  visibility: hidden;
+}
+.sketch-flyout {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  z-index: 5;
+}
+
 /* Groups drawing tools / dimension / constraints / solve in the sketch toolbar. */
 .sketch-toolbar-sep {
   height: 1px;
