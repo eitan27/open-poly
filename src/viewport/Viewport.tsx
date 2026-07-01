@@ -687,6 +687,7 @@ export function Viewport({
     );
     snapMarker.renderOrder = 12;
     snapMarker.visible = false;
+    keepConstantPixelRadius(snapMarker, 1.4, SNAP_PIXEL_RADIUS);
     scene.add(previewLine, snapMarker);
 
     const state: SceneState = {
@@ -1923,6 +1924,27 @@ function softenGizmo(helper: THREE.Object3D): void {
 // --- Datum geometry -------------------------------------------------------
 
 const PLANE_SIZE = 72;
+// On-screen radius (in device pixels) the origin dot holds at any zoom level.
+const ORIGIN_PIXEL_RADIUS = 10;
+// On-screen radius of the snap/hover marker (the ring shown over the origin or a
+// snapped edge). Slightly larger than the origin dot so it reads as a highlight.
+const SNAP_PIXEL_RADIUS = 12;
+
+/** Rescale a sphere-based marker each frame so its projected radius stays at
+ *  `pxRadius` device pixels regardless of zoom — the world-space equivalent of
+ *  PointsMaterial's sizeAttenuation:false. `geomRadius` is the mesh's base
+ *  SphereGeometry radius. */
+function keepConstantPixelRadius(mesh: THREE.Mesh, geomRadius: number, pxRadius: number): void {
+  const world = new THREE.Vector3();
+  const size = new THREE.Vector2();
+  mesh.onBeforeRender = (renderer, _scene, camera) => {
+    const cam = camera as THREE.PerspectiveCamera;
+    const dist = cam.position.distanceTo(mesh.getWorldPosition(world));
+    const h = renderer.getDrawingBufferSize(size).y;
+    const worldRadius = (dist * Math.tan((cam.fov * Math.PI) / 360) * 2 * pxRadius) / h;
+    mesh.scale.setScalar(worldRadius / geomRadius);
+  };
+}
 const PLANE_TINTS: Record<"plane-top" | "plane-front" | "plane-right", number> = {
   "plane-top": 0x4f8cff,
   "plane-front": 0x3ddc84,
@@ -1937,6 +1959,9 @@ function createDatums(scene: THREE.Scene): DatumEntry[] {
   });
   const origin = new THREE.Mesh(new THREE.SphereGeometry(1.0, 20, 20), originMat);
   origin.renderOrder = 10;
+  // Keep the origin dot a constant on-screen size regardless of zoom, the way
+  // the vertex points (sizeAttenuation:false) do.
+  keepConstantPixelRadius(origin, 1.0, ORIGIN_PIXEL_RADIUS);
   scene.add(origin);
   entries.push({ id: "origin", object: origin, kind: "point", material: originMat, baseOpacity: 0.5 });
 
