@@ -116,8 +116,8 @@ All mutations route through undo, so the human can revert anything you do.
 - **Offset / inset a profile:** `add_offset` (one connected chain of edges +
   signed `distance`) makes a parallel DRIVEN copy that tracks the source — e.g.
   inset a wall, or make a concentric ring (offset a circle, then extrude the
-  region between). Output edges are `derived:true` in the summary; don't
-  dimension/constrain them, edit the source instead.
+  region between). Output edges are `derived:true` in the summary; they're
+  driven (not directly editable) — to change them, edit the source.
 - **Mirror sketch geometry:** `add_sketch_mirror` (a sketch line `axisId` + the
   `sourceIds` to reflect) for symmetric profiles — draw half, mirror the rest;
   the copies track the originals. (To mirror a whole solid, use `add_mirror`.)
@@ -145,8 +145,13 @@ All mutations route through undo, so the human can revert anything you do.
   other symbols, not a reserved math name (`pi`, `sin`, …), and unique. Use
   `wallThickness` / `holeDia` / `outerR`, **not** `wall_thickness`, `r1`, or
   `hole2`; an invalid name is rejected.
-- **Constrain sketches** (horizontal/vertical/dimension) so profiles are
-  predictable; aim for fully-constrained where it matters.
+- **Predictable sketches.** You can't apply explicit constraints or dimensions
+  yet, and agent-drawn entities carry none — a sketch *is* exactly the
+  coordinates you give. So place points precisely (axis-aligned where you mean
+  it, shared coords where things should meet) and parameterize sizes with
+  **variables in feature params** (extrude distance, primitive/revolve dims),
+  not magic numbers. Explicit sketch constraints/dimensions are on the roadmap —
+  `report_issue(missing_feature)` if you're blocked without them.
 - **Exploit symmetry** and reference planes instead of repeating manual placement.
 - **Name parts and features** meaningfully (`rename`) — future steps and the human
   read those names.
@@ -161,8 +166,9 @@ You are also the project's feedback loop. When something blocks or surprises you
 **do not fake geometry or silently work around it** — call **`report_issue`**:
 
 - `kind: "missing_feature"` — the operation you need isn't expressible with the
-  available tools (e.g. linear/circular pattern, variable-radius fillet, a
-  constraint type, trim/extend, projecting model edges into a sketch). *(Revolve
+  available tools (e.g. linear/circular pattern, variable-radius fillet, an
+  explicit sketch constraint or dimension — horizontal/vertical/parallel/equal/
+  distance/… — trim/extend, projecting model edges into a sketch). *(Revolve
   — incl. symmetric + plane/face axes, 3D mirror, sweep, loft, the spline tool,
   **text** + text-extrude, **offset** and **sketch-mirror** (driven), symmetric /
   through-all / up-to-face extrude, and all `add_plane` methods — offset /

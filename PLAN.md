@@ -340,10 +340,12 @@ driving variable changes — is **met**.
   positioned imperatively each frame (no React re-render). Values accept a number
   / expression / variable; **double-click** to edit, **click + Delete** to remove.
 - **Geometric constraints** (toolbar buttons, enabled on the matching selection):
-  parallel, perpendicular, equal (length/radius, any line/circle/arc mix), tangent
+  horizontal / vertical (manual, on a single selected line — `H`/`V`), parallel,
+  perpendicular, equal (length/radius, any line/circle/arc mix), tangent
   (line/circle/arc), coincident (also point-on-line + origin-anchoring), midpoint.
   Point-on-line / midpoint are **auto-attached** when a drawn endpoint snaps onto
-  an edge or its midpoint.
+  an edge or its midpoint; H/V are also applied implicitly by the rectangle and
+  axis-aligned line drawing.
 - **Arcs and circles are solver-mapped** (centre + endpoints + radius + angles),
   so they constrain and move as real curves. A **Constraints list** (sidebar while
   sketching) shows each with a per-row ✕ delete; over-constraint shows a red ⚠
@@ -738,8 +740,17 @@ edge/plane/face axis), **extrudable text**, and the **`add_offset` /
 geometry, so generated edges are referenceable/extrudable). **Project/Convert has
 no agent op yet** — it's UI-only because its persistent-edge-name capture +
 post-rebuild reprojection loop doesn't map onto a one-shot document op; the guide
-tells the agent to reference faces/edges directly instead. **L4 (robustness: token
-auth, multi-tab, error taxonomy, list/open/new_document) is next.**
+tells the agent to reference faces/edges directly instead. **Explicit sketch
+constraints + dimensions are UI-only too** — there is no `add_constraint` /
+`add_dimension` agent op yet, so agent sketches are unconstrained exact-coordinate
+geometry and the guide steers the agent to precise coords + variable-driven
+*feature* params. **Backlog (agent constraints):** expose the geometric set the
+UI supports (horizontal/vertical/parallel/perpendicular/equal/tangent) via an
+`add_constraint` op, and — higher value for parametrics — an `add_dimension` op
+whose `value` accepts a variable/expression (distance/radius/angle). Coincident /
+point-on-line need a point-addressing scheme (entity vertex vs origin) and come
+later. **L4 (robustness: token auth, multi-tab, error taxonomy,
+list/open/new_document) is next.**
 
 **Goal.** Let a local LLM agent (Claude Desktop, Claude Code, Cursor, Cline, Zed,
 …) **drive the live Open Poly browser tab** — sketch, extrude, transform, arrange
