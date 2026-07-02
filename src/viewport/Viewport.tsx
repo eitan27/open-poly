@@ -287,6 +287,13 @@ export const SELECT_COLOR = 0xff9d3c;
 export const GHOST_COLOR = 0x4fd1ff;
 const EDGE_SEL_COLOR = new THREE.Color(SELECT_COLOR);
 const EDGE_HOV_COLOR = new THREE.Color(0x36d6c3);
+// Small persistent dots drawn at every selectable/draggable vertex of the ACTIVE
+// sketch, so the grabbable key points are discoverable. Colour matches the sketch
+// line (recoloured live with its constrained state — see applyHighlights); the
+// hover/selection marker is larger and translucent so this dot shows through it.
+const sketchDotMaterial = new THREE.PointsMaterial({
+  color: 0x4d8dff, size: 5, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.95,
+});
 // Edge/vertex picking is done entirely in SCREEN space (pixels), at every stage,
 // so it behaves identically at any zoom. The old design used a world-space ray
 // threshold (EDGE_PICK_WORLD = 1.6 mm) for edge *detection*, which had two flaws:
@@ -618,7 +625,9 @@ export function Viewport({
 
     const pointMarkers = new THREE.Points(
       new THREE.BufferGeometry(),
-      new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, vertexColors: true, depthTest: false }),
+      // Translucent so the small persistent vertex dot (sketchDotMaterial) stays
+      // visible underneath when a sketch vertex is hovered/selected.
+      new THREE.PointsMaterial({ size: 11, sizeAttenuation: false, vertexColors: true, depthTest: false, transparent: true, opacity: 0.65 }),
     );
     pointMarkers.renderOrder = 13;
     pointMarkers.visible = false;
@@ -914,6 +923,10 @@ export function Viewport({
           ((child as LineSegments2).material as LineMaterial).color.set(
             sketchBaseColor(isActive, sketchFullyConstrainedRef.current),
           );
+        } else if (child.userData.isSketchDots) {
+          // Vertex dots match the active sketch line (blue ⇄ green). Shared
+          // material, and dots only exist for the active sketch.
+          sketchDotMaterial.color.set(sketchBaseColor(true, sketchFullyConstrainedRef.current));
         } else if (child instanceof THREE.LineSegments) {
           const sid = child.userData.sketchId as string;
           const isActive = sid === activeSketchIdRef.current;
@@ -1389,6 +1402,13 @@ export function Viewport({
           ? [{ from: sketchDrag.origins[0], to: cur }]
           : sketchDrag.origins.map((o) => ({ from: o, to: [o[0] + dx, o[1] + dy] as Vec2 }));
         onSketchDragMoveRef.current(points);
+        // Keep the teal marker on the grabbed vertex as it travels (single-vertex
+        // drags snap the point to the cursor), so it moves with the line.
+        const sid = activeSketchIdRef.current;
+        if (sketchDrag.single && sid) {
+          hoverSelRef.current = { kind: "sketchPoint", sketchId: sid, point: cur };
+          applyHighlights();
+        }
         return;
       }
       // Selection (hover) is active when idle OR editing a sketch with the Select
@@ -1909,6 +1929,30 @@ export function Viewport({
         state.sketchGroup.add(fat);
       }
 
+      // Small dots at the active sketch's selectable/draggable vertices, so those
+      // key points are visible and grabbable. Rebuilt with the geometry each
+      // render, so they follow a live vertex/entity drag (App re-solves → the
+      // sketch re-renders → these move with it). Origin excluded (it has the
+      // yellow datum dot).
+      if (s.id === activeSketchId) {
+        const verts = sketchPointCandidates(s).slice(1);
+        if (verts.length > 0) {
+          const dotPos = new Float32Array(verts.length * 3);
+          verts.forEach((uv, i) => {
+            const w = uvToWorld(s.frame, uv[0], uv[1]);
+            dotPos[i * 3] = w[0]; dotPos[i * 3 + 1] = w[1]; dotPos[i * 3 + 2] = w[2];
+          });
+          const dotGeom = new THREE.BufferGeometry();
+          dotGeom.setAttribute("position", new THREE.BufferAttribute(dotPos, 3));
+          sketchDotMaterial.color.set(sketchBaseColor(true, sketchFullyConstrainedRef.current));
+          const dots = new THREE.Points(dotGeom, sketchDotMaterial);
+          dots.frustumCulled = false;
+          dots.renderOrder = 12; // above the fat lines, below the hover marker (13)
+          dots.userData.isSketchDots = true;
+          state.sketchGroup.add(dots);
+        }
+      }
+
       // Enclosed regions ("sketch faces"): a transparent, pickable fill that
       // only shows on hover/selection.
       for (const region of s.regions) {
@@ -2305,7 +2349,10 @@ function disposeGroup(group: THREE.Group): void {
 
 function disposeSketchGroup(group: THREE.Group): void {
   for (const child of group.children) {
-    if (
+    if (child.userData.isSketchDots) {
+      // Dispose only the per-render geometry; the dot material is shared.
+      (child as THREE.Points).geometry.dispose();
+    } else if (
       child instanceof THREE.LineSegments ||
       child.userData.isSketchDisplay ||
       (child instanceof THREE.Mesh && child.userData.isRegion)
