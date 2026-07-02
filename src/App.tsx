@@ -1995,6 +1995,10 @@ export default function App() {
         // pick (keeping the dialog); a second Esc then closes the dialog.
         else if (revolveDialog && picking) { setPicking(false); setPickPurpose("sketch"); }
         else if (revolveDialog) closeRevolveDialog();
+        // Mirror dialog: like Revolve, Esc first cancels an in-progress face
+        // pick (keeping the dialog), then a second Esc closes the dialog.
+        else if (mirrorDialog && pickingMirrorFace) setPickingMirrorFace(false);
+        else if (mirrorDialog) closeMirror();
         else if (transformEditId) cancelTransform();
         else if (picking) setPicking(false);
         // Esc finishes an in-progress draft: the spline commits its accumulated
@@ -2185,6 +2189,8 @@ export default function App() {
     extrudeDialog,
     revolveInputs,
     revolveDialog,
+    mirrorDialog,
+    pickingMirrorFace,
     sweepInputs,
     loftInputs,
     dressUpTarget,
