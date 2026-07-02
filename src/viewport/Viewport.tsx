@@ -1324,7 +1324,12 @@ export function Viewport({
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
-      raycaster.params.Line = { threshold: EDGE_PICK_WORLD };
+      // Screen-space line threshold (world units for PICK_DETECT_PX pixels at the
+      // orbit-target depth) — the old world-space EDGE_PICK_WORLD was removed when
+      // picking moved to screen space.
+      const dragDepth = camera.position.distanceTo(controls.target);
+      const dragWorldPerPx = (2 * dragDepth * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / rect.height;
+      raycaster.params.Line = { threshold: dragWorldPerPx * PICK_DETECT_PX };
 
       // 2. An entity body → translate all of its points.
       const seg = sketchGroup.children.find(
@@ -2172,6 +2177,7 @@ function entityDragPoints(e: SketchEntity): Vec2[] {
     case "arc": return [e.c];
     case "spline": return e.points;
     case "point": return [e.p];
+    case "text": return [e.p];
   }
 }
 

@@ -44,6 +44,13 @@ type Prim = Record<string, unknown> & { id: string; type: string };
 export async function solveSketch(
   entities: SketchEntity[],
   constraints: SketchConstraint[],
+  opts: {
+    /** Points (uv) to pin at their given position for this solve — used by
+     *  dragging to lock the grabbed vertex to the cursor so free neighbours
+     *  follow it, instead of the solver correcting the grabbed point back along a
+     *  constrained axis. Matched by rounded-coordinate key like every point. */
+    lockedPoints?: Vec2[];
+  } = {},
 ): Promise<SolveResult> {
   const wrapper = await getWrapper();
   wrapper.clear_data();
@@ -77,6 +84,8 @@ export async function solveSketch(
   // drawn *from* the origin and then lengthened drifts — the solver grows it
   // symmetrically so it passes *through* the origin instead of staying anchored.
   const ORIGIN_KEY = key([0, 0]);
+  // Grabbed points (drag): pinned at their current position so neighbours follow.
+  const lockedKeys = new Set((opts.lockedPoints ?? []).map(key));
   // Resolve a PointRef to live coordinates: the origin is the sketch origin
   // (0,0); otherwise the named vertex of the referenced entity.
   const refCoord = (ref: PointRef): Vec2 | null => {
@@ -99,7 +108,7 @@ export async function solveSketch(
       id = `pt${pc++}`;
       pointIdByKey.set(k, id);
       keyToCoord.set(k, p);
-      prims.push({ id, type: "point", x: p[0], y: p[1], fixed: k === ORIGIN_KEY });
+      prims.push({ id, type: "point", x: p[0], y: p[1], fixed: k === ORIGIN_KEY || lockedKeys.has(k) });
     }
     return id;
   };

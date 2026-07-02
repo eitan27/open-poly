@@ -297,6 +297,7 @@ function moveSketchPoints(
       case "arc": return { ...e, c: mv(e.c) };
       case "spline": return { ...e, points: e.points.map(mv) };
       case "point": return { ...e, p: mv(e.p) };
+      case "text": return { ...e, p: mv(e.p) };
     }
   });
 }
@@ -2756,12 +2757,28 @@ export default function App() {
         dragPendingRef.current = null;
         const base = dragBaseRef.current;
         if (!base) break;
-        let res: Awaited<ReturnType<typeof solveSketch>>;
+        const moved = moveSketchPoints(base.entities, points);
+        // Pin the grabbed point(s) at the cursor so free neighbours follow them,
+        // instead of the solver correcting the grabbed point back along a
+        // constrained axis (which made e.g. a vertical line's free end only drag
+        // vertically). If pinning over-constrains — a genuinely constrained vertex
+        // dragged off its locus, which planegcs may reject by THROWING or by
+        // flagging a conflict — fall back to an unpinned solve so the point still
+        // slides as far as the constraints allow (never worse than no pin).
+        const solveDrag = async (pin: boolean) =>
+          solveSketch(moved, base.constraints, pin ? { lockedPoints: points.map((p) => p.to) } : {});
+        let res: Awaited<ReturnType<typeof solveSketch>> | null = null;
         try {
-          res = await solveSketch(moveSketchPoints(base.entities, points), base.constraints);
-        } catch (err) {
-          console.error("drag solve failed:", err);
-          continue;
+          res = await solveDrag(true);
+          if (res.hasConflicts) res = null; // pinning was infeasible → fall back
+        } catch { /* pinning threw → fall back */ }
+        if (!res) {
+          try {
+            res = await solveDrag(false);
+          } catch (err) {
+            console.error("drag solve failed:", err);
+            continue;
+          }
         }
         // Coalesce every frame of one drag into a single undo step (the key is
         // unique per drag, so separate drags stay separate undo steps).
