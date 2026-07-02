@@ -246,10 +246,21 @@ rough relative sizing, not calendar promises.
 > **variable-name validation** + **dimension var-name autocomplete**, a **dashed
 > construction-line highlight** (`Q` syncs the toolbar toggle), and two fixes
 > (length-dimension side-flicker on symmetric sketches; loops that close at the
-> origin now enclose). Separately, **drag-to-move unconstrained sketch geometry**
-> + a **blue (under-constrained) → green (fully constrained) line styling** are
-> **in progress** on `claude/sketch-unconstrained-dragging` — **not yet merged**
-> (kinks to work out).
+> origin now enclose).
+>
+> **Drag-to-move unconstrained sketch geometry — ✅ SHIPPED to `main`
+> (2026-07-02; branch `claude/sketch-unconstrained-dragging` merged + deleted).**
+> With the Select tool you can drag a vertex, an entity body, or an enclosed
+> region across the plane; each frame re-solves from a pre-drag snapshot so
+> constraints stay satisfied while free DOF follow the cursor (one undo step per
+> drag). The grabbed vertex is **pinned to the cursor** for the solve (via
+> `solveSketch`'s new `lockedPoints`) so free neighbours follow it — fixing the
+> reported axis-lock where e.g. a vertical line's free end could only drag
+> vertically; pinning falls back to an unpinned solve if it over-constrains.
+> **Grabbable vertices now show small dots** (line-coloured, blue↔green with the
+> constrained state) and the hover/selection marker is translucent so the dot
+> shows through and tracks a live drag. Line styling is a **blue
+> (under-constrained) → green (fully constrained)** shift.
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
