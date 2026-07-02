@@ -3699,11 +3699,15 @@ export default function App() {
               {SKETCH_LAYOUT.map((slot) => {
                 if (slot.kind === "tool") {
                   const t = sketchToolMeta(slot.tool);
+                  // Offset needs a selected chain of edges — grey it out when
+                  // nothing is selected.
+                  const disabled = slot.tool === "offset" && selectedSketchEntities.length === 0;
                   return (
                     <button
                       key={t.tool}
                       className={sketchTool === t.tool ? "active" : ""}
                       title={t.title}
+                      disabled={disabled}
                       onClick={() => setSketchTool(t.tool)}
                     >
                       {t.label}{kbd(t.sc)}
@@ -4601,40 +4605,47 @@ export default function App() {
       )}
       {mirrorDialog && (
         <DraggableDialog
-          className="extrude-dialog mirror-dialog"
+          className="extrude-dialog"
           style={{ left: "50%", top: 70 }}
           baseTransform="translateX(-50%)"
         >
           <div className="ed-title" data-drag-handle>Mirror across plane</div>
-          <select
-            value={mirrorDialog.plane}
-            onChange={(e) => {
-              const plane = e.target.value;
-              setMirrorDialog((d) => (d ? { ...d, plane } : d));
-              setPickingMirrorFace(plane === "face" && !mirrorDialog.faceRef);
-            }}
-          >
-            {mirrorPlaneOptions.map((o) => (
-              <option key={o.key} value={o.key}>{o.label}</option>
-            ))}
-          </select>
-          {mirrorDialog.plane === "face" && (
-            <button
-              className={"ed-pick-btn" + (pickingMirrorFace ? " active" : "")}
-              onClick={() => setPickingMirrorFace((v) => !v)}
+          <label className="ed-field">
+            <span>Plane</span>
+            <select
+              value={mirrorDialog.plane}
+              onChange={(e) => {
+                const plane = e.target.value;
+                setMirrorDialog((d) => (d ? { ...d, plane } : d));
+                setPickingMirrorFace(plane === "face" && !mirrorDialog.faceRef);
+              }}
             >
-              {pickingMirrorFace
-                ? "Click a planar face…"
-                : mirrorDialog.faceRef
-                  ? `Face on ${doc.features.find((f) => f.id === mirrorDialog.faceRef!.featureId)?.name ?? "body"}`
-                  : "Select a face"}
-            </button>
+              {mirrorPlaneOptions.map((o) => (
+                <option key={o.key} value={o.key}>{o.label}</option>
+              ))}
+            </select>
+          </label>
+          {mirrorDialog.plane === "face" && (
+            <label className="ed-field">
+              <span>Face</span>
+              <button
+                type="button"
+                className={"ed-pick-btn" + (pickingMirrorFace ? " active" : "")}
+                onClick={() => setPickingMirrorFace((v) => !v)}
+              >
+                {pickingMirrorFace
+                  ? "Click a planar face…"
+                  : mirrorDialog.faceRef
+                    ? `On ${doc.features.find((f) => f.id === mirrorDialog.faceRef!.featureId)?.name ?? "body"}`
+                    : "Select a face"}
+              </button>
+            </label>
           )}
-          <div className="mirror-actions">
-            <button onClick={createMirror} disabled={mirrorDialog.plane === "face" && !mirrorDialog.faceRef}>
+          <div className="ed-actions">
+            <button className="ed-primary" onClick={createMirror} disabled={mirrorDialog.plane === "face" && !mirrorDialog.faceRef}>
               Create
             </button>
-            <button className="ghost" onClick={closeMirror}>Cancel</button>
+            <button onClick={closeMirror}>Cancel</button>
           </div>
         </DraggableDialog>
       )}

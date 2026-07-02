@@ -825,6 +825,10 @@ export function Viewport({
           const g = eg?.find((x) => x.entityId === s.entityId);
           if (child && g) pushRange(child.geometry, g.start, g.count, c, !!g.construction);
         } else if (s.kind === "feature" && isSketchId(s.id)) {
+          // While a sketch is being edited it's the selected feature (so the
+          // params panel shows), but don't paint all its entities as selected —
+          // inside the sketch, individual entity selection is what matters.
+          if (s.id === activeSketchIdRef.current) return;
           const child = sketchChild(s.id);
           const eg = child?.geometry.userData.entityGroups as { start: number; count: number; entityId: string; construction?: boolean }[] | undefined;
           if (child && eg) {
