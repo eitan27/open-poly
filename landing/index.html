@@ -82,6 +82,9 @@
         justify-content: space-between;
       }
       .nav__brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
         font-size: 17px;
         font-weight: 600;
         letter-spacing: -0.01em;
@@ -89,6 +92,11 @@
       }
       .nav__brand:hover {
         text-decoration: none;
+      }
+      .nav__logo {
+        display: block;
+        width: 26px;
+        height: 26px;
       }
       .nav__links {
         display: flex;
@@ -270,7 +278,10 @@
   <body>
     <nav class="nav">
       <div class="nav__inner">
-        <a class="nav__brand" href="#">Open Poly</a>
+        <a class="nav__brand" href="#">
+          <img class="nav__logo" src="logo.svg" alt="" width="26" height="26" />
+          <span>Open Poly</span>
+        </a>
         <div class="nav__links">
           <a href="#features">Features</a>
           <a href="https://github.com/eitan27/open-poly">GitHub</a>
