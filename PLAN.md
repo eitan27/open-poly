@@ -645,6 +645,17 @@ this — datum / reference-plane sketches stay anchored to their datum.
   that turns "one autosaved sketchpad" into a real multi-file workspace.
 - Measurement tools, section view, appearance, keyboard shortcuts.
 - Performance: incremental regen (only re-run dirty features), tessellation LOD.
+- **CI — ✅ DONE.** `.github/workflows/ci.yml` runs `npm run typecheck` (`tsc -b`,
+  the real gate — the root tsconfig has `files:[]` so a bare `tsc --noEmit` is a
+  no-op) + `npm test` on every push to `main` and PR.
+- **Landing page + GitHub Pages deploy — auto-deploy DISABLED (TODO: re-enable).**
+  The hero renders + `logo.svg` live in `landing/`, and
+  `.github/workflows/pages.yml` can publish them — but this repo is **private on
+  the Free plan**, where GitHub Pages can't publish, so every run failed red. The
+  workflow's `push` trigger is **commented out** (`workflow_dispatch` kept for
+  manual runs). **TODO:** re-enable by uncommenting the `push` trigger once the
+  repo is **public** OR on a **paid plan** (Pro/Team/Enterprise), then set
+  Settings → Pages → Build and deployment → Source → "GitHub Actions".
 
 > First deliverable ("v0.1, genuinely usable") — **✅ reached.** Phases 0–4 plus
 > Boolean: sketch a constrained profile, extrude/cut it, chamfer/fillet an edge,
