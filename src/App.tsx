@@ -1110,6 +1110,12 @@ export default function App() {
         if (docs.length > 0) {
           docIdRef.current = docs[0].id;
           const migrated = migrateDocument(docs[0].doc);
+          // Paint the last-saved meshes immediately so a heavy document shows its
+          // geometry at once — the regen `resetDoc` kicks off (which rebuilds
+          // every feature through OCCT and can take many seconds) then swaps in
+          // fresh meshes when it settles. Without this the viewport stays blank
+          // until that full rebuild finishes.
+          if (docs[0].meshes?.length) setRawMeshes(docs[0].meshes);
           resetDoc(migrated);
           // Default the Variables section open/collapsed by the restored count.
           setVariablesOpen(migrated.variables.length < VARS_OPEN_THRESHOLD);
@@ -1126,15 +1132,19 @@ export default function App() {
   }, [resetDoc]);
 
   // Autosave the working document to IndexedDB (debounced) after each change.
+  // Meshes ride along so the next load can paint instantly (see the restore
+  // effect); `rawMeshes` is a dependency so a completed regen re-saves the fresh
+  // geometry — a doc-only edit persists with the meshes that are current when the
+  // debounce fires (regen typically settles first, so they match the doc).
   useEffect(() => {
     if (!persistLoaded) return;
     const t = setTimeout(() => {
-      saveDoc({ id: docIdRef.current!, name: "Untitled", doc, updatedAt: Date.now() }).catch((err) =>
+      saveDoc({ id: docIdRef.current!, name: "Untitled", doc, updatedAt: Date.now(), meshes: rawMeshes }).catch((err) =>
         console.warn("autosave failed:", err),
       );
     }, 600);
     return () => clearTimeout(t);
-  }, [doc, persistLoaded]);
+  }, [doc, rawMeshes, persistLoaded]);
 
   // Close the "New Body" dropdown when clicking anywhere outside it.
   useEffect(() => {

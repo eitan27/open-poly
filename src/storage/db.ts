@@ -3,6 +3,7 @@
 // clone). One object store keyed by document id; the app autosaves the working
 // document and restores it on load. (Multi-document UI can build on this.)
 import type { Document } from "../document/types";
+import type { ShapeMeshPayload } from "../kernel/types";
 
 const DB_NAME = "open-poly";
 const DB_VERSION = 1;
@@ -14,6 +15,14 @@ export interface StoredDoc {
   name: string;
   doc: Document;
   updatedAt: number;
+  /** Last-regenerated body meshes (plain JSON-serializable arrays). Saved so the
+   *  viewport can paint the model INSTANTLY on load while the kernel re-runs the
+   *  (expensive) full regen in the background — without them a heavy document
+   *  shows a blank viewport until every feature rebuilds through OCCT. Purely a
+   *  render-time cache: the parametric `doc` remains the source of truth, and the
+   *  meshes are replaced the moment regen settles. Optional (older records and
+   *  documents that never regenerated have none). */
+  meshes?: { id: string; mesh: ShapeMeshPayload }[];
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
