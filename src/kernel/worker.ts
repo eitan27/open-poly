@@ -860,24 +860,32 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): Nam
   const ops = operandIds.map((id) => requireBody(bodies, id));
   if (ops.length < 2) throw new Error("A boolean needs at least two operands.");
   let acc: NamedShape = { shape: ops[0].shape, names: ops[0].names };
-  let accVol = measureVolume(acc.shape);
+  // Volume integration (BRepGProp) is expensive on complex solids; a UNION's
+  // validity uses countSolids, not volume, so compute volumes lazily and only
+  // for subtract/intersect. `accVol` tracks the running result's volume there.
+  let accVol = op === "union" ? 0 : measureVolume(acc.shape);
   let accIsIntermediate = false;
   for (let i = 1; i < ops.length; i++) {
-    const toolVol = measureVolume(ops[i].shape);
     const next = booleanNamed(BOOL_OCC[op], acc, ops[i]);
-    const nextVol = measureVolume(next.shape);
-    const eps = VOLUME_EPS_REL * Math.max(accVol, toolVol, 1);
     // A union is valid when it actually joins the bodies into fewer solids —
     // true for overlapping AND merely-touching (shared-face) bodies, which have
     // no shared volume and so can't be told apart from disjoint by volume alone.
     // Subtract/intersect still go by volume (nothing removed / no common volume).
-    const bad =
-      op === "union"
-        ? countSolids(next.shape) >= countSolids(acc.shape) + countSolids(ops[i].shape) &&
-          "Solids don't touch — union needs bodies that overlap or share a face."
-        : op === "subtract"
+    let bad: string | false;
+    if (op === "union") {
+      bad =
+        countSolids(next.shape) >= countSolids(acc.shape) + countSolids(ops[i].shape) &&
+        "Solids don't touch — union needs bodies that overlap or share a face.";
+    } else {
+      const toolVol = measureVolume(ops[i].shape);
+      const nextVol = measureVolume(next.shape);
+      const eps = VOLUME_EPS_REL * Math.max(accVol, toolVol, 1);
+      bad =
+        op === "subtract"
           ? nextVol >= accVol - eps && "Solids don't overlap — nothing to subtract."
           : nextVol <= eps && "Solids don't overlap — no common volume.";
+      accVol = nextVol;
+    }
     if (bad) {
       next.shape.delete();
       if (accIsIntermediate) acc.shape.delete();
@@ -885,7 +893,6 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): Nam
     }
     if (accIsIntermediate) acc.shape.delete();
     acc = next;
-    accVol = nextVol;
     accIsIntermediate = true;
   }
   return acc;
@@ -905,6 +912,12 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): Nam
 // are disposed (bounded memory; nothing lingers for deleted/edited features).
 const builderCache = new Map<string, NamedShape>();
 const meshCache = new Map<string, { faces: MeshedFaces; edges: MeshedEdges }>();
+
+// --- Regen profiling (dev): per-feature build ms + per-body mesh ms, logged
+// once per regen. `hit` = the pure-builder canonical was already cached. Set
+// REGEN_PROFILE=false to silence. ---
+const REGEN_PROFILE = true;
+type FeatureTiming = { id: string; type: string; ms: number; hit: boolean };
 
 /** cyrb53 — a fast, well-distributed 53-bit string hash. Used to keep content
  *  keys short and bounded (combining keys down a long feature chain would grow
@@ -963,13 +976,17 @@ function buildCached(key: string, used: Set<string>, build: () => NamedShape): N
 function buildBodies(
   features: ResolvedFeature[],
   used: Set<string> = new Set(),
-): { bodies: Body[]; failures: RegenFeatureResult[] } {
+): { bodies: Body[]; failures: RegenFeatureResult[]; timings: FeatureTiming[] } {
   const bodies: Body[] = [];
   const failures: RegenFeatureResult[] = [];
+  const timings: FeatureTiming[] = [];
   // Current content key of the body under a given id (read before mutations).
   const keyOf = (id: string): string => bodies.find((b) => b.id === id)?.key ?? id;
 
   for (const feature of features) {
+    const t0 = performance.now();
+    // Cache-hit detection for the pure builders (was the canonical already built?).
+    const preHit = builderCache.has(builderKey(feature));
     try {
       if (feature.type === "primitive") {
         const key = builderKey(feature);
@@ -1107,8 +1124,13 @@ function buildBodies(
         // Combine 2+ existing bodies into one, consuming the operands and
         // keeping the result keyed by this feature's id. Names propagate through
         // the boolean history so the result's faces/edges stay referenceable.
+        // CACHED by content key: OCCT booleans on complex solids are by far the
+        // dominant regen cost (seconds each), so on unchanged operands we reuse a
+        // cheap copy instead of recomputing the fuse/cut. The operands are still
+        // built (cheaply) and consumed below; only the boolean itself is skipped.
         const operandKeys = feature.operands.map(keyOf);
-        const result = combineBodies(feature.op, feature.operands, bodies);
+        const key = contentKey(feature, operandKeys);
+        const result = buildCached(key, used, () => combineBodies(feature.op, feature.operands, bodies));
         const operandSet = new Set(feature.operands);
         const remaining: Body[] = [];
         for (const b of bodies) {
@@ -1116,7 +1138,7 @@ function buildBodies(
           else remaining.push(b);
         }
         bodies.length = 0;
-        bodies.push(...remaining, { id: feature.id, key: contentKey(feature, operandKeys), ...result });
+        bodies.push(...remaining, { id: feature.id, key, ...result });
       } else if (feature.type === "transform") {
         const target = requireBody(bodies, feature.targetId);
         const key = contentKey(feature, [target.key]);
@@ -1178,19 +1200,25 @@ function buildBodies(
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: String(err) });
     }
+    timings.push({ id: feature.id, type: feature.type, ms: performance.now() - t0, hit: preHit });
   }
-  return { bodies, failures };
+  return { bodies, failures, timings };
 }
 
 function regenerate(
   features: ResolvedFeature[],
   emit?: (result: RegenFeatureResult) => void,
 ): RegenFeatureResult[] {
+  const buildT0 = performance.now();
   const usedBuilders = new Set<string>();
-  const { bodies, failures } = buildBodies(features, usedBuilders);
+  const { bodies, failures, timings } = buildBodies(features, usedBuilders);
+  const buildMs = performance.now() - buildT0;
+  const meshTimings: { id: string; ms: number; hit: boolean }[] = [];
   const usedMeshes = new Set<string>();
   const meshes: RegenFeatureResult[] = bodies.map((b) => {
     let result: RegenFeatureResult;
+    const mt0 = performance.now();
+    const meshHit = meshCache.has(b.key);
     try {
       // Reuse a cached tessellation when this body's content is unchanged; its
       // faceGroups' build-local faceIds only need to be internally consistent
@@ -1219,6 +1247,7 @@ function regenerate(
     } finally {
       b.shape.delete();
     }
+    meshTimings.push({ id: b.id, ms: performance.now() - mt0, hit: meshHit });
     // Stream this body the instant it's ready so the main thread can paint it
     // without waiting for the rest of the fold (the final message is complete).
     emit?.(result);
@@ -1231,6 +1260,20 @@ function regenerate(
     if (!usedBuilders.has(k)) { builderCache.get(k)!.shape.delete(); builderCache.delete(k); }
   }
   for (const k of meshCache.keys()) if (!usedMeshes.has(k)) meshCache.delete(k);
+
+  if (REGEN_PROFILE) {
+    const meshMs = meshTimings.reduce((s, m) => s + m.ms, 0);
+    const short = (s: string) => s.slice(0, 8);
+    const topBuild = timings.filter((t) => t.ms >= 1).sort((a, b) => b.ms - a.ms)
+      .map((t) => `${short(t.id)}:${t.type}${t.hit ? "*" : ""}=${t.ms.toFixed(0)}`);
+    const topMesh = meshTimings.filter((m) => m.ms >= 1).sort((a, b) => b.ms - a.ms)
+      .map((m) => `${short(m.id)}${m.hit ? "*" : ""}=${m.ms.toFixed(0)}`);
+    console.log(
+      `[regen] total=${(buildMs + meshMs).toFixed(0)}ms build=${buildMs.toFixed(0)} mesh=${meshMs.toFixed(0)} ` +
+      `(bodies=${bodies.length}) | build: ${topBuild.join(" ")} | mesh: ${topMesh.join(" ")} ` +
+      `(* = cache hit)`,
+    );
+  }
 
   return [...meshes, ...failures];
 }
