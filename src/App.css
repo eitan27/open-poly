@@ -20,21 +20,23 @@
   letter-spacing: 0.02em;
 }
 
-/* Document title in the topbar — looks like a label, edits on click. The
-   button/input pair share metrics so toggling doesn't shift the layout. */
+/* Document title in the topbar — a first-class title (sized close to the
+   logo), edits on click. The button/input pair share metrics so toggling
+   doesn't shift the layout. */
 .doc-title,
 .doc-title-input {
-  font-size: 12px;
+  font-size: 15px;
+  font-weight: 600;
   font-family: inherit;
   padding: 2px 8px;
   border-radius: 6px;
   border: 1px solid transparent;
   background: none;
-  max-width: 260px;
+  max-width: 300px;
 }
 
 .doc-title {
-  color: #8a8f9c;
+  color: #e6e8ee;
   cursor: text;
   white-space: nowrap;
   overflow: hidden;
@@ -42,7 +44,6 @@
 }
 
 .doc-title:hover {
-  color: #cfd3dc;
   border-color: #2a2d35;
 }
 
@@ -51,7 +52,7 @@
   border-color: #3b4252;
   background: #1a1c22;
   outline: none;
-  width: 200px;
+  width: 220px;
 }
 
 /* Text-sized sibling of .tool-btn (which is a FIXED 28×26 icon button — text

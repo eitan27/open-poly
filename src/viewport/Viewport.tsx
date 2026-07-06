@@ -181,8 +181,13 @@ export interface ViewportApi {
   getEdgeWorldPolylineByName(featureId: string, name: string): [number, number, number][] | null;
   /** Render the current scene and return it as a PNG data URL — the agent's
    *  visual feedback (Phase 9). Finalizes any in-flight camera tween first so a
-   *  preceding setView is reflected immediately. */
-  capturePNG(): string;
+   *  preceding setView is reflected immediately. `plain` renders the capture
+   *  frame with ALL highlights suppressed (selection/hover/whole-body/boolean
+   *  operands) — for document thumbnails, where an orange selected part would
+   *  mislead — then restores them; all synchronous, so nothing flickers
+   *  on screen. Agent screenshots stay un-plain: highlighting the selection is
+   *  how `select` + `screenshot` communicate. */
+  capturePNG(opts?: { plain?: boolean }): string;
 }
 
 interface DatumEntry {
@@ -1011,7 +1016,7 @@ export function Viewport({
       getEdgeWorldPolylineByName(featureId, name) {
         return edgePolyline(featureId, (g) => g.name === name);
       },
-      capturePNG() {
+      capturePNG(opts) {
         // Snap to the end of any in-flight view tween so the requested camera is
         // captured now, not mid-animation.
         if (state.tween) {
@@ -1020,10 +1025,37 @@ export function Viewport({
           state.tween = null;
         }
         controls.update();
+        // Plain mode: blank every highlight source, re-apply materials, render
+        // the capture frame, then restore — all in this tick, so the on-screen
+        // frame the user sees next is the normal highlighted one.
+        const saved = opts?.plain
+          ? {
+              sel: selectionRef.current,
+              hover: hoverSelRef.current,
+              bodies: highlightBodyIdsRef.current,
+              bool: booleanHighlightRef.current,
+            }
+          : null;
+        if (saved) {
+          selectionRef.current = [];
+          hoverSelRef.current = null;
+          highlightBodyIdsRef.current = new Set();
+          booleanHighlightRef.current = null;
+          applyHighlights();
+        }
         // Read back in the same tick as render — the WebGL drawing buffer isn't
         // preserved across the browser's compositing step.
         renderer.render(scene, camera);
-        return renderer.domElement.toDataURL("image/png");
+        const url = renderer.domElement.toDataURL("image/png");
+        if (saved) {
+          selectionRef.current = saved.sel;
+          hoverSelRef.current = saved.hover;
+          highlightBodyIdsRef.current = saved.bodies;
+          booleanHighlightRef.current = saved.bool;
+          applyHighlights();
+          renderer.render(scene, camera);
+        }
+        return url;
       },
     };
 

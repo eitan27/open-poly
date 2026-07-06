@@ -11,7 +11,6 @@ interface Props {
   activeId: string | null;
   onClose: () => void;
   onOpen: (id: string) => Promise<void>;
-  onNew: () => Promise<void>;
   onDuplicate: (id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onRename: (id: string, name: string) => Promise<void>;
@@ -26,7 +25,6 @@ export function DocumentsDialog({
   activeId,
   onClose,
   onOpen,
-  onNew,
   onDuplicate,
   onDelete,
   onRename,
@@ -113,11 +111,13 @@ export function DocumentsDialog({
       >
         <div className="docs-header">
           <h2>Documents</h2>
-          <button className="text-btn" disabled={busy} onClick={() => void run(onNew, true)}>
-            ＋ New document
-          </button>
-          <button className="text-btn" disabled={busy} onClick={() => fileInputRef.current?.click()}>
-            Import…
+          <button
+            className="text-btn"
+            disabled={busy}
+            title="Import a document from an Open Poly .json file"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Import from JSON
           </button>
           <input
             ref={fileInputRef}
@@ -188,8 +188,13 @@ export function DocumentsDialog({
                     <button className="text-btn" disabled={busy} onClick={() => void run(() => onDuplicate(m.id), true)}>
                       Duplicate
                     </button>
-                    <button className="text-btn" disabled={busy} onClick={() => void run(() => onExport(m.id))}>
-                      Export
+                    <button
+                      className="text-btn"
+                      disabled={busy}
+                      title="Save this document as an Open Poly .json file"
+                      onClick={() => void run(() => onExport(m.id))}
+                    >
+                      Export as JSON
                     </button>
                     {confirmDelete === m.id ? (
                       <button

@@ -1263,7 +1263,9 @@ export default function App() {
    *  thumbnail would quadruple the stored bytes for no visible gain in a 56 px
    *  slot). Fire-and-forget: a failed capture just keeps the old thumb. */
   const captureThumb = useCallback((docId: string) => {
-    const dataUrl = viewApiRef.current?.capturePNG();
+    // `plain` suppresses selection/hover highlights for the capture frame — a
+    // thumbnail with an orange "selected" part would be misleading in the list.
+    const dataUrl = viewApiRef.current?.capturePNG({ plain: true });
     if (!dataUrl) return;
     const img = new Image();
     img.onload = () => {
@@ -3827,11 +3829,18 @@ export default function App() {
           />
         )}
         <button
+          className="text-btn newdoc-btn"
+          title="Create and open a new empty document"
+          onClick={() => void newDocument()}
+        >
+          ＋ New Doc
+        </button>
+        <button
           className="text-btn docs-btn"
-          title="Documents (⌘O)"
+          title="Open a document (⌘O)"
           onClick={() => setDocsDialogOpen(true)}
         >
-          ▤ Documents
+          Open…
         </button>
         {docInOtherTab && (
           <span
@@ -3871,7 +3880,6 @@ export default function App() {
           activeId={activeId}
           onClose={() => setDocsDialogOpen(false)}
           onOpen={openDocument}
-          onNew={newDocument}
           onDuplicate={duplicateDocument}
           onDelete={deleteDocument}
           onRename={renameDocument}

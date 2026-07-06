@@ -42,9 +42,8 @@ await page.locator(".doc-title-input").press("Enter");
 await apply({ op: "addPrimitive", kind: "box" });
 await waitIdle();
 
-// 1. New document via the dialog → empty, deduped name, becomes active.
-await page.locator(".docs-btn").click();
-await page.getByRole("button", { name: "＋ New document" }).click();
+// 1. New document via the topbar "＋ New Doc" button → empty, deduped name, active.
+await page.locator(".newdoc-btn").click();
 await waitIdle();
 const bName = await title();
 check("new document opened with a fresh Untitled name", /^Untitled/.test(bName), bName);
