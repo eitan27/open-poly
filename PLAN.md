@@ -571,35 +571,15 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   *release* itself instant in heavy docs, cache unchanged bodies' OCCT shapes in the
   worker (incremental regen). Bigger change; not needed for interactive dragging.
 
-### Deferred — Associative face-sketches (sketch follows its host body) ⏸️
-A sketch placed on a **body face** stores its plane as a frozen `frame` snapshot
-(`{kind:"face", featureId, frame}`), and sketches are drawn by the app *outside*
-the kernel's body-fold — so when the host body is transformed (or resized) the
-sketch stays put instead of moving with it. (Extrude-on-a-face *does* follow,
-because the worker re-finds the face by its persistent topological name each
-regen — so today the solid built from a face-sketch moves with the body but the
-sketch that defined it doesn't.) **Stopgap shipped:** an extrude now hides its
-source sketch (it stays in place), which sidesteps the visible mismatch for now.
-
-**Solution B (preferred) — make the face-sketch associative, like extrude:**
-1. Capture the face's persistent **name** when starting the sketch (the pick
-   currently records only point + normal).
-2. Have the worker report the **current frame** of that named face each regen.
-3. App renders sketches / anchors extrudes from that live frame, not the snapshot.
-
-Take the in-plane axes from the planar face's own coordinate system (OCCT
-`gp_Pln`/`Ax3`) so the frame transports rigidly under translation **and** rotation
-(and stays sane under resize); re-deriving from the normal alone would make a
-sketch spin oddly when the body rotates. Only the `kind:"face"` plane ref needs
-this — datum / reference-plane sketches stay anchored to their datum.
-
-**Open questions to settle first:**
-- How far should "follow" go — rigid transforms only, or full associativity incl.
-  the host body being **resized**? (B gives the latter ~for free.)
-- **Reference planes placed on a face** store the same face snapshot → same bug.
-  Fix in the same pass?
-- Rotation fidelity: do we need correct rotation-following (needs the face's
-  natural axes), or is translation the 99% case for v1?
+### Dropped — Associative face-sketches (sketch follows its host body) ✂️
+A sketch placed on a **body face** stores its plane as a frozen `frame` snapshot,
+so it stays put when the host body later changes. Formerly a deferred backlog
+item ("Solution B": live face frames via persistent names, like extrude-on-face
+already does). **Dropped 2026-07-06 after testing against Onshape:** Onshape
+doesn't move the sketch either, so the frozen snapshot is at parity, not a gap.
+The shipped stopgap (an extrude hides its source sketch) already covers the
+visual mismatch. If this ever comes back, the old plan lives in git history
+(this section, pre-2026-07-06).
 
 ### Phase 6 — Sweep + Loft + Revolve — ✅ DONE
 - **Sweep — ✅ DONE.** A `SweepFeature` sweeps a **sketch region** along a **path
