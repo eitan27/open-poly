@@ -1377,8 +1377,11 @@ export default function App() {
   );
 
   const renameDocument = useCallback(async (id: string, name: string) => {
-    await renameDoc(id, name);
+    // State first: for the active doc this alone persists (docName is an
+    // autosave dependency), even if the record hasn't been written yet —
+    // renameDoc is then a no-op-if-absent stores update.
     if (id === docIdRef.current) setDocName(name);
+    await renameDoc(id, name);
   }, []);
 
   /** Save a document as `.openpoly.json` (envelope + parametric doc; cached
@@ -1682,9 +1685,28 @@ export default function App() {
   // Agent command layer (Phase 9): exposes window.__openpoly for console testing
   // and runs the WebSocket bridge to the local MCP hub. `agentStatus` drives the
   // "Agent connected" badge.
+  // Multi-document API for the agent (Phase 8.7 M4). A ref refreshed each
+  // render, so the stable AgentContext always calls the latest switch-flow
+  // closures (openDocument etc. close over doc/docName/rawMeshes).
+  const agentDocApiRef = useRef({
+    info: () => ({ id: docIdRef.current!, name: docName }),
+    open: openDocument,
+    create: newDocument,
+    duplicate: duplicateDocument,
+    rename: renameDocument,
+  });
+  agentDocApiRef.current = {
+    info: () => ({ id: docIdRef.current!, name: docName }),
+    open: openDocument,
+    create: newDocument,
+    duplicate: duplicateDocument,
+    rename: renameDocument,
+  };
+
   const { status: agentStatus } = useAgentBridge({
     doc, setDoc, selection, setSelection,
     meshesRef: agentMeshesRef, errorsRef: agentErrorsRef, waitForRegen, viewApiRef,
+    docApiRef: agentDocApiRef,
   });
 
   // Exit isolate if the isolated body disappears (deleted / consumed / regen).

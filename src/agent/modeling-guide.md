@@ -66,8 +66,25 @@ quoted in the warning).
   `copy`), `boolean`, `dress_up` (chamfer/fillet), `set_param`, `set_appearance`,
   `rename`, `delete`, `select`, `import_step`.
 - **Feedback:** `report_issue` — see below.
+- **Documents (the workspace):** `list_documents` (all stored docs, active one
+  flagged), `open_document`, `new_document`, `rename_document`,
+  `duplicate_document` (opens the copy — a safe sandbox before risky edits).
+  There is deliberately no delete — ask the human.
 
 All mutations route through undo, so the human can revert anything you do.
+
+## Documents
+
+The workspace holds several documents; you act on the ACTIVE one. Rules:
+
+- `get_scene_summary` includes `documentId`/`documentName` — **read it before
+  assuming context**, especially at session start ("continue the bracket" =
+  `list_documents` → match by name → `open_document` → `get_scene_summary`).
+- Switching documents resets undo history and rebuilds geometry; don't switch
+  in the middle of a multi-step recipe.
+- `new_document` starts empty (the previous document autosaves); pass `name`
+  so the human can find it later.
+- Never guess ids — they come from `list_documents`.
 
 ## Recipes
 

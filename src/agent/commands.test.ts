@@ -10,6 +10,18 @@ import type { Selection } from "../viewport/Viewport";
 // needed. `waitForRegen` stands in for the worker by returning the pure
 // document-resolution errors (expressions / references) — the same surface the
 // real kernel would also report, minus actual geometry build failures.
+
+/** Workspace stub for tests that don't exercise multi-document ops. */
+function stubDocuments(): AgentContext["documents"] {
+  return {
+    info: () => ({ id: "test-doc", name: "Test" }),
+    open: async () => {},
+    create: async () => {},
+    duplicate: async () => {},
+    rename: async () => {},
+  };
+}
+
 function makeCtx(initial: Document = createDocument()) {
   let doc = initial;
   let selection: Selection[] = [];
@@ -22,6 +34,7 @@ function makeCtx(initial: Document = createDocument()) {
     getErrors: () => resolveDocument(doc).errors,
     waitForRegen: async () => ({ errors: resolveDocument(doc).errors }),
     getViewport: () => null,
+    documents: stubDocuments(),
   };
   return { ctx, doc: () => doc };
 }
@@ -188,6 +201,7 @@ describe("applyOperation — construction, extent, revolve, mirror", () => {
       getErrors: () => resolveDocument(d).errors,
       waitForRegen: async () => ({ errors: resolveDocument(d).errors }),
       getViewport: () => null,
+      documents: stubDocuments(),
     };
     const sk = await apply(ctx, { op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "rect", center: [0, 0], w: 10, h: 10 }] });
     const ex = await apply(ctx, {
@@ -510,6 +524,7 @@ describe("applyOperation — dressUp edge fingerprints", () => {
       getErrors: () => resolveDocument(d).errors,
       waitForRegen: async () => ({ errors: resolveDocument(d).errors }),
       getViewport: () => null,
+      documents: stubDocuments(),
     };
 
     const r = await apply(ctx, {
@@ -537,6 +552,7 @@ describe("applyOperation — regen warnings surface in the result", () => {
       getErrors: () => resolveDocument(d).errors,
       waitForRegen: async () => ({ errors: resolveDocument(d).errors, warnings: pendingWarnings }),
       getViewport: () => null,
+      documents: stubDocuments(),
     };
     const clean = await apply(ctx, { op: "addPrimitive", kind: "box" });
     expect(clean.ok).toBe(true);
@@ -546,5 +562,82 @@ describe("applyOperation — regen warnings surface in the result", () => {
     const warned = await apply(ctx, { op: "setParam", featureId: clean.createdId!, name: "width", value: "20" });
     expect(warned.ok).toBe(true);
     expect(warned.warnings).toEqual(pendingWarnings);
+  });
+});
+
+describe("applyOperation — multi-document ops", () => {
+  // A ctx whose workspace stub RECORDS calls and simulates one stored doc
+  // ("existing") via a mocked listMeta — but listMeta comes from ../storage/db,
+  // so simulate through fake-indexeddb instead: seed the real (fake) DB.
+  async function seedDb(ids: string[]) {
+    const { IDBFactory } = await import("fake-indexeddb");
+    globalThis.indexedDB = new IDBFactory();
+    const { __resetDBForTests, putDoc } = await import("../storage/db");
+    __resetDBForTests();
+    for (const id of ids) {
+      await putDoc({ id, name: `Doc ${id}`, doc: createDocument(), updatedAt: 1, createdAt: 1 });
+    }
+  }
+
+  function recordingCtx(activeId: string) {
+    const calls: string[] = [];
+    const { ctx } = makeCtx();
+    ctx.documents = {
+      info: () => ({ id: activeId, name: `Doc ${activeId}` }),
+      open: async (id) => void calls.push(`open:${id}`),
+      create: async () => {
+        calls.push("create");
+        activeId = "fresh";
+      },
+      duplicate: async (id) => {
+        calls.push(`duplicate:${id}`);
+        activeId = "copy";
+      },
+      rename: async (id, name) => void calls.push(`rename:${id}:${name}`),
+    };
+    return { ctx, calls };
+  }
+
+  it("openDocument switches via the workspace API and settles regen", async () => {
+    await seedDb(["a", "b"]);
+    const { ctx, calls } = recordingCtx("a");
+    const r = await apply(ctx, { op: "openDocument", id: "b" });
+    expect(r).toMatchObject({ ok: true, createdId: "b" });
+    expect(calls).toEqual(["open:b"]);
+  });
+
+  it("openDocument of the active doc is a no-op; unknown id errors", async () => {
+    await seedDb(["a"]);
+    const { ctx, calls } = recordingCtx("a");
+    expect(await apply(ctx, { op: "openDocument", id: "a" })).toMatchObject({ ok: true });
+    expect(calls).toEqual([]);
+    const missing = await apply(ctx, { op: "openDocument", id: "ghost" });
+    expect(missing).toMatchObject({ ok: false, errorKind: "not_found" });
+  });
+
+  it("newDocument creates, then renames when a name is given", async () => {
+    await seedDb([]);
+    const { ctx, calls } = recordingCtx("a");
+    const r = await apply(ctx, { op: "newDocument", name: "Bracket" });
+    expect(r).toMatchObject({ ok: true, createdId: "fresh" });
+    expect(calls).toEqual(["create", "rename:fresh:Bracket"]);
+  });
+
+  it("duplicateDocument defaults to the active doc and reports the copy", async () => {
+    await seedDb(["a"]);
+    const { ctx, calls } = recordingCtx("a");
+    const r = await apply(ctx, { op: "duplicateDocument" });
+    expect(r).toMatchObject({ ok: true, createdId: "copy" });
+    expect(calls).toEqual(["duplicate:a"]);
+  });
+
+  it("listDocuments flags the active document", async () => {
+    await seedDb(["a", "b"]);
+    const { ctx } = recordingCtx("b");
+    const { listDocuments } = await import("./commands");
+    const docs = await listDocuments(ctx);
+    expect(docs).toHaveLength(2);
+    expect(docs.find((d) => d.id === "b")?.active).toBe(true);
+    expect(docs.find((d) => d.id === "a")?.active).toBe(false);
   });
 });

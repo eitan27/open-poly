@@ -11,6 +11,7 @@ import {
   getDocument,
   getSceneSummary,
   getSelection,
+  listDocuments,
   screenshot,
   type AgentContext,
   type AgentMesh,
@@ -21,6 +22,7 @@ import {
   readQuerySchema,
   OPERATION_NAMES,
   READ_NAMES,
+  type DocumentListing,
   type Operation,
   type OpResult,
   type ReadQuery,
@@ -44,6 +46,9 @@ interface BridgeDeps {
   /** Resolves after the next kernel regen settles. */
   waitForRegen: () => Promise<RegenSettle>;
   viewApiRef: RefObject<ViewportApi | null>;
+  /** Multi-document workspace API (Phase 8.7 M4). App refreshes the ref each
+   *  render so the getters/actions always see the latest switch-flow closures. */
+  docApiRef: RefObject<AgentContext["documents"]>;
 }
 
 /** The dev-console handle. `apply` validates the op with the shared zod schema
@@ -51,7 +56,8 @@ interface BridgeDeps {
  *  `read` runs a typed read query. */
 export interface OpenPolyApi {
   apply(op: Operation): Promise<OpResult>;
-  read(query: ReadQuery): Document | SceneSummary | Selection[] | string | null;
+  /** `documents` resolves async (IndexedDB); the rest return synchronously. */
+  read(query: ReadQuery): Document | SceneSummary | Selection[] | string | null | Promise<DocumentListing[]>;
   document(): Document;
   summary(): SceneSummary;
   selection(): Selection[];
@@ -105,8 +111,17 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
       getErrors: () => errorsRef.current,
       waitForRegen: () => waitForRegenRef.current(),
       getViewport: () => viewApiRef.current,
+      // Delegate through the ref so the ctx stays stable while App's switch
+      // flow callbacks (which close over doc/docName/rawMeshes) are refreshed.
+      documents: {
+        info: () => deps.docApiRef.current.info(),
+        open: (id) => deps.docApiRef.current.open(id),
+        create: () => deps.docApiRef.current.create(),
+        duplicate: (id) => deps.docApiRef.current.duplicate(id),
+        rename: (id, name) => deps.docApiRef.current.rename(id, name),
+      },
     }),
-    [meshesRef, errorsRef, viewApiRef],
+    [meshesRef, errorsRef, viewApiRef, deps.docApiRef],
   );
 
   // Apply/read handlers shared by the WS bridge and the dev console. Validate
@@ -125,6 +140,8 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
           return getSceneSummary(ctx);
         case "selection":
           return getSelection(ctx);
+        case "documents":
+          return listDocuments(ctx); // async — the bridge awaits handler results
         case "screenshot":
           return screenshot(ctx, q.view ? { view: q.view } : undefined);
       }

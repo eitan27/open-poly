@@ -46,11 +46,13 @@ import {
   type SketchPlaneRef,
 } from "../document/planes";
 import type { Document, EdgeRef, ExtrudeProfile, Feature, PrimitiveFeature, RevolveAxis, Variable } from "../document/types";
+import { listMeta } from "../storage/db";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 import type { Selection, ViewName } from "../viewport/Viewport";
 import {
   expandEntities,
   type Operation,
+  type DocumentListing,
   type OpResult,
   type PlaneRefSpec,
   type ProfileSpec,
@@ -99,6 +101,19 @@ export interface AgentContext {
     setView(name: ViewName): void;
     capturePNG(): string | null;
   } | null;
+  /** Multi-document workspace (Phase 8.7 M4). All mutations run through the
+   *  App's switch flow (flush → load → adopt) — NEVER a raw setDoc — so
+   *  autosave/undo/meshes stay consistent across the boundary. */
+  documents: {
+    /** Active document identity (id + display name). */
+    info(): { id: string; name: string };
+    open(id: string): Promise<void>;
+    /** Create + open an empty document (name auto-deduped "Untitled N"). */
+    create(): Promise<void>;
+    /** Duplicate `id` and open the copy. */
+    duplicate(id: string): Promise<void>;
+    rename(id: string, name: string): Promise<void>;
+  };
 }
 
 class OpError extends Error {
@@ -508,6 +523,55 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         createdId = r.id;
         break;
       }
+      // --- Multi-document ops: these switch/mutate the WORKSPACE, not `doc`,
+      // so they bypass the shared setDoc tail and settle their own regen.
+      case "openDocument": {
+        if (op.id === ctx.documents.info().id) return { ok: true, createdId: op.id };
+        if (!(await listMeta()).some((m) => m.id === op.id)) {
+          throw new OpError("not_found", `No document "${op.id}" — get ids from list_documents.`);
+        }
+        await ctx.documents.open(op.id);
+        const { errors, warnings } = await ctx.waitForRegen();
+        return {
+          ok: true,
+          createdId: op.id,
+          featureErrors: Object.keys(errors).length ? errors : undefined,
+          warnings: warnings && Object.keys(warnings).length ? warnings : undefined,
+        };
+      }
+      case "newDocument": {
+        await ctx.documents.create();
+        const id = ctx.documents.info().id;
+        if (op.name) await ctx.documents.rename(id, op.name);
+        await ctx.waitForRegen(); // empty doc — settles immediately
+        return { ok: true, createdId: id };
+      }
+      case "renameDocument": {
+        const id = op.id ?? ctx.documents.info().id;
+        // The ACTIVE doc is exempt from the existence check: a brand-new doc
+        // may not have autosaved yet (600 ms debounce), and its rename lands
+        // through the app state either way.
+        if (id !== ctx.documents.info().id && !(await listMeta()).some((m) => m.id === id)) {
+          throw new OpError("not_found", `No document "${id}".`);
+        }
+        await ctx.documents.rename(id, op.name);
+        return { ok: true, createdId: id };
+      }
+      case "duplicateDocument": {
+        const id = op.id ?? ctx.documents.info().id;
+        // Active doc exempt (see renameDocument) — App flushes it before copying.
+        if (id !== ctx.documents.info().id && !(await listMeta()).some((m) => m.id === id)) {
+          throw new OpError("not_found", `No document "${id}".`);
+        }
+        await ctx.documents.duplicate(id);
+        const { errors, warnings } = await ctx.waitForRegen();
+        return {
+          ok: true,
+          createdId: ctx.documents.info().id, // the copy is now active
+          featureErrors: Object.keys(errors).length ? errors : undefined,
+          warnings: warnings && Object.keys(warnings).length ? warnings : undefined,
+        };
+      }
     }
 
     ctx.setDoc(next);
@@ -603,7 +667,10 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
     value: resolved.scope[v.name],
   }));
 
+  const docInfo = ctx.documents.info();
   return {
+    documentId: docInfo.id,
+    documentName: docInfo.name,
     bodies,
     sketches,
     planes,
@@ -613,6 +680,21 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
     selection: ctx.getSelection(),
     errors,
   };
+}
+
+/** All stored documents' metadata (most-recently-edited first), with the
+ *  active one flagged — the agent's entry point for "continue yesterday's X". */
+export async function listDocuments(ctx: AgentContext): Promise<DocumentListing[]> {
+  const activeId = ctx.documents.info().id;
+  const metas = await listMeta();
+  return metas.map((m) => ({
+    id: m.id,
+    name: m.name,
+    updatedAt: m.updatedAt,
+    featureCount: m.featureCount,
+    partCount: m.partCount,
+    active: m.id === activeId,
+  }));
 }
 
 /** Capture the viewport as a PNG data URL, optionally snapping to a view first.

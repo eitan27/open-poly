@@ -277,6 +277,15 @@ export const operationSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("setRollback"), index: z.number().int().min(0) }),
   z.object({ op: z.literal("select"), refs: z.array(selectionSchema) }),
   z.object({ op: z.literal("importStep"), source: z.string(), name: z.string().optional() }),
+  // --- Multi-document ops (Phase 8.7 M4). These act on the WORKSPACE, not the
+  // model: opening/creating/duplicating switches the working document (undo
+  // history resets — a document boundary). Ids come from list_documents.
+  z.object({ op: z.literal("openDocument"), id: z.string() }),
+  z.object({ op: z.literal("newDocument"), name: z.string().optional() }),
+  /** id defaults to the active document. Rename is not an undoable model edit. */
+  z.object({ op: z.literal("renameDocument"), id: z.string().optional(), name: z.string().min(1) }),
+  /** id defaults to the active document; the copy opens as the working doc. */
+  z.object({ op: z.literal("duplicateDocument"), id: z.string().optional() }),
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -290,6 +299,8 @@ export const readQuerySchema = z.discriminatedUnion("read", [
   z.object({ read: z.literal("document") }),
   z.object({ read: z.literal("sceneSummary") }),
   z.object({ read: z.literal("selection") }),
+  /** All stored documents (metadata only), most-recently-edited first. */
+  z.object({ read: z.literal("documents") }),
   z.object({
     read: z.literal("screenshot"),
     /** Snap the camera to a standard view before capturing. */
@@ -322,9 +333,23 @@ export interface OpResult {
   warnings?: Record<string, string>;
 }
 
+/** One stored document, as returned by the `documents` read. */
+export interface DocumentListing {
+  id: string;
+  name: string;
+  updatedAt: number;
+  featureCount: number;
+  partCount: number;
+  /** True for the document currently open in the tab. */
+  active: boolean;
+}
+
 /** Compact, LLM-first digest of the scene — the agent's primary planning input
  *  (see commands.ts#getSceneSummary). */
 export interface SceneSummary {
+  /** WHICH document this summary describes — check before assuming context. */
+  documentId: string;
+  documentName: string;
   bodies: {
     id: string;
     name: string;

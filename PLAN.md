@@ -845,9 +845,22 @@ docs in different tabs works naturally and becomes the recommended pattern.
    round-trip/rejections, dedupeName, setThumb) + `verify-multidoc-m3.mjs`
    (12 headless checks: thumb in meta + rendered, envelope shape/filename,
    import opens deduped fresh-id copy, corrupt file errors readably).
-4. **M4 — Agent tools.** The five ops + MCP tools + summary fields + guide
-   section; extend `scripts/mcp-e2e.mjs` with a list → new → build → switch →
-   read round-trip.
+4. **M4 — Agent tools. ✅ DONE (2026-07-06).** Ops `openDocument` /
+   `newDocument {name?}` / `renameDocument` / `duplicateDocument` (each
+   settles its own regen and bypasses the setDoc tail; active doc exempt from
+   the existence check — it may predate its first autosave) + the `documents`
+   read (`list_documents`, active flagged). `AgentContext.documents` delegates
+   through App's `agentDocApiRef` so every switch runs the real flush→adopt
+   flow. `SceneSummary` gains `documentId`/`documentName`; MCP tool
+   descriptions + a "Documents" section in the modeling guide (no delete —
+   ask the human). 5 vitest (recording-stub ops + listDocuments) +
+   `verify-multidoc-m4.mjs` (11 headless checks: identity in summary, list,
+   new/open/duplicate/rename round-trip, active-no-op, not_found) +
+   `mcp-e2e.mjs` green (32 tools).
+
+> **Phase 8.7 complete (M1–M4, 2026-07-06).** The workspace is genuinely
+> multi-document for both the human (dialog, title, thumbnails, .json files)
+> and the agent (list/open/new/rename/duplicate + document identity in reads).
 
 ### Phase 8.5 — UI/UX backlog (next polish pass) — IN PROGRESS (6/8 done)
 

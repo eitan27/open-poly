@@ -44,6 +44,10 @@ const OP_DESCRIPTIONS: Record<string, string> = {
   setRollback: "Move the timeline rollback bar to an index (features at/after it are not regenerated).",
   select: "Set the viewport selection (so a screenshot highlights what you mean).",
   importStep: "Import a body from STEP file text.",
+  openDocument: "Switch the working document to `id` (from list_documents). Resolves after its geometry regenerates; undo history resets. Check get_scene_summary's documentId/documentName before assuming which file you're in.",
+  newDocument: "Create and open a NEW empty document (optionally named). The previous document is autosaved.",
+  renameDocument: "Rename a document (id defaults to the active one). Display-name only — not an undoable model edit.",
+  duplicateDocument: "Duplicate a document (id defaults to the active one) and open the copy — a safe sandbox before risky edits.",
 };
 
 const READ_TOOLS: Record<string, { tool: string; description: string }> = {
@@ -51,6 +55,7 @@ const READ_TOOLS: Record<string, { tool: string; description: string }> = {
   sceneSummary: { tool: "get_scene_summary", description: "Compact, LLM-first digest: bodies (named faces/edges, bbox), sketches (entities by id+type, regions), planes, variables, rollback, selection. Your primary planning input — read it to get the entity id for a revolve axis, region ids, and face/edge names." },
   selection: { tool: "get_selection", description: "Return the current viewport selection." },
   screenshot: { tool: "screenshot", description: "Render the viewport and return a PNG image (optionally snap to a standard view first). Use it to verify what you built." },
+  documents: { tool: "list_documents", description: "All stored documents (id, name, edited time, feature/part counts), most-recently-edited first, with the ACTIVE one flagged. Entry point for \"continue the X document\" — find it here, then open_document." },
 };
 
 const camelToSnake = (s: string) => s.replace(/[A-Z]/g, (m) => "_" + m.toLowerCase());
