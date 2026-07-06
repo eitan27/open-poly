@@ -785,31 +785,56 @@ docs in different tabs works naturally and becomes the recommended pattern.
   `{documentId, documentName}` so the agent always knows WHICH file it's
   shaping ("continue yesterday's bracket" = `list_documents` → match by name →
   `open_document` → `get_scene_summary`).
-- **AgentContext** grows `getActiveDocMeta()` + `switchDocument(id)` wired in
-  `useAgentBridge`/`App` (the switch must go through the App's flow, not a raw
-  `setDoc`, so history/meshes/waiters reset correctly).
-- **Bridge `hello`** capabilities blob adds the active doc id/name, so the MCP
-  server can log which doc a session drove.
+- **AgentContext** grows a `documents: {info, open, create, duplicate, rename}`
+  API (delegated through App's `agentDocApiRef`, refreshed each render, so it
+  always calls the live switch-flow closures — not the planned
+  `getActiveDocMeta()`/`switchDocument()` names, but the same guarantee: every
+  agent switch runs the real flush→adopt flow, never a raw `setDoc`). ✅ DONE.
+- **Bridge `hello`** capabilities blob does NOT yet add the active doc id/name
+  — still open, see "Remaining open items" above.
 - **Guardrails:** `openDocument` while a regen is in flight waits for it
   (regen start-seq already serializes waiters); ops that arrive DURING a switch
   queue behind it (the serial request pipeline in `bridgeClient` already
   guarantees ordering). Modeling-guide gets a "Documents" section: read
   `documentId` before assuming, don't switch mid-recipe, never delete.
 
-#### Edge cases & open questions
+#### Edge cases — resolved
 
-- **Undo across switches:** cleared (document boundary). In-session per-doc
-  history retention (a `Map<docId, HistoryState>`) is a cheap follow-up if
-  switching feels lossy — decide after using it.
-- **Per-doc view state** (camera, datum visibility, timeline height): nice to
-  restore on open; needs a `getCamera()` addition to `ViewportApi`. Punt to a
-  fast-follow — stored on `StoredDoc.view` when it comes.
-- **Corrupt record on open:** catch, offer "Export raw JSON" + "Delete" instead
-  of a white screen; never auto-delete.
-- **`docIdRef` seeding order:** autosave currently guards on `persistLoaded`;
-  the switch flow must set `docIdRef` BEFORE `resetDoc` so the first autosave
-  after a switch can't write doc B's content under doc A's id (the classic
-  clobber bug — write a regression test for exactly this).
+- **`docIdRef` seeding order** — ✅ `adoptRecord` sets `docIdRef` BEFORE
+  `resetDoc`; the clobber scenario has a standing regression check in
+  `verify-multidoc-m2.mjs`.
+- **Undo across switches** — ✅ cleared by design (document boundary); this was
+  the spec'd v1 behavior, not a gap.
+
+#### Remaining open items (not yet built)
+
+- **Corrupt/missing record on open is silent.** `openDocument`/boot-restore
+  `await loadDoc(id)` and just no-op `adoptRecord` when it returns falsy — no
+  error banner, no "Export raw JSON" recovery offered (the spec called for
+  one). Today: a corrupt record means clicking **Open** does nothing
+  (dialog stays put, no explanation) rather than a white screen, which is
+  better than the failure mode we were guarding against but still not the
+  designed recovery UX.
+- **No UI for a failed autosave/flush.** `putDoc`/`flushSave` failures only
+  `console.warn`; the status chip reflects kernel regen state, not save
+  health. Spec called for "a persistent banner if the LAST save failed" —
+  not built. Low-frequency (IndexedDB failures are rare — private mode, quota)
+  but silent data loss is a bad failure mode if it happens.
+- **Per-doc view state** (camera, datum visibility, timeline height) is not
+  restored on switch — every open lands at the default view. Needs a
+  `getCamera()`/`setCamera()` addition to `ViewportApi` and a `StoredDoc.view`
+  field. Fast-follow, not started.
+- **Bridge `hello` doesn't carry the active doc id/name** — the MCP hub can't
+  log which document a session is driving without an explicit
+  `list_documents`/`get_scene_summary` read first. Low priority: the summary
+  already exposes `documentId`/`documentName`, so nothing is actually blocked,
+  it's just not proactively advertised at connect time.
+- **Kernel builder/mesh caches evict on doc switch** (documented+accepted in
+  Performance above, repeated here so it isn't lost track of): switching
+  A→B→A re-solves A's sweeps/lofts/booleans from scratch on the way back
+  (the saved-mesh instant-paint hides the *visual* gap, not the recompute
+  cost). Follow-up: per-doc used-sets or a "used in the last K regens" sweep
+  policy instead of "used this run."
 
 #### Delivery steps
 
@@ -824,14 +849,18 @@ docs in different tabs works naturally and becomes the recommended pattern.
    switch flow it guards.)*
 2. **M2 — Documents dialog. ✅ DONE (2026-07-06).** `DocumentsDialog` (modal on
    `.modal-overlay`, lists from `meta` only; inline rename, two-step delete,
-   duplicate-opens-copy, ＋New with deduped `nextUntitled`; Esc/overlay-click
-   closes), topbar **▤ Documents** button + **⌘O**, the switch flow in App
-   (`flushSave` → `loadDoc` → `adoptRecord`: docIdRef set BEFORE `resetDoc` —
-   the clobber guard), delete-active falls back to next-recent-else-seed,
-   BroadcastChannel `openpoly-docs` open/present/leave handshake → amber
-   "Also open in another tab" badge. New `.text-btn` CSS class (auto-width
-   sibling of the fixed 28×26 icon `.tool-btn`). 4 vitest (`docNames.test.ts`)
-   + `scripts/verify-multidoc-m2.mjs` (13 headless checks: isolation, flush
+   duplicate-opens-copy; Esc/overlay-click closes), topbar split into
+   **"＋ New"** (creates + opens directly) and **"Open…"** (opens the dialog;
+   the dialog's own header ＋New button was removed as redundant — UX pass,
+   2026-07-06); the switch flow in App (`flushSave` → `loadDoc` →
+   `adoptRecord`: docIdRef set BEFORE `resetDoc` — the clobber guard),
+   delete-active falls back to next-recent-else-seed, BroadcastChannel
+   `openpoly-docs` open/present/leave handshake → amber "Also open in another
+   tab" badge. New `.text-btn` CSS class (auto-width sibling of the fixed
+   28×26 icon `.tool-btn`). *(The planned ⌘O shortcut was tried and removed —
+   browsers reserve Cmd/Ctrl+O for their own Open-File dialog, so it never
+   fired; no shortcut for now.)* 4 vitest (`docNames.test.ts`) +
+   `scripts/verify-multidoc-m2.mjs` (13 headless checks: isolation, flush
    inside the debounce window, duplicate, delete-active fallback, two-tab
    warn + clear).
 3. **M3 — Thumbnails + `.json` import/export. ✅ DONE (2026-07-06).**
