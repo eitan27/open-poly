@@ -18,6 +18,8 @@ import type {
   BooleanOp,
   ExportFormat,
   ExtrudeExtent,
+  MeshedEdges,
+  MeshedFaces,
   RegenFeatureResult,
   ResolvedFeature,
   ResolvedFrame,
@@ -69,7 +71,11 @@ const MESH_OPTS = { tolerance: 0.05, angularTolerance: 30 };
 // All geometry is authored directly in millimetres (no unit conversion) since
 // that is OpenCascade's default working unit; STEP export declares "mm".
 type NamedShape = { shape: Shape3D; names: Map<number, string> };
-type Body = NamedShape & { id: string };
+// `key` is a content hash of everything that produced this body (its feature's
+// resolved params + the keys of the bodies it consumed). Two regens yield the
+// same key for a body iff its geometry is identical — so it drives the mesh
+// cache (skip re-tessellating unchanged bodies).
+type Body = NamedShape & { id: string; key: string };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Topo = any; // a raw OCCT TopoDS_Shape (opencascade.js binding)
@@ -885,22 +891,92 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): Nam
   return acc;
 }
 
+// --- Incremental regen caches (persist across regenerate calls) ---
+// The worker is long-lived, so we keep two caches keyed by content hashes:
+//  • builderCache — the canonical OCCT shape of each PURE builder (sweep/loft/
+//    revolve/primitive/import; they read only their own resolved params, never
+//    other bodies). Rebuilding these (solving a pipe-shell, lofting sections) is
+//    the dominant cost; on a cache hit we hand the fold a cheap BRepBuilderAPI_
+//    Copy instead of re-solving. The canonical is cache-owned and NEVER given to
+//    the fold, so the fold's existing consume/delete logic can't corrupt it.
+//  • meshCache — the tessellation of each surviving body, keyed by its content
+//    key, so an unchanged body isn't re-meshed.
+// Both are swept after each regenerate: entries whose key wasn't used this run
+// are disposed (bounded memory; nothing lingers for deleted/edited features).
+const builderCache = new Map<string, NamedShape>();
+const meshCache = new Map<string, { faces: MeshedFaces; edges: MeshedEdges }>();
+
+/** cyrb53 — a fast, well-distributed 53-bit string hash. Used to keep content
+ *  keys short and bounded (combining keys down a long feature chain would grow
+ *  without a hash). Collisions are astronomically unlikely at our scale. */
+function hashKey(str: string): string {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+/** A pure builder's content key: just its resolved feature (no body inputs). */
+const builderKey = (feature: ResolvedFeature) => hashKey(JSON.stringify(feature));
+/** A derived body's content key: its feature plus the keys of the bodies it read. */
+const contentKey = (feature: ResolvedFeature, inputKeys: string[]) =>
+  hashKey(JSON.stringify(feature) + "|" + inputKeys.join("|"));
+
+/** Duplicate a named shape (geometry + topology) without re-solving it, by
+ *  applying an IDENTITY rigid transform with copy=true — the single OCCT build
+ *  doesn't bind BRepBuilderAPI_Copy, but an identity Transform copies all the
+ *  same (and re-keys the name map through its history, exactly like applyTrsf).
+ *  Cheap relative to rebuilding a swept/lofted body from scratch. */
+function copyNamed(src: NamedShape): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const trsf = new oc.gp_Trsf_1(); // identity
+  const res = applyTrsf(src, trsf);
+  trsf.delete();
+  return res;
+}
+
+/** Build a pure builder's shape, reusing the cached canonical when its inputs
+ *  are unchanged. Always returns a fresh COPY for the fold to own/consume; the
+ *  canonical stays in the cache. `used` collects hit keys for post-run eviction. */
+function buildCached(key: string, used: Set<string>, build: () => NamedShape): NamedShape {
+  used.add(key);
+  let entry = builderCache.get(key);
+  if (!entry) {
+    entry = build();
+    builderCache.set(key, entry);
+  }
+  return copyNamed(entry);
+}
+
 // The running-result model: replay features in order, folding each over a
 // running set of bodies. A sketch/face profile becomes a solid; mode "new" adds
 // it as its own body, while "add"/"remove" fuse/cut it into target bodies in
 // place (preserving their ids). A body's id is the feature that produced (or
 // last started) it. Callers either tessellate the survivors (regenerate) or
 // export one (exportBody); both must delete the body shapes when done.
-function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: RegenFeatureResult[] } {
+function buildBodies(
+  features: ResolvedFeature[],
+  used: Set<string> = new Set(),
+): { bodies: Body[]; failures: RegenFeatureResult[] } {
   const bodies: Body[] = [];
   const failures: RegenFeatureResult[] = [];
+  // Current content key of the body under a given id (read before mutations).
+  const keyOf = (id: string): string => bodies.find((b) => b.id === id)?.key ?? id;
 
   for (const feature of features) {
     try {
       if (feature.type === "primitive") {
-        bodies.push({ id: feature.id, ...buildPrimitive(feature) });
+        const key = builderKey(feature);
+        bodies.push({ id: feature.id, key, ...buildCached(key, used, () => buildPrimitive(feature)) });
       } else if (feature.type === "import") {
-        bodies.push({ id: feature.id, ...importStepNamed(feature.source, feature.id) });
+        const key = builderKey(feature);
+        bodies.push({ id: feature.id, key, ...buildCached(key, used, () => importStepNamed(feature.source, feature.id)) });
       } else if (feature.type === "extrude") {
         const { profile, flip, distance, extent, mode } = feature;
         // A "remove" cuts *into* the body, so its natural direction is opposite
@@ -972,21 +1048,30 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
           : compoundOf(glyphSolids);
         if (built === null) throw new Error("extrude: profile produced no geometry");
 
+        // Content key of the swept tool: the feature plus the keys of any bodies
+        // it read (a body-face profile / up-to-face target). Result keys fold in
+        // the affected target's key so a cut/fuse re-meshes only when it changed.
+        const toolInputKeys: string[] = [];
+        if (profile.kind === "bodyFace") toolInputKeys.push(keyOf(profile.sourceId));
+        if (extent === "upToFace" && feature.upTo) toolInputKeys.push(keyOf(feature.upTo.sourceId));
+        const toolKey = contentKey(feature, toolInputKeys);
+
         if (feature.previewTool) {
           // Live-preview ghost: emit just the swept tool (the changing portion),
           // built with the real direction (dirFlip) and extent, leaving every
           // existing body untouched so they keep their own colour.
-          bodies.push({ id: feature.id, ...built });
+          bodies.push({ id: feature.id, key: toolKey, ...built });
         } else if (mode === "new") {
-          bodies.push({ id: feature.id, ...built });
+          bodies.push({ id: feature.id, key: toolKey, ...built });
         } else {
           if (targets.length === 0) {
             // Nothing to combine with: add becomes a new body, remove is a no-op.
-            if (mode === "add") bodies.push({ id: feature.id, ...built });
+            if (mode === "add") bodies.push({ id: feature.id, key: toolKey, ...built });
             else built.shape.delete();
           } else if (mode === "add") {
             // Fuse the tool into the targets, preserving the first target's id
             // (and propagating names through the boolean history).
+            const targetKeys = targets.map((t) => t.key);
             let acc: NamedShape = built;
             for (const t of targets) {
               const next = booleanNamed("fuse", t, acc);
@@ -997,7 +1082,7 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
             const keepId = targets[0].id;
             const remaining = bodies.filter((b) => !targets.includes(b));
             bodies.length = 0;
-            bodies.push(...remaining, { id: keepId, ...acc });
+            bodies.push(...remaining, { id: keepId, key: contentKey(feature, [toolKey, ...targetKeys]), ...acc });
           } else {
             // remove: cut the tool from each target in place, preserving ids.
             for (const t of targets) {
@@ -1005,6 +1090,7 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
               t.shape.delete();
               t.shape = next.shape;
               t.names = next.names;
+              t.key = contentKey(feature, [toolKey, t.key]);
             }
             built.shape.delete();
           }
@@ -1016,10 +1102,12 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
         target.shape.delete();
         target.shape = res.shape;
         target.names = res.names;
+        target.key = contentKey(feature, [target.key]);
       } else if (feature.type === "boolean") {
         // Combine 2+ existing bodies into one, consuming the operands and
         // keeping the result keyed by this feature's id. Names propagate through
         // the boolean history so the result's faces/edges stay referenceable.
+        const operandKeys = feature.operands.map(keyOf);
         const result = combineBodies(feature.op, feature.operands, bodies);
         const operandSet = new Set(feature.operands);
         const remaining: Body[] = [];
@@ -1028,29 +1116,32 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
           else remaining.push(b);
         }
         bodies.length = 0;
-        bodies.push(...remaining, { id: feature.id, ...result });
+        bodies.push(...remaining, { id: feature.id, key: contentKey(feature, operandKeys), ...result });
       } else if (feature.type === "transform") {
         const target = requireBody(bodies, feature.targetId);
+        const key = contentKey(feature, [target.key]);
         const res = transformNamed(target, feature);
         if (feature.copy) {
           // Keep the original; add the transformed copy as a NEW body keyed by
           // this feature (transformNamed builds a fresh shape, never consuming
           // the target).
-          bodies.push({ id: feature.id, ...res });
+          bodies.push({ id: feature.id, key, ...res });
         } else {
           // Move the target in place, keeping its id and names.
           target.shape.delete();
           target.shape = res.shape;
           target.names = res.names;
+          target.key = key;
         }
       } else if (feature.type === "mirror") {
         // Reflect the target across the plane; keep the original, add the
         // mirrored body as a NEW body keyed by this feature.
         const src = requireBody(bodies, feature.targetId);
         const res = mirrorNamed(src, feature.origin, feature.normal, feature.id);
-        bodies.push({ id: feature.id, ...res });
+        bodies.push({ id: feature.id, key: contentKey(feature, [src.key]), ...res });
       } else if (feature.type === "revolve") {
         if (feature.profile.kind !== "sketchRegion") throw new Error("revolve: profile must be a sketch region");
+        const revProfile = feature.profile; // narrowed; used inside the build closure
         // A body-face axis is resolved here (needs the built body + profile frame);
         // sketch-line/plane axes arrive pre-baked as axisOrigin/axisDir.
         let axisOrigin = feature.axisOrigin;
@@ -1062,22 +1153,27 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
           axisDir = line.dir;
         }
         if (!axisOrigin || !axisDir) throw new Error("revolve: missing axis");
-        const built = revolveSketchRegion(
-          feature.profile,
-          axisOrigin,
-          axisDir,
-          (feature.angle * Math.PI) / 180,
-          feature.symmetric,
-          feature.id,
+        const ao = axisOrigin, ad = axisDir;
+        // A body-face axis makes the result depend on that body's geometry, so
+        // fold its key in; a baked line axis is fully captured by the feature.
+        const key = feature.axisFace
+          ? contentKey(feature, [keyOf(feature.axisFace.sourceId)])
+          : builderKey(feature);
+        const built = buildCached(key, used, () =>
+          revolveSketchRegion(revProfile, ao, ad, (feature.angle * Math.PI) / 180, feature.symmetric, feature.id),
         );
-        bodies.push({ id: feature.id, ...built });
+        bodies.push({ id: feature.id, key, ...built });
       } else if (feature.type === "sweep") {
         if (feature.profile.kind !== "sketchRegion") throw new Error("sweep: profile must be a sketch region");
-        bodies.push({ id: feature.id, ...sweepBody(feature.profile, feature.path, feature.id) });
+        const swProfile = feature.profile; // narrowed; used inside the build closure
+        const path = feature.path;
+        const key = builderKey(feature);
+        bodies.push({ id: feature.id, key, ...buildCached(key, used, () => sweepBody(swProfile, path, feature.id)) });
       } else if (feature.type === "loft") {
         const regions = feature.profiles.filter((p) => p.kind === "sketchRegion");
         if (regions.length < 2) throw new Error("loft: needs at least 2 sketch-region sections");
-        bodies.push({ id: feature.id, ...loftBody(regions as Extract<ResolvedProfile, { kind: "sketchRegion" }>[], feature.id) });
+        const key = builderKey(feature);
+        bodies.push({ id: feature.id, key, ...buildCached(key, used, () => loftBody(regions as Extract<ResolvedProfile, { kind: "sketchRegion" }>[], feature.id)) });
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: String(err) });
@@ -1087,27 +1183,46 @@ function buildBodies(features: ResolvedFeature[]): { bodies: Body[]; failures: R
 }
 
 function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
-  const { bodies, failures } = buildBodies(features);
+  const usedBuilders = new Set<string>();
+  const { bodies, failures } = buildBodies(features, usedBuilders);
+  const usedMeshes = new Set<string>();
   const meshes: RegenFeatureResult[] = bodies.map((b) => {
     try {
-      const faces = b.shape.mesh(MESH_OPTS);
-      const edges = b.shape.meshEdges(MESH_OPTS);
-      // Attach each face's / edge's persistent name (matched by build-local hash)
-      // so the app carries stable references across rebuilds.
-      if (faces.faceGroups) {
-        faces.faceGroups = faces.faceGroups.map((g) => ({ ...g, name: b.names.get(g.faceId) }));
+      // Reuse a cached tessellation when this body's content is unchanged; its
+      // faceGroups' build-local faceIds only need to be internally consistent
+      // with the mesh being rendered (picking resolves to persistent names), so
+      // the cached mesh stays valid even though the rebuilt body has fresh hashes.
+      usedMeshes.add(b.key);
+      let cached = meshCache.get(b.key);
+      if (!cached) {
+        const faces = b.shape.mesh(MESH_OPTS);
+        const edges = b.shape.meshEdges(MESH_OPTS);
+        // Attach each face's / edge's persistent name (matched by build-local hash)
+        // so the app carries stable references across rebuilds.
+        if (faces.faceGroups) {
+          faces.faceGroups = faces.faceGroups.map((g) => ({ ...g, name: b.names.get(g.faceId) }));
+        }
+        if (edges.edgeGroups) {
+          const edgeNames = edgeNamesFrom(b.shape, b.names);
+          edges.edgeGroups = edges.edgeGroups.map((g) => ({ ...g, name: edgeNames.get(g.edgeId) }));
+        }
+        cached = { faces, edges };
+        meshCache.set(b.key, cached);
       }
-      if (edges.edgeGroups) {
-        const edgeNames = edgeNamesFrom(b.shape, b.names);
-        edges.edgeGroups = edges.edgeGroups.map((g) => ({ ...g, name: edgeNames.get(g.edgeId) }));
-      }
-      return { id: b.id, ok: true, mesh: { name: b.id, faces, edges } };
+      return { id: b.id, ok: true, mesh: { name: b.id, faces: cached.faces, edges: cached.edges } };
     } catch (err) {
       return { id: b.id, ok: false, error: String(err) };
     } finally {
       b.shape.delete();
     }
   });
+
+  // Sweep both caches: drop entries not touched this run (edited/removed
+  // features) so memory stays bounded and stale geometry never lingers.
+  for (const k of builderCache.keys()) {
+    if (!usedBuilders.has(k)) { builderCache.get(k)!.shape.delete(); builderCache.delete(k); }
+  }
+  for (const k of meshCache.keys()) if (!usedMeshes.has(k)) meshCache.delete(k);
 
   return [...meshes, ...failures];
 }
