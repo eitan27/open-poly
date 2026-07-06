@@ -125,7 +125,13 @@ export type ExportFormat = "step" | "stl";
 
 /** The contract implemented by the worker-backed client. Grows per phase. */
 export interface Kernel {
-  regenerate(features: ResolvedFeature[]): Promise<RegenFeatureResult[]>;
+  /** Replay the feature list and tessellate the surviving bodies. `onProgress`,
+   *  if given, fires once per body as it's meshed (for progressive painting);
+   *  the resolved array is still the complete, authoritative result. */
+  regenerate(
+    features: ResolvedFeature[],
+    onProgress?: (result: RegenFeatureResult) => void,
+  ): Promise<RegenFeatureResult[]>;
   /** Replays the feature list and exports the result body with `bodyId`.
    *  Geometry is authored in millimetres throughout, so STEP declares "mm". */
   exportBody(features: ResolvedFeature[], bodyId: string, format: ExportFormat): Promise<Blob>;

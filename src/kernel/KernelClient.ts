@@ -9,6 +9,7 @@ type Pending =
       op: "regenerate";
       resolve: (value: RegenFeatureResult[]) => void;
       reject: (reason: Error) => void;
+      onProgress?: (result: RegenFeatureResult) => void;
     }
   | { op: "export"; resolve: (value: Blob) => void; reject: (reason: Error) => void };
 
@@ -25,6 +26,12 @@ export class KernelClient implements Kernel {
       const res = event.data;
       const p = this.pending.get(res.id);
       if (!p) return;
+      // Progressive body results arrive before the final message — forward them
+      // and keep the request pending (don't resolve or delete it yet).
+      if (res.ok && res.op === "regenerate-progress") {
+        if (p.op === "regenerate") p.onProgress?.(res.result);
+        return;
+      }
       this.pending.delete(res.id);
       if (!res.ok) {
         p.reject(new Error(res.error));
@@ -46,11 +53,14 @@ export class KernelClient implements Kernel {
     this.pending.clear();
   }
 
-  regenerate(features: ResolvedFeature[]): Promise<RegenFeatureResult[]> {
+  regenerate(
+    features: ResolvedFeature[],
+    onProgress?: (result: RegenFeatureResult) => void,
+  ): Promise<RegenFeatureResult[]> {
     const id = this.nextId++;
     const req: KernelRequest = { id, op: "regenerate", features };
     return new Promise<RegenFeatureResult[]>((resolve, reject) => {
-      this.pending.set(id, { op: "regenerate", resolve, reject });
+      this.pending.set(id, { op: "regenerate", resolve, reject, onProgress });
       this.worker.postMessage(req);
     });
   }

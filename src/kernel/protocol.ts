@@ -7,5 +7,10 @@ export type KernelRequest =
 
 export type KernelResponse =
   | { id: number; ok: true; op: "regenerate"; results: RegenFeatureResult[] }
+  // Streamed ahead of the final "regenerate": one body's result the moment it's
+  // meshed, so the viewport can paint the model progressively instead of waiting
+  // for the whole fold. The final "regenerate" message is still authoritative
+  // (it also removes bodies that no longer exist).
+  | { id: number; ok: true; op: "regenerate-progress"; result: RegenFeatureResult }
   | { id: number; ok: true; op: "export"; blob: Blob }
   | { id: number; ok: false; error: string };

@@ -1182,11 +1182,15 @@ function buildBodies(
   return { bodies, failures };
 }
 
-function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
+function regenerate(
+  features: ResolvedFeature[],
+  emit?: (result: RegenFeatureResult) => void,
+): RegenFeatureResult[] {
   const usedBuilders = new Set<string>();
   const { bodies, failures } = buildBodies(features, usedBuilders);
   const usedMeshes = new Set<string>();
   const meshes: RegenFeatureResult[] = bodies.map((b) => {
+    let result: RegenFeatureResult;
     try {
       // Reuse a cached tessellation when this body's content is unchanged; its
       // faceGroups' build-local faceIds only need to be internally consistent
@@ -1209,12 +1213,16 @@ function regenerate(features: ResolvedFeature[]): RegenFeatureResult[] {
         cached = { faces, edges };
         meshCache.set(b.key, cached);
       }
-      return { id: b.id, ok: true, mesh: { name: b.id, faces: cached.faces, edges: cached.edges } };
+      result = { id: b.id, ok: true, mesh: { name: b.id, faces: cached.faces, edges: cached.edges } };
     } catch (err) {
-      return { id: b.id, ok: false, error: String(err) };
+      result = { id: b.id, ok: false, error: String(err) };
     } finally {
       b.shape.delete();
     }
+    // Stream this body the instant it's ready so the main thread can paint it
+    // without waiting for the rest of the fold (the final message is complete).
+    emit?.(result);
+    return result;
   });
 
   // Sweep both caches: drop entries not touched this run (edited/removed
@@ -1261,7 +1269,14 @@ ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
     let res: KernelResponse;
     switch (req.op) {
       case "regenerate":
-        res = { id: req.id, ok: true, op: "regenerate", results: regenerate(req.features) };
+        res = {
+          id: req.id,
+          ok: true,
+          op: "regenerate",
+          results: regenerate(req.features, (result) =>
+            ctx.postMessage({ id: req.id, ok: true, op: "regenerate-progress", result }),
+          ),
+        };
         break;
       case "export":
         res = { id: req.id, ok: true, op: "export", blob: exportBody(req.features, req.bodyId, req.format) };

@@ -1042,6 +1042,11 @@ export default function App() {
   // live on the feature and are overlaid in `meshes` below so tweaking them
   // doesn't require re-running the (expensive) kernel regen.
   const [rawMeshes, setRawMeshes] = useState<{ id: string; mesh: FeatureMesh["mesh"] }[]>([]);
+  // Bumped once per regen when the FINAL (complete) result lands — not on the
+  // progressive per-body updates. Effects that must see the whole rebuilt scene
+  // (the associative Project reproject) key off this instead of `rawMeshes`, so
+  // they don't fire against a half-streamed model.
+  const [regenSettledSeq, setRegenSettledSeq] = useState(0);
   // When set, only this body is rendered (isolate); others are hidden until exit.
   const [isolatedBodyId, setIsolatedBodyId] = useState<string | null>(null);
   // Which geometry kinds clicking can pick (selection filters).
@@ -1199,7 +1204,20 @@ export default function App() {
       let settle: RegenSettle = { errors: { ...resolved.errors } };
 
       kernel
-        .regenerate(resolved.features)
+        .regenerate(resolved.features, (r) => {
+          // Progressive paint: fold each body into the shown set the moment it's
+          // meshed (replace by id, else append) so a heavy rebuild reveals the
+          // model piece by piece instead of all at once. The final result below
+          // is authoritative and reconciles (drops bodies that no longer exist).
+          if (cancelled || !r.ok) return;
+          setRawMeshes((prev) => {
+            const next = prev.slice();
+            const i = next.findIndex((m) => m.id === r.id);
+            if (i >= 0) next[i] = { id: r.id, mesh: r.mesh };
+            else next.push({ id: r.id, mesh: r.mesh });
+            return next;
+          });
+        })
         .then((results) => {
           if (cancelled) return;
           const nextMeshes: { id: string; mesh: FeatureMesh["mesh"] }[] = [];
@@ -1209,6 +1227,7 @@ export default function App() {
             else regenErrors[r.id] = r.error;
           }
           setRawMeshes(nextMeshes);
+          setRegenSettledSeq((s) => s + 1);
           setErrors(regenErrors);
           setFatal(null);
           // Feed the agent refs synchronously (ahead of React's commit).
@@ -1308,8 +1327,10 @@ export default function App() {
     // re-flashing the same banner on every settled rebuild).
     if (changed && dangling) flashSketchMsg("A projected edge's source is missing.");
     if (changed) setDoc({ ...cur, features });
+    // Keyed on the SETTLED regen (not progressive partials) so it reprojects
+    // against the complete rebuilt scene, never a half-streamed one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawMeshes]);
+  }, [regenSettledSeq]);
 
   // Overlay each body's current color/opacity from the document onto its
   // cached geometry — so changing appearance is instant, not a regen round-trip.
