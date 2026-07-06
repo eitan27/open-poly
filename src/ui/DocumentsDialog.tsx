@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listMeta, type DocMeta } from "../storage/db";
 import { timeAgo } from "../storage/docNames";
+import { CorruptDocError } from "../storage/docErrors";
 
 interface Props {
   /** The document currently open in this tab (highlighted; can't be Opened). */
@@ -40,8 +41,12 @@ export function DocumentsDialog({
   const [importError, setImportError] = useState<string | null>(null);
   // Set when Open/Duplicate/Rename/Delete/Export throws (most commonly: the
   // document is corrupt, or vanished under a concurrent action) — shown as a
-  // banner instead of a silent no-op / unhandled rejection.
-  const [actionError, setActionError] = useState<string | null>(null);
+  // banner instead of a silent no-op / unhandled rejection. "corrupted" gets
+  // its own shape so the message can bold "Export as JSON" (still works on a
+  // corrupt record); anything else renders as plain text.
+  const [actionError, setActionError] = useState<{ kind: "corrupted"; name: string } | { kind: "plain"; message: string } | null>(
+    null,
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(() => {
@@ -79,7 +84,11 @@ export function DocumentsDialog({
       if (closeAfter) onClose();
       else reload();
     } catch (err) {
-      setActionError(String((err as Error)?.message ?? err));
+      setActionError(
+        err instanceof CorruptDocError
+          ? { kind: "corrupted", name: err.docName }
+          : { kind: "plain", message: String((err as Error)?.message ?? err) },
+      );
       reload(); // the doc may have vanished/changed — refresh what we show
     } finally {
       setBusy(false);
@@ -148,7 +157,18 @@ export function DocumentsDialog({
           </button>
         </div>
         {importError && <p className="docs-error">{importError}</p>}
-        {actionError && <p className="docs-error">{actionError}</p>}
+        {actionError && (
+          <p className="docs-error">
+            {actionError.kind === "corrupted" ? (
+              <>
+                "{actionError.name}" is corrupted and can't be opened. Use <strong>Export as JSON</strong> to save its
+                data, then Delete it.
+              </>
+            ) : (
+              actionError.message
+            )}
+          </p>
+        )}
 
         {metas === null ? (
           <p className="hint">Loading…</p>

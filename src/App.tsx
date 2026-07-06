@@ -86,6 +86,7 @@ import {
 } from "./storage/db";
 import { copyName, dedupeName, nextUntitled } from "./storage/docNames";
 import { parseDocFile, serializeDocFile } from "./storage/docFile";
+import { CorruptDocError } from "./storage/docErrors";
 import { DocumentsDialog } from "./ui/DocumentsDialog";
 import {
   arcFrom3,
@@ -532,10 +533,15 @@ export default function App() {
   const [docInOtherTab, setDocInOtherTab] = useState(false);
   const tabIdRef = useRef(genId());
   // Set once, at most, by the boot-restore effect when the saved active/most-
-  // recent document couldn't be opened (corrupt or unreadable) — a dismissible
-  // banner pointing at the Documents dialog's existing Export/Delete actions,
-  // rather than the app silently falling back to a blank doc.
-  const [docRecoveryBanner, setDocRecoveryBanner] = useState<string | null>(null);
+  // recent document couldn't be opened — a dismissible banner pointing at the
+  // Documents dialog's existing Export/Delete actions, rather than the app
+  // silently falling back to a blank doc. "corrupted" means the record loaded
+  // but its content didn't migrate (Export as JSON still works on it);
+  // "unreadable" means the record itself couldn't be read from IndexedDB (rarer
+  // — Export as JSON may not help either, so that promise isn't made).
+  const [docRecoveryBanner, setDocRecoveryBanner] = useState<
+    { kind: "corrupted"; name: string } | { kind: "unreadable" } | null
+  >(null);
   const [selection, setSelection] = useState<Selection[]>([]);
   const featureIdOf = (s: Selection): string =>
     s.kind === "feature" ? s.id : "featureId" in s ? s.featureId : s.sketchId;
@@ -1187,7 +1193,7 @@ export default function App() {
         // banner rather than silently discarded, since the failure mode used to
         // be "the app quietly falls back to a blank doc and the next autosave
         // overwrites the broken record" (see docIdRef note below).
-        let failedName: string | null = null;
+        let recovery: { kind: "corrupted"; name: string } | { kind: "unreadable" } | null = null;
         try {
           record = activeId ? await loadDoc(activeId) : undefined;
           if (!record) {
@@ -1196,7 +1202,7 @@ export default function App() {
           }
         } catch (err) {
           console.warn("could not read saved document:", err);
-          failedName = "your last document";
+          recovery = { kind: "unreadable" };
         }
         if (cancelled) return;
         if (record) {
@@ -1222,15 +1228,10 @@ export default function App() {
             setVariablesOpen(migrated.variables.length < VARS_OPEN_THRESHOLD);
           } catch (err) {
             console.warn("saved document is corrupt:", err);
-            failedName = record.name || "your last document";
+            recovery = { kind: "corrupted", name: record.name || "Untitled" };
           }
         }
-        if (failedName) {
-          setDocRecoveryBanner(
-            `Couldn't open ${failedName === "your last document" ? failedName : `"${failedName}"`} — it may be ` +
-              `corrupted. It's still in Documents: use Export as JSON to save its data, then Delete it.`,
-          );
-        }
+        if (recovery) setDocRecoveryBanner(recovery);
         // Adopt whichever doc we ended up with (restored, or the fresh seed —
         // docIdRef never adopted a record that failed to open) as the tab's
         // active document.
@@ -1377,9 +1378,7 @@ export default function App() {
         // Swallow the raw parse error (e.g. a TypeError from migrateDocument) —
         // not actionable for the user. It's still in Documents either way: they
         // can Export as JSON (works regardless of doc validity) then Delete it.
-        throw new Error(
-          `"${record.name}" is corrupted and can't be opened. Use Export as JSON to save its data, then Delete it.`,
-        );
+        throw new CorruptDocError(record.name);
       }
     },
     [flushSave, adoptRecord, captureThumb],
@@ -1413,9 +1412,7 @@ export default function App() {
       try {
         adoptRecord(copy); // throws if the SOURCE was itself corrupt (copied verbatim)
       } catch {
-        throw new Error(
-          `"${copy.name}" is corrupted and can't be opened. Use Export as JSON to save its data, then Delete it.`,
-        );
+        throw new CorruptDocError(copy.name);
       }
     },
     [flushSave, adoptRecord, captureThumb],
@@ -3937,16 +3934,38 @@ export default function App() {
       </header>
       {docRecoveryBanner && (
         <div className="recovery-banner">
-          <span>{docRecoveryBanner}</span>
-          <button
-            className="text-btn"
-            onClick={() => {
-              setDocRecoveryBanner(null);
-              setDocsDialogOpen(true);
-            }}
-          >
-            Open Documents
-          </button>
+          <span>
+            {docRecoveryBanner.kind === "corrupted" ? (
+              <>
+                Couldn't open "{docRecoveryBanner.name}" — it may be corrupted. Use <strong>Export as JSON</strong> in
+                the{" "}
+                <button
+                  className="banner-link"
+                  onClick={() => {
+                    setDocRecoveryBanner(null);
+                    setDocsDialogOpen(true);
+                  }}
+                >
+                  Documents
+                </button>{" "}
+                menu to save its data, then Delete it.
+              </>
+            ) : (
+              <>
+                Couldn't read your last document from local storage.{" "}
+                <button
+                  className="banner-link"
+                  onClick={() => {
+                    setDocRecoveryBanner(null);
+                    setDocsDialogOpen(true);
+                  }}
+                >
+                  Open Documents
+                </button>{" "}
+                to see what's available.
+              </>
+            )}
+          </span>
           <button className="row-icon" title="Dismiss" onClick={() => setDocRecoveryBanner(null)}>
             ✕
           </button>

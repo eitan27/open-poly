@@ -82,7 +82,20 @@ const newActiveId = await page.evaluate(() => localStorage.getItem("openpoly.act
 check("active pointer moved OFF the corrupt id", newActiveId !== victimId);
 check("recovery banner is shown", (await page.locator(".recovery-banner").count()) === 1);
 const bannerText = (await page.locator(".recovery-banner span").textContent())?.trim();
-check("banner mentions the corrupt doc's name and points at Export/Delete", /VictimDoc/.test(bannerText) && /Export/.test(bannerText) && /Delete/.test(bannerText), bannerText);
+check(
+  "banner mentions the corrupt doc's name and points at Export/Delete",
+  /VictimDoc/.test(bannerText) && /Export as JSON/.test(bannerText) && /Delete/.test(bannerText),
+  bannerText,
+);
+check(
+  '"Export as JSON" is bolded (a <strong> element, not just plain text)',
+  (await page.locator(".recovery-banner strong", { hasText: "Export as JSON" }).count()) === 1,
+);
+check(
+  'the "Documents" action is an inline text link, not a separate boxed button',
+  (await page.locator(".recovery-banner .banner-link", { hasText: "Documents" }).count()) === 1 &&
+    (await page.locator(".recovery-banner .text-btn").count()) === 0,
+);
 
 // The corrupt record is UNTOUCHED (not silently overwritten by the fresh seed).
 const survivedRaw = await page.evaluate(
@@ -98,9 +111,9 @@ const survivedRaw = await page.evaluate(
 );
 check("the corrupt record survived untouched (no silent overwrite)", survivedRaw?.doc?.features === "NOT_AN_ARRAY");
 
-// --- 2. "Open Documents" from the banner jumps straight to the dialog, showing
+// --- 2. The inline "Documents" link jumps straight to the dialog, showing
 // the corrupt doc in the list (metadata never required migrateDocument).
-await page.locator(".recovery-banner .text-btn", { hasText: "Open Documents" }).click();
+await page.locator(".recovery-banner .banner-link", { hasText: "Documents" }).click();
 await page.waitForTimeout(300);
 check("banner is gone after clicking through", (await page.locator(".recovery-banner").count()) === 0);
 check("corrupt doc still shows up in the list", (await page.locator(".docs-row", { hasText: "VictimDoc" }).count()) === 1);
@@ -113,6 +126,10 @@ await page.waitForTimeout(400);
 check("dialog stayed open after a failed Open", (await page.locator(".docs-dialog").count()) === 1);
 const dialogErr = (await page.locator(".docs-error").last().textContent())?.trim();
 check("dialog shows a descriptive error, not a stack trace", /corrupted/.test(dialogErr) && /Export as JSON/.test(dialogErr), dialogErr);
+check(
+  '"Export as JSON" is bolded in the dialog error too',
+  (await page.locator(".docs-error").last().locator("strong", { hasText: "Export as JSON" }).count()) === 1,
+);
 check("did NOT switch into the corrupt doc", (await page.locator(".doc-title").textContent())?.trim() !== "VictimDoc");
 
 // --- 4. Export as JSON on the corrupt row still works (the real recovery
