@@ -790,8 +790,6 @@ docs in different tabs works naturally and becomes the recommended pattern.
   always calls the live switch-flow closures — not the planned
   `getActiveDocMeta()`/`switchDocument()` names, but the same guarantee: every
   agent switch runs the real flush→adopt flow, never a raw `setDoc`). ✅ DONE.
-- **Bridge `hello`** capabilities blob does NOT yet add the active doc id/name
-  — still open, see "Remaining open items" above.
 - **Guardrails:** `openDocument` while a regen is in flight waits for it
   (regen start-seq already serializes waiters); ops that arrive DURING a switch
   queue behind it (the serial request pipeline in `bridgeClient` already
@@ -820,15 +818,6 @@ docs in different tabs works naturally and becomes the recommended pattern.
   health. Spec called for "a persistent banner if the LAST save failed" —
   not built. Low-frequency (IndexedDB failures are rare — private mode, quota)
   but silent data loss is a bad failure mode if it happens.
-- **Per-doc view state** (camera, datum visibility, timeline height) is not
-  restored on switch — every open lands at the default view. Needs a
-  `getCamera()`/`setCamera()` addition to `ViewportApi` and a `StoredDoc.view`
-  field. Fast-follow, not started.
-- **Bridge `hello` doesn't carry the active doc id/name** — the MCP hub can't
-  log which document a session is driving without an explicit
-  `list_documents`/`get_scene_summary` read first. Low priority: the summary
-  already exposes `documentId`/`documentName`, so nothing is actually blocked,
-  it's just not proactively advertised at connect time.
 - **Kernel builder/mesh caches evict on doc switch** (documented+accepted in
   Performance above, repeated here so it isn't lost track of): switching
   A→B→A re-solves A's sweeps/lofts/booleans from scratch on the way back
