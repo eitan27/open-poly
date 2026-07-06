@@ -917,7 +917,7 @@ const meshCache = new Map<string, { faces: MeshedFaces; edges: MeshedEdges }>();
 // once per regen. `hit` = the pure-builder canonical was already cached. Set
 // REGEN_PROFILE=false to silence. ---
 const REGEN_PROFILE = true;
-type FeatureTiming = { id: string; type: string; ms: number; hit: boolean };
+type FeatureTiming = { id: string; type: string; ms: number };
 
 /** cyrb53 — a fast, well-distributed 53-bit string hash. Used to keep content
  *  keys short and bounded (combining keys down a long feature chain would grow
@@ -985,8 +985,6 @@ function buildBodies(
 
   for (const feature of features) {
     const t0 = performance.now();
-    // Cache-hit detection for the pure builders (was the canonical already built?).
-    const preHit = builderCache.has(builderKey(feature));
     try {
       if (feature.type === "primitive") {
         const key = builderKey(feature);
@@ -1200,7 +1198,7 @@ function buildBodies(
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: String(err) });
     }
-    timings.push({ id: feature.id, type: feature.type, ms: performance.now() - t0, hit: preHit });
+    timings.push({ id: feature.id, type: feature.type, ms: performance.now() - t0 });
   }
   return { bodies, failures, timings };
 }
@@ -1265,13 +1263,13 @@ function regenerate(
     const meshMs = meshTimings.reduce((s, m) => s + m.ms, 0);
     const short = (s: string) => s.slice(0, 8);
     const topBuild = timings.filter((t) => t.ms >= 1).sort((a, b) => b.ms - a.ms)
-      .map((t) => `${short(t.id)}:${t.type}${t.hit ? "*" : ""}=${t.ms.toFixed(0)}`);
+      .map((t) => `${short(t.id)}:${t.type}=${t.ms.toFixed(0)}`);
     const topMesh = meshTimings.filter((m) => m.ms >= 1).sort((a, b) => b.ms - a.ms)
       .map((m) => `${short(m.id)}${m.hit ? "*" : ""}=${m.ms.toFixed(0)}`);
     console.log(
       `[regen] total=${(buildMs + meshMs).toFixed(0)}ms build=${buildMs.toFixed(0)} mesh=${meshMs.toFixed(0)} ` +
       `(bodies=${bodies.length}) | build: ${topBuild.join(" ")} | mesh: ${topMesh.join(" ")} ` +
-      `(* = cache hit)`,
+      `(build ms<10 = cache reuse; mesh * = cache hit)`,
     );
   }
 
