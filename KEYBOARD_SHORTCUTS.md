@@ -138,8 +138,9 @@ both at the same time):
   alternate letter (or a non-letter glyph, as Equal does with `=`) once it
   has a concrete toolbar button to attach a key to.
 - **Multi-document manager** (new/open/rename/duplicate/delete documents) —
-  Phase 8 backlog, still TODO. The obvious bindings `Ctrl+N` / `Ctrl+O` are
-  both browser-reserved (new window / open file); will need different
-  combinations (e.g. `Ctrl+Shift+N`) or to live menu-only with no shortcut.
+  ✅ shipped (Phase 8.7). The prediction here held: `⌘O` was tried for "Open"
+  and reverted (browsers do reserve it for their own Open-File dialog, exactly
+  as expected), so it ended up menu-only — a **"＋ New"** / **"Open…"** button
+  pair in the topbar, no shortcut for now.
 - **Section view, appearance** — Phase 8 backlog, still TODO, no concrete UI
   yet to attach letters to; revisit once they have toolbar buttons.

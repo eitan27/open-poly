@@ -267,6 +267,19 @@ rough relative sizing, not calendar promises.
 > constrained state) and the hover/selection marker is translucent so the dot
 > shows through and tracks a live drag. Line styling is a **blue
 > (under-constrained) → green (fully constrained)** shift.
+>
+> **Progress (2026-07-06):** four batches merged to `main`. **Topological-naming
+> robustness** (N3): geometric fallback matching (`kernel/topoMatch.ts`) when a
+> persistent name churns, surfaced as timeline warnings + `OpResult.warnings`
+> for the agent (see Phase 3's naming write-up). **Regen-performance caching**
+> (`perf/regen-caching`): content-hash-keyed `builderCache`/`meshCache` so an
+> unchanged body skips re-solve/re-mesh, plus debounced regen, progressive
+> body streaming, and a tuned boolean fuzzy tolerance (~45% faster). **The
+> multi-document manager** (Phase 8.7, M1–M4): Documents dialog, editable
+> title, thumbnails, `.json` import/export, corrupt-record recovery, and
+> agent `list/open/new/rename/duplicate_document` tools. **Associative
+> face-sketches** dropped from the backlog entirely (tested against
+> Onshape — it doesn't follow the host body either; parity, not a gap).
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
@@ -483,8 +496,12 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   - It's then a **first-class body**: colour / opacity / hide, transform, boolean,
     dress-up, and re-export (Parts panel) all work; named in the Parts list /
     timeline / param editor.
-  - **TODO:** drag-and-drop a file onto the viewport; one-body-per-solid; cache
-    the parsed shape so big files don't re-parse on every regen (perf).
+  - **Caching the parsed shape — ✅ DONE** (a side effect of the general
+    incremental-regen work: `import` goes through the same content-hash-keyed
+    `buildCached`/`builderKey` as every other builder, so an unchanged STEP
+    source isn't re-parsed every regen). **Still TODO:** drag-and-drop a file
+    onto the viewport; one-body-per-solid (multi-solid STEP still comes in as
+    one compound).
 
 ### Phase 5 — Boolean + Reference planes + Pattern + Mirror *(Boolean + offset planes ✅; rest TODO)*
 - Boolean between separate bodies: union / subtract / intersect — **done**
@@ -566,10 +583,17 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 - **TODO:** scale; rotation about a datum axis / body edge / arbitrary
   point+direction (today: world axis through the bbox-centre pivot); a pivot
   that re-derives if the body changes upstream (today it's baked at creation).
-- **TODO (perf, follow-up):** the single commit regenerate still rebuilds the whole
-  timeline (~225ms for 40 simple boxes; more with fillets/booleans). To make the
-  *release* itself instant in heavy docs, cache unchanged bodies' OCCT shapes in the
-  worker (incremental regen). Bigger change; not needed for interactive dragging.
+- **Perf follow-up — ✅ DONE** (`perf/regen-caching`, merged): the worker now
+  caches unchanged bodies' OCCT shapes (`builderCache`, keyed by a content
+  hash of the resolved feature + its inputs) and their tessellations
+  (`meshCache`), swept each regen to what was actually used — so a commit
+  that only touches one body no longer re-solves/re-meshes the rest of the
+  timeline. Also landed in the same pass: regen debouncing (coalesces edit
+  bursts, `REGEN_DEBOUNCE_MS`), progressive/streamed body painting
+  (`regenerate-progress`), and a tuned boolean fuzzy tolerance (~45% faster
+  booleans). Tessellation **LOD is still not built** (no distance/zoom-based
+  mesh simplification) — the caching above addresses the "unnecessary
+  rework" cost, not "how much geometry to draw."
 
 ### Phase 6 — Sweep + Loft + Revolve — ✅ DONE
 - **Sweep — ✅ DONE.** A `SweepFeature` sweeps a **sketch region** along a **path
@@ -637,13 +661,15 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   `Document`); the app restores the most-recent doc on load and debounced-
   autosaves on change (autosave waits for the initial load). A refresh no longer
   loses work.
-- **Multi-document manager (TODO — builds directly on `db.ts`).** Full spec
-  below: **"Phase 8.7 — Multi-document manager (spec)"**. Turns "one autosaved
-  sketchpad" into a real multi-file workspace: documents dialog, editable
-  title, thumbnails, `.json` import/export, and the agent's
-  `list/open/new_document` tools (Phase 9 L4).
+- **Multi-document manager — ✅ DONE.** See **"Phase 8.7 — Multi-document
+  manager"** below: documents dialog, editable title, thumbnails, `.json`
+  import/export, corrupt-record recovery, and the agent's
+  `list/open/new/rename/duplicate_document` tools.
 - Measurement tools, section view, appearance, keyboard shortcuts.
-- Performance: incremental regen (only re-run dirty features), tessellation LOD.
+- **Performance — incremental regen ✅ DONE** (worker-side `builderCache`/
+  `meshCache`, content-hash-keyed — see Phase 5.5's perf follow-up above).
+  **Tessellation LOD — still TODO** (no distance/zoom-based mesh
+  simplification).
 - **CI — ✅ DONE.** `.github/workflows/ci.yml` runs `npm run typecheck` (`tsc -b`,
   the real gate — the root tsconfig has `files:[]` so a bare `tsc --noEmit` is a
   no-op) + `npm test` on every push to `main` and PR.
@@ -1259,7 +1285,7 @@ official **`@modelcontextprotocol/sdk`**.
 |------|-----------|
 | **Topological naming** breaks references on edits | ✅ Mitigated: OCCT history maps + scored geometric fallback (`topoMatch.ts`) + fixable-error/warning surfacing all shipped (2026-07-06). Residual: fingerprints go stale if geometry moves far AND names churn simultaneously. |
 | OCCT WASM **bundle size / load time** | Lazy-load the worker; tree-shake via replicad; show a splash; cache the WASM. |
-| **Regen performance** | Worker thread; dirty-feature incremental regen; cache tessellations; LOD. |
+| **Regen performance** | ✅ Worker thread, debounced regen, and content-hash-keyed incremental caching (unchanged bodies skip re-solve + re-mesh) all shipped. LOD (distance/zoom mesh simplification) not built — not yet a bottleneck. |
 | **Constraint solver** robustness | Lean on planegcs rather than rolling your own; constrain the supported constraint set early. |
 | Selource **license** mix (LGPL GCS, OCCT LGPL-with-exception) | Audit each dependency's license before committing to a project license. |
 | Scope creep (this is a *lot*) | Ship Phases 0–3 as a real milestone before going wide. |
