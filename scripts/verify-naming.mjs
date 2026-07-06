@@ -75,6 +75,11 @@ const [a, b] = bottomRim.split("∩");
 const stale = `${a}#1∩${b}`;
 const ch = await apply({ op: "dressUp", kind: "chamfer", targetId: cylId, edges: [stale], size: "1" });
 check("chamfer with churned (#1) edge name still succeeds", ch.ok, JSON.stringify(ch).slice(0, 200));
+check(
+  "the op result itself reports the re-match warning to the agent",
+  ch.warnings && Object.values(ch.warnings).some((w) => /re-matched/.test(w)),
+  JSON.stringify(ch.warnings),
+);
 await waitIdle();
 
 // The re-match must be SURFACED, not silent: amber ⚠ badge in the timeline.

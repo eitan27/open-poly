@@ -65,10 +65,13 @@ export interface AgentMesh {
 }
 
 /** The outcome of a kernel regeneration, delivered to whoever awaited it via
- *  `waitForRegen`: the merged per-feature error map (resolve + kernel) and the
- *  ids of the bodies that built. `timedOut` if regen didn't settle in time. */
+ *  `waitForRegen`: the merged per-feature error map (resolve + kernel), the
+ *  non-fatal per-feature warnings (a topological reference re-matched after an
+ *  upstream edit, or partially lost), and the ids of the bodies that built.
+ *  `timedOut` if regen didn't settle in time. */
 export interface RegenSettle {
   errors: Record<string, string>;
+  warnings?: Record<string, string>;
   bodyIds?: string[];
   timedOut?: boolean;
 }
@@ -509,15 +512,18 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
 
     ctx.setDoc(next);
     // Wait for the worker to regenerate, then report what actually happened —
-    // resolve (expression/reference) AND kernel (build) errors, merged.
-    const { errors } = await ctx.waitForRegen();
+    // resolve (expression/reference) AND kernel (build) errors, merged, plus
+    // non-fatal warnings (topological references re-matched / partially lost
+    // after this edit) so the agent can verify a re-match landed right.
+    const { errors, warnings: regenWarnings } = await ctx.waitForRegen();
+    const warnings = regenWarnings && Object.keys(regenWarnings).length ? regenWarnings : undefined;
     // If the feature this op created failed to build, surface it as the op's
     // own failure so the agent self-corrects instead of building on nothing.
     if (createdId && errors[createdId]) {
-      return { ok: false, createdId, error: errors[createdId], errorKind: "kernel_error", featureErrors: errors };
+      return { ok: false, createdId, error: errors[createdId], errorKind: "kernel_error", featureErrors: errors, warnings };
     }
     const featureErrors = Object.keys(errors).length ? errors : undefined;
-    return { ok: true, createdId, featureErrors };
+    return { ok: true, createdId, featureErrors, warnings };
   } catch (err) {
     if (err instanceof OpError) return { ok: false, error: err.message, errorKind: err.kind };
     return { ok: false, error: String((err as Error)?.message ?? err), errorKind: "invalid_op" };

@@ -40,6 +40,14 @@ tools. A human is watching the same browser. Model deliberately and verifiably.
 
 If an op errors, read the message, fix the cause, and retry — don't loop blindly.
 
+An op result may also carry **`warnings`** (per feature id) even when `ok` is
+true: a face/edge reference in some feature was renamed by your edit and got
+**re-matched geometrically** (or a dress-up lost some of its edges and skipped
+them). The model still built, but don't ignore it — `get_scene_summary` /
+`screenshot` to confirm the re-match landed on the intended geometry, and if it
+didn't, edit that feature to reference the correct face/edge (current names are
+quoted in the warning).
+
 ## Tools (overview)
 
 - **Read:** `get_scene_summary`, `get_document`, `get_selection`, `screenshot`.

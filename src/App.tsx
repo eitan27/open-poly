@@ -1092,6 +1092,9 @@ export default function App() {
   // mirrors the merged error map; `regenWaitersRef` holds one-shot resolvers.
   const agentMeshesRef = useRef<AgentMesh[]>([]);
   const agentErrorsRef = useRef<Record<string, string>>({});
+  // Mirrors the kernel's non-fatal per-feature warnings (re-matched/lost
+  // topological references) so agent op results can report them.
+  const agentWarningsRef = useRef<Record<string, string>>({});
   // Monotonic count of regens that have *started*. A waiter must only resolve on
   // a regen that began after it started waiting — otherwise a regen already in
   // flight (e.g. the slow initial load) would resolve it before the agent's edit
@@ -1108,7 +1111,7 @@ export default function App() {
         regenWaitersRef.current.push({ threshold: regenStartSeqRef.current, settle });
         // Never hang: if regen doesn't settle (kernel not ready, a competing
         // edit cancelled it), resolve with whatever errors we last knew.
-        setTimeout(() => settle({ errors: agentErrorsRef.current, timedOut: true }), 8000);
+        setTimeout(() => settle({ errors: agentErrorsRef.current, warnings: agentWarningsRef.current, timedOut: true }), 8000);
       }),
     [],
   );
@@ -1264,13 +1267,14 @@ export default function App() {
           // Feed the agent refs synchronously (ahead of React's commit).
           agentMeshesRef.current = nextMeshes;
           agentErrorsRef.current = regenErrors;
-          settle = { errors: regenErrors, bodyIds: nextMeshes.map((m) => m.id) };
+          agentWarningsRef.current = regenWarnings;
+          settle = { errors: regenErrors, warnings: regenWarnings, bodyIds: nextMeshes.map((m) => m.id) };
         })
         .catch((err) => {
           if (cancelled) return;
           console.error("regeneration failed:", err);
           setFatal(String(err?.message ?? err));
-          settle = { errors: agentErrorsRef.current };
+          settle = { errors: agentErrorsRef.current, warnings: agentWarningsRef.current };
         })
         .finally(() => {
           if (cancelled) return;

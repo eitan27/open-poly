@@ -308,13 +308,18 @@ export type ErrorKind = "not_found" | "invalid_op" | "kernel_error";
 /** The result of applying one Operation. `createdId` is the new feature/variable
  *  id (so the agent can chain). `featureErrors` carries per-feature resolve
  *  errors detected synchronously after the edit (kernel/regen errors arrive once
- *  L3 wires the regen-await loop). */
+ *  L3 wires the regen-await loop). `warnings` carries non-fatal per-feature
+ *  notices from the regen — a topological reference (face/edge name) that had
+ *  to be re-matched after an upstream edit, or a dress-up that lost some of its
+ *  edges. The op succeeded, but the agent should verify the re-match landed on
+ *  the intended geometry (get_scene_summary / screenshot). */
 export interface OpResult {
   ok: boolean;
   createdId?: string;
   error?: string;
   errorKind?: ErrorKind;
   featureErrors?: Record<string, string>;
+  warnings?: Record<string, string>;
 }
 
 /** Compact, LLM-first digest of the scene — the agent's primary planning input

@@ -524,3 +524,27 @@ describe("applyOperation — dressUp edge fingerprints", () => {
     expect(f.edgeRefs![1]).toEqual({ name: "bogus/name" }); // no polyline → name-only
   });
 });
+
+describe("applyOperation — regen warnings surface in the result", () => {
+  it("passes non-fatal regen warnings through (and omits when empty)", async () => {
+    let d = createDocument();
+    let sel: Selection[] = [];
+    let pendingWarnings: Record<string, string> = {};
+    const ctx: AgentContext = {
+      getDoc: () => d, setDoc: (n) => { d = n; },
+      getSelection: () => sel, setSelection: (s) => { sel = s; },
+      getMeshes: () => [],
+      getErrors: () => resolveDocument(d).errors,
+      waitForRegen: async () => ({ errors: resolveDocument(d).errors, warnings: pendingWarnings }),
+      getViewport: () => null,
+    };
+    const clean = await apply(ctx, { op: "addPrimitive", kind: "box" });
+    expect(clean.ok).toBe(true);
+    expect(clean.warnings).toBeUndefined(); // empty map → omitted
+
+    pendingWarnings = { "some-fillet": 'edge "a/+z∩a/f0" was renamed by an upstream edit; re-matched geometrically' };
+    const warned = await apply(ctx, { op: "setParam", featureId: clean.createdId!, name: "width", value: "20" });
+    expect(warned.ok).toBe(true);
+    expect(warned.warnings).toEqual(pendingWarnings);
+  });
+});

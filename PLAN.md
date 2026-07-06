@@ -454,10 +454,11 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   `dressUp` case now bakes `edgeRefs` fingerprints (mid+length) from the mesh
   `edgeGroups` (`edgeFingerprintByName`, mirroring `App.tsx`'s
   `edgeFingerprint`; unknown names stay name-only), so agent-created dress-ups
-  get the geometric rescue pass too; (b) warnings reach the timeline ⚠ badge
-  but not the agent's `OpResult`/`RegenSettle`, so the LLM can't notice/verify
-  a re-match (fix: thread `RegenOutcome.warnings` through the regen settle into
-  apply results) — still TODO.
+  get the geometric rescue pass too; (b) ✅ DONE — `RegenOutcome.warnings`
+  now threads through `RegenSettle` (App's regen effect + `agentWarningsRef`)
+  into every apply's `OpResult.warnings`, so the MCP tool result itself tells
+  the LLM a reference was re-matched (modeling guide's work-loop section says
+  to verify, not ignore).
 - **Selection round-trip** (sketch region / body face / body edge → kernel →
   meshed body back) — ✅ exercised end to end.
 
