@@ -53,6 +53,17 @@ const fil = await apply({ op: "dressUp", kind: "fillet", targetId: cylId, edges:
 check("fillet on cylinder rim succeeds", fil.ok, JSON.stringify(fil).slice(0, 200));
 await waitIdle();
 
+// The agent path must bake a geometric fingerprint (mid + length) alongside
+// the name, so the kernel's geometric fallback has something to match on.
+const docAfterFillet = await read({ read: "document" });
+const filFeature = docAfterFillet.features.find((f) => f.id === fil.createdId);
+const ref = filFeature?.edgeRefs?.[0];
+check(
+  "agent dress-up stored an edge fingerprint",
+  ref && ref.name === rim && Array.isArray(ref.mid) && ref.length > 50, // rim circumference ~63 mm
+  JSON.stringify(filFeature?.edgeRefs),
+);
+
 // --- 2. Base-name fallback: a stored name with a stale #n suffix still resolves ---
 scene = await read({ read: "sceneSummary" });
 const body = scene.bodies.find((b) => b.id === cylId);

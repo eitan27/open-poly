@@ -481,3 +481,46 @@ describe("applyOperation — reference plane methods", () => {
     expect(badPts).toMatchObject({ ok: false, errorKind: "invalid_op" });
   });
 });
+
+describe("applyOperation — dressUp edge fingerprints", () => {
+  it("bakes mid + length for known edge names, name-only for unknown", async () => {
+    // Create the target first (plain ctx), then rebuild a ctx whose mesh is
+    // keyed to that feature id and exposes one named edge polyline: a straight
+    // 10 mm edge from (0,0,10) to (10,0,10).
+    const base = makeCtx();
+    const box = await apply(base.ctx, { op: "addPrimitive", kind: "box" });
+    const bodyId = box.createdId!;
+    const known = `${bodyId}/+z∩${bodyId}/f0`;
+    let d = base.doc();
+    let sel: Selection[] = [];
+    const ctx: AgentContext = {
+      getDoc: () => d, setDoc: (n) => { d = n; },
+      getSelection: () => sel, setSelection: (s) => { sel = s; },
+      getMeshes: () => [{
+        id: bodyId,
+        mesh: {
+          name: bodyId,
+          faces: { vertices: [], triangles: [] },
+          edges: {
+            lines: [0, 0, 10, 10, 0, 10],
+            edgeGroups: [{ start: 0, count: 2, edgeId: 3, name: known }],
+          },
+        },
+      }],
+      getErrors: () => resolveDocument(d).errors,
+      waitForRegen: async () => ({ errors: resolveDocument(d).errors }),
+      getViewport: () => null,
+    };
+
+    const r = await apply(ctx, {
+      op: "dressUp", kind: "fillet", targetId: bodyId, edges: [known, "bogus/name"], size: 2,
+    });
+    expect(r.ok).toBe(true);
+    const f = d.features.find((x) => x.id === r.createdId);
+    expect(f?.type).toBe("dressup");
+    if (f?.type !== "dressup") return;
+    expect(f.edgeRefs).toHaveLength(2);
+    expect(f.edgeRefs![0]).toMatchObject({ name: known, mid: [5, 0, 10], length: 10 });
+    expect(f.edgeRefs![1]).toEqual({ name: "bogus/name" }); // no polyline → name-only
+  });
+});

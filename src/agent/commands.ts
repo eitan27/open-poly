@@ -45,8 +45,8 @@ import {
   type SketchPlaneId,
   type SketchPlaneRef,
 } from "../document/planes";
-import type { Document, ExtrudeProfile, Feature, PrimitiveFeature, RevolveAxis, Variable } from "../document/types";
-import type { MeshedFaces, ShapeMeshPayload } from "../kernel/types";
+import type { Document, EdgeRef, ExtrudeProfile, Feature, PrimitiveFeature, RevolveAxis, Variable } from "../document/types";
+import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 import type { Selection, ViewName } from "../viewport/Viewport";
 import {
   expandEntities,
@@ -135,6 +135,29 @@ function faceGeomByName(faces: MeshedFaces, name: string): FaceGeom | null {
   const len = Math.hypot(nx, ny, nz);
   const normal: [number, number, number] = len > 1e-9 ? [nx / len, ny / len, nz / len] : [0, 0, 1];
   return { faceId: g.faceId, center, normal };
+}
+
+/** Geometric fingerprint of a named edge from its tessellated polyline — the
+ *  bounding-box centre (robust for closed edges, where an endpoint average
+ *  degenerates to the seam) + arc length. Stored with a dress-up alongside the
+ *  persistent name so the kernel can re-match the edge if an upstream edit
+ *  renames it (mirrors `edgeFingerprint` in App.tsx for UI picks). */
+function edgeFingerprintByName(edges: MeshedEdges, name: string): EdgeRef {
+  const g = edges.edgeGroups?.find((eg) => eg.name === name);
+  if (!g || g.count === 0) return { name };
+  const { lines } = edges;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let length = 0;
+  for (let v = g.start; v < g.start + g.count; v++) {
+    const x = lines[v * 3], y = lines[v * 3 + 1], z = lines[v * 3 + 2];
+    minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+    if (v > g.start) {
+      length += Math.hypot(x - lines[(v - 1) * 3], y - lines[(v - 1) * 3 + 1], z - lines[(v - 1) * 3 + 2]);
+    }
+  }
+  return { name, mid: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2], length };
 }
 
 function bbox(faces: MeshedFaces): { min: [number, number, number]; max: [number, number, number] } | undefined {
@@ -410,7 +433,13 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       }
       case "dressUp": {
         requireFeature(doc, op.targetId);
-        const r = addDressUp(doc, op.kind, op.targetId, op.edges, op.size);
+        // Bake geometric fingerprints for the named edges (from the target's
+        // tessellation) so the kernel can re-match them if a later upstream
+        // edit renames the edges. A name the mesh doesn't know stays a bare
+        // name-only ref — the kernel will report it properly.
+        const mesh = ctx.getMeshes().find((m) => m.id === op.targetId);
+        const edgeRefs = mesh ? op.edges.map((nm) => edgeFingerprintByName(mesh.mesh.edges, nm)) : undefined;
+        const r = addDressUp(doc, op.kind, op.targetId, op.edges, op.size, edgeRefs);
         next = r.doc;
         createdId = r.id;
         break;
