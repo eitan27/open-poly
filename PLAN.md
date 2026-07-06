@@ -571,16 +571,6 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   *release* itself instant in heavy docs, cache unchanged bodies' OCCT shapes in the
   worker (incremental regen). Bigger change; not needed for interactive dragging.
 
-### Dropped — Associative face-sketches (sketch follows its host body) ✂️
-A sketch placed on a **body face** stores its plane as a frozen `frame` snapshot,
-so it stays put when the host body later changes. Formerly a deferred backlog
-item ("Solution B": live face frames via persistent names, like extrude-on-face
-already does). **Dropped 2026-07-06 after testing against Onshape:** Onshape
-doesn't move the sketch either, so the frozen snapshot is at parity, not a gap.
-The shipped stopgap (an extrude hides its source sketch) already covers the
-visual mismatch. If this ever comes back, the old plan lives in git history
-(this section, pre-2026-07-06).
-
 ### Phase 6 — Sweep + Loft + Revolve — ✅ DONE
 - **Sweep — ✅ DONE.** A `SweepFeature` sweeps a **sketch region** along a **path
   entity** (line / arc / **spline**, possibly in a different sketch) — `⊃ Sweep`
