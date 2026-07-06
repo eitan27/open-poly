@@ -43,8 +43,17 @@
   text-overflow: ellipsis;
 }
 
+/* A clearly visible affordance that the title is click-to-rename. */
 .doc-title:hover {
-  border-color: #2a2d35;
+  border-color: #4a5266;
+  background: #1a1c22;
+}
+
+/* New/Open pair sit tight together (the topbar's own 16px gap reads as two
+   unrelated controls). */
+.doc-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .doc-title-input {

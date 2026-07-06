@@ -3828,20 +3828,22 @@ export default function App() {
             }}
           />
         )}
-        <button
-          className="text-btn newdoc-btn"
-          title="Create and open a new empty document"
-          onClick={() => void newDocument()}
-        >
-          ＋ New Doc
-        </button>
-        <button
-          className="text-btn docs-btn"
-          title="Open a document (⌘O)"
-          onClick={() => setDocsDialogOpen(true)}
-        >
-          Open…
-        </button>
+        <div className="doc-actions">
+          <button
+            className="text-btn newdoc-btn"
+            title="Create and open a new empty document"
+            onClick={() => void newDocument()}
+          >
+            ＋ New
+          </button>
+          <button
+            className="text-btn docs-btn"
+            title="Open a document (⌘O)"
+            onClick={() => setDocsDialogOpen(true)}
+          >
+            Open…
+          </button>
+        </div>
         {docInOtherTab && (
           <span
             className="tab-warning"
