@@ -72,7 +72,7 @@ import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, worldToUv, type Pla
 import { evaluateExpression } from "./document/expression";
 import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
-import { listDocs, saveDoc } from "./storage/db";
+import { getActiveDocId, listMeta, loadDoc, putDoc, setActiveDocId } from "./storage/db";
 import {
   arcFrom3,
   circleFrom3,
@@ -503,6 +503,13 @@ export default function App() {
   const docIdRef = useRef<string | null>(null);
   if (docIdRef.current === null) docIdRef.current = genId();
   const [persistLoaded, setPersistLoaded] = useState(false);
+  // Document identity (Phase 8.7). The name lives OUTSIDE the parametric
+  // `Document` (rename is a storage-level operation, not an undoable model
+  // edit); `createdAt` rides along so autosaves preserve it.
+  const [docName, setDocName] = useState("Untitled");
+  const docCreatedAtRef = useRef<number>(Date.now());
+  // Inline title editing in the topbar: null when idle, else the draft text.
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection[]>([]);
   const featureIdOf = (s: Selection): string =>
     s.kind === "feature" ? s.id : "featureId" in s ? s.featureId : s.sketchId;
@@ -1139,28 +1146,40 @@ export default function App() {
     };
   }, []);
 
-  // Restore the working document from IndexedDB on first load (most recent), or
-  // keep the seed and adopt its id. Autosave only starts once this completes so
-  // the placeholder can't overwrite a saved document.
+  // Restore the working document from IndexedDB on first load: the tab's
+  // active-document pointer (localStorage) first — NOT "most recent", which
+  // another tab may have touched — falling back to the most recent meta row,
+  // else keeping the fresh seed under its own id. Autosave only starts once
+  // this completes so the placeholder can't overwrite a saved document.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const docs = await listDocs();
+        const activeId = getActiveDocId();
+        let record = activeId ? await loadDoc(activeId) : undefined;
+        if (!record) {
+          const metas = await listMeta();
+          if (metas.length > 0) record = await loadDoc(metas[0].id);
+        }
         if (cancelled) return;
-        if (docs.length > 0) {
-          docIdRef.current = docs[0].id;
-          const migrated = migrateDocument(docs[0].doc);
+        if (record) {
+          docIdRef.current = record.id;
+          docCreatedAtRef.current = record.createdAt ?? record.updatedAt;
+          setDocName(record.name || "Untitled");
+          const migrated = migrateDocument(record.doc);
           // Paint the last-saved meshes immediately so a heavy document shows its
           // geometry at once — the regen `resetDoc` kicks off (which rebuilds
           // every feature through OCCT and can take many seconds) then swaps in
           // fresh meshes when it settles. Without this the viewport stays blank
           // until that full rebuild finishes.
-          if (docs[0].meshes?.length) setRawMeshes(docs[0].meshes);
+          if (record.meshes?.length) setRawMeshes(record.meshes);
           resetDoc(migrated);
           // Default the Variables section open/collapsed by the restored count.
           setVariablesOpen(migrated.variables.length < VARS_OPEN_THRESHOLD);
         }
+        // Adopt whichever doc we ended up with (restored or fresh seed) as the
+        // tab's active document.
+        setActiveDocId(docIdRef.current!);
       } catch (err) {
         console.warn("could not load saved document:", err);
       } finally {
@@ -1177,15 +1196,27 @@ export default function App() {
   // effect); `rawMeshes` is a dependency so a completed regen re-saves the fresh
   // geometry — a doc-only edit persists with the meshes that are current when the
   // debounce fires (regen typically settles first, so they match the doc).
+  // `putDoc` writes the full record AND its meta row atomically (Phase 8.7);
+  // `docName` is a dependency so a rename persists through the same path.
   useEffect(() => {
     if (!persistLoaded) return;
     const t = setTimeout(() => {
-      saveDoc({ id: docIdRef.current!, name: "Untitled", doc, updatedAt: Date.now(), meshes: rawMeshes }).catch((err) =>
-        console.warn("autosave failed:", err),
-      );
+      putDoc({
+        id: docIdRef.current!,
+        name: docName,
+        doc,
+        updatedAt: Date.now(),
+        createdAt: docCreatedAtRef.current,
+        meshes: rawMeshes,
+      }).catch((err) => console.warn("autosave failed:", err));
     }, 600);
     return () => clearTimeout(t);
-  }, [doc, rawMeshes, persistLoaded]);
+  }, [doc, rawMeshes, docName, persistLoaded]);
+
+  // Mirror the document name to the browser tab.
+  useEffect(() => {
+    document.title = `${docName} — Open Poly`;
+  }, [docName]);
 
   // Close the "New Body" dropdown when clicking anywhere outside it.
   useEffect(() => {
@@ -3510,7 +3541,29 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <span className="logo">Open Poly</span>
-        <span className="phase">Phase&nbsp;3 · modeling</span>
+        {titleDraft === null ? (
+          <button className="doc-title" title="Rename document" onClick={() => setTitleDraft(docName)}>
+            {docName}
+          </button>
+        ) : (
+          <input
+            className="doc-title-input"
+            autoFocus
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onFocus={(e) => e.target.select()}
+            onBlur={() => {
+              // Commit on blur; an all-whitespace draft reverts.
+              const trimmed = titleDraft.trim();
+              if (trimmed) setDocName(trimmed);
+              setTitleDraft(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              else if (e.key === "Escape") setTitleDraft(null);
+            }}
+          />
+        )}
         <div className="topbar-actions">
           <button className="tool-btn" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">
             ↶

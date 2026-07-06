@@ -20,9 +20,38 @@
   letter-spacing: 0.02em;
 }
 
-.phase {
+/* Document title in the topbar — looks like a label, edits on click. The
+   button/input pair share metrics so toggling doesn't shift the layout. */
+.doc-title,
+.doc-title-input {
   font-size: 12px;
+  font-family: inherit;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: none;
+  max-width: 260px;
+}
+
+.doc-title {
   color: #8a8f9c;
+  cursor: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doc-title:hover {
+  color: #cfd3dc;
+  border-color: #2a2d35;
+}
+
+.doc-title-input {
+  color: #e8eaf0;
+  border-color: #3b4252;
+  background: #1a1c22;
+  outline: none;
+  width: 200px;
 }
 
 .topbar-actions {
