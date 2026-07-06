@@ -223,6 +223,16 @@
   border-color: #5a2a2a;
 }
 
+.docs-error {
+  font-size: 12px;
+  color: #ffd2d2;
+  background: #3a2124;
+  border: 1px solid #5a2a2a;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 0 0 10px;
+}
+
 .topbar-actions {
   display: flex;
   gap: 4px;

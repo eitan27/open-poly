@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { copyName, nextUntitled, timeAgo } from "./docNames";
+import { copyName, dedupeName, nextUntitled, timeAgo } from "./docNames";
 
 describe("nextUntitled", () => {
   it("starts at plain Untitled", () => {
@@ -28,5 +28,13 @@ describe("timeAgo", () => {
     expect(timeAgo(now - 5 * 60_000, now)).toBe("5m ago");
     expect(timeAgo(now - 3 * 3_600_000, now)).toBe("3h ago");
     expect(timeAgo(now - 2 * 86_400_000, now)).toBe("2d ago");
+  });
+});
+
+describe("dedupeName", () => {
+  it("keeps a free name, numbers a taken one", () => {
+    expect(dedupeName("Bracket", [])).toBe("Bracket");
+    expect(dedupeName("Bracket", ["Bracket"])).toBe("Bracket 2");
+    expect(dedupeName("Bracket", ["Bracket", "Bracket 2"])).toBe("Bracket 3");
   });
 });

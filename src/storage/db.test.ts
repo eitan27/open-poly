@@ -193,3 +193,18 @@ describe("v1 → v2 migration", () => {
     expect((await loadDoc("legacy"))?.updatedAt).toBe(777);
   });
 });
+
+describe("setThumb", () => {
+  it("writes the thumbnail onto meta only, surviving later autosaves", async () => {
+    const { setThumb } = await import("./db");
+    await putDoc(record("a", "Doc", { updatedAt: 1 }));
+    await setThumb("a", new Blob(["img"], { type: "image/jpeg" }));
+    expect((await listMeta())[0].thumb).toBeDefined();
+    await putDoc(record("a", "Doc", { updatedAt: 2 })); // autosave after capture
+    const meta = (await listMeta())[0];
+    expect(meta.thumb).toBeDefined();
+    expect(meta.updatedAt).toBe(2);
+    // The full record never carries a thumb.
+    expect(await loadDoc("a")).not.toHaveProperty("thumb");
+  });
+});

@@ -15,15 +15,32 @@ interface Props {
   onDuplicate: (id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onRename: (id: string, name: string) => Promise<void>;
+  /** Save as `.openpoly.json` (does not switch documents). */
+  onExport: (id: string) => Promise<void>;
+  /** Import a `.openpoly.json` file as a new document (opens it). Resolves an
+   *  error message to display, or null on success. */
+  onImport: (file: File) => Promise<string | null>;
 }
 
-export function DocumentsDialog({ activeId, onClose, onOpen, onNew, onDuplicate, onDelete, onRename }: Props) {
+export function DocumentsDialog({
+  activeId,
+  onClose,
+  onOpen,
+  onNew,
+  onDuplicate,
+  onDelete,
+  onRename,
+  onExport,
+  onImport,
+}: Props) {
   const [metas, setMetas] = useState<DocMeta[] | null>(null); // null = loading
   const [renaming, setRenaming] = useState<{ id: string; draft: string } | null>(null);
   // Two-step delete: first click arms this row, second confirms; any other
   // action (or re-listing) disarms.
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(() => {
     listMeta()
@@ -67,18 +84,57 @@ export function DocumentsDialog({ activeId, onClose, onOpen, onNew, onDuplicate,
     if (name) void run(() => onRename(id, name));
   };
 
+  // Import a picked/dropped file. Success switches to the imported doc and
+  // closes; failure keeps the dialog open with the (readable) error.
+  const importFile = async (file: File) => {
+    setBusy(true);
+    setImportError(null);
+    try {
+      const err = await onImport(file);
+      if (err) setImportError(err);
+      else onClose();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="docs-dialog" role="dialog" aria-label="Documents">
+      <div
+        className="docs-dialog"
+        role="dialog"
+        aria-label="Documents"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          const file = e.dataTransfer.files?.[0];
+          if (file) void importFile(file);
+        }}
+      >
         <div className="docs-header">
           <h2>Documents</h2>
           <button className="text-btn" disabled={busy} onClick={() => void run(onNew, true)}>
             ＋ New document
           </button>
+          <button className="text-btn" disabled={busy} onClick={() => fileInputRef.current?.click()}>
+            Import…
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = ""; // re-picking the same file fires again
+              if (file) void importFile(file);
+            }}
+          />
           <button className="row-icon docs-close" title="Close (Esc)" onClick={onClose}>
             ✕
           </button>
         </div>
+        {importError && <p className="docs-error">{importError}</p>}
 
         {metas === null ? (
           <p className="hint">Loading…</p>
@@ -131,6 +187,9 @@ export function DocumentsDialog({ activeId, onClose, onOpen, onNew, onDuplicate,
                     )}
                     <button className="text-btn" disabled={busy} onClick={() => void run(() => onDuplicate(m.id), true)}>
                       Duplicate
+                    </button>
+                    <button className="text-btn" disabled={busy} onClick={() => void run(() => onExport(m.id))}>
+                      Export
                     </button>
                     {confirmDelete === m.id ? (
                       <button

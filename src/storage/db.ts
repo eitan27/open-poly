@@ -168,6 +168,18 @@ export async function duplicateDoc(sourceId: string, newId: string, name: string
   return copy;
 }
 
+/** Replace a document's list thumbnail (meta only — the full record doesn't
+ *  carry it). No-op if the document vanished. */
+export function setThumb(id: string, thumb: Blob): Promise<void> {
+  return dualTx((_docs, meta) => {
+    const get = meta.get(id);
+    get.onsuccess = () => {
+      const row = get.result as DocMeta | undefined;
+      if (row) meta.put({ ...row, thumb });
+    };
+  });
+}
+
 export function loadDoc(id: string): Promise<StoredDoc | undefined> {
   return readTx<StoredDoc | undefined>(DOCS, (s) => s.get(id));
 }

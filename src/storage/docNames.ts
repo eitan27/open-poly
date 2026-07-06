@@ -23,6 +23,17 @@ export function copyName(source: string, existing: readonly string[]): string {
   }
 }
 
+/** `name` if free, else the first free "name N" (N ≥ 2) — used when importing
+ *  a file whose name collides with an existing document. */
+export function dedupeName(name: string, existing: readonly string[]): string {
+  const taken = new Set(existing);
+  if (!taken.has(name)) return name;
+  for (let n = 2; ; n++) {
+    const candidate = `${name} ${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
 /** Compact "edited …" label for the Documents dialog. */
 export function timeAgo(then: number, now = Date.now()): string {
   const s = Math.max(0, Math.round((now - then) / 1000));

@@ -81,9 +81,11 @@ import {
   putDoc,
   renameDoc,
   setActiveDocId,
+  setThumb,
   type StoredDoc,
 } from "./storage/db";
-import { copyName, nextUntitled } from "./storage/docNames";
+import { copyName, dedupeName, nextUntitled } from "./storage/docNames";
+import { parseDocFile, serializeDocFile } from "./storage/docFile";
 import { DocumentsDialog } from "./ui/DocumentsDialog";
 import {
   arcFrom3,
@@ -1256,6 +1258,43 @@ export default function App() {
     }).catch((err) => console.warn("flush save failed:", err));
   }, [doc, docName, rawMeshes, persistLoaded]);
 
+  /** Snapshot the CURRENT viewport into `meta.thumb` for `docId`, downscaled
+   *  to ~256 px (offscreen canvas — capturePNG is Retina-sized, and a 2×/4×
+   *  thumbnail would quadruple the stored bytes for no visible gain in a 56 px
+   *  slot). Fire-and-forget: a failed capture just keeps the old thumb. */
+  const captureThumb = useCallback((docId: string) => {
+    const dataUrl = viewApiRef.current?.capturePNG();
+    if (!dataUrl) return;
+    const img = new Image();
+    img.onload = () => {
+      const w = 256;
+      const h = Math.max(1, Math.round((img.height / img.width) * w));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
+      canvas.toBlob((blob) => {
+        if (blob) setThumb(docId, blob).catch(() => {});
+      }, "image/jpeg", 0.75);
+    };
+    img.src = dataUrl;
+  }, []);
+
+  // Refresh the thumbnail when a regen settles, throttled to once per 30 s per
+  // document (never per keystroke — regens can settle several times a second
+  // while dragging a dimension). Switch-away also captures (see openDocument).
+  const thumbAtRef = useRef<{ id: string; at: number } | null>(null);
+  useEffect(() => {
+    if (!persistLoaded || regenSettledSeq === 0) return;
+    const id = docIdRef.current!;
+    const last = thumbAtRef.current;
+    if (last && last.id === id && Date.now() - last.at < 30_000) return;
+    thumbAtRef.current = { id, at: Date.now() };
+    // Give the freshly settled meshes one frame to actually paint.
+    const t = setTimeout(() => captureThumb(id), 300);
+    return () => clearTimeout(t);
+  }, [regenSettledSeq, persistLoaded, captureThumb]);
+
   /** Make `record` the working document. Ordering is load-bearing:
    *  `docIdRef` updates BEFORE `resetDoc`, so the first autosave after a switch
    *  can never write the incoming document's content under the outgoing id
@@ -1280,14 +1319,16 @@ export default function App() {
   const openDocument = useCallback(
     async (id: string) => {
       if (id === docIdRef.current) return;
+      captureThumb(docIdRef.current!); // the canvas still shows the outgoing doc
       await flushSave();
       const record = await loadDoc(id);
       if (record) adoptRecord(record);
     },
-    [flushSave, adoptRecord],
+    [flushSave, adoptRecord, captureThumb],
   );
 
   const newDocument = useCallback(async () => {
+    captureThumb(docIdRef.current!);
     await flushSave();
     const metas = await listMeta();
     const now = Date.now();
@@ -1300,10 +1341,11 @@ export default function App() {
     };
     await putDoc(record); // exists in the list before it's ever edited
     adoptRecord(record);
-  }, [flushSave, adoptRecord]);
+  }, [flushSave, adoptRecord, captureThumb]);
 
   const duplicateDocument = useCallback(
     async (id: string) => {
+      captureThumb(docIdRef.current!);
       // Flush first so duplicating the ACTIVE doc copies its latest edits.
       if (id === docIdRef.current) await flushSave();
       const metas = await listMeta();
@@ -1311,7 +1353,7 @@ export default function App() {
       const copy = await duplicateDoc(id, genId(), copyName(source?.name ?? "Untitled", metas.map((m) => m.name)));
       if (copy) adoptRecord(copy);
     },
-    [flushSave, adoptRecord],
+    [flushSave, adoptRecord, captureThumb],
   );
 
   const deleteDocument = useCallback(
@@ -1338,6 +1380,48 @@ export default function App() {
     await renameDoc(id, name);
     if (id === docIdRef.current) setDocName(name);
   }, []);
+
+  /** Save a document as `.openpoly.json` (envelope + parametric doc; cached
+   *  meshes deliberately excluded — see storage/docFile.ts). */
+  const exportDocument = useCallback(
+    async (id: string) => {
+      if (id === docIdRef.current) await flushSave(); // export the latest edits
+      const record = await loadDoc(id);
+      if (!record) return;
+      const blob = new Blob([serializeDocFile(record.name, record.doc)], { type: "application/json" });
+      downloadBlob(blob, `${safeFilename(record.name)}.openpoly.json`);
+    },
+    [flushSave],
+  );
+
+  /** Import a `.openpoly.json` file as a NEW document (fresh id — an import
+   *  must never overwrite an existing doc) and open it. Resolves an error
+   *  message for the dialog to show, or null on success. */
+  const importDocumentFile = useCallback(
+    async (file: File): Promise<string | null> => {
+      let parsed: ReturnType<typeof parseDocFile>;
+      try {
+        parsed = parseDocFile(await file.text());
+      } catch (err) {
+        return String((err as Error).message ?? err);
+      }
+      captureThumb(docIdRef.current!);
+      await flushSave();
+      const metas = await listMeta();
+      const now = Date.now();
+      const record: StoredDoc = {
+        id: genId(),
+        name: dedupeName(parsed.name, metas.map((m) => m.name)),
+        doc: migrateDocument(parsed.doc),
+        createdAt: now,
+        updatedAt: now,
+      };
+      await putDoc(record);
+      adoptRecord(record);
+      return null;
+    },
+    [flushSave, adoptRecord, captureThumb],
+  );
 
   // Same-document multi-tab guard: announce which doc this tab holds; if
   // another tab announces (or answers for) the same doc, both show a warning.
@@ -3769,6 +3853,8 @@ export default function App() {
           onDuplicate={duplicateDocument}
           onDelete={deleteDocument}
           onRename={renameDocument}
+          onExport={exportDocument}
+          onImport={importDocumentFile}
         />
       )}
       <div className="body">

@@ -834,9 +834,17 @@ docs in different tabs works naturally and becomes the recommended pattern.
    + `scripts/verify-multidoc-m2.mjs` (13 headless checks: isolation, flush
    inside the debounce window, duplicate, delete-active fallback, two-tab
    warn + clear).
-3. **M3 — Thumbnails + `.json` import/export.** Throttled thumb capture,
-   export/import with version + migration + new-id rule. Playwright: export →
-   delete → import → same geometry (compare scene summary).
+3. **M3 — Thumbnails + `.json` import/export. ✅ DONE (2026-07-06).**
+   Thumbnails: `captureThumb` (viewport `capturePNG` → 256 px JPEG blob via
+   offscreen canvas) on regen settle throttled 30 s/doc + on every
+   switch-away; `db.setThumb` writes meta only. Files: `storage/docFile.ts`
+   (envelope `{format:"openpoly-doc", version, name, doc}`, meshes excluded,
+   readable parse errors) — Export row action (flushes active first),
+   Import… button + drag-drop onto the dialog (migrate + FRESH id +
+   `dedupeName`; error banner in the dialog). 9 new vitest (envelope
+   round-trip/rejections, dedupeName, setThumb) + `verify-multidoc-m3.mjs`
+   (12 headless checks: thumb in meta + rendered, envelope shape/filename,
+   import opens deduped fresh-id copy, corrupt file errors readably).
 4. **M4 — Agent tools.** The five ops + MCP tools + summary fields + guide
    section; extend `scripts/mcp-e2e.mjs` with a list → new → build → switch →
    read round-trip.
