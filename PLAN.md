@@ -813,11 +813,15 @@ docs in different tabs works naturally and becomes the recommended pattern.
 
 #### Delivery steps
 
-1. **M1 — Storage + title (foundation).** DB v2 (meta store + migration +
-   `putDoc`/`listMeta`/`renameDoc`/`duplicateDoc`), `activeDocId` pointer,
-   topbar editable title + tab title, autosave writes both stores. Vitest:
-   `db.test.ts` against `fake-indexeddb` (migration, dual-write atomicity,
-   rename, duplicate); the docIdRef-clobber regression test.
+1. **M1 — Storage + title (foundation). ✅ DONE (2026-07-06, `feat/multidoc`).**
+   DB v2 (meta store + cursor-backfill migration + `putDoc`/`listMeta`/
+   `renameDoc`/`duplicateDoc` dual-store transactions), `activeDocId`
+   localStorage pointer (boot restores the TAB's doc, fallback most-recent),
+   topbar click-to-edit title + browser tab title, autosave dual-writes and
+   preserves createdAt/thumb. 9 vitest against `fake-indexeddb` (new devDep) +
+   `scripts/verify-multidoc-m1.mjs` (9 headless checks incl. live v1→v2
+   migration). *(The docIdRef-clobber regression test moves to M2 with the
+   switch flow it guards.)*
 2. **M2 — Documents dialog.** List from `meta`, new/open/rename/duplicate/
    delete + confirm, the switch flow (flush → load → paint → reset), multi-tab
    BroadcastChannel banner. Playwright: create → edit → switch → switch back →
