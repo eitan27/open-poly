@@ -637,13 +637,11 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   `Document`); the app restores the most-recent doc on load and debounced-
   autosaves on change (autosave waits for the initial load). A refresh no longer
   loses work.
-- **Multi-document manager (TODO — builds directly on `db.ts`).** A **Documents
-  list / file menu**: new, open, rename, duplicate, and delete documents (the
-  store is already keyed by id and `listDocs()` exists). Track the active
-  document id (e.g. in localStorage) instead of "most recent." Add **import /
-  export as `.json`** for portability/sharing, and per-document **thumbnails**
-  (render a snapshot Blob into the record). This is the next persistence step
-  that turns "one autosaved sketchpad" into a real multi-file workspace.
+- **Multi-document manager (TODO — builds directly on `db.ts`).** Full spec
+  below: **"Phase 8.7 — Multi-document manager (spec)"**. Turns "one autosaved
+  sketchpad" into a real multi-file workspace: documents dialog, editable
+  title, thumbnails, `.json` import/export, and the agent's
+  `list/open/new_document` tools (Phase 9 L4).
 - Measurement tools, section view, appearance, keyboard shortcuts.
 - Performance: incremental regen (only re-run dirty features), tessellation LOD.
 - **CI — ✅ DONE.** `.github/workflows/ci.yml` runs `npm run typecheck` (`tsc -b`,
@@ -663,6 +661,173 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 > boolean bodies, recolor/hide parts, **export a STEP/STL file**, and it all
 > **autosaves** — with variables and a working timeline. Validates every hard
 > layer end to end.
+
+### Phase 8.7 — Multi-document manager (spec, 2026-07-06)
+
+Turns the single autosaved sketchpad into a multi-file workspace. Everything
+below builds on what exists: `src/storage/db.ts` (IndexedDB store keyed by doc
+id, `StoredDoc {id, name, doc, updatedAt, meshes?}`), the App's restore/autosave
+effects (`App.tsx` ~1145/1180), `useHistory.reset`, and `ViewportApi.capturePNG`.
+
+**Goals:** several named documents; switch/create/rename/duplicate/delete
+without losing work; instant-feeling switches; `.json` portability; agent can
+list/open/create documents (Phase 9 L4). **Non-goals (v1):** cloud sync,
+folders/tags, collaborative editing, per-document settings profiles.
+
+#### Data model & storage (DB v2)
+
+- **Split metadata from payload.** `listDocs()` today `getAll()`s FULL records —
+  with saved meshes riding along, opening the Documents dialog (or booting)
+  would deserialize every document's tessellation. DB v2 adds a second object
+  store **`meta`**: `DocMeta { id, name, updatedAt, createdAt, featureCount,
+  partCount, thumb?: Blob }`. The dialog and boot path read ONLY `meta`
+  (cheap); the full `documents` record loads on open.
+- `StoredDoc` gains `createdAt` (and keeps `meshes` — see Performance). Writes
+  update both stores in **one transaction** so they can't drift; `db.ts` grows
+  `listMeta()`, `putDoc(record)` (writes both), `renameDoc(id, name)` (both),
+  `duplicateDoc(id)`, and keeps `loadDoc`/`deleteDoc` (delete removes both).
+- **Active document pointer** in `localStorage` (`openpoly.activeDocId`) — NOT
+  "most recent", so a refresh reopens what you were looking at even if another
+  tab touched a different doc more recently. Fallback: most-recent meta, else
+  seed a new "Untitled".
+- **v1 → v2 upgrade** (in `onupgradeneeded`): create `meta`, backfill by
+  cursoring `documents` (derive counts from the doc; no thumbs yet). Existing
+  single-doc users see their doc appear in the list unchanged.
+- **Title lives on `StoredDoc`/`DocMeta`, NOT inside `Document`.** The
+  parametric model stays pure geometry; rename is a storage-level operation
+  that does NOT create an undo step and can't be undone away. (Same reasoning
+  as feature colors living on features but doc identity living outside.)
+
+#### UX
+
+- **Topbar title.** Replace the static "Phase 3 · modeling" chip with the
+  document name — click to edit inline (like Parts renaming); Enter/blur
+  commits, Esc reverts; empty reverts to previous. Also mirror to the browser
+  tab: `document.title = "<name> — Open Poly"`. A subtle "Saved ✓ / Saving…"
+  hint can fold into the existing status chip (autosave already exists; this
+  just surfaces it).
+- **Documents dialog** (a modal on the existing `DraggableDialog` pattern,
+  opened from a **⌘O / "Documents" topbar button** next to the title):
+  - Grid or list of cards: **thumbnail**, name, "edited 3h ago", small
+    "12 features · 3 parts" line. Active document highlighted, list sorted
+    most-recently-edited first.
+  - Row actions: **Open**, **Rename** (inline), **Duplicate** ("Copy of X",
+    becomes active), **Export .json**, **Delete** (two-step confirm in place;
+    deleting the ACTIVE doc opens the next most recent, or seeds a fresh
+    "Untitled" if none remain).
+  - Header actions: **＋ New document** (empty seed via `createDocument()`,
+    named "Untitled 2", "Untitled 3"…; opens immediately), **Import .json**
+    (file picker + drag-drop onto the dialog).
+  - The dialog is the only browsing surface (no separate home screen) — this
+    is a local tool, not a cloud drive; Esc closes and you're back in the
+    model.
+- **Switch flow** (the critical path): flush the pending autosave (cancel the
+  600 ms debounce and `putDoc` NOW, with current meshes) → load the target's
+  `StoredDoc` → `migrateDocument` → paint its saved `meshes` instantly →
+  `resetDoc` (clears undo history — a document boundary is a history boundary)
+  → kernel regen swaps in fresh geometry when it settles → update
+  `activeDocId` + tab title. Selection, dialogs, rollback drag state, and the
+  agent's pending waiters all reset with the doc.
+- **`.json` export/import.** Export: `{ format: "openpoly-doc", version: N,
+  name, doc }` (no meshes — they're a cache; files stay small and diffable).
+  Import: parse → `migrateDocument` → new id (NEVER reuse the file's id —
+  imports must not silently overwrite) → name from file (deduped) → open.
+  Corrupt/unknown-version files surface a readable error in the dialog.
+
+#### Performance — what loads when
+
+| Moment | Loads | Cost |
+| --- | --- | --- |
+| **Boot** | `meta` for the active-id lookup + the ONE active `StoredDoc` (doc + meshes) | one small getAll + one record; meshes paint instantly, OCCT regen runs behind |
+| **Documents dialog open** | `meta` only (names, dates, counts, thumb Blobs) | no `Document` JSON, no meshes deserialized |
+| **Switch/open** | that one `StoredDoc` | same as boot's second half |
+| **Autosave (600 ms debounce)** | writes active `StoredDoc` + its `meta` row | unchanged from today + one small row |
+
+- **Thumbnails**: `capturePNG()` downscaled to ~256 px and stored as a Blob on
+  `meta.thumb`. Generated **on regen settle, throttled** (e.g. at most once per
+  30 s per doc) and always once on **switch-away** — never per keystroke, and
+  never blocks the switch (fire-and-forget after flush). Retina note: downscale
+  via an offscreen canvas so the Blob isn't 4× the display size.
+- **Kernel caches across switches:** the worker's `builderCache`/`meshCache`
+  are content-hash-keyed (doc-agnostic keys!) but swept after every regen to
+  "used this run" — so switching docs evicts doc A's entries and switching back
+  re-solves its sweeps/lofts/booleans from scratch. **v1 accepts this** (the
+  saved-meshes instant paint hides most of it). Follow-up option recorded here:
+  sweep to "used in the last K regens" or per-doc used-sets to make A↔B
+  round-trips cheap.
+- **One doc in memory at a time.** No preloading of inactive docs; the meta
+  store is the only always-resident index.
+- **Quota:** IndexedDB writes can fail (private mode, disk pressure). Autosave
+  already catches + warns; the dialog should surface a persistent banner if the
+  LAST save failed, since now "which doc did I lose?" is a real question.
+
+#### Multi-tab safety
+
+Two tabs editing the SAME doc is last-writer-wins clobbering today (and stays
+dangerous with multiple docs). v1 guard: a **`BroadcastChannel("openpoly-docs")`**
+— each tab announces `{docId, tabId}` on open/switch; a tab holding the same
+docId shows a warning banner ("This document is open in another tab — changes
+may overwrite each other"). Full locking/merging is out of scope; different
+docs in different tabs works naturally and becomes the recommended pattern.
+
+#### Agent integration (Phase 9 L4 — `list/open/new_document`)
+
+- **New operations** (zod, `operations.ts` → `commands.ts` → MCP tools):
+  - `listDocuments` (read) → `[{id, name, updatedAt, featureCount, partCount,
+    active}]` from `meta`.
+  - `openDocument {id}` → runs the same switch flow (flush → load → reset);
+    resolves after the first regen settles so the next read sees real geometry.
+  - `newDocument {name?}` → seed + open.
+  - `renameDocument {id?, name}` (default: active), `duplicateDocument {id?}`.
+  - **No `deleteDocument` in v1** — destructive, low value for modeling tasks;
+    the guide tells the agent to ask the user. (Revisit with L4 auth.)
+- **Context in reads:** `getSceneSummary` and `get_document` gain
+  `{documentId, documentName}` so the agent always knows WHICH file it's
+  shaping ("continue yesterday's bracket" = `list_documents` → match by name →
+  `open_document` → `get_scene_summary`).
+- **AgentContext** grows `getActiveDocMeta()` + `switchDocument(id)` wired in
+  `useAgentBridge`/`App` (the switch must go through the App's flow, not a raw
+  `setDoc`, so history/meshes/waiters reset correctly).
+- **Bridge `hello`** capabilities blob adds the active doc id/name, so the MCP
+  server can log which doc a session drove.
+- **Guardrails:** `openDocument` while a regen is in flight waits for it
+  (regen start-seq already serializes waiters); ops that arrive DURING a switch
+  queue behind it (the serial request pipeline in `bridgeClient` already
+  guarantees ordering). Modeling-guide gets a "Documents" section: read
+  `documentId` before assuming, don't switch mid-recipe, never delete.
+
+#### Edge cases & open questions
+
+- **Undo across switches:** cleared (document boundary). In-session per-doc
+  history retention (a `Map<docId, HistoryState>`) is a cheap follow-up if
+  switching feels lossy — decide after using it.
+- **Per-doc view state** (camera, datum visibility, timeline height): nice to
+  restore on open; needs a `getCamera()` addition to `ViewportApi`. Punt to a
+  fast-follow — stored on `StoredDoc.view` when it comes.
+- **Corrupt record on open:** catch, offer "Export raw JSON" + "Delete" instead
+  of a white screen; never auto-delete.
+- **`docIdRef` seeding order:** autosave currently guards on `persistLoaded`;
+  the switch flow must set `docIdRef` BEFORE `resetDoc` so the first autosave
+  after a switch can't write doc B's content under doc A's id (the classic
+  clobber bug — write a regression test for exactly this).
+
+#### Delivery steps
+
+1. **M1 — Storage + title (foundation).** DB v2 (meta store + migration +
+   `putDoc`/`listMeta`/`renameDoc`/`duplicateDoc`), `activeDocId` pointer,
+   topbar editable title + tab title, autosave writes both stores. Vitest:
+   `db.test.ts` against `fake-indexeddb` (migration, dual-write atomicity,
+   rename, duplicate); the docIdRef-clobber regression test.
+2. **M2 — Documents dialog.** List from `meta`, new/open/rename/duplicate/
+   delete + confirm, the switch flow (flush → load → paint → reset), multi-tab
+   BroadcastChannel banner. Playwright: create → edit → switch → switch back →
+   content intact + instant paint; delete-active fallback.
+3. **M3 — Thumbnails + `.json` import/export.** Throttled thumb capture,
+   export/import with version + migration + new-id rule. Playwright: export →
+   delete → import → same geometry (compare scene summary).
+4. **M4 — Agent tools.** The five ops + MCP tools + summary fields + guide
+   section; extend `scripts/mcp-e2e.mjs` with a list → new → build → switch →
+   read round-trip.
 
 ### Phase 8.5 — UI/UX backlog (next polish pass) — IN PROGRESS (6/8 done)
 
@@ -905,7 +1070,8 @@ official **`@modelcontextprotocol/sdk`**.
   session for quick re-reads.
 - Lean on the **multi-document manager** (Phase 8): expose `list_documents` /
   `open_document` / `new_document` tools so "continue yesterday's bracket" = open
-  that doc + `get_scene_summary`.
+  that doc + `get_scene_summary`. *(Full design: "Phase 8.7 — Multi-document
+  manager (spec)" → Agent integration.)*
 
 ### Agent modeling guide + issue reporting
 - **The "skill"** — a concise modeling playbook lives at
