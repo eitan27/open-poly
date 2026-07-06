@@ -62,6 +62,19 @@ function ensureFont(): Promise<void> {
 
 const MESH_OPTS = { tolerance: 0.05, angularTolerance: 30 };
 
+// Fuzzy tolerance (mm) applied to every boolean. OCCT booleans on thin-walled
+// B-spline swept solids (this chute's tube∪scoop) are pathologically slow
+// because near-tangent surface intersections are computed at machine precision;
+// a small fuzzy value coalesces them and roughly HALVES each boolean's time.
+// Must stay well below the smallest real feature. Measured on the chute doc:
+//   0     -> booleans 9294/2923/1888ms  (baseline)
+//   0.01  -> 4888/1253/998ms, geometry identical  ← chosen
+//   0.05  -> BREAKS the ChuteWithScoop subtract (fuzzy > the thin ScoopInner
+//            wall gap, so the cut degenerates)
+// So 0.01 is the sweet spot: ~45% faster, no geometry change. Don't raise it
+// without re-checking every boolean result.
+const BOOL_FUZZY = 0.01;
+
 // --- Topological naming (N2: OCCT construction history) ---
 // A body carries a name map (face hashCode -> persistent name) built at creation
 // and PROPAGATED through every operation via OCCT history (Generated/Modified/
@@ -629,12 +642,21 @@ function booleanNamed(op: "fuse" | "cut" | "common", base: NamedShape, tool: Nam
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   const progress = new oc.Message_ProgressRange_1();
+  // Low-level construction (empty ctor + SetArguments/SetTools) so we can set a
+  // fuzzy value before Build — the (S1,S2,PR) ctor performs the op immediately,
+  // leaving no window to configure it. args = base, tools = tool (for cut this
+  // is base − tool).
   const builder =
-    op === "fuse"
-      ? new oc.BRepAlgoAPI_Fuse_3(base.shape.wrapped, tool.shape.wrapped, progress)
-      : op === "cut"
-        ? new oc.BRepAlgoAPI_Cut_3(base.shape.wrapped, tool.shape.wrapped, progress)
-        : new oc.BRepAlgoAPI_Common_3(base.shape.wrapped, tool.shape.wrapped, progress);
+    op === "fuse" ? new oc.BRepAlgoAPI_Fuse_1()
+    : op === "cut" ? new oc.BRepAlgoAPI_Cut_1()
+    : new oc.BRepAlgoAPI_Common_1();
+  const args = new oc.TopTools_ListOfShape_1();
+  args.Append_1(base.shape.wrapped);
+  const tools = new oc.TopTools_ListOfShape_1();
+  tools.Append_1(tool.shape.wrapped);
+  builder.SetArguments(args);
+  builder.SetTools(tools);
+  if (BOOL_FUZZY > 0) builder.SetFuzzyValue(BOOL_FUZZY);
   builder.Build(progress);
   const shape = cast(builder.Shape()) as Shape3D;
 
@@ -656,6 +678,9 @@ function booleanNamed(op: "fuse" | "cut" | "common", base: NamedShape, tool: Nam
     }
   }
   builder.delete();
+  args.delete();
+  tools.delete();
+  progress.delete();
   return { shape, names };
 }
 
