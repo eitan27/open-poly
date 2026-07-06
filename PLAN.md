@@ -450,6 +450,14 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   churned `#1` edge name re-matched + ⚠; bogus name → descriptive error) and
   `scripts/verify-naming-face.mjs` (boolean-split `+z#1` profile face un-split
   by an upstream edit → pad re-attaches geometrically + ⚠).
+  *Residual follow-ups (agent path, Phase 9):* (a) the MCP `dress_up` op takes
+  edge names only, so `commands.ts` stores no `edgeRefs` fingerprints —
+  agent-created dress-ups get the name/base-name rescue passes but not the
+  geometric one (fix: compute mid+length from mesh `edgeGroups` in
+  `commands.ts`, like `App.tsx`'s `edgeFingerprint`); (b) warnings reach the
+  timeline ⚠ badge but not the agent's `OpResult`/`RegenSettle`, so the LLM
+  can't notice/verify a re-match (fix: thread `RegenOutcome.warnings` through
+  the regen settle into apply results).
 - **Selection round-trip** (sketch region / body face / body edge → kernel →
   meshed body back) — ✅ exercised end to end.
 
