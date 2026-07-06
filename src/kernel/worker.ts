@@ -941,7 +941,7 @@ const meshCache = new Map<string, { faces: MeshedFaces; edges: MeshedEdges }>();
 // --- Regen profiling (dev): per-feature build ms + per-body mesh ms, logged
 // once per regen. `hit` = the pure-builder canonical was already cached. Set
 // REGEN_PROFILE=false to silence. ---
-const REGEN_PROFILE = true;
+const REGEN_PROFILE = false;
 type FeatureTiming = { id: string; type: string; ms: number };
 
 /** cyrb53 — a fast, well-distributed 53-bit string hash. Used to keep content
