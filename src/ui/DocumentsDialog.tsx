@@ -38,6 +38,10 @@ export function DocumentsDialog({
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  // Set when Open/Duplicate/Rename/Delete/Export throws (most commonly: the
+  // document is corrupt, or vanished under a concurrent action) — shown as a
+  // banner instead of a silent no-op / unhandled rejection.
+  const [actionError, setActionError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(() => {
@@ -61,14 +65,22 @@ export function DocumentsDialog({
   }, [onClose]);
 
   // Run an action with the list disarmed + refreshed afterwards. Actions that
-  // switch the active document also close the dialog (via `closeAfter`).
+  // switch the active document also close the dialog (via `closeAfter`). A
+  // thrown error (e.g. the document is corrupt) surfaces as a banner instead
+  // of closing/switching — the dialog stays open so the user can act on it
+  // (Export as JSON still works on a corrupt doc; Delete always does).
   const run = async (action: () => Promise<void>, closeAfter = false) => {
     setBusy(true);
     setConfirmDelete(null);
+    setActionError(null);
+    setImportError(null);
     try {
       await action();
       if (closeAfter) onClose();
       else reload();
+    } catch (err) {
+      setActionError(String((err as Error)?.message ?? err));
+      reload(); // the doc may have vanished/changed — refresh what we show
     } finally {
       setBusy(false);
     }
@@ -87,6 +99,7 @@ export function DocumentsDialog({
   const importFile = async (file: File) => {
     setBusy(true);
     setImportError(null);
+    setActionError(null);
     try {
       const err = await onImport(file);
       if (err) setImportError(err);
@@ -135,6 +148,7 @@ export function DocumentsDialog({
           </button>
         </div>
         {importError && <p className="docs-error">{importError}</p>}
+        {actionError && <p className="docs-error">{actionError}</p>}
 
         {metas === null ? (
           <p className="hint">Loading…</p>

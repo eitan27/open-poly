@@ -531,6 +531,11 @@ export default function App() {
   // True while the SAME document is open in another tab (BroadcastChannel).
   const [docInOtherTab, setDocInOtherTab] = useState(false);
   const tabIdRef = useRef(genId());
+  // Set once, at most, by the boot-restore effect when the saved active/most-
+  // recent document couldn't be opened (corrupt or unreadable) — a dismissible
+  // banner pointing at the Documents dialog's existing Export/Delete actions,
+  // rather than the app silently falling back to a blank doc.
+  const [docRecoveryBanner, setDocRecoveryBanner] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection[]>([]);
   const featureIdOf = (s: Selection): string =>
     s.kind === "feature" ? s.id : "featureId" in s ? s.featureId : s.sketchId;
@@ -1177,33 +1182,60 @@ export default function App() {
     (async () => {
       try {
         const activeId = getActiveDocId();
-        let record = activeId ? await loadDoc(activeId) : undefined;
-        if (!record) {
-          const metas = await listMeta();
-          if (metas.length > 0) record = await loadDoc(metas[0].id);
+        let record: StoredDoc | undefined;
+        // Which document (if any) failed to open — surfaced as a dismissible
+        // banner rather than silently discarded, since the failure mode used to
+        // be "the app quietly falls back to a blank doc and the next autosave
+        // overwrites the broken record" (see docIdRef note below).
+        let failedName: string | null = null;
+        try {
+          record = activeId ? await loadDoc(activeId) : undefined;
+          if (!record) {
+            const metas = await listMeta();
+            if (metas.length > 0) record = await loadDoc(metas[0].id);
+          }
+        } catch (err) {
+          console.warn("could not read saved document:", err);
+          failedName = "your last document";
         }
         if (cancelled) return;
         if (record) {
-          docIdRef.current = record.id;
-          docCreatedAtRef.current = record.createdAt ?? record.updatedAt;
-          setDocName(record.name || "Untitled");
-          const migrated = migrateDocument(record.doc);
-          // Paint the last-saved meshes immediately so a heavy document shows its
-          // geometry at once — the regen `resetDoc` kicks off (which rebuilds
-          // every feature through OCCT and can take many seconds) then swaps in
-          // fresh meshes when it settles. Without this the viewport stays blank
-          // until that full rebuild finishes.
-          if (record.meshes?.length) setRawMeshes(record.meshes);
-          resetDoc(migrated);
-          // Default the Variables section open/collapsed by the restored count.
-          setVariablesOpen(migrated.variables.length < VARS_OPEN_THRESHOLD);
+          try {
+            // Validate BEFORE touching docIdRef/state: migrateDocument throws on
+            // malformed persisted data (e.g. `features` isn't an array). If it
+            // threw AFTER docIdRef already pointed at this record, the fresh
+            // seed doc would render under the BROKEN record's id, and the next
+            // autosave would silently overwrite the corrupt data with an empty
+            // box — the exact "quiet data loss" this fix exists to prevent.
+            const migrated = migrateDocument(record.doc);
+            docIdRef.current = record.id;
+            docCreatedAtRef.current = record.createdAt ?? record.updatedAt;
+            setDocName(record.name || "Untitled");
+            // Paint the last-saved meshes immediately so a heavy document shows
+            // its geometry at once — the regen `resetDoc` kicks off (which
+            // rebuilds every feature through OCCT and can take many seconds)
+            // then swaps in fresh meshes when it settles. Without this the
+            // viewport stays blank until that full rebuild finishes.
+            if (record.meshes?.length) setRawMeshes(record.meshes);
+            resetDoc(migrated);
+            // Default the Variables section open/collapsed by the restored count.
+            setVariablesOpen(migrated.variables.length < VARS_OPEN_THRESHOLD);
+          } catch (err) {
+            console.warn("saved document is corrupt:", err);
+            failedName = record.name || "your last document";
+          }
         }
-        // Adopt whichever doc we ended up with (restored or fresh seed) as the
-        // tab's active document.
+        if (failedName) {
+          setDocRecoveryBanner(
+            `Couldn't open ${failedName === "your last document" ? failedName : `"${failedName}"`} — it may be ` +
+              `corrupted. It's still in Documents: use Export as JSON to save its data, then Delete it.`,
+          );
+        }
+        // Adopt whichever doc we ended up with (restored, or the fresh seed —
+        // docIdRef never adopted a record that failed to open) as the tab's
+        // active document.
         setActiveDocId(docIdRef.current!);
         setActiveId(docIdRef.current!);
-      } catch (err) {
-        console.warn("could not load saved document:", err);
       } finally {
         if (!cancelled) setPersistLoaded(true);
       }
@@ -1297,20 +1329,29 @@ export default function App() {
     return () => clearTimeout(t);
   }, [regenSettledSeq, persistLoaded, captureThumb]);
 
-  /** Make `record` the working document. Ordering is load-bearing:
-   *  `docIdRef` updates BEFORE `resetDoc`, so the first autosave after a switch
-   *  can never write the incoming document's content under the outgoing id
-   *  (the classic clobber bug — covered by verify-multidoc-m2.mjs). The saved
-   *  meshes paint instantly while the kernel regen rebuilds behind. */
+  /** Make `record` the working document. Ordering is load-bearing in TWO ways:
+   *  1. `migrateDocument` runs FIRST, before anything is mutated — it throws on
+   *     malformed persisted data, and if that happened after `docIdRef` already
+   *     pointed at `record.id`, the app would be left in an inconsistent state
+   *     (docIdRef says we're on the new doc; `doc` state is still the old one),
+   *     and the next autosave would silently overwrite `record`'s real content.
+   *  2. Once validated, `docIdRef` updates BEFORE `resetDoc`, so the first
+   *     autosave after a switch can never write the incoming document's content
+   *     under the outgoing id (the clobber bug — covered by verify-multidoc-
+   *     m2.mjs). The saved meshes paint instantly while the kernel regen
+   *     rebuilds behind.
+   *  Throws (uncaught) if `record.doc` doesn't migrate — callers decide how to
+   *  surface that (the Documents dialog shows it; the boot-restore effect
+   *  falls back to a fresh doc + a recovery banner). */
   const adoptRecord = useCallback(
     (record: StoredDoc) => {
+      const migrated = migrateDocument(record.doc);
       docIdRef.current = record.id;
       docCreatedAtRef.current = record.createdAt ?? record.updatedAt;
       setDocName(record.name || "Untitled");
       setActiveId(record.id);
       setActiveDocId(record.id);
       setSelection([]);
-      const migrated = migrateDocument(record.doc);
       setRawMeshes(record.meshes ?? []);
       resetDoc(migrated); // clears undo history — a document boundary
       setVariablesOpen(migrated.variables.length < VARS_OPEN_THRESHOLD);
@@ -1323,8 +1364,23 @@ export default function App() {
       if (id === docIdRef.current) return;
       captureThumb(docIdRef.current!); // the canvas still shows the outgoing doc
       await flushSave();
-      const record = await loadDoc(id);
-      if (record) adoptRecord(record);
+      let record: StoredDoc | undefined;
+      try {
+        record = await loadDoc(id);
+      } catch (err) {
+        throw new Error(`Could not read this document from storage: ${String((err as Error)?.message ?? err)}`);
+      }
+      if (!record) throw new Error("This document no longer exists — it may have been deleted.");
+      try {
+        adoptRecord(record);
+      } catch {
+        // Swallow the raw parse error (e.g. a TypeError from migrateDocument) —
+        // not actionable for the user. It's still in Documents either way: they
+        // can Export as JSON (works regardless of doc validity) then Delete it.
+        throw new Error(
+          `"${record.name}" is corrupted and can't be opened. Use Export as JSON to save its data, then Delete it.`,
+        );
+      }
     },
     [flushSave, adoptRecord, captureThumb],
   );
@@ -1353,7 +1409,14 @@ export default function App() {
       const metas = await listMeta();
       const source = metas.find((m) => m.id === id);
       const copy = await duplicateDoc(id, genId(), copyName(source?.name ?? "Untitled", metas.map((m) => m.name)));
-      if (copy) adoptRecord(copy);
+      if (!copy) throw new Error("This document no longer exists — it may have been deleted.");
+      try {
+        adoptRecord(copy); // throws if the SOURCE was itself corrupt (copied verbatim)
+      } catch {
+        throw new Error(
+          `"${copy.name}" is corrupted and can't be opened. Use Export as JSON to save its data, then Delete it.`,
+        );
+      }
     },
     [flushSave, adoptRecord, captureThumb],
   );
@@ -3872,6 +3935,23 @@ export default function App() {
           {status}
         </span>
       </header>
+      {docRecoveryBanner && (
+        <div className="recovery-banner">
+          <span>{docRecoveryBanner}</span>
+          <button
+            className="text-btn"
+            onClick={() => {
+              setDocRecoveryBanner(null);
+              setDocsDialogOpen(true);
+            }}
+          >
+            Open Documents
+          </button>
+          <button className="row-icon" title="Dismiss" onClick={() => setDocRecoveryBanner(null)}>
+            ✕
+          </button>
+        </div>
+      )}
       {docsDialogOpen && (
         <DocumentsDialog
           activeId={activeId}

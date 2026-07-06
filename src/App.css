@@ -243,6 +243,25 @@
   margin: 0 0 10px;
 }
 
+/* Full-width banner under the topbar: the boot-restore path couldn't open the
+   saved active/most-recent document (corrupt or unreadable). Same red palette
+   as .docs-error — this is a real (if recoverable) problem, not routine. */
+.recovery-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: #ffd2d2;
+  background: #3a2124;
+  border-bottom: 1px solid #5a2a2a;
+  flex: 0 0 auto;
+}
+
+.recovery-banner span {
+  flex: 1;
+}
+
 .topbar-actions {
   display: flex;
   gap: 4px;

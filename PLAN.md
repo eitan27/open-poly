@@ -803,16 +803,36 @@ docs in different tabs works naturally and becomes the recommended pattern.
   `verify-multidoc-m2.mjs`.
 - **Undo across switches** — ✅ cleared by design (document boundary); this was
   the spec'd v1 behavior, not a gap.
+- **Corrupt/missing record recovery — ✅ DONE (2026-07-06, `feat/corrupt-doc-
+  recovery`).** Two real bugs fixed, not just messaging:
+  1. **Atomicity.** `adoptRecord` and the boot-restore effect used to mutate
+     `docIdRef`/state BEFORE calling `migrateDocument` — if it threw (malformed
+     persisted `doc`), the app was left with `docIdRef` pointing at the broken
+     record while `doc` state stayed on the OLD document, and the next
+     autosave would silently overwrite the corrupt record with unrelated
+     content. Both now call `migrateDocument` FIRST and only mutate refs/state
+     if it succeeds — nothing is touched on failure.
+  2. **Silent no-ops → thrown, surfaced errors.** `openDocument`/
+     `duplicateDocument` now throw a descriptive error (missing record, unread-
+     able record, or corrupt data) instead of quietly doing nothing.
+     `DocumentsDialog`'s `run()` catches it and shows an inline banner, dialog
+     stays open. The boot-restore path shows a dismissible topbar
+     `.recovery-banner` ("Couldn't open X — it may be corrupted…") with an
+     "Open Documents" shortcut, and never adopts the broken id (so the fresh
+     seed gets its OWN id — the corrupt record is left untouched, not
+     overwritten). **No new "export raw" UI was needed**: `serializeDocFile`
+     never calls `migrateDocument` — the existing per-row **Export as JSON**
+     button already round-trips a corrupt document's raw content, so the
+     recovery path is just "point the error message at the buttons that
+     already work." Verified end-to-end by
+     `scripts/verify-corrupt-doc-recovery.mjs` (12 checks: directly corrupts a
+     real IndexedDB record, reloads, confirms the app falls back to a fresh
+     doc + shows the banner + the corrupt record survives untouched, opens the
+     dialog, confirms Open fails visibly without switching, confirms Export as
+     JSON still downloads the corrupt doc's data, confirms Delete removes it).
 
 #### Remaining open items (not yet built)
 
-- **Corrupt/missing record on open is silent.** `openDocument`/boot-restore
-  `await loadDoc(id)` and just no-op `adoptRecord` when it returns falsy — no
-  error banner, no "Export raw JSON" recovery offered (the spec called for
-  one). Today: a corrupt record means clicking **Open** does nothing
-  (dialog stays put, no explanation) rather than a white screen, which is
-  better than the failure mode we were guarding against but still not the
-  designed recovery UX.
 - **No UI for a failed autosave/flush.** `putDoc`/`flushSave` failures only
   `console.warn`; the status chip reflects kernel regen state, not save
   health. Spec called for "a persistent banner if the LAST save failed" —
