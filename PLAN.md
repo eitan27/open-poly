@@ -665,7 +665,9 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   manager"** below: documents dialog, editable title, thumbnails, `.json`
   import/export, corrupt-record recovery, and the agent's
   `list/open/new/rename/duplicate_document` tools.
-- Measurement tools, section view, appearance, keyboard shortcuts.
+- Measurement tools, section view — still TODO. *(Appearance — ✅ DONE, Phase 7:
+  color/opacity/hide per part. Keyboard shortcuts — ✅ DONE, see
+  `KEYBOARD_SHORTCUTS.md`.)*
 - **Performance — incremental regen ✅ DONE** (worker-side `builderCache`/
   `meshCache`, content-hash-keyed — see Phase 5.5's perf follow-up above).
   **Tessellation LOD — still TODO** (no distance/zoom-based mesh
@@ -1239,8 +1241,10 @@ official **`@modelcontextprotocol/sdk`**.
   surfaces `kernel_error` ("fillet: no matching edges"). 8/8 checks, stable across
   repeats. **Exit met** (mechanics): build → single-read verify → error-driven
   self-correct all work; an LLM driving it is the natural next manual test.
-- **L4 — Robustness.** token auth, multi-tab handling, error taxonomy, queue
-  ordering, reconnection, timeouts, and `list/open/new_document` tools.
+- **L4 — Robustness.** token auth, multi-tab handling (concurrent agent
+  sessions on the bridge — distinct from Phase 8.7's document-level
+  BroadcastChannel guard), error taxonomy, queue ordering, reconnection,
+  timeouts. *(`list/open/new_document` tools — ✅ DONE, Phase 8.7 M4.)*
 
 ### Existing touchpoints (where a new session hooks in)
 - `src/document/document.ts` — every mutating `Operation` maps to a fn here.
