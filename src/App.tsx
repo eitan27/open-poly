@@ -2419,11 +2419,6 @@ export default function App() {
         importInputRef.current?.click();
         return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "o") {
-        e.preventDefault(); // the browser's own Open-File dialog
-        setDocsDialogOpen((v) => !v);
-        return;
-      }
       if (e.metaKey || e.ctrlKey) return; // leave other OS/browser chords alone
 
       // Standard views: the view-controls bar is visible (and clickable) in
@@ -3838,7 +3833,7 @@ export default function App() {
           </button>
           <button
             className="text-btn docs-btn"
-            title="Open a document (⌘O)"
+            title="Open a document"
             onClick={() => setDocsDialogOpen(true)}
           >
             Open…
