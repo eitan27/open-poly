@@ -822,10 +822,18 @@ docs in different tabs works naturally and becomes the recommended pattern.
    `scripts/verify-multidoc-m1.mjs` (9 headless checks incl. live v1→v2
    migration). *(The docIdRef-clobber regression test moves to M2 with the
    switch flow it guards.)*
-2. **M2 — Documents dialog.** List from `meta`, new/open/rename/duplicate/
-   delete + confirm, the switch flow (flush → load → paint → reset), multi-tab
-   BroadcastChannel banner. Playwright: create → edit → switch → switch back →
-   content intact + instant paint; delete-active fallback.
+2. **M2 — Documents dialog. ✅ DONE (2026-07-06).** `DocumentsDialog` (modal on
+   `.modal-overlay`, lists from `meta` only; inline rename, two-step delete,
+   duplicate-opens-copy, ＋New with deduped `nextUntitled`; Esc/overlay-click
+   closes), topbar **▤ Documents** button + **⌘O**, the switch flow in App
+   (`flushSave` → `loadDoc` → `adoptRecord`: docIdRef set BEFORE `resetDoc` —
+   the clobber guard), delete-active falls back to next-recent-else-seed,
+   BroadcastChannel `openpoly-docs` open/present/leave handshake → amber
+   "Also open in another tab" badge. New `.text-btn` CSS class (auto-width
+   sibling of the fixed 28×26 icon `.tool-btn`). 4 vitest (`docNames.test.ts`)
+   + `scripts/verify-multidoc-m2.mjs` (13 headless checks: isolation, flush
+   inside the debounce window, duplicate, delete-active fallback, two-tab
+   warn + clear).
 3. **M3 — Thumbnails + `.json` import/export.** Throttled thumb capture,
    export/import with version + migration + new-id rule. Playwright: export →
    delete → import → same geometry (compare scene summary).

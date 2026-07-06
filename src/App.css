@@ -54,6 +54,175 @@
   width: 200px;
 }
 
+/* Text-sized sibling of .tool-btn (which is a FIXED 28×26 icon button — text
+   inside it overflows). Shares the look, sizes to its label. */
+.text-btn {
+  background: #232730;
+  border: 1px solid #313643;
+  color: #d6d9e0;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.text-btn:hover:not(:disabled) {
+  background: #2c313c;
+  border-color: #4f8cff;
+}
+
+.text-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Same-document-in-another-tab warning (BroadcastChannel guard). */
+.tab-warning {
+  font-size: 12px;
+  color: #ffe3a3;
+  background: #574722;
+  border-radius: 6px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+/* --- Documents dialog (Phase 8.7) --- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 9, 12, 0.6);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+  z-index: 50;
+}
+
+.docs-dialog {
+  width: min(560px, calc(100vw - 48px));
+  max-height: 70vh;
+  overflow-y: auto;
+  background: #16181d;
+  border: 1px solid #2a2d35;
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.docs-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.docs-header h2 {
+  font-size: 14px;
+  margin: 0;
+  flex: 1;
+}
+
+.docs-close {
+  font-size: 14px;
+}
+
+.docs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.docs-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid #23262e;
+  border-radius: 8px;
+}
+
+.docs-row.active {
+  border-color: #3b4252;
+  background: #1a1d24;
+}
+
+.docs-thumb {
+  width: 56px;
+  height: 40px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: #101216;
+  flex: 0 0 auto;
+}
+
+.docs-thumb.placeholder {
+  border: 1px dashed #2a2d35;
+}
+
+.docs-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.docs-name {
+  background: none;
+  border: none;
+  color: #e8eaf0;
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.docs-current {
+  color: #8a8f9c;
+  font-size: 11px;
+}
+
+.docs-name-input {
+  font-size: 13px;
+  font-family: inherit;
+  color: #e8eaf0;
+  background: #1a1c22;
+  border: 1px solid #3b4252;
+  border-radius: 4px;
+  padding: 1px 6px;
+  outline: none;
+}
+
+.docs-sub {
+  font-size: 11px;
+  color: #8a8f9c;
+}
+
+.docs-row-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.docs-row-actions .text-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.docs-delete-confirm {
+  color: #ffd2d2;
+  border-color: #5a2a2a;
+}
+
 .topbar-actions {
   display: flex;
   gap: 4px;

@@ -72,7 +72,19 @@ import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, worldToUv, type Pla
 import { evaluateExpression } from "./document/expression";
 import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
-import { getActiveDocId, listMeta, loadDoc, putDoc, setActiveDocId } from "./storage/db";
+import {
+  deleteDoc,
+  duplicateDoc,
+  getActiveDocId,
+  listMeta,
+  loadDoc,
+  putDoc,
+  renameDoc,
+  setActiveDocId,
+  type StoredDoc,
+} from "./storage/db";
+import { copyName, nextUntitled } from "./storage/docNames";
+import { DocumentsDialog } from "./ui/DocumentsDialog";
 import {
   arcFrom3,
   circleFrom3,
@@ -510,6 +522,13 @@ export default function App() {
   const docCreatedAtRef = useRef<number>(Date.now());
   // Inline title editing in the topbar: null when idle, else the draft text.
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
+  // State mirror of docIdRef for things that must re-render/re-run when the
+  // active document changes (dialog highlight, the multi-tab guard effect).
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [docsDialogOpen, setDocsDialogOpen] = useState(false);
+  // True while the SAME document is open in another tab (BroadcastChannel).
+  const [docInOtherTab, setDocInOtherTab] = useState(false);
+  const tabIdRef = useRef(genId());
   const [selection, setSelection] = useState<Selection[]>([]);
   const featureIdOf = (s: Selection): string =>
     s.kind === "feature" ? s.id : "featureId" in s ? s.featureId : s.sketchId;
@@ -1180,6 +1199,7 @@ export default function App() {
         // Adopt whichever doc we ended up with (restored or fresh seed) as the
         // tab's active document.
         setActiveDocId(docIdRef.current!);
+        setActiveId(docIdRef.current!);
       } catch (err) {
         console.warn("could not load saved document:", err);
       } finally {
@@ -1217,6 +1237,137 @@ export default function App() {
   useEffect(() => {
     document.title = `${docName} — Open Poly`;
   }, [docName]);
+
+  // --- Multi-document actions (Phase 8.7 M2) -------------------------------
+
+  /** Persist the working document NOW (same payload as the debounced autosave).
+   *  Called before switching away so the last ≤600 ms of edits can't be lost;
+   *  the pending debounce timer is cleared by its own effect when state changes,
+   *  and a double-write is harmless. */
+  const flushSave = useCallback(() => {
+    if (!persistLoaded) return Promise.resolve();
+    return putDoc({
+      id: docIdRef.current!,
+      name: docName,
+      doc,
+      updatedAt: Date.now(),
+      createdAt: docCreatedAtRef.current,
+      meshes: rawMeshes,
+    }).catch((err) => console.warn("flush save failed:", err));
+  }, [doc, docName, rawMeshes, persistLoaded]);
+
+  /** Make `record` the working document. Ordering is load-bearing:
+   *  `docIdRef` updates BEFORE `resetDoc`, so the first autosave after a switch
+   *  can never write the incoming document's content under the outgoing id
+   *  (the classic clobber bug — covered by verify-multidoc-m2.mjs). The saved
+   *  meshes paint instantly while the kernel regen rebuilds behind. */
+  const adoptRecord = useCallback(
+    (record: StoredDoc) => {
+      docIdRef.current = record.id;
+      docCreatedAtRef.current = record.createdAt ?? record.updatedAt;
+      setDocName(record.name || "Untitled");
+      setActiveId(record.id);
+      setActiveDocId(record.id);
+      setSelection([]);
+      const migrated = migrateDocument(record.doc);
+      setRawMeshes(record.meshes ?? []);
+      resetDoc(migrated); // clears undo history — a document boundary
+      setVariablesOpen(migrated.variables.length < VARS_OPEN_THRESHOLD);
+    },
+    [resetDoc],
+  );
+
+  const openDocument = useCallback(
+    async (id: string) => {
+      if (id === docIdRef.current) return;
+      await flushSave();
+      const record = await loadDoc(id);
+      if (record) adoptRecord(record);
+    },
+    [flushSave, adoptRecord],
+  );
+
+  const newDocument = useCallback(async () => {
+    await flushSave();
+    const metas = await listMeta();
+    const now = Date.now();
+    const record: StoredDoc = {
+      id: genId(),
+      name: nextUntitled(metas.map((m) => m.name)),
+      doc: createDocument(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await putDoc(record); // exists in the list before it's ever edited
+    adoptRecord(record);
+  }, [flushSave, adoptRecord]);
+
+  const duplicateDocument = useCallback(
+    async (id: string) => {
+      // Flush first so duplicating the ACTIVE doc copies its latest edits.
+      if (id === docIdRef.current) await flushSave();
+      const metas = await listMeta();
+      const source = metas.find((m) => m.id === id);
+      const copy = await duplicateDoc(id, genId(), copyName(source?.name ?? "Untitled", metas.map((m) => m.name)));
+      if (copy) adoptRecord(copy);
+    },
+    [flushSave, adoptRecord],
+  );
+
+  const deleteDocument = useCallback(
+    async (id: string) => {
+      // No flush — deleting the active doc means discarding it.
+      await deleteDoc(id);
+      if (id !== docIdRef.current) return;
+      // The active doc is gone: fall back to the next most recent, else seed.
+      const metas = await listMeta();
+      const next = metas.length ? await loadDoc(metas[0].id) : undefined;
+      if (next) {
+        adoptRecord(next);
+      } else {
+        const now = Date.now();
+        const record: StoredDoc = { id: genId(), name: "Untitled", doc: createDocument(), createdAt: now, updatedAt: now };
+        await putDoc(record);
+        adoptRecord(record);
+      }
+    },
+    [adoptRecord],
+  );
+
+  const renameDocument = useCallback(async (id: string, name: string) => {
+    await renameDoc(id, name);
+    if (id === docIdRef.current) setDocName(name);
+  }, []);
+
+  // Same-document multi-tab guard: announce which doc this tab holds; if
+  // another tab announces (or answers for) the same doc, both show a warning.
+  // Last-writer-wins autosaves make concurrent edits genuinely dangerous, so
+  // surface it rather than silently clobbering.
+  useEffect(() => {
+    if (!activeId || typeof BroadcastChannel === "undefined") return;
+    setDocInOtherTab(false);
+    const tab = tabIdRef.current;
+    const ch = new BroadcastChannel("openpoly-docs");
+    ch.onmessage = (e: MessageEvent<{ t: string; docId: string; tab: string }>) => {
+      const m = e.data;
+      if (!m || m.tab === tab || m.docId !== activeId) return;
+      if (m.t === "open") {
+        setDocInOtherTab(true);
+        ch.postMessage({ t: "present", docId: activeId, tab });
+      } else if (m.t === "present") {
+        setDocInOtherTab(true);
+      } else if (m.t === "leave") {
+        // The other holder left; re-announce to detect any remaining ones.
+        setDocInOtherTab(false);
+        ch.postMessage({ t: "open", docId: activeId, tab });
+      }
+    };
+    ch.postMessage({ t: "open", docId: activeId, tab });
+    return () => {
+      ch.postMessage({ t: "leave", docId: activeId, tab });
+      ch.close();
+    };
+  }, [activeId]);
 
   // Close the "New Body" dropdown when clicking anywhere outside it.
   useEffect(() => {
@@ -2158,6 +2309,11 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "i") {
         e.preventDefault();
         importInputRef.current?.click();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "o") {
+        e.preventDefault(); // the browser's own Open-File dialog
+        setDocsDialogOpen((v) => !v);
         return;
       }
       if (e.metaKey || e.ctrlKey) return; // leave other OS/browser chords alone
@@ -3564,6 +3720,21 @@ export default function App() {
             }}
           />
         )}
+        <button
+          className="text-btn docs-btn"
+          title="Documents (⌘O)"
+          onClick={() => setDocsDialogOpen(true)}
+        >
+          ▤ Documents
+        </button>
+        {docInOtherTab && (
+          <span
+            className="tab-warning"
+            title="This document is open in another tab — concurrent edits will overwrite each other."
+          >
+            ⚠ Also open in another tab
+          </span>
+        )}
         <div className="topbar-actions">
           <button className="tool-btn" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">
             ↶
@@ -3589,6 +3760,17 @@ export default function App() {
           {status}
         </span>
       </header>
+      {docsDialogOpen && (
+        <DocumentsDialog
+          activeId={activeId}
+          onClose={() => setDocsDialogOpen(false)}
+          onOpen={openDocument}
+          onNew={newDocument}
+          onDuplicate={duplicateDocument}
+          onDelete={deleteDocument}
+          onRename={renameDocument}
+        />
+      )}
       <div className="body">
         <aside className="panel">
           <button
