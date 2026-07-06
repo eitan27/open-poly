@@ -21,6 +21,7 @@ import type {
   DerivedOp,
   Document,
   DressUpFeature,
+  EdgeRef,
   ExtrudeFeature,
   ExtrudeProfile,
   Feature,
@@ -200,6 +201,7 @@ export function addDressUp(
   targetId: string,
   edges: string[],
   size = "2",
+  edgeRefs?: EdgeRef[],
 ): { doc: Document; id: string } {
   const label = op === "chamfer" ? "Chamfer" : "Fillet";
   const ordinal = doc.features.filter((f) => f.type === "dressup" && f.op === op).length + 1;
@@ -211,6 +213,7 @@ export function addDressUp(
     suppressed: false,
     targetId,
     edges,
+    edgeRefs,
     size,
   };
   return insertFeature(doc, feature);
@@ -832,16 +835,16 @@ export function resolveDocument(doc: Document): ResolveResult {
             frame: frameOf(sketch.plane, planeFrames),
           };
         } else {
-          // A body face: pass the source + persistent name (+ centroid fallback);
-          // the worker re-finds the face against the running body set.
-          profile = { kind: "bodyFace" as const, sourceId: prof.featureId, faceName: prof.faceName, center: prof.center };
+          // A body face: pass the source + persistent name (+ geometric
+          // fingerprint); the worker re-finds the face against the running set.
+          profile = { kind: "bodyFace" as const, sourceId: prof.featureId, faceName: prof.faceName, center: prof.center, normal: prof.normal };
         }
         // `?? "blind"` guards documents persisted before this field existed.
         // For "up to face", pass the target face reference (source body id +
         // persistent name + centroid fallback); the worker re-finds it.
         const upTo =
           f.extent === "upToFace" && f.upTo
-            ? { sourceId: f.upTo.featureId, faceName: f.upTo.faceName, center: f.upTo.center }
+            ? { sourceId: f.upTo.featureId, faceName: f.upTo.faceName, center: f.upTo.center, normal: f.upTo.normal }
             : undefined;
         features.push({ id: f.id, type: "extrude", profile, distance, flip: f.flip, extent: f.extent ?? "blind", mode: f.mode, targetId: f.targetId, upTo });
       } else if (f.type === "dressup") {
@@ -851,6 +854,7 @@ export function resolveDocument(doc: Document): ResolveResult {
           op: f.op,
           targetId: f.targetId,
           edges: f.edges,
+          edgeRefs: f.edgeRefs,
           size: evaluateExpression(f.size, scope),
         });
       } else if (f.type === "boolean") {
@@ -887,9 +891,9 @@ export function resolveDocument(doc: Document): ResolveResult {
         const axis = f.axis;
         let axisPart:
           | { axisOrigin: [number, number, number]; axisDir: [number, number, number] }
-          | { axisFace: { sourceId: string; faceName?: string; center: [number, number, number] } };
+          | { axisFace: { sourceId: string; faceName?: string; center: [number, number, number]; normal?: [number, number, number] } };
         if ("face" in axis) {
-          axisPart = { axisFace: { sourceId: axis.face.featureId, faceName: axis.face.faceName, center: axis.face.center } };
+          axisPart = { axisFace: { sourceId: axis.face.featureId, faceName: axis.face.faceName, center: axis.face.center, normal: axis.face.normal } };
         } else if ("plane" in axis) {
           const axisFrame = frameOf(axis.plane, planeFrames);
           const line = planeIntersectionLine(axisFrame, frame);

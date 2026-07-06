@@ -1,13 +1,13 @@
 // Main-thread implementation of the Kernel facade. Spawns the worker and
 // correlates request/response pairs by id, exposing a clean Promise API.
 
-import type { ExportFormat, Kernel, RegenFeatureResult, ResolvedFeature } from "./types";
+import type { ExportFormat, Kernel, RegenFeatureResult, RegenOutcome, ResolvedFeature } from "./types";
 import type { KernelRequest, KernelResponse } from "./protocol";
 
 type Pending =
   | {
       op: "regenerate";
-      resolve: (value: RegenFeatureResult[]) => void;
+      resolve: (value: RegenOutcome) => void;
       reject: (reason: Error) => void;
       onProgress?: (result: RegenFeatureResult) => void;
     }
@@ -36,7 +36,7 @@ export class KernelClient implements Kernel {
       if (!res.ok) {
         p.reject(new Error(res.error));
       } else if (p.op === "regenerate" && res.op === "regenerate") {
-        p.resolve(res.results);
+        p.resolve({ results: res.results, warnings: res.warnings });
       } else if (p.op === "export" && res.op === "export") {
         p.resolve(res.blob);
       }
@@ -56,10 +56,10 @@ export class KernelClient implements Kernel {
   regenerate(
     features: ResolvedFeature[],
     onProgress?: (result: RegenFeatureResult) => void,
-  ): Promise<RegenFeatureResult[]> {
+  ): Promise<RegenOutcome> {
     const id = this.nextId++;
     const req: KernelRequest = { id, op: "regenerate", features };
-    return new Promise<RegenFeatureResult[]>((resolve, reject) => {
+    return new Promise<RegenOutcome>((resolve, reject) => {
       this.pending.set(id, { op: "regenerate", resolve, reject, onProgress });
       this.worker.postMessage(req);
     });

@@ -197,7 +197,9 @@ function resolveProfile(ctx: AgentContext, spec: ProfileSpec): ExtrudeProfile {
   if (!mesh) throw new OpError("not_found", `No body "${spec.bodyId}".`);
   const fg = faceGeomByName(mesh.mesh.faces, spec.faceName);
   if (!fg) throw new OpError("not_found", `Face "${spec.faceName}" not found on body "${spec.bodyId}".`);
-  return { kind: "bodyFace", featureId: spec.bodyId, faceId: fg.faceId, faceName: spec.faceName, center: fg.center };
+  // center + normal are the geometric fingerprint the kernel falls back to if
+  // an upstream edit renames the face.
+  return { kind: "bodyFace", featureId: spec.bodyId, faceId: fg.faceId, faceName: spec.faceName, center: fg.center, normal: fg.normal };
 }
 
 /** Resolve an "up to face" target (body id + persistent face name) to the
@@ -206,12 +208,12 @@ function resolveProfile(ctx: AgentContext, spec: ProfileSpec): ExtrudeProfile {
 function resolveUpToFace(
   ctx: AgentContext,
   spec: { bodyId: string; faceName: string },
-): { featureId: string; faceName: string; center: [number, number, number] } {
+): { featureId: string; faceName: string; center: [number, number, number]; normal?: [number, number, number] } {
   const mesh = ctx.getMeshes().find((m) => m.id === spec.bodyId);
   if (!mesh) throw new OpError("not_found", `No body "${spec.bodyId}" for the up-to-face target.`);
   const fg = faceGeomByName(mesh.mesh.faces, spec.faceName);
   if (!fg) throw new OpError("not_found", `Face "${spec.faceName}" not found on body "${spec.bodyId}".`);
-  return { featureId: spec.bodyId, faceName: spec.faceName, center: fg.center };
+  return { featureId: spec.bodyId, faceName: spec.faceName, center: fg.center, normal: fg.normal };
 }
 
 function requireFeature(doc: Document, id: string): Feature {
@@ -293,7 +295,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           if (!mesh) throw new OpError("not_found", `No body "${ax.bodyId}" for the revolve axis.`);
           const fg = faceGeomByName(mesh.mesh.faces, ax.faceName);
           if (!fg) throw new OpError("not_found", `Face "${ax.faceName}" not found on body "${ax.bodyId}".`);
-          axis = { face: { featureId: ax.bodyId, faceName: ax.faceName, faceId: fg.faceId, center: fg.center } };
+          axis = { face: { featureId: ax.bodyId, faceName: ax.faceName, faceId: fg.faceId, center: fg.center, normal: fg.normal } };
         }
         const r = addRevolve(doc, { sketchId: prof.sketchId, regionId: prof.regionId }, axis, op.angle, op.symmetric);
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;

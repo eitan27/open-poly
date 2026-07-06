@@ -150,6 +150,12 @@ Pragmatic approach for this project:
 - Accept that v1 will sometimes "lose" a reference on big edits; surface it as a
   fixable error in the tree rather than silently corrupting the model.
 
+> **Status (2026-07-06):** all three layers are in. History propagation since
+> Phase 3; the **geometric fallback + surfacing** landed as the N3 robustness
+> pass — see "Topological naming" under Phase 3 for the details
+> (`src/kernel/topoMatch.ts`, fingerprints on refs, `RegenOutcome.warnings`,
+> amber ⚠ timeline badges, descriptive lost-reference errors).
+
 ### Selection round-trip
 Picking in the viewport must map back to kernel topology:
 1. When tessellating an OCCT shape, **tag each triangle group with the face ID**
@@ -426,8 +432,24 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   referenced by **persistent name**. *(Chamfer two-distance/angle variants:
   TODO; currently single distance / single radius.)*
 - **Topological naming** — ✅ DONE (the real version, via OCCT history; see the
-  phase intro above). *(Gap: curved faces / cylinder sides aren't named yet →
-  centroid fallback.)*
+  phase intro above). **Robustness layer (N3, 2026-07-06) — ✅ DONE:** when a
+  name is gone (an upstream edit split/merged topology, churning `#n` suffixes),
+  references now **fall back to a scored geometric match** against a fingerprint
+  baked at pick time — faces: centroid + normal (`UpToFaceRef`/`bodyFace`/
+  `RevolveAxisFace` gained `normal?`); edges: persistent name → suffix-stripped
+  base name → bbox-centre + length (`DressUpFeature.edgeRefs`). Matching is pure
+  math in `src/kernel/topoMatch.ts` (Node-tested; scale-relative rejection
+  thresholds so a lost reference errors descriptively instead of silently
+  grabbing the wrong face/edge). Every re-match or partial loss is **surfaced as
+  a per-feature warning** (kernel → `RegenOutcome.warnings` → amber ⚠ badge in
+  the timeline); a dress-up with some edges lost proceeds on the survivors and
+  says so. **Primitives now name ALL faces** (axis name else `f{n}`), so
+  cylinder/sphere rims are chamfer/fillet-able (previously the unnamed side face
+  made their edges unreferenceable); prism leftovers get the same `f{n}`
+  fallback. E2E-verified by `scripts/verify-naming.mjs` (cylinder rim fillet;
+  churned `#1` edge name re-matched + ⚠; bogus name → descriptive error) and
+  `scripts/verify-naming-face.mjs` (boolean-split `+z#1` profile face un-split
+  by an upstream edit → pad re-attaches geometrically + ⚠).
 - **Selection round-trip** (sketch region / body face / body edge → kernel →
   meshed body back) — ✅ exercised end to end.
 
@@ -1033,7 +1055,7 @@ official **`@modelcontextprotocol/sdk`**.
 
 | Risk | Mitigation |
 |------|-----------|
-| **Topological naming** breaks references on edits | Use OCCT history maps + geometric fallback; store stable IDs; surface as fixable errors (Phase 4 focus). |
+| **Topological naming** breaks references on edits | ✅ Mitigated: OCCT history maps + scored geometric fallback (`topoMatch.ts`) + fixable-error/warning surfacing all shipped (2026-07-06). Residual: fingerprints go stale if geometry moves far AND names churn simultaneously. |
 | OCCT WASM **bundle size / load time** | Lazy-load the worker; tree-shake via replicad; show a splash; cache the WASM. |
 | **Regen performance** | Worker thread; dirty-feature incremental regen; cache tessellations; LOD. |
 | **Constraint solver** robustness | Lean on planegcs rather than rolling your own; constrain the supported constraint set early. |

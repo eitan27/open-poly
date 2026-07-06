@@ -400,6 +400,13 @@
   justify-content: center;
 }
 
+/* Non-fatal notice (a reference re-matched / partially lost): amber, not red. */
+.row-badge.warn {
+  background: #574722;
+  color: #ffe3a3;
+  font-size: 10px;
+}
+
 .row-icon {
   background: none;
   border: none;

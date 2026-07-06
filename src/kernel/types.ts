@@ -59,9 +59,10 @@ export type ProfileSegment =
  *  (lines + arcs) — the kernel prefers them over the faceted `outline`. */
 export type ResolvedProfile =
   | { kind: "sketchRegion"; outline: [number, number][]; frame: ResolvedFrame; segmentStart?: [number, number]; segments?: ProfileSegment[] }
-  // `faceName` is the persistent topological name (preferred); `center` is the
-  // centroid fallback for faces that don't have a name yet.
-  | { kind: "bodyFace"; sourceId: string; faceName?: string; center: [number, number, number] }
+  // `faceName` is the persistent topological name (preferred); `center` (+
+  // optional `normal`, for planar faces) is the geometric fingerprint used to
+  // re-match the face when the name no longer exists on the rebuilt body.
+  | { kind: "bodyFace"; sourceId: string; faceName?: string; center: [number, number, number]; normal?: [number, number, number] }
   // A text run, baked to glyph faces in the worker (replicad `textBlueprints`,
   // which does even-odd counters/holes). `anchor` is the baseline-left in u,v,
   // `rotation` in radians (CCW about the anchor), `height` the em size.
@@ -76,11 +77,21 @@ export type ExtrudeMode = "new" | "add" | "remove";
 export type ExtrudeExtent = "blind" | "symmetric" | "throughAll" | "upToFace";
 
 /** Resolved "up to face" target: the body (by id) and the face on it, found by
- *  persistent name (preferred) or nearest centroid inside the worker. */
+ *  persistent name (preferred) or geometric fingerprint inside the worker. */
 export interface ResolvedUpToFace {
   sourceId: string;
   faceName?: string;
   center: [number, number, number];
+  normal?: [number, number, number];
+}
+
+/** An edge reference's geometric fingerprint, stored when the edge was picked
+ *  (alongside its persistent name) so the worker can re-match the edge when an
+ *  upstream edit renamed it. `mid` is the edge's bounding-box centre. */
+export interface ResolvedEdgeRef {
+  name: string;
+  mid?: [number, number, number];
+  length?: number;
 }
 
 /** Features with all parameters already resolved to numbers/geometry
@@ -92,7 +103,9 @@ export type ResolvedFeature =
   // bodies keep their own colour. Targets are still resolved so "throughAll"
   // sizes correctly.
   | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; extent: ExtrudeExtent; mode: ExtrudeMode; targetId?: string; upTo?: ResolvedUpToFace; previewTool?: boolean }
-  | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; size: number }
+  // `edges` are persistent names; `edgeRefs` (parallel, when the doc has them)
+  // carry the geometric fingerprints used to re-match renamed edges.
+  | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; edgeRefs?: ResolvedEdgeRef[]; size: number }
   // A boolean combines existing bodies (by id) from the running set.
   | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
   // A rigid transform moves a body (by id) — translate + rotate. `copy` keeps
@@ -106,7 +119,7 @@ export type ResolvedFeature =
   // resolved in the document layer) OR a body face (`axisFace`, resolved in the
   // kernel against the profile `frame` — planar → plane∩profile, cylinder/cone →
   // the surface axis). Exactly one form is present.
-  | { id: string; type: "revolve"; profile: ResolvedProfile; angle: number; symmetric: boolean; axisOrigin?: [number, number, number]; axisDir?: [number, number, number]; axisFace?: { sourceId: string; faceName?: string; center: [number, number, number] } }
+  | { id: string; type: "revolve"; profile: ResolvedProfile; angle: number; symmetric: boolean; axisOrigin?: [number, number, number]; axisDir?: [number, number, number]; axisFace?: { sourceId: string; faceName?: string; center: [number, number, number]; normal?: [number, number, number] } }
   // Sweep a sketch profile along a path (baked to 2D points on a frame). For a
   // spline, `beziers` carries the exact cubic-Bézier spans of the drawn curve
   // (the spine is built from them, so it matches the sketch exactly); otherwise
@@ -121,17 +134,27 @@ export type RegenFeatureResult =
   | { id: string; ok: true; mesh: ShapeMeshPayload }
   | { id: string; ok: false; error: string };
 
+/** The complete outcome of a regenerate: one result per surviving body (plus
+ *  one per failed feature), and non-fatal per-FEATURE warnings — e.g. "this
+ *  reference was re-matched geometrically after an upstream edit renamed it"
+ *  or "2 of 4 edges could not be re-found". Keyed by feature id (a dress-up's
+ *  own id, not the body it modified). */
+export interface RegenOutcome {
+  results: RegenFeatureResult[];
+  warnings: Record<string, string>;
+}
+
 export type ExportFormat = "step" | "stl";
 
 /** The contract implemented by the worker-backed client. Grows per phase. */
 export interface Kernel {
   /** Replay the feature list and tessellate the surviving bodies. `onProgress`,
    *  if given, fires once per body as it's meshed (for progressive painting);
-   *  the resolved array is still the complete, authoritative result. */
+   *  the resolved outcome is still the complete, authoritative result. */
   regenerate(
     features: ResolvedFeature[],
     onProgress?: (result: RegenFeatureResult) => void,
-  ): Promise<RegenFeatureResult[]>;
+  ): Promise<RegenOutcome>;
   /** Replays the feature list and exports the result body with `bodyId`.
    *  Geometry is authored in millimetres throughout, so STEP declares "mm". */
   exportBody(features: ResolvedFeature[], bodyId: string, format: ExportFormat): Promise<Blob>;

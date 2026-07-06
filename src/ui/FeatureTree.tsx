@@ -13,6 +13,9 @@ interface Props {
   onToggleDatum: (id: DatumId) => void;
   selectedIds: Set<string>;
   errors: Record<string, string>;
+  /** Non-fatal kernel notices (a topological reference re-matched after an
+   *  upstream edit, or partially lost) — an amber badge, not a red one. */
+  warnings: Record<string, string>;
   onSelect: (id: string) => void;
   onDoubleClick: (id: string) => void;
   onDelete: (id: string) => void;
@@ -29,6 +32,7 @@ export function FeatureTree({
   onToggleDatum,
   selectedIds,
   errors,
+  warnings,
   onSelect,
   onDoubleClick,
   onDelete,
@@ -66,6 +70,7 @@ export function FeatureTree({
         {features.map((feature, i) => {
           const rolledBack = i >= rollbackIndex;
           const error = errors[feature.id];
+          const warning = warnings[feature.id];
           return (
             <li key={feature.id}>
               <div
@@ -105,6 +110,7 @@ export function FeatureTree({
                 </span>
                 <span className="row-name">{feature.name}</span>
                 {error && <span className="row-badge" title={error}>!</span>}
+                {!error && warning && <span className="row-badge warn" title={warning}>⚠</span>}
                 <button
                   className="row-icon"
                   title="Move up (Alt+↑)"

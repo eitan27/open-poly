@@ -149,12 +149,25 @@ export type ExtrudeExtent = "blind" | "symmetric" | "throughAll" | "upToFace";
 
 /** A planar face of an earlier body, used as the "up to face" extrude target.
  *  `faceName` is the persistent topological name (preferred, stable across
- *  rebuilds); `center` is the centroid fallback when there's no name yet. */
+ *  rebuilds); `center` + `normal` are the geometric fingerprint the kernel
+ *  falls back to (scored match, rejected when implausible) when an upstream
+ *  edit renamed the face. */
 export interface UpToFaceRef {
   /** The feature whose body owns the face. */
   featureId: string;
   faceName?: string;
   center: [number, number, number];
+  /** Unit normal at pick time (planar faces only). */
+  normal?: [number, number, number];
+}
+
+/** Geometric fingerprint of a picked edge, stored alongside its persistent
+ *  name so the kernel can re-match the edge when an upstream edit renamed it
+ *  (`mid` is the edge's bounding-box centre; `length` its arc length). */
+export interface EdgeRef {
+  name: string;
+  mid?: [number, number, number];
+  length?: number;
 }
 
 /** What an extrude pulls: a closed region of a sketch, a planar face of an
@@ -166,7 +179,7 @@ export type ExtrudeProfile =
   // A body face. `faceName` is the persistent topological name (preferred,
   // stable across rebuilds); `faceId` is the build-local hash from selection and
   // `center` the centroid — both kept as fallback when there's no name yet.
-  | { kind: "bodyFace"; featureId: string; faceId: number; faceName?: string; center: [number, number, number] }
+  | { kind: "bodyFace"; featureId: string; faceId: number; faceName?: string; center: [number, number, number]; normal?: [number, number, number] }
   // A run of text in a sketch (a `text` entity). The kernel re-bakes the glyph
   // wires from the entity's value/height/rotation/anchor each rebuild, so editing
   // the text re-extrudes parametrically.
@@ -215,6 +228,9 @@ export interface DressUpFeature extends FeatureBase {
   targetId: string;
   /** Persistent names of the edges to chamfer/fillet. */
   edges: string[];
+  /** Geometric fingerprints for `edges` (parallel array), used to re-match an
+   *  edge whose name churned after an upstream edit. Absent on legacy docs. */
+  edgeRefs?: EdgeRef[];
   /** Chamfer distance / fillet radius, as an expression string. */
   size: string;
 }
@@ -287,6 +303,9 @@ export interface RevolveAxisFace {
   faceName?: string;
   faceId: number;
   center: [number, number, number];
+  /** Unit normal at pick time (planar faces only) — part of the geometric
+   *  fingerprint used to re-match the face if its name churns. */
+  normal?: [number, number, number];
 }
 
 /** The rotation axis of a revolve. One of:

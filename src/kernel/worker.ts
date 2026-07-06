@@ -9,7 +9,7 @@ import {
   cast, getOC, Vector, HASH_CODE_MAX, exportSTEP, measureVolume, loadFont,
   Blueprint, BlueprintSketcher, CompoundBlueprint,
 } from "replicad";
-import type { Shape3D, Face, Sketch } from "replicad";
+import type { Shape3D, Face, Edge, Sketch } from "replicad";
 import type { Font as OpentypeFont } from "opentype.js";
 import { glyphFillPolygons } from "./glyphFill";
 
@@ -21,10 +21,12 @@ import type {
   MeshedEdges,
   MeshedFaces,
   RegenFeatureResult,
+  ResolvedEdgeRef,
   ResolvedFeature,
   ResolvedFrame,
   ResolvedProfile,
 } from "./types";
+import { matchEdges, matchFace, type EdgeCandidate, type FaceCandidate } from "./topoMatch";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -127,10 +129,19 @@ function buildPrimitive(feature: Extract<ResolvedFeature, { type: "primitive" }>
   }
   // NB: replicad's 3D translate() deletes the original and returns a new shape.
   shape = shape.translate(p.x ?? 0, p.y ?? 0, p.z ?? 0) as Shape3D;
+  // EVERY face gets a name: axis-aligned planar faces a directional one, the
+  // rest a stable index (`f0`…). Naming all faces matters because an edge is
+  // only referenceable when BOTH its faces are named — without this a cylinder's
+  // side face was unnamed, so its rim edges couldn't be chamfered/filleted.
   const names = new Map<number, string>();
+  const used = new Set<string>();
+  let extra = 0;
   for (const f of shape.faces) {
     const dir = axisFaceName(f);
-    if (dir) names.set(f.hashCode, `${feature.id}/${dir}`);
+    const axis = dir ? `${feature.id}/${dir}` : null;
+    const nm = axis && !used.has(axis) ? axis : `${feature.id}/f${extra++}`;
+    used.add(nm);
+    names.set(f.hashCode, nm);
   }
   return { shape, names };
 }
@@ -194,20 +205,17 @@ function prismFromFace(profileFace: Face, dir: Vector, signedDist: number, id: s
   const builder = new oc.BRepPrimAPI_MakePrism_1(profileFace.wrapped, vec.wrapped, false, true);
   const shape = cast(builder.Shape()) as Shape3D;
 
-  const startHash = hashOf(builder.FirstShape_1());
-  const endHash = hashOf(builder.LastShape_1());
+  const capHashes = new Map<number, string>();
+  capHashes.set(hashOf(builder.FirstShape_1()), `${id}/start`);
+  capHashes.set(hashOf(builder.LastShape_1()), `${id}/end`);
   const sideByHash = new Map<number, string>();
   profileFace.edges.forEach((e, i) => {
     for (const g of drainList(builder.Generated(e.wrapped))) sideByHash.set(hashOf(g), `${id}/side${i}`);
   });
 
-  const names = new Map<number, string>();
-  for (const f of shape.faces) {
-    const h = f.hashCode;
-    if (h === startHash) names.set(h, `${id}/start`);
-    else if (h === endHash) names.set(h, `${id}/end`);
-    else if (sideByHash.has(h)) names.set(h, sideByHash.get(h)!);
-  }
+  // namesFromHistory gives any face history missed a stable `f{n}` fallback so
+  // every face (and therefore every edge) stays referenceable.
+  const { names } = namesFromHistory(shape, id, capHashes, sideByHash);
   builder.delete();
   return { shape, names };
 }
@@ -503,28 +511,66 @@ function sketchTextFaces(
   return { faces, normal: new Vector(frame.normal) };
 }
 
-/** Resolve a body-face profile to its OCCT face and outward normal. The face
- *  is re-found by its persistent name, else by nearest centroid. */
+/** Characteristic size of a shape: its bounding-box diagonal. Geometric
+ *  re-matching judges distances relative to this. */
+function bboxDiagonal(shape: Shape3D): number {
+  const [min, max] = shape.boundingBox.bounds;
+  return Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+}
+
+/** A non-fatal, per-feature notice (reference re-matched / partially lost),
+ *  surfaced in the timeline next to the feature. */
+type Warn = (msg: string) => void;
+
+/** Resolve a face reference to its OCCT face and outward normal.
+ *  Resolution order (the topological-naming strategy):
+ *  1. the persistent name (survives most edits via construction history);
+ *  2. if the name is gone (an upstream edit split/merged/renamed topology),
+ *     a SCORED geometric match against the stored fingerprint (centroid +
+ *     normal), rejected when nothing is plausibly the same face — a warning
+ *     is emitted on success, a descriptive error thrown on rejection;
+ *  3. a legacy ref with no name at all keeps the old unconditional
+ *     nearest-centroid behaviour (no fingerprint to judge plausibility by). */
 function bodyProfileFace(
   src: Body,
   faceName: string | undefined,
   center: [number, number, number],
+  refNormal?: [number, number, number],
+  warn?: Warn,
+  what = "face",
 ): { face: Face; normal: Vector } {
-  let best: Face | null = null;
+  const faces = src.shape.faces;
+  if (faces.length === 0) throw new Error(`${what}: source body has no faces`);
   if (faceName) {
-    for (const f of src.shape.faces) {
-      if (src.names.get(f.hashCode) === faceName) { best = f; break; }
+    for (const f of faces) {
+      if (src.names.get(f.hashCode) === faceName) return { face: f, normal: f.normalAt() };
     }
-  }
-  if (!best) {
-    let bestDist = Infinity;
-    for (const f of src.shape.faces) {
-      const c = f.center.toTuple();
-      const d = (c[0] - center[0]) ** 2 + (c[1] - center[1]) ** 2 + (c[2] - center[2]) ** 2;
-      if (d < bestDist) { bestDist = d; best = f; }
+    // Name gone — geometric fallback with a plausibility threshold.
+    const candidates: FaceCandidate[] = faces.map((f) => ({
+      center: f.center.toTuple() as [number, number, number],
+      normal: f.geomType === "PLANE" ? (f.normalAt().normalized().toTuple() as [number, number, number]) : undefined,
+    }));
+    const m = matchFace({ center, normal: refNormal }, candidates, bboxDiagonal(src.shape));
+    if (!m) {
+      throw new Error(
+        `${what} "${faceName}" no longer exists on the body and nothing similar was found — edit the feature to re-pick it`,
+      );
     }
+    const face = faces[m.index];
+    const nowName = src.names.get(face.hashCode);
+    warn?.(
+      `${what} "${faceName}" was renamed by an upstream edit; re-matched geometrically${nowName ? ` (now "${nowName}")` : ""}`,
+    );
+    return { face, normal: face.normalAt() };
   }
-  if (!best) throw new Error("extrude: source body has no faces");
+  // Legacy centre-only reference: nearest centroid, as before.
+  let best: Face = faces[0];
+  let bestDist = Infinity;
+  for (const f of faces) {
+    const c = f.center.toTuple();
+    const d = (c[0] - center[0]) ** 2 + (c[1] - center[1]) ** 2 + (c[2] - center[2]) ** 2;
+    if (d < bestDist) { bestDist = d; best = f; }
+  }
   return { face: best, normal: best.normalAt() };
 }
 
@@ -557,8 +603,10 @@ function faceRevolveAxis(
   faceName: string | undefined,
   center: V3,
   profileFrame: RegionProfile["frame"],
+  refNormal?: V3,
+  warn?: Warn,
 ): { origin: V3; dir: V3 } {
-  const { face } = bodyProfileFace(body, faceName, center);
+  const { face } = bodyProfileFace(body, faceName, center, refNormal, warn, "revolve axis face");
   const gt = face.geomType;
   if (gt === "CYLINDRE" || gt === "CONE") {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -716,27 +764,101 @@ function edgeNamesFrom(shape: Shape3D, faceNames: Map<number, string>): Map<numb
   return names;
 }
 
+/** Re-resolve a dress-up's stored edge references against the body's current
+ *  edges: exact persistent name first; when names churned (an upstream edit
+ *  split/merged faces), a suffix-insensitive base-name match, then a geometric
+ *  match on the stored fingerprint (bbox-centre + length). Emits a warning for
+ *  every re-matched or lost edge; only outright-lost edges are dropped. */
+function resolveDressUpEdges(
+  target: Body,
+  edgeNames: string[],
+  edgeRefs: ResolvedEdgeRef[] | undefined,
+  warn: Warn | undefined,
+): { hits: Edge[]; lost: string[] } {
+  const targetEdgeNames = edgeNamesFrom(target.shape, target.names);
+  const edges = target.shape.edges;
+
+  // Fast path: every requested name still exists — no fingerprinting needed.
+  const byName = new Map<string, number>();
+  edges.forEach((e, i) => {
+    const nm = targetEdgeNames.get(e.hashCode);
+    if (nm !== undefined && !byName.has(nm)) byName.set(nm, i);
+  });
+  if (edgeNames.every((nm) => byName.has(nm))) {
+    return { hits: edgeNames.map((nm) => edges[byName.get(nm)!]), lost: [] };
+  }
+
+  // Slow path: build geometric candidates and match all refs one-to-one.
+  const candidates: EdgeCandidate[] = edges.map((e) => {
+    let length = 0;
+    try { length = e.length; } catch { /* degenerate edge — mid still matches */ }
+    return {
+      name: targetEdgeNames.get(e.hashCode),
+      mid: e.boundingBox.center as [number, number, number],
+      length,
+    };
+  });
+  const refs = edgeNames.map((nm, i) => ({
+    name: nm,
+    mid: edgeRefs?.[i]?.mid,
+    length: edgeRefs?.[i]?.length,
+  }));
+  const matches = matchEdges(refs, candidates, bboxDiagonal(target.shape));
+
+  const hits: Edge[] = [];
+  const lost: string[] = [];
+  matches.forEach((m, i) => {
+    if (m.kind === "lost") {
+      lost.push(edgeNames[i]);
+      return;
+    }
+    hits.push(edges[m.index]);
+    if (m.kind !== "name") {
+      const nowName = candidates[m.index].name;
+      warn?.(
+        `edge "${edgeNames[i]}" was renamed by an upstream edit; re-matched ` +
+          `${m.kind === "base" ? "by base name" : "geometrically"}${nowName ? ` (now "${nowName}")` : ""}`,
+      );
+    }
+  });
+  return { hits, lost };
+}
+
 /** Chamfer or fillet the named edges of a body, propagating face names through
  *  the operation's history (modified faces keep their names; the new bevel/round
  *  faces are named after the feature). Modifies geometry; returns a NamedShape. */
-function dressUpNamed(op: "chamfer" | "fillet", target: Body, edgeNames: string[], size: number, id: string): NamedShape {
+function dressUpNamed(
+  op: "chamfer" | "fillet",
+  target: Body,
+  edgeNames: string[],
+  edgeRefs: ResolvedEdgeRef[] | undefined,
+  size: number,
+  id: string,
+  warn?: Warn,
+): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
-  const targetEdgeNames = edgeNamesFrom(target.shape, target.names);
+  const { hits, lost } = resolveDressUpEdges(target, edgeNames, edgeRefs, warn);
+  if (hits.length === 0) {
+    throw new Error(
+      `${op}: none of the edges could be re-found on the body (an upstream edit changed its shape) — edit the feature to re-pick them`,
+    );
+  }
+  if (lost.length > 0) {
+    warn?.(
+      `${lost.length} of ${edgeNames.length} edges could not be re-found and were skipped: ${lost.join(", ")} — edit the feature to re-pick them`,
+    );
+  }
   const builder =
     op === "fillet"
       ? new oc.BRepFilletAPI_MakeFillet(target.shape.wrapped, oc.ChFi3d_FilletShape.ChFi3d_Rational)
       : new oc.BRepFilletAPI_MakeChamfer(target.shape.wrapped);
 
   const dressed: Topo[] = [];
-  for (const e of target.shape.edges) {
-    const nm = targetEdgeNames.get(e.hashCode);
-    if (nm && edgeNames.includes(nm)) {
-      builder.Add_2(size, e.wrapped);
-      dressed.push(e.wrapped);
-    }
+  for (const e of hits) {
+    builder.Add_2(size, e.wrapped);
+    dressed.push(e.wrapped);
   }
-  if (dressed.length === 0) throw new Error(`${op}: no matching edges`);
   const progress = new oc.Message_ProgressRange_1();
   builder.Build(progress);
   const shape = cast(builder.Shape()) as Shape3D;
@@ -1001,15 +1123,21 @@ function buildCached(key: string, used: Set<string>, build: () => NamedShape): N
 function buildBodies(
   features: ResolvedFeature[],
   used: Set<string> = new Set(),
-): { bodies: Body[]; failures: RegenFeatureResult[]; timings: FeatureTiming[] } {
+): { bodies: Body[]; failures: RegenFeatureResult[]; timings: FeatureTiming[]; warnings: Record<string, string> } {
   const bodies: Body[] = [];
   const failures: RegenFeatureResult[] = [];
   const timings: FeatureTiming[] = [];
+  // Non-fatal notices per feature id (references re-matched / partially lost),
+  // surfaced in the timeline so a fragile reference is visible, not silent.
+  const warnings: Record<string, string> = {};
   // Current content key of the body under a given id (read before mutations).
   const keyOf = (id: string): string => bodies.find((b) => b.id === id)?.key ?? id;
 
   for (const feature of features) {
     const t0 = performance.now();
+    const warn: Warn = (msg) => {
+      warnings[feature.id] = warnings[feature.id] ? `${warnings[feature.id]}; ${msg}` : msg;
+    };
     try {
       if (feature.type === "primitive") {
         const key = builderKey(feature);
@@ -1042,7 +1170,9 @@ function buildBodies(
           const r = sketchTextFaces(profile);
           faces = r.faces; normal = r.normal;
         } else {
-          const r = bodyProfileFace(requireBody(bodies, profile.sourceId), profile.faceName, profile.center);
+          const r = bodyProfileFace(
+            requireBody(bodies, profile.sourceId), profile.faceName, profile.center, profile.normal, warn, "profile face",
+          );
           faces = [r.face]; normal = r.normal;
         }
         const face = faces[0]; // representative for through-all / up-to-face sizing
@@ -1053,7 +1183,9 @@ function buildBodies(
         let lengths: number[];
         if (extent === "upToFace" && feature.upTo) {
           const upBody = requireBody(bodies, feature.upTo.sourceId);
-          const up = bodyProfileFace(upBody, feature.upTo.faceName, feature.upTo.center);
+          const up = bodyProfileFace(
+            upBody, feature.upTo.faceName, feature.upTo.center, feature.upTo.normal, warn, "up-to face",
+          );
           lengths = [upToFaceLength(face, normal, up.face, up.normal)];
         } else {
           lengths = extrudeLengths(extent, distance, face, targets).map((l) => l * sign);
@@ -1138,7 +1270,7 @@ function buildBodies(
       } else if (feature.type === "dressup") {
         // Chamfer/fillet modifies the target body in place, keeping its id.
         const target = requireBody(bodies, feature.targetId);
-        const res = dressUpNamed(feature.op, target, feature.edges, feature.size, feature.id);
+        const res = dressUpNamed(feature.op, target, feature.edges, feature.edgeRefs, feature.size, feature.id, warn);
         target.shape.delete();
         target.shape = res.shape;
         target.names = res.names;
@@ -1193,7 +1325,9 @@ function buildBodies(
         let axisDir = feature.axisDir;
         if (feature.axisFace) {
           const axBody = requireBody(bodies, feature.axisFace.sourceId);
-          const line = faceRevolveAxis(axBody, feature.axisFace.faceName, feature.axisFace.center, feature.profile.frame);
+          const line = faceRevolveAxis(
+            axBody, feature.axisFace.faceName, feature.axisFace.center, feature.profile.frame, feature.axisFace.normal, warn,
+          );
           axisOrigin = line.origin;
           axisDir = line.dir;
         }
@@ -1225,16 +1359,16 @@ function buildBodies(
     }
     timings.push({ id: feature.id, type: feature.type, ms: performance.now() - t0 });
   }
-  return { bodies, failures, timings };
+  return { bodies, failures, timings, warnings };
 }
 
 function regenerate(
   features: ResolvedFeature[],
   emit?: (result: RegenFeatureResult) => void,
-): RegenFeatureResult[] {
+): { results: RegenFeatureResult[]; warnings: Record<string, string> } {
   const buildT0 = performance.now();
   const usedBuilders = new Set<string>();
-  const { bodies, failures, timings } = buildBodies(features, usedBuilders);
+  const { bodies, failures, timings, warnings } = buildBodies(features, usedBuilders);
   const buildMs = performance.now() - buildT0;
   const meshTimings: { id: string; ms: number; hit: boolean }[] = [];
   const usedMeshes = new Set<string>();
@@ -1298,7 +1432,7 @@ function regenerate(
     );
   }
 
-  return [...meshes, ...failures];
+  return { results: [...meshes, ...failures], warnings };
 }
 
 // Export one result body: run the same fold, pick the body whose id matches,
@@ -1334,16 +1468,13 @@ ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
     }
     let res: KernelResponse;
     switch (req.op) {
-      case "regenerate":
-        res = {
-          id: req.id,
-          ok: true,
-          op: "regenerate",
-          results: regenerate(req.features, (result) =>
-            ctx.postMessage({ id: req.id, ok: true, op: "regenerate-progress", result }),
-          ),
-        };
+      case "regenerate": {
+        const { results, warnings } = regenerate(req.features, (result) =>
+          ctx.postMessage({ id: req.id, ok: true, op: "regenerate-progress", result }),
+        );
+        res = { id: req.id, ok: true, op: "regenerate", results, warnings };
         break;
+      }
       case "export":
         res = { id: req.id, ok: true, op: "export", blob: exportBody(req.features, req.bodyId, req.format) };
         break;

@@ -50,6 +50,7 @@ import type {
   DerivedOp,
   ProjectRef,
   Document,
+  EdgeRef,
   ExtrudeExtent,
   ExtrudeProfile,
   FeatureKind,
@@ -361,6 +362,29 @@ function edgeMidpoint(edges: MeshedEdges, edgeId: number): [number, number, numb
   return n ? [sx / n, sy / n, sz / n] : null;
 }
 
+/** Geometric fingerprint of a tessellated edge, stored with a dress-up so the
+ *  kernel can re-match the edge if an upstream edit renames it. `mid` is the
+ *  polyline's bounding-box centre (matches the kernel's edge-bbox centre — and
+ *  is robust for closed edges, where an endpoint average lands on the seam);
+ *  `length` is the polyline arc length. */
+function edgeFingerprint(edges: MeshedEdges, edgeId: number): { mid: [number, number, number]; length: number } | null {
+  const g = edges.edgeGroups?.find((eg) => eg.edgeId === edgeId);
+  if (!g || g.count === 0) return null;
+  const { lines } = edges;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let length = 0;
+  for (let v = g.start; v < g.start + g.count; v++) {
+    const x = lines[v * 3], y = lines[v * 3 + 1], z = lines[v * 3 + 2];
+    minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+    if (v > g.start) {
+      length += Math.hypot(x - lines[(v - 1) * 3], y - lines[(v - 1) * 3 + 1], z - lines[(v - 1) * 3 + 2]);
+    }
+  }
+  return { mid: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2], length };
+}
+
 /** Saves a Blob to the user's machine via a throwaway anchor element. */
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -514,7 +538,9 @@ export default function App() {
         const center = m ? faceCentroid(m.mesh.faces, picked.faceId) : null;
         if (center) {
           const faceName = m ? faceNameOf(m.mesh.faces, picked.faceId) : undefined;
-          setExtrudeDialog((d) => (d ? { ...d, upTo: { featureId: picked.featureId, faceName, center } } : d));
+          // normal completes the geometric fingerprint (null for non-planar).
+          const normal = (m && faceNormal(m.mesh.faces, picked.faceId)) || undefined;
+          setExtrudeDialog((d) => (d ? { ...d, upTo: { featureId: picked.featureId, faceName, center, normal } } : d));
         }
       }
       setPickingUpFace(false);
@@ -1052,6 +1078,10 @@ export default function App() {
   // Which geometry kinds clicking can pick (selection filters).
   const [selFilter, setSelFilter] = useState<SelectionFilter>({ body: true, face: true, edge: true, vertex: true });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Non-fatal kernel notices per feature id: a topological reference that had
+  // to be re-matched geometrically (name churn after an upstream edit) or was
+  // partially lost. Shown as an amber badge in the timeline.
+  const [warnings, setWarnings] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
 
@@ -1218,7 +1248,7 @@ export default function App() {
             return next;
           });
         })
-        .then((results) => {
+        .then(({ results, warnings: regenWarnings }) => {
           if (cancelled) return;
           const nextMeshes: { id: string; mesh: FeatureMesh["mesh"] }[] = [];
           const regenErrors: Record<string, string> = { ...resolved.errors };
@@ -1229,6 +1259,7 @@ export default function App() {
           setRawMeshes(nextMeshes);
           setRegenSettledSeq((s) => s + 1);
           setErrors(regenErrors);
+          setWarnings(regenWarnings);
           setFatal(null);
           // Feed the agent refs synchronously (ahead of React's commit).
           agentMeshesRef.current = nextMeshes;
@@ -1597,7 +1628,8 @@ export default function App() {
         const center = m ? faceCentroid(m.mesh.faces, s.faceId) : null;
         if (!center) continue;
         const faceName = m ? faceNameOf(m.mesh.faces, s.faceId) : undefined;
-        profiles.push({ kind: "bodyFace", featureId: s.featureId, faceId: s.faceId, faceName, center });
+        const normal = (m && faceNormal(m.mesh.faces, s.faceId)) || undefined;
+        profiles.push({ kind: "bodyFace", featureId: s.featureId, faceId: s.faceId, faceName, center, normal });
       }
     }
     return profiles;
@@ -1761,7 +1793,7 @@ export default function App() {
 
     kernel
       .regenerate(features)
-      .then((results) => {
+      .then(({ results }) => {
         if (cancelled) return;
         const previews: { bodyId: string; mesh: FeatureMesh["mesh"] }[] = [];
         let failure: string | null = null;
@@ -1816,7 +1848,7 @@ export default function App() {
       }
       kernel
         .regenerate(previewResolved.features)
-        .then((results) => {
+        .then(({ results }) => {
           if (cancelled) return;
           const hit = results.find((r) => r.id === id);
           if (hit?.ok) {
@@ -1849,13 +1881,18 @@ export default function App() {
     const m = meshes.find((x) => x.id === targetId);
     if (!m) return null;
     const names: string[] = [];
+    const edgeRefs: EdgeRef[] = [];
     for (const e of edges) {
       const nm = edgeNameOf(m.mesh.edges, e.edgeId);
       if (!nm) return null; // unnamed edge — can't reference it stably
       names.push(nm);
+      // Geometric fingerprint stored alongside the name, so the kernel can
+      // re-match the edge if an upstream edit renames it.
+      const fp = edgeFingerprint(m.mesh.edges, e.edgeId);
+      edgeRefs.push(fp ? { name: nm, mid: fp.mid, length: fp.length } : { name: nm });
     }
     const anchor = edgeMidpoint(m.mesh.edges, edges[0].edgeId);
-    return { targetId, edges: names, anchor };
+    return { targetId, edges: names, edgeRefs, anchor };
   }, [selection, meshes]);
 
   const openDressUp = (op: "chamfer" | "fillet") => {
@@ -1867,7 +1904,7 @@ export default function App() {
   const createDressUp = () => {
     if (!dressUpTarget || !dressUpDialog) return;
     const { doc: next, id } = addDressUp(
-      doc, dressUpDialog.op, dressUpTarget.targetId, dressUpTarget.edges, dressUpDialog.size,
+      doc, dressUpDialog.op, dressUpTarget.targetId, dressUpTarget.edges, dressUpDialog.size, dressUpTarget.edgeRefs,
     );
     setDoc(next);
     selectFeature(id);
@@ -2513,7 +2550,8 @@ export default function App() {
       const center = m ? faceCentroid(m.mesh.faces, pick.faceId) : null;
       if (!center) return;
       const faceName = m ? faceNameOf(m.mesh.faces, pick.faceId) : undefined;
-      setRevolveDialog((d) => (d ? { ...d, axis: { face: { featureId: pick.featureId, faceId: pick.faceId, faceName, center } } } : d));
+      const normal = (m && faceNormal(m.mesh.faces, pick.faceId)) || undefined;
+      setRevolveDialog((d) => (d ? { ...d, axis: { face: { featureId: pick.featureId, faceId: pick.faceId, faceName, center, normal } } } : d));
     } else {
       setRevolveDialog((d) => (d ? { ...d, axis: { plane: pick.ref } } : d));
     }
@@ -3529,6 +3567,7 @@ export default function App() {
             onToggleDatum={(id) => setDatumVisibility((v) => ({ ...v, [id]: !v[id] }))}
             selectedIds={selectedFeatureIds}
             errors={errors}
+            warnings={warnings}
             onSelect={selectFeature}
             onDoubleClick={handleTreeDoubleClick}
             onDelete={handleDelete}
