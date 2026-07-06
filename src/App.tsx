@@ -950,6 +950,9 @@ export default function App() {
   // doesn't dominate the panel. Set from the loaded doc (see the restore effect)
   // and then left wherever the user puts it.
   const VARS_OPEN_THRESHOLD = 5;
+  // Trailing debounce (ms) before a resolved-doc change triggers a kernel regen,
+  // so bursts of edits collapse into one rebuild (see the regen effect).
+  const REGEN_DEBOUNCE_MS = 60;
   const [variablesOpen, setVariablesOpen] = useState(() => doc.variables.length < VARS_OPEN_THRESHOLD);
   // Height of the timeline's own scroll box, dragged via the splitter below it.
   const [timelineHeight, setTimelineHeight] = useState(260);
@@ -1178,55 +1181,64 @@ export default function App() {
   );
 
   // Regenerate whenever the resolved document changes — the kernel runs off-thread.
+  // A short trailing debounce coalesces bursts (slider drags, multi-step edits)
+  // into ONE regen: without it each intermediate `resolved` kicks off a full
+  // worker rebuild that the next supersedes — the client drops the stale result,
+  // but the worker already spent the time. The delay is negligible next to a
+  // heavy regen, and geometry the model already shows stays on screen meanwhile.
   useEffect(() => {
     const kernel = kernelRef.current;
     if (!ready || !kernel) return;
     let cancelled = false;
-    setBusy(true);
-    // This regen's start ordinal — waiters that began before it resolve on it.
-    const myStart = (regenStartSeqRef.current += 1);
-    // Captured outcome handed to anyone awaiting this regen (the agent layer).
-    let settle: RegenSettle = { errors: { ...resolved.errors } };
 
-    kernel
-      .regenerate(resolved.features)
-      .then((results) => {
-        if (cancelled) return;
-        const nextMeshes: { id: string; mesh: FeatureMesh["mesh"] }[] = [];
-        const regenErrors: Record<string, string> = { ...resolved.errors };
-        for (const r of results) {
-          if (r.ok) nextMeshes.push({ id: r.id, mesh: r.mesh });
-          else regenErrors[r.id] = r.error;
-        }
-        setRawMeshes(nextMeshes);
-        setErrors(regenErrors);
-        setFatal(null);
-        // Feed the agent refs synchronously (ahead of React's commit).
-        agentMeshesRef.current = nextMeshes;
-        agentErrorsRef.current = regenErrors;
-        settle = { errors: regenErrors, bodyIds: nextMeshes.map((m) => m.id) };
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("regeneration failed:", err);
-        setFatal(String(err?.message ?? err));
-        settle = { errors: agentErrorsRef.current };
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setBusy(false);
-        // Resolve only waiters that began before this regen started; keep the
-        // rest pending for a later regen.
-        const stillWaiting: typeof regenWaitersRef.current = [];
-        for (const w of regenWaitersRef.current) {
-          if (myStart > w.threshold) w.settle(settle);
-          else stillWaiting.push(w);
-        }
-        regenWaitersRef.current = stillWaiting;
-      });
+    const timer = setTimeout(() => {
+      setBusy(true);
+      // This regen's start ordinal — waiters that began before it resolve on it.
+      const myStart = (regenStartSeqRef.current += 1);
+      // Captured outcome handed to anyone awaiting this regen (the agent layer).
+      let settle: RegenSettle = { errors: { ...resolved.errors } };
+
+      kernel
+        .regenerate(resolved.features)
+        .then((results) => {
+          if (cancelled) return;
+          const nextMeshes: { id: string; mesh: FeatureMesh["mesh"] }[] = [];
+          const regenErrors: Record<string, string> = { ...resolved.errors };
+          for (const r of results) {
+            if (r.ok) nextMeshes.push({ id: r.id, mesh: r.mesh });
+            else regenErrors[r.id] = r.error;
+          }
+          setRawMeshes(nextMeshes);
+          setErrors(regenErrors);
+          setFatal(null);
+          // Feed the agent refs synchronously (ahead of React's commit).
+          agentMeshesRef.current = nextMeshes;
+          agentErrorsRef.current = regenErrors;
+          settle = { errors: regenErrors, bodyIds: nextMeshes.map((m) => m.id) };
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          console.error("regeneration failed:", err);
+          setFatal(String(err?.message ?? err));
+          settle = { errors: agentErrorsRef.current };
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setBusy(false);
+          // Resolve only waiters that began before this regen started; keep the
+          // rest pending for a later regen.
+          const stillWaiting: typeof regenWaitersRef.current = [];
+          for (const w of regenWaitersRef.current) {
+            if (myStart > w.threshold) w.settle(settle);
+            else stillWaiting.push(w);
+          }
+          regenWaitersRef.current = stillWaiting;
+        });
+    }, REGEN_DEBOUNCE_MS);
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [resolved, ready]);
 
