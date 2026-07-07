@@ -5181,63 +5181,74 @@ export default function App() {
                   ? "Click entities to pattern"
                   : `${n} in pattern — click entities to add`;
             return (
-              <DraggableDialog className="dim-input" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
-                <label data-drag-handle>{s.kind === "linear" ? "Linear pattern" : "Circular pattern"}</label>
-                <span className="dim-status" style={{ padding: "0 6px" }}>{status}</span>
-                <label style={{ padding: "0 2px" }}>Count</label>
-                <DimValueInput
-                  value={s.count}
-                  variables={dimVarOptions}
-                  onChange={(v) => setPatternSession((p) => (p ? { ...p, count: v } : p))}
-                  onSubmit={commitPattern}
-                  onCancel={cancelPattern}
-                />
+              <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
+                <div className="ed-title" data-drag-handle>{s.kind === "linear" ? "Linear pattern" : "Circular pattern"}</div>
+                <div className="ed-hint">{status}</div>
+                <label className="ed-field">
+                  <span>Count</span>
+                  <DimValueInput
+                    value={s.count}
+                    variables={dimVarOptions}
+                    onChange={(v) => setPatternSession((p) => (p ? { ...p, count: v } : p))}
+                    onSubmit={commitPattern}
+                    onCancel={cancelPattern}
+                  />
+                </label>
                 {s.kind === "linear" ? (
                   <>
-                    <label style={{ padding: "0 2px" }}>ΔX</label>
-                    <DimValueInput
-                      value={s.dx}
-                      variables={dimVarOptions}
-                      onChange={(v) => setPatternSession((p) => (p ? { ...p, dx: v } : p))}
-                      onSubmit={commitPattern}
-                      onCancel={cancelPattern}
-                    />
-                    <label style={{ padding: "0 2px" }}>ΔY</label>
-                    <DimValueInput
-                      value={s.dy}
-                      variables={dimVarOptions}
-                      onChange={(v) => setPatternSession((p) => (p ? { ...p, dy: v } : p))}
-                      onSubmit={commitPattern}
-                      onCancel={cancelPattern}
-                    />
+                    <label className="ed-field">
+                      <span>ΔX</span>
+                      <DimValueInput
+                        value={s.dx}
+                        variables={dimVarOptions}
+                        onChange={(v) => setPatternSession((p) => (p ? { ...p, dx: v } : p))}
+                        onSubmit={commitPattern}
+                        onCancel={cancelPattern}
+                      />
+                    </label>
+                    <label className="ed-field">
+                      <span>ΔY</span>
+                      <DimValueInput
+                        value={s.dy}
+                        variables={dimVarOptions}
+                        onChange={(v) => setPatternSession((p) => (p ? { ...p, dy: v } : p))}
+                        onSubmit={commitPattern}
+                        onCancel={cancelPattern}
+                      />
+                    </label>
                   </>
                 ) : (
                   <>
-                    <button
-                      className={s.mode === "full" ? "active" : "ghost"}
-                      title="Full circle: instances at equal 360°/count steps"
-                      onClick={() => setPatternSession((p) => (p ? { ...p, mode: "full" } : p))}
-                    >
-                      360°
-                    </button>
-                    <button
-                      className={s.mode === "angle" ? "active" : "ghost"}
-                      title="Spread the instances across a total sweep angle"
-                      onClick={() => setPatternSession((p) => (p ? { ...p, mode: "angle" } : p))}
-                    >
-                      Angle
-                    </button>
+                    <div className="ed-modes">
+                      <button
+                        className={s.mode === "full" ? "active" : ""}
+                        title="Full circle: instances at equal 360°/count steps"
+                        onClick={() => setPatternSession((p) => (p ? { ...p, mode: "full" } : p))}
+                      >
+                        Full (360°)
+                      </button>
+                      <button
+                        className={s.mode === "angle" ? "active" : ""}
+                        title="Spread the instances across a total sweep angle"
+                        onClick={() => setPatternSession((p) => (p ? { ...p, mode: "angle" } : p))}
+                      >
+                        Angle
+                      </button>
+                    </div>
                     {s.mode === "angle" && (
                       <>
-                        <DimValueInput
-                          value={s.angle}
-                          variables={dimVarOptions}
-                          onChange={(v) => setPatternSession((p) => (p ? { ...p, angle: v } : p))}
-                          onSubmit={commitPattern}
-                          onCancel={cancelPattern}
-                        />
-                        <label style={{ padding: "0 2px" }} title="Spread ±angle/2 to both sides of the seed">
-                          Sym
+                        <label className="ed-field">
+                          <span>Angle (°)</span>
+                          <DimValueInput
+                            value={s.angle}
+                            variables={dimVarOptions}
+                            onChange={(v) => setPatternSession((p) => (p ? { ...p, angle: v } : p))}
+                            onSubmit={commitPattern}
+                            onCancel={cancelPattern}
+                          />
+                        </label>
+                        <label className="ed-field ed-flip" title="Spread ±angle/2 to both sides of the seed">
+                          <span>Symmetric</span>
                           <input
                             type="checkbox"
                             checked={s.symmetric}
@@ -5248,12 +5259,16 @@ export default function App() {
                     )}
                   </>
                 )}
-                <button onClick={commitPattern} disabled={n === 0 || (s.kind === "circular" && !s.center)}>
-                  Done
-                </button>
-                <button className="ghost" onClick={cancelPattern}>
-                  ✕
-                </button>
+                <div className="ed-actions">
+                  <button
+                    className="ed-primary"
+                    onClick={commitPattern}
+                    disabled={n === 0 || (s.kind === "circular" && !s.center)}
+                  >
+                    Done
+                  </button>
+                  <button onClick={cancelPattern}>Cancel</button>
+                </div>
               </DraggableDialog>
             );
           })()}
