@@ -4768,7 +4768,7 @@ export default function App() {
                 disabled={!!editingSketch}
                 onClick={() => setNewSolidOpen((o) => !o)}
               >
-                ◧ New Body ▾{kbd("N")}
+                ◧ New ▾{kbd("N")}
               </button>
               {newSolidOpen && (
                 <div className="mt-menu">
