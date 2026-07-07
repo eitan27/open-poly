@@ -80,18 +80,41 @@ Notes:
 ### Sketch UX
 
 One new toolbar entry in the sketch bar, a **flyout group like rect/circle**
-with two variants (matches `SKETCH_GROUPS` precedent):
+with two variants (matches `SKETCH_GROUPS` precedent).
 
-- **⁙ Linear pattern** — flow modeled on the mirror tool: click entities to
-  add/remove them from the source set (highlighted), then a `dim-input`-style
-  dialog (the small `DraggableDialog` used by offset/dimensions) shows
-  **Count**, **Step X**, **Step Y** fields with live ghost previews of the
-  copies; dragging in the viewport sets the step vector directly (like
-  offset's drag), typing refines it; Enter commits the op, Esc cancels.
-- **⁛ Circular pattern** — click entities to select, then the next click sets
-  the **center** (snapping to entity points / origin, same snap stack as other
-  tools); dialog shows **Count**, **Full ⟷ Angle** toggle, **Angle (°)** and
-  **Symmetric** when in angle mode, with live ghosts; Enter commits.
+**Source accumulation** combines the two existing idioms, with the mirror
+session as the chassis:
+
+- The Select tool already toggle-accumulates (each click appends the pick to
+  the selection or removes it if present — no Shift chord; empty-space click
+  clears). **Activating a pattern tool with entities selected seeds the
+  session from `selectedSketchEntities`** (the way Offset consumes the
+  selection), then clears the selection.
+- With nothing pre-selected the tool behaves like Mirror: the session starts
+  empty and **each click adds an entity to `sourceIds`** (live ghost previews
+  of all N−1 copies update per pick), **re-clicking a source toggles it off**,
+  and a floating panel shows the running count ("3 in pattern — click
+  entities to add"). Enter (or the panel button) commits the `DerivedOp` and
+  re-solves (`solveSketchIn`, per `commitMirror`); Esc cancels.
+- **Eligibility:** hand-authored entities only — `applyDerived` restricts op
+  sources to non-`derivedFrom` entities so derivations can't chain, so
+  clicking a mirrored/offset/projected output flashes a message rather than
+  adding it. Construction entities are allowed; each copy preserves its
+  source's construction flag.
+
+Per-variant flow on top of that:
+
+- **⁙ Linear pattern** — no arming click (direction isn't picked): pure
+  accumulation, with a `dim-input`-style dialog (the small `DraggableDialog`
+  used by offset/dimensions) showing **Count**, **Step X**, **Step Y**;
+  dragging in the viewport sets the step vector directly (like offset's
+  drag), typing refines it.
+- **⁛ Circular pattern** — keeps Mirror's arm-first step for code symmetry:
+  the **first click sets the center** (snapping to entity points / origin;
+  empty space drops a construction point and references it), subsequent
+  clicks accumulate entities. A seeded session (pre-selection) goes straight
+  to the center click. Dialog shows **Count**, **Full ⟷ Angle** toggle,
+  **Angle (°)** and **Symmetric** in angle mode, with live ghosts.
 
 Both store the op and let `applyDerived` own the output from then on. Editing
 an existing pattern (changing count/step later) goes through the same route as
