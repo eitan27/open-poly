@@ -36,6 +36,7 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 | Boolean | `B` | Resolves conflict #1 (below). |
 | Transform | `T` | |
 | Mirror | `M` | |
+| Pattern | `X` | Repeat the selected body — linear run/grid or circular ring. Same letter as the sketch pattern tools (mutually exclusive contexts, safe). |
 
 ## Sketch toolbar (only available while editing a sketch)
 

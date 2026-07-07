@@ -8,6 +8,7 @@ import {
   addImport,
   addLoft,
   addMirror,
+  addPattern,
   addPlane,
   addRevolve,
   addSweep,
@@ -58,6 +59,8 @@ import type {
   ExtrudeProfile,
   FeatureKind,
   UpToFaceRef,
+  PatternAxisRef,
+  PatternDirRef,
   PlaneFeature,
   PlaneMethod,
   PointRef,
@@ -68,7 +71,7 @@ import type {
   TransformFeature,
   Vec2,
 } from "./document/types";
-import type { BooleanOp, MeshedEdges, MeshedFaces } from "./kernel/types";
+import type { BooleanOp, MeshedEdges, MeshedFaces, ShapeMeshPayload } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, worldToUv, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
@@ -403,6 +406,56 @@ function edgeFingerprint(edges: MeshedEdges, edgeId: number): { mid: [number, nu
     }
   }
   return { mid: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2], length };
+}
+
+/** Apply a rigid motion to a tessellated mesh payload for the Pattern dialog's
+ *  ghost preview — no kernel round trip: positions map through `mapPt`, normals
+ *  through `mapVec` (identity for a pure translation). Face/edge groups are
+ *  dropped (ghosts are never picked). */
+function transformMeshPayload(
+  mesh: ShapeMeshPayload,
+  mapPt: (p: [number, number, number]) => [number, number, number],
+  mapVec: (v: [number, number, number]) => [number, number, number],
+): ShapeMeshPayload {
+  const mapFlat = (src: number[], fn: (p: [number, number, number]) => [number, number, number]) => {
+    const out = new Array<number>(src.length);
+    for (let i = 0; i < src.length; i += 3) {
+      const [x, y, z] = fn([src[i], src[i + 1], src[i + 2]]);
+      out[i] = x; out[i + 1] = y; out[i + 2] = z;
+    }
+    return out;
+  };
+  return {
+    name: mesh.name,
+    faces: {
+      vertices: mapFlat(mesh.faces.vertices, mapPt),
+      triangles: mesh.faces.triangles,
+      ...(mesh.faces.normals ? { normals: mapFlat(mesh.faces.normals, mapVec) } : {}),
+    },
+    edges: { lines: mapFlat(mesh.edges.lines, mapPt) },
+  };
+}
+
+/** Point/vector mappers for a rotation of `angle` radians about the axis line
+ *  through `origin` along (unit) `dir` — Rodrigues' formula. */
+function rotationMappers(origin: [number, number, number], dir: [number, number, number], angle: number) {
+  const [ux, uy, uz] = dir;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const mapVec = (v: [number, number, number]): [number, number, number] => {
+    const [x, y, z] = v;
+    const dot = ux * x + uy * y + uz * z;
+    const cx = uy * z - uz * y, cy = uz * x - ux * z, cz = ux * y - uy * x;
+    return [
+      x * cos + cx * sin + ux * dot * (1 - cos),
+      y * cos + cy * sin + uy * dot * (1 - cos),
+      z * cos + cz * sin + uz * dot * (1 - cos),
+    ];
+  };
+  const mapPt = (p: [number, number, number]): [number, number, number] => {
+    const r = mapVec([p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]]);
+    return [r[0] + origin[0], r[1] + origin[1], r[2] + origin[2]];
+  };
+  return { mapPt, mapVec };
 }
 
 /** Saves a Blob to the user's machine via a throwaway anchor element. */
@@ -806,7 +859,7 @@ export default function App() {
   const [picking, setPicking] = useState(false);
   // What the plane/face pick flow is for: starting a sketch, or the base of a
   // new reference plane.
-  const [pickPurpose, setPickPurpose] = useState<"sketch" | "plane" | "revolveAxis">("sketch");
+  const [pickPurpose, setPickPurpose] = useState<"sketch" | "plane" | "revolveAxis" | "patternAxis" | "patternDir">("sketch");
   // The reference-plane dialog. `method` chooses the placement; the relevant
   // fields are filled by picks (base/refB planes-or-faces; points) or text inputs.
   const [planeDialog, setPlaneDialog] = useState<{
@@ -830,6 +883,31 @@ export default function App() {
   >(null);
   // Armed by the Mirror dialog: the next clicked planar body face is the plane.
   const [pickingMirrorFace, setPickingMirrorFace] = useState(false);
+  // The body Pattern dialog: repeat `targetId` as a linear run/grid or a
+  // circular ring (the copies land in ONE compound body; the seed is kept).
+  // Direction/axis references arm the shared axis-pick stream (pickPurpose
+  // "patternDir"/"patternAxis"); `arming` says which slot the next pick fills.
+  // `dir2on` reveals the optional second direction (a count1×count2 grid).
+  // All numeric fields are expression text.
+  const [patternDialog, setPatternDialog] = useState<{
+    kind: "linear" | "circular";
+    targetId: string;
+    dir1: PatternDirRef;
+    count1: string;
+    spacing1: string;
+    flip1: boolean;
+    dir2on: boolean;
+    dir2: PatternDirRef | null;
+    count2: string;
+    spacing2: string;
+    flip2: boolean;
+    axis: PatternAxisRef | null;
+    count: string;
+    mode: "full" | "angle";
+    angle: string;
+    symmetric: boolean;
+    arming: "dir1" | "dir2" | "axis" | null;
+  } | null>(null);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
   const [draft, setDraft] = useState<Vec2[]>([]);
@@ -1835,12 +1913,131 @@ export default function App() {
   // existing body stays rendered in its own colour and only the new material
   // reads as cyan. Hence the viewport just shows all real meshes as usual.
   const viewportMeshes = meshes;
+
+  // The Pattern dialog's live validation: null = fields are commit-ready. Used
+  // both to gate Create and as the dialog's warning line.
+  const patternDialogWarning = useMemo<string | null>(() => {
+    const d = patternDialog;
+    if (!d) return null;
+    const num = (expr: string): number => {
+      try { return evaluateExpression(expr, resolved.scope); } catch { return NaN; }
+    };
+    const badCount = (expr: string) => resolvePatternCount(expr, resolved.scope) === null;
+    if (d.kind === "linear") {
+      if (badCount(d.count1)) return "Count must be 2 or more.";
+      const s1 = num(d.spacing1);
+      if (!Number.isFinite(s1) || Math.abs(s1) < 1e-9) return "Spacing must be a non-zero number.";
+      if (d.dir2on) {
+        if (!d.dir2) return "Pick the second direction (or collapse it).";
+        if (badCount(d.count2)) return "The second count must be 2 or more.";
+        const s2 = num(d.spacing2);
+        if (!Number.isFinite(s2) || Math.abs(s2) < 1e-9) return "The second spacing must be a non-zero number.";
+      }
+      return null;
+    }
+    if (badCount(d.count)) return "Count must be 2 or more.";
+    if (d.mode === "angle") {
+      const a = num(d.angle);
+      if (!Number.isFinite(a) || Math.abs(a) < 1e-9) return "Angle must be a non-zero number.";
+    }
+    return null;
+  }, [patternDialog, resolved.scope]);
+
+  // Ghost preview of the Pattern dialog: the seed's ALREADY-TESSELLATED mesh
+  // cloned once per would-be copy with the instance's rigid motion applied in
+  // place — no kernel round trip, exact for rigid motions, updates per
+  // keystroke. Mirrors resolveDocument's baking but tolerates half-typed fields
+  // (⇒ no ghosts). A face axis only resolves in the worker (a cylinder's axis
+  // needs the B-rep), so it previews nothing until Create.
+  const patternGhosts = useMemo<GhostMesh[]>(() => {
+    const d = patternDialog;
+    if (!d || patternDialogWarning) return [];
+    const m = meshes.find((x) => x.id === d.targetId);
+    if (!m) return [];
+    const worldDir = (ref: PatternDirRef): [number, number, number] | null => {
+      if ("world" in ref) return ref.world === "x" ? [1, 0, 0] : ref.world === "y" ? [0, 1, 0] : [0, 0, 1];
+      const sk = doc.features.find((f) => f.id === ref.sketchId);
+      if (sk?.type !== "sketch") return null;
+      const e = sk.entities.find((x) => x.id === ref.entityId);
+      if (e?.type !== "line") return null;
+      const fr = frameOf(sk.plane, resolved.planeFrames);
+      const a = uvToWorld(fr, e.a[0], e.a[1]);
+      const b = uvToWorld(fr, e.b[0], e.b[1]);
+      const v: [number, number, number] = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const len = Math.hypot(v[0], v[1], v[2]);
+      return len < 1e-9 ? null : [v[0] / len, v[1] / len, v[2] / len];
+    };
+    const num = (expr: string): number => {
+      try { return evaluateExpression(expr, resolved.scope); } catch { return NaN; }
+    };
+    if (d.kind === "linear") {
+      const count1 = resolvePatternCount(d.count1, resolved.scope);
+      const d1 = worldDir(d.dir1);
+      if (count1 === null || !d1) return [];
+      const s1 = num(d.spacing1) * (d.flip1 ? -1 : 1);
+      let count2 = 1, s2 = 0;
+      let d2: [number, number, number] = [0, 0, 0];
+      if (d.dir2on && d.dir2) {
+        const c2 = resolvePatternCount(d.count2, resolved.scope);
+        const dir2 = worldDir(d.dir2);
+        if (c2 === null || !dir2) return [];
+        count2 = c2;
+        s2 = num(d.spacing2) * (d.flip2 ? -1 : 1);
+        d2 = dir2;
+      }
+      const out: GhostMesh[] = [];
+      for (let j = 0; j < count2; j++) {
+        for (let i = 0; i < count1; i++) {
+          if (i === 0 && j === 0) continue;
+          const off: [number, number, number] = [
+            i * s1 * d1[0] + j * s2 * d2[0],
+            i * s1 * d1[1] + j * s2 * d2[1],
+            i * s1 * d1[2] + j * s2 * d2[2],
+          ];
+          out.push({
+            mesh: transformMeshPayload(
+              m.mesh,
+              (p) => [p[0] + off[0], p[1] + off[1], p[2] + off[2]],
+              (v) => v,
+            ),
+          });
+        }
+      }
+      return out;
+    }
+    const axis = d.axis;
+    const count = resolvePatternCount(d.count, resolved.scope);
+    if (count === null || !axis || "face" in axis) return [];
+    const totalDeg = d.mode === "full" ? 360 : num(d.angle);
+    if (!Number.isFinite(totalDeg) || Math.abs(totalDeg) < 1e-9) return [];
+    let origin: [number, number, number];
+    let dir: [number, number, number] | null;
+    if ("world" in axis) {
+      origin = [0, 0, 0];
+      dir = worldDir({ world: axis.world });
+    } else {
+      const sk = doc.features.find((f) => f.id === axis.sketchId);
+      if (sk?.type !== "sketch") return [];
+      const e = sk.entities.find((x) => x.id === axis.entityId);
+      if (e?.type !== "line") return [];
+      const fr = frameOf(sk.plane, resolved.planeFrames);
+      origin = uvToWorld(fr, e.a[0], e.a[1]);
+      dir = worldDir(axis);
+    }
+    if (!dir) return [];
+    return circularPatternAngles(count, totalDeg, d.mode === "angle" && d.symmetric).map((a) => {
+      const { mapPt, mapVec } = rotationMappers(origin, dir!, a);
+      return { mesh: transformMeshPayload(m.mesh, mapPt, mapVec) };
+    });
+  }, [patternDialog, patternDialogWarning, meshes, doc, resolved.planeFrames, resolved.scope]);
+
   const ghostMeshes = useMemo<GhostMesh[]>(
     () => [
       ...(extrudePreview ? extrudePreview.map((p) => ({ mesh: p.mesh })) : []),
       ...(revolvePreview ? [{ mesh: revolvePreview }] : []),
+      ...patternGhosts,
     ],
-    [extrudePreview, revolvePreview],
+    [extrudePreview, revolvePreview, patternGhosts],
   );
 
   // Feature ids that produced an actual rendered body — what the Solids list
@@ -2540,6 +2737,10 @@ export default function App() {
         // pick (keeping the dialog), then a second Esc closes the dialog.
         else if (mirrorDialog && pickingMirrorFace) setPickingMirrorFace(false);
         else if (mirrorDialog) closeMirror();
+        // Pattern dialog: Esc first cancels an in-progress direction/axis pick
+        // (keeping the dialog), then a second Esc closes the dialog.
+        else if (patternDialog && picking) { setPicking(false); setPickPurpose("sketch"); }
+        else if (patternDialog) closePattern();
         else if (transformEditId) cancelTransform();
         else if (picking) setPicking(false);
         // Esc finishes an in-progress draft: the spline commits its accumulated
@@ -2713,6 +2914,9 @@ export default function App() {
         case "m":
           if (transformTarget) openMirror();
           break;
+        case "x":
+          if (transformTarget && !patternDialog) openPattern();
+          break;
         default:
           break;
       }
@@ -2738,6 +2942,7 @@ export default function App() {
     revolveDialog,
     mirrorDialog,
     pickingMirrorFace,
+    patternDialog,
     sweepInputs,
     loftInputs,
     dressUpTarget,
@@ -2777,6 +2982,59 @@ export default function App() {
     const { doc: next, id } = addMirror(doc, mirrorDialog.targetId, ref);
     setDoc(next);
     closeMirror();
+    selectFeature(id);
+  };
+
+  const openPattern = () => {
+    if (!transformTarget) return;
+    setPatternDialog({
+      kind: "linear",
+      targetId: transformTarget,
+      dir1: { world: "x" }, count1: "3", spacing1: "25", flip1: false,
+      dir2on: false, dir2: null, count2: "2", spacing2: "25", flip2: false,
+      axis: null, count: "6", mode: "full", angle: "90", symmetric: false,
+      arming: null,
+    });
+  };
+  const closePattern = () => {
+    setPatternDialog(null);
+    if (pickPurpose === "patternAxis" || pickPurpose === "patternDir") {
+      setPicking(false);
+      setPickPurpose("sketch");
+    }
+  };
+  // Arm the shared axis-pick stream to fill one of the dialog's reference slots.
+  const armPatternPick = (slot: "dir1" | "dir2" | "axis") => {
+    setPatternDialog((d) => (d ? { ...d, arming: slot } : d));
+    setPickPurpose(slot === "axis" ? "patternAxis" : "patternDir");
+    setPicking(true);
+  };
+  const createPattern = () => {
+    const d = patternDialog;
+    if (!d || patternDialogWarning) return;
+    if (d.kind === "circular" && !d.axis) return;
+    const { doc: next, id } = addPattern(
+      doc,
+      d.targetId,
+      d.kind === "linear"
+        ? {
+            kind: "linear",
+            dir1: d.dir1, count1: d.count1, spacing1: d.spacing1, flip1: d.flip1,
+            ...(d.dir2on && d.dir2
+              ? { dir2: d.dir2, count2: d.count2, spacing2: d.spacing2, flip2: d.flip2 }
+              : {}),
+          }
+        : {
+            kind: "circular",
+            axis: d.axis!,
+            count: d.count,
+            // Full circle is just angle "360"; symmetric is meaningless there.
+            angle: d.mode === "full" ? "360" : d.angle,
+            symmetric: d.mode === "angle" && d.symmetric,
+          },
+    );
+    setDoc(next);
+    closePattern();
     selectFeature(id);
   };
 
@@ -3062,7 +3320,48 @@ export default function App() {
 
   // The revolve "Select axis" arming resolved: fill the dialog's axis role from a
   // sketch line, a body face, or a datum/reference plane (one unified pick path).
+  // The Pattern dialog rides the same stream: "patternDir" takes a sketch line
+  // only; "patternAxis" a sketch line or a body face (planes are rejected — a
+  // pattern has no profile plane to intersect one with).
   const handleAxisPick = (pick: RevolveAxisPick) => {
+    if (pickPurpose === "patternDir" || pickPurpose === "patternAxis") {
+      if (pick.kind === "line") {
+        const sk = doc.features.find((f) => f.id === pick.sketchId);
+        const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === pick.entityId) : undefined;
+        if (e?.type !== "line") { flashSketchMsg("Pick a straight sketch line."); return; }
+        const ref = { sketchId: pick.sketchId, entityId: pick.entityId };
+        setPatternDialog((d) =>
+          d && d.arming
+            ? d.arming === "axis"
+              ? { ...d, axis: ref, arming: null }
+              : d.arming === "dir2"
+                ? { ...d, dir2: ref, arming: null }
+                : { ...d, dir1: ref, arming: null }
+            : d,
+        );
+      } else if (pick.kind === "bodyFace" && pickPurpose === "patternAxis") {
+        const m = meshes.find((x) => x.id === pick.featureId);
+        const center = m ? faceCentroid(m.mesh.faces, pick.faceId) : null;
+        if (!center) return;
+        const faceName = m ? faceNameOf(m.mesh.faces, pick.faceId) : undefined;
+        const normal = (m && faceNormal(m.mesh.faces, pick.faceId)) || undefined;
+        setPatternDialog((d) =>
+          d && d.arming === "axis"
+            ? { ...d, axis: { face: { featureId: pick.featureId, faceId: pick.faceId, faceName, center, normal } }, arming: null }
+            : d,
+        );
+      } else {
+        flashSketchMsg(
+          pickPurpose === "patternDir"
+            ? "The direction must be a sketch line (or use World X/Y/Z)."
+            : "The axis must be a sketch line or a cylindrical face.",
+        );
+        return; // keep the pick armed for another try
+      }
+      setPicking(false);
+      setPickPurpose("sketch");
+      return;
+    }
     if (pick.kind === "line") {
       const sk = doc.features.find((f) => f.id === pick.sketchId);
       const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === pick.entityId) : undefined;
@@ -4420,7 +4719,7 @@ export default function App() {
             onTransformPreview={handleTransformPreview}
             picking={picking}
             onPick={handlePickRef}
-            axisPick={picking && pickPurpose === "revolveAxis"}
+            axisPick={picking && (pickPurpose === "revolveAxis" || pickPurpose === "patternAxis" || pickPurpose === "patternDir")}
             onAxisPick={handleAxisPick}
             activeSketch={
               editingSketch
@@ -4537,6 +4836,13 @@ export default function App() {
               onClick={openMirror}
             >
               ⇋ Mirror{kbd("M")}
+            </button>
+            <button
+              title="Pattern (X): repeat the selected body — a linear run/grid or a circular ring"
+              disabled={!transformTarget || !!editingSketch || picking || !!patternDialog}
+              onClick={openPattern}
+            >
+              ⁙ Pattern{kbd("X")}
             </button>
           </div>
           {editingSketch && (
@@ -5073,11 +5379,15 @@ export default function App() {
                 <span>
                   {pickPurpose === "revolveAxis"
                     ? "Click an edge, plane, or face to revolve around"
-                    : pickPurpose === "plane"
-                      ? "Select a plane or planar face to offset the new plane from"
-                      : "Select a plane or planar face for the sketch"}
+                    : pickPurpose === "patternAxis"
+                      ? "Click a sketch line or a cylindrical face to pattern around"
+                      : pickPurpose === "patternDir"
+                        ? "Click a sketch line for the pattern direction"
+                        : pickPurpose === "plane"
+                          ? "Select a plane or planar face to offset the new plane from"
+                          : "Select a plane or planar face for the sketch"}
                 </span>
-                <button onClick={() => { setPicking(false); if (pickPurpose === "revolveAxis") setPickPurpose("sketch"); }}>Cancel (Esc)</button>
+                <button onClick={() => { setPicking(false); if (pickPurpose !== "sketch" && pickPurpose !== "plane") setPickPurpose("sketch"); }}>Cancel (Esc)</button>
               </div>
             )
           )}
@@ -5585,6 +5895,252 @@ export default function App() {
           </div>
         </DraggableDialog>
       )}
+      {patternDialog && (() => {
+        const d = patternDialog;
+        const targetName = doc.features.find((f) => f.id === d.targetId)?.name ?? "Body";
+        const lineLabel = (ref: { sketchId: string }) =>
+          (doc.features.find((f) => f.id === ref.sketchId)?.name ?? "Sketch") + " · line";
+        const axis = d.axis;
+        const axisLabel = !axis
+          ? null
+          : "world" in axis
+            ? `World ${axis.world.toUpperCase()}`
+            : "face" in axis
+              ? (doc.features.find((f) => f.id === axis.face.featureId)?.name ?? "Body") + " · face"
+              : lineLabel(axis);
+        // The direction dropdowns show "line" while a sketch-line ref is set OR
+        // its pick is being armed; picking a world option cancels the arming.
+        const dirValue = (slot: "dir1" | "dir2", ref: PatternDirRef | null) =>
+          d.arming === slot || (ref && !("world" in ref)) ? "line" : ref ? ref.world : "";
+        const setDir = (slot: "dir1" | "dir2") => (v: string) => {
+          if (v === "line") { armPatternPick(slot); return; }
+          if (v !== "x" && v !== "y" && v !== "z") return;
+          if (picking && d.arming === slot) { setPicking(false); setPickPurpose("sketch"); }
+          setPatternDialog((p) => (p ? { ...p, [slot]: { world: v }, arming: null } : p));
+        };
+        const dirPicking = (slot: "dir1" | "dir2") => picking && pickPurpose === "patternDir" && d.arming === slot;
+        return (
+          <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
+            <div className="ed-title" data-drag-handle>Pattern</div>
+            <div className="ed-modes">
+              {(["linear", "circular"] as const).map((k) => (
+                <button
+                  key={k}
+                  className={d.kind === k ? "active" : ""}
+                  onClick={() => setPatternDialog((p) => (p ? { ...p, kind: k, arming: null } : p))}
+                >
+                  {k === "linear" ? "Linear" : "Circular"}
+                </button>
+              ))}
+            </div>
+            <div className="bool-group-label">Body</div>
+            <div className="bool-operand-row">
+              <span className="bool-operand-name">{targetName}</span>
+            </div>
+            {d.kind === "linear" ? (
+              <>
+                <div className="bool-group-label">Direction</div>
+                <label className="ed-field">
+                  <span>Along</span>
+                  <select value={dirValue("dir1", d.dir1)} onChange={(e) => setDir("dir1")(e.target.value)}>
+                    <option value="x">World X</option>
+                    <option value="y">World Y</option>
+                    <option value="z">World Z</option>
+                    <option value="line">Sketch line…</option>
+                  </select>
+                </label>
+                {dirPicking("dir1") ? (
+                  <button className="ed-pick-btn active">Click a sketch line…</button>
+                ) : (
+                  !("world" in d.dir1) && (
+                    <div className="bool-operand-row">
+                      <span className="bool-operand-name">{lineLabel(d.dir1)}</span>
+                      <button className="bool-operand-x" title="Re-pick" onClick={() => armPatternPick("dir1")}>✕</button>
+                    </div>
+                  )
+                )}
+                <label className="ed-field">
+                  <span>Count</span>
+                  <input
+                    autoFocus
+                    value={d.count1}
+                    onChange={(e) => setPatternDialog((p) => (p ? { ...p, count1: e.target.value } : p))}
+                    onKeyDown={(e) => { if (e.key === "Enter") createPattern(); }}
+                  />
+                </label>
+                <label className="ed-field">
+                  <span>Spacing</span>
+                  <input
+                    value={d.spacing1}
+                    onChange={(e) => setPatternDialog((p) => (p ? { ...p, spacing1: e.target.value } : p))}
+                    onKeyDown={(e) => { if (e.key === "Enter") createPattern(); }}
+                  />
+                </label>
+                <label className="ed-field ed-flip">
+                  <span>Flip</span>
+                  <input
+                    type="checkbox"
+                    checked={d.flip1}
+                    onChange={(e) => setPatternDialog((p) => (p ? { ...p, flip1: e.target.checked } : p))}
+                  />
+                </label>
+                <button
+                  className="ed-pick-btn"
+                  onClick={() => setPatternDialog((p) => (p ? { ...p, dir2on: !p.dir2on, arming: null } : p))}
+                >
+                  {d.dir2on ? "▾ Second direction" : "▸ Second direction"}
+                </button>
+                {d.dir2on && (
+                  <>
+                    <label className="ed-field">
+                      <span>Along</span>
+                      <select value={dirValue("dir2", d.dir2)} onChange={(e) => setDir("dir2")(e.target.value)}>
+                        <option value="" disabled>Choose…</option>
+                        <option value="x">World X</option>
+                        <option value="y">World Y</option>
+                        <option value="z">World Z</option>
+                        <option value="line">Sketch line…</option>
+                      </select>
+                    </label>
+                    {dirPicking("dir2") ? (
+                      <button className="ed-pick-btn active">Click a sketch line…</button>
+                    ) : (
+                      d.dir2 && !("world" in d.dir2) && (
+                        <div className="bool-operand-row">
+                          <span className="bool-operand-name">{lineLabel(d.dir2)}</span>
+                          <button className="bool-operand-x" title="Re-pick" onClick={() => armPatternPick("dir2")}>✕</button>
+                        </div>
+                      )
+                    )}
+                    <label className="ed-field">
+                      <span>Count</span>
+                      <input
+                        value={d.count2}
+                        onChange={(e) => setPatternDialog((p) => (p ? { ...p, count2: e.target.value } : p))}
+                        onKeyDown={(e) => { if (e.key === "Enter") createPattern(); }}
+                      />
+                    </label>
+                    <label className="ed-field">
+                      <span>Spacing</span>
+                      <input
+                        value={d.spacing2}
+                        onChange={(e) => setPatternDialog((p) => (p ? { ...p, spacing2: e.target.value } : p))}
+                        onKeyDown={(e) => { if (e.key === "Enter") createPattern(); }}
+                      />
+                    </label>
+                    <label className="ed-field ed-flip">
+                      <span>Flip</span>
+                      <input
+                        type="checkbox"
+                        checked={d.flip2}
+                        onChange={(e) => setPatternDialog((p) => (p ? { ...p, flip2: e.target.checked } : p))}
+                      />
+                    </label>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="bool-group-label">Axis</div>
+                {axisLabel ? (
+                  <div className="bool-operand-row">
+                    <span className="bool-operand-name">{axisLabel}</span>
+                    <button
+                      className="bool-operand-x"
+                      title="Re-pick"
+                      onClick={() => { setPatternDialog((p) => (p ? { ...p, axis: null } : p)); armPatternPick("axis"); }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <label className="ed-field">
+                      <span>World</span>
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v !== "x" && v !== "y" && v !== "z") return;
+                          if (picking && d.arming === "axis") { setPicking(false); setPickPurpose("sketch"); }
+                          setPatternDialog((p) => (p ? { ...p, axis: { world: v }, arming: null } : p));
+                        }}
+                      >
+                        <option value="">Choose…</option>
+                        <option value="x">World X (through the origin)</option>
+                        <option value="y">World Y (through the origin)</option>
+                        <option value="z">World Z (through the origin)</option>
+                      </select>
+                    </label>
+                    <button
+                      className={"ed-pick-btn" + (picking && pickPurpose === "patternAxis" ? " active" : "")}
+                      onClick={() => armPatternPick("axis")}
+                    >
+                      {picking && pickPurpose === "patternAxis"
+                        ? "Click a line or cylindrical face…"
+                        : "Select axis (sketch line / cylindrical face)"}
+                    </button>
+                  </>
+                )}
+                <label className="ed-field">
+                  <span>Count</span>
+                  <input
+                    autoFocus
+                    value={d.count}
+                    onChange={(e) => setPatternDialog((p) => (p ? { ...p, count: e.target.value } : p))}
+                    onKeyDown={(e) => { if (e.key === "Enter") createPattern(); }}
+                  />
+                </label>
+                <div className="ed-modes">
+                  {(["full", "angle"] as const).map((m) => (
+                    <button
+                      key={m}
+                      className={d.mode === m ? "active" : ""}
+                      onClick={() => setPatternDialog((p) => (p ? { ...p, mode: m } : p))}
+                    >
+                      {m === "full" ? "Full (360°)" : "Angle"}
+                    </button>
+                  ))}
+                </div>
+                {d.mode === "angle" && (
+                  <>
+                    <label className="ed-field">
+                      <span>Angle (°)</span>
+                      <input
+                        value={d.angle}
+                        onChange={(e) => setPatternDialog((p) => (p ? { ...p, angle: e.target.value } : p))}
+                        onKeyDown={(e) => { if (e.key === "Enter") createPattern(); }}
+                      />
+                    </label>
+                    <label className="ed-field ed-flip">
+                      <span>Symmetric</span>
+                      <input
+                        type="checkbox"
+                        checked={d.symmetric}
+                        onChange={(e) => setPatternDialog((p) => (p ? { ...p, symmetric: e.target.checked } : p))}
+                      />
+                    </label>
+                  </>
+                )}
+                {axis && "face" in axis && (
+                  <div className="ed-hint">A face axis resolves in the kernel — the preview appears after Create.</div>
+                )}
+              </>
+            )}
+            {patternDialogWarning && <p className="ed-warning">{patternDialogWarning}</p>}
+            <div className="ed-actions">
+              <button
+                className="ed-primary"
+                disabled={!!patternDialogWarning || (d.kind === "circular" && !d.axis)}
+                onClick={createPattern}
+              >
+                Create
+              </button>
+              <button onClick={closePattern}>Cancel</button>
+            </div>
+          </DraggableDialog>
+        );
+      })()}
     </div>
   );
 }
