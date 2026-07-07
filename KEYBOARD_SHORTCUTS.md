@@ -47,6 +47,8 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 | Spline | `Shift+S` | Variant of `S` (which now selects the **Select** tool). Moved `S`→`Shift+S` so the bare letter goes to the more frequently used Select pointer. |
 | Offset | `O` | **O**ffset. Acts on the current selection (must be a single chain); opens an on-canvas distance box + a draggable arrow. |
 | Mirror (sketch) | `M` | **M**irror. Click a line to arm the mirror axis, then click entities to mirror them across it (live dashed previews); `Enter` commits, `Esc` cancels. Distinct from the modeling-toolbar `M` (body Mirror) — mutually exclusive, safe. |
+| Linear pattern | `X` | Click entities to repeat (seeds from the current selection; re-click removes), set count + ΔX/ΔY in the floating box (live dashed previews); `Enter` commits an associative op, `Esc` cancels. |
+| Circular pattern | `Shift+X` | Variant of `X`. First click sets the center (a vertex, the origin, or empty space — the latter commits a construction point), then click entities to repeat; count + 360°/angle/symmetric in the floating box; `Enter` commits, `Esc` cancels. |
 | Project / Convert | `U` | "**U**se" existing geometry. Click body edges & vertices to project them onto the sketch plane as new entities (live dashed previews); `Enter` commits, `Esc` cancels. Straight edges → lines, planar circular edges → circles/arcs, anything else → splines. |
 | Text | `T` | **T**ext. Click to place the baseline anchor, then type the string + height in the floating box; the glyphs preview live. `Enter` commits, `Esc` cancels. Sketch-mode only — distinct from the modeling-toolbar `T` (Transform), mutually exclusive, safe. |
 | Dimension | `D` | Already shipped. |

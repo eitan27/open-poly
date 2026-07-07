@@ -41,8 +41,11 @@ import {
 } from "./document/document";
 import {
   applyDerivedToSketch,
+  circularPatternAngles,
   projectedEntityFromPolyline,
   projectedPointEntity,
+  resolvePatternCenter,
+  resolvePatternCount,
   sameProjectedEntities,
 } from "./document/derived";
 import { DEFAULT_SOLID_COLOR } from "./document/colors";
@@ -99,6 +102,8 @@ import {
   rectangleCorners,
   rectangleFromCenter,
   regularPolygon,
+  rotateEntity,
+  translateEntity,
   type ChainEdge,
   type FittedProjection,
   type OffsetPrimitive,
@@ -432,6 +437,8 @@ const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; title: string; sc: str
   { tool: "spline", label: "∿", title: "Spline (Shift+S): click points, Esc to finish", sc: "⇧S" },
   { tool: "offset", label: <OffsetIcon />, title: "Offset (O): select a single chain of edges, then drag / type the distance", sc: "O" },
   { tool: "mirror", label: "◫", title: "Mirror (M): click a line to arm the mirror axis, then click entities to mirror; Enter commits, Esc cancels", sc: "M" },
+  { tool: "pattern-linear", label: "⋯", title: "Linear pattern (X): click entities to repeat, set count + step; Enter commits, Esc cancels", sc: "X" },
+  { tool: "pattern-circular", label: "⊛", title: "Circular pattern (Shift+X): click the center point, then entities to repeat; Enter commits, Esc cancels", sc: "⇧X" },
   { tool: "project", label: "⧉", title: "Project / Convert (U): click body edges & vertices to project them onto the sketch; Enter commits, Esc cancels", sc: "U" },
   { tool: "text", label: "T", title: "Text (T): click to place, then type the text & height; Enter commits, Esc cancels", sc: "T" },
 ];
@@ -444,6 +451,7 @@ const sketchToolMeta = (t: SketchTool) => SKETCH_TOOLS.find((x) => x.tool === t)
 const SKETCH_GROUPS = {
   rect: { title: "Rectangle (R = 2 corners, Shift+R = center)", variants: ["rect-corner", "rect-center"] as const },
   circle: { title: "Circle (C = center + radius, Shift+C = 3 points)", variants: ["circle-center", "circle-3p"] as const },
+  pattern: { title: "Pattern (X = linear, Shift+X = circular)", variants: ["pattern-linear", "pattern-circular"] as const },
 };
 type SketchGroupId = keyof typeof SKETCH_GROUPS;
 // Left-to-right (top-to-bottom in the vertical bar) order, with the two tool
@@ -458,6 +466,7 @@ const SKETCH_LAYOUT: ({ kind: "tool"; tool: SketchTool } | { kind: "group"; grou
   { kind: "tool", tool: "spline" },
   { kind: "tool", tool: "offset" },
   { kind: "tool", tool: "mirror" },
+  { kind: "group", group: "pattern" },
   { kind: "tool", tool: "project" },
   { kind: "tool", tool: "text" },
 ];
@@ -568,7 +577,7 @@ export default function App() {
     setSelection(id === null ? [] : [{ kind: "feature", id }]);
   // Regular clicks accumulate into the set; clicking a selected element removes
   // it; clicking empty space clears.
-  const handlePick = (picked: Selection | null) => {
+  const handlePick = (picked: Selection | null, sketchUv?: Vec2) => {
     // Up-to-face pick armed (from the extrude dialog): the next clicked body
     // face becomes the extrude's target face; anything else cancels the arming.
     if (pickingUpFace) {
@@ -706,6 +715,42 @@ export default function App() {
       setMirrorSession({ ...s, sourceIds: [...s.sourceIds, ent.id], previews: [...s.previews, mirrored] });
       return;
     }
+    // Sketch Pattern tool active: clicks accumulate source entities (re-click
+    // toggles off). Circular first arms the CENTER: the click's snapped uv
+    // resolves to an entity point / the origin when it lands on one (associative
+    // PointRef), else a raw uv committed later as a construction point. Clicks
+    // never change the normal selection. Enter commits; Esc cancels.
+    if (patternSessionRef.current && (sketchTool === "pattern-linear" || sketchTool === "pattern-circular")) {
+      const s = patternSessionRef.current;
+      const sk = doc.features.find((f) => f.id === editingSketchId);
+      if (sk?.type !== "sketch") return;
+      if (s.kind === "circular" && !s.center) {
+        if (!sketchUv) return;
+        // A vertex of DERIVED geometry can't anchor the center (applyDerived
+        // only sources hand-authored entities) — fall back to the raw uv.
+        const ref = pointRefAt(sketchUv);
+        const refDerived =
+          ref && "entity" in ref && sk.entities.find((x) => x.id === ref.entity)?.derivedFrom;
+        setPatternSession({ ...s, center: ref && !refDerived ? ref : { at: sketchUv } });
+        return;
+      }
+      const ent =
+        picked?.kind === "sketchEntity" && picked.sketchId === editingSketchId
+          ? sk.entities.find((x) => x.id === picked.entityId)
+          : undefined;
+      if (!ent) return; // empty / non-sketch click: keep the session armed
+      if (ent.derivedFrom) {
+        flashSketchMsg("Derived geometry can't be patterned — pick its source instead.");
+        return;
+      }
+      setPatternSession({
+        ...s,
+        sourceIds: s.sourceIds.includes(ent.id)
+          ? s.sourceIds.filter((id) => id !== ent.id)
+          : [...s.sourceIds, ent.id],
+      });
+      return;
+    }
     // Project/Convert tool active: clicking an existing body edge or vertex
     // projects it orthographically onto the active sketch plane as a new entity.
     // Each pick is previewed; Enter commits, Esc cancels. Re-clicking a source
@@ -837,6 +882,31 @@ export default function App() {
   const projectSessionRef = useRef(projectSession);
   projectSessionRef.current = projectSession;
   const commitProjectRef = useRef<() => void>(() => {});
+  // The active sketch Pattern session (linear or circular — the 2D sketch tools,
+  // distinct from the modeling-mode body PatternFeature). Sources accumulate by
+  // clicking entities (re-click toggles off); the session seeds from the current
+  // selection when the tool is activated. Circular arms a `center` on its first
+  // click (an entity-point PointRef when the snapped uv lands on one, else a raw
+  // uv committed as a construction point). All numeric fields are expression
+  // text. Committed on Enter as a DerivedOp, discarded on Esc. Null = none.
+  const [patternSession, setPatternSession] = useState<{
+    kind: "linear" | "circular";
+    sourceIds: string[];
+    /** TOTAL instances including the seed (expression). */
+    count: string;
+    /** Linear: per-step uv translation (expressions, mm). */
+    dx: string;
+    dy: string;
+    /** Circular: the rotation center; null until the first click arms it. */
+    center: PointRef | { at: Vec2 } | null;
+    /** Circular: full circle (equal steps) or a total sweep angle. */
+    mode: "full" | "angle";
+    angle: string;
+    symmetric: boolean;
+  } | null>(null);
+  const patternSessionRef = useRef(patternSession);
+  patternSessionRef.current = patternSession;
+  const commitPatternRef = useRef<() => void>(() => {});
   // Text tool: after clicking the plane to set the anchor, the user types the
   // string + height in a floating box. Live-previewed; committed on Enter,
   // discarded on Esc. Null = no placement in progress.
@@ -946,9 +1016,11 @@ export default function App() {
   const [expandedSketchGroup, setExpandedSketchGroup] = useState<SketchGroupId | null>(null);
   const [circleVariant, setCircleVariant] = useState<SketchTool>("circle-center");
   const [rectVariant, setRectVariant] = useState<SketchTool>("rect-corner");
+  const [patternVariant, setPatternVariant] = useState<SketchTool>("pattern-linear");
   useEffect(() => {
     if (sketchTool === "circle-center" || sketchTool === "circle-3p") setCircleVariant(sketchTool);
     else if (sketchTool === "rect-corner" || sketchTool === "rect-center") setRectVariant(sketchTool);
+    else if (sketchTool === "pattern-linear" || sketchTool === "pattern-circular") setPatternVariant(sketchTool);
     setExpandedSketchGroup(null);
   }, [sketchTool]);
   // Dismiss an open flyout when clicking anything outside a sketch group (the
@@ -1058,6 +1130,7 @@ export default function App() {
       setProjectSession(null);
       setOffsetSession(null);
       setMirrorSession(null);
+      setPatternSession(null);
       setSketchToolState("text");
       setDraft([]);
       setPolySidesOpen(false);
@@ -1073,12 +1146,13 @@ export default function App() {
     // it forms a single chain and open the offset session (or flash the error
     // and stay in Select). beginOffset is defined below — a closure, so it's
     // initialised by the time any click/keypress calls this.
-    if (t === "offset") { setProjectSession(null); beginOffsetRef.current(); return; }
+    if (t === "offset") { setProjectSession(null); setPatternSession(null); beginOffsetRef.current(); return; }
     setOffsetSession(null);
     // Mirror opens a session that arms an axis on the next line click, then
     // mirrors each subsequently clicked entity. Starting any other tool ends it.
     if (t === "mirror") {
       setProjectSession(null);
+      setPatternSession(null);
       setMirrorSession({ axisEntityId: null, sourceIds: [], previews: [] });
       setSketchToolState("mirror");
       setDraft([]);
@@ -1089,12 +1163,41 @@ export default function App() {
     // Project/Convert: clicking body edges/vertices projects them onto the plane.
     if (t === "project") {
       setProjectSession({ refs: [], keys: [], previews: [] });
+      setPatternSession(null);
       setSketchToolState("project");
       setDraft([]);
       setPolySidesOpen(false);
       return;
     }
     setProjectSession(null);
+    // Pattern (linear/circular): a session that accumulates source entities by
+    // click, seeded from whatever is already selected (the Select tool toggle-
+    // accumulates, so a multi-entity selection is often already there). Only
+    // hand-authored entities are eligible — derived ops can't chain. Switching
+    // between the two pattern variants keeps the accumulated sources.
+    if (t === "pattern-linear" || t === "pattern-circular") {
+      const prev = patternSessionRef.current;
+      const seed = prev
+        ? prev.sourceIds
+        : selectedSketchEntities.filter((e) => !e.derivedFrom).map((e) => e.id);
+      setPatternSession({
+        kind: t === "pattern-linear" ? "linear" : "circular",
+        sourceIds: seed,
+        count: prev?.count ?? (t === "pattern-linear" ? "3" : "6"),
+        dx: prev?.dx ?? "10",
+        dy: prev?.dy ?? "0",
+        center: prev?.center ?? null,
+        mode: prev?.mode ?? "full",
+        angle: prev?.angle ?? "90",
+        symmetric: prev?.symmetric ?? false,
+      });
+      setSelection([]);
+      setSketchToolState(t);
+      setDraft([]);
+      setPolySidesOpen(false);
+      return;
+    }
+    setPatternSession(null);
     setSketchToolState(t);
     setDraft([]); // starting a new tool abandons any in-progress points
     // Selecting the polygon tool (re)opens its Sides prompt, seeded with the
@@ -2408,17 +2511,20 @@ export default function App() {
       m: "mirror", // M = sketch Mirror (modeling-mode M = body Mirror feature)
       u: "project", // U = "Use" (Project/Convert existing geometry into the sketch)
       t: "text", // T = Text (sketch-mode only; modeling-mode T = Transform)
+      x: "pattern-linear", // X = linear pattern (Shift+X = circular)
     };
     // Shift-modified variants of an existing tool key (Shift+R/Shift+C/Shift+S).
     const SKETCH_SHIFT_KEYS: Record<string, SketchTool> = {
       r: "rect-center",
       c: "circle-3p",
       s: "spline", // Shift+S = Spline (bare S now selects the Select tool)
+      x: "pattern-circular",
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (offsetSessionRef.current) { setOffsetSession(null); setSketchToolState("select"); }
         else if (mirrorSessionRef.current) { setMirrorSession(null); setSelection([]); setSketchToolState("select"); }
+        else if (patternSessionRef.current) { setPatternSession(null); setSelection([]); setSketchToolState("select"); }
         else if (projectSessionRef.current) { setProjectSession(null); setSketchToolState("select"); }
         else if (textDraftRef.current) setTextDraft(null);
         else if (dimInputRef.current) setDimInput(null);
@@ -2461,6 +2567,12 @@ export default function App() {
       if (e.key === "Enter" && projectSessionRef.current) {
         e.preventDefault();
         commitProjectRef.current();
+        return;
+      }
+      // Enter commits the in-progress sketch Pattern as a DerivedOp.
+      if (e.key === "Enter" && patternSessionRef.current) {
+        e.preventDefault();
+        commitPatternRef.current();
         return;
       }
       if ((e.key === "Delete" || e.key === "Backspace") && selection.length > 0) {
@@ -2808,6 +2920,52 @@ export default function App() {
     }
   }, [offsetSession, resolved.scope]);
 
+  // Live dashed preview of the in-progress sketch Pattern: every copy the
+  // committed op would generate, recomputed as sources/count/step/center change.
+  // Uses the same helpers as applyDerived so preview and commit can't disagree.
+  const patternPreview = useMemo<SketchEntity[]>(() => {
+    if (!patternSession || !editingSketch) return [];
+    const s = patternSession;
+    try {
+      const byId = new Map(
+        editingSketch.entities.filter((e) => !e.derivedFrom).map((e) => [e.id, e] as const),
+      );
+      const out: SketchEntity[] = [];
+      const count = resolvePatternCount(s.count, resolved.scope);
+      if (s.kind === "linear") {
+        if (count === null) return [];
+        const dx = evaluateExpression(s.dx, resolved.scope);
+        const dy = evaluateExpression(s.dy, resolved.scope);
+        if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < 1e-9) return [];
+        s.sourceIds.forEach((sid, j) => {
+          const src = byId.get(sid);
+          if (!src) return;
+          for (let i = 1; i < count; i++) out.push(translateEntity(src, dx * i, dy * i, `__patpv${j}:${i}`));
+        });
+        return out;
+      }
+      const center = s.center ? resolvePatternCenter(s.center, byId) : null;
+      if (!center) return [];
+      // Mark the armed center so it reads before any sources are clicked.
+      out.push({ type: "point", id: "__patpv_center", p: center });
+      if (count !== null) {
+        const totalDeg = s.mode === "full" ? 360 : evaluateExpression(s.angle, resolved.scope);
+        if (Number.isFinite(totalDeg) && Math.abs(totalDeg) > 1e-9) {
+          const angles = circularPatternAngles(count, totalDeg, s.mode === "angle" && s.symmetric);
+          s.sourceIds.forEach((sid, j) => {
+            const src = byId.get(sid);
+            if (!src) return;
+            angles.forEach((a, i) => out.push(rotateEntity(src, center, a, `__patpv${j}:${i}`)));
+          });
+        }
+      }
+      return out;
+    } catch {
+      // A half-typed expression must yield no preview, never crash the render.
+      return [];
+    }
+  }, [patternSession, editingSketch, resolved.scope]);
+
   // The sketches handed to the Viewport, plus a transient synthetic sketch
   // carrying the offset preview (on the active sketch's frame) when one is live.
   const renderSketchesWithPreview = useMemo(() => {
@@ -2825,7 +2983,8 @@ export default function App() {
         textPreview = [{ type: "text", id: "__textpv", p: textDraft.anchor, value: textDraft.value, height: h }];
     }
     if (
-      (offsetPreview.length === 0 && mirrorPreview.length === 0 && projectPreview.length === 0 && textPreview.length === 0) ||
+      (offsetPreview.length === 0 && mirrorPreview.length === 0 && projectPreview.length === 0 &&
+        patternPreview.length === 0 && textPreview.length === 0) ||
       !dimFrame
     )
       return renderSketches;
@@ -2850,8 +3009,17 @@ export default function App() {
         entities: projectPreview.map((e) => ({ ...e, construction: true })),
         regions: [],
       });
+    if (patternPreview.length > 0)
+      extra.push({
+        id: "__pattern_preview__",
+        frame: dimFrame,
+        // Force construction so the preview routes to the dashed overlay; the
+        // committed copies keep their sources' real construction flags.
+        entities: patternPreview.map((e) => ({ ...e, construction: true })),
+        regions: [],
+      });
     return [...renderSketches, ...extra];
-  }, [renderSketches, offsetPreview, mirrorSession, projectSession, textDraft, resolved.scope, dimFrame]);
+  }, [renderSketches, offsetPreview, mirrorSession, projectSession, patternPreview, textDraft, resolved.scope, dimFrame]);
 
   const startSketchOn = (ref: SketchPlaneRef) => {
     const { doc: next, id } = addSketch(doc, ref);
@@ -3401,6 +3569,78 @@ export default function App() {
     setDoc(await solveSketchIn(next, sketchId));
   };
   commitMirrorRef.current = commitMirror;
+
+  const cancelPattern = () => {
+    setPatternSession(null);
+    setSelection([]);
+    setSketchToolState("select");
+  };
+
+  // Commit the sketch Pattern as an associative DerivedOp (the copies re-compute
+  // from their sources whenever they move — applyDerived runs on solve/regen).
+  // A raw-uv circular center first drops a construction point at that spot and
+  // references it, so the center stays visible / draggable / dimensionable.
+  const commitPattern = async () => {
+    const sess = patternSession;
+    if (!sess || !editingSketch) return;
+    if (sess.sourceIds.length === 0 || (sess.kind === "circular" && !sess.center)) {
+      cancelPattern();
+      return;
+    }
+    // Validate the numeric fields like commitOffset: flag and keep the session
+    // open so the user can correct them (don't throw, don't silently discard).
+    if (resolvePatternCount(sess.count, resolved.scope) === null) {
+      flashSketchMsg("Enter an instance count of 2 or more.");
+      return;
+    }
+    if (sess.kind === "linear") {
+      let dx = NaN, dy = NaN;
+      try {
+        dx = evaluateExpression(sess.dx, resolved.scope);
+        dy = evaluateExpression(sess.dy, resolved.scope);
+      } catch { /* fall through to the finite check */ }
+      if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < 1e-9) {
+        flashSketchMsg("Enter a non-zero numeric step.");
+        return;
+      }
+    } else if (sess.mode === "angle") {
+      let a = NaN;
+      try { a = evaluateExpression(sess.angle, resolved.scope); } catch { /* as above */ }
+      if (!Number.isFinite(a) || Math.abs(a) < 1e-9) {
+        flashSketchMsg("Enter a non-zero numeric angle.");
+        return;
+      }
+    }
+    const sketchId = editingSketch.id;
+    let next = doc;
+    const opId = genId();
+    let op: DerivedOp;
+    if (sess.kind === "linear") {
+      op = { id: opId, kind: "linearPattern", sourceIds: sess.sourceIds, count: sess.count, dx: sess.dx, dy: sess.dy };
+    } else {
+      let center = sess.center!;
+      if (!("entity" in center) && !("origin" in center)) {
+        const pid = genId();
+        next = addSketchEntities(next, sketchId, [{ type: "point", id: pid, p: center.at, construction: true }]);
+        center = { entity: pid, at: "c" };
+      }
+      op = {
+        id: opId,
+        kind: "circularPattern",
+        sourceIds: sess.sourceIds,
+        center,
+        count: sess.count,
+        angle: sess.mode === "full" ? "360" : sess.angle,
+        symmetric: sess.mode === "angle" && sess.symmetric,
+      };
+    }
+    next = addDerivedOp(next, sketchId, op);
+    setPatternSession(null);
+    setSelection([]);
+    setSketchToolState("select");
+    setDoc(await solveSketchIn(next, sketchId));
+  };
+  commitPatternRef.current = commitPattern;
 
   const cancelProject = () => {
     setProjectSession(null);
@@ -4319,7 +4559,8 @@ export default function App() {
                   );
                 }
                 const g = SKETCH_GROUPS[slot.group];
-                const variant = slot.group === "circle" ? circleVariant : rectVariant;
+                const variant =
+                  slot.group === "circle" ? circleVariant : slot.group === "rect" ? rectVariant : patternVariant;
                 const groupActive = (g.variants as readonly SketchTool[]).includes(sketchTool);
                 const expanded = expandedSketchGroup === slot.group;
                 return (
@@ -4598,6 +4839,96 @@ export default function App() {
                   Done
                 </button>
                 <button className="ghost" onClick={cancelMirror}>
+                  ✕
+                </button>
+              </DraggableDialog>
+            );
+          })()}
+          {/* Pattern tool (linear/circular): a fixed floating prompt at the top
+              (sources accumulate by clicks anywhere, so there's no single
+              anchor). Expression fields for count/step/angle; Done/Enter commits
+              the DerivedOp, ✕/Esc discards the session. */}
+          {editingSketch && patternSession && (() => {
+            const s = patternSession;
+            const n = s.sourceIds.length;
+            const status =
+              s.kind === "circular" && !s.center
+                ? "Click the center point (a vertex, the origin, or empty space)"
+                : n === 0
+                  ? "Click entities to pattern"
+                  : `${n} in pattern — click entities to add`;
+            return (
+              <DraggableDialog className="dim-input" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
+                <label data-drag-handle>{s.kind === "linear" ? "Linear pattern" : "Circular pattern"}</label>
+                <span style={{ padding: "0 6px" }}>{status}</span>
+                <label style={{ padding: "0 2px" }}>Count</label>
+                <DimValueInput
+                  value={s.count}
+                  variables={dimVarOptions}
+                  onChange={(v) => setPatternSession((p) => (p ? { ...p, count: v } : p))}
+                  onSubmit={commitPattern}
+                  onCancel={cancelPattern}
+                />
+                {s.kind === "linear" ? (
+                  <>
+                    <label style={{ padding: "0 2px" }}>ΔX</label>
+                    <DimValueInput
+                      value={s.dx}
+                      variables={dimVarOptions}
+                      onChange={(v) => setPatternSession((p) => (p ? { ...p, dx: v } : p))}
+                      onSubmit={commitPattern}
+                      onCancel={cancelPattern}
+                    />
+                    <label style={{ padding: "0 2px" }}>ΔY</label>
+                    <DimValueInput
+                      value={s.dy}
+                      variables={dimVarOptions}
+                      onChange={(v) => setPatternSession((p) => (p ? { ...p, dy: v } : p))}
+                      onSubmit={commitPattern}
+                      onCancel={cancelPattern}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className={s.mode === "full" ? "active" : "ghost"}
+                      title="Full circle: instances at equal 360°/count steps"
+                      onClick={() => setPatternSession((p) => (p ? { ...p, mode: "full" } : p))}
+                    >
+                      360°
+                    </button>
+                    <button
+                      className={s.mode === "angle" ? "active" : "ghost"}
+                      title="Spread the instances across a total sweep angle"
+                      onClick={() => setPatternSession((p) => (p ? { ...p, mode: "angle" } : p))}
+                    >
+                      Angle
+                    </button>
+                    {s.mode === "angle" && (
+                      <>
+                        <DimValueInput
+                          value={s.angle}
+                          variables={dimVarOptions}
+                          onChange={(v) => setPatternSession((p) => (p ? { ...p, angle: v } : p))}
+                          onSubmit={commitPattern}
+                          onCancel={cancelPattern}
+                        />
+                        <label style={{ padding: "0 2px" }} title="Spread ±angle/2 to both sides of the seed">
+                          Sym
+                          <input
+                            type="checkbox"
+                            checked={s.symmetric}
+                            onChange={(ev) => setPatternSession((p) => (p ? { ...p, symmetric: ev.target.checked } : p))}
+                          />
+                        </label>
+                      </>
+                    )}
+                  </>
+                )}
+                <button onClick={commitPattern} disabled={n === 0 || (s.kind === "circular" && !s.center)}>
+                  Done
+                </button>
+                <button className="ghost" onClick={cancelPattern}>
                   ✕
                 </button>
               </DraggableDialog>

@@ -150,14 +150,18 @@ export type SketchTool =
   | "offset"
   | "mirror"
   | "project"
+  | "pattern-linear"
+  | "pattern-circular"
   | "text";
 /** Tools that pick/click existing entities (entity selection) rather than draw
  *  new geometry on the plane: Select, the Mirror tool (which clicks an axis line
- *  and then entities to reflect), and Project/Convert (which clicks body edges /
- *  vertices to pull into the sketch). Routes clicks to onSelect, not
- *  onSketchClick, and keeps selection-hover highlighting live. */
+ *  and then entities to reflect), the Pattern tools (which click entities to
+ *  repeat — and, for circular, a center point via the snapped uv passed along
+ *  with each pick), and Project/Convert (which clicks body edges / vertices to
+ *  pull into the sketch). Routes clicks to onSelect, not onSketchClick, and
+ *  keeps selection-hover highlighting live. */
 function isPickTool(t: SketchTool): boolean {
-  return t === "select" || t === "mirror" || t === "project";
+  return t === "select" || t === "mirror" || t === "project" || t === "pattern-linear" || t === "pattern-circular";
 }
 export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
 
@@ -438,7 +442,11 @@ export function Viewport({
    *  bodies render in the standard selection color, `cyan` bodies render as a
    *  translucent ghost. See SELECT_COLOR / GHOST_COLOR. */
   booleanHighlight: { orange: Set<string>; cyan: Set<string> } | null;
-  onSelect: (picked: Selection | null) => void;
+  /** `sketchUv` rides along when a sketch is being edited: the click's SNAPPED
+   *  uv on the active plane (endpoints/origin/grid, same stack as drawing
+   *  tools), so pick-tool flows that need a coordinate — the circular pattern's
+   *  center — get one without a second click path. */
+  onSelect: (picked: Selection | null, sketchUv?: Vec2) => void;
   datumVisibility: Record<DatumId, boolean>;
   /** User reference planes to render + make pickable (for sketch / plane base). */
   userPlanes: RenderPlane[];
@@ -1541,6 +1549,14 @@ export function Viewport({
         }
       }
     };
+    // The snapped uv of a screen point on the active sketch plane (undefined
+    // outside sketch editing / off the plane) — the coordinate rider handed to
+    // onSelect for pick-tool flows like the circular pattern's center click.
+    const snappedUvAt = (x: number, y: number): Vec2 | undefined => {
+      if (!activeFrameRef.current) return undefined;
+      const raw = planeHitUv(x, y);
+      return raw ? snap(raw, x, y).uv : undefined;
+    };
     const onUp = (e: PointerEvent) => {
       // Finish (or cancel) a sketch drag. A press that never travelled far enough
       // to become a drag falls through to a normal selection click.
@@ -1554,7 +1570,7 @@ export function Viewport({
         renderer.domElement.style.cursor = "";
         down = null;
         if (wasDrag) onSketchDragEndRef.current();
-        else onSelectRef.current(pickSelection(e.clientX, e.clientY));
+        else onSelectRef.current(pickSelection(e.clientX, e.clientY), snappedUvAt(e.clientX, e.clientY));
         return;
       }
       if (!down) return;
@@ -1607,7 +1623,7 @@ export function Viewport({
       }
       // Selection click (idle, or sketch + Select tool). App accumulates into a
       // set and toggles the element off if it is already selected.
-      onSelectRef.current(pickSelection(e.clientX, e.clientY));
+      onSelectRef.current(pickSelection(e.clientX, e.clientY), snappedUvAt(e.clientX, e.clientY));
     };
     renderer.domElement.addEventListener("pointermove", onMove);
     renderer.domElement.addEventListener("pointerdown", onDown);
