@@ -17,6 +17,7 @@ import {
   addImport,
   addLoft,
   addMirror,
+  addPattern,
   addPlane,
   addRevolve,
   addSketch,
@@ -45,7 +46,7 @@ import {
   type SketchPlaneId,
   type SketchPlaneRef,
 } from "../document/planes";
-import type { Document, EdgeRef, ExtrudeProfile, Feature, PrimitiveFeature, RevolveAxis, Variable } from "../document/types";
+import type { Document, EdgeRef, ExtrudeProfile, Feature, PatternAxisRef, PatternDirRef, PointRef, PrimitiveFeature, RevolveAxis, Variable, Vec2 } from "../document/types";
 import { listMeta } from "../storage/db";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 import type { Selection, ViewName } from "../viewport/Viewport";
@@ -404,6 +405,91 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         const opId = genId();
         next = addDerivedOp(doc, op.sketchId, { id: opId, kind: "mirror", axisId: op.axisId, sourceIds: op.sourceIds });
         createdId = opId;
+        break;
+      }
+      case "addSketchPattern": {
+        const sketch = requireFeature(doc, op.sketchId);
+        if (sketch.type !== "sketch") throw new OpError("invalid_op", `"${op.sketchId}" is not a sketch.`);
+        for (const id of op.sourceIds) {
+          const e = sketch.entities.find((x) => x.id === id);
+          if (!e) throw new OpError("not_found", `No entity "${id}" in sketch "${op.sketchId}".`);
+          if (e.derivedFrom) throw new OpError("invalid_op", `"${id}" is derived geometry — pattern its source instead.`);
+        }
+        const opId = genId();
+        if (op.kind === "linear") {
+          if (op.dx === undefined && op.dy === undefined) {
+            throw new OpError("invalid_op", "a linear sketch pattern needs a step (dx and/or dy).");
+          }
+          next = addDerivedOp(doc, op.sketchId, {
+            id: opId, kind: "linearPattern", sourceIds: op.sourceIds,
+            count: String(op.count), dx: String(op.dx ?? 0), dy: String(op.dy ?? 0),
+          });
+        } else {
+          if (!op.center) throw new OpError("invalid_op", "a circular sketch pattern needs a center.");
+          let center: PointRef | { at: Vec2 };
+          if (Array.isArray(op.center)) {
+            center = { at: op.center };
+          } else {
+            const ce = sketch.entities.find((x) => x.id === (op.center as { entityId: string }).entityId);
+            if (!ce) throw new OpError("not_found", `No entity "${(op.center as { entityId: string }).entityId}" in sketch "${op.sketchId}".`);
+            if (ce.derivedFrom) throw new OpError("invalid_op", "the center can't be derived geometry.");
+            center = { entity: ce.id, at: (op.center as { at?: "a" | "b" | "c" }).at ?? "c" };
+          }
+          next = addDerivedOp(doc, op.sketchId, {
+            id: opId, kind: "circularPattern", sourceIds: op.sourceIds, center,
+            count: String(op.count), angle: String(op.angle ?? 360), symmetric: op.symmetric ?? false,
+          });
+        }
+        createdId = opId;
+        break;
+      }
+      case "addPattern": {
+        requireFeature(doc, op.targetId);
+        const dirRef = (d: { world: "x" | "y" | "z" } | { sketchId: string; entityId: string }): PatternDirRef => {
+          if ("world" in d) return d;
+          const sk = requireFeature(doc, d.sketchId);
+          if (sk.type !== "sketch") throw new OpError("not_found", `"${d.sketchId}" is not a sketch.`);
+          const e = sk.entities.find((x) => x.id === d.entityId);
+          if (!e) throw new OpError("not_found", `No entity "${d.entityId}" in sketch "${d.sketchId}".`);
+          if (e.type !== "line") throw new OpError("invalid_op", "a pattern direction/axis entity must be a line.");
+          return { sketchId: d.sketchId, entityId: d.entityId };
+        };
+        let r;
+        if (op.kind === "linear") {
+          if (!op.dir1) throw new OpError("invalid_op", "a linear pattern needs dir1.");
+          if (op.count1 === undefined || op.spacing1 === undefined) {
+            throw new OpError("invalid_op", "a linear pattern needs count1 and spacing1.");
+          }
+          if (op.dir2 && (op.count2 === undefined || op.spacing2 === undefined)) {
+            throw new OpError("invalid_op", "a second direction needs count2 and spacing2.");
+          }
+          r = addPattern(doc, op.targetId, {
+            kind: "linear",
+            dir1: dirRef(op.dir1), count1: String(op.count1), spacing1: String(op.spacing1), flip1: op.flip1 ?? false,
+            ...(op.dir2
+              ? { dir2: dirRef(op.dir2), count2: String(op.count2), spacing2: String(op.spacing2), flip2: op.flip2 ?? false }
+              : {}),
+          });
+        } else {
+          if (!op.axis) throw new OpError("invalid_op", "a circular pattern needs an axis.");
+          if (op.count === undefined) throw new OpError("invalid_op", "a circular pattern needs a count.");
+          let axis: PatternAxisRef;
+          if ("bodyId" in op.axis) {
+            const mesh = ctx.getMeshes().find((m) => m.id === (op.axis as { bodyId: string }).bodyId);
+            if (!mesh) throw new OpError("not_found", `No body "${(op.axis as { bodyId: string }).bodyId}" for the pattern axis.`);
+            const fg = faceGeomByName(mesh.mesh.faces, (op.axis as { faceName: string }).faceName);
+            if (!fg) throw new OpError("not_found", `Face "${(op.axis as { faceName: string }).faceName}" not found on body "${(op.axis as { bodyId: string }).bodyId}".`);
+            axis = { face: { featureId: (op.axis as { bodyId: string }).bodyId, faceName: (op.axis as { faceName: string }).faceName, faceId: fg.faceId, center: fg.center, normal: fg.normal } };
+          } else {
+            axis = dirRef(op.axis);
+          }
+          r = addPattern(doc, op.targetId, {
+            kind: "circular",
+            axis, count: String(op.count), angle: String(op.angle ?? 360), symmetric: op.symmetric ?? false,
+          });
+        }
+        next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
+        createdId = r.id;
         break;
       }
       case "addPlane": {

@@ -208,6 +208,83 @@ export const operationSchema = z.discriminatedUnion("op", [
     name: z.string().optional(),
   }),
   z.object({
+    // Associative 2D PATTERN of sketch entities: a linear run (count × step) or
+    // a circular ring (count about a center). The copies track their sources
+    // and are driven, like offset/mirror. Counts INCLUDE the seed (≥2).
+    op: z.literal("addSketchPattern"),
+    sketchId: z.string(),
+    /** The entity ids to repeat. */
+    sourceIds: z.array(z.string()).min(1),
+    kind: z.enum(["linear", "circular"]),
+    /** TOTAL instances including the seed (number or expression, ≥2). */
+    count: expr,
+    /** linear: the per-step translation in sketch (u,v) mm. */
+    dx: expr.optional(),
+    dy: expr.optional(),
+    /** circular: the rotation center — a raw [u,v], or an entity point
+     *  {entityId, at} (at "a"/"b" = line/arc ends, "c" = circle/arc center or a
+     *  point entity; default "c"). There is NO radius input: instances are
+     *  rotations of the seed about the center, so the radius is wherever the
+     *  seed already sits. */
+    center: z
+      .union([
+        z.tuple([z.number(), z.number()]),
+        z.object({ entityId: z.string(), at: z.enum(["a", "b", "c"]).optional() }),
+      ])
+      .optional(),
+    /** circular: TOTAL sweep in degrees (default 360 = full circle, equal
+     *  360/count steps). Any other sweep spreads the instances
+     *  endpoints-inclusive across it. */
+    angle: expr.optional(),
+    /** circular, non-360 only: spread ±angle/2 to both sides of the seed. */
+    symmetric: z.boolean().optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
+    // Repeat a BODY as rigid copies — a linear run/grid or a circular ring. The
+    // copies land in ONE new compound body keyed by the pattern; the seed body
+    // is kept (like add_mirror). Counts INCLUDE the seed (≥2).
+    op: z.literal("addPattern"),
+    /** The body (feature id) to repeat. */
+    targetId: z.string(),
+    kind: z.enum(["linear", "circular"]),
+    /** linear: first direction — a world axis {world:"x"|"y"|"z"} or a sketch
+     *  line {sketchId, entityId}. */
+    dir1: z
+      .union([z.object({ world: z.enum(["x", "y", "z"]) }), z.object({ sketchId: z.string(), entityId: z.string() })])
+      .optional(),
+    /** linear: TOTAL instances along dir1 including the seed (≥2). */
+    count1: expr.optional(),
+    /** linear: instance-to-instance spacing along dir1 (mm). */
+    spacing1: expr.optional(),
+    flip1: z.boolean().optional(),
+    /** linear: optional second direction ⇒ a count1×count2 grid. */
+    dir2: z
+      .union([z.object({ world: z.enum(["x", "y", "z"]) }), z.object({ sketchId: z.string(), entityId: z.string() })])
+      .optional(),
+    count2: expr.optional(),
+    spacing2: expr.optional(),
+    flip2: z.boolean().optional(),
+    /** circular: the rotation axis — a world axis through the origin, a sketch
+     *  line, or a body face {bodyId, faceName} (must be cylindrical/conical —
+     *  its own central axis is used; planar faces are rejected). There is NO
+     *  radius input: instances are rotations of the seed about the axis. */
+    axis: z
+      .union([
+        z.object({ world: z.enum(["x", "y", "z"]) }),
+        z.object({ sketchId: z.string(), entityId: z.string() }),
+        z.object({ bodyId: z.string(), faceName: z.string() }),
+      ])
+      .optional(),
+    /** circular: TOTAL instances including the seed (≥2). */
+    count: expr.optional(),
+    /** circular: TOTAL sweep in degrees (default 360 = full circle). */
+    angle: expr.optional(),
+    /** circular, non-360 only: spread ±angle/2 to both sides of the seed. */
+    symmetric: z.boolean().optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
     op: z.literal("addPlane"),
     /** Placement method (default "offset"). */
     method: z.enum(["offset", "midplane", "angle", "through"]).optional(),

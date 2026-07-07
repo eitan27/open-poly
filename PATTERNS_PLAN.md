@@ -5,6 +5,14 @@ Plan for the Phase 5 "Linear pattern (1- and 2-direction), circular pattern
 document model, inputs, dialog UX, kernel work, previews, MCP parity, and
 phasing.
 
+> **Status: ✅ implemented** (phases 1–5 below, including the second linear
+> direction). Deviations from the plan as written: the body dialog is a single
+> floating dialog rather than per-type dialogs (as designed in §3); linear
+> directions support world axes + sketch lines (body-EDGE direction references
+> are deferred to the §6 future list); the sketch tools commit via a floating
+> count/step box rather than a drag handle (drag-to-set-step is future). The
+> §6 "later" items remain open.
+
 ## 1. Scope: sketches AND solids — yes, both
 
 Pattern should exist at both levels, exactly like Mirror already does

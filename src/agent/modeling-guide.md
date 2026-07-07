@@ -146,6 +146,19 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
 - **Mirror sketch geometry:** `add_sketch_mirror` (a sketch line `axisId` + the
   `sourceIds` to reflect) for symmetric profiles — draw half, mirror the rest;
   the copies track the originals. (To mirror a whole solid, use `add_mirror`.)
+- **Repeat geometry (bolt circles, hole rows, fences):** two levels, pick by
+  what repeats. For repeated **holes/cuts**, pattern **in the sketch**:
+  `add_sketch_pattern` (`kind:"linear"` with `count` + `dx`/`dy`, or
+  `kind:"circular"` with `count` + a `center` — an entity point
+  `{entityId, at}` or raw `[u,v]`) makes DRIVEN copies of the profile, then
+  **one** `add_extrude` remove cuts them all (far cheaper than N bodies + N
+  booleans). For a repeated **solid**, `add_pattern` on the body:
+  `kind:"linear"` (`dir1` world axis or sketch line, `count1`, `spacing1`;
+  optional `dir2`/`count2`/`spacing2` for a grid) or `kind:"circular"` (`axis`
+  = world axis / sketch line / cylindrical face, `count`, `angle` default 360;
+  `symmetric` spreads ±angle/2). Copies land in ONE compound body, the seed is
+  kept. Counts **include** the seed; there is **no radius input** — instances
+  rotate about the axis/center, so the radius is wherever the seed sits.
 - **Reuse model geometry in a sketch (project/convert):** projecting existing
   body edges onto the sketch plane is available in the UI (Onshape's "Use") and
   is associative, but there's **no agent op for it yet** — reference the geometry

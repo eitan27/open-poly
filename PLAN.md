@@ -540,7 +540,25 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   (Showing planes in a separate datums list is **not planned** — appearing in the
   timeline + viewport is enough.)
 - Linear pattern (1- and 2-direction), circular pattern (axis + count + angle).
-  **TODO.**
+  **✅ DONE — at BOTH levels** (see PATTERNS_PLAN.md for the full design):
+  - **Sketch patterns** — `linearPattern` / `circularPattern` `DerivedOp`s
+    (associative, expression-backed, counts include the seed, clamped at
+    `MAX_PATTERN_INSTANCES`). Tools live in a sketch-toolbar flyout (`X` /
+    `Shift+X`): sources seed from the selection or accumulate by click,
+    circular arms its center on the first click (entity points/origin →
+    `PointRef`; empty space → a construction point), live dashed previews,
+    floating count/step/angle box. The idiomatic way to repeat cuts — pattern
+    the profile, one extrude-remove.
+  - **Body pattern** — `PatternFeature` (`⁙ Pattern`, `X`): linear run/grid
+    (world-axis or sketch-line directions × spacing, optional second
+    direction) or circular ring (axis = world axis / sketch line /
+    cylindrical face; revolve-style Full(360°)/Angle + Symmetric). The copies
+    are rigid `applyTrsf` clones with per-instance `~p{i}` name suffixes,
+    compounded into ONE body keyed by the feature (seed kept, like Mirror).
+    Live ghost preview clones the seed's tessellated mesh — no kernel round
+    trip. Agent parity: `add_sketch_pattern` + `add_pattern` MCP tools.
+  - *Still open:* per-instance skip, fuse-with-seed option, multi-seed, and
+    body-edge direction references.
 - **Mirror across a plane/planar face — ✅ DONE.** A `MirrorFeature` reflects a
   body across a datum / reference plane into a **new** body (original kept) via
   `gp_Trsf.SetMirror` (reuses `applyTrsf`; names re-key 1:1). `⇋ Mirror` button

@@ -449,6 +449,97 @@ describe("applyOperation — revolve options, text, offset, mirror", () => {
     const m = await apply(ctx, { op: "addSketchMirror", sketchId: sk.createdId!, axisId: circ!.id, sourceIds: [circ!.id] });
     expect(m).toMatchObject({ ok: false, errorKind: "invalid_op" });
   });
+
+  it("addSketchPattern (circular) appends the op and generates driven copies", async () => {
+    const { ctx, doc } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch", plane: { datum: "top" },
+      entities: [{ shape: "circle", c: [20, 0], r: 3 }],
+    });
+    const circ = getSceneSummary(ctx).sketches[0].entities.find((e) => e.type === "circle");
+    const p = await apply(ctx, {
+      op: "addSketchPattern", sketchId: sk.createdId!, kind: "circular",
+      sourceIds: [circ!.id], count: 6, center: [0, 0],
+    });
+    expect(p.ok).toBe(true);
+    const s = doc().features.find((x) => x.id === sk.createdId);
+    expect(s && s.type === "sketch" && s.derived?.[0].kind).toBe("circularPattern");
+    // 6 total = the seed + 5 driven copies ⇒ 6 extrudable regions.
+    const summary = getSceneSummary(ctx).sketches[0];
+    expect(summary.regions.length).toBe(6);
+    expect(summary.entities.filter((e) => e.derived).length).toBe(5);
+  });
+
+  it("addSketchPattern (linear) translates copies by count × step", async () => {
+    const { ctx } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch", plane: { datum: "top" },
+      entities: [{ shape: "circle", c: [0, 0], r: 2 }],
+    });
+    const circ = getSceneSummary(ctx).sketches[0].entities.find((e) => e.type === "circle");
+    const p = await apply(ctx, {
+      op: "addSketchPattern", sketchId: sk.createdId!, kind: "linear",
+      sourceIds: [circ!.id], count: 3, dx: 10, dy: 0,
+    });
+    expect(p.ok).toBe(true);
+    expect(getSceneSummary(ctx).sketches[0].regions.length).toBe(3);
+  });
+
+  it("addSketchPattern rejects a missing source and a missing center", async () => {
+    const { ctx } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch", plane: { datum: "top" },
+      entities: [{ shape: "circle", c: [10, 0], r: 2 }],
+    });
+    const circ = getSceneSummary(ctx).sketches[0].entities.find((e) => e.type === "circle");
+    const bad = await apply(ctx, {
+      op: "addSketchPattern", sketchId: sk.createdId!, kind: "linear",
+      sourceIds: ["nope"], count: 2, dx: 5,
+    });
+    expect(bad).toMatchObject({ ok: false, errorKind: "not_found" });
+    const noCenter = await apply(ctx, {
+      op: "addSketchPattern", sketchId: sk.createdId!, kind: "circular",
+      sourceIds: [circ!.id], count: 4,
+    });
+    expect(noCenter).toMatchObject({ ok: false, errorKind: "invalid_op" });
+  });
+});
+
+describe("applyOperation — body pattern", () => {
+  it("addPattern (linear, world axis) creates the feature and bakes offsets", async () => {
+    const { ctx, doc } = makeCtx();
+    const box = await apply(ctx, { op: "addPrimitive", kind: "box" });
+    const p = await apply(ctx, {
+      op: "addPattern", targetId: box.createdId!, kind: "linear",
+      dir1: { world: "x" }, count1: 4, spacing1: 25,
+    });
+    expect(p.ok).toBe(true);
+    const f = doc().features.find((x) => x.id === p.createdId);
+    expect(f?.type).toBe("pattern");
+    const rp = resolveDocument(doc()).features.find((x) => x.id === p.createdId);
+    expect(rp?.type === "pattern" && rp.offsets).toEqual([[25, 0, 0], [50, 0, 0], [75, 0, 0]]);
+  });
+
+  it("addPattern (circular, world axis) bakes the angles", async () => {
+    const { ctx, doc } = makeCtx();
+    const box = await apply(ctx, { op: "addPrimitive", kind: "box", params: { x: 30 } });
+    const p = await apply(ctx, {
+      op: "addPattern", targetId: box.createdId!, kind: "circular",
+      axis: { world: "z" }, count: 6,
+    });
+    expect(p.ok).toBe(true);
+    const rp = resolveDocument(doc()).features.find((x) => x.id === p.createdId);
+    expect(rp?.type === "pattern" && rp.angles?.length).toBe(5);
+  });
+
+  it("addPattern validates its per-kind required fields", async () => {
+    const { ctx } = makeCtx();
+    const box = await apply(ctx, { op: "addPrimitive", kind: "box" });
+    expect(await apply(ctx, { op: "addPattern", targetId: box.createdId!, kind: "linear", count1: 3, spacing1: 10 }))
+      .toMatchObject({ ok: false, errorKind: "invalid_op" }); // no dir1
+    expect(await apply(ctx, { op: "addPattern", targetId: box.createdId!, kind: "circular", count: 4 }))
+      .toMatchObject({ ok: false, errorKind: "invalid_op" }); // no axis
+  });
 });
 
 describe("applyOperation — reference plane methods", () => {
