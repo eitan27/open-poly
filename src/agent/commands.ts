@@ -220,9 +220,14 @@ function resolveProfile(ctx: AgentContext, spec: ProfileSpec): ExtrudeProfile {
     return { kind: "sketchText", sketchId: spec.sketchId, textId: spec.textId };
   }
   if ("sketchId" in spec) {
-    const sketch = ctx.getDoc().features.find((f) => f.id === spec.sketchId);
+    const doc = ctx.getDoc();
+    const sketch = doc.features.find((f) => f.id === spec.sketchId);
     if (sketch?.type !== "sketch") throw new OpError("not_found", `No sketch "${spec.sketchId}".`);
-    const regions = detectSketchRegions(sketch.entities);
+    // Detect regions on the DERIVED-APPLIED sketch (offset/mirror/pattern
+    // outputs included) — the same view the scene summary shows the agent and
+    // resolveDocument bakes profiles from, so a region the summary lists is
+    // always accepted here.
+    const regions = detectSketchRegions(applyDerived(sketch, resolveDocument(doc).scope).entities);
     if (regions.length === 0) throw new OpError("invalid_op", `Sketch "${spec.sketchId}" has no closed region to extrude.`);
     let regionId = spec.regionId;
     if (regionId === undefined) {

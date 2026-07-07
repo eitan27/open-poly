@@ -468,6 +468,13 @@ describe("applyOperation — revolve options, text, offset, mirror", () => {
     const summary = getSceneSummary(ctx).sketches[0];
     expect(summary.regions.length).toBe(6);
     expect(summary.entities.filter((e) => e.derived).length).toBe(5);
+    // A DERIVED region is extrudable: resolveProfile must accept any region the
+    // summary lists (it detects regions on the derived-applied sketch).
+    const derivedRegion = summary.regions[summary.regions.length - 1];
+    const ex = await apply(ctx, {
+      op: "addExtrude", profile: { sketchId: sk.createdId!, regionId: derivedRegion.id }, distance: 5,
+    });
+    expect(ex.ok).toBe(true);
   });
 
   it("addSketchPattern (linear) translates copies by count × step", async () => {
