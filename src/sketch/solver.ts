@@ -35,6 +35,12 @@ export interface SolveResult {
    *  (e.g. forcing a horizontal and a vertical line parallel), even when planegcs
    *  doesn't flag it as a formal "conflict". */
   status: number;
+  /** Ids of OUR constraints planegcs flagged as conflicting — lets the UI name
+   *  the culprits instead of a vague "existing constraints" message. */
+  conflictingIds: string[];
+  /** Ids of OUR constraints planegcs flagged as (partially) redundant — already
+   *  implied by the rest, so they'd be dead weight if stored. */
+  redundantIds: string[];
 }
 
 // planegcs SketchPrimitive objects are loosely typed here to avoid coupling to
@@ -62,7 +68,6 @@ export async function solveSketch(
   const circleIdByEntity = new Map<string, string>();
   const arcIdByEntity = new Map<string, string>();
   let pc = 0;
-  let cc = 0;
 
   // The two endpoints of an arc, in uv, at its current start/end angles.
   const arcEnds = (a: Extract<SketchEntity, { type: "arc" }>): { start: Vec2; end: Vec2 } => ({
@@ -157,8 +162,11 @@ export async function solveSketch(
     }
   }
 
+  // Constraint prims carry OUR constraint id (a constraint mapping to several
+  // prims suffixes the extras with `~`), so planegcs's conflicting/redundant
+  // diagnostics can be mapped back to the sketch's constraints.
   for (const c of constraints) {
-    const id = `c${cc++}`;
+    const id = c.id;
     if (c.type === "horizontal" && lineIdByEntity.has(c.entity)) {
       prims.push({ id, type: "horizontal_l", l_id: lineIdByEntity.get(c.entity) });
     } else if (c.type === "vertical" && lineIdByEntity.has(c.entity)) {
@@ -242,7 +250,7 @@ export async function solveSketch(
           // it off the origin.
           const p = ensurePoint(aIsOrigin ? pb : pa);
           prims.push({ id, type: "coordinate_x", p_id: p, x: 0 });
-          prims.push({ id: `c${cc++}`, type: "coordinate_y", p_id: p, y: 0 });
+          prims.push({ id: `${id}~y`, type: "coordinate_y", p_id: p, y: 0 });
         } else {
           const p1 = ensurePoint(pa);
           const p2 = ensurePoint(pb);
@@ -279,7 +287,7 @@ export async function solveSketch(
         const pid = ensurePoint(p);
         prims.push({ id, type: "point_on_arc", p_id: pid, a_id: arcIdByEntity.get(target.id) });
         prims.push({
-          id: `c${cc++}`,
+          id: `${id}~b`,
           type: "point_on_perp_bisector_ppp",
           p_id: pid,
           lp1_id: ensurePoint(ends.start),
@@ -297,6 +305,18 @@ export async function solveSketch(
   const dof = wrapper.gcs.dof();
   const hasConflicts = wrapper.has_gcs_conflicting_constraints();
   const hasRedundant = wrapper.has_gcs_redundant_constraints();
+
+  // Map flagged prim ids back to our constraint ids (strip the `~` suffix of
+  // secondary prims; drop internal prims like arc_rules).
+  const knownIds = new Set(constraints.map((c) => c.id));
+  const ownIds = (primIds: string[]): string[] => [
+    ...new Set(primIds.map((s) => s.split("~")[0]).filter((s) => knownIds.has(s))),
+  ];
+  const conflictingIds = ownIds(wrapper.get_gcs_conflicting_constraints());
+  const redundantIds = ownIds([
+    ...wrapper.get_gcs_redundant_constraints(),
+    ...wrapper.get_gcs_partially_redundant_constraints(),
+  ]);
 
   // Read solved point coordinates back per key.
   const solvedByKey = new Map<string, Vec2>();
@@ -334,5 +354,5 @@ export async function solveSketch(
     return e;
   });
 
-  return { entities: updated, dof, ok: true, hasConflicts, hasRedundant, status };
+  return { entities: updated, dof, ok: true, hasConflicts, hasRedundant, status, conflictingIds, redundantIds };
 }

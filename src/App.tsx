@@ -3167,6 +3167,39 @@ export default function App() {
     }
   };
 
+  // Did adding constraint `addedId` introduce a redundancy? Precise when
+  // planegcs names the new constraint directly; otherwise compare against a
+  // baseline solve without it — a sketch can carry harmless pre-existing
+  // redundants (e.g. a trivially-satisfied draw-time attach), and those must
+  // not veto every future constraint.
+  const introducedRedundancy = async (
+    entities: SketchEntity[],
+    constraints: SketchConstraint[],
+    addedId: string,
+    res: NonNullable<Awaited<ReturnType<typeof runSolve>>["res"]>,
+  ): Promise<boolean> => {
+    if (!res.hasRedundant && res.redundantIds.length === 0) return false;
+    if (res.redundantIds.includes(addedId)) return true;
+    try {
+      const baseline = await solveSketch(entities, constraints.filter((c) => c.id !== addedId));
+      return res.redundantIds.length > baseline.redundantIds.length || (res.hasRedundant && !baseline.hasRedundant);
+    } catch {
+      return true; // baseline itself unsolvable — blame the addition
+    }
+  };
+
+  // The labels of the constraints planegcs blames for a conflict (minus the one
+  // just added), for a rejection message that names the actual culprits.
+  const conflictNames = (constraints: SketchConstraint[], res: { conflictingIds: string[] }, addedId: string): string[] => [
+    ...new Set(
+      res.conflictingIds
+        .filter((id) => id !== addedId)
+        .map((id) => constraints.find((c) => c.id === id))
+        .filter((c): c is SketchConstraint => !!c)
+        .map(constraintLabel),
+    ),
+  ];
+
   const solveSketchIn = async (docArg: Document, sketchId: string): Promise<Document> => {
     const { doc: solved, res } = await runSolve(docArg, sketchId);
     if (res) {
@@ -3483,29 +3516,41 @@ export default function App() {
     if (!editingSketch) return;
     const sketchId = editingSketch.id;
     const candidate = addSketchConstraints(doc, sketchId, [constraint]);
+    const candidateSk = candidate.features.find((f) => f.id === sketchId);
+    if (candidateSk?.type !== "sketch") return;
     const { doc: solved, res } = await runSolve(candidate, sketchId);
-    if (res) {
-      // A contradictory geometric constraint (e.g. forcing a horizontal and a
-      // vertical line parallel) often isn't flagged as a formal conflict —
-      // planegcs "satisfies" it by collapsing a line to zero length. So reject on
-      // a conflict, a failed/invalid solve, OR a degenerate (near-zero) entity.
-      const sk = solved.features.find((f) => f.id === sketchId);
-      const degenerate =
-        sk?.type === "sketch" &&
-        sk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
-      if (res.hasConflicts || res.status >= 2 || degenerate) {
-        flashSketchMsg(`${name} conflicts with existing constraints — not applied. Edit or remove the conflicting one instead.`);
-        setSelection([]);
-        return;
-      }
-      if (res.hasRedundant) {
-        flashSketchMsg(`${name} is already implied by existing constraints — not added.`);
-        setSelection([]);
-        return;
-      }
-      setFullyConstrained(res.dof === 0 && !res.hasConflicts);
-      setSolveConflict(res.hasConflicts);
+    // The solver threw: storing the constraint anyway would silently freeze the
+    // sketch (saved but never enforced), so reject it like a failed solve.
+    if (!res) {
+      flashSketchMsg(`${name} couldn't be solved — not applied.`);
+      setSelection([]);
+      return;
     }
+    // A contradictory geometric constraint (e.g. forcing a horizontal and a
+    // vertical line parallel) often isn't flagged as a formal conflict —
+    // planegcs "satisfies" it by collapsing a line to zero length. So reject on
+    // a conflict, a failed/invalid solve, OR a degenerate (near-zero) entity.
+    const sk = solved.features.find((f) => f.id === sketchId);
+    const degenerate =
+      sk?.type === "sketch" &&
+      sk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
+    if (res.hasConflicts || res.status >= 2 || degenerate) {
+      const culprits = conflictNames(candidateSk.constraints, res, constraint.id);
+      flashSketchMsg(
+        culprits.length
+          ? `${name} conflicts with ${culprits.join(" + ")} — not applied. Edit or remove that constraint (Constraints list) instead.`
+          : `${name} conflicts with existing constraints — not applied. Edit or remove the conflicting one instead.`,
+      );
+      setSelection([]);
+      return;
+    }
+    if (await introducedRedundancy(candidateSk.entities, candidateSk.constraints, constraint.id, res)) {
+      flashSketchMsg(`${name} is already implied by existing constraints — not added.`);
+      setSelection([]);
+      return;
+    }
+    setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+    setSolveConflict(res.hasConflicts);
     setDoc(solved);
     setSelection([]);
   };
@@ -3680,28 +3725,48 @@ export default function App() {
         ? { id: genId(), type: "angle", a: entityId, b: entityId2!, value }
         : { id: genId(), type: kind === "radius" ? "radius" : "distance", entity: entityId, value };
     const candidate = setSketchConstraints(doc, sketchId, [...kept, added]);
+    const candidateSk = candidate.features.find((f) => f.id === sketchId);
+    if (candidateSk?.type !== "sketch") return;
     const { doc: solved, res } = await runSolve(candidate, sketchId);
     // A dimension the solver can't satisfy would otherwise be saved as a dead
     // constraint that silently freezes (or wrecks) the geometry. Reject it and tell
     // the user — the sketch is left exactly as it was. As with geometric
     // constraints, an over-constraint shows as `hasConflicts`, but an impossible
     // one (e.g. a second right angle in a triangle) instead fails the solve or
-    // collapses a line to zero length, so check those too.
-    if (res) {
-      const sk = solved.features.find((f) => f.id === sketchId);
-      const degenerate =
-        sk?.type === "sketch" &&
-        sk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
-      if (res.hasConflicts || res.status >= 2 || degenerate) {
-        flashSketchMsg(
-          `That ${kind} can't be satisfied with the existing constraints — not applied. Edit or remove a conflicting one instead.`,
-        );
-        setSelection([]);
-        return;
-      }
-      setFullyConstrained(res.dof === 0 && !res.hasConflicts);
-      setSolveConflict(res.hasConflicts);
+    // collapses a line to zero length, so check those too. A solver THROW must
+    // also reject: storing the dimension unsolved would show the new value on the
+    // label while the geometry silently stays put.
+    if (!res) {
+      flashSketchMsg(`That ${kind} couldn't be solved — not applied.`);
+      setSelection([]);
+      return;
     }
+    const sk = solved.features.find((f) => f.id === sketchId);
+    const degenerate =
+      sk?.type === "sketch" &&
+      sk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
+    if (res.hasConflicts || res.status >= 2 || degenerate) {
+      const culprits = conflictNames(candidateSk.constraints, res, added.id);
+      flashSketchMsg(
+        culprits.length
+          ? `That ${kind} conflicts with ${culprits.join(" + ")} — not applied. Edit or remove that constraint (Constraints list) instead.`
+          : `That ${kind} can't be satisfied with the existing constraints — not applied. Edit or remove a conflicting one instead.`,
+      );
+      setSelection([]);
+      return;
+    }
+    // A dimension on an already-driven length (e.g. the opposite side of a
+    // rectangle) solves "fine" but is dead weight: it changes nothing now and
+    // makes every later edit of the coupled dimension conflict. Reject it.
+    if (await introducedRedundancy(candidateSk.entities, candidateSk.constraints, added.id, res)) {
+      flashSketchMsg(
+        `That ${kind} is already driven by the existing constraints — not added. Edit the existing dimension instead.`,
+      );
+      setSelection([]);
+      return;
+    }
+    setFullyConstrained(res.dof === 0 && !res.hasConflicts);
+    setSolveConflict(res.hasConflicts);
     setDoc(solved);
     setSelection([]);
   };

@@ -208,6 +208,62 @@ describe("solveSketch text", () => {
   });
 });
 
+describe("solveSketch redundant/conflicting diagnostics (square legs)", () => {
+  // A 10×10 square at the origin: chained lines with H/V on every edge —
+  // opposite legs are coupled, so a second dimension on the far leg is dead
+  // weight and must be identifiable (this froze real sketches: the dead dim
+  // was stored silently, then every later dimension edit conflicted).
+  const square = (): SketchEntity[] => [
+    { type: "line", id: "B", a: [0, 0], b: [10, 0] },
+    { type: "line", id: "R", a: [10, 0], b: [10, 10] },
+    { type: "line", id: "T", a: [10, 10], b: [0, 10] },
+    { type: "line", id: "L", a: [0, 10], b: [0, 0] },
+  ];
+  const hv: SketchConstraint[] = [
+    { id: "hb", type: "horizontal", entity: "B" },
+    { id: "vr", type: "vertical", entity: "R" },
+    { id: "ht", type: "horizontal", entity: "T" },
+    { id: "vl", type: "vertical", entity: "L" },
+  ];
+  const len = (e: SketchEntity) => {
+    if (e.type !== "line") throw new Error("line");
+    return Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]);
+  };
+
+  it("changing a leg's dimension resizes the square (edit flow)", async () => {
+    const first = await solveSketch(square(), [...hv, { id: "d", type: "distance", entity: "R", value: 10 }]);
+    const second = await solveSketch(first.entities, [...hv, { id: "d2", type: "distance", entity: "R", value: 20 }]);
+    expect(second.hasConflicts).toBe(false);
+    const r = second.entities.find((e) => e.id === "R")!;
+    expect(len(r)).toBeCloseTo(20, 3);
+  });
+
+  it("names a same-value dimension on the coupled opposite leg as redundant", async () => {
+    const res = await solveSketch(square(), [
+      ...hv,
+      { id: "dr", type: "distance", entity: "R", value: 10 },
+      { id: "dl", type: "distance", entity: "L", value: 10 },
+    ]);
+    expect(res.hasRedundant).toBe(true);
+    expect(res.redundantIds).toContain("dl");
+    expect(res.hasConflicts).toBe(false);
+  });
+
+  it("names the constraints of an inconsistent coupled pair as conflicting", async () => {
+    const res = await solveSketch(square(), [
+      ...hv,
+      { id: "dr", type: "distance", entity: "R", value: 10 },
+      { id: "dl", type: "distance", entity: "L", value: 20 },
+    ]);
+    expect(res.hasConflicts || res.status >= 2).toBe(true);
+    expect(res.conflictingIds).toContain("dr");
+    expect(res.conflictingIds).toContain("dl");
+    // The geometry must not silently half-satisfy the new value.
+    const l = res.entities.find((e) => e.id === "L")!;
+    expect(len(l)).toBeCloseTo(10, 3);
+  });
+});
+
 describe("solveSketch derived geometry", () => {
   it("ignores derivedFrom entities (no DOF, returned untouched)", async () => {
     // A free, fully-constrained line plus a generated (derived) line. The derived
