@@ -5152,9 +5152,9 @@ export default function App() {
               <DraggableDialog className="dim-input" baseTransform="translate(14px, -130%)" style={{ left: a0.x, top: a0.y }}>
                 <label data-drag-handle>Mirror</label>
                 {!mirrorSession.axisEntityId ? (
-                  <span style={{ padding: "0 6px" }}>Click a line to set the axis</span>
+                  <span className="dim-status" style={{ padding: "0 6px" }}>Click a line to set the axis</span>
                 ) : (
-                  <span style={{ padding: "0 6px" }}>
+                  <span className="dim-status" style={{ padding: "0 6px" }}>
                     {mirrorSession.previews.length} mirrored — click entities to add
                   </span>
                 )}
@@ -5183,7 +5183,7 @@ export default function App() {
             return (
               <DraggableDialog className="dim-input" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
                 <label data-drag-handle>{s.kind === "linear" ? "Linear pattern" : "Circular pattern"}</label>
-                <span style={{ padding: "0 6px" }}>{status}</span>
+                <span className="dim-status" style={{ padding: "0 6px" }}>{status}</span>
                 <label style={{ padding: "0 2px" }}>Count</label>
                 <DimValueInput
                   value={s.count}
@@ -5263,7 +5263,7 @@ export default function App() {
           {editingSketch && projectSession && (
             <DraggableDialog className="dim-input" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
               <label data-drag-handle>Project</label>
-              <span style={{ padding: "0 6px" }}>
+              <span className="dim-status" style={{ padding: "0 6px" }}>
                 {projectSession.previews.length > 0
                   ? `${projectSession.previews.length} projected — click more edges/vertices`
                   : "Click body edges or vertices to project"}
@@ -6009,12 +6009,14 @@ export default function App() {
                     onChange={(e) => setPatternDialog((p) => (p ? { ...p, flip1: e.target.checked } : p))}
                   />
                 </label>
-                <button
-                  className="ed-pick-btn ed-wide"
-                  onClick={() => setPatternDialog((p) => (p ? { ...p, dir2on: !p.dir2on, arming: null } : p))}
-                >
-                  {d.dir2on ? "▾ Second direction" : "▸ Second direction"}
-                </button>
+                <label className="ed-field ed-flip">
+                  <span>Second direction</span>
+                  <input
+                    type="checkbox"
+                    checked={d.dir2on}
+                    onChange={(e) => setPatternDialog((p) => (p ? { ...p, dir2on: e.target.checked, arming: null } : p))}
+                  />
+                </label>
                 {d.dir2on && (
                   <>
                     <label className="ed-field">

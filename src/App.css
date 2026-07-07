@@ -1396,6 +1396,18 @@
   color: #8a8f9c;
 }
 
+/* Instructional status text inside a .dim-input floater (Mirror/Pattern/
+   Project sessions — "Click entities to pattern", "N in pattern — click
+   entities to add", …). Without an explicit size these plain <span>s fell
+   back to the browser default (~16px), reading far larger than the field
+   labels right next to them. Matches .dim-input label's size, with a looser
+   line-height since these are full sentences that often wrap. */
+.dim-status {
+  font-size: 12px;
+  color: #8a8f9c;
+  line-height: 1.3;
+}
+
 .dim-input input {
   width: 80px;
   background: #0f1115;
