@@ -1263,7 +1263,7 @@
   color: #e6e8ee;
   border-radius: 5px;
   padding: 4px 6px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 /* "Select a face" arming button inside the extrude dialog. Matches the select
@@ -1287,6 +1287,17 @@
   border-color: #4f8cff;
   background: #1e2a44;
   color: #cfe0ff;
+}
+
+/* Pattern dialog's longer standalone labels ("▾ Second direction", "Select
+   axis (sketch line / cylindrical face)") don't fit the default 112px arming
+   width Revolve/Boolean's short labels use — wrap instead of truncating. */
+.ed-pick-btn.ed-wide {
+  width: 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.3;
 }
 
 .ed-actions button:disabled {

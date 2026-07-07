@@ -702,6 +702,16 @@ export default function App() {
       });
       return;
     }
+    // Pattern dialog open, TARGET body not yet picked: like Revolve's profile,
+    // arming it happens via the normal selection raycaster (any click that
+    // resolves to a body).
+    if (patternDialog && patternDialog.arming === "target") {
+      const id = picked ? featureIdOf(picked) : null;
+      if (id && bodyIds.has(id)) {
+        setPatternDialog((d) => (d ? { ...d, targetId: id, arming: null } : d));
+      }
+      return;
+    }
     // Revolve dialog open: arming the PROFILE (a sketch region) happens here via
     // the normal selection raycaster. Arming the AXIS uses picking mode instead
     // (→ handleAxisPick), so one click stream can take a sketch line, a body
@@ -891,7 +901,9 @@ export default function App() {
   // All numeric fields are expression text.
   const [patternDialog, setPatternDialog] = useState<{
     kind: "linear" | "circular";
-    targetId: string;
+    /** Null until a body is armed + clicked (see `arming: "target"`) — the
+     *  dialog opens immediately like Revolve, no pre-selection required. */
+    targetId: string | null;
     dir1: PatternDirRef;
     count1: string;
     spacing1: string;
@@ -906,7 +918,7 @@ export default function App() {
     mode: "full" | "angle";
     angle: string;
     symmetric: boolean;
-    arming: "dir1" | "dir2" | "axis" | null;
+    arming: "target" | "dir1" | "dir2" | "axis" | null;
   } | null>(null);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
@@ -1919,6 +1931,7 @@ export default function App() {
   const patternDialogWarning = useMemo<string | null>(() => {
     const d = patternDialog;
     if (!d) return null;
+    if (!d.targetId) return "Pick a body to pattern.";
     const num = (expr: string): number => {
       try { return evaluateExpression(expr, resolved.scope); } catch { return NaN; }
     };
@@ -2915,7 +2928,7 @@ export default function App() {
           if (transformTarget) openMirror();
           break;
         case "x":
-          if (transformTarget && !patternDialog) openPattern();
+          if (!patternDialog) openPattern();
           break;
         default:
           break;
@@ -2985,15 +2998,18 @@ export default function App() {
     selectFeature(id);
   };
 
+  // Open the Pattern dialog. Always available: like Revolve, a body is armed
+  // inside the dialog by clicking one in the viewport. If a single body
+  // happens to be pre-selected it prefills the target; otherwise the target
+  // role is armed and waiting for the first click.
   const openPattern = () => {
-    if (!transformTarget) return;
     setPatternDialog({
       kind: "linear",
       targetId: transformTarget,
       dir1: { world: "x" }, count1: "3", spacing1: "25", flip1: false,
       dir2on: false, dir2: null, count2: "2", spacing2: "25", flip2: false,
       axis: null, count: "6", mode: "full", angle: "90", symmetric: false,
-      arming: null,
+      arming: transformTarget ? null : "target",
     });
   };
   const closePattern = () => {
@@ -3011,7 +3027,7 @@ export default function App() {
   };
   const createPattern = () => {
     const d = patternDialog;
-    if (!d || patternDialogWarning) return;
+    if (!d || !d.targetId || patternDialogWarning) return;
     if (d.kind === "circular" && !d.axis) return;
     const { doc: next, id } = addPattern(
       doc,
@@ -4838,8 +4854,8 @@ export default function App() {
               ⇋ Mirror{kbd("M")}
             </button>
             <button
-              title="Pattern (X): repeat the selected body — a linear run/grid or a circular ring"
-              disabled={!transformTarget || !!editingSketch || picking || !!patternDialog}
+              title="Pattern (X): arm a body, then a linear run/grid or a circular ring"
+              disabled={!!editingSketch || picking || !!patternDialog}
               onClick={openPattern}
             >
               ⁙ Pattern{kbd("X")}
@@ -5919,6 +5935,8 @@ export default function App() {
           setPatternDialog((p) => (p ? { ...p, [slot]: { world: v }, arming: null } : p));
         };
         const dirPicking = (slot: "dir1" | "dir2") => picking && pickPurpose === "patternDir" && d.arming === slot;
+        const targetArming = patternDialog.arming === "target";
+        const armTarget = () => setPatternDialog((p) => (p ? { ...p, targetId: null, arming: "target" } : p));
         return (
           <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
             <div className="ed-title" data-drag-handle>Pattern</div>
@@ -5934,9 +5952,16 @@ export default function App() {
               ))}
             </div>
             <div className="bool-group-label">Body</div>
-            <div className="bool-operand-row">
-              <span className="bool-operand-name">{targetName}</span>
-            </div>
+            {d.targetId ? (
+              <div className="bool-operand-row">
+                <span className="bool-operand-name">{targetName}</span>
+                <button className="bool-operand-x" title="Re-pick" onClick={armTarget}>✕</button>
+              </div>
+            ) : (
+              <button className={"ed-pick-btn ed-wide" + (targetArming ? " active" : "")} onClick={armTarget}>
+                {targetArming ? "Click a body…" : "Select a body"}
+              </button>
+            )}
             {d.kind === "linear" ? (
               <>
                 <div className="bool-group-label">Direction</div>
@@ -5985,7 +6010,7 @@ export default function App() {
                   />
                 </label>
                 <button
-                  className="ed-pick-btn"
+                  className="ed-pick-btn ed-wide"
                   onClick={() => setPatternDialog((p) => (p ? { ...p, dir2on: !p.dir2on, arming: null } : p))}
                 >
                   {d.dir2on ? "▾ Second direction" : "▸ Second direction"}
@@ -6073,7 +6098,7 @@ export default function App() {
                       </select>
                     </label>
                     <button
-                      className={"ed-pick-btn" + (picking && pickPurpose === "patternAxis" ? " active" : "")}
+                      className={"ed-pick-btn ed-wide" + (picking && pickPurpose === "patternAxis" ? " active" : "")}
                       onClick={() => armPatternPick("axis")}
                     >
                       {picking && pickPurpose === "patternAxis"
