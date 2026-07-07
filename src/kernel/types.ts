@@ -114,6 +114,13 @@ export type ResolvedFeature =
   // Mirror a body (by id) across the plane through `origin` with `normal`,
   // producing a new reflected body (the original is kept).
   | { id: string; type: "mirror"; targetId: string; origin: [number, number, number]; normal: [number, number, number] }
+  // Repeat a body (by id) as rigid copies compounded into ONE new body (the
+  // seed is kept). Exactly one of `offsets`/`angles` is present, both baked in
+  // the app layer and EXCLUDING the seed: linear copies translate by each of
+  // `offsets` (world mm); circular copies rotate by each of `angles` (radians)
+  // about the axis — a baked world line, or a body face resolved in the worker
+  // (cylindrical/conical → that surface's own central axis).
+  | { id: string; type: "pattern"; targetId: string; offsets?: [number, number, number][]; angles?: number[]; axisOrigin?: [number, number, number]; axisDir?: [number, number, number]; axisFace?: { sourceId: string; faceName?: string; center: [number, number, number]; normal?: [number, number, number] } }
   // Revolve a sketch profile around an axis by an angle. The axis is either a
   // baked world line (`axisOrigin`+`axisDir`, for sketch-line and plane axes,
   // resolved in the document layer) OR a body face (`axisFace`, resolved in the

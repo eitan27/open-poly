@@ -952,6 +952,80 @@ function transformNamed(
   return cur; // owned is always true here (translation step ran)
 }
 
+/** Repeat a named shape as rigid copies — translations (`offsets`) or rotations
+ *  (`angles` about the axis line) — compounded into ONE new body; the seed is
+ *  left untouched for the caller. Each copy's face names re-key 1:1 through
+ *  applyTrsf and gain a per-instance `~p{i}` suffix, so the compound's name map
+ *  stays collision-free and downstream picks (chamfer/up-to-face/boolean) stay
+ *  unambiguous — patterns multiply topology, and this is what keeps it named. */
+function patternNamed(
+  target: NamedShape,
+  f: Extract<ResolvedFeature, { type: "pattern" }>,
+  axisOrigin?: number[],
+  axisDir?: number[],
+): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const copies: NamedShape[] = [];
+  const suffixed = (s: NamedShape, i: number): NamedShape => ({
+    shape: s.shape,
+    names: new Map([...s.names].map(([h, n]) => [h, `${n}~p${i}`])),
+  });
+  if (f.offsets && f.offsets.length > 0) {
+    f.offsets.forEach((o, i) => {
+      const vec = new oc.gp_Vec_4(o[0], o[1], o[2]);
+      const trsf = new oc.gp_Trsf_1();
+      trsf.SetTranslation_1(vec);
+      copies.push(suffixed(applyTrsf(target, trsf), i + 1));
+      trsf.delete();
+      vec.delete();
+    });
+  } else if (f.angles && f.angles.length > 0) {
+    if (!axisOrigin || !axisDir) throw new Error("pattern: missing axis");
+    const pnt = new oc.gp_Pnt_3(axisOrigin[0], axisOrigin[1], axisOrigin[2]);
+    const dir = new oc.gp_Dir_4(axisDir[0], axisDir[1], axisDir[2]);
+    const ax1 = new oc.gp_Ax1_2(pnt, dir);
+    f.angles.forEach((a, i) => {
+      const trsf = new oc.gp_Trsf_1();
+      trsf.SetRotation_1(ax1, a);
+      copies.push(suffixed(applyTrsf(target, trsf), i + 1));
+      trsf.delete();
+    });
+    ax1.delete();
+    dir.delete();
+    pnt.delete();
+  } else {
+    throw new Error("pattern: no instances (count must be 2 or more)");
+  }
+  return compoundOf(copies);
+}
+
+/** Resolve a body face armed as a circular-pattern axis: a cylindrical/conical
+ *  face → that surface's own central axis. Planar faces are rejected — unlike
+ *  revolve there is no profile plane to intersect with. */
+function facePatternAxis(
+  body: Body,
+  faceName: string | undefined,
+  center: V3,
+  refNormal?: V3,
+  warn?: Warn,
+): { origin: V3; dir: V3 } {
+  const { face } = bodyProfileFace(body, faceName, center, refNormal, warn, "pattern axis face");
+  const gt = face.geomType;
+  if (gt !== "CYLINDRE" && gt !== "CONE") {
+    throw new Error("pattern: the axis face must be cylindrical or conical (its own axis is the pattern axis)");
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const ad = new oc.BRepAdaptor_Surface_2(face.wrapped, false);
+  const ax1 = gt === "CYLINDRE" ? ad.Cylinder().Axis() : ad.Cone().Axis();
+  const loc = ax1.Location();
+  const d = ax1.Direction();
+  const out = { origin: [loc.X(), loc.Y(), loc.Z()] as V3, dir: [d.X(), d.Y(), d.Z()] as V3 };
+  ad.delete();
+  return out;
+}
+
 /** Mirror a named shape across the plane through `origin` with `normal`. A
  *  reflection is a rigid (topology-preserving) gp_Trsf, so face names re-key 1:1
  *  through applyTrsf, like a transform. */
@@ -1316,6 +1390,26 @@ function buildBodies(
         const src = requireBody(bodies, feature.targetId);
         const res = mirrorNamed(src, feature.origin, feature.normal, feature.id);
         bodies.push({ id: feature.id, key: contentKey(feature, [src.key]), ...res });
+      } else if (feature.type === "pattern") {
+        // Repeat the target as rigid copies compounded into ONE new body keyed
+        // by this feature; the seed body is kept (like mirror). A face axis
+        // makes the result depend on that body's geometry, so fold its key in.
+        const src = requireBody(bodies, feature.targetId);
+        let axisOrigin = feature.axisOrigin as number[] | undefined;
+        let axisDir = feature.axisDir as number[] | undefined;
+        const depKeys = [src.key];
+        if (feature.axisFace) {
+          const axBody = requireBody(bodies, feature.axisFace.sourceId);
+          depKeys.push(axBody.key);
+          const line = facePatternAxis(
+            axBody, feature.axisFace.faceName, feature.axisFace.center, feature.axisFace.normal, warn,
+          );
+          axisOrigin = line.origin;
+          axisDir = line.dir;
+        }
+        const key = contentKey(feature, depKeys);
+        const res = buildCached(key, used, () => patternNamed(src, feature, axisOrigin, axisDir));
+        bodies.push({ id: feature.id, key, ...res });
       } else if (feature.type === "revolve") {
         if (feature.profile.kind !== "sketchRegion") throw new Error("revolve: profile must be a sketch region");
         const revProfile = feature.profile; // narrowed; used inside the build closure

@@ -230,6 +230,92 @@ export function ParamEditor({
             <span className="param-static">a reflected copy across a plane</span>
           </div>
         </div>
+      ) : feature.type === "pattern" ? (
+        <div className="sketch-params">
+          {feature.kind === "linear" ? (
+            <>
+              <label className="param-field">
+                <span className="param-label">Count</span>
+                <input
+                  className="param-input"
+                  value={feature.count1 ?? ""}
+                  onChange={(e) => onChangeParam(feature.id, "count1", e.target.value)}
+                />
+              </label>
+              <label className="param-field">
+                <span className="param-label">Spacing</span>
+                <input
+                  className="param-input"
+                  value={feature.spacing1 ?? ""}
+                  onChange={(e) => onChangeParam(feature.id, "spacing1", e.target.value)}
+                />
+              </label>
+              <label className="param-field">
+                <span className="param-label">Flip</span>
+                <input
+                  type="checkbox"
+                  checked={feature.flip1 ?? false}
+                  onChange={(e) => onChangeParam(feature.id, "flip1", e.target.checked ? "true" : "false")}
+                />
+              </label>
+              {feature.dir2 && (
+                <>
+                  <label className="param-field">
+                    <span className="param-label">Count 2</span>
+                    <input
+                      className="param-input"
+                      value={feature.count2 ?? ""}
+                      onChange={(e) => onChangeParam(feature.id, "count2", e.target.value)}
+                    />
+                  </label>
+                  <label className="param-field">
+                    <span className="param-label">Spacing 2</span>
+                    <input
+                      className="param-input"
+                      value={feature.spacing2 ?? ""}
+                      onChange={(e) => onChangeParam(feature.id, "spacing2", e.target.value)}
+                    />
+                  </label>
+                  <label className="param-field">
+                    <span className="param-label">Flip 2</span>
+                    <input
+                      type="checkbox"
+                      checked={feature.flip2 ?? false}
+                      onChange={(e) => onChangeParam(feature.id, "flip2", e.target.checked ? "true" : "false")}
+                    />
+                  </label>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <label className="param-field">
+                <span className="param-label">Count</span>
+                <input
+                  className="param-input"
+                  value={feature.count ?? ""}
+                  onChange={(e) => onChangeParam(feature.id, "count", e.target.value)}
+                />
+              </label>
+              <label className="param-field">
+                <span className="param-label">Angle°</span>
+                <input
+                  className="param-input"
+                  value={feature.angle ?? "360"}
+                  onChange={(e) => onChangeParam(feature.id, "angle", e.target.value)}
+                />
+              </label>
+              <label className="param-field">
+                <span className="param-label">Symmetric</span>
+                <input
+                  type="checkbox"
+                  checked={feature.symmetric ?? false}
+                  onChange={(e) => onChangeParam(feature.id, "symmetric", e.target.checked ? "true" : "false")}
+                />
+              </label>
+            </>
+          )}
+        </div>
       ) : feature.type === "revolve" ? (
         <div className="sketch-params">
           <label className="param-field">

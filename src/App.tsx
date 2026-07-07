@@ -1817,6 +1817,7 @@ export default function App() {
           feature?.type === "boolean" ||
           feature?.type === "transform" ||
           feature?.type === "mirror" ||
+          feature?.type === "pattern" ||
           feature?.type === "revolve" ||
           feature?.type === "sweep" ||
           feature?.type === "loft" ||

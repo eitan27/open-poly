@@ -100,6 +100,8 @@ export function FeatureTree({
                                 ? "Import"
                                 : feature.type === "mirror"
                                   ? "Mirror"
+                                  : feature.type === "pattern"
+                                  ? "Pattern"
                                   : feature.type === "revolve"
                                     ? "Revolve"
                                     : feature.type === "sweep"

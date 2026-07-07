@@ -365,6 +365,56 @@ export interface RevolveFeature extends FeatureBase {
   hidden?: boolean;
 }
 
+/** A direction for a linear body pattern: a world axis, or a sketch line entity
+ *  (its two endpoints baked to a world direction at resolve time, so the pattern
+ *  follows when the line is re-drawn/re-solved). */
+export type PatternDirRef =
+  | { world: "x" | "y" | "z" }
+  | { sketchId: string; entityId: string };
+
+/** A circular body pattern's rotation axis: a world axis (through the origin),
+ *  a sketch line entity, or a body face (cylindrical/conical → that surface's
+ *  own central axis, resolved in the kernel; reuses revolve's face reference —
+ *  planar faces are rejected since a pattern has no profile plane to intersect). */
+export type PatternAxisRef =
+  | { world: "x" | "y" | "z" }
+  | { sketchId: string; entityId: string }
+  | { face: RevolveAxisFace };
+
+/** Repeat a body as rigid copies — a linear run/grid or a circular ring. The
+ *  copies are compounded into ONE new body keyed by this feature and the seed
+ *  body is left untouched (delete/suppress the pattern ⇒ back to the seed, like
+ *  Mirror). Counts are TOTAL instances including the seed (expressions, ≥2).
+ *  Circular `angle` "360" = full circle (equal 360/count steps, no duplicate at
+ *  the wrap); any other sweep spreads the instances endpoints-inclusive, and
+ *  `symmetric` re-centers the spread on the seed (±angle/2). There is no radius
+ *  input — instances are rotations of the seed about the axis, so the radius is
+ *  wherever the seed already sits. (Phase 5.) */
+export interface PatternFeature extends FeatureBase {
+  type: "pattern";
+  kind: "linear" | "circular";
+  /** The body being repeated (the feature id that produced it). */
+  targetId: string;
+  /** Linear: first direction + total count + instance-to-instance spacing. */
+  dir1?: PatternDirRef;
+  count1?: string;
+  spacing1?: string;
+  flip1?: boolean;
+  /** Linear: optional second direction ⇒ a count1×count2 grid. */
+  dir2?: PatternDirRef;
+  count2?: string;
+  spacing2?: string;
+  flip2?: boolean;
+  /** Circular: rotation axis + total count + sweep. */
+  axis?: PatternAxisRef;
+  count?: string;
+  angle?: string;
+  symmetric?: boolean;
+  color: number;
+  opacity: number;
+  hidden?: boolean;
+}
+
 /** Mirror a body across a plane, producing a new (reflected) body. The original
  *  is kept. The mirror plane is a datum / reference plane / planar face. */
 export interface MirrorFeature extends FeatureBase {
@@ -424,6 +474,7 @@ export type Feature =
   | PlaneFeature
   | TransformFeature
   | MirrorFeature
+  | PatternFeature
   | RevolveFeature
   | SweepFeature
   | LoftFeature

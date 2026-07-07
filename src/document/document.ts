@@ -15,7 +15,7 @@ import {
   type SketchPlaneRef,
 } from "./planes";
 import { detectSketchRegions, regionProfileSegments } from "./regions";
-import { applyDerived } from "./derived";
+import { applyDerived, circularPatternAngles, resolvePatternCount } from "./derived";
 import type {
   BooleanFeature,
   DerivedOp,
@@ -29,6 +29,8 @@ import type {
   ImportFeature,
   LoftFeature,
   MirrorFeature,
+  PatternDirRef,
+  PatternFeature,
   PlaneFeature,
   PlaneMethod,
   RevolveAxis,
@@ -171,7 +173,7 @@ export function addExtrude(
  *  from — true for all three ops, not just union. */
 function colorOfFeature(doc: Document, id: string): number {
   const f = doc.features.find((x) => x.id === id);
-  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import")
+  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "pattern" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import")
     ? f.color
     : randomSolidColor();
 }
@@ -323,6 +325,28 @@ export function addMirror(
     suppressed: false,
     targetId,
     plane,
+    color: colorOfFeature(doc, targetId),
+    opacity: 1,
+  };
+  return insertFeature(doc, feature);
+}
+
+/** Repeat a body as rigid copies (linear run/grid or circular ring) compounded
+ *  into one new body; the seed is kept. Pass the per-kind fields pre-filled —
+ *  the dialog/agent owns defaults. */
+export function addPattern(
+  doc: Document,
+  targetId: string,
+  fields: Omit<PatternFeature, "id" | "type" | "name" | "suppressed" | "targetId" | "color" | "opacity">,
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "pattern").length + 1;
+  const feature: PatternFeature = {
+    id: uid(),
+    type: "pattern",
+    name: `Pattern ${ordinal}`,
+    suppressed: false,
+    targetId,
+    ...fields,
     color: colorOfFeature(doc, targetId),
     opacity: 1,
   };
@@ -630,6 +654,17 @@ export function updateParam(
       }
       if (name === "copy") return { ...f, copy: value === "true" };
     }
+    if (f.type === "pattern") {
+      if (
+        name === "count1" || name === "spacing1" || name === "count2" ||
+        name === "spacing2" || name === "count" || name === "angle"
+      ) {
+        return { ...f, [name]: value };
+      }
+      if (name === "flip1" || name === "flip2" || name === "symmetric") {
+        return { ...f, [name]: value === "true" };
+      }
+    }
     return f;
   });
 }
@@ -644,13 +679,13 @@ export function renameFeature(doc: Document, id: string, name: string): Document
 
 export function setFeatureColor(doc: Document, id: string, color: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import" ? { ...f, color } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "pattern" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import" ? { ...f, color } : f,
   );
 }
 
 export function setFeatureOpacity(doc: Document, id: string, opacity: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import"
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "pattern" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import"
       ? { ...f, opacity: Math.max(0, Math.min(1, opacity)) }
       : f,
   );
@@ -659,7 +694,7 @@ export function setFeatureOpacity(doc: Document, id: string, opacity: number): D
 /** Hide/show a part — a view toggle (skips rendering), distinct from suppress. */
 export function setFeatureHidden(doc: Document, id: string, hidden: boolean): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import" ? { ...f, hidden } : f,
+    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "pattern" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import" ? { ...f, hidden } : f,
   );
 }
 
@@ -882,6 +917,89 @@ export function resolveDocument(doc: Document): ResolveResult {
         // Bake the mirror plane to a point + normal the kernel can reflect about.
         const frame = frameOf(f.plane, planeFrames);
         features.push({ id: f.id, type: "mirror", targetId: f.targetId, origin: frame.origin, normal: frame.normal });
+      } else if (f.type === "pattern") {
+        // Bake every copy's rigid motion so the kernel just loops: linear →
+        // world offsets (spacing × direction, grid = both counts crossed);
+        // circular → rotation angles about a world line (or a body-face axis
+        // carried through for the worker to resolve). Counts/angles share the
+        // sketch pattern's helpers so the two levels can't disagree.
+        const worldDir = (d: PatternDirRef): [number, number, number] => {
+          if ("world" in d) return d.world === "x" ? [1, 0, 0] : d.world === "y" ? [0, 1, 0] : [0, 0, 1];
+          const dirSketch = dDoc.features.find((x) => x.id === d.sketchId);
+          if (dirSketch?.type !== "sketch") throw new Error("pattern: direction sketch not found");
+          const ent = dirSketch.entities.find((e) => e.id === d.entityId);
+          if (ent?.type !== "line") throw new Error("pattern: direction must be a line");
+          const dirFrame = frameOf(dirSketch.plane, planeFrames);
+          const a = uvToWorld(dirFrame, ent.a[0], ent.a[1]);
+          const b = uvToWorld(dirFrame, ent.b[0], ent.b[1]);
+          const v: [number, number, number] = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+          const len = Math.hypot(v[0], v[1], v[2]);
+          if (len < 1e-9) throw new Error("pattern: direction line is degenerate");
+          return [v[0] / len, v[1] / len, v[2] / len];
+        };
+        if (f.kind === "linear") {
+          if (!f.dir1) throw new Error("pattern: missing direction");
+          const count1 = resolvePatternCount(f.count1 ?? "", scope);
+          if (count1 === null) throw new Error("pattern: count must be 2 or more");
+          const s1 = evaluateExpression(f.spacing1 ?? "0", scope) * (f.flip1 ? -1 : 1);
+          if (!Number.isFinite(s1) || Math.abs(s1) < 1e-9) throw new Error("pattern: spacing must be non-zero");
+          const d1 = worldDir(f.dir1);
+          // The second direction is optional; without it the grid is 1×count1.
+          let count2 = 1;
+          let s2 = 0;
+          let d2: [number, number, number] = [0, 0, 0];
+          if (f.dir2) {
+            const c2 = resolvePatternCount(f.count2 ?? "", scope);
+            if (c2 === null) throw new Error("pattern: second count must be 2 or more");
+            s2 = evaluateExpression(f.spacing2 ?? "0", scope) * (f.flip2 ? -1 : 1);
+            if (!Number.isFinite(s2) || Math.abs(s2) < 1e-9) throw new Error("pattern: second spacing must be non-zero");
+            count2 = c2;
+            d2 = worldDir(f.dir2);
+          }
+          const offsets: [number, number, number][] = [];
+          for (let j = 0; j < count2; j++) {
+            for (let i = 0; i < count1; i++) {
+              if (i === 0 && j === 0) continue; // the seed
+              offsets.push([
+                i * s1 * d1[0] + j * s2 * d2[0],
+                i * s1 * d1[1] + j * s2 * d2[1],
+                i * s1 * d1[2] + j * s2 * d2[2],
+              ]);
+            }
+          }
+          features.push({ id: f.id, type: "pattern", targetId: f.targetId, offsets });
+        } else {
+          if (!f.axis) throw new Error("pattern: missing axis");
+          const count = resolvePatternCount(f.count ?? "", scope);
+          if (count === null) throw new Error("pattern: count must be 2 or more");
+          const totalDeg = evaluateExpression(f.angle ?? "360", scope);
+          if (!Number.isFinite(totalDeg) || Math.abs(totalDeg) < 1e-9) throw new Error("pattern: angle must be non-zero");
+          const angles = circularPatternAngles(count, totalDeg, f.symmetric);
+          const axis = f.axis;
+          if ("face" in axis) {
+            features.push({
+              id: f.id, type: "pattern", targetId: f.targetId, angles,
+              axisFace: { sourceId: axis.face.featureId, faceName: axis.face.faceName, center: axis.face.center, normal: axis.face.normal },
+            });
+          } else if ("world" in axis) {
+            features.push({
+              id: f.id, type: "pattern", targetId: f.targetId, angles,
+              axisOrigin: [0, 0, 0], axisDir: worldDir({ world: axis.world }),
+            });
+          } else {
+            const axisSketch = dDoc.features.find((x) => x.id === axis.sketchId);
+            if (axisSketch?.type !== "sketch") throw new Error("pattern: axis sketch not found");
+            const axisEnt = axisSketch.entities.find((e) => e.id === axis.entityId);
+            if (axisEnt?.type !== "line") throw new Error("pattern: axis must be a line");
+            const axisFrame = frameOf(axisSketch.plane, planeFrames);
+            const a = uvToWorld(axisFrame, axisEnt.a[0], axisEnt.a[1]);
+            const b = uvToWorld(axisFrame, axisEnt.b[0], axisEnt.b[1]);
+            features.push({
+              id: f.id, type: "pattern", targetId: f.targetId, angles,
+              axisOrigin: a, axisDir: [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+            });
+          }
+        }
       } else if (f.type === "revolve") {
         const angle = evaluateExpression(f.angle, scope);
         const sketch = dDoc.features.find((x) => x.id === f.profile.sketchId);

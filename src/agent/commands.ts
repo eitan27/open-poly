@@ -618,7 +618,7 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
   const featureById = new Map(doc.features.map((f) => [f.id, f]));
   // Bodies that own appearance carry a color; in-place modifiers inherit it.
   const hasColor = (f: Feature | undefined): f is Extract<Feature, { color: number }> =>
-    !!f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import");
+    !!f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "pattern" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import");
   const bodies: SceneSummary["bodies"] = meshes.map((m) => {
     const f = featureById.get(m.id);
     const mesh: ShapeMeshPayload = m.mesh;
