@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   applyDerived,
+  circularPatternAngles,
+  MAX_PATTERN_INSTANCES,
   projectedEntityFromPolyline,
   projectedPointEntity,
+  resolvePatternCount,
   sameProjectedEntities,
 } from "./derived";
 import type { PlaneFrameData, Vec3 } from "./planes";
@@ -178,6 +181,152 @@ describe("applyDerived — mirror", () => {
     // reflection of x=2 and x=4 across x=5 → x=8 and x=6.
     expect(e.a[0]).toBeCloseTo(8, 6);
     expect(e.b[0]).toBeCloseTo(6, 6);
+  });
+});
+
+describe("applyDerived — linear pattern", () => {
+  const hole: SketchEntity = { type: "circle", id: "H", c: [0, 0], r: 3 };
+  const op: DerivedOp = { id: "lp", kind: "linearPattern", sourceIds: ["H"], count: "4", dx: "10", dy: "0" };
+
+  it("generates count−1 copies at i·(dx,dy), seed untouched", () => {
+    const out = applyDerived(sketch([hole], [op]), {});
+    const g = gen(out);
+    expect(g).toHaveLength(3);
+    const centers = g.map((e) => (e.type === "circle" ? e.c[0] : NaN)).sort((a, b) => a - b);
+    expect(centers[0]).toBeCloseTo(10, 9);
+    expect(centers[1]).toBeCloseTo(20, 9);
+    expect(centers[2]).toBeCloseTo(30, 9);
+    expect(out.entities.find((e) => e.id === "H")).toBeTruthy();
+  });
+
+  it("follows the source when it moves (associativity)", () => {
+    const moved: SketchEntity = { type: "circle", id: "H", c: [5, 5], r: 3 };
+    const out = applyDerived(sketch([moved], [op]), {});
+    const e = gen(out)[0];
+    if (e.type !== "circle") throw new Error("expected circle");
+    expect(e.c).toEqual([15, 5]);
+  });
+
+  it("evaluates count/step against the variable scope", () => {
+    const out = applyDerived(sketch([hole], [{ ...op, count: "holes", dx: "pitch" }]), { holes: 3, pitch: 7 });
+    const g = gen(out);
+    expect(g).toHaveLength(2);
+    if (g[0].type !== "circle") throw new Error("expected circle");
+    expect(g[0].c[0]).toBeCloseTo(7, 9);
+  });
+
+  it("contributes nothing for count < 2, a zero step, or a missing source", () => {
+    expect(gen(applyDerived(sketch([hole], [{ ...op, count: "1" }]), {}))).toHaveLength(0);
+    expect(gen(applyDerived(sketch([hole], [{ ...op, dx: "0", dy: "0" }]), {}))).toHaveLength(0);
+    expect(gen(applyDerived(sketch([hole], [{ ...op, sourceIds: ["GONE"] }]), {}))).toHaveLength(0);
+  });
+
+  it("keeps per-output ids stable across recomputes", () => {
+    const a = gen(applyDerived(sketch([hole], [op]), {})).map((e) => e.id);
+    const b = gen(applyDerived(sketch([{ ...hole, c: [1, 1] } as SketchEntity], [op]), {})).map((e) => e.id);
+    expect(a).toEqual(b);
+  });
+
+  it("preserves the source's construction flag on every copy", () => {
+    const c: SketchEntity = { type: "circle", id: "H", c: [0, 0], r: 3, construction: true };
+    const g = gen(applyDerived(sketch([c], [op]), {}));
+    expect(g.every((e) => e.construction)).toBe(true);
+  });
+});
+
+describe("applyDerived — circular pattern", () => {
+  const hole: SketchEntity = { type: "circle", id: "H", c: [20, 0], r: 2 };
+  const full: DerivedOp = {
+    id: "cp", kind: "circularPattern", sourceIds: ["H"],
+    center: { at: [0, 0] }, count: "4", angle: "360",
+  };
+
+  it("full circle: count−1 copies at 360/count steps, no duplicate at the wrap", () => {
+    const out = applyDerived(sketch([hole], [full]), {});
+    const g = gen(out);
+    expect(g).toHaveLength(3);
+    const pts = g.map((e) => (e.type === "circle" ? e.c : [NaN, NaN]));
+    // 90°, 180°, 270° around the origin from (20,0).
+    expect(pts[0][0]).toBeCloseTo(0, 6);
+    expect(pts[0][1]).toBeCloseTo(20, 6);
+    expect(pts[1][0]).toBeCloseTo(-20, 6);
+    expect(pts[1][1]).toBeCloseTo(0, 6);
+    expect(pts[2][0]).toBeCloseTo(0, 6);
+    expect(pts[2][1]).toBeCloseTo(-20, 6);
+  });
+
+  it("angle mode: spreads endpoints-inclusive across the sweep", () => {
+    const op: DerivedOp = { ...full, count: "3", angle: "90" };
+    const g = gen(applyDerived(sketch([hole], [op]), {}));
+    expect(g).toHaveLength(2); // 45° and 90° (0° is the seed)
+    const pts = g.map((e) => (e.type === "circle" ? e.c : [NaN, NaN]));
+    expect(pts[0][0]).toBeCloseTo(20 * Math.SQRT1_2, 6);
+    expect(pts[0][1]).toBeCloseTo(20 * Math.SQRT1_2, 6);
+    expect(pts[1][0]).toBeCloseTo(0, 6);
+    expect(pts[1][1]).toBeCloseTo(20, 6);
+  });
+
+  it("symmetric angle mode: spreads ±angle/2 about the seed", () => {
+    const op: DerivedOp = { ...full, count: "3", angle: "90", symmetric: true };
+    const g = gen(applyDerived(sketch([hole], [op]), {}));
+    expect(g).toHaveLength(2); // −45° and +45°; the 0° slot is the seed, skipped
+    const ys = g.map((e) => (e.type === "circle" ? e.c[1] : NaN)).sort((a, b) => a - b);
+    expect(ys[0]).toBeCloseTo(-20 * Math.SQRT1_2, 6);
+    expect(ys[1]).toBeCloseTo(20 * Math.SQRT1_2, 6);
+  });
+
+  it("rotation preserves an arc's sweep (start/end shift by the step)", () => {
+    const arc: SketchEntity = { type: "arc", id: "A", c: [20, 0], r: 5, start: 0, end: Math.PI / 2 };
+    const op: DerivedOp = { ...full, sourceIds: ["A"], count: "2", angle: "180" };
+    const g = gen(applyDerived(sketch([arc], [op]), {}));
+    expect(g).toHaveLength(1);
+    const e = g[0];
+    if (e.type !== "arc") throw new Error("expected arc");
+    expect(e.c[0]).toBeCloseTo(-20, 6);
+    expect(e.end - e.start).toBeCloseTo(Math.PI / 2, 9); // sweep preserved
+    expect(e.start).toBeCloseTo(Math.PI, 9);
+  });
+
+  it("follows an associative center reference (entity vertex) when it moves", () => {
+    const pivot: SketchEntity = { type: "point", id: "P", p: [10, 0], construction: true };
+    const op: DerivedOp = { ...full, center: { entity: "P", at: "c" }, count: "2", angle: "180" };
+    const out = applyDerived(sketch([hole, pivot], [op]), {});
+    const e = gen(out)[0];
+    if (e.type !== "circle") throw new Error("expected circle");
+    expect(e.c[0]).toBeCloseTo(0, 6); // (20,0) rotated 180° about (10,0)
+    // Move the pivot: the copy follows.
+    const out2 = applyDerived(sketch([hole, { ...pivot, p: [15, 0] } as SketchEntity], [op]), {});
+    const e2 = gen(out2)[0];
+    if (e2.type !== "circle") throw new Error("expected circle");
+    expect(e2.c[0]).toBeCloseTo(10, 6);
+  });
+
+  it("contributes nothing when the center reference is gone", () => {
+    const op: DerivedOp = { ...full, center: { entity: "GONE", at: "c" } };
+    expect(gen(applyDerived(sketch([hole], [op]), {}))).toHaveLength(0);
+  });
+});
+
+describe("pattern count/angle helpers", () => {
+  it("clamps runaway counts to MAX_PATTERN_INSTANCES", () => {
+    expect(resolvePatternCount("1000000", {})).toBe(MAX_PATTERN_INSTANCES);
+  });
+
+  it("rejects non-numeric / sub-2 counts", () => {
+    expect(resolvePatternCount("oops", {})).toBeNull();
+    expect(resolvePatternCount("1", {})).toBeNull();
+    expect(resolvePatternCount("-3", {})).toBeNull();
+  });
+
+  it("full-circle angles exclude the seed and the wrap duplicate", () => {
+    const a = circularPatternAngles(6, 360);
+    expect(a).toHaveLength(5);
+    expect(a[0]).toBeCloseTo(Math.PI / 3, 9);
+    expect(a[4]).toBeCloseTo((5 * Math.PI) / 3, 9);
+  });
+
+  it("multiples of 360 count as full circles", () => {
+    expect(circularPatternAngles(4, 720)).toHaveLength(3);
   });
 });
 

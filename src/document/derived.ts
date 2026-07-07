@@ -10,16 +10,85 @@ import {
   fitProjectedPolyline,
   offsetChain,
   mirrorEntity,
+  rotateEntity,
+  translateEntity,
   type FittedProjection,
   type OffsetPrimitive,
 } from "./sketchTools";
-import type { Document, SketchEntity, SketchFeature } from "./types";
+import type { Document, PointRef, SketchEntity, SketchFeature, Vec2 } from "./types";
 
 function primToEntity(p: OffsetPrimitive, id: string, construction?: boolean): SketchEntity {
   const base = construction ? { construction: true as const } : {};
   if (p.type === "line") return { type: "line", id, a: p.a, b: p.b, ...base };
   if (p.type === "circle") return { type: "circle", id, c: p.c, r: p.r, ...base };
   return { type: "arc", id, c: p.c, r: p.r, start: p.start, end: p.end, ...base };
+}
+
+/** Hard cap on a pattern op's TOTAL instance count — a typo'd count ("1000")
+ *  clamps instead of freezing the solver under thousands of entities. */
+export const MAX_PATTERN_INSTANCES = 200;
+
+/** Evaluate + sanitize a pattern count expression: an integer 2..MAX, or null
+ *  when the expression is unevaluable / non-finite / below 2 (op contributes
+ *  nothing rather than throwing, per the DerivedOp policy). */
+export function resolvePatternCount(expr: string, scope: Scope): number | null {
+  let n: number;
+  try { n = evaluateExpression(expr, scope); } catch { return null; }
+  if (!Number.isFinite(n)) return null;
+  n = Math.round(n);
+  if (n < 2) return null;
+  return Math.min(n, MAX_PATTERN_INSTANCES);
+}
+
+/** The per-instance rotation angles (radians) of a circular pattern, EXCLUDING
+ *  the seed (instance 0). `totalDeg` "360" (mod 360 ≈ 0) means a full circle:
+ *  equal 360/count steps with no duplicate at the wrap. Any other sweep spreads
+ *  the count instances endpoints-inclusive (step = total/(count−1)), and
+ *  `symmetric` re-centers the spread on the seed (±total/2). Shared by
+ *  applyDerived and the tool's live preview so they can never disagree. */
+export function circularPatternAngles(count: number, totalDeg: number, symmetric?: boolean): number[] {
+  const full = Math.abs(((totalDeg % 360) + 360) % 360) < 1e-9 && Math.abs(totalDeg) > 1e-9;
+  const rad = (totalDeg * Math.PI) / 180;
+  const angles: number[] = [];
+  if (full) {
+    const step = (2 * Math.PI * Math.sign(totalDeg)) / count;
+    for (let i = 1; i < count; i++) angles.push(step * i);
+    return angles;
+  }
+  const step = count > 1 ? rad / (count - 1) : 0;
+  const start = symmetric ? -rad / 2 : 0;
+  for (let i = 0; i < count; i++) {
+    const a = start + step * i;
+    if (Math.abs(a) < 1e-12) continue; // the seed itself
+    angles.push(a);
+  }
+  return angles;
+}
+
+/** Resolve a circular-pattern center to live uv coordinates: a raw uv, the
+ *  sketch origin, or a named vertex of a source entity (line ends, circle/arc
+ *  center, arc endpoints — and, beyond the solver's `refCoord`, a point
+ *  entity's own position, which the tool uses for a free-placed construction
+ *  point center). Null when the referenced entity is gone. */
+export function resolvePatternCenter(
+  center: PointRef | { at: Vec2 },
+  byId: Map<string, SketchEntity>,
+): Vec2 | null {
+  // NB: check the PointRef variants FIRST — the entity variant also has an
+  // `at` field (the vertex name), so `"at" in center` alone would match it.
+  if ("origin" in center) return [0, 0];
+  if (!("entity" in center)) return center.at;
+  const e = byId.get(center.entity);
+  if (!e) return null;
+  if (e.type === "point") return e.p;
+  if (e.type === "line") return center.at === "a" ? e.a : e.b;
+  if (e.type === "circle") return e.c;
+  if (e.type === "arc") {
+    if (center.at === "c") return e.c;
+    const ang = center.at === "a" ? e.start : e.end;
+    return [e.c[0] + e.r * Math.cos(ang), e.c[1] + e.r * Math.sin(ang)];
+  }
+  return null;
 }
 
 /** Recompute a sketch's derived geometry from its current (source) entities.
@@ -66,6 +135,36 @@ export function applyDerived(sketch: SketchFeature, scope: Scope): SketchFeature
           const src = byId.get(sid);
           if (!src) return;
           generated.push({ ...mirrorEntity(src, axis.a, axis.b, `${op.id}:${i}`), derivedFrom: op.id });
+        });
+      } else if (op.kind === "linearPattern") {
+        const count = resolvePatternCount(op.count, scope);
+        if (count === null) continue;
+        const dx = evaluateExpression(op.dx, scope);
+        const dy = evaluateExpression(op.dy, scope);
+        if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < 1e-9) continue;
+        op.sourceIds.forEach((sid, j) => {
+          const src = byId.get(sid);
+          if (!src) return;
+          // Instances 1..count-1 (the seed IS instance 0). Stable per-output ids
+          // `${op.id}:${srcIndex}:${instanceIndex}` persist across recomputes.
+          for (let i = 1; i < count; i++) {
+            generated.push({ ...translateEntity(src, dx * i, dy * i, `${op.id}:${j}:${i}`), derivedFrom: op.id });
+          }
+        });
+      } else if (op.kind === "circularPattern") {
+        const count = resolvePatternCount(op.count, scope);
+        if (count === null) continue;
+        const totalDeg = evaluateExpression(op.angle, scope);
+        if (!Number.isFinite(totalDeg) || Math.abs(totalDeg) < 1e-9) continue;
+        const center = resolvePatternCenter(op.center, byId);
+        if (!center) continue;
+        const angles = circularPatternAngles(count, totalDeg, op.symmetric);
+        op.sourceIds.forEach((sid, j) => {
+          const src = byId.get(sid);
+          if (!src) return;
+          angles.forEach((a, i) => {
+            generated.push({ ...rotateEntity(src, center, a, `${op.id}:${j}:${i + 1}`), derivedFrom: op.id });
+          });
         });
       }
     } catch {

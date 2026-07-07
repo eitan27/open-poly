@@ -440,6 +440,67 @@ export function mirrorEntity(e: SketchEntity, a: Vec2, b: Vec2, newId: string): 
   }
 }
 
+// ── Sketch Pattern tools ──────────────────────────────────────────────────────
+// Pure rigid-motion geometry for the 2D sketch Linear/Circular Pattern tools
+// (distinct from the modeling-mode body PatternFeature). Unlike mirror, these
+// preserve orientation, so an arc's start/end angles map directly.
+
+/** Translate a sketch entity by (dx, dy), returning a new entity with id
+ *  `newId`. The copy is construction iff the source was. */
+export function translateEntity(e: SketchEntity, dx: number, dy: number, newId: string): SketchEntity {
+  const t = (p: Vec2): Vec2 => [p[0] + dx, p[1] + dy];
+  const c = e.construction ? { construction: true as const } : {};
+  switch (e.type) {
+    case "line":
+      return { type: "line", id: newId, a: t(e.a), b: t(e.b), ...c };
+    case "circle":
+      return { type: "circle", id: newId, c: t(e.c), r: e.r, ...c };
+    case "arc":
+      return { type: "arc", id: newId, c: t(e.c), r: e.r, start: e.start, end: e.end, ...c };
+    case "spline":
+      return { type: "spline", id: newId, points: e.points.map(t), ...c };
+    case "point":
+      return { type: "point", id: newId, p: t(e.p), ...c };
+    case "text":
+      return {
+        type: "text", id: newId, p: t(e.p), value: e.value, height: e.height,
+        ...(e.rotation !== undefined ? { rotation: e.rotation } : {}),
+        ...(e.font ? { font: e.font } : {}), ...c,
+      };
+  }
+}
+
+/** Rotate a sketch entity by `angle` radians (CCW) about `center`, returning a
+ *  new entity with id `newId`. A rotation preserves orientation, so an arc's
+ *  start/end angles simply shift by the rotation angle (no re-fit needed).
+ *  The copy is construction iff the source was. */
+export function rotateEntity(e: SketchEntity, center: Vec2, angle: number, newId: string): SketchEntity {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const rot = (p: Vec2): Vec2 => {
+    const x = p[0] - center[0], y = p[1] - center[1];
+    return [center[0] + x * cos - y * sin, center[1] + x * sin + y * cos];
+  };
+  const c = e.construction ? { construction: true as const } : {};
+  switch (e.type) {
+    case "line":
+      return { type: "line", id: newId, a: rot(e.a), b: rot(e.b), ...c };
+    case "circle":
+      return { type: "circle", id: newId, c: rot(e.c), r: e.r, ...c };
+    case "arc":
+      return { type: "arc", id: newId, c: rot(e.c), r: e.r, start: e.start + angle, end: e.end + angle, ...c };
+    case "spline":
+      return { type: "spline", id: newId, points: e.points.map(rot), ...c };
+    case "point":
+      return { type: "point", id: newId, p: rot(e.p), ...c };
+    case "text":
+      return {
+        type: "text", id: newId, p: rot(e.p), value: e.value, height: e.height,
+        rotation: (e.rotation ?? 0) + angle,
+        ...(e.font ? { font: e.font } : {}), ...c,
+      };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Project / Convert (existing 3D geometry pulled into the active sketch).
 // ---------------------------------------------------------------------------

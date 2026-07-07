@@ -552,7 +552,12 @@ export function removeSketchEntity(
             ? o.sourceIds.includes(entityId)
             : o.kind === "mirror"
               ? o.axisId === entityId || o.sourceIds.includes(entityId)
-              : false, // project ops reference body edges, not sketch entities
+              : o.kind === "linearPattern"
+                ? o.sourceIds.includes(entityId)
+                : o.kind === "circularPattern"
+                  ? o.sourceIds.includes(entityId) ||
+                    ("entity" in o.center && o.center.entity === entityId)
+                  : false, // project ops reference body edges, not sketch entities
         )
         .map((o) => o.id),
     );

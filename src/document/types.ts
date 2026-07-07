@@ -62,6 +62,35 @@ export type DerivedOp =
        *  `applyDerived` — they're re-projected in the app layer after each kernel
        *  build (resolved by persistent `edgeName`) and tagged `derivedFrom`. */
       refs: ProjectRef[];
+    }
+  | {
+      id: string;
+      kind: "linearPattern";
+      /** The source entity ids repeated along the step vector. */
+      sourceIds: string[];
+      /** TOTAL instance count including the seed (expression, ≥2). */
+      count: string;
+      /** Per-step translation in sketch u/v, as expressions (mm). */
+      dx: string;
+      dy: string;
+    }
+  | {
+      id: string;
+      kind: "circularPattern";
+      /** The source entity ids rotated about the center. */
+      sourceIds: string[];
+      /** Rotation center: an associative point reference (entity vertex /
+       *  circle-arc center / a point entity via at:"c" / the sketch origin),
+       *  or a raw uv coordinate for a free-standing center. */
+      center: PointRef | { at: Vec2 };
+      /** TOTAL instance count including the seed (expression, ≥2). */
+      count: string;
+      /** Total sweep in degrees (expression); "360" = full circle (equal
+       *  360/count steps, no duplicate at the wrap). Any other value spreads
+       *  the instances endpoints-inclusive across the sweep. */
+      angle: string;
+      /** Spread ±angle/2 to both sides of the seed (ignored at a full 360°). */
+      symmetric?: boolean;
     };
 
 /** A reference to a body's edge or vertex, projected into a sketch by a
