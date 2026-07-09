@@ -527,15 +527,25 @@ const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; title: string; sc: str
 const sketchToolMeta = (t: SketchTool) => SKETCH_TOOLS.find((x) => x.tool === t)!;
 
 // The two circle tools and the two rectangle tools each collapse into a single
-// flyout button that expands horizontally to reveal its variants. Shortcuts are
-// unchanged: the bare key picks variant[0], Shift the second (see SKETCH_KEYS /
-// SKETCH_SHIFT_KEYS). The collapsed button shows the last-used variant's icon.
+// primary button (the last-used variant, clickable to select it) plus a ▸ arrow
+// that opens a vertical flyout of the variants — same UX as the grouped
+// constraint button. Shortcuts are unchanged: the bare key picks variant[0],
+// Shift the second (see SKETCH_KEYS / SKETCH_SHIFT_KEYS).
 const SKETCH_GROUPS = {
   rect: { title: "Rectangle (R = 2 corners, Shift+R = center)", variants: ["rect-corner", "rect-center"] as const },
   circle: { title: "Circle (C = center + radius, Shift+C = 3 points)", variants: ["circle-center", "circle-3p"] as const },
   pattern: { title: "Pattern (X = linear, Shift+X = circular)", variants: ["pattern-linear", "pattern-circular"] as const },
 };
 type SketchGroupId = keyof typeof SKETCH_GROUPS;
+// Short display names for the variants shown in each group's vertical flyout.
+const SKETCH_VARIANT_NAME: Partial<Record<SketchTool, string>> = {
+  "rect-corner": "2 corners",
+  "rect-center": "Center",
+  "circle-center": "Center + radius",
+  "circle-3p": "3 points",
+  "pattern-linear": "Linear",
+  "pattern-circular": "Circular",
+};
 // Left-to-right (top-to-bottom in the vertical bar) order, with the two tool
 // pairs replaced by their group flyouts.
 const SKETCH_LAYOUT: ({ kind: "tool"; tool: SketchTool } | { kind: "group"; group: SketchGroupId })[] = [
@@ -1166,24 +1176,6 @@ export default function App() {
     window.addEventListener("pointerdown", onDown);
     return () => window.removeEventListener("pointerdown", onDown);
   }, [constraintFlyoutOpen]);
-  // The toolbar buttons stretch to a uniform width; the flyout variants live in
-  // an absolute overlay (out of that flow), so match them to a stretched button's
-  // measured width — otherwise the expanded variants look narrower than the
-  // collapsed button that was clicked.
-  const sketchToolbarRef = useRef<HTMLDivElement>(null);
-  const [sketchBtnWidth, setSketchBtnWidth] = useState<number | null>(null);
-  useLayoutEffect(() => {
-    const el = sketchToolbarRef.current;
-    if (!el) return;
-    const measure = () => {
-      const b = el.querySelector<HTMLButtonElement>(":scope > button");
-      if (b) setSketchBtnWidth(b.getBoundingClientRect().width);
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [editingSketchId, showShortcuts]);
   // When the (left-anchored, horizontal) modeling toolbar grows wide enough to
   // run under the (right-anchored) camera selector — e.g. once shortcut hints
   // widen it, or on a narrow viewport — drop the camera selector below the
@@ -4977,7 +4969,7 @@ export default function App() {
             </button>
           </div>
           {editingSketch && (
-            <div className="sketch-toolbar" ref={sketchToolbarRef}>
+            <div className="sketch-toolbar">
               {SKETCH_LAYOUT.map((slot) => {
                 if (slot.kind === "tool") {
                   const t = sketchToolMeta(slot.tool);
@@ -5001,17 +4993,25 @@ export default function App() {
                   slot.group === "circle" ? circleVariant : slot.group === "rect" ? rectVariant : patternVariant;
                 const groupActive = (g.variants as readonly SketchTool[]).includes(sketchTool);
                 const expanded = expandedSketchGroup === slot.group;
+                const vm = sketchToolMeta(variant);
                 return (
                   <div className="sketch-group" key={slot.group}>
-                    {/* In-flow collapsed button — keeps the column width stable.
-                        Clicking it reveals the variants as a horizontal flyout. */}
+                    {/* Primary applies the last-used variant; ▸ opens the vertical
+                        flyout of variants (to the right of the toolbar). */}
                     <button
-                      className={(groupActive ? "active" : "") + (expanded ? " expanded" : "")}
+                      className={"sketch-group-primary" + (groupActive ? " active" : "")}
+                      title={vm.title}
+                      onClick={() => setSketchTool(variant)}
+                    >
+                      {vm.label}{kbd(vm.sc)}
+                    </button>
+                    <button
+                      className={"sketch-group-arrow" + (expanded ? " expanded" : "")}
                       title={g.title}
                       aria-expanded={expanded}
                       onClick={() => setExpandedSketchGroup(expanded ? null : slot.group)}
                     >
-                      {sketchToolMeta(variant).label}{kbd(sketchToolMeta(variant).sc)}
+                      ▸
                     </button>
                     {expanded && (
                       <div className="sketch-flyout">
@@ -5022,10 +5022,10 @@ export default function App() {
                               key={tv}
                               className={sketchTool === tv ? "active" : ""}
                               title={t.title}
-                              style={sketchBtnWidth != null ? { width: sketchBtnWidth } : undefined}
                               onClick={() => setSketchTool(tv)}
                             >
-                              {t.label}{kbd(t.sc)}
+                              <span className="cf-icon">{t.label}</span>
+                              <span className="cf-name">{SKETCH_VARIANT_NAME[tv] ?? t.title}{kbd(t.sc)}</span>
                             </button>
                           );
                         })}

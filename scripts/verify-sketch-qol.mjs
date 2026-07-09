@@ -87,6 +87,47 @@ sketch = doc.features.find((f) => f.id === sk.createdId);
 const lineCount2 = (sketch?.entities ?? []).filter((e) => e.type === "line").length;
 check("a click after closing does not extend the old chain", lineCount2 === 3, `lines: ${lineCount2}`);
 
+// --- Circle / rectangle groups use the same primary + ▸ flyout UX ----------
+// (There are 3 groups: rect, circle, pattern — all share the new rendering.)
+const groupCount = await page.locator(".sketch-group").count();
+check("sketch-tool groups render with the new group UX", groupCount === 3, `groups: ${groupCount}`);
+const primaryCount = await page.locator(".sketch-group .sketch-group-primary").count();
+const arrowCount = await page.locator(".sketch-group .sketch-group-arrow").count();
+check("each group has a primary + an arrow", primaryCount === 3 && arrowCount === 3, `primary:${primaryCount} arrow:${arrowCount}`);
+// Open the RECTANGLE group's flyout (first group) and confirm it's vertical,
+// to the right, and lists the two rect variants by name.
+const rectArrow = page.locator(".sketch-group").nth(0).locator(".sketch-group-arrow");
+await rectArrow.click();
+await page.waitForTimeout(200);
+const rectNames = await page.locator(".sketch-group").nth(0).locator(".sketch-flyout .cf-name").allInnerTexts();
+check("rectangle flyout lists both variants", rectNames.some((n) => /2 corners/.test(n)) && rectNames.some((n) => /Center/.test(n)), rectNames.join(", "));
+const rectBoxes = await page.locator(".sketch-group").nth(0).locator(".sketch-flyout button").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ x: Math.round(r.x), y: Math.round(r.y) })));
+const rectVertical = rectBoxes.every((b, i) => i === 0 || (b.y > rectBoxes[i - 1].y && Math.abs(b.x - rectBoxes[0].x) < 2));
+check("rectangle flyout is vertical", rectVertical, JSON.stringify(rectBoxes.map((b) => b.y)));
+const rtoolbar = await page.locator(".sketch-toolbar").boundingBox();
+const rfly = await page.locator(".sketch-group").nth(0).locator(".sketch-flyout").boundingBox();
+check("rectangle flyout sits to the right of the toolbar", rfly.x >= rtoolbar.x + rtoolbar.width - 2, `fly.x=${Math.round(rfly.x)} toolbar.right=${Math.round(rtoolbar.x + rtoolbar.width)}`);
+// Picking a variant from the flyout selects that tool AND closes the flyout.
+await page.locator(".sketch-group").nth(0).locator(".sketch-flyout button", { hasText: "Center" }).click();
+await page.waitForTimeout(200);
+const rectFlyGone = await page.locator(".sketch-group").nth(0).locator(".sketch-flyout").count();
+check("picking a variant closes the flyout", rectFlyGone === 0);
+const rectPrimaryActive = await page.locator(".sketch-group").nth(0).locator(".sketch-group-primary").evaluate((el) => el.classList.contains("active"));
+check("the rect primary is now active (rect-center selected)", rectPrimaryActive);
+// Clicking the primary directly re-selects the (now rect-center) tool: still active.
+await page.locator(".sketch-group").nth(0).locator(".sketch-group-primary").click();
+await page.waitForTimeout(150);
+const stillActive = await page.locator(".sketch-group").nth(0).locator(".sketch-group-primary").evaluate((el) => el.classList.contains("active"));
+check("clicking the primary selects its variant tool", stillActive);
+// Circle group's arrow opens its own flyout with the circle variants.
+const circleArrow = page.locator(".sketch-group").nth(1).locator(".sketch-group-arrow");
+await circleArrow.click();
+await page.waitForTimeout(200);
+const circNames = await page.locator(".sketch-group").nth(1).locator(".sketch-flyout .cf-name").allInnerTexts();
+check("circle flyout lists both variants", circNames.some((n) => /Center \+ radius/.test(n)) && circNames.some((n) => /3 points/.test(n)), circNames.join(", "));
+await circleArrow.click(); // close it before moving on
+await page.waitForTimeout(150);
+
 // --- 3 & 4. Grouped constraint button + vertical flyout --------------------
 const groups = await page.locator(".constraint-group").count();
 check("a single grouped constraint button exists", groups === 1, `count: ${groups}`);

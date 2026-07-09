@@ -1111,28 +1111,27 @@
   cursor: default;
 }
 
-/* Collapsed circle/rectangle flyout. The collapsed button sits in-flow (so the
-   vertical bar keeps its width); clicking it opens the variants as a horizontal
-   flyout that overlays the button and extends to the right — expanding
-   horizontally without reflowing the column. */
+/* Circle / rectangle / pattern group: a primary button (the last-used variant,
+   clickable to select it) plus a ▸ arrow that opens a vertical flyout of the
+   variants to the right of the toolbar — same UX as the constraint group. */
 .sketch-group {
   position: relative;
   display: flex;
+  gap: 2px;
 }
-.sketch-group > button {
+.sketch-group .sketch-group-primary {
   flex: 1;
 }
-.sketch-group > button.expanded {
-  visibility: hidden;
+.sketch-group .sketch-group-arrow {
+  min-width: 16px;
+  padding: 0;
+  font-size: 11px;
+  color: #9aa1b1;
 }
-.sketch-flyout {
-  position: absolute;
-  left: 0;
-  top: 0;
-  display: flex;
-  flex-direction: row;
-  gap: 4px;
-  z-index: 5;
+.sketch-group .sketch-group-arrow.expanded {
+  background: #1e2a44;
+  border-color: #4f8cff;
+  color: #cfe0ff;
 }
 
 /* Groups drawing tools / dimension / constraints / solve in the sketch toolbar. */
@@ -1164,7 +1163,11 @@
   border-color: #4f8cff;
   color: #cfe0ff;
 }
-.constraint-flyout {
+/* Shared vertical flyout for both the constraint group and the drawing-tool
+   groups (circle/rect/pattern): a column of icon + name choices anchored just
+   right of the toolbar. */
+.constraint-flyout,
+.sketch-flyout {
   position: absolute;
   left: calc(100% + 6px);
   top: 0;
@@ -1178,19 +1181,22 @@
   backdrop-filter: blur(4px);
   z-index: 6;
 }
-.constraint-flyout button {
+.constraint-flyout button,
+.sketch-flyout button {
   justify-content: flex-start;
   gap: 8px;
   width: 100%;
   white-space: nowrap;
 }
-.constraint-flyout .cf-icon {
+.constraint-flyout .cf-icon,
+.sketch-flyout .cf-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 20px;
 }
-.constraint-flyout .cf-name {
+.constraint-flyout .cf-name,
+.sketch-flyout .cf-name {
   font-size: 13px;
 }
 
