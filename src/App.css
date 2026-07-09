@@ -1158,12 +1158,11 @@
   padding: 0;
   font-size: 11px;
   color: #9aa1b1;
-  transition: transform 0.12s ease;
 }
 .constraint-group .constraint-arrow.expanded {
-  transform: rotate(90deg);
-  color: #cfe0ff;
+  background: #1e2a44;
   border-color: #4f8cff;
+  color: #cfe0ff;
 }
 .constraint-flyout {
   position: absolute;

@@ -1139,7 +1139,7 @@ export default function App() {
   // The grouped geometric-constraint button: which constraint the always-visible
   // primary button represents (last one used, like the drawing-tool variants),
   // and whether the ▸ flyout of the others is open.
-  const [constraintChoice, setConstraintChoice] = useState<ConstraintKind>("horizontal");
+  const [constraintChoice, setConstraintChoice] = useState<ConstraintKind>("parallel");
   const [constraintFlyoutOpen, setConstraintFlyoutOpen] = useState(false);
   useEffect(() => {
     if (sketchTool === "circle-center" || sketchTool === "circle-3p") setCircleVariant(sketchTool);
@@ -3570,6 +3570,7 @@ export default function App() {
           // on from there. Snapping back onto the chain's own point doesn't count.
           if (atVertex) {
             setDraft([]);
+            setSketchTool("select"); // chain closed on a corner → back to Select
             void applyAndSolve(next);
           } else {
             setDraft([uv]); // chain optimistically; applyAndSolve resets to the solved endpoint

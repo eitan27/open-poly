@@ -74,20 +74,25 @@ let sketch = doc.features.find((f) => f.id === sk.createdId);
 const lineCount = (sketch?.entities ?? []).filter((e) => e.type === "line").length;
 check("closing on the start vertex yields exactly 3 lines (chain ended)", lineCount === 3, `lines: ${lineCount}`);
 
-// Confirm the chain truly ended: click a far empty point. If still chaining,
-// this would draw a 4th line from P0; if ended, it just starts a new draft
-// (no new committed line yet).
+// Ending the chain must switch back to the Select tool (not stay on Line).
+const selectActive = await page.locator(".sketch-toolbar button[title^='Select']").evaluate((el) => el.classList.contains("active"));
+check("ending the chain switches to the Select tool", selectActive);
+
+// And Select is active, so a click on empty space clears selection rather than
+// drawing — the loop stays at 3 lines.
 await clickWorld([40, 40, 0]);
 await page.waitForTimeout(150);
 doc = await read({ read: "document" });
 sketch = doc.features.find((f) => f.id === sk.createdId);
 const lineCount2 = (sketch?.entities ?? []).filter((e) => e.type === "line").length;
 check("a click after closing does not extend the old chain", lineCount2 === 3, `lines: ${lineCount2}`);
-await page.keyboard.press("Escape"); // drop the stray new draft
 
 // --- 3 & 4. Grouped constraint button + vertical flyout --------------------
 const groups = await page.locator(".constraint-group").count();
 check("a single grouped constraint button exists", groups === 1, `count: ${groups}`);
+// The primary defaults to Parallel.
+const defaultTitle = await page.locator(".constraint-primary").getAttribute("title");
+check("primary defaults to Parallel", /Parallel/.test(defaultTitle ?? ""), defaultTitle ?? "");
 // Before opening, only the primary is visible (no standalone H/V/∥ buttons).
 const flyoutBefore = await page.locator(".constraint-flyout").count();
 check("flyout is closed initially", flyoutBefore === 0);
