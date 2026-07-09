@@ -62,6 +62,9 @@ export interface OpenPolyApi {
   summary(): SceneSummary;
   selection(): Selection[];
   screenshot(view?: ViewName): string | null;
+  /** Project a world point to canvas CSS pixels (dev/console + e2e scripts:
+   *  lets a test compute where to synthesize a real viewport click). */
+  worldToScreen(p: [number, number, number]): { x: number; y: number } | null;
 }
 
 declare global {
@@ -176,6 +179,7 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
       summary: () => getSceneSummary(ctx),
       selection: () => getSelection(ctx),
       screenshot: (view) => screenshot(ctx, view ? { view } : undefined),
+      worldToScreen: (p) => viewApiRef.current?.worldToScreen(p) ?? null,
     };
     window.__openpoly = api;
     return () => {

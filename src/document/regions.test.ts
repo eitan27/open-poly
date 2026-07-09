@@ -56,6 +56,107 @@ describe("detectSketchRegions", () => {
   });
 });
 
+describe("detectSketchRegions — subregions at T-junctions and crossings", () => {
+  // A 4×2 box whose corners are shared vertices; interior lines below land
+  // mid-edge (T-junctions) or cross each other (X), not on those corners.
+  const box = () => [
+    line([0, 0], [4, 0]), line([4, 0], [4, 2]), line([4, 2], [0, 2]), line([0, 2], [0, 0]),
+  ];
+
+  it("splits a box at a T-to-T chord into two cells", () => {
+    // Vertical chord from mid-bottom (2,0) to mid-top (2,2): both endpoints are
+    // T-junctions on edge interiors, not box vertices.
+    const chord = line([2, 0], [2, 2]);
+    expect(areas([...box(), chord])).toEqual([4, 4]);
+  });
+
+  it("splits a box at crossing diagonals into four cells", () => {
+    const d1 = line([0, 0], [4, 2]);
+    const d2 = line([0, 2], [4, 0]);
+    const regions = detectSketchRegions([...box(), d1, d2]);
+    expect(regions).toHaveLength(4);
+    expect(regions.reduce((s, r) => s + r.area, 0)).toBeCloseTo(8, 5);
+    // Ids must be unique so each cell is independently selectable/persistable.
+    expect(new Set(regions.map((r) => r.id)).size).toBe(4);
+  });
+
+  it("splits a box by two edge-to-edge lines that also cross each other", () => {
+    // A vertical and a horizontal chord crossing at (2,1): four 2×1 cells.
+    const v = line([2, 0], [2, 2]);
+    const h = line([0, 1], [4, 1]);
+    expect(areas([...box(), v, h])).toEqual([2, 2, 2, 2]);
+  });
+
+  it("a line crossing clear through the box splits it (overhangs dangle)", () => {
+    // The chord extends past both edges; the outside stubs are dangling edges.
+    const long = line([2, -1], [2, 3]);
+    expect(areas([...box(), long])).toEqual([4, 4]);
+  });
+
+  it("a dangling interior line creates no extra region", () => {
+    // One end on the bottom edge, the other floating inside.
+    const dangler = line([2, 0], [2, 1]);
+    expect(areas([...box(), dangler])).toEqual([8]);
+  });
+
+  it("splits a circle crossed by a diameter line into two half-disks", () => {
+    const circle: SketchEntity = { type: "circle", id: "c", c: [0, 0], r: 2 };
+    // Vertical line through the center, overhanging both sides.
+    const cut = line([0, -3], [0, 3]);
+    const regions = detectSketchRegions([circle, cut]);
+    expect(regions).toHaveLength(2);
+    // Each ≈ half the 48-gon area.
+    for (const r of regions) {
+      expect(r.area).toBeGreaterThan(6.1);
+      expect(r.area).toBeLessThan(Math.PI * 2 + 0.01);
+    }
+  });
+
+  it("splits a circle crossed at its 0° seam (horizontal diameter)", () => {
+    // The circle's polyline seam sits at angle 0 = (r, 0); a horizontal line
+    // through the center crosses exactly there.
+    const circle: SketchEntity = { type: "circle", id: "c", c: [0, 0], r: 2 };
+    const cut = line([-3, 0], [3, 0]);
+    const regions = detectSketchRegions([circle, cut]);
+    expect(regions).toHaveLength(2);
+    expect(regions.reduce((s, r) => s + r.area, 0)).toBeGreaterThan(12.2); // ≈ π·4
+  });
+
+  it("gives the four quadrants of a crossed circle unique, stable ids", () => {
+    const circle: SketchEntity = { type: "circle", id: "c", c: [0, 0], r: 2 };
+    const h = line([-3, 0], [3, 0]);
+    const v = line([0, -3], [0, 3]);
+    const regions = detectSketchRegions([circle, h, v]);
+    expect(regions).toHaveLength(4);
+    const ids1 = regions.map((r) => r.id).sort();
+    expect(new Set(ids1).size).toBe(4);
+    // Re-detection yields the same ids (features persist them).
+    const ids2 = detectSketchRegions([circle, h, v]).map((r) => r.id).sort();
+    expect(ids2).toEqual(ids1);
+  });
+
+  it("a lone circle keeps its exact area and id (no junctions → old behavior)", () => {
+    const circle: SketchEntity = { type: "circle", id: "c9", c: [1, 1], r: 1.5 };
+    const regions = detectSketchRegions([circle]);
+    expect(regions).toHaveLength(1);
+    expect(regions[0].id).toBe("region-c9");
+    expect(regions[0].area).toBeCloseTo(Math.PI * 2.25, 5);
+  });
+
+  it("regionsEnclosedBy resolves a subregion from its bounding entities", () => {
+    const [bot, right, top, left] = box();
+    const chord = line([2, 0], [2, 2]);
+    const ents = [bot, right, top, left, chord];
+    // Selecting the left cell's boundary (left edge + chord + split bottom/top)
+    // encloses exactly the left cell.
+    const found = regionsEnclosedBy(ents, new Set([left.id, chord.id, bot.id, top.id]));
+    expect(found).toHaveLength(1);
+    expect(found[0].area).toBeCloseTo(4, 5);
+    // Selecting everything encloses both cells.
+    expect(regionsEnclosedBy(ents, new Set(ents.map((e) => e.id)))).toHaveLength(2);
+  });
+});
+
 const arc = (c: Vec2, r: number, start: number, end: number): SketchEntity => ({ type: "arc", id: `a${n++}`, c, r, start, end });
 const spline = (points: Vec2[]): SketchEntity => ({ type: "spline", id: `s${n++}`, points });
 

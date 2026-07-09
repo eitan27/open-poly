@@ -1,12 +1,16 @@
 // Detects enclosed regions ("sketch faces") of a sketch. Each circle (and any
-// self-closed arc/spline) is its own region; everything else is found by treating
-// the sketch as a planar graph and enumerating its bounded faces. Line, **arc**,
-// and **spline** entities all act as boundary edges — a curve is one graph edge
-// between its two endpoints, tessellated into a polyline for the outline/area and
-// using its *tangent* (not its chord) for the angular face traversal. Outlines are
-// in 2D (uv); used both for the clickable fill and for area display. Curved
-// boundaries are emitted as fine polylines (the kernel builds faceted faces, same
-// as it already does for circles).
+// self-closed arc/spline) that nothing crosses is its own region; everything
+// else is found by treating the sketch as a planar graph and enumerating its
+// bounded faces. Line, **arc**, and **spline** entities all act as boundary
+// edges, tessellated into polylines for the outline/area and using the curve
+// *tangent* (not the chord) for the angular face traversal. Before the graph is
+// built, every boundary polyline is **split where it meets another** — at
+// T-junctions (an endpoint landing mid-edge) and X-crossings — so the faces
+// enumerated are the most granular subregions: a box with interior edge-to-edge
+// lines yields each cell as its own selectable region. Outlines are in 2D (uv);
+// used both for the clickable fill and for area display. Curved boundaries are
+// emitted as fine polylines (the kernel builds faceted faces, same as it
+// already does for circles).
 import type { SketchEntity, Vec2 } from "./types";
 import type { ProfileSegment } from "../kernel/types";
 import { sampleArc, sampleSpline } from "./sketchTools";
@@ -58,26 +62,117 @@ function entityBoundary(e: SketchEntity): { poly: Vec2[] } | null {
  *  at the `from` endpoint, used to order edges around a vertex. */
 const leaveAngle = (poly: Vec2[]) => Math.atan2(poly[1][1] - poly[0][1], poly[1][0] - poly[0][0]);
 
+// Coordinates within EPS are the same point (matches the 4dp `coord` rounding).
+const EPS = 1e-4;
+
+/** Intersection of segments p1→p2 and q1→q2, endpoints inclusive (within EPS),
+ *  parallel/collinear pairs excluded. Returns the point + both segment params. */
+function segIntersect(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): { point: Vec2; t: number; u: number } | null {
+  const rx = p2[0] - p1[0], ry = p2[1] - p1[1];
+  const sx = q2[0] - q1[0], sy = q2[1] - q1[1];
+  const lenR = Math.hypot(rx, ry), lenS = Math.hypot(sx, sy);
+  if (lenR < 1e-12 || lenS < 1e-12) return null;
+  const denom = rx * sy - ry * sx;
+  if (Math.abs(denom) < 1e-12 * lenR * lenS) return null;
+  const qpx = q1[0] - p1[0], qpy = q1[1] - p1[1];
+  let t = (qpx * sy - qpy * sx) / denom;
+  let u = (qpx * ry - qpy * rx) / denom;
+  if (t < -EPS / lenR || t > 1 + EPS / lenR || u < -EPS / lenS || u > 1 + EPS / lenS) return null;
+  t = Math.min(1, Math.max(0, t));
+  u = Math.min(1, Math.max(0, u));
+  return { point: [p1[0] + t * rx, p1[1] + t * ry], t, u };
+}
+
+/** A boundary entity flattened to a polyline. `closed` marks circles and
+ *  self-closed curves (poly[0] === poly[last]). `cuts` collects the parameter
+ *  positions (segment index + fraction, i.e. param `i` is vertex `i`) where
+ *  another entity touches or crosses this one. */
+interface BoundaryPoly { entityId: string; poly: Vec2[]; closed: boolean; cuts: { t: number; p: Vec2 }[] }
+
+/** The point at param `t` of a polyline (segment index + fraction). */
+function polyAt(poly: Vec2[], t: number): Vec2 {
+  const i = Math.min(Math.floor(t), poly.length - 2);
+  const f = t - i;
+  return [poly[i][0] + (poly[i + 1][0] - poly[i][0]) * f, poly[i][1] + (poly[i + 1][1] - poly[i][1]) * f];
+}
+
+/** The sub-polyline from param `ta` to `tb` (ta < tb), using the exact cut
+ *  points at the ends so both sides of a split share identical coordinates. */
+function polySlice(poly: Vec2[], ta: number, pa: Vec2, tb: number, pb: Vec2): Vec2[] {
+  const pts: Vec2[] = [pa];
+  for (let i = Math.floor(ta) + 1; i <= Math.min(Math.floor(tb), poly.length - 1); i++) {
+    if (i > ta + 1e-9 && i < tb - 1e-9) pts.push(poly[i]);
+  }
+  pts.push(pb);
+  return pts;
+}
+
 export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
   const regions: SketchRegion[] = [];
 
   // Construction geometry is reference-only — never a profile boundary.
   entities = entities.filter((e) => !e.construction);
 
-  // Circles are closed by themselves → one disk region each.
+  // Flatten every boundary entity to a polyline. Circles join the pool too (as
+  // closed 48-gons) so a curve crossing a circle splits it into selectable
+  // sub-regions; an uncrossed circle falls out below as one disk region.
+  const polys: BoundaryPoly[] = [];
   for (const e of entities) {
-    if (e.type !== "circle") continue;
-    const outline: Vec2[] = [];
-    const SEG = 48;
-    for (let i = 0; i < SEG; i++) {
-      const t = (2 * Math.PI * i) / SEG;
-      outline.push([e.c[0] + e.r * Math.cos(t), e.c[1] + e.r * Math.sin(t)]);
+    if (e.type === "circle") {
+      const SEG = 48;
+      const poly: Vec2[] = [];
+      for (let i = 0; i <= SEG; i++) {
+        const t = (2 * Math.PI * i) / SEG;
+        poly.push([e.c[0] + e.r * Math.cos(t), e.c[1] + e.r * Math.sin(t)]);
+      }
+      polys.push({ entityId: e.id, poly, closed: true, cuts: [] });
+      continue;
     }
-    regions.push({ id: `region-${e.id}`, outline, area: Math.PI * e.r * e.r, entityIds: [e.id] });
+    const bd = entityBoundary(e);
+    if (!bd || bd.poly.length < 2) continue;
+    const closed = key(bd.poly[0]) === key(bd.poly[bd.poly.length - 1]);
+    polys.push({ entityId: e.id, poly: bd.poly, closed, cuts: [] });
   }
 
-  // Planar-graph face enumeration over line/arc/spline boundary entities: each
-  // entity becomes two directed half-edges (twin(i) === i ^ 1), and each directed
+  // Find every place two boundary polylines touch or cross (T-junctions and
+  // X-crossings) and record a cut on each side. Cuts at an open polyline's own
+  // endpoints are dropped — those are already graph vertices. Bounding-box
+  // rejection (per polyline pair, then per segment pair) keeps the quadratic
+  // sweep cheap on curve-heavy sketches.
+  const bbox = polys.map((bp) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of bp.poly) {
+      if (p[0] < x0) x0 = p[0];
+      if (p[0] > x1) x1 = p[0];
+      if (p[1] < y0) y0 = p[1];
+      if (p[1] > y1) y1 = p[1];
+    }
+    return { x0, y0, x1, y1 };
+  });
+  for (let i = 0; i < polys.length; i++) {
+    for (let j = i + 1; j < polys.length; j++) {
+      const P = polys[i], Q = polys[j];
+      const bi = bbox[i], bj = bbox[j];
+      if (bi.x1 + EPS < bj.x0 || bj.x1 + EPS < bi.x0 || bi.y1 + EPS < bj.y0 || bj.y1 + EPS < bi.y0) continue;
+      for (let a = 0; a < P.poly.length - 1; a++) {
+        const p1 = P.poly[a], p2 = P.poly[a + 1];
+        const ax0 = Math.min(p1[0], p2[0]) - EPS, ax1 = Math.max(p1[0], p2[0]) + EPS;
+        const ay0 = Math.min(p1[1], p2[1]) - EPS, ay1 = Math.max(p1[1], p2[1]) + EPS;
+        for (let b = 0; b < Q.poly.length - 1; b++) {
+          const q1 = Q.poly[b], q2 = Q.poly[b + 1];
+          if (Math.max(q1[0], q2[0]) < ax0 || Math.min(q1[0], q2[0]) > ax1) continue;
+          if (Math.max(q1[1], q2[1]) < ay0 || Math.min(q1[1], q2[1]) > ay1) continue;
+          const hit = segIntersect(p1, p2, q1, q2);
+          if (!hit) continue;
+          P.cuts.push({ t: a + hit.t, p: hit.point });
+          Q.cuts.push({ t: b + hit.u, p: hit.point });
+        }
+      }
+    }
+  }
+
+  // Planar-graph face enumeration over the (split) boundary pieces: each piece
+  // becomes two directed half-edges (twin(i) === i ^ 1), and each directed
   // half-edge belongs to exactly one face. This (unlike a greedy loop tracer)
   // lets a single edge bound two adjacent regions.
   const nodeIndex = new Map<string, number>();
@@ -100,27 +195,72 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
   // keeping two *distinct* curves between the same endpoints (a lens) apart.
   const seenEdge = new Set<string>();
 
-  for (const e of entities) {
-    const bd = entityBoundary(e);
-    if (!bd) continue;
-    const poly = bd.poly;
-    const a = poly[0];
-    const b = poly[poly.length - 1];
+  // Split each polyline at its cuts into graph-edge pieces.
+  const pieces: { entityId: string; poly: Vec2[] }[] = [];
+  for (const bp of polys) {
+    const startKey = key(bp.poly[0]);
+    const endKey = key(bp.poly[bp.poly.length - 1]);
+    // Sort, then dedupe by rounded point (a crossing at a closed poly's seam
+    // registers at both t≈0 and t≈N — one cut, not two) and — for open
+    // polylines — drop cuts that coincide with the polyline's own endpoints.
+    const seenCut = new Set<string>();
+    const cuts = bp.cuts
+      .filter((c) => bp.closed || (key(c.p) !== startKey && key(c.p) !== endKey))
+      .sort((x, y) => x.t - y.t)
+      .filter((c) => {
+        const k = key(c.p);
+        if (seenCut.has(k)) return false;
+        seenCut.add(k);
+        return true;
+      });
 
-    // A self-closed curve (endpoints coincide) is its own region, like a circle.
-    if (key(a) === key(b)) {
-      const ar = signedArea(poly);
-      if (poly.length >= 4 && Math.abs(ar) > 1e-7) {
-        regions.push({
-          id: `region-${e.id}`,
-          outline: ar >= 0 ? poly.slice(0, -1) : poly.slice(0, -1).reverse(),
-          area: Math.abs(ar),
-          entityIds: [e.id],
-        });
+    if (bp.closed && cuts.length < 2) {
+      // Nothing splits this closed curve (a lone touch point can't) → it is its
+      // own region: a disk for circles, the enclosed loop for self-closed curves.
+      const ring = bp.poly.slice(0, -1);
+      const e = entities.find((x) => x.id === bp.entityId);
+      if (e?.type === "circle") {
+        regions.push({ id: `region-${e.id}`, outline: ring, area: Math.PI * e.r * e.r, entityIds: [e.id] });
+      } else {
+        const ar = signedArea(ring);
+        if (ring.length >= 3 && Math.abs(ar) > 1e-7) {
+          regions.push({
+            id: `region-${bp.entityId}`,
+            outline: ar >= 0 ? ring : [...ring].reverse(),
+            area: Math.abs(ar),
+            entityIds: [bp.entityId],
+          });
+        }
       }
       continue;
     }
 
+    const N = bp.poly.length - 1;
+    if (bp.closed) {
+      // Pieces between consecutive cuts, plus the wrap-around piece (the poly's
+      // coincident first/last point makes plain concatenation correct).
+      for (let c = 0; c < cuts.length; c++) {
+        const cur = cuts[c];
+        const nxt = cuts[(c + 1) % cuts.length];
+        const poly =
+          c < cuts.length - 1
+            ? polySlice(bp.poly, cur.t, cur.p, nxt.t, nxt.p)
+            : [...polySlice(bp.poly, cur.t, cur.p, N, bp.poly[N]), ...polySlice(bp.poly, 0, bp.poly[0], nxt.t, nxt.p).slice(1)];
+        pieces.push({ entityId: bp.entityId, poly });
+      }
+    } else {
+      const bounds = [{ t: 0, p: bp.poly[0] }, ...cuts, { t: N, p: bp.poly[N] }];
+      for (let c = 0; c < bounds.length - 1; c++) {
+        pieces.push({ entityId: bp.entityId, poly: polySlice(bp.poly, bounds[c].t, bounds[c].p, bounds[c + 1].t, bounds[c + 1].p) });
+      }
+    }
+  }
+
+  for (const piece of pieces) {
+    const poly = piece.poly;
+    if (poly.length < 2) continue;
+    const a = poly[0];
+    const b = poly[poly.length - 1];
     const an = node(a);
     const bn = node(b);
     if (an === bn) continue; // endpoints rounded to the same vertex — degenerate
@@ -137,8 +277,8 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
     seenEdge.add(ek);
 
     const rev = [...poly].reverse();
-    he.push({ from: an, to: bn, entityId: e.id, angle: leaveAngle(poly), poly });
-    he.push({ from: bn, to: an, entityId: e.id, angle: leaveAngle(rev), poly: rev });
+    he.push({ from: an, to: bn, entityId: piece.entityId, angle: leaveAngle(poly), poly });
+    he.push({ from: bn, to: an, entityId: piece.entityId, angle: leaveAngle(rev), poly: rev });
   }
 
   // Outgoing half-edges per vertex, sorted CCW by leave-angle.
@@ -178,6 +318,30 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
       const id = `region-loop-${[...entityIds].sort().join("_")}`;
       regions.push({ id, outline: loop, area: a, entityIds: [...entityIds] });
     }
+  }
+
+  // Distinct subregions can share a bounding-entity set (e.g. the 4 quadrants
+  // of a circle crossed by two lines). Ids must be unique — and stable across
+  // rebuilds, since features persist them — so colliding ids get an ordinal by
+  // centroid order (x, then y). Non-colliding ids (the common case, and every
+  // pre-existing document) are untouched.
+  const byId = new Map<string, SketchRegion[]>();
+  for (const r of regions) {
+    const list = byId.get(r.id);
+    if (list) list.push(r);
+    else byId.set(r.id, [r]);
+  }
+  for (const group of byId.values()) {
+    if (group.length < 2) continue;
+    const centroid = (r: SketchRegion): Vec2 => {
+      let x = 0, y = 0;
+      for (const p of r.outline) { x += p[0]; y += p[1]; }
+      return [x / r.outline.length, y / r.outline.length];
+    };
+    group
+      .map((r) => ({ r, c: centroid(r) }))
+      .sort((p, q) => p.c[0] - q.c[0] || p.c[1] - q.c[1])
+      .forEach(({ r }, k) => { r.id = `${r.id}~${k}`; });
   }
 
   return regions;
