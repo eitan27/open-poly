@@ -79,6 +79,19 @@ export interface AgentBridge {
   status: BridgeStatus;
 }
 
+/** Whether this instance is running locally (so the agent bridge, which dials a
+ *  hub on 127.0.0.1, is worth starting). True for the Vite dev server and for a
+ *  build opened from a loopback / *.local host; false for a public deployment.
+ *  TODO: replace this host sniff with an explicit signal — a build-time flag,
+ *  an env var, or a user-facing "enable agent" toggle — for a more robust and
+ *  generic condition (e.g. so a LAN-hosted dev box or a remote hub can opt in). */
+function isLocalDeployment(): boolean {
+  if (import.meta.env.DEV) return true;
+  if (typeof window === "undefined") return false;
+  const h = window.location.hostname;
+  return h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "[::1]" || h.endsWith(".local");
+}
+
 export function useAgentBridge(deps: BridgeDeps): AgentBridge {
   // Refs always hold the latest committed state, so ctx getters never close over
   // stale values. `setDoc` also writes docRef synchronously so a chain of ops in
@@ -158,6 +171,11 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
   if (!sessionIdRef.current) sessionIdRef.current = genId();
 
   useEffect(() => {
+    // The bridge only makes sense when the app runs locally, since the hub it
+    // dials lives on 127.0.0.1 (see BRIDGE_URL). On a deployed/public build that
+    // connection can never succeed, so skip it — no reconnection churn, and the
+    // "Agent connected" badge (gated on status === "connected") stays hidden.
+    if (!isLocalDeployment()) return;
     const client = new BridgeClient({
       sessionId: sessionIdRef.current,
       conventions: { units: "mm", up: "z", operations: OPERATION_NAMES, reads: READ_NAMES },
