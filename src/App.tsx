@@ -146,6 +146,35 @@ const fmt = (n: number) => {
   return Number.isInteger(r) ? String(r) : String(r);
 };
 
+// The geometric constraints grouped behind the one toolbar button, in flyout
+// order. (Dimensional constraints and the construction toggle stay separate.)
+type ConstraintKind =
+  | "horizontal"
+  | "vertical"
+  | "parallel"
+  | "perpendicular"
+  | "equal"
+  | "coincident"
+  | "tangent";
+const CONSTRAINT_ORDER: readonly ConstraintKind[] = [
+  "horizontal",
+  "vertical",
+  "parallel",
+  "perpendicular",
+  "equal",
+  "coincident",
+  "tangent",
+];
+const CONSTRAINT_NAME: Record<ConstraintKind, string> = {
+  horizontal: "Horizontal",
+  vertical: "Vertical",
+  parallel: "Parallel",
+  perpendicular: "Perpendicular",
+  equal: "Equal",
+  coincident: "Coincident",
+  tangent: "Tangent",
+};
+
 /** Human-readable label for a sketch constraint (for the constraints list). */
 const constraintLabel = (c: SketchConstraint): string => {
   switch (c.type) {
@@ -1107,6 +1136,11 @@ export default function App() {
   const [circleVariant, setCircleVariant] = useState<SketchTool>("circle-center");
   const [rectVariant, setRectVariant] = useState<SketchTool>("rect-corner");
   const [patternVariant, setPatternVariant] = useState<SketchTool>("pattern-linear");
+  // The grouped geometric-constraint button: which constraint the always-visible
+  // primary button represents (last one used, like the drawing-tool variants),
+  // and whether the ▸ flyout of the others is open.
+  const [constraintChoice, setConstraintChoice] = useState<ConstraintKind>("horizontal");
+  const [constraintFlyoutOpen, setConstraintFlyoutOpen] = useState(false);
   useEffect(() => {
     if (sketchTool === "circle-center" || sketchTool === "circle-3p") setCircleVariant(sketchTool);
     else if (sketchTool === "rect-corner" || sketchTool === "rect-center") setRectVariant(sketchTool);
@@ -1123,6 +1157,15 @@ export default function App() {
     window.addEventListener("pointerdown", onDown);
     return () => window.removeEventListener("pointerdown", onDown);
   }, [expandedSketchGroup]);
+  // Same dismiss-on-outside-click for the constraint flyout.
+  useEffect(() => {
+    if (!constraintFlyoutOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest?.(".constraint-group")) setConstraintFlyoutOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    return () => window.removeEventListener("pointerdown", onDown);
+  }, [constraintFlyoutOpen]);
   // The toolbar buttons stretch to a uniform width; the flyout variants live in
   // an absolute overlay (out of that flow), so match them to a stretched button's
   // measured width — otherwise the expanded variants look narrower than the
@@ -3459,7 +3502,7 @@ export default function App() {
   // A snapped click on the sketch plane (already in uv coords). Drives the
   // multi-click construction tools. `hv` records a horizontal/vertical inference
   // (line tool) so it can be captured as a constraint.
-  const handleSketchClick = (uv: Vec2, hv?: "horizontal" | "vertical", on?: { id: string; mid: boolean }) => {
+  const handleSketchClick = (uv: Vec2, hv?: "horizontal" | "vertical", on?: { id: string; mid: boolean }, atVertex?: boolean) => {
     if (!editingSketchId || sketchTool === "select" || sketchTool === "offset") return;
     const sketchId = editingSketchId;
     // Drawing solves immediately: the constraints captured while drawing (auto
@@ -3522,8 +3565,16 @@ export default function App() {
           // The chain continues from this end; it's now constrained, so the next
           // segment's start needs no further attachment.
           lineStartOnRef.current = undefined;
-          setDraft([uv]); // chain optimistically; applyAndSolve resets to the solved endpoint
-          void applyAndSolve(next, line.id);
+          // Landing this endpoint on an existing corner (another entity's endpoint
+          // or the origin) closes the polyline — end the chain instead of drawing
+          // on from there. Snapping back onto the chain's own point doesn't count.
+          if (atVertex) {
+            setDraft([]);
+            void applyAndSolve(next);
+          } else {
+            setDraft([uv]); // chain optimistically; applyAndSolve resets to the solved endpoint
+            void applyAndSolve(next, line.id);
+          }
         }
         break;
       case "rect-corner":
@@ -4226,6 +4277,63 @@ export default function App() {
     setConstructionMode(makeConstruction);
   };
 
+  // The seven geometric constraints, keyed for the grouped toolbar button: the
+  // icon/kbd node, tooltip, whether the current selection makes it applicable,
+  // and the action. `enabled` mirrors each constraint's own selection rule.
+  const coincidentEnabled =
+    (selectedSketchPoints.length === 1 && selectedSketchLines.length === 1) ||
+    ((selectedSketchPoints.length === 1 || selectedSketchPoints.length === 2) && selectedSketchLines.length === 0);
+  const constraintDefs: Record<
+    ConstraintKind,
+    { node: ReactNode; title: string; enabled: boolean; apply: () => void }
+  > = {
+    horizontal: {
+      node: <><HorizontalIcon />{kbd("H")}</>,
+      title: "Horizontal (H) — select a line",
+      enabled: !!oneSelectedLine,
+      apply: () => oneSelectedLine && addHVConstraint("horizontal", oneSelectedLine.id),
+    },
+    vertical: {
+      node: <><VerticalIcon />{kbd("V")}</>,
+      title: "Vertical (V) — select a line",
+      enabled: !!oneSelectedLine,
+      apply: () => oneSelectedLine && addHVConstraint("vertical", oneSelectedLine.id),
+    },
+    parallel: {
+      node: <><ParallelIcon />{kbd("⇧P")}</>,
+      title: "Parallel (Shift+P) — select two lines",
+      enabled: !!twoSelectedLines,
+      apply: () => twoSelectedLines && addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id),
+    },
+    perpendicular: {
+      node: <>⊥{kbd("N")}</>,
+      title: "Perpendicular (N) — select two lines",
+      enabled: !!twoSelectedLines,
+      apply: () => twoSelectedLines && addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id),
+    },
+    equal: {
+      node: <>＝{kbd("=")}</>,
+      title: "Equal (=) — select two lines (equal length) or two circles/arcs (equal radius)",
+      enabled: !!(twoSelectedLines || twoRadiusEntities),
+      apply: () => {
+        const pair = twoSelectedLines ?? twoRadiusEntities;
+        if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
+      },
+    },
+    coincident: {
+      node: <>⌖</>,
+      title: "Coincident — a point + a line puts the point on the line; one point anchors it to the origin; two points make them coincident",
+      enabled: coincidentEnabled,
+      apply: addCoincident,
+    },
+    tangent: {
+      node: <>◯⌐</>,
+      title: "Tangent — select two curves (circle/arc) or a line and a curve",
+      enabled: !!tangentPair,
+      apply: () => tangentPair && addGeoConstraint("tangent", tangentPair[0].id, tangentPair[1].id),
+    },
+  };
+
   // Remove a single constraint (from the constraints list) and re-solve.
   const deleteConstraint = async (id: string) => {
     if (!editingSketch) return;
@@ -4462,6 +4570,12 @@ export default function App() {
         entityRefs.push({ sketchId: s.sketchId, entityId: s.entityId });
       }
     }
+    // Entering sketch edit selects the sketch feature (for the timeline/param
+    // highlight), and edge/vertex picks then accumulate on top. While editing,
+    // Delete must act on the picked geometry — never wipe the whole sketch out
+    // from under the editor. To delete the sketch itself, finish editing first
+    // (or use the timeline ✕).
+    if (editingSketchId) featureIds.delete(editingSketchId);
     let next = doc;
     for (const { sketchId, entityId } of entityRefs) {
       if (featureIds.has(sketchId)) continue; // whole sketch is already going away
@@ -4927,70 +5041,51 @@ export default function App() {
                 ↔{kbd("D")}
               </button>
               <div className="sketch-toolbar-sep" />
-              <button
-                title="Horizontal (H) — select a line"
-                disabled={!oneSelectedLine}
-                onClick={() => oneSelectedLine && addHVConstraint("horizontal", oneSelectedLine.id)}
-              >
-                <HorizontalIcon />{kbd("H")}
-              </button>
-              <button
-                title="Vertical (V) — select a line"
-                disabled={!oneSelectedLine}
-                onClick={() => oneSelectedLine && addHVConstraint("vertical", oneSelectedLine.id)}
-              >
-                <VerticalIcon />{kbd("V")}
-              </button>
-              <button
-                title="Parallel (Shift+P) — select two lines"
-                disabled={!twoSelectedLines}
-                onClick={() =>
-                  twoSelectedLines &&
-                  addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id)
-                }
-              >
-                <ParallelIcon />{kbd("⇧P")}
-              </button>
-              <button
-                title="Perpendicular (N) — select two lines"
-                disabled={!twoSelectedLines}
-                onClick={() =>
-                  twoSelectedLines &&
-                  addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id)
-                }
-              >
-                ⊥{kbd("N")}
-              </button>
-              <button
-                title="Equal (=) — select two lines (equal length) or two circles/arcs (equal radius)"
-                disabled={!twoSelectedLines && !twoRadiusEntities}
-                onClick={() => {
-                  const pair = twoSelectedLines ?? twoRadiusEntities;
-                  if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
-                }}
-              >
-                ＝{kbd("=")}
-              </button>
-              <button
-                title="Coincident — a point + a line puts the point on the line; one point anchors it to the origin; two points make them coincident"
-                disabled={
-                  !(
-                    (selectedSketchPoints.length === 1 && selectedSketchLines.length === 1) ||
-                    ((selectedSketchPoints.length === 1 || selectedSketchPoints.length === 2) &&
-                      selectedSketchLines.length === 0)
-                  )
-                }
-                onClick={addCoincident}
-              >
-                ⌖
-              </button>
-              <button
-                title="Tangent — select two curves (circle/arc) or a line and a curve"
-                disabled={!tangentPair}
-                onClick={() => tangentPair && addGeoConstraint("tangent", tangentPair[0].id, tangentPair[1].id)}
-              >
-                ◯⌐
-              </button>
+              {/* All seven geometric constraints behind one button: the primary
+                  applies the last-used one; ▸ opens a vertical flyout (to the
+                  right of the toolbar) of every choice. Disabled choices show
+                  what selection they need via their tooltip. */}
+              <div className="constraint-group">
+                <button
+                  className="constraint-primary"
+                  title={constraintDefs[constraintChoice].title}
+                  disabled={!constraintDefs[constraintChoice].enabled}
+                  onClick={() => constraintDefs[constraintChoice].apply()}
+                >
+                  {constraintDefs[constraintChoice].node}
+                </button>
+                <button
+                  className={"constraint-arrow" + (constraintFlyoutOpen ? " expanded" : "")}
+                  title="More constraints"
+                  aria-expanded={constraintFlyoutOpen}
+                  onClick={() => setConstraintFlyoutOpen((v) => !v)}
+                >
+                  ▸
+                </button>
+                {constraintFlyoutOpen && (
+                  <div className="constraint-flyout">
+                    {CONSTRAINT_ORDER.map((k) => {
+                      const d = constraintDefs[k];
+                      return (
+                        <button
+                          key={k}
+                          className={k === constraintChoice ? "active" : ""}
+                          title={d.title}
+                          disabled={!d.enabled}
+                          onClick={() => {
+                            setConstraintChoice(k);
+                            setConstraintFlyoutOpen(false);
+                            d.apply();
+                          }}
+                        >
+                          <span className="cf-icon">{d.node}</span>
+                          <span className="cf-name">{CONSTRAINT_NAME[k]}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
               <div className="sketch-toolbar-sep" />
               <button
                 title={

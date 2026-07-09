@@ -1,0 +1,179 @@
+// Verifies the four sketch QoL changes end-to-end against the running dev app:
+//  1. Line tool ends the chain when its endpoint lands on an existing vertex.
+//  2. Deleting a selected edge while editing removes only the edge, not the sketch.
+//  3. All seven geometric constraints live behind one grouped button.
+//  4. The ▸ arrow opens a vertical flyout of the constraint choices.
+import { chromium } from "playwright";
+
+const URL = process.env.URL ?? "http://localhost:5173/";
+const browser = await chromium.launch();
+const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
+const page = await context.newPage();
+page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
+await page.goto(URL, { waitUntil: "domcontentloaded" });
+await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
+const waitIdle = async () => {
+  let stable = 0;
+  for (let i = 0; i < 80; i++) {
+    const s = (await page.locator(".status").textContent())?.trim() ?? "";
+    stable = /up to date/i.test(s) ? stable + 1 : 0;
+    if (stable >= 3) return;
+    await page.waitForTimeout(300);
+  }
+};
+await waitIdle();
+const apply = (op) => page.evaluate((o) => window.__openpoly.apply(o), op);
+const read = (q) => page.evaluate((o) => window.__openpoly.read(o), q);
+
+let failures = 0;
+const check = (label, ok, detail = "") => {
+  console.log(`${ok ? "PASS" : "FAIL"}: ${label}${detail ? ` — ${detail}` : ""}`);
+  if (!ok) failures++;
+};
+
+await apply({ op: "newDocument" });
+await waitIdle();
+const canvas = await page.locator("canvas").first().boundingBox();
+const toScreen = (w) => page.evaluate((p) => window.__openpoly.worldToScreen(p), w);
+const clickWorld = async (w) => {
+  const s = await toScreen(w);
+  await page.mouse.click(canvas.x + s.x, canvas.y + s.y);
+  await page.waitForTimeout(140);
+};
+const moveWorld = async (w) => {
+  const s = await toScreen(w);
+  await page.mouse.move(canvas.x + s.x, canvas.y + s.y);
+  await page.waitForTimeout(60);
+};
+
+// --- Start a sketch on Top and enter the line tool -------------------------
+const sk = await apply({ op: "addSketch", plane: { datum: "top" }, entities: [] });
+await waitIdle();
+// Enter edit mode via the timeline row (double-click).
+const row = page.locator("[class*=row]").filter({ hasText: "Sketch" }).first();
+await row.dblclick().catch(() => {});
+await page.waitForTimeout(400);
+// Select the Line tool (keyboard shortcut for line).
+await page.keyboard.press("l");
+await page.waitForTimeout(200);
+
+// --- 1. Draw a triangle; closing on the start vertex ends the chain --------
+// Vertices of a triangle on the Top plane (z=0).
+const P0 = [-20, -10, 0], P1 = [20, -10, 0], P2 = [0, 20, 0];
+await clickWorld(P0); // start
+await clickWorld(P1); // seg 1
+await clickWorld(P2); // seg 2
+await clickWorld(P0); // close onto the start vertex → should END the chain
+await waitIdle();
+
+// After closing, the chain must be ended: moving the mouse shows NO rubber-band
+// preview, and a further click starts a brand-new segment rather than drawing
+// from P0. Assert via entity count: a closed triangle = exactly 3 lines.
+let doc = await read({ read: "document" });
+let sketch = doc.features.find((f) => f.id === sk.createdId);
+const lineCount = (sketch?.entities ?? []).filter((e) => e.type === "line").length;
+check("closing on the start vertex yields exactly 3 lines (chain ended)", lineCount === 3, `lines: ${lineCount}`);
+
+// Confirm the chain truly ended: click a far empty point. If still chaining,
+// this would draw a 4th line from P0; if ended, it just starts a new draft
+// (no new committed line yet).
+await clickWorld([40, 40, 0]);
+await page.waitForTimeout(150);
+doc = await read({ read: "document" });
+sketch = doc.features.find((f) => f.id === sk.createdId);
+const lineCount2 = (sketch?.entities ?? []).filter((e) => e.type === "line").length;
+check("a click after closing does not extend the old chain", lineCount2 === 3, `lines: ${lineCount2}`);
+await page.keyboard.press("Escape"); // drop the stray new draft
+
+// --- 3 & 4. Grouped constraint button + vertical flyout --------------------
+const groups = await page.locator(".constraint-group").count();
+check("a single grouped constraint button exists", groups === 1, `count: ${groups}`);
+// Before opening, only the primary is visible (no standalone H/V/∥ buttons).
+const flyoutBefore = await page.locator(".constraint-flyout").count();
+check("flyout is closed initially", flyoutBefore === 0);
+// Click the ▸ arrow → vertical flyout with all 7 choices.
+await page.locator(".constraint-group .constraint-arrow").click();
+await page.waitForTimeout(200);
+const flyoutBtns = await page.locator(".constraint-flyout button").count();
+check("▸ opens a flyout listing all 7 geometric constraints", flyoutBtns === 7, `buttons: ${flyoutBtns}`);
+const names = await page.locator(".constraint-flyout .cf-name").allInnerTexts();
+check(
+  "flyout names cover Horizontal…Tangent",
+  ["Horizontal", "Vertical", "Parallel", "Perpendicular", "Equal", "Coincident", "Tangent"].every((n) => names.includes(n)),
+  names.join(", "),
+);
+// Flyout is vertical: its buttons stack (each below the previous).
+const boxes = await page.locator(".constraint-flyout button").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ x: Math.round(r.x), y: Math.round(r.y) })));
+const vertical = boxes.every((b, i) => i === 0 || (b.y > boxes[i - 1].y && Math.abs(b.x - boxes[0].x) < 2));
+check("flyout is laid out vertically", vertical, JSON.stringify(boxes.map((b) => b.y)));
+// And it sits to the RIGHT of the toolbar column.
+const toolbarBox = await page.locator(".sketch-toolbar").boundingBox();
+const flyoutBox = await page.locator(".constraint-flyout").boundingBox();
+check("flyout sits to the right of the sketch tools", flyoutBox.x >= toolbarBox.x + toolbarBox.width - 2, `flyout.x=${Math.round(flyoutBox.x)} toolbar.right=${Math.round(toolbarBox.x + toolbarBox.width)}`);
+
+// --- Pick a constraint from the flyout and confirm it applies --------------
+// Close the flyout (toggle the arrow — Escape would exit the sketch), then
+// select one line deterministically via the bridge so the flyout has a valid
+// target, and apply Horizontal from the flyout.
+await page.locator(".constraint-group .constraint-arrow").click();
+await page.waitForTimeout(150);
+doc = await read({ read: "document" });
+sketch = doc.features.find((f) => f.id === sk.createdId);
+const lines = (sketch?.entities ?? []).filter((e) => e.type === "line");
+// The base edge P0–P1 (both endpoints near y=-10) — apply Horizontal to it.
+const base = lines.find((e) => Math.abs(e.a[1] - e.b[1]) < 0.01 && Math.abs(e.a[1] + 10) < 2) ?? lines[0];
+await apply({ op: "select", refs: [{ kind: "sketchEntity", sketchId: sk.createdId, entityId: base.id }] });
+await page.waitForTimeout(150);
+const sel0 = await read({ read: "selection" });
+check("selected a base line via the bridge", sel0.some((s) => s.kind === "sketchEntity" && s.entityId === base.id), JSON.stringify(sel0));
+
+// Open flyout — Horizontal must now be ENABLED (one line selected) — and click it.
+await page.locator(".constraint-group .constraint-arrow").click();
+await page.waitForTimeout(150);
+const horizDisabled = await page.locator(".constraint-flyout button", { hasText: "Horizontal" }).isDisabled();
+check("Horizontal is enabled in the flyout with a line selected", !horizDisabled);
+await page.locator(".constraint-flyout button", { hasText: "Horizontal" }).click();
+await waitIdle();
+doc = await read({ read: "document" });
+sketch = doc.features.find((f) => f.id === sk.createdId);
+const hasHoriz = (sketch?.constraints ?? []).some((c) => c.type === "horizontal");
+check("applying Horizontal from the flyout adds the constraint", hasHoriz, JSON.stringify((sketch?.constraints ?? []).map((c) => c.type)));
+// The primary button now shows the last-used choice (Horizontal) — its title.
+const primaryTitle = await page.locator(".constraint-primary").getAttribute("title");
+check("primary now reflects the last-used constraint (Horizontal)", /Horizontal/.test(primaryTitle ?? ""), primaryTitle ?? "");
+
+// --- 2. Delete a selected edge while editing removes only the edge ---------
+// Reproduce the real accumulated state: entering edit selects the whole-sketch
+// FEATURE, then an edge pick adds a sketchEntity on top. With both selected,
+// Delete must remove only the edge — the fix protects the sketch being edited.
+const remaining = (sketch?.entities ?? []).filter((e) => e.type === "line");
+const victim = remaining.find((e) => e.id !== base.id) ?? remaining[0];
+await apply({
+  op: "select",
+  refs: [
+    { kind: "feature", id: sk.createdId },
+    { kind: "sketchEntity", sketchId: sk.createdId, entityId: victim.id },
+  ],
+});
+await page.waitForTimeout(150);
+let sel = await read({ read: "selection" });
+check(
+  "selection holds both the sketch feature and an edge (the buggy state)",
+  sel.some((s) => s.kind === "feature") && sel.some((s) => s.kind === "sketchEntity"),
+  JSON.stringify(sel),
+);
+// Give the canvas focus so the Delete keydown lands on the app handler.
+await page.mouse.move(canvas.x + 200, canvas.y + 200);
+await page.keyboard.press("Delete");
+await waitIdle();
+doc = await read({ read: "document" });
+sketch = doc.features.find((f) => f.id === sk.createdId);
+check("sketch still exists after deleting an edge", !!sketch, `sketch present: ${!!sketch}`);
+const linesAfterDel = (sketch?.entities ?? []).filter((e) => e.type === "line").length;
+check("only the one edge was deleted (3 → 2 lines)", linesAfterDel === 2, `lines: ${linesAfterDel}`);
+
+await page.screenshot({ path: "/tmp/verify-sketch-qol.png" });
+console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
+console.log("screenshot: /tmp/verify-sketch-qol.png");
+await browser.close();
+process.exit(failures === 0 ? 0 : 1);

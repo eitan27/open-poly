@@ -1142,6 +1142,59 @@
   background: #313643;
 }
 
+/* All seven geometric constraints behind one button: a primary (the last-used
+   constraint) plus a slim ▸ toggle that opens a vertical flyout of the rest to
+   the right of the toolbar column. */
+.constraint-group {
+  position: relative;
+  display: flex;
+  gap: 2px;
+}
+.constraint-group .constraint-primary {
+  flex: 1;
+}
+.constraint-group .constraint-arrow {
+  min-width: 16px;
+  padding: 0;
+  font-size: 11px;
+  color: #9aa1b1;
+  transition: transform 0.12s ease;
+}
+.constraint-group .constraint-arrow.expanded {
+  transform: rotate(90deg);
+  color: #cfe0ff;
+  border-color: #4f8cff;
+}
+.constraint-flyout {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px;
+  background: rgba(24, 26, 32, 0.95);
+  border: 1px solid #2a2d35;
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  z-index: 6;
+}
+.constraint-flyout button {
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  white-space: nowrap;
+}
+.constraint-flyout .cf-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+}
+.constraint-flyout .cf-name {
+  font-size: 13px;
+}
+
 .dim-input {
   position: absolute;
   /* left/top set inline to the line's screen position; the up-right nudge that
