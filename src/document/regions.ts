@@ -89,13 +89,6 @@ function segIntersect(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): { point: Vec2; t:
  *  another entity touches or crosses this one. */
 interface BoundaryPoly { entityId: string; poly: Vec2[]; closed: boolean; cuts: { t: number; p: Vec2 }[] }
 
-/** The point at param `t` of a polyline (segment index + fraction). */
-function polyAt(poly: Vec2[], t: number): Vec2 {
-  const i = Math.min(Math.floor(t), poly.length - 2);
-  const f = t - i;
-  return [poly[i][0] + (poly[i + 1][0] - poly[i][0]) * f, poly[i][1] + (poly[i + 1][1] - poly[i][1]) * f];
-}
-
 /** The sub-polyline from param `ta` to `tb` (ta < tb), using the exact cut
  *  points at the ends so both sides of a split share identical coordinates. */
 function polySlice(poly: Vec2[], ta: number, pa: Vec2, tb: number, pb: Vec2): Vec2[] {
