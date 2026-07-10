@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyDerived,
+  applyEntityExprs,
   circularPatternAngles,
   MAX_PATTERN_INSTANCES,
   projectedEntityFromPolyline,
@@ -34,6 +35,57 @@ const sketch = (
 });
 
 const gen = (s: SketchFeature) => s.entities.filter((e) => e.derivedFrom);
+
+describe("applyEntityExprs — expression-driven coordinates", () => {
+  it("reflows a coordinate/radius from its exprs overlay against the scope", () => {
+    const s = sketch(
+      [{ type: "circle", id: "c", c: [0, 0], r: 1, exprs: { r: "innerRad + clearance" } }],
+      [],
+    );
+    const out = applyEntityExprs(s, { innerRad: 6, clearance: 0.3 });
+    expect(out.entities[0]).toMatchObject({ type: "circle", r: 6.3 });
+    // Re-drives when the variable changes — the overlay is the source of truth.
+    expect(applyEntityExprs(s, { innerRad: 10, clearance: 0 }).entities[0]).toMatchObject({ r: 10 });
+  });
+
+  it("writes nested array paths (line ends, spline points)", () => {
+    const s = sketch(
+      [{ type: "line", id: "l", a: [0, 0], b: [1, 0], exprs: { "a.0": "-w/2", "b.0": "w/2" } }],
+      [],
+    );
+    const out = applyEntityExprs(s, { w: 10 });
+    expect(out.entities[0]).toMatchObject({ a: [-5, 0], b: [5, 0] });
+  });
+
+  it("keeps the stored literal when an expression is invalid or unknown", () => {
+    const s = sketch(
+      [{ type: "circle", id: "c", c: [0, 0], r: 4, exprs: { r: "missingVar" } }],
+      [],
+    );
+    expect(applyEntityExprs(s, {}).entities[0]).toMatchObject({ r: 4 });
+  });
+
+  it("is a no-op (same reference) when no entity carries an overlay", () => {
+    const s = sketch([{ type: "circle", id: "c", c: [0, 0], r: 4 }], []);
+    expect(applyEntityExprs(s, { w: 1 })).toBe(s);
+  });
+
+  it("runs before derived geometry, so a mirror reflects reflowed coordinates", () => {
+    // A vertical mirror axis at u = 0, and a point driven to u = w by its overlay.
+    const s = sketch(
+      [
+        { type: "line", id: "axis", a: [0, -10], b: [0, 10] },
+        { type: "point", id: "p", p: [1, 2], exprs: { "p.0": "w" } },
+      ],
+      [{ id: "m", kind: "mirror", axisId: "axis", sourceIds: ["p"] }],
+    );
+    const out = applyDerived(s, { w: 5 });
+    const src = out.entities.find((e) => e.id === "p");
+    const mirrored = gen(out).find((e) => e.type === "point");
+    expect(src).toMatchObject({ p: [5, 2] }); // reflowed from w
+    expect(mirrored).toMatchObject({ type: "point", p: [-5, 2] }); // reflected across u=0
+  });
+});
 
 describe("project — pure projection helpers", () => {
   it("projects a straight world edge to a line, tagged derivedFrom", () => {

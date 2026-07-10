@@ -9,23 +9,36 @@ export type FeatureKind = PrimitiveKind;
 
 export type Vec2 = [number, number];
 
+/** Optional expression overlays for a sketch entity's numeric coordinates and
+ *  scalars, keyed by a dot-path into the entity: "a.0"/"a.1" (line ends),
+ *  "c.0"/"c.1" + "r" (circle/arc centre + radius), "start"/"end" (arc angles,
+ *  **radians** — the internal unit), "p.0"/"p.1" (point/text anchor), "height"
+ *  and "rotation" (text), "points.<i>.0"/"points.<i>.1" (spline). A present key
+ *  is re-evaluated against the document's variable scope on every regen
+ *  (`applyEntityExprs`) and overwrites the stored literal; absent keys keep their
+ *  number. This is how a sketch coordinate tracks a variable (e.g. an expression
+ *  "innerRad + clearance"). Derived (`derivedFrom`) entities never carry overlays
+ *  — they're regenerated wholesale from their sources. */
+export type EntityExprs = Record<string, string>;
+
 /** `construction: true` marks an entity as reference geometry — used for
  *  dimensions/constraints/snapping but ignored when detecting profile regions
- *  and never extruded. */
+ *  and never extruded. `exprs` (see EntityExprs) drives coordinates from
+ *  variable expressions. */
 export type SketchEntity =
-  | { type: "line"; id: string; a: Vec2; b: Vec2; construction?: boolean; derivedFrom?: string }
-  | { type: "circle"; id: string; c: Vec2; r: number; construction?: boolean; derivedFrom?: string }
-  | { type: "arc"; id: string; c: Vec2; r: number; start: number; end: number; construction?: boolean; derivedFrom?: string }
+  | { type: "line"; id: string; a: Vec2; b: Vec2; construction?: boolean; derivedFrom?: string; exprs?: EntityExprs }
+  | { type: "circle"; id: string; c: Vec2; r: number; construction?: boolean; derivedFrom?: string; exprs?: EntityExprs }
+  | { type: "arc"; id: string; c: Vec2; r: number; start: number; end: number; construction?: boolean; derivedFrom?: string; exprs?: EntityExprs }
   // A smooth (interpolated) open spline through its control points. An open curve
   // — used for snapping and as a sweep path, not a region boundary.
-  | { type: "spline"; id: string; points: Vec2[]; construction?: boolean; derivedFrom?: string }
-  | { type: "point"; id: string; p: Vec2; construction?: boolean; derivedFrom?: string }
+  | { type: "spline"; id: string; points: Vec2[]; construction?: boolean; derivedFrom?: string; exprs?: EntityExprs }
+  | { type: "point"; id: string; p: Vec2; construction?: boolean; derivedFrom?: string; exprs?: EntityExprs }
   // A run of text. `p` is the baseline-left anchor (u,v); `height` is the font
   // (em) size in sketch units; `rotation` (radians, default 0) turns it about
   // the anchor. Rendered as glyph outlines; not a constraint/region participant
   // (the solver and region detector skip it). `font` is reserved for future
   // per-text font choice (the bundled font is used today).
-  | { type: "text"; id: string; p: Vec2; value: string; height: number; rotation?: number; font?: string; construction?: boolean; derivedFrom?: string };
+  | { type: "text"; id: string; p: Vec2; value: string; height: number; rotation?: number; font?: string; construction?: boolean; derivedFrom?: string; exprs?: EntityExprs };
 
 /** A derived-geometry operation on a sketch: geometry generated FROM other
  *  sketch entities and re-computed whenever its sources change, so the result

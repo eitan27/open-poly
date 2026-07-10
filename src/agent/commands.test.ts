@@ -3,6 +3,7 @@ import { z } from "zod";
 import { applyOperation, getSceneSummary, type AgentContext } from "./commands";
 import { expandEntities, operationSchema } from "./operations";
 import { createDocument, resolveDocument } from "../document/document";
+import { applyDerived } from "../document/derived";
 import type { Document } from "../document/types";
 import type { Selection } from "../viewport/Viewport";
 
@@ -58,6 +59,61 @@ describe("expandEntities", () => {
       { type: "line" }
     >[];
     expect(l0.a).toEqual([-5, -3]);
+  });
+
+  it("arc start/end are given in DEGREES and stored as radians", () => {
+    const [arc] = expandEntities([{ shape: "arc", c: [0, 0], r: 5, start: 0, end: 180 }]) as Extract<
+      ReturnType<typeof expandEntities>[number],
+      { type: "arc" }
+    >[];
+    expect(arc.start).toBeCloseTo(0);
+    expect(arc.end).toBeCloseTo(Math.PI);
+    expect(arc.exprs).toBeUndefined(); // plain numbers → no overlay
+  });
+
+  it("text rotation is DEGREES → radians (and only present when given)", () => {
+    const [t] = expandEntities([{ shape: "text", p: [0, 0], value: "A", height: 8, rotation: 90 }]) as Extract<
+      ReturnType<typeof expandEntities>[number],
+      { type: "text" }
+    >[];
+    expect(t.rotation).toBeCloseTo(Math.PI / 2);
+    const [t2] = expandEntities([{ shape: "text", p: [0, 0], value: "A", height: 8 }]) as Extract<
+      ReturnType<typeof expandEntities>[number],
+      { type: "text" }
+    >[];
+    expect("rotation" in t2).toBe(false);
+  });
+
+  it("expression coordinates evaluate against scope and record an exprs overlay", () => {
+    const scope = { innerRad: 6, clearance: 0.3 };
+    const [circ] = expandEntities([{ shape: "circle", c: [0, 0], r: "innerRad + clearance" }], scope) as Extract<
+      ReturnType<typeof expandEntities>[number],
+      { type: "circle" }
+    >[];
+    expect(circ.r).toBeCloseTo(6.3);
+    expect(circ.exprs).toEqual({ r: "innerRad + clearance" });
+  });
+
+  it("a numeric expression string needs no overlay", () => {
+    const [circ] = expandEntities([{ shape: "circle", c: [0, 0], r: "10/2" }]) as Extract<
+      ReturnType<typeof expandEntities>[number],
+      { type: "circle" }
+    >[];
+    expect(circ.r).toBeCloseTo(5);
+    expect(circ.exprs).toBeUndefined();
+  });
+
+  it("a variable rect composes overlays onto every generated line endpoint", () => {
+    const lines = expandEntities([{ shape: "rect", center: [0, 0], w: "width", h: 6 }], { width: 10 }) as Extract<
+      ReturnType<typeof expandEntities>[number],
+      { type: "line" }
+    >[];
+    expect(lines).toHaveLength(4);
+    // First corner x = center.x − width/2 = −5, and it tracks `width`.
+    expect(lines[0].a).toEqual([-5, -3]);
+    expect(lines[0].exprs?.["a.0"]).toBe("(0)-((width)*0.5)");
+    // The literal h axis carries no overlay on that coordinate.
+    expect(lines[0].exprs?.["a.1"]).toBeUndefined();
   });
 });
 
@@ -130,6 +186,25 @@ describe("applyOperation — sketch + extrude (no kernel)", () => {
     expect(ex.featureErrors).toBeUndefined(); // resolves cleanly (no geometry build in tests)
     const extrude = doc().features.find((f) => f.id === ex.createdId);
     expect(extrude?.type).toBe("extrude");
+  });
+
+  it("a sketch coordinate expression reflows when its variable changes (end to end)", async () => {
+    const { ctx, doc } = makeCtx();
+    await apply(ctx, { op: "setVariable", name: "R", expression: "5" });
+    const sk = await apply(ctx, {
+      op: "addSketch",
+      plane: { datum: "top" },
+      entities: [{ shape: "circle", c: [0, 0], r: "R" }],
+    });
+    const circle = () => {
+      const d = doc();
+      const s = d.features.find((f) => f.id === sk.createdId);
+      if (s?.type !== "sketch") throw new Error("sketch missing");
+      return applyDerived(s, resolveDocument(d).scope).entities[0];
+    };
+    expect(circle()).toMatchObject({ type: "circle", r: 5 }); // initial number from scope
+    await apply(ctx, { op: "setVariable", name: "R", expression: "12" });
+    expect(circle()).toMatchObject({ type: "circle", r: 12 }); // re-driven by the overlay
   });
 
   it("errors when a sketch has no closed region to extrude", async () => {

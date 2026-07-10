@@ -42,6 +42,7 @@ import {
 } from "./document/document";
 import {
   applyDerivedToSketch,
+  applyEntityExprs,
   circularPatternAngles,
   projectedEntityFromPolyline,
   projectedPointEntity,
@@ -3205,13 +3206,16 @@ export default function App() {
         // Hidden (suppressed) sketches aren't drawn — except the one being
         // actively edited, so editing a post-extrude hidden sketch still shows it.
         .filter((f): f is SketchFeature => f.type === "sketch" && (!f.suppressed || f.id === editingSketchId))
+        // Reflow expression-driven coordinates so the on-canvas sketch tracks its
+        // variables, matching the solids built from it.
+        .map((f) => applyEntityExprs(f, resolved.scope))
         .map((f) => ({
           id: f.id,
           frame: frameOf(f.plane, resolved.planeFrames),
           entities: f.entities,
           regions: detectSketchRegions(f.entities),
         })),
-    [doc, editingSketchId, resolved.planeFrames],
+    [doc, editingSketchId, resolved.planeFrames, resolved.scope],
   );
 
   // Live dashed preview of the in-progress offset, rebuilt as the distance

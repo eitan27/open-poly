@@ -296,7 +296,10 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       case "addSketch": {
         const plane = resolvePlaneRef(ctx, op.plane);
         const r = addSketch(doc, plane);
-        let d = addSketchEntities(r.doc, r.id, expandEntities(op.entities));
+        // Pass the current variable scope so expression coordinates ("innerRad")
+        // get correct initial numbers; the exprs overlay reflows them on regen.
+        const scope = resolveDocument(doc).scope;
+        let d = addSketchEntities(r.doc, r.id, expandEntities(op.entities, scope));
         if (op.name) d = renameFeature(d, r.id, op.name);
         next = d;
         createdId = r.id;

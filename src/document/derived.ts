@@ -17,6 +17,57 @@ import {
 } from "./sketchTools";
 import type { Document, PointRef, SketchEntity, SketchFeature, Vec2 } from "./types";
 
+/** Write `value` into the numeric field of `obj` addressed by a dot-path
+ *  ("a.0", "c.1", "r", "start", "points.2.1"). Walks existing containers only —
+ *  a path that doesn't resolve to an existing slot is a no-op. Returns whether it
+ *  wrote. Mutates `obj` (call on a clone). */
+function setNumericPath(obj: unknown, path: string, value: number): boolean {
+  const parts = path.split(".");
+  let cur: Record<string, unknown> = obj as Record<string, unknown>;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const nextVal = cur?.[parts[i]];
+    if (nextVal == null || typeof nextVal !== "object") return false;
+    cur = nextVal as Record<string, unknown>;
+  }
+  const key = parts[parts.length - 1];
+  if (cur == null || !(key in cur)) return false;
+  cur[key] = value;
+  return true;
+}
+
+/** Re-evaluate one entity's `exprs` overlay against `scope`, returning a copy
+ *  with the results written over its numeric coordinates. Never throws: a key
+ *  whose expression is invalid, unknown, or non-finite keeps the stored literal.
+ *  Returns the same reference when nothing changed. */
+function evalEntityExprs(e: SketchEntity, scope: Scope): SketchEntity {
+  if (!e.exprs) return e;
+  const keys = Object.keys(e.exprs);
+  if (keys.length === 0) return e;
+  const clone = JSON.parse(JSON.stringify(e)) as SketchEntity;
+  let changed = false;
+  for (const key of keys) {
+    let v: number;
+    try {
+      v = evaluateExpression(e.exprs[key], scope);
+    } catch {
+      continue;
+    }
+    if (!Number.isFinite(v)) continue;
+    if (setNumericPath(clone, key, v)) changed = true;
+  }
+  return changed ? clone : e;
+}
+
+/** Reflow a sketch's expression-driven coordinates: every entity carrying an
+ *  `exprs` overlay is re-evaluated against `scope` and its numeric coordinates
+ *  refreshed. Pure; returns the same sketch when no entity has an overlay. Run
+ *  before derived geometry so offsets/mirrors/patterns build off reflowed
+ *  coordinates. */
+export function applyEntityExprs(sketch: SketchFeature, scope: Scope): SketchFeature {
+  if (!sketch.entities.some((e) => e.exprs && Object.keys(e.exprs).length > 0)) return sketch;
+  return { ...sketch, entities: sketch.entities.map((e) => evalEntityExprs(e, scope)) };
+}
+
 function primToEntity(p: OffsetPrimitive, id: string, construction?: boolean): SketchEntity {
   const base = construction ? { construction: true as const } : {};
   if (p.type === "line") return { type: "line", id, a: p.a, b: p.b, ...base };
@@ -99,6 +150,9 @@ export function resolvePatternCenter(
  *  simply contributes nothing. Sources are limited to the hand-authored
  *  (non-derived) entities, so derivations don't chain off each other. */
 export function applyDerived(sketch: SketchFeature, scope: Scope): SketchFeature {
+  // Reflow expression-driven coordinates first, so derived geometry (offset/
+  // mirror/pattern) builds off the up-to-date base coordinates.
+  sketch = applyEntityExprs(sketch, scope);
   const ops = sketch.derived ?? [];
   const base = sketch.entities.filter((e) => !e.derivedFrom);
   if (ops.length === 0) {

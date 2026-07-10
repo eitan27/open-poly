@@ -12,8 +12,8 @@
 // number or an expression string like "width/2" — both are stored as strings.
 import { z } from "zod";
 import { genId } from "../document/document";
-import type { SketchEntity, Vec2 } from "../document/types";
-import { rectangleCorners, rectangleFromCenter, regularPolygon } from "../document/sketchTools";
+import { evaluateExpression, type Scope } from "../document/expression";
+import type { EntityExprs, SketchEntity, Vec2 } from "../document/types";
 import type { BooleanOp, PrimitiveKind } from "../kernel/types";
 
 // --- Small shared schemas -------------------------------------------------
@@ -24,6 +24,13 @@ const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 /** A value that becomes a document expression string. Accept a number (the
  *  common case) or a string expression ("width/2"); store as a string. */
 const expr = z.union([z.number(), z.string()]).transform((v) => String(v));
+
+/** A sketch coordinate/scalar input: a number literal, or an expression string
+ *  ("innerRad + clearance") that tracks the document's variables. Unlike `expr`
+ *  it is NOT coerced to a string — expandEntities needs to tell a literal from
+ *  an expression to build the entity's `exprs` overlay. */
+const sketchNum = z.union([z.number(), z.string()]);
+const sketchVec2 = z.tuple([sketchNum, sketchNum]);
 
 // --- Reference specs (how the agent names geometry) -----------------------
 
@@ -55,21 +62,28 @@ export type ProfileSpec = z.infer<typeof profileSchema>;
 // `construction: true` marks an entity as reference geometry — used for
 // dimensions/snapping (and as a revolve **axis** line) but ignored when
 // detecting profile regions and never extruded.
+// Sketch coordinates, radii and angles accept a number OR a variable expression
+// ("innerRad + clearance"); the sketch reflows when the variable changes. Angles
+// (arc start/end, text rotation) are in DEGREES. `w`/`h`/`r`/`height` must stay
+// positive, but an expression can't be range-checked up front, so a string is
+// allowed through and validated at evaluation.
 const construction = z.boolean().optional();
+const posNum = z.union([z.number().positive(), z.string()]);
 export const entitySchema = z.discriminatedUnion("shape", [
-  z.object({ shape: z.literal("rect"), center: vec2.optional(), corner: vec2.optional(), w: z.number().positive(), h: z.number().positive(), construction }),
-  z.object({ shape: z.literal("circle"), c: vec2, r: z.number().positive(), construction }),
-  z.object({ shape: z.literal("polygon"), c: vec2, r: z.number().positive(), n: z.number().int().min(3), construction }),
-  z.object({ shape: z.literal("line"), a: vec2, b: vec2, construction }),
-  z.object({ shape: z.literal("arc"), c: vec2, r: z.number().positive(), start: z.number(), end: z.number(), construction }),
+  z.object({ shape: z.literal("rect"), center: sketchVec2.optional(), corner: sketchVec2.optional(), w: posNum, h: posNum, construction }),
+  z.object({ shape: z.literal("circle"), c: sketchVec2, r: posNum, construction }),
+  z.object({ shape: z.literal("polygon"), c: sketchVec2, r: posNum, n: z.number().int().min(3), construction }),
+  z.object({ shape: z.literal("line"), a: sketchVec2, b: sketchVec2, construction }),
+  // `start`/`end` are in DEGREES (converted to the internal radians on expand).
+  z.object({ shape: z.literal("arc"), c: sketchVec2, r: posNum, start: sketchNum, end: sketchNum, construction }),
   // A smooth through-point spline (≥2 points). An open curve — used as a sweep
   // path, not a region boundary.
-  z.object({ shape: z.literal("spline"), points: z.array(vec2).min(2), construction }),
-  z.object({ shape: z.literal("point"), p: vec2, construction }),
+  z.object({ shape: z.literal("spline"), points: z.array(sketchVec2).min(2), construction }),
+  z.object({ shape: z.literal("point"), p: sketchVec2, construction }),
   // A run of text placed at baseline-left anchor `p`, `height` ems tall (sketch
-  // units), optionally rotated `rotation` degrees. Extrude it with add_extrude
+  // units), optionally rotated `rotation` DEGREES. Extrude it with add_extrude
   // using a `{sketchId, textId}` profile — the kernel bakes the glyphs.
-  z.object({ shape: z.literal("text"), p: vec2, value: z.string().min(1), height: z.number().positive(), rotation: z.number().optional(), construction }),
+  z.object({ shape: z.literal("text"), p: sketchVec2, value: z.string().min(1), height: posNum, rotation: sketchNum.optional(), construction }),
 ]);
 export type EntitySpec = z.infer<typeof entitySchema>;
 
@@ -456,51 +470,164 @@ export interface SceneSummary {
   errors: Record<string, string>;
 }
 
+// --- Expression-aware coordinate arithmetic -------------------------------
+// Sketch coordinates accept a number OR a variable expression. To stay
+// associative (reflow when a variable changes), expandEntities carries each
+// value as a `Num`: its evaluated number, plus — when it came from (or was
+// computed from) a variable expression — the source expression string. Sugar
+// shapes compose these (a centred rect corner is `center − w/2`, a polygon
+// vertex is `c + r·cosθ`), so even generated line endpoints track their
+// variables. The composed expressions become the entity's `exprs` overlay.
+
+type Num = { n: number; e?: string };
+type Pt = { x: Num; y: Num };
+
+/** A purely numeric expression ("5", "10/2") never changes, so it needs no
+ *  overlay; only expressions that name something (a variable/const/function) do. */
+const namesSomething = (s: string) => /[A-Za-z]/.test(s);
+const tok = (a: Num): string => a.e ?? String(a.n);
+
+function toNum(v: number | string, scope: Scope): Num {
+  if (typeof v === "number") return { n: v };
+  let n = 0;
+  try {
+    n = evaluateExpression(v, scope);
+  } catch {
+    n = 0; // unknown var at author time — the overlay re-evaluates on regen
+  }
+  return namesSomething(v) ? { n, e: v } : { n };
+}
+const toPt = (v: [number | string, number | string], scope: Scope): Pt => ({ x: toNum(v[0], scope), y: toNum(v[1], scope) });
+
+const addN = (a: Num, b: Num): Num => ({ n: a.n + b.n, ...(a.e || b.e ? { e: `(${tok(a)})+(${tok(b)})` } : {}) });
+const subN = (a: Num, b: Num): Num => ({ n: a.n - b.n, ...(a.e || b.e ? { e: `(${tok(a)})-(${tok(b)})` } : {}) });
+/** Multiply by a constant factor (a literal number, never an expression). */
+const mulK = (a: Num, k: number): Num => ({ n: a.n * k, ...(a.e ? { e: `(${tok(a)})*${k}` } : {}) });
+/** Degrees → radians (the internal arc/rotation unit), preserving any overlay. */
+const degToRad = (a: Num): Num => ({ n: (a.n * Math.PI) / 180, ...(a.e ? { e: `rad(${tok(a)})` } : {}) });
+
+/** Collect an `exprs` overlay from labelled Nums — only those carrying an
+ *  expression contribute, so plain numeric entities stay overlay-free. */
+function collectExprs(fields: Record<string, Num>): EntityExprs | undefined {
+  const exprs: EntityExprs = {};
+  for (const [k, v] of Object.entries(fields)) if (v.e) exprs[k] = v.e;
+  return Object.keys(exprs).length ? exprs : undefined;
+}
+
 // --- Entity expansion -----------------------------------------------------
 
 /** Expand the agent's sugar shapes into concrete SketchEntity objects (with
- *  fresh ids), in the sketch's (u, v) plane coords. Pure — unit-tested. */
-export function expandEntities(specs: EntitySpec[]): SketchEntity[] {
+ *  fresh ids), in the sketch's (u, v) plane coords. Coordinates/radii/angles may
+ *  be variable expressions, evaluated against `scope` for the stored numbers and
+ *  recorded as an `exprs` overlay so the sketch reflows when a variable changes;
+ *  angles (arc start/end, text rotation) are DEGREES and stored as radians.
+ *  Pure — unit-tested. */
+export function expandEntities(specs: EntitySpec[], scope: Scope = {}): SketchEntity[] {
   const out: SketchEntity[] = [];
-  // Stamp the construction flag (only when true, to keep entities clean).
+  // Stamp the construction flag / exprs overlay only when set, to keep entities clean.
   const mark = <T extends SketchEntity>(e: T, c?: boolean): T => (c ? { ...e, construction: true } : e);
-  const lineLoop = (pts: Vec2[], c?: boolean) => {
+  const withExprs = <T extends SketchEntity>(e: T, ex?: EntityExprs): T => (ex ? { ...e, exprs: ex } : e);
+  // Emit a closed loop of lines through Pts; each line carries its endpoints' overlays.
+  const ptLoop = (pts: Pt[], c?: boolean) => {
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i];
       const b = pts[(i + 1) % pts.length];
-      out.push(mark({ type: "line", id: genId(), a, b }, c));
+      const e = mark({ type: "line" as const, id: genId(), a: [a.x.n, a.y.n] as Vec2, b: [b.x.n, b.y.n] as Vec2 }, c);
+      out.push(withExprs(e, collectExprs({ "a.0": a.x, "a.1": a.y, "b.0": b.x, "b.1": b.y })));
     }
   };
   for (const s of specs) {
     switch (s.shape) {
       case "rect": {
-        const pts = s.center
-          ? rectangleFromCenter(s.center, [s.center[0] + s.w / 2, s.center[1] + s.h / 2])
-          : rectangleCorners(s.corner ?? [0, 0], [(s.corner?.[0] ?? 0) + s.w, (s.corner?.[1] ?? 0) + s.h]);
-        lineLoop(pts, s.construction);
+        // Corners from center±half or corner+size, as Num arithmetic so a
+        // variable width/center reflows all four generated lines.
+        const w = toNum(s.w, scope);
+        const h = toNum(s.h, scope);
+        let corners: Pt[];
+        if (s.center) {
+          const c = toPt(s.center, scope);
+          const hw = mulK(w, 0.5);
+          const hh = mulK(h, 0.5);
+          corners = [
+            { x: subN(c.x, hw), y: subN(c.y, hh) },
+            { x: addN(c.x, hw), y: subN(c.y, hh) },
+            { x: addN(c.x, hw), y: addN(c.y, hh) },
+            { x: subN(c.x, hw), y: addN(c.y, hh) },
+          ];
+        } else {
+          const c = s.corner ? toPt(s.corner, scope) : { x: { n: 0 }, y: { n: 0 } };
+          corners = [
+            { x: c.x, y: c.y },
+            { x: addN(c.x, w), y: c.y },
+            { x: addN(c.x, w), y: addN(c.y, h) },
+            { x: c.x, y: addN(c.y, h) },
+          ];
+        }
+        ptLoop(corners, s.construction);
         break;
       }
-      case "circle":
-        out.push(mark({ type: "circle", id: genId(), c: s.c, r: s.r }, s.construction));
+      case "circle": {
+        const c = toPt(s.c, scope);
+        const r = toNum(s.r, scope);
+        const e = mark({ type: "circle" as const, id: genId(), c: [c.x.n, c.y.n] as Vec2, r: r.n }, s.construction);
+        out.push(withExprs(e, collectExprs({ "c.0": c.x, "c.1": c.y, r })));
         break;
-      case "polygon":
-        lineLoop(regularPolygon(s.c, [s.c[0] + s.r, s.c[1]], s.n), s.construction);
+      }
+      case "polygon": {
+        const c = toPt(s.c, scope);
+        const r = toNum(s.r, scope);
+        const verts: Pt[] = [];
+        for (let k = 0; k < s.n; k++) {
+          const th = (2 * Math.PI * k) / s.n;
+          verts.push({ x: addN(c.x, mulK(r, Math.cos(th))), y: addN(c.y, mulK(r, Math.sin(th))) });
+        }
+        ptLoop(verts, s.construction);
         break;
-      case "line":
-        out.push(mark({ type: "line", id: genId(), a: s.a, b: s.b }, s.construction));
+      }
+      case "line": {
+        const a = toPt(s.a, scope);
+        const b = toPt(s.b, scope);
+        const e = mark({ type: "line" as const, id: genId(), a: [a.x.n, a.y.n] as Vec2, b: [b.x.n, b.y.n] as Vec2 }, s.construction);
+        out.push(withExprs(e, collectExprs({ "a.0": a.x, "a.1": a.y, "b.0": b.x, "b.1": b.y })));
         break;
-      case "arc":
-        out.push(mark({ type: "arc", id: genId(), c: s.c, r: s.r, start: s.start, end: s.end }, s.construction));
+      }
+      case "arc": {
+        // Agent angles are DEGREES; store radians (the internal unit).
+        const c = toPt(s.c, scope);
+        const r = toNum(s.r, scope);
+        const start = degToRad(toNum(s.start, scope));
+        const end = degToRad(toNum(s.end, scope));
+        const e = mark({ type: "arc" as const, id: genId(), c: [c.x.n, c.y.n] as Vec2, r: r.n, start: start.n, end: end.n }, s.construction);
+        out.push(withExprs(e, collectExprs({ "c.0": c.x, "c.1": c.y, r, start, end })));
         break;
-      case "spline":
-        out.push(mark({ type: "spline", id: genId(), points: s.points }, s.construction));
+      }
+      case "spline": {
+        const pts = s.points.map((p) => toPt(p, scope));
+        const e = mark({ type: "spline" as const, id: genId(), points: pts.map((p) => [p.x.n, p.y.n] as Vec2) }, s.construction);
+        const fields: Record<string, Num> = {};
+        pts.forEach((p, i) => {
+          fields[`points.${i}.0`] = p.x;
+          fields[`points.${i}.1`] = p.y;
+        });
+        out.push(withExprs(e, collectExprs(fields)));
         break;
-      case "point":
-        out.push(mark({ type: "point", id: genId(), p: s.p }, s.construction));
+      }
+      case "point": {
+        const p = toPt(s.p, scope);
+        const e = mark({ type: "point" as const, id: genId(), p: [p.x.n, p.y.n] as Vec2 }, s.construction);
+        out.push(withExprs(e, collectExprs({ "p.0": p.x, "p.1": p.y })));
         break;
-      case "text":
-        out.push(mark({ type: "text", id: genId(), p: s.p, value: s.value, height: s.height, ...(s.rotation !== undefined ? { rotation: s.rotation } : {}) }, s.construction));
+      }
+      case "text": {
+        const p = toPt(s.p, scope);
+        const height = toNum(s.height, scope);
+        const rot = s.rotation !== undefined ? degToRad(toNum(s.rotation, scope)) : undefined;
+        const e = mark({ type: "text" as const, id: genId(), p: [p.x.n, p.y.n] as Vec2, value: s.value, height: height.n, ...(rot ? { rotation: rot.n } : {}) }, s.construction);
+        const fields: Record<string, Num> = { "p.0": p.x, "p.1": p.y, height };
+        if (rot) fields.rotation = rot;
+        out.push(withExprs(e, collectExprs(fields)));
         break;
+      }
     }
   }
   return out;

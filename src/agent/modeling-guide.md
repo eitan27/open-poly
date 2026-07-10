@@ -186,10 +186,21 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
 - **Predictable sketches.** You can't apply explicit constraints or dimensions
   yet, and agent-drawn entities carry none — a sketch *is* exactly the
   coordinates you give. So place points precisely (axis-aligned where you mean
-  it, shared coords where things should meet) and parameterize sizes with
-  **variables in feature params** (extrude distance, primitive/revolve dims),
-  not magic numbers. Explicit sketch constraints/dimensions are on the roadmap —
-  `report_issue(missing_feature)` if you're blocked without them.
+  it, shared coords where things should meet). Explicit sketch constraints/
+  dimensions are on the roadmap — `report_issue(missing_feature)` if you're
+  blocked without them.
+- **Parameterize sketch coordinates too.** Any sketch coordinate, radius or
+  angle in `add_sketch` accepts a **variable expression string** in place of a
+  number (`{shape:"circle", c:[0,0], r:"innerRad"}`,
+  `{shape:"line", a:["-w/2", 0], b:["w/2", 0]}`). The entity stores the evaluated
+  number **and** the expression, and **reflows when the variable changes** — so
+  define your variables first, then build the profile against them and later
+  `set_variable` re-drives the whole sketch (and the solids built from it). Use
+  this for profile dimensions the same way you use variables for extrude
+  distance / primitive dims; keep true one-off positions as plain numbers.
+- **Arc/text angles are DEGREES.** `arc` `start`/`end` and `text` `rotation` are
+  in degrees (e.g. a semicircle is `start:0, end:180`); they're stored internally
+  as radians for you.
 - **Exploit symmetry** and reference planes instead of repeating manual placement.
 - **Name parts and features** meaningfully (`rename`) — future steps and the human
   read those names.
