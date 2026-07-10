@@ -33,6 +33,39 @@ Open Poly comes with a built-in MCP server, so it can be driven by a local LLM a
 
 Everything stays local: the agent talks to your browser tab over `127.0.0.1`, and every action routes through undo, so you can revert anything it does.
 
+## Deploy
+
+Open Poly is a fully static, client-side app, so it can be hosted on any static
+host. The public build is served from **Cloudflare Pages** at
+<https://open-poly.pages.dev>.
+
+Deploys use Wrangler's **direct upload** — only the built `dist/` folder is
+uploaded, so the source repository stays private and is never connected to
+Cloudflare.
+
+One-time setup:
+
+```bash
+npx wrangler login                                 # browser OAuth, once per machine
+npx wrangler pages project create open-poly --production-branch main
+```
+
+Deploy (or re-deploy after changes):
+
+```bash
+npm run build
+npx wrangler pages deploy dist --project-name open-poly
+```
+
+Notes:
+
+- The agent/MCP bridge auto-disables on deployed builds (it only dials the local
+  hub on `127.0.0.1`), so the public site never attempts to connect to an agent.
+- `public/_redirects` sends unknown paths to `index.html` so deep links and hard
+  refreshes resolve to the app.
+- Documents still live in each visitor's own browser IndexedDB — the deployment
+  is a shared app, not shared storage.
+
 ## Other scripts
 
 | Command              | Description                                       |

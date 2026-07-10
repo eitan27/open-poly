@@ -1,0 +1,4 @@
+# Cloudflare Pages: serve the SPA shell for any path so deep links and hard
+# refreshes resolve to the app instead of a 404. Real assets are matched first,
+# so this only catches non-file routes.
+/*  /index.html  200
