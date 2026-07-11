@@ -180,6 +180,65 @@ export async function solveSketch(
       if (e && e.type === "line") {
         prims.push({ id, type: "p2p_distance", p1_id: ensurePoint(e.a), p2_id: ensurePoint(e.b), distance: c.value });
       }
+    } else if (c.type === "distanceBetween") {
+      // A linear distance between two sides, each a point / line / circle-arc rim.
+      // Resolve each side to the planegcs object it needs and pick the matching
+      // primitive. `null` = a side didn't resolve (missing/derived entity), so the
+      // whole constraint is skipped (it contributes no DOF rather than throwing).
+      type Side =
+        | { k: "point"; id: string }
+        | { k: "line"; id: string }
+        | { k: "rim"; id: string };
+      const side = (ref: typeof c.a): Side | null => {
+        if (ref.on === "point") {
+          const p = refCoord(ref.ref);
+          return p ? { k: "point", id: ensurePoint(p) } : null;
+        }
+        if (ref.on === "line") {
+          const id = lineIdByEntity.get(ref.entity);
+          return id ? { k: "line", id } : null;
+        }
+        const id = circleIdByEntity.get(ref.entity) ?? arcIdByEntity.get(ref.entity);
+        return id ? { k: "rim", id } : null;
+      };
+      const sa = side(c.a);
+      const sb = side(c.b);
+      if (sa && sb) {
+        // Order so each pair is handled once (point < line < rim).
+        const order = { point: 0, line: 1, rim: 2 } as const;
+        const [x, y] = order[sa.k] <= order[sb.k] ? [sa, sb] : [sb, sa];
+        const v = c.value;
+        if (x.k === "point" && y.k === "point") {
+          prims.push({ id, type: "p2p_distance", p1_id: x.id, p2_id: y.id, distance: v });
+        } else if (x.k === "point" && y.k === "line") {
+          prims.push({ id, type: "p2l_distance", p_id: x.id, l_id: y.id, distance: v });
+        } else if (x.k === "point" && y.k === "rim") {
+          prims.push({ id, type: "p2cdistance", p_id: x.id, c_id: y.id, distance: v });
+        } else if (x.k === "line" && y.k === "line") {
+          // Parallel-line separation. Pin line A's endpoint(s) to a perpendicular
+          // distance `v` from line B. If the lines are ALREADY held parallel
+          // (explicit parallel, or both horizontal / both vertical), one point is
+          // enough — pinning both would just be a self-redundant duplicate. If not,
+          // pin BOTH endpoints so the dimension itself makes A parallel to B and
+          // `v` away, on the side it already sits (parallel at creation time).
+          const eA = c.a.on === "line" ? c.a.entity : "";
+          const eB = c.b.on === "line" ? c.b.entity : "";
+          const has = (t: "horizontal" | "vertical", e: string) => constraints.some((o) => o.type === t && o.entity === e);
+          const forcedParallel =
+            constraints.some((o) => o.type === "parallel" && ((o.a === eA && o.b === eB) || (o.a === eB && o.b === eA))) ||
+            (has("horizontal", eA) && has("horizontal", eB)) ||
+            (has("vertical", eA) && has("vertical", eB));
+          const ln = entities.find((e) => e.id === eA);
+          if (ln?.type === "line") {
+            prims.push({ id, type: "p2l_distance", p_id: ensurePoint(ln.a), l_id: y.id, distance: v });
+            if (!forcedParallel) prims.push({ id: `${id}~b`, type: "p2l_distance", p_id: ensurePoint(ln.b), l_id: y.id, distance: v });
+          }
+        } else if (x.k === "line" && y.k === "rim") {
+          prims.push({ id, type: "c2ldistance", c_id: y.id, l_id: x.id, dist: v });
+        } else if (x.k === "rim" && y.k === "rim") {
+          prims.push({ id, type: "c2cdistance", c1_id: x.id, c2_id: y.id, dist: v });
+        }
+      }
     } else if (c.type === "radius" && circleIdByEntity.has(c.entity)) {
       prims.push({ id, type: "circle_radius", c_id: circleIdByEntity.get(c.entity), radius: c.value });
     } else if (c.type === "radius" && arcIdByEntity.has(c.entity)) {

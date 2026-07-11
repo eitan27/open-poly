@@ -10,6 +10,10 @@ export type DimSpec =
   // A line's length: witness (extension) lines off both endpoints, a parallel
   // dimension line with arrowheads, and the value at its midpoint.
   | { id: string; kind: "length"; text: string; a: Vec2; b: Vec2 }
+  // A linear distance between two elements — drawn identically to a length (a
+  // dimension line spanning the two witness endpoints `a`..`b`), but its value
+  // edits a `distanceBetween` constraint.
+  | { id: string; kind: "distance"; text: string; a: Vec2; b: Vec2 }
   // A circle's radius: a leader from the centre to just past the rim, an
   // arrowhead touching the rim, and the value beyond it.
   | { id: string; kind: "radius"; text: string; c: Vec2; r: number }
@@ -124,7 +128,7 @@ export function DimensionOverlay({
           const g = groupNodes.current.get(spec.id);
           if (!g) continue;
 
-          if (spec.kind === "length") {
+          if (spec.kind === "length" || spec.kind === "distance") {
             const sa = toScreen(spec.a);
             const sb = toScreen(spec.b);
             const u = unit(sub(sb, sa));
@@ -223,7 +227,7 @@ export function DimensionOverlay({
                 else groupNodes.current.delete(s.id);
               }}
             >
-              {s.kind === "length" && (
+              {(s.kind === "length" || s.kind === "distance") && (
                 <>
                   <line data-role="ext1" className="dim-ext" />
                   <line data-role="ext2" className="dim-ext" />

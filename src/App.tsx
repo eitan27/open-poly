@@ -61,6 +61,7 @@ import type {
   FeatureKind,
   UpToFaceRef,
   PatternAxisRef,
+  DistanceRef,
   PatternDirRef,
   PlaneFeature,
   PlaneMethod,
@@ -72,6 +73,7 @@ import type {
   TransformFeature,
   Vec2,
 } from "./document/types";
+import { measureBetween, resolveSide } from "./sketch/distanceDim";
 import type { BooleanOp, MeshedEdges, MeshedFaces, ShapeMeshPayload } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
@@ -185,6 +187,7 @@ const constraintLabel = (c: SketchConstraint): string => {
     case "perpendicular": return "Perpendicular";
     case "equal": return "Equal";
     case "distance": return `Length ${fmt(c.value)}`;
+    case "distanceBetween": return `Distance ${fmt(c.value)}`;
     case "radius": return `Radius ${fmt(c.value)}`;
     case "angle": return `Angle ${fmt(c.value)}°`;
     case "tangent": return "Tangent";
@@ -1068,7 +1071,9 @@ export default function App() {
       entityId: string;
       /** Second line, for an angle dimension between two lines. */
       entityId2?: string;
-      kind: "length" | "radius" | "angle";
+      kind: "length" | "radius" | "angle" | "distance";
+      /** The two sides of a `distance` dimension (point/line/rim each). */
+      refs?: [DistanceRef, DistanceRef];
       /** The constraint being edited (if reopening an existing one), so its
        *  on-canvas label is hidden while the input is open. */
       editId?: string;
@@ -2253,6 +2258,13 @@ export default function App() {
       if (c.type === "distance") {
         const e = ent(c.entity);
         if (e?.type === "line") return [{ id: c.id, kind: "length", text: fmt(c.value), a: e.a, b: e.b }];
+      } else if (c.type === "distanceBetween") {
+        const ra = resolveSide(c.a, editingSketch.entities);
+        const rb = resolveSide(c.b, editingSketch.entities);
+        if (ra && rb) {
+          const m = measureBetween(ra, rb);
+          if (m) return [{ id: c.id, kind: "distance", text: fmt(c.value), a: m.wa, b: m.wb }];
+        }
       } else if (c.type === "radius") {
         const e = ent(c.entity);
         if (e?.type === "circle" || e?.type === "arc")
@@ -4100,12 +4112,30 @@ export default function App() {
     setDimInput({ entityId: la.id, entityId2: lb.id, kind: "angle", editId, value: fmt(deg), x: s.x, y: s.y });
   };
 
+  // Open the linear-distance input for a pair of sides (point/line/rim each),
+  // anchored at the midpoint of the dimension it would draw. `prefill` supplies
+  // the stored value when reopening an existing dimension.
+  const openDistanceFor = (a: DistanceRef, b: DistanceRef, editId?: string, prefill?: number) => {
+    if (!editingSketch) return;
+    const ra = resolveSide(a, editingSketch.entities);
+    const rb = resolveSide(b, editingSketch.entities);
+    if (!ra || !rb) return;
+    const m = measureBetween(ra, rb);
+    if (!m) return;
+    const s = screenOf([(m.wa[0] + m.wb[0]) / 2, (m.wa[1] + m.wb[1]) / 2]);
+    setDimPending(false);
+    setDimInput({ entityId: "", kind: "distance", refs: [a, b], editId, value: fmt(prefill ?? Math.abs(m.value)), x: s.x, y: s.y });
+  };
+
   // D (or the ↔ button): dimension the current selection — a single line/circle
-  // (length/radius), or two lines (angle) — else arm "pick one to dimension"
-  // mode (forcing the Select tool so clicks pick).
+  // (length/radius), a distance between two elements (point/line/rim, incl. two
+  // PARALLEL lines), or two non-parallel lines (angle) — else arm "pick one to
+  // dimension" mode (forcing the Select tool so clicks pick).
   const startDimension = () => {
     if (!editingSketch) return;
     if (dimEntity) return openDimensionFor(dimEntity);
+    const pair = computeDistancePair();
+    if (pair) return openDistanceFor(pair[0], pair[1]);
     if (twoSelectedLines) return openAngleFor(twoSelectedLines[0], twoSelectedLines[1]);
     setSketchTool("select");
     setDimPending(true);
@@ -4209,6 +4239,43 @@ export default function App() {
 
   const samePointRef = (x: PointRef, y: PointRef) =>
     "origin" in x || "origin" in y ? "origin" in x && "origin" in y : x.entity === y.entity && x.at === y.at;
+
+  // Resolve the current selection to a pair of distance sides for a linear
+  // dimension: a selected point/centre/origin → a `point` side; a selected line →
+  // a `line` side (perpendicular distance); a selected circle/arc → a `rim` side
+  // (nearest boundary). Returns null unless exactly two sides resolve to a
+  // non-degenerate measure — and, for two lines, only when they're PARALLEL (an
+  // angle is the right dimension otherwise).
+  const computeDistancePair = (): [DistanceRef, DistanceRef] | null => {
+    if (!editingSketch) return null;
+    const refs: DistanceRef[] = [];
+    for (const p of selectedSketchPoints) {
+      const pr = pointRefAt(p);
+      if (!pr) return null; // a free point that isn't a vertex/centre/origin
+      refs.push({ on: "point", ref: pr });
+    }
+    for (const e of selectedSketchEntities) {
+      if (e.derivedFrom) return null; // derived geometry isn't constrainable
+      if (e.type === "line") refs.push({ on: "line", entity: e.id });
+      else if (e.type === "circle" || e.type === "arc") refs.push({ on: "rim", entity: e.id });
+      else return null; // spline/point/text aren't dimensioned this way
+    }
+    if (refs.length !== 2) return null;
+    const [a, b] = refs;
+    if (a.on === "line" && b.on === "line") {
+      const la = ent(a.entity);
+      const lb = ent(b.entity);
+      if (la?.type !== "line" || lb?.type !== "line") return null;
+      const na = Math.hypot(la.b[0] - la.a[0], la.b[1] - la.a[1]);
+      const nb = Math.hypot(lb.b[0] - lb.a[0], lb.b[1] - lb.a[1]);
+      const cross = (la.b[0] - la.a[0]) * (lb.b[1] - lb.a[1]) - (la.b[1] - la.a[1]) * (lb.b[0] - lb.a[0]);
+      if (na < 1e-9 || nb < 1e-9 || Math.abs(cross) / (na * nb) > 1e-3) return null; // not parallel → angle
+    }
+    const ra = resolveSide(a, editingSketch.entities);
+    const rb = resolveSide(b, editingSketch.entities);
+    if (!ra || !rb || !measureBetween(ra, rb)) return null; // degenerate (e.g. point on its own centre)
+    return [a, b];
+  };
 
   // Coincident, dispatched on the selection:
   //  • one point + one line → the point lies ON the line (point-on-line). This
@@ -4347,6 +4414,8 @@ export default function App() {
     if (c.type === "distance" || c.type === "radius") {
       const e = ent(c.entity);
       if (e?.type === "line" || e?.type === "circle" || e?.type === "arc") openDimensionFor(e, c.id, c.value);
+    } else if (c.type === "distanceBetween") {
+      openDistanceFor(c.a, c.b, c.id, c.value);
     } else if (c.type === "angle") {
       const la = ent(c.a);
       const lb = ent(c.b);
@@ -4376,15 +4445,25 @@ export default function App() {
 
     const samePair = (a: string, b: string) =>
       (a === entityId && b === entityId2) || (a === entityId2 && b === entityId);
+    // Order-independent equality of two distance sides / pairs, so re-dimensioning
+    // the same two elements replaces the prior dimension instead of stacking.
+    const sameSide = (x: DistanceRef, y: DistanceRef): boolean =>
+      x.on !== y.on ? false : x.on === "point" && y.on === "point" ? samePointRef(x.ref, y.ref) : (x as { entity: string }).entity === (y as { entity: string }).entity;
+    const samePairRefs = (p: [DistanceRef, DistanceRef], q: [DistanceRef, DistanceRef]) =>
+      (sameSide(p[0], q[0]) && sameSide(p[1], q[1])) || (sameSide(p[0], q[1]) && sameSide(p[1], q[0]));
     const kept = editingSketch.constraints.filter((c) => {
+      if (c.id === dimInput.editId) return false; // the one being edited is replaced
+      if (kind === "distance") return !(c.type === "distanceBetween" && dimInput.refs != null && samePairRefs([c.a, c.b], dimInput.refs));
       if (kind === "angle") return !(c.type === "angle" && samePair(c.a, c.b));
       const ctype = kind === "radius" ? "radius" : "distance";
       return !(c.type === ctype && c.entity === entityId);
     });
     const added: SketchConstraint =
-      kind === "angle"
-        ? { id: genId(), type: "angle", a: entityId, b: entityId2!, value }
-        : { id: genId(), type: kind === "radius" ? "radius" : "distance", entity: entityId, value };
+      kind === "distance"
+        ? { id: genId(), type: "distanceBetween", a: dimInput.refs![0], b: dimInput.refs![1], value }
+        : kind === "angle"
+          ? { id: genId(), type: "angle", a: entityId, b: entityId2!, value }
+          : { id: genId(), type: kind === "radius" ? "radius" : "distance", entity: entityId, value };
     const candidate = setSketchConstraints(doc, sketchId, [...kept, added]);
     const candidateSk = candidate.features.find((f) => f.id === sketchId);
     if (candidateSk?.type !== "sketch") return;
@@ -5127,7 +5206,7 @@ export default function App() {
               style={{ left: dimInput.x, top: dimInput.y }}
             >
               <label data-drag-handle>
-                {dimInput.kind === "radius" ? "Radius" : dimInput.kind === "angle" ? "Angle °" : "Length"}
+                {dimInput.kind === "radius" ? "Radius" : dimInput.kind === "angle" ? "Angle °" : dimInput.kind === "distance" ? "Distance" : "Length"}
               </label>
               <DimValueInput
                 value={dimInput.value}

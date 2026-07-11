@@ -123,6 +123,16 @@ export type PointRef =
   | { entity: string; at: "a" | "b" | "c" }
   | { origin: true };
 
+/** One side of a linear distance dimension. The choice mirrors the selection:
+ *  a picked point/centre/origin → `point` (measured to that exact point); a
+ *  picked line → `line` (perpendicular distance to the infinite line); a picked
+ *  circle/arc → `rim` (nearest boundary, i.e. centre distance ∓ radius). So the
+ *  user chooses centre-vs-rim just by what they select. */
+export type DistanceRef =
+  | { on: "point"; ref: PointRef }
+  | { on: "line"; entity: string }
+  | { on: "rim"; entity: string };
+
 /** Dimensional/geometric constraints over sketch entities (solved by planegcs).
  *  `entity`/`a`/`b` reference SketchEntity ids. */
 export type SketchConstraint =
@@ -132,6 +142,11 @@ export type SketchConstraint =
   | { id: string; type: "perpendicular"; a: string; b: string }
   | { id: string; type: "equal"; a: string; b: string }
   | { id: string; type: "distance"; entity: string; value: number }
+  // A linear distance between two elements (point/line/rim on each side) — see
+  // DistanceRef. `value` is the natural measure for the pair (straight,
+  // perpendicular, or rim gap). This is the general dimension the single-entity
+  // `distance` (a line's own length) is a special case of.
+  | { id: string; type: "distanceBetween"; a: DistanceRef; b: DistanceRef; value: number }
   | { id: string; type: "radius"; entity: string; value: number }
   | { id: string; type: "angle"; a: string; b: string; value: number }
   // Tangent between a line+circle or two circles (entity ids).

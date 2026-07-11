@@ -519,6 +519,10 @@ function constraintRefsEntity(c: SketchConstraint, entityId: string): boolean {
       return c.line === entityId || (!("origin" in c.point) && c.point.entity === entityId);
     case "midpoint":
       return c.target === entityId || (!("origin" in c.point) && c.point.entity === entityId);
+    case "distanceBetween": {
+      const refs = (r: typeof c.a) => (r.on === "point" ? !("origin" in r.ref) && r.ref.entity === entityId : r.entity === entityId);
+      return refs(c.a) || refs(c.b);
+    }
     case "horizontal":
     case "vertical":
     case "distance":

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { solveSketch } from "./solver";
-import type { SketchConstraint, SketchEntity } from "../document/types";
+import { measureBetween, resolveSide } from "./distanceDim";
+import type { DistanceRef, SketchConstraint, SketchEntity } from "../document/types";
 
 // A line from the sketch origin to (10, 0).
 const line: SketchEntity = { type: "line", id: "L", a: [0, 0], b: [10, 0] };
@@ -84,6 +85,113 @@ describe("solveSketch pointOnLine", () => {
     // The line is horizontal and now sits at y = 0 (so the origin is on it).
     expect(l.a[1]).toBeCloseTo(0, 3);
     expect(l.b[1]).toBeCloseTo(0, 3);
+  });
+});
+
+// End-to-end validation that each distanceBetween pair maps to a planegcs
+// primitive the real solver accepts and enforces: apply the dimension, solve,
+// then re-measure the solved geometry — it must hit the target value. This is
+// also what proves whether arc rims work (arc treated as a circle).
+describe("solveSketch distanceBetween", () => {
+  const measure = (entities: SketchEntity[], a: DistanceRef, b: DistanceRef) => {
+    const ra = resolveSide(a, entities);
+    const rb = resolveSide(b, entities);
+    if (!ra || !rb) throw new Error("side did not resolve");
+    const m = measureBetween(ra, rb);
+    if (!m) throw new Error("degenerate pair");
+    return m.value;
+  };
+  const dim = (a: DistanceRef, b: DistanceRef, value: number): SketchConstraint => ({ id: "d", type: "distanceBetween", a, b, value });
+
+  it("point–point (two circle centres) drives the straight distance", async () => {
+    const c1: SketchEntity = { type: "circle", id: "A", c: [0, 0], r: 3 };
+    const c2: SketchEntity = { type: "circle", id: "B", c: [8, 0], r: 2 };
+    const a: DistanceRef = { on: "point", ref: { entity: "A", at: "c" } };
+    const b: DistanceRef = { on: "point", ref: { entity: "B", at: "c" } };
+    const res = await solveSketch([c1, c2], [dim(a, b, 20)]);
+    expect(res.hasConflicts).toBe(false);
+    expect(measure(res.entities, a, b)).toBeCloseTo(20, 3);
+  });
+
+  it("point–line drives the perpendicular distance", async () => {
+    const c: SketchEntity = { type: "circle", id: "P", c: [0, 4], r: 1 };
+    const l: SketchEntity = { type: "line", id: "L", a: [-10, 0], b: [10, 0] };
+    const a: DistanceRef = { on: "point", ref: { entity: "P", at: "c" } };
+    const b: DistanceRef = { on: "line", entity: "L" };
+    const res = await solveSketch([c, l], [{ id: "h", type: "horizontal", entity: "L" }, dim(a, b, 15)]);
+    expect(res.hasConflicts).toBe(false);
+    expect(measure(res.entities, a, b)).toBeCloseTo(15, 3);
+  });
+
+  it("point–rim (circle) drives the nearest gap (centre distance − radius)", async () => {
+    const p: SketchEntity = { type: "circle", id: "P", c: [0, 0], r: 1 };
+    const circle: SketchEntity = { type: "circle", id: "C", c: [10, 0], r: 3 };
+    const a: DistanceRef = { on: "point", ref: { entity: "P", at: "c" } };
+    const b: DistanceRef = { on: "rim", entity: "C" };
+    const res = await solveSketch([p, circle], [{ id: "r", type: "radius", entity: "C", value: 3 }, dim(a, b, 12)]);
+    expect(res.hasConflicts).toBe(false);
+    expect(measure(res.entities, a, b)).toBeCloseTo(12, 3);
+  });
+
+  it("line–rim (circle) drives the tangent gap", async () => {
+    const l: SketchEntity = { type: "line", id: "L", a: [-10, 0], b: [10, 0] };
+    const circle: SketchEntity = { type: "circle", id: "C", c: [0, 8], r: 2 };
+    const a: DistanceRef = { on: "line", entity: "L" };
+    const b: DistanceRef = { on: "rim", entity: "C" };
+    const res = await solveSketch([l, circle], [{ id: "h", type: "horizontal", entity: "L" }, { id: "r", type: "radius", entity: "C", value: 2 }, dim(a, b, 5)]);
+    expect(res.hasConflicts).toBe(false);
+    expect(measure(res.entities, a, b)).toBeCloseTo(5, 3);
+  });
+
+  it("rim–rim (circle–circle) drives the gap between boundaries", async () => {
+    const c1: SketchEntity = { type: "circle", id: "A", c: [0, 0], r: 3 };
+    const c2: SketchEntity = { type: "circle", id: "B", c: [10, 0], r: 2 };
+    const a: DistanceRef = { on: "rim", entity: "A" };
+    const b: DistanceRef = { on: "rim", entity: "B" };
+    const res = await solveSketch([c1, c2], [{ id: "ra", type: "radius", entity: "A", value: 3 }, { id: "rb", type: "radius", entity: "B", value: 2 }, dim(a, b, 15)]);
+    expect(res.hasConflicts).toBe(false);
+    expect(measure(res.entities, a, b)).toBeCloseTo(15, 3);
+  });
+
+  it("line–line already parallel (both horizontal): one p2l, no redundancy", async () => {
+    const l1: SketchEntity = { type: "line", id: "A", a: [0, 0], b: [10, 0] };
+    const l2: SketchEntity = { type: "line", id: "B", a: [0, 4], b: [10, 4] };
+    const a: DistanceRef = { on: "line", entity: "A" };
+    const b: DistanceRef = { on: "line", entity: "B" };
+    const res = await solveSketch([l1, l2], [
+      { id: "h1", type: "horizontal", entity: "A" },
+      { id: "h2", type: "horizontal", entity: "B" },
+      dim(a, b, 12),
+    ]);
+    expect(res.hasConflicts).toBe(false);
+    expect(res.redundantIds).not.toContain("d"); // adaptive encoding avoids the self-redundancy
+    expect(measure(res.entities, a, b)).toBeCloseTo(12, 3);
+  });
+
+  it("line–line not pre-parallel: two p2l establish parallel + separation", async () => {
+    // Second line slightly tilted; the dimension alone must both level it to
+    // parallel and set the gap.
+    const l1: SketchEntity = { type: "line", id: "A", a: [0, 0], b: [10, 0] };
+    const l2: SketchEntity = { type: "line", id: "B", a: [0, 4], b: [10, 4.5] };
+    const a: DistanceRef = { on: "line", entity: "A" };
+    const b: DistanceRef = { on: "line", entity: "B" };
+    const res = await solveSketch([l1, l2], [{ id: "h1", type: "horizontal", entity: "A" }, dim(a, b, 12)]);
+    expect(res.hasConflicts).toBe(false);
+    expect(measure(res.entities, a, b)).toBeCloseTo(12, 3);
+    const b2 = res.entities.find((e) => e.id === "B");
+    if (b2?.type !== "line") throw new Error("line");
+    expect(b2.a[1]).toBeCloseTo(b2.b[1], 3); // B is now horizontal ⇒ parallel to A
+  });
+
+  it("point–rim (ARC) — arc treated as a circle for the rim gap", async () => {
+    const p: SketchEntity = { type: "circle", id: "P", c: [0, 0], r: 1 };
+    const arc: SketchEntity = { type: "arc", id: "R", c: [10, 0], r: 3, start: 0, end: Math.PI };
+    const a: DistanceRef = { on: "point", ref: { entity: "P", at: "c" } };
+    const b: DistanceRef = { on: "rim", entity: "R" };
+    const res = await solveSketch([p, arc], [{ id: "r", type: "radius", entity: "R", value: 3 }, dim(a, b, 12)]);
+    expect(res.hasConflicts).toBe(false);
+    // If planegcs accepts the arc where a circle is expected, the gap is enforced.
+    expect(measure(res.entities, a, b)).toBeCloseTo(12, 3);
   });
 });
 
