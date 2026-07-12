@@ -369,6 +369,8 @@
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
+  /* Anchor for the mobile off-canvas panel + its backdrop. */
+  position: relative;
 }
 
 .panel {
@@ -378,6 +380,60 @@
   background: #181a20;
   border-right: 1px solid #2a2d35;
   overflow-y: auto;
+}
+
+/* Panel hidden: it simply leaves the flex row and the viewport reclaims the
+   width. The toggle (☰ in the topbar) flips this on any screen size. */
+.body.sidebar-closed .panel {
+  display: none;
+}
+
+/* Collapse/expand tab for the panel. A slim vertical tab attached to the
+   panel's right edge, protruding into the viewport; when the panel is hidden
+   it slides to the viewport's left edge (the `left` transition animates the
+   slide). Vertically centred so it clears the viewport's corner toolbars. */
+.panel-toggle {
+  position: absolute;
+  top: 50%;
+  /* Panel is 288px + 1px right border — sit flush against that edge. */
+  left: 289px;
+  transform: translateY(-50%);
+  z-index: 46;
+  width: 20px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: #aeb4c0;
+  background: #181a20;
+  border: 1px solid #2a2d35;
+  /* No left border: reads as protruding from the panel, not a floating box. */
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  cursor: pointer;
+  box-shadow: 2px 0 7px rgba(0, 0, 0, 0.28);
+  transition: left 0.14s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.panel-toggle:hover {
+  color: #cfe0ff;
+  border-color: #4f8cff;
+}
+
+/* Collapsed: free-standing at the viewport's left edge — give it its left
+   border back so it's a complete tab. */
+.body.sidebar-closed .panel-toggle {
+  left: 0;
+  border-left: 1px solid #2a2d35;
+}
+
+/* Backdrop is desktop-invisible; it only becomes a real dimming layer once the
+   panel floats over the viewport at narrow widths (see the media query). */
+.sidebar-backdrop {
+  display: none;
 }
 
 .panel h2 {
@@ -1868,4 +1924,70 @@
 
 .bool-operand-x:hover {
   color: #ff8a8a;
+}
+
+/* ------------------------------------------------------------------ */
+/* Mobile / narrow-viewport layout                                     */
+/*                                                                     */
+/* The 3D viewport is the point of the app, so on a phone we give it   */
+/* the whole width: the left panel becomes an off-canvas drawer that   */
+/* slides over the viewport (toggled by ☰), and the topbar tightens    */
+/* up so its controls don't wrap.                                      */
+/* ------------------------------------------------------------------ */
+@media (max-width: 820px) {
+  .topbar {
+    gap: 8px;
+    padding: 0 10px;
+    /* Let long content (a wide doc title) scroll rather than wrap the bar. */
+    overflow-x: auto;
+  }
+
+  /* The logo is decorative next to the doc title — reclaim its space. */
+  .logo {
+    display: none;
+  }
+
+  .doc-title,
+  .doc-title-input {
+    max-width: 40vw;
+  }
+
+  /* Panel floats over the viewport as a drawer instead of taking a column. */
+  .panel {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 45;
+    width: min(300px, 82vw);
+    box-shadow: 6px 0 28px rgba(0, 0, 0, 0.55);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 44;
+    background: rgba(6, 7, 10, 0.5);
+    backdrop-filter: blur(1px);
+  }
+
+  /* The drawer is a fraction of the viewport (not the fixed 288px), so pin the
+     tab to the drawer's actual right edge; it still slides to 0 when closed. */
+  .panel-toggle {
+    left: min(300px, 82vw);
+  }
+
+  /* Give the viewport's floating controls a touch more breathing room from the
+     edges and each other so they stay tappable. */
+  .view-controls button,
+  .model-toolbar > button,
+  .mt-dropdown > button {
+    padding: 7px 10px;
+  }
+
+  .sketch-toolbar button {
+    min-width: 34px;
+    height: 34px;
+  }
 }
