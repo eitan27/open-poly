@@ -1190,6 +1190,8 @@ export default function App() {
   const modelToolbarRef = useRef<HTMLDivElement>(null);
   const viewControlsRef = useRef<HTMLDivElement>(null);
   const [viewControlsTop, setViewControlsTop] = useState<number | null>(null);
+  // Camera projection: false = orthographic (default), true = perspective.
+  const [perspective, setPerspective] = useState(false);
   useLayoutEffect(() => {
     const tb = modelToolbarRef.current;
     const vc = viewControlsRef.current;
@@ -5550,6 +5552,18 @@ export default function App() {
                 {v.label}
               </button>
             ))}
+            <label className="proj-toggle" title="Perspective projection (off = orthographic: parallel, no foreshortening — good for aligning to edges)">
+              <input
+                type="checkbox"
+                checked={perspective}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setPerspective(next);
+                  viewApiRef.current?.setProjection(next ? "perspective" : "orthographic");
+                }}
+              />
+              Perspective
+            </label>
           </div>
           {!editingSketch && !picking && (
             <div className="sel-filters" title="Selection filters — what a click can pick">

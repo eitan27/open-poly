@@ -926,6 +926,34 @@
   border-color: #4f8cff;
 }
 
+/* Perspective/orthographic toggle — sits next to Iso on the bottom row. */
+.proj-toggle {
+  grid-column: span 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: #232730;
+  border: 1px solid #313643;
+  color: #d6d9e0;
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.proj-toggle:hover {
+  background: #2c313c;
+  border-color: #4f8cff;
+}
+
+.proj-toggle input {
+  cursor: pointer;
+  margin: 0;
+}
+
 .datum-label {
   position: absolute;
   left: 12px;

@@ -167,6 +167,9 @@ export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | 
 
 export interface ViewportApi {
   setView(name: ViewName): void;
+  /** Switch the camera between perspective and orthographic projection,
+   *  preserving the current view (position/target and apparent scale). */
+  setProjection(mode: "perspective" | "orthographic"): void;
   lookAtFrame(frame: PlaneFrameData): void;
   /** Project a world point to pixel coords relative to the canvas top-left. */
   worldToScreen(p: [number, number, number]): { x: number; y: number };
@@ -206,7 +209,7 @@ interface DatumEntry {
 interface SceneState {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
+  camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   controls: OrbitControls;
   group: THREE.Group;
   // Whether sketch-edit mode is dimming solids (applied per-body since each
@@ -567,9 +570,30 @@ export function Viewport({
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x1b1d23);
 
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 10_000);
+    // `let` (not const): the perspective/orthographic toggle swaps this binding.
+    // Every closure below reads `camera`, so reassigning it repoints them all;
+    // controls / transformControls / renderer are re-pointed explicitly.
+    const CAMERA_FOV = 45;
+    // Default to ORTHOGRAPHIC (the checkbox turns perspective ON). The frustum is
+    // sized from the initial framing — dist·tan(fov/2) — so it matches what a 45°
+    // perspective would show; the aspect is fixed on the first resize.
+    const initPos = new THREE.Vector3(110, -120, 90);
+    const initHalfH = initPos.length() * Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2);
+    let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera =
+      new THREE.OrthographicCamera(-initHalfH, initHalfH, initHalfH, -initHalfH, 0.1, 10_000);
     camera.up.set(0, 0, 1);
-    camera.position.set(110, -120, 90);
+    camera.position.copy(initPos);
+
+    // World units spanned by one device pixel at view `depth` (distance from the
+    // camera). Perspective grows with depth; orthographic is depth-independent
+    // (a constant frustum). Used for screen-space picking tolerance + marker sizing.
+    const worldPerPixel = (depth: number, hpx: number): number => {
+      if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+        const oc = camera as THREE.OrthographicCamera;
+        return (oc.top - oc.bottom) / oc.zoom / hpx;
+      }
+      return (2 * depth * Math.tan(THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov) / 2)) / hpx;
+    };
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -1006,6 +1030,39 @@ export function Viewport({
         const to = new THREE.Vector3(...v.dir).normalize().multiplyScalar(VIEW_DISTANCE);
         startTween(to, new THREE.Vector3(...v.up), new THREE.Vector3(0, 0, 0));
       },
+      setProjection(mode) {
+        const isOrtho = (camera as THREE.OrthographicCamera).isOrthographicCamera === true;
+        if ((mode === "orthographic") === isOrtho) return; // already in that mode
+        const rect = renderer.domElement.getBoundingClientRect();
+        const aspect = rect.width / rect.height || 1;
+        const fovRad = THREE.MathUtils.degToRad(CAMERA_FOV);
+        const dir = camera.position.clone().sub(controls.target); // camera - target
+        const dist = dir.length() || VIEW_DISTANCE;
+        let next: THREE.PerspectiveCamera | THREE.OrthographicCamera;
+        if (mode === "orthographic") {
+          // Match the perspective's visible height at the target so the swap is
+          // seamless: frustum half-height = dist·tan(fov/2).
+          const halfH = dist * Math.tan(fovRad / 2);
+          next = new THREE.OrthographicCamera(-halfH * aspect, halfH * aspect, halfH, -halfH, 0.1, 10_000);
+          next.position.copy(camera.position);
+        } else {
+          // Going back to perspective: place the camera at the distance whose
+          // frustum height equals the ortho's current visible height (top/zoom).
+          const oc = camera as THREE.OrthographicCamera;
+          const visH = (oc.top - oc.bottom) / oc.zoom;
+          const newDist = visH / (2 * Math.tan(fovRad / 2)) || dist;
+          next = new THREE.PerspectiveCamera(CAMERA_FOV, aspect, 0.1, 10_000);
+          next.position.copy(controls.target).add(dir.setLength(newDist));
+        }
+        next.up.copy(camera.up);
+        next.lookAt(controls.target);
+        next.updateProjectionMatrix();
+        camera = next;
+        controls.object = next;
+        (transformControls as unknown as { camera: THREE.Camera }).camera = next;
+        state.camera = next;
+        controls.update();
+      },
       lookAtFrame(frame) {
         const origin = new THREE.Vector3(...frame.origin);
         const normal = new THREE.Vector3(...frame.normal).normalize();
@@ -1247,7 +1304,7 @@ export function Viewport({
       const faceHit = raycaster.intersectObjects(faceMeshes, false)[0];
       const regionHit = raycaster.intersectObjects(regionMeshes, false)[0];
       const depth = faceHit ? faceHit.distance : camera.position.distanceTo(controls.target);
-      const worldPerPx = (2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / rect.height;
+      const worldPerPx = worldPerPixel(depth, rect.height);
       raycaster.params.Line = { threshold: worldPerPx * PICK_DETECT_PX };
       const edgeHit = raycaster.intersectObjects(bodyEdges, false)[0];
       const sketchHit = raycaster.intersectObjects(sketchSegs, false)[0];
@@ -1380,7 +1437,7 @@ export function Viewport({
       // orbit-target depth) — the old world-space EDGE_PICK_WORLD was removed when
       // picking moved to screen space.
       const dragDepth = camera.position.distanceTo(controls.target);
-      const dragWorldPerPx = (2 * dragDepth * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / rect.height;
+      const dragWorldPerPx = worldPerPixel(dragDepth, rect.height);
       raycaster.params.Line = { threshold: dragWorldPerPx * PICK_DETECT_PX };
 
       // 2. An entity body → translate all of its points.
@@ -1642,7 +1699,15 @@ export function Viewport({
       const h = container.clientHeight;
       if (w === 0 || h === 0) return;
       renderer.setSize(w, h);
-      camera.aspect = w / h;
+      if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+        // Keep the vertical extent; re-derive the horizontal from the new aspect.
+        const oc = camera as THREE.OrthographicCamera;
+        const halfH = (oc.top - oc.bottom) / 2;
+        oc.left = -halfH * (w / h);
+        oc.right = halfH * (w / h);
+      } else {
+        (camera as THREE.PerspectiveCamera).aspect = w / h;
+      }
       camera.updateProjectionMatrix();
       highlightMaterial.resolution.set(w, h); // fat-line width is in screen pixels
       highlightMaterialDash.resolution.set(w, h);
@@ -2318,11 +2383,17 @@ function keepConstantPixelRadius(mesh: THREE.Mesh, geomRadius: number, pxRadius:
   const world = new THREE.Vector3();
   const size = new THREE.Vector2();
   mesh.onBeforeRender = (renderer, _scene, camera) => {
-    const cam = camera as THREE.PerspectiveCamera;
-    const dist = cam.position.distanceTo(mesh.getWorldPosition(world));
     const h = renderer.getDrawingBufferSize(size).y;
-    const worldRadius = (dist * Math.tan((cam.fov * Math.PI) / 360) * 2 * pxRadius) / h;
-    mesh.scale.setScalar(worldRadius / geomRadius);
+    let worldPerPx: number;
+    if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+      const oc = camera as THREE.OrthographicCamera;
+      worldPerPx = (oc.top - oc.bottom) / oc.zoom / h;
+    } else {
+      const pc = camera as THREE.PerspectiveCamera;
+      const dist = pc.position.distanceTo(mesh.getWorldPosition(world));
+      worldPerPx = (2 * dist * Math.tan((pc.fov * Math.PI) / 360)) / h;
+    }
+    mesh.scale.setScalar((worldPerPx * pxRadius) / geomRadius);
   };
 }
 const PLANE_TINTS: Record<"plane-top" | "plane-front" | "plane-right", number> = {
