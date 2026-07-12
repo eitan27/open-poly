@@ -634,6 +634,12 @@ export default function App() {
   // active document changes (dialog highlight, the multi-tab guard effect).
   const [activeId, setActiveId] = useState<string | null>(null);
   const [docsDialogOpen, setDocsDialogOpen] = useState(false);
+  // Left panel visibility. Togglable at any width; on a phone it's an
+  // off-canvas drawer over the viewport, so it starts hidden there to keep the
+  // 3D view (the point of the app) front and centre.
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => typeof window === "undefined" || window.innerWidth > 820,
+  );
   // True while the SAME document is open in another tab (BroadcastChannel).
   const [docInOtherTab, setDocInOtherTab] = useState(false);
   const tabIdRef = useRef(genId());
@@ -4796,7 +4802,24 @@ export default function App() {
           onImport={importDocumentFile}
         />
       )}
-      <div className="body">
+      <div className={"body" + (sidebarOpen ? "" : " sidebar-closed")}>
+        {sidebarOpen && (
+          // Backdrop only matters when the panel floats over the viewport
+          // (mobile drawer); on desktop it's CSS-hidden. Tap to dismiss.
+          <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+        )}
+        {/* Collapse/expand tab attached to the panel's right edge; slides to
+            the viewport's left edge when the panel is hidden so it's always
+            reachable (Onshape-style). */}
+        <button
+          className={"panel-toggle" + (sidebarOpen ? " open" : "")}
+          onClick={() => setSidebarOpen((o) => !o)}
+          title={sidebarOpen ? "Hide panel" : "Show panel"}
+          aria-pressed={sidebarOpen}
+          aria-label="Toggle side panel"
+        >
+          {sidebarOpen ? "‹" : "›"}
+        </button>
         <aside className="panel">
           <button
             className="params-heading collapsible"
