@@ -220,6 +220,69 @@ describe("applyOperation — sketch + extrude (no kernel)", () => {
   });
 });
 
+describe("applyOperation — sketch constraints & dimensions", () => {
+  // Add a sketch and return the ctx plus the ids of its entities (in order), so
+  // constraint tests can reference the concrete entity ids the agent would read
+  // from get_scene_summary.
+  const sketchWith = async (entities: { shape: string; [k: string]: unknown }[]) => {
+    const { ctx, doc } = makeCtx();
+    const sk = await apply(ctx, { op: "addSketch", plane: { datum: "top" }, entities: entities as never });
+    const ids = getSceneSummary(ctx).sketches[0].entities.map((e) => e.id);
+    return { ctx, doc, sketchId: sk.createdId!, ids };
+  };
+
+  it("applies a horizontal constraint and lists it in the summary", async () => {
+    const { ctx, sketchId, ids } = await sketchWith([{ shape: "line", a: [0, 0], b: [10, 2] }]);
+    const r = await apply(ctx, { op: "addConstraint", sketchId, constraint: { kind: "horizontal", entity: ids[0] } });
+    expect(r.ok).toBe(true);
+    const sketch = getSceneSummary(ctx).sketches[0];
+    expect(sketch.constraints).toHaveLength(1);
+    expect(sketch.constraints[0]).toMatchObject({ type: "horizontal", refs: [ids[0]] });
+    // The line was pulled horizontal: both endpoints share a v-coordinate.
+    const line = ctx.getDoc().features.find((f) => f.id === sketchId);
+    if (line?.type !== "sketch" || line.entities[0].type !== "line") throw new Error("no line");
+    expect(Math.abs(line.entities[0].a[1] - line.entities[0].b[1])).toBeLessThan(1e-6);
+  });
+
+  it("add_dimension length drives the line to a variable value", async () => {
+    const { ctx, sketchId, ids } = await sketchWith([{ shape: "line", a: [0, 0], b: [10, 0] }]);
+    await apply(ctx, { op: "setVariable", name: "len", expression: 25 });
+    const r = await apply(ctx, { op: "addDimension", sketchId, dimension: { kind: "length", entity: ids[0], value: "len" } });
+    expect(r.ok).toBe(true);
+    const summ = getSceneSummary(ctx).sketches[0];
+    expect(summ.constraints[0]).toMatchObject({ type: "distance", value: 25 });
+    const sk = ctx.getDoc().features.find((f) => f.id === sketchId);
+    if (sk?.type !== "sketch" || sk.entities[0].type !== "line") throw new Error("no line");
+    const len = Math.hypot(sk.entities[0].b[0] - sk.entities[0].a[0], sk.entities[0].b[1] - sk.entities[0].a[1]);
+    expect(len).toBeCloseTo(25, 4);
+  });
+
+  it("rejects a conflicting constraint and leaves the sketch unchanged", async () => {
+    const { ctx, sketchId, ids } = await sketchWith([{ shape: "line", a: [0, 0], b: [10, 0] }]);
+    await apply(ctx, { op: "addConstraint", sketchId, constraint: { kind: "horizontal", entity: ids[0] } });
+    // A vertical on the same (now horizontal, origin-anchored) line collapses it —
+    // rejected, and the one surviving constraint is still just the horizontal.
+    const r = await apply(ctx, { op: "addConstraint", sketchId, constraint: { kind: "vertical", entity: ids[0] } });
+    expect(r.ok).toBe(false);
+    expect(r.errorKind).toBe("invalid_op");
+    expect(getSceneSummary(ctx).sketches[0].constraints).toHaveLength(1);
+  });
+
+  it("remove_constraint deletes by id", async () => {
+    const { ctx, sketchId, ids } = await sketchWith([{ shape: "line", a: [0, 0], b: [10, 2] }]);
+    const add = await apply(ctx, { op: "addConstraint", sketchId, constraint: { kind: "horizontal", entity: ids[0] } });
+    await apply(ctx, { op: "removeConstraint", sketchId, constraintId: add.createdId! });
+    expect(getSceneSummary(ctx).sketches[0].constraints).toHaveLength(0);
+  });
+
+  it("errors on a wrong-kind entity (radius on a line)", async () => {
+    const { ctx, sketchId, ids } = await sketchWith([{ shape: "line", a: [0, 0], b: [10, 0] }]);
+    const r = await apply(ctx, { op: "addDimension", sketchId, dimension: { kind: "radius", entity: ids[0], value: 5 } });
+    expect(r.ok).toBe(false);
+    expect(r.errorKind).toBe("invalid_op");
+  });
+});
+
 describe("applyOperation — delete & rollback", () => {
   it("deletes a feature", async () => {
     const { ctx, doc } = makeCtx();

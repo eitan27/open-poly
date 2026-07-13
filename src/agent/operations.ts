@@ -87,6 +87,55 @@ export const entitySchema = z.discriminatedUnion("shape", [
 ]);
 export type EntitySpec = z.infer<typeof entitySchema>;
 
+// --- Sketch constraints & dimensions (planegcs) ---------------------------
+
+/** A specific point in a sketch a constraint can pin: a named vertex of an
+ *  entity (line/arc "a"/"b" end; circle/arc/point "c" centre), or the sketch
+ *  origin. Entity ids come from get_scene_summary's sketch entities. */
+const pointRefSpec = z.union([
+  z.object({ entityId: z.string(), at: z.enum(["a", "b", "c"]) }),
+  z.object({ origin: z.literal(true) }),
+]);
+
+/** One side of a distance dimension — mirrors what you'd pick in the UI: an
+ *  exact `point`, the perpendicular distance to a `line`, or the nearest `rim`
+ *  of a circle/arc (its centre distance ∓ radius). */
+const distanceRefSpec = z.union([
+  z.object({ on: z.literal("point"), point: pointRefSpec }),
+  z.object({ on: z.literal("line"), entity: z.string() }),
+  z.object({ on: z.literal("rim"), entity: z.string() }),
+]);
+
+/** A geometric (non-dimensional) constraint over sketch entities, by id. Pairs
+ *  (`a`/`b`) must be compatible: parallel/perpendicular/angle need two lines;
+ *  equal needs two lines OR two circles/arcs; tangent a line+circle/arc or two
+ *  circles/arcs. */
+const constraintSpec = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("horizontal"), entity: z.string() }),
+  z.object({ kind: z.literal("vertical"), entity: z.string() }),
+  z.object({ kind: z.literal("parallel"), a: z.string(), b: z.string() }),
+  z.object({ kind: z.literal("perpendicular"), a: z.string(), b: z.string() }),
+  z.object({ kind: z.literal("equal"), a: z.string(), b: z.string() }),
+  z.object({ kind: z.literal("tangent"), a: z.string(), b: z.string() }),
+  z.object({ kind: z.literal("coincident"), a: pointRefSpec, b: pointRefSpec }),
+  z.object({ kind: z.literal("pointOnLine"), point: pointRefSpec, line: z.string() }),
+  z.object({ kind: z.literal("midpoint"), point: pointRefSpec, target: z.string() }),
+]);
+export type ConstraintSpec = z.infer<typeof constraintSpec>;
+
+/** A dimensional constraint. `value` accepts a number OR a variable expression
+ *  ("width/2") — evaluated to a length/angle NOW against the document's
+ *  variables (like the UI; a live link that re-evaluates when the variable
+ *  changes is a known gap). Lengths/radii/distances must be > 0; angles are in
+ *  DEGREES, 0–180. */
+const dimensionSpec = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("length"), entity: z.string(), value: sketchNum }),
+  z.object({ kind: z.literal("radius"), entity: z.string(), value: sketchNum }),
+  z.object({ kind: z.literal("angle"), a: z.string(), b: z.string(), value: sketchNum }),
+  z.object({ kind: z.literal("distance"), a: distanceRefSpec, b: distanceRefSpec, value: sketchNum }),
+]);
+export type DimensionSpec = z.infer<typeof dimensionSpec>;
+
 // --- Selection refs (for the `select` op) ---------------------------------
 
 const selectionSchema = z.union([
@@ -128,9 +177,14 @@ export const operationSchema = z.discriminatedUnion("op", [
     /** How far it reaches: blind = `distance` one way; symmetric = `distance`
      *  split evenly both ways (flip ignored); throughAll = clear through the
      *  target (**remove/cut only** — needs a targetId); upToFace = stop at the
-     *  plane of `upTo` (distance/flip ignored — the face sets length+direction).
-     *  Defaults to blind. */
-    extent: z.enum(["blind", "symmetric", "throughAll", "upToFace"]).optional(),
+     *  plane of `upTo` (distance/flip ignored — the face sets length+direction);
+     *  upToNext = stop at the nearest face of the model ahead in the flip-adjusted
+     *  direction (distance ignored; `flip` reverses the direction; errors if
+     *  nothing lies ahead that way, OR if the next face only PARTIALLY covers the
+     *  profile — it must fully block the extrude). Both upToFace and upToNext
+     *  CONFORM to the target face — a tilted target gives an angled top, not a
+     *  flat cut. Defaults to blind. */
+    extent: z.enum(["blind", "symmetric", "throughAll", "upToFace", "upToNext"]).optional(),
     /** Required when extent is "upToFace": the planar target face to reach, by
      *  body (feature id) + persistent face name (from get_scene_summary). The
      *  face must not be parallel to the extrude direction. */
@@ -363,6 +417,33 @@ export const operationSchema = z.discriminatedUnion("op", [
     opacity: z.number().min(0).max(1).optional(),
     hidden: z.boolean().optional(),
   }),
+  z.object({
+    // Add a geometric constraint to a sketch (planegcs), then re-solve. Rejected
+    // (with an error) if it conflicts with / is already implied by the existing
+    // constraints, or collapses the geometry — the sketch is left unchanged.
+    // Entity ids come from get_scene_summary's sketch entities; derived
+    // (offset/mirror/project) entities and `text` aren't constrainable.
+    op: z.literal("addConstraint"),
+    sketchId: z.string(),
+    constraint: constraintSpec,
+  }),
+  z.object({
+    // Add a dimensional constraint (length/radius/angle/distance) to a sketch,
+    // then re-solve. Same rejection guardrails as add_constraint. For a
+    // parametric model, pass `value` as a variable name/expression (define it
+    // first with set_variable) — it's evaluated to a number at apply time.
+    op: z.literal("addDimension"),
+    sketchId: z.string(),
+    dimension: dimensionSpec,
+  }),
+  z.object({
+    // Remove a sketch constraint/dimension by id (from get_scene_summary's
+    // sketch constraints) — e.g. to resolve an over-constraint before adding a
+    // different one.
+    op: z.literal("removeConstraint"),
+    sketchId: z.string(),
+    constraintId: z.string(),
+  }),
   z.object({ op: z.literal("rename"), featureId: z.string(), name: z.string() }),
   z.object({ op: z.literal("delete"), featureId: z.string() }),
   z.object({ op: z.literal("setRollback"), index: z.number().int().min(0) }),
@@ -461,6 +542,10 @@ export interface SceneSummary {
      *  driven offset/mirror/project output (don't edit/constrain it directly). */
     entities: { id: string; type: string; construction?: boolean; derived?: boolean }[];
     regions: { id: string; area: number }[];
+    /** Constraints/dimensions on the sketch, by id + kind, with the entity ids
+     *  each touches (a point ref shows as its entity id, or "origin"). Use the
+     *  ids with remove_constraint. `value` is present on dimensions. */
+    constraints: { id: string; type: string; refs: string[]; value?: number }[];
   }[];
   planes: { id: string; name: string }[];
   variables: { name: string; expression: string; value?: number }[];

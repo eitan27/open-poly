@@ -5689,6 +5689,10 @@ export default function App() {
                   {/* Through All only makes sense as a cut, so it's shown for Remove only. */}
                   {extrudeDialog.mode === "remove" && <option value="throughAll">Through All</option>}
                   <option value="upToFace">Up to face</option>
+                  {/* Up to next reaches the nearest body face ahead; like Up to
+                      face it's offered in every mode (it errors clearly if nothing
+                      lies ahead). */}
+                  <option value="upToNext">Up to next</option>
                 </select>
               </label>
               {extrudeDialog.extent === "upToFace" && (
@@ -5707,7 +5711,7 @@ export default function App() {
                   </button>
                 </label>
               )}
-              {extrudeDialog.extent !== "upToFace" && (
+              {extrudeDialog.extent !== "upToFace" && extrudeDialog.extent !== "upToNext" && (
                 <label className="ed-field">
                   <span>Distance</span>
                   <input

@@ -109,6 +109,16 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
   to the extrude direction. Prefer this over a guessed distance when one body
   should meet another. Two bodies that end up **sharing a face** (touching, no
   overlap) still `boolean` `union` into one — touching counts as joined.
+- **Extrude up to the next face:** `add_extrude` with `extent: "upToNext"` stops
+  at the **nearest** face of the model ahead in the (flip-adjusted) extrude
+  direction that the profile runs into — no target face to name and no distance to
+  guess (works in any mode). It **conforms** to that face: a target not
+  perpendicular to the extrude axis gives an angled/matching top, not a flat cut
+  (same for `upToFace`). The next face must **fully cover** the profile — a face
+  that only partially blocks the extrude is rejected with an error (use a smaller
+  profile, `upToFace`, or a blind `distance`). `flip` reverses the direction;
+  `distance` is ignored; it errors if nothing lies ahead that way (flip it). Use
+  it for a boss/cut that should reach the first wall in front of it.
 - **Revolved part (shaft, ring, bowl):** `add_sketch` with the **profile region**
   to one side of an axis (mark a sketch axis line `construction:true` so it isn't
   part of the region and isn't a wall); then `add_revolve` with that region + an
@@ -183,12 +193,25 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
   other symbols, not a reserved math name (`pi`, `sin`, …), and unique. Use
   `wallThickness` / `holeDia` / `outerR`, **not** `wall_thickness`, `r1`, or
   `hole2`; an invalid name is rejected.
-- **Predictable sketches.** You can't apply explicit constraints or dimensions
-  yet, and agent-drawn entities carry none — a sketch *is* exactly the
-  coordinates you give. So place points precisely (axis-aligned where you mean
-  it, shared coords where things should meet). Explicit sketch constraints/
-  dimensions are on the roadmap — `report_issue(missing_feature)` if you're
-  blocked without them.
+- **Predictable sketches, then constrain what matters.** Agent-drawn entities
+  carry no constraints, so a sketch *is* exactly the coordinates you give — place
+  points precisely (axis-aligned where you mean it, shared coords where things
+  should meet). For a *parametric* profile, add explicit constraints/dimensions:
+  - `add_constraint` — `horizontal`/`vertical` (a line), `parallel`/
+    `perpendicular` (two lines), `equal` (two lines or two circles/arcs),
+    `tangent`, `coincident`, `pointOnLine`, `midpoint`. Points are `{entityId,
+    at}` (`at` 'a'/'b' = line/arc ends, 'c' = circle/arc/point center) or
+    `{origin:true}`.
+  - `add_dimension` — `length`/`radius`/`angle`/`distance`; its `value` takes a
+    number or a **variable expression** (`"width/2"`), so define the variable
+    first and the dimension drives the geometry from it.
+  Both re-solve immediately and are **rejected (with a message)** if they
+  conflict with, or are already implied by, the existing constraints — the sketch
+  is left unchanged. Constraint ids appear in `get_scene_summary`; clear one with
+  `remove_constraint`. Note the *value* is captured as a number at apply time (a
+  live re-link on later variable changes is still a gap — `report_issue` if that
+  blocks you). Derived (offset/mirror/project) and `text` entities aren't
+  constrainable.
 - **Parameterize sketch coordinates too.** Any sketch coordinate, radius or
   angle in `add_sketch` accepts a **variable expression string** in place of a
   number (`{shape:"circle", c:[0,0], r:"innerRad"}`,
@@ -215,14 +238,14 @@ You are also the project's feedback loop. When something blocks or surprises you
 **do not fake geometry or silently work around it** — call **`report_issue`**:
 
 - `kind: "missing_feature"` — the operation you need isn't expressible with the
-  available tools (e.g. linear/circular pattern, variable-radius fillet, an
-  explicit sketch constraint or dimension — horizontal/vertical/parallel/equal/
-  distance/… — trim/extend, projecting model edges into a sketch). *(Revolve
-  — incl. symmetric + plane/face axes, 3D mirror, sweep, loft, the spline tool,
-  **text** + text-extrude, **offset** and **sketch-mirror** (driven), symmetric /
-  through-all / up-to-face extrude, and all `add_plane` methods — offset /
-  midplane / angle / through-3-points — exist now; use those tools.)* Include the
-  goal, what you tried, and a suggested API.
+  available tools (e.g. variable-radius fillet, trim/extend, projecting model
+  edges into a sketch, a live dimension→variable re-link). *(Revolve — incl.
+  symmetric + plane/face axes, 3D mirror, sweep, loft, the spline tool, **text** +
+  text-extrude, **offset** and **sketch-mirror** (driven), linear/circular
+  **pattern**, **sketch constraints + dimensions** (`add_constraint` /
+  `add_dimension`), symmetric / through-all / up-to-face / up-to-next extrude, and
+  all `add_plane` methods — offset / midplane / angle / through-3-points — exist
+  now; use those tools.)* Include the goal, what you tried, and a suggested API.
 - `kind: "bug"` — a tool did the wrong thing or errored unexpectedly (e.g. a
   remove that didn't cut, a name that didn't resolve, a regen error). Include what
   you did, what you **expected**, what you **observed**, and a minimal repro.

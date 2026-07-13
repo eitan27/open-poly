@@ -670,6 +670,125 @@ function upToFaceLength(profileFace: Face, dir: Vector, targetFace: Face, target
   return t;
 }
 
+type Vec3 = [number, number, number];
+const v3cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const v3dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const v3unit = (a: Vec3): Vec3 => { const L = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / L, a[1] / L, a[2] / L]; };
+
+/** [min,max] of an axis-aligned box's 8 corners projected onto `axis`. */
+function projectBounds(bounds: [[number, number, number], [number, number, number]], axis: [number, number, number]): [number, number] {
+  const [mn, mx] = bounds;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < 8; i++) {
+    const x = i & 1 ? mx[0] : mn[0];
+    const y = i & 2 ? mx[1] : mn[1];
+    const z = i & 4 ? mx[2] : mn[2];
+    const d = x * axis[0] + y * axis[1] + z * axis[2];
+    if (d < lo) lo = d;
+    if (d > hi) hi = d;
+  }
+  return [lo, hi];
+}
+
+/** A characteristic length that comfortably exceeds any reach within the current
+ *  scene — the profile plus every scanned body's bbox diagonal, plus a margin.
+ *  Used to size the "up to" prism/clip box so they surely span the region. */
+function bigReach(profileFace: Face, scan: Body[]): number {
+  const diag = (b: [[number, number, number], [number, number, number]]) => Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]);
+  let s = diag(profileFace.boundingBox.bounds);
+  for (const t of scan) s += diag(t.shape.boundingBox.bounds);
+  return s + 100;
+}
+
+/** A big box filling the half-space on the +`m` side of the plane through `q`
+ *  (|m| = 1). CUTting a prism by it terminates the prism flush with that plane —
+ *  conforming even when the plane is tilted relative to the extrude axis. `size`
+ *  must exceed the prism's reach beyond the plane and its perpendicular extent. */
+function halfSpaceBox(q: Vec3, m: Vec3, size: number): Shape3D {
+  // makeBaseBox(2s,2s,s): x,y ∈ [-s,s], z ∈ [0,s] — a slab whose base is the
+  // z=0 plane, extending +z. Rotate local +z onto m, then move its base to q.
+  let box = makeBaseBox(2 * size, 2 * size, size) as Shape3D;
+  const d = Math.max(-1, Math.min(1, m[2])); // cos angle between +z and m
+  if (d < 0.999999) {
+    let ax: Vec3 = [-m[1], m[0], 0]; // (0,0,1) × m
+    const al = Math.hypot(ax[0], ax[1], ax[2]);
+    if (al < 1e-9) ax = [1, 0, 0]; // m == -z → rotate 180° about x
+    else ax = [ax[0] / al, ax[1] / al, ax[2] / al];
+    box = box.rotate((Math.acos(d) * 180) / Math.PI, [0, 0, 0], ax) as Shape3D;
+  }
+  return box.translate(q[0], q[1], q[2]) as Shape3D;
+}
+
+/** A clip plane for an "up to" extrude: the target face's plane, with a normal
+ *  oriented to point AWAY from the profile (along the travel direction), so a
+ *  half-space box on the +normal side cuts the prism flush with the face. */
+interface ClipPlane { point: Vec3; normal: Vec3; boxSize: number }
+function makeClipPlane(facePoint: Vec3, faceNormal: Vec3, extrudeNormal: Vector, dirSign: number, reach: number): ClipPlane {
+  const en = extrudeNormal.normalized().toTuple();
+  const dir: Vec3 = [en[0] * dirSign, en[1] * dirSign, en[2] * dirSign];
+  const fn = v3unit(faceNormal);
+  const normal: Vec3 = v3dot(fn, dir) >= 0 ? fn : [-fn[0], -fn[1], -fn[2]];
+  return { point: facePoint, normal, boxSize: reach * 2 };
+}
+
+/** The plane (a point + normal) of the NEAREST face of the model (`scan` = every
+ *  existing body) that `profileFace` meets travelling in the flip-adjusted
+ *  direction (`normal` × `sign`) — the "up to next" target. Directional (like
+ *  every CAD "up to next"): it only looks AHEAD, so the Flip toggle genuinely
+ *  reverses it and flipping toward empty space fails. The nearest face whose
+ *  footprint OVERLAPS the profile (in the plane perpendicular to the axis) is the
+ *  blocker; it must **fully cover** the profile's cross-section — like every CAD
+ *  "up to next", a face that only partially blocks the extrude is ambiguous and
+ *  is rejected with an error rather than silently extending the (infinite) face
+ *  plane across the uncovered part. The extrude CLIPS its prism at this plane, so
+ *  a tilted target face gives a conforming (angled) result. Scans all bodies (not
+ *  just the boolean target) so a boss can reach a separate wall. Throws when
+ *  nothing lies ahead or the blocker only partially covers. Planar faces only. */
+function upToNextFace(profileFace: Face, normal: Vector, sign: number, scan: Body[]): { point: Vec3; normal: Vec3 } {
+  const p = profileFace.center.toTuple();
+  const nu = normal.normalized().toTuple();
+  const n: Vec3 = [nu[0] * sign, nu[1] * sign, nu[2] * sign];
+  const EPS = 1e-4; // ignore the profile's own (coincident) start face
+  const TOL = 1e-3;
+  // Two axes spanning the plane perpendicular to n, for the cross-section test.
+  const u = v3unit(v3cross(n, Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]));
+  const v = v3unit(v3cross(n, u));
+  const pB = profileFace.boundingBox.bounds;
+  const [pu0, pu1] = projectBounds(pB, u);
+  const [pv0, pv1] = projectBounds(pB, v);
+  const overlaps = (a0: number, a1: number, b0: number, b1: number) => a0 <= b1 + TOL && b0 <= a1 + TOL;
+  const contains = (in0: number, in1: number, out0: number, out1: number) => out0 - TOL <= in0 && in1 <= out1 + TOL;
+  let best = Infinity; // nearest OVERLAPPING face ahead (the blocker), covering or not
+  let bestFace: { point: Vec3; normal: Vec3 } | null = null;
+  let bestCovers = false;
+  for (const t of scan) {
+    for (const f of t.shape.faces) {
+      const m = f.normalAt(f.center).normalized().toTuple() as Vec3;
+      const denom = v3dot(n, m);
+      if (Math.abs(denom) < 1e-7) continue; // axis parallel to this face's plane
+      const q = f.center.toTuple() as Vec3;
+      const len = ((q[0] - p[0]) * m[0] + (q[1] - p[1]) * m[1] + (q[2] - p[2]) * m[2]) / denom;
+      if (len <= EPS || len >= best) continue; // behind / coincident / not closer
+      const fB = f.boundingBox.bounds;
+      const [fu0, fu1] = projectBounds(fB, u);
+      const [fv0, fv1] = projectBounds(fB, v);
+      if (!overlaps(pu0, pu1, fu0, fu1) || !overlaps(pv0, pv1, fv0, fv1)) continue; // not in the path
+      best = len;
+      bestFace = { point: q, normal: m };
+      bestCovers = contains(pu0, pu1, fu0, fu1) && contains(pv0, pv1, fv0, fv1);
+    }
+  }
+  if (!bestFace) {
+    throw new Error("up to next: no body face lies ahead of the profile in this direction — try Flip direction");
+  }
+  if (!bestCovers) {
+    throw new Error(
+      "up to next: the next face only partially covers the profile — it doesn't fully block the extrude. Use a smaller profile, extent \"up to face\", or a blind distance.",
+    );
+  }
+  return bestFace;
+}
+
 /** The signed prism length(s) to build for a given extent — one length for
  *  "blind"/"throughAll", two (equal and opposite) for "symmetric" whose union
  *  is fused into the final tool. "throughAll" only has a target to size
@@ -1252,15 +1371,30 @@ function buildBodies(
         const face = faces[0]; // representative for through-all / up-to-face sizing
 
         const sign = dirFlip ? -1 : 1;
-        // "Up to face" derives its own signed length (and direction) from the
-        // chosen target face's plane, so it bypasses the Flip/sign handling.
+        // "Up to face/next" build a deliberately LONG prism and then CUT it flush
+        // with the target face's plane (`clip`), so a target that isn't
+        // perpendicular to the extrude axis yields a conforming (angled) top
+        // rather than a flat approximation. "Up to face" derives its own
+        // direction from the chosen face (ignoring Flip); "up to next" uses the
+        // Flip-adjusted direction.
         let lengths: number[];
+        let clip: ClipPlane | null = null;
         if (extent === "upToFace" && feature.upTo) {
           const upBody = requireBody(bodies, feature.upTo.sourceId);
           const up = bodyProfileFace(
             upBody, feature.upTo.faceName, feature.upTo.center, feature.upTo.normal, warn, "up-to face",
           );
-          lengths = [upToFaceLength(face, normal, up.face, up.normal)];
+          const t = upToFaceLength(face, normal, up.face, up.normal); // signed, validates reachability
+          const reach = bigReach(face, bodies);
+          lengths = [(t >= 0 ? 1 : -1) * reach];
+          clip = makeClipPlane(up.face.center.toTuple() as Vec3, up.normal.normalized().toTuple() as Vec3, normal, t >= 0 ? 1 : -1, reach);
+        } else if (extent === "upToNext") {
+          // Scan every existing body (the model so far), not just the boolean
+          // target, so a boss can stop at a separate wall ahead of it.
+          const tgt = upToNextFace(face, normal, sign, bodies);
+          const reach = bigReach(face, bodies);
+          lengths = [sign * reach];
+          clip = makeClipPlane(tgt.point, tgt.normal, normal, sign, reach);
         } else {
           lengths = extrudeLengths(extent, distance, face, targets).map((l) => l * sign);
         }
@@ -1276,7 +1410,15 @@ function buildBodies(
           const prefix = faces.length > 1 ? `${feature.id}/g${gi}` : feature.id;
           let glyph: NamedShape | null = null;
           for (const len of lengths) {
-            const piece = prismFromFace(faces[gi], normal, len, prefix);
+            let piece = prismFromFace(faces[gi], normal, len, prefix);
+            // Up to face/next: trim the long prism flush with the target plane.
+            if (clip) {
+              const box = halfSpaceBox(clip.point, clip.normal, clip.boxSize);
+              const trimmed = booleanNamed("cut", piece, { shape: box, names: new Map() });
+              piece.shape.delete();
+              box.delete();
+              piece = trimmed;
+            }
             if (glyph === null) {
               glyph = piece;
             } else {
@@ -1300,6 +1442,9 @@ function buildBodies(
         const toolInputKeys: string[] = [];
         if (profile.kind === "bodyFace") toolInputKeys.push(keyOf(profile.sourceId));
         if (extent === "upToFace" && feature.upTo) toolInputKeys.push(keyOf(feature.upTo.sourceId));
+        // "Up to next" sizes the tool against the whole model, so fold in every
+        // scanned body's key — the ghost/tool must re-solve when any of them moves.
+        if (extent === "upToNext") for (const b of bodies) toolInputKeys.push(b.key);
         const toolKey = contentKey(feature, toolInputKeys);
 
         if (feature.previewTool) {

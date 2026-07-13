@@ -21,11 +21,14 @@ import {
   addPlane,
   addRevolve,
   addSketch,
+  addSketchConstraints,
   addSweep,
   addSketchEntities,
   addTransform,
   addVariable,
   genId,
+  removeSketchConstraint,
+  setSketchEntities,
   makeFeature,
   removeFeature,
   renameFeature,
@@ -39,19 +42,23 @@ import {
   validateVariableNames,
 } from "../document/document";
 import { detectSketchRegions } from "../document/regions";
-import { applyDerived } from "../document/derived";
+import { applyDerived, applyDerivedToSketch } from "../document/derived";
+import { evaluateExpression } from "../document/expression";
+import { solveSketch } from "../sketch/solver";
 import {
   deriveFaceFrame,
   planeRefLabel,
   type SketchPlaneId,
   type SketchPlaneRef,
 } from "../document/planes";
-import type { Document, EdgeRef, ExtrudeProfile, Feature, PatternAxisRef, PatternDirRef, PointRef, PrimitiveFeature, RevolveAxis, Variable, Vec2 } from "../document/types";
+import type { DistanceRef, Document, EdgeRef, ExtrudeProfile, Feature, PatternAxisRef, PatternDirRef, PointRef, PrimitiveFeature, RevolveAxis, SketchConstraint, SketchEntity, SketchFeature, Variable, Vec2 } from "../document/types";
 import { listMeta } from "../storage/db";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 import type { Selection, ViewName } from "../viewport/Viewport";
 import {
   expandEntities,
+  type ConstraintSpec,
+  type DimensionSpec,
   type Operation,
   type DocumentListing,
   type OpResult,
@@ -269,6 +276,206 @@ function requireFeature(doc: Document, id: string): Feature {
   return f;
 }
 
+// --- Sketch constraint/dimension resolution -------------------------------
+
+function requireSketch(doc: Document, id: string): SketchFeature {
+  const f = doc.features.find((x) => x.id === id);
+  if (!f) throw new OpError("not_found", `No sketch "${id}".`);
+  if (f.type !== "sketch") throw new OpError("invalid_op", `Feature "${id}" is not a sketch.`);
+  return f;
+}
+
+/** Find a constrainable sketch entity by id. Derived (offset/mirror/project)
+ *  output isn't editable/constrainable — it's driven by its source — so it's
+ *  rejected here like the UI does. */
+function requireEntity(sk: SketchFeature, id: string): SketchEntity {
+  const e = sk.entities.find((x) => x.id === id);
+  if (!e) throw new OpError("not_found", `No entity "${id}" in sketch "${sk.id}".`);
+  if (e.derivedFrom) throw new OpError("invalid_op", `Entity "${id}" is derived (driven) — not constrainable.`);
+  return e;
+}
+
+function requireLine(sk: SketchFeature, id: string, role: string): SketchEntity {
+  const e = requireEntity(sk, id);
+  if (e.type !== "line") throw new OpError("invalid_op", `${role} "${id}" must be a line (is ${e.type}).`);
+  return e;
+}
+
+function requireCircular(sk: SketchFeature, id: string, role: string): SketchEntity {
+  const e = requireEntity(sk, id);
+  if (e.type !== "circle" && e.type !== "arc") {
+    throw new OpError("invalid_op", `${role} "${id}" must be a circle or arc (is ${e.type}).`);
+  }
+  return e;
+}
+
+type PointRefSpec = { entityId: string; at: "a" | "b" | "c" } | { origin: true };
+
+/** Map an agent point-ref spec to the document PointRef, validating the vertex
+ *  makes sense for the entity ("a"/"b" ends need a line/arc; "c" needs a
+ *  circle/arc/point). */
+function resolvePointRef(sk: SketchFeature, spec: PointRefSpec): PointRef {
+  if ("origin" in spec) return { origin: true };
+  const e = requireEntity(sk, spec.entityId);
+  const ok =
+    spec.at === "c"
+      ? e.type === "circle" || e.type === "arc" || e.type === "point"
+      : e.type === "line" || e.type === "arc";
+  if (!ok) {
+    throw new OpError("invalid_op", `Point "${spec.at}" isn't a vertex of ${e.type} "${spec.entityId}".`);
+  }
+  return { entity: spec.entityId, at: spec.at };
+}
+
+/** Map an agent distance-ref spec (one side of a distance dimension) to the
+ *  document DistanceRef, validating the referenced entity's kind. */
+function resolveDistanceRef(
+  sk: SketchFeature,
+  spec: { on: "point"; point: PointRefSpec } | { on: "line"; entity: string } | { on: "rim"; entity: string },
+): DistanceRef {
+  if (spec.on === "point") return { on: "point", ref: resolvePointRef(sk, spec.point) };
+  if (spec.on === "line") {
+    requireLine(sk, spec.entity, "distance line");
+    return { on: "line", entity: spec.entity };
+  }
+  requireCircular(sk, spec.entity, "distance rim");
+  return { on: "rim", entity: spec.entity };
+}
+
+/** Build a geometric SketchConstraint from the agent spec, validating that the
+ *  referenced entities exist and are compatible with the constraint. */
+function buildGeoConstraint(sk: SketchFeature, spec: ConstraintSpec): SketchConstraint {
+  const id = genId();
+  switch (spec.kind) {
+    case "horizontal":
+    case "vertical":
+      requireLine(sk, spec.entity, "entity");
+      return { id, type: spec.kind, entity: spec.entity };
+    case "parallel":
+    case "perpendicular":
+      requireLine(sk, spec.a, "a");
+      requireLine(sk, spec.b, "b");
+      return { id, type: spec.kind, a: spec.a, b: spec.b };
+    case "equal": {
+      const a = requireEntity(sk, spec.a);
+      const b = requireEntity(sk, spec.b);
+      const lineLike = (e: SketchEntity) => e.type === "line";
+      const circLike = (e: SketchEntity) => e.type === "circle" || e.type === "arc";
+      if (!((lineLike(a) && lineLike(b)) || (circLike(a) && circLike(b)))) {
+        throw new OpError("invalid_op", "equal needs two lines (equal length) or two circles/arcs (equal radius).");
+      }
+      return { id, type: "equal", a: spec.a, b: spec.b };
+    }
+    case "tangent": {
+      const a = requireEntity(sk, spec.a);
+      const b = requireEntity(sk, spec.b);
+      const circLike = (e: SketchEntity) => e.type === "circle" || e.type === "arc";
+      const ok = (circLike(a) && circLike(b)) || (a.type === "line" && circLike(b)) || (circLike(a) && b.type === "line");
+      if (!ok) throw new OpError("invalid_op", "tangent needs a line + circle/arc, or two circles/arcs.");
+      return { id, type: "tangent", a: spec.a, b: spec.b };
+    }
+    case "coincident":
+      return { id, type: "coincident", a: resolvePointRef(sk, spec.a), b: resolvePointRef(sk, spec.b) };
+    case "pointOnLine":
+      requireLine(sk, spec.line, "line");
+      return { id, type: "pointOnLine", point: resolvePointRef(sk, spec.point), line: spec.line };
+    case "midpoint": {
+      const t = requireEntity(sk, spec.target);
+      if (t.type !== "line" && t.type !== "arc") {
+        throw new OpError("invalid_op", `midpoint target "${spec.target}" must be a line or arc (is ${t.type}).`);
+      }
+      return { id, type: "midpoint", point: resolvePointRef(sk, spec.point), target: spec.target };
+    }
+  }
+}
+
+/** Build a dimensional SketchConstraint, evaluating `value` (number or variable
+ *  expression) to a number against the document scope and range-checking it. */
+function buildDimension(sk: SketchFeature, spec: DimensionSpec, scope: Record<string, number>): SketchConstraint {
+  const id = genId();
+  let value: number;
+  try {
+    value = evaluateExpression(String(spec.value), scope);
+  } catch (e) {
+    throw new OpError("invalid_op", `Couldn't evaluate value "${spec.value}": ${(e as Error).message}`);
+  }
+  if (!Number.isFinite(value)) throw new OpError("invalid_op", `Value "${spec.value}" isn't a finite number.`);
+  const requirePositive = () => {
+    if (value <= 0) throw new OpError("invalid_op", `${spec.kind} must be > 0 (got ${value}).`);
+  };
+  switch (spec.kind) {
+    case "length":
+      requireLine(sk, spec.entity, "entity");
+      requirePositive();
+      return { id, type: "distance", entity: spec.entity, value };
+    case "radius":
+      requireCircular(sk, spec.entity, "entity");
+      requirePositive();
+      return { id, type: "radius", entity: spec.entity, value };
+    case "angle":
+      requireLine(sk, spec.a, "a");
+      requireLine(sk, spec.b, "b");
+      if (value < 0 || value >= 180) throw new OpError("invalid_op", `angle must be in [0, 180) degrees (got ${value}).`);
+      return { id, type: "angle", a: spec.a, b: spec.b, value };
+    case "distance": {
+      const a = resolveDistanceRef(sk, spec.a);
+      const b = resolveDistanceRef(sk, spec.b);
+      requirePositive();
+      return { id, type: "distanceBetween", a, b, value };
+    }
+  }
+}
+
+/** Add `constraint` to the sketch, re-solve, and either return the solved
+ *  document or throw — mirroring the UI's commitConstraint/applyDimension
+ *  guardrails so the agent gets the same behaviour: reject a solve throw, a
+ *  conflict / failed solve, a collapsed (near-zero) line, or a constraint the
+ *  solver flags as already-implied (redundant). */
+async function addConstraintSolved(
+  doc: Document,
+  sketchId: string,
+  constraint: SketchConstraint,
+  label: string,
+): Promise<Document> {
+  const scope = resolveDocument(doc).scope;
+  const candidate = addSketchConstraints(doc, sketchId, [constraint]);
+  const sk = candidate.features.find((f) => f.id === sketchId);
+  if (sk?.type !== "sketch") throw new OpError("not_found", `No sketch "${sketchId}".`);
+  let res: Awaited<ReturnType<typeof solveSketch>>;
+  try {
+    res = await solveSketch(sk.entities, sk.constraints);
+  } catch {
+    throw new OpError("invalid_op", `${label} couldn't be solved — not applied.`);
+  }
+  const solved = applyDerivedToSketch(setSketchEntities(candidate, sketchId, res.entities), sketchId, scope);
+  const solvedSk = solved.features.find((f) => f.id === sketchId);
+  const degenerate =
+    solvedSk?.type === "sketch" &&
+    solvedSk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
+  if (res.hasConflicts || res.status >= 2 || degenerate) {
+    const culprits = [
+      ...new Set(
+        res.conflictingIds
+          .filter((cid) => cid !== constraint.id)
+          .map((cid) => sk.constraints.find((c) => c.id === cid)?.type)
+          .filter((t): t is NonNullable<typeof t> => !!t),
+      ),
+    ];
+    throw new OpError(
+      "invalid_op",
+      culprits.length
+        ? `${label} conflicts with existing constraints (${culprits.join(", ")}) — not applied. Remove one with remove_constraint first.`
+        : `${label} can't be satisfied with the existing constraints — not applied.`,
+    );
+  }
+  // planegcs naming the NEW constraint as redundant is precise (unlike a
+  // pre-existing redundant), so reject only that case.
+  if (res.redundantIds.includes(constraint.id)) {
+    throw new OpError("invalid_op", `${label} is already implied by the existing constraints — not added.`);
+  }
+  return solved;
+}
+
 // --- Apply ----------------------------------------------------------------
 
 /** Apply one Operation. Resolves to a structured result; throws nothing (errors
@@ -303,6 +510,29 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         if (op.name) d = renameFeature(d, r.id, op.name);
         next = d;
         createdId = r.id;
+        break;
+      }
+      case "addConstraint": {
+        const sk = requireSketch(doc, op.sketchId);
+        const constraint = buildGeoConstraint(sk, op.constraint);
+        next = await addConstraintSolved(doc, op.sketchId, constraint, op.constraint.kind);
+        createdId = constraint.id;
+        break;
+      }
+      case "addDimension": {
+        const sk = requireSketch(doc, op.sketchId);
+        const constraint = buildDimension(sk, op.dimension, resolveDocument(doc).scope);
+        next = await addConstraintSolved(doc, op.sketchId, constraint, op.dimension.kind);
+        createdId = constraint.id;
+        break;
+      }
+      case "removeConstraint": {
+        const sk = requireSketch(doc, op.sketchId);
+        if (!sk.constraints.some((c) => c.id === op.constraintId)) {
+          throw new OpError("not_found", `No constraint "${op.constraintId}" in sketch "${op.sketchId}".`);
+        }
+        next = removeSketchConstraint(doc, op.sketchId, op.constraintId);
+        createdId = op.constraintId;
         break;
       }
       case "addExtrude": {
@@ -703,6 +933,38 @@ const uniqueNames = (groups?: { name?: string }[]): string[] =>
 
 /** Compact, LLM-first digest — the agent's primary planning input. Small and
  *  semantic (named faces/edges, region ids, variables), not raw geometry. */
+/** The entity ids a constraint touches (a point ref → its entity id, or the
+ *  literal "origin"), for the scene summary. */
+function pointRefId(r: PointRef): string {
+  return "origin" in r ? "origin" : r.entity;
+}
+function distanceRefIds(r: DistanceRef): string[] {
+  return r.on === "point" ? [pointRefId(r.ref)] : [r.entity];
+}
+function constraintRefIds(c: SketchConstraint): string[] {
+  switch (c.type) {
+    case "horizontal":
+    case "vertical":
+    case "distance":
+    case "radius":
+      return [c.entity];
+    case "parallel":
+    case "perpendicular":
+    case "equal":
+    case "angle":
+    case "tangent":
+      return [c.a, c.b];
+    case "distanceBetween":
+      return [...distanceRefIds(c.a), ...distanceRefIds(c.b)];
+    case "coincident":
+      return [pointRefId(c.a), pointRefId(c.b)];
+    case "pointOnLine":
+      return [pointRefId(c.point), c.line];
+    case "midpoint":
+      return [pointRefId(c.point), c.target];
+  }
+}
+
 export function getSceneSummary(ctx: AgentContext): SceneSummary {
   const doc = ctx.getDoc();
   const meshes = ctx.getMeshes();
@@ -748,6 +1010,12 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
           ...(e.derivedFrom ? { derived: true } : {}),
         })),
         regions: detectSketchRegions(ds.entities).map((r) => ({ id: r.id, area: r.area })),
+        constraints: s.constraints.map((c) => ({
+          id: c.id,
+          type: c.type,
+          refs: constraintRefIds(c),
+          ...("value" in c ? { value: c.value } : {}),
+        })),
       };
     });
 
