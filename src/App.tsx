@@ -589,15 +589,9 @@ function fittedToEntity(f: FittedProjection, id = genId()): SketchEntity {
   }
 }
 
-const VIEW_BUTTONS: { name: ViewName; label: string }[] = [
-  { name: "top", label: "Top" },
-  { name: "front", label: "Front" },
-  { name: "right", label: "Right" },
-  { name: "back", label: "Back" },
-  { name: "left", label: "Left" },
-  { name: "bottom", label: "Bottom" },
-  { name: "iso", label: "Iso" },
-];
+// Order backs the 1-7 keyboard shortcuts for named views (the on-canvas
+// gizmo handles mouse clicks — see Viewport.tsx).
+const VIEW_KEYS: ViewName[] = ["top", "front", "right", "back", "left", "bottom", "iso"];
 
 function initialDocument(): Document {
   // Seed with one box so there is something on screen on first load.
@@ -1202,7 +1196,7 @@ export default function App() {
     const tb = modelToolbarRef.current;
     const vc = viewControlsRef.current;
     if (!tb || !vc) return;
-    const TOP = 12; // matches the CSS resting top of both toolbars
+    const TOP = 148; // matches the CSS resting top: clears the on-canvas gizmo (12 margin + 128 gizmo + 8 gap)
     const GAP = 8;
     const measure = () => {
       const t = tb.getBoundingClientRect();
@@ -2864,13 +2858,14 @@ export default function App() {
       }
       if (e.metaKey || e.ctrlKey) return; // leave other OS/browser chords alone
 
-      // Standard views: the view-controls bar is visible (and clickable) in
-      // both modeling and sketch mode, so digits 1-7 work in both — letters
-      // were deliberately avoided here (they'd collide with modeling-toolbar
-      // actions live in the same context: T-op/T-ransform, F-ront/F-illet...).
+      // Standard views: the on-canvas gizmo covers these by click, but digits
+      // 1-7 remain a keyboard shortcut in both modeling and sketch mode —
+      // letters were deliberately avoided here (they'd collide with
+      // modeling-toolbar actions live in the same context: T-op/T-ransform,
+      // F-ront/F-illet...).
       if (/^[1-7]$/.test(e.key)) {
-        const v = VIEW_BUTTONS[Number(e.key) - 1];
-        if (v) viewApiRef.current?.setView(v.name);
+        const v = VIEW_KEYS[Number(e.key) - 1];
+        if (v) viewApiRef.current?.setView(v);
         return;
       }
 
@@ -5561,20 +5556,18 @@ export default function App() {
             />
           )}
           {editingSketch && sketchMsg && <div className="sketch-msg" role="alert">⚠ {sketchMsg}</div>}
+          {/* Named views (Top/Front/Right/…) live on the on-canvas navigation
+              gizmo now (see Viewport.tsx); this bar just holds what the gizmo
+              doesn't cover — the Iso/home shortcut and the projection toggle
+              (interim home until it moves into a settings menu). */}
           <div
             className="view-controls"
             ref={viewControlsRef}
             style={viewControlsTop != null ? { top: viewControlsTop } : undefined}
           >
-            {VIEW_BUTTONS.map((v, i) => (
-              <button
-                key={v.name}
-                title={`${v.label} (${i + 1})`}
-                onClick={() => viewApiRef.current?.setView(v.name)}
-              >
-                {v.label}
-              </button>
-            ))}
+            <button title="Iso view (7)" onClick={() => viewApiRef.current?.setView("iso")}>
+              Iso
+            </button>
             <label className="proj-toggle" title="Perspective projection (off = orthographic: parallel, no foreshortening — good for aligning to edges)">
               <input
                 type="checkbox"

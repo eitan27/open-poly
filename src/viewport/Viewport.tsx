@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
+import { ViewHelper } from "three/examples/jsm/helpers/ViewHelper.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
@@ -404,6 +405,17 @@ const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, numb
   iso: { dir: [1, -1, 0.8], up: [0, 0, 1] },
 };
 
+// three.js's ViewHelper always labels its six pickable spheres by world axis
+// (±X/±Y/±Z), regardless of which axis the app treats as "up" — this scene is
+// Z-up, so the mapping to our named views isn't alphabetical.
+const GIZMO_AXIS_VIEW: Record<string, ViewName> = {
+  posX: "right", negX: "left",
+  posY: "back", negY: "front",
+  posZ: "top", negZ: "bottom",
+};
+const GIZMO_DIM = 128; // matches ViewHelper's internal (unconfigurable) size
+const GIZMO_MARGIN = 12;
+
 export function Viewport({
   meshes,
   ghostMeshes,
@@ -606,6 +618,15 @@ export function Viewport({
     };
     controls.target.set(0, 0, 0);
     controls.update();
+
+    // On-canvas navigation gizmo (replaces the old view-buttons row): a small
+    // axis widget drawn into the corner of this same WebGL canvas. Its own
+    // click→camera animation assumes a Y-up world, which would roll the
+    // front/back/left/right views wrong in this Z-up scene — so it's used
+    // purely as the visual widget + hit target; clicks are re-raycast below
+    // and routed through the existing `goToView` tween instead.
+    let viewHelper = new ViewHelper(camera, renderer.domElement);
+    viewHelper.location = { top: GIZMO_MARGIN, right: GIZMO_MARGIN, bottom: 0, left: null };
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.65));
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
@@ -994,6 +1015,33 @@ export function Viewport({
       state.tween = { from: camera.position.clone(), to, up, start: performance.now() };
       controls.target.copy(target);
     };
+    const goToView = (name: ViewName) => {
+      const v = VIEWS[name];
+      const to = new THREE.Vector3(...v.dir).normalize().multiplyScalar(VIEW_DISTANCE);
+      startTween(to, new THREE.Vector3(...v.up), new THREE.Vector3(0, 0, 0));
+    };
+    // Hit-test the gizmo's six pickable spheres. Re-raycasts against
+    // ViewHelper's own children rather than calling its handleClick (which
+    // would also kick off its Y-up-assuming internal camera animation) so the
+    // resulting view goes through `goToView` and matches the named-view
+    // buttons' up-vectors exactly.
+    const gizmoRaycaster = new THREE.Raycaster();
+    const gizmoOrthoCam = new THREE.OrthographicCamera(-2, 2, 2, -2, 0, 4);
+    gizmoOrthoCam.position.set(0, 0, 2);
+    gizmoOrthoCam.updateMatrixWorld(true); // static camera, never re-added to a scene graph
+    const gizmoAxisAt = (clientX: number, clientY: number): string | null => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const loc = viewHelper.location;
+      const offsetX = loc.left !== null ? rect.left + loc.left : rect.left + renderer.domElement.offsetWidth - GIZMO_DIM - loc.right;
+      const offsetY = loc.top !== null ? rect.top + loc.top : rect.top + renderer.domElement.offsetHeight - GIZMO_DIM - loc.bottom;
+      const lx = clientX - offsetX;
+      const ly = clientY - offsetY;
+      if (lx < 0 || lx > GIZMO_DIM || ly < 0 || ly > GIZMO_DIM) return null;
+      gizmoRaycaster.setFromCamera(new THREE.Vector2((lx / GIZMO_DIM) * 2 - 1, -(ly / GIZMO_DIM) * 2 + 1), gizmoOrthoCam);
+      const targets = viewHelper.children.filter((c) => c.userData.type);
+      const hit = gizmoRaycaster.intersectObjects(targets)[0];
+      return (hit?.object.userData.type as string | undefined) ?? null;
+    };
     // --- Body-edge lookup (shared by the Project/Convert tool's id- and
     // name-based edge queries). Edge groups carry a build-local `edgeId` and a
     // persistent `name`; the LineSegments buffer is consecutive world-space pairs
@@ -1026,9 +1074,7 @@ export function Viewport({
     };
     apiRef.current = {
       setView(name) {
-        const v = VIEWS[name];
-        const to = new THREE.Vector3(...v.dir).normalize().multiplyScalar(VIEW_DISTANCE);
-        startTween(to, new THREE.Vector3(...v.up), new THREE.Vector3(0, 0, 0));
+        goToView(name);
       },
       setProjection(mode) {
         const isOrtho = (camera as THREE.OrthographicCamera).isOrthographicCamera === true;
@@ -1062,6 +1108,11 @@ export function Viewport({
         (transformControls as unknown as { camera: THREE.Camera }).camera = next;
         state.camera = next;
         controls.update();
+        // ViewHelper captures its camera by closure at construction time, so
+        // swapping the projection needs a fresh instance to track the new one.
+        viewHelper.dispose();
+        viewHelper = new ViewHelper(camera, renderer.domElement);
+        viewHelper.location = { top: GIZMO_MARGIN, right: GIZMO_MARGIN, bottom: 0, left: null };
       },
       lookAtFrame(frame) {
         const origin = new THREE.Vector3(...frame.origin);
@@ -1525,6 +1576,10 @@ export function Viewport({
         }
         return;
       }
+      if (gizmoAxisAt(e.clientX, e.clientY)) {
+        renderer.domElement.style.cursor = "pointer";
+        return;
+      }
       // Selection (hover) is active when idle OR editing a sketch with the Select
       // tool. Drop a stale hover when neither applies.
       const selecting =
@@ -1690,6 +1745,19 @@ export function Viewport({
       // set and toggles the element off if it is already selected.
       onSelectRef.current(pickSelection(e.clientX, e.clientY), snappedUvAt(e.clientX, e.clientY));
     };
+    // Capture-phase so a gizmo click is claimed before OrbitControls' own
+    // pointerdown listener (attached when it was constructed, earlier in
+    // registration order) can start a rotate drag from the same press.
+    const onGizmoDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const type = gizmoAxisAt(e.clientX, e.clientY);
+      const name = type ? GIZMO_AXIS_VIEW[type] : undefined;
+      if (!name) return;
+      e.stopPropagation();
+      e.preventDefault();
+      goToView(name);
+    };
+    renderer.domElement.addEventListener("pointerdown", onGizmoDown, true);
     renderer.domElement.addEventListener("pointermove", onMove);
     renderer.domElement.addEventListener("pointerdown", onDown);
     renderer.domElement.addEventListener("pointerup", onUp);
@@ -1734,6 +1802,7 @@ export function Viewport({
       }
       controls.update();
       renderer.render(scene, camera);
+      viewHelper.render(renderer);
       frame = requestAnimationFrame(animate);
     };
     animate();
@@ -1741,9 +1810,11 @@ export function Viewport({
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      renderer.domElement.removeEventListener("pointerdown", onGizmoDown, true);
       renderer.domElement.removeEventListener("pointermove", onMove);
       renderer.domElement.removeEventListener("pointerdown", onDown);
       renderer.domElement.removeEventListener("pointerup", onUp);
+      viewHelper.dispose();
       controls.dispose();
       transformControls.detach();
       transformControls.dispose();

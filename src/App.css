@@ -952,12 +952,14 @@
   pointer-events: none;
 }
 
+/* Named views live on the on-canvas gizmo (top-right, 128px); this bar sits
+   just below it and holds only what the gizmo doesn't cover. */
 .view-controls {
   position: absolute;
-  top: 12px;
+  top: 148px;
   right: 12px;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 4px;
   padding: 6px;
   background: rgba(24, 26, 32, 0.82);
@@ -982,9 +984,9 @@
   border-color: #4f8cff;
 }
 
-/* Perspective/orthographic toggle — sits next to Iso on the bottom row. */
+/* Perspective/orthographic toggle — interim home until it moves into a
+   settings menu. */
 .proj-toggle {
-  grid-column: span 2;
   display: flex;
   align-items: center;
   justify-content: center;
