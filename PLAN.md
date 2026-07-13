@@ -434,8 +434,17 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   - **End condition / extent** (a **dropdown**): ✅ **Blind** (expression-backed
     distance), ✅ **Symmetric**, ✅ **Through-all** (**remove/cut only** —
     bbox-sized tool clipped by the boolean; the option is hidden for new/add),
-    ✅ **Up-to-face** (stop at a chosen planar face's plane — backlog #3).
-    *(Up-to-next: still TODO.)*
+    ✅ **Up-to-face** (stop at a chosen planar face — backlog #3),
+    ✅ **Up-to-next** (any mode, like up-to-face; stops at the nearest face of the
+    model ahead in the flip-adjusted direction that the profile runs into —
+    plane-crossing distance + perpendicular bbox overlap over every body's planar
+    faces; directional so Flip genuinely reverses it, distance ignored; errors if
+    nothing lies ahead that way, OR — like every CAD — if the next face only
+    PARTIALLY covers the profile rather than fully blocking it). **Both up-to-face and
+    up-to-next CONFORM to the target face** (a long prism cut flush with the
+    face's plane via an oriented half-space box), so a target that isn't
+    perpendicular to the extrude axis yields an angled/matching top rather than a
+    flat approximation.
   - **Dialog:** ✅ anchored mini-dialog (mode + target + extent + distance +
     flip). **Live ghost preview — ✅ DONE:** the dialog regenerates a throwaway
     doc and renders the **swept tool only** (the changing portion) as a
@@ -1032,16 +1041,18 @@ geometry, so generated edges are referenceable/extrudable). **Project/Convert ha
 no agent op yet** — it's UI-only because its persistent-edge-name capture +
 post-rebuild reprojection loop doesn't map onto a one-shot document op; the guide
 tells the agent to reference faces/edges directly instead. **Explicit sketch
-constraints + dimensions are UI-only too** — there is no `add_constraint` /
-`add_dimension` agent op yet, so agent sketches are unconstrained exact-coordinate
-geometry and the guide steers the agent to precise coords + variable-driven
-*feature* params. **Backlog (agent constraints):** expose the geometric set the
-UI supports (horizontal/vertical/parallel/perpendicular/equal/tangent) via an
-`add_constraint` op, and — higher value for parametrics — an `add_dimension` op
-whose `value` accepts a variable/expression (distance/radius/angle). Coincident /
-point-on-line need a point-addressing scheme (entity vertex vs origin) and come
-later. **L4 (robustness: token auth, multi-tab, error taxonomy,
-list/open/new_document) is next.**
+constraints + dimensions — ✅ DONE (agent ops).** `add_constraint`
+(horizontal/vertical/parallel/perpendicular/equal/tangent/**coincident/
+pointOnLine/midpoint** — points addressed as `{entityId, at:"a"|"b"|"c"}` or
+`{origin:true}`), `add_dimension` (length/radius/angle/**distance** between two
+point/line/rim refs; `value` takes a number or a **variable expression**,
+evaluated to a number at apply time — a live re-link on later variable changes is
+the residual gap), and `remove_constraint`. Each re-solves and is **rejected**
+(with a culprit-naming message) on conflict / already-implied / collapse, mirroring
+the UI's commitConstraint/applyDimension guardrails; `get_scene_summary` now lists
+each sketch's constraints (id + type + touched entity ids + value). Derived and
+text entities aren't constrainable. **L4 (robustness: token auth, multi-tab, error
+taxonomy, list/open/new_document) is next.**
 
 **Goal.** Let a local LLM agent (Claude Desktop, Claude Code, Cursor, Cline, Zed,
 …) **drive the live Open Poly browser tab** — sketch, extrude, transform, arrange

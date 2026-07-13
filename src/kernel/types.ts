@@ -74,7 +74,7 @@ export type ExtrudeMode = "new" | "add" | "remove";
 /** How far an extrude reaches — see document/types.ts's ExtrudeExtent for the
  *  full description; mirrored here since the kernel doesn't import the
  *  document model. */
-export type ExtrudeExtent = "blind" | "symmetric" | "throughAll" | "upToFace";
+export type ExtrudeExtent = "blind" | "symmetric" | "throughAll" | "upToFace" | "upToNext";
 
 /** Resolved "up to face" target: the body (by id) and the face on it, found by
  *  persistent name (preferred) or geometric fingerprint inside the worker. */

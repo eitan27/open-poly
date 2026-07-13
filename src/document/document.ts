@@ -636,7 +636,7 @@ export function updateParam(
     if (f.type === "extrude") {
       if (name === "distance") return { ...f, distance: value };
       if (name === "flip") return { ...f, flip: value === "true" };
-      if (name === "extent" && (value === "blind" || value === "symmetric" || value === "throughAll" || value === "upToFace")) {
+      if (name === "extent" && (value === "blind" || value === "symmetric" || value === "throughAll" || value === "upToFace" || value === "upToNext")) {
         return { ...f, extent: value };
       }
       if (name === "mode" && (value === "new" || value === "add" || value === "remove")) {

@@ -199,10 +199,13 @@ export type ExtrudeMode = "new" | "add" | "remove";
 /** How far an extrude reaches: a fixed `distance` one way ("blind"), `distance`
  *  split evenly both ways of the profile ("symmetric"), far enough to fully
  *  clear the target body regardless of its shape ("throughAll" — add/remove
- *  only; a target-less extrude falls back to blind using `distance`), or up to
+ *  only; a target-less extrude falls back to blind using `distance`), up to
  *  the plane of a chosen target face ("upToFace" — the extrude's `upTo` face
- *  reference drives both the distance and direction; `distance`/`flip` ignored). */
-export type ExtrudeExtent = "blind" | "symmetric" | "throughAll" | "upToFace";
+ *  reference drives both the distance and direction; `distance`/`flip` ignored),
+ *  or up to the nearest face of the target body met travelling in the
+ *  flip-adjusted direction ("upToNext" — add/remove only; `flip` picks the
+ *  direction, `distance` ignored). */
+export type ExtrudeExtent = "blind" | "symmetric" | "throughAll" | "upToFace" | "upToNext";
 
 /** A planar face of an earlier body, used as the "up to face" extrude target.
  *  `faceName` is the persistent topological name (preferred, stable across
