@@ -857,6 +857,58 @@ function requireBody(bodies: Body[], id: string): Body {
   return b;
 }
 
+/** Merge coplanar planar faces (and collinear edges) of a body into single faces
+ *  — so an extrude/boolean that leaves a co-planar seam becomes one continuous
+ *  face instead of a black seam line. Applied at BUILD time (right where the body
+ *  is produced) so the build topology, the selectable/displayed geometry, and any
+ *  downstream feature references all stay consistent (e.g. a chamfer hits the
+ *  whole merged edge, not half). Names can't come from OCCT history
+ *  (BRepTools_History isn't in these bindings), so each unified face inherits the
+ *  nearest coplanar original named face — exact for unchanged faces, one of a
+ *  merged pair otherwise (deterministic, so stable across rebuilds). Returns null
+ *  if the upgrade fails (keep the original body). */
+function unifySameDomain(named: NamedShape): NamedShape | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  let shape: Shape3D;
+  try {
+    const unify = new oc.ShapeUpgrade_UnifySameDomain_2(named.shape.wrapped, true, true, false);
+    unify.Build();
+    shape = cast(unify.Shape()) as Shape3D;
+    unify.delete();
+  } catch {
+    return null;
+  }
+  const originals: { nm: string; c: Vec3; n: Vec3 }[] = [];
+  for (const f of named.shape.faces) {
+    const nm = named.names.get(f.hashCode);
+    if (nm) originals.push({ nm, c: f.center.toTuple() as Vec3, n: v3unit(f.normalAt(f.center).toTuple() as Vec3) });
+  }
+  const names = new Map<number, string>();
+  for (const uf of shape.faces) {
+    const c = uf.center.toTuple() as Vec3;
+    const n = v3unit(uf.normalAt(uf.center).toTuple() as Vec3);
+    let best: string | undefined;
+    let bestD = Infinity;
+    for (const o of originals) {
+      if (Math.abs(v3dot(o.n, n)) < 0.999) continue; // not coplanar-parallel
+      const dd = (o.c[0] - c[0]) ** 2 + (o.c[1] - c[1]) ** 2 + (o.c[2] - c[2]) ** 2;
+      if (dd < bestD) { bestD = dd; best = o.nm; }
+    }
+    if (best) names.set(uf.hashCode, best);
+  }
+  return { shape, names };
+}
+
+/** Unify a body's coplanar faces in place: returns the merged NamedShape (and
+ *  deletes the original), or the original unchanged if the upgrade failed. */
+function unifyBody(named: NamedShape): NamedShape {
+  const u = unifySameDomain(named);
+  if (!u) return named;
+  named.shape.delete();
+  return u;
+}
+
 /** Edge names are DERIVED from face names: an edge is the intersection of two
  *  faces, so its name is the sorted pair of their names (e.g. "id/+x∩id/+z").
  *  Stable wherever both adjacent faces are named. Returns hashCode -> name. */
@@ -1470,6 +1522,9 @@ function buildBodies(
               t.shape.delete();
               acc = next;
             }
+            // Merge co-planar faces the fuse left (e.g. stacking a taller section
+            // on a body) so there's no black seam line where the tool met the body.
+            acc = unifyBody(acc);
             const keepId = targets[0].id;
             const remaining = bodies.filter((b) => !targets.includes(b));
             bodies.length = 0;
@@ -1477,7 +1532,7 @@ function buildBodies(
           } else {
             // remove: cut the tool from each target in place, preserving ids.
             for (const t of targets) {
-              const next = booleanNamed("cut", t, built);
+              const next = unifyBody(booleanNamed("cut", t, built));
               t.shape.delete();
               t.shape = next.shape;
               t.names = next.names;
@@ -1504,7 +1559,9 @@ function buildBodies(
         // built (cheaply) and consumed below; only the boolean itself is skipped.
         const operandKeys = feature.operands.map(keyOf);
         const key = contentKey(feature, operandKeys);
-        const result = buildCached(key, used, () => combineBodies(feature.op, feature.operands, bodies));
+        // Unify inside the cached builder (so it runs only on a cache miss and the
+        // merged result is what's stored) — no black seam where operands met.
+        const result = buildCached(key, used, () => unifyBody(combineBodies(feature.op, feature.operands, bodies)));
         const operandSet = new Set(feature.operands);
         const remaining: Body[] = [];
         for (const b of bodies) {

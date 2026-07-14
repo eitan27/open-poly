@@ -423,6 +423,19 @@ const VIEWCUBE_FACES: { view: ViewName; label: string; normal: [number, number, 
   { view: "bottom", label: "BOTTOM", normal: [0, 0, -1], up: [0, 1, 0] },
 ];
 
+/** A tiny solid-colour sRGB texture — used for the corner nubs so they render
+ *  through the same path as the face backgrounds (identical gray). */
+function solidCubeTexture(color: string): THREE.CanvasTexture {
+  const c = document.createElement("canvas");
+  c.width = c.height = 2;
+  const g = c.getContext("2d")!;
+  g.fillStyle = color;
+  g.fillRect(0, 0, 2, 2);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /** A face label rendered to a canvas texture. `hover` swaps to an accent look. */
 function viewCubeFaceTexture(label: string, hover: boolean): THREE.CanvasTexture {
   const S = 128;
@@ -440,6 +453,10 @@ function viewCubeFaceTexture(label: string, hover: boolean): THREE.CanvasTexture
   g.textBaseline = "middle";
   g.fillText(label, S / 2, S / 2 + 1);
   const tex = new THREE.CanvasTexture(c);
+  // The canvas colours are authored in sRGB; tag the texture so they render as
+  // authored — matching the (also-sRGB) flat material colour of the corner nubs,
+  // so a nub is exactly the same gray as the face background it sits on.
+  tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
   return tex;
 }
@@ -500,17 +517,20 @@ function createViewCube(): ViewCube {
   }
 
   // A small nub at each of the 8 corners → the iso view looking down that corner's
-  // diagonal (camera position = the corner direction, Z-up). Coloured to match the
-  // faces (fill + hover tint) so they read as part of the cube, not loud dots.
-  const CORNER_NORMAL = 0x252a34; // = face background
-  const CORNER_HOVER = 0x2f3a52; // = face hover background
+  // diagonal (camera position = the corner direction, Z-up). They use the SAME
+  // solid-colour textures as the face backgrounds (not a flat material colour,
+  // which renders through a different colour-space path) so a nub is exactly the
+  // same gray as the face it sits on, hinting it's pressable without reading as a
+  // loud dot.
+  const cornerNormalTex = solidCubeTexture("#252a34"); // = face background
+  const cornerHoverTex = solidCubeTexture("#2f3a52"); // = face hover background
   const cornerGeom = new THREE.SphereGeometry(0.09, 16, 12);
-  disposables.push(cornerGeom);
+  disposables.push(cornerGeom, cornerNormalTex, cornerHoverTex);
   for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
-    const mat = new THREE.MeshBasicMaterial({ color: CORNER_NORMAL });
+    const mat = new THREE.MeshBasicMaterial({ map: cornerNormalTex });
     const nub = new THREE.Mesh(cornerGeom, mat);
     nub.position.set(sx * 0.5, sy * 0.5, sz * 0.5);
-    nub.userData = { hit: { dir: [sx, sy, sz], up: [0, 0, 1] } as CubeHit, kind: "corner", colorNormal: CORNER_NORMAL, colorHover: CORNER_HOVER };
+    nub.userData = { hit: { dir: [sx, sy, sz], up: [0, 0, 1] } as CubeHit, texNormal: cornerNormalTex, texHover: cornerHoverTex };
     group.add(nub);
     targets.push(nub);
     disposables.push(mat);
@@ -525,8 +545,8 @@ function createViewCube(): ViewCube {
     if (!obj) return;
     const ud = obj.userData;
     const mat = obj.material as THREE.MeshBasicMaterial;
-    if (ud.kind === "face") mat.map = on ? ud.texHover : ud.texNormal;
-    else mat.color.setHex(on ? ud.colorHover : ud.colorNormal);
+    // Faces and corner nubs both swap their (solid or labelled) texture on hover.
+    mat.map = on ? ud.texHover : ud.texNormal;
   };
   const setHovered = (obj: THREE.Mesh | null) => {
     if (obj === hovered) return;
