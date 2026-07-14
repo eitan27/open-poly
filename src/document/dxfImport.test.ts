@@ -116,6 +116,31 @@ describe("parseDxfToEntities", () => {
     expect(spline.points[spline.points.length - 1]).toEqual([expect.closeTo(4), expect.closeTo(0)]);
   });
 
+  it("welds sub-tolerance gaps so an exported outline chains into a closed loop", () => {
+    // A square drawn as 4 separate LINE segments whose shared corners are off by
+    // ~5e-4 (typical DXF export noise) — larger than region detection's 1e-4
+    // vertex merge, so without healing the loop stays open.
+    const src = dxf(
+      [0, "LINE"], [8, 0], [10, 0], [20, 0], [11, 100.0005], [21, 0],
+      [0, "LINE"], [8, 0], [10, 100], [20, 0.0004], [11, 100], [21, 100],
+      [0, "LINE"], [8, 0], [10, 100.0003], [20, 100], [11, 0], [21, 100.0006],
+      [0, "LINE"], [8, 0], [10, 0.0005], [20, 100], [11, 0.0002], [21, 0.0003],
+      // A degenerate near-zero-length segment that should be dropped.
+      [0, "LINE"], [8, 0], [10, 50], [20, 50], [11, 50.00001], [21, 50],
+    );
+    const { entities } = parseDxfToEntities(src);
+    expect(entities.filter((e) => e.type === "line")).toHaveLength(4); // degenerate dropped
+    // Every endpoint now coincides exactly with a neighbour — no open ends.
+    const k = (p: [number, number]) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+    const deg = new Map<string, number>();
+    for (const e of entities) {
+      if (e.type !== "line") continue;
+      deg.set(k(e.a), (deg.get(k(e.a)) ?? 0) + 1);
+      deg.set(k(e.b), (deg.get(k(e.b)) ?? 0) + 1);
+    }
+    expect([...deg.values()].every((d) => d === 2)).toBe(true);
+  });
+
   it("reports unsupported entity types instead of dropping them silently", () => {
     const src = dxf([0, "ELLIPSE"], [8, 0], [10, 0], [20, 0], [11, 5], [21, 0], [40, 0.5]);
     const { entities, skipped } = parseDxfToEntities(src);

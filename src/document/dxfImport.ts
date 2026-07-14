@@ -105,7 +105,69 @@ export function parseDxfToEntities(
     }
   }
 
-  return { entities, counts, skipped, warnings };
+  return { entities: healEndpoints(entities), counts, skipped, warnings };
+}
+
+/** Weld near-coincident endpoints and drop degenerate segments so an exported
+ *  outline — often thousands of separate LINE segments with sub-micron gaps —
+ *  chains into a closed loop that region detection can actually enclose. Without
+ *  this, tiny gaps (a few microns, below any real feature but above the region
+ *  detector's 1e-4 vertex-merge tolerance) leave the profile open and it can't
+ *  be extruded. Only line endpoints and spline end points are welded (arcs are
+ *  parametric); the tolerance is relative to the drawing size so it adapts to
+ *  any unit scale while staying orders of magnitude below real geometry. */
+export function healEndpoints(entities: SketchEntity[]): SketchEntity[] {
+  // Weld tolerance from the geometry's extent: large enough to close export
+  // noise, far smaller than the tiniest meaningful feature.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const see = (p: Vec2) => {
+    if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+    if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+  };
+  for (const e of entities) {
+    if (e.type === "line") { see(e.a); see(e.b); }
+    else if (e.type === "spline" && e.points.length) { see(e.points[0]); see(e.points[e.points.length - 1]); }
+  }
+  if (!Number.isFinite(minX)) return entities; // nothing weldable
+  const diag = Math.hypot(maxX - minX, maxY - minY);
+  const tol = Math.max(1e-4, diag * 1e-5);
+
+  // Snap each endpoint to a shared representative within `tol` (grid-bucketed,
+  // checking the 8 neighbour cells so points straddling a bucket edge still
+  // merge). Reps are the first point seen in each cluster.
+  const cells = new Map<string, Vec2[]>();
+  const snap = (p: Vec2): Vec2 => {
+    const cx = Math.round(p[0] / tol), cy = Math.round(p[1] / tol);
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++) {
+        const reps = cells.get(`${cx + dx},${cy + dy}`);
+        if (!reps) continue;
+        for (const r of reps) if (Math.hypot(r[0] - p[0], r[1] - p[1]) <= tol) return r;
+      }
+    const rep: Vec2 = [p[0], p[1]];
+    const k = `${cx},${cy}`;
+    const arr = cells.get(k);
+    if (arr) arr.push(rep); else cells.set(k, [rep]);
+    return rep;
+  };
+
+  const out: SketchEntity[] = [];
+  for (const e of entities) {
+    if (e.type === "line") {
+      const a = snap(e.a), b = snap(e.b);
+      if (Math.hypot(b[0] - a[0], b[1] - a[1]) < tol) continue; // collapsed → drop
+      out.push({ ...e, a: [a[0], a[1]], b: [b[0], b[1]] });
+    } else if (e.type === "spline" && e.points.length >= 2) {
+      const pts = e.points.map((p) => [p[0], p[1]] as Vec2);
+      const a = snap(pts[0]), b = snap(pts[pts.length - 1]);
+      pts[0] = [a[0], a[1]];
+      pts[pts.length - 1] = [b[0], b[1]];
+      out.push({ ...e, points: pts });
+    } else {
+      out.push(e);
+    }
+  }
+  return out;
 }
 
 /** Degrees → radians (DXF TEXT/MTEXT rotation is in degrees; our text stores
