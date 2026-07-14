@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type ReactNode } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import {
   addBoolean,
@@ -1182,39 +1182,9 @@ export default function App() {
     window.addEventListener("pointerdown", onDown);
     return () => window.removeEventListener("pointerdown", onDown);
   }, [constraintFlyoutOpen]);
-  // When the (left-anchored, horizontal) modeling toolbar grows wide enough to
-  // run under the (right-anchored) camera selector — e.g. once shortcut hints
-  // widen it, or on a narrow viewport — drop the camera selector below the
-  // toolbar so nothing is obstructed. Measured live because the trigger (toolbar
-  // width, viewport width) is dynamic.
-  const modelToolbarRef = useRef<HTMLDivElement>(null);
-  const viewControlsRef = useRef<HTMLDivElement>(null);
-  const [viewControlsTop, setViewControlsTop] = useState<number | null>(null);
-  // Camera projection: false = orthographic (default), true = perspective.
-  const [perspective, setPerspective] = useState(false);
-  useLayoutEffect(() => {
-    const tb = modelToolbarRef.current;
-    const vc = viewControlsRef.current;
-    if (!tb || !vc) return;
-    const TOP = 148; // matches the CSS resting top: clears the on-canvas gizmo (12 margin + 128 gizmo + 8 gap)
-    const GAP = 8;
-    const measure = () => {
-      const t = tb.getBoundingClientRect();
-      const v = vc.getBoundingClientRect();
-      // The selector is right-anchored, so its left/width don't depend on its
-      // own `top` — testing the toolbar's right edge against it is stable (no
-      // oscillation once we've moved the selector down).
-      const wouldOverlap = t.left + t.width + GAP > v.left;
-      const top = wouldOverlap ? TOP + t.height + GAP : TOP;
-      setViewControlsTop(top === TOP ? null : top);
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(tb);
-    ro.observe(vc);
-    window.addEventListener("resize", measure);
-    return () => { ro.disconnect(); window.removeEventListener("resize", measure); };
-  }, []);
+  // The camera projection toggle (orthographic ⇄ perspective) is TODO: it moves
+  // into a future settings menu. The viewport API (viewApiRef.setProjection) is
+  // still wired, so the menu can drive it; the default stays orthographic.
   // The Variables section is collapsible (to reclaim panel space). Default:
   // open for a short list (< 5 variables), collapsed for a long one so it
   // doesn't dominate the panel. Set from the loaded doc (see the restore effect)
@@ -4964,7 +4934,7 @@ export default function App() {
             selectionFilter={selFilter}
             apiRef={viewApiRef}
           />
-          <div className="model-toolbar" ref={modelToolbarRef}>
+          <div className="model-toolbar">
             <button
               title="Sketch (S): start a sketch — pick a plane or face"
               disabled={!!editingSketch || picking}
@@ -5556,31 +5526,21 @@ export default function App() {
             />
           )}
           {editingSketch && sketchMsg && <div className="sketch-msg" role="alert">⚠ {sketchMsg}</div>}
-          {/* Named views (Top/Front/Right/…) live on the on-canvas navigation
-              gizmo now (see Viewport.tsx); this bar just holds what the gizmo
-              doesn't cover — the Iso/home shortcut and the projection toggle
-              (interim home until it moves into a settings menu). */}
-          <div
-            className="view-controls"
-            ref={viewControlsRef}
-            style={viewControlsTop != null ? { top: viewControlsTop } : undefined}
+          {/* Named views (Top/Front/Right/…) + iso corners live on the on-canvas
+              navigation gizmo (see Viewport.tsx). This small reset button, tucked
+              at the gizmo's bottom-right, snaps back to the default iso view.
+              (The perspective/orthographic toggle is TODO — a future settings
+              menu; the viewport API still exposes setProjection.) */}
+          <button
+            className="view-reset"
+            title="Reset to iso view (7)"
+            onClick={() => viewApiRef.current?.setView("iso")}
           >
-            <button title="Iso view (7)" onClick={() => viewApiRef.current?.setView("iso")}>
-              Iso
-            </button>
-            <label className="proj-toggle" title="Perspective projection (off = orthographic: parallel, no foreshortening — good for aligning to edges)">
-              <input
-                type="checkbox"
-                checked={perspective}
-                onChange={(e) => {
-                  const next = e.target.checked;
-                  setPerspective(next);
-                  viewApiRef.current?.setProjection(next ? "perspective" : "orthographic");
-                }}
-              />
-              Perspective
-            </label>
-          </div>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="3 4 3 10 9 10" />
+              <path d="M5.5 15a8 8 0 1 0 2-8.5L3 10" />
+            </svg>
+          </button>
           {!editingSketch && !picking && (
             <div className="sel-filters" title="Selection filters — what a click can pick">
               <span className="sel-filters-label">Selection filters</span>
