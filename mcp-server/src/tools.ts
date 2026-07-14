@@ -49,6 +49,7 @@ const OP_DESCRIPTIONS: Record<string, string> = {
   setRollback: "Move the timeline rollback bar to an index (features at/after it are not regenerated).",
   select: "Set the viewport selection (so a screenshot highlights what you mean).",
   importStep: "Import a body from STEP file text.",
+  importDxf: "Import a DXF drawing as an EDITABLE sketch (not an opaque body like import_step). source is the DXF file text; plane places the sketch (datum/planeId/body face); scale multiplies all coordinates (DXF is unitless — 25.4 if the drawing is in inches, else 1 = mm). Handles LINE/CIRCLE/ARC/POLYLINE(bulges)/SPLINE/TEXT; unsupported types are skipped and reported as a warning. Imported geometry is free (unconstrained).",
   openDocument: "Switch the working document to `id` (from list_documents). Resolves after its geometry regenerates; undo history resets. Check get_scene_summary's documentId/documentName before assuming which file you're in.",
   newDocument: "Create and open a NEW empty document (optionally named). The previous document is autosaved.",
   renameDocument: "Rename a document (id defaults to the active one). Display-name only — not an undoable model edit.",

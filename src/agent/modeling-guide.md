@@ -64,7 +64,8 @@ quoted in the warning).
   offset a chain, or mirror entities across a sketch line), `add_mirror`
   (3D body + plane), `add_plane`, `transform` (translate/rotate, optional
   `copy`), `boolean`, `dress_up` (chamfer/fillet), `set_param`, `set_appearance`,
-  `rename`, `delete`, `select`, `import_step`.
+  `rename`, `delete`, `select`, `import_step`, `import_dxf` (a DXF drawing →
+  editable sketch on a chosen plane).
 - **Feedback:** `report_issue` — see below.
 - **Documents (the workspace):** `list_documents` (all stored docs, active one
   flagged), `open_document`, `new_document`, `rename_document`,
@@ -182,7 +183,9 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
   (parallel to a datum/face at a distance — the default), `midplane` (halfway
   between `base` and `refB`), `angle` (base hinged on its `u`/`v` axis by `angle`
   degrees), or `through` (3 world points).
-- **Bring in external CAD:** `import_step` with the file's STEP text.
+- **Bring in external CAD:** `import_step` with the file's STEP text (an opaque
+  body). For 2D drawings, `import_dxf` converts the DXF into an editable sketch
+  on a chosen plane — then extrude/revolve it like any sketch.
 
 ## Best practices
 

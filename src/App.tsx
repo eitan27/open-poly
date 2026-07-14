@@ -40,6 +40,7 @@ import {
   updateParam,
   updateVariable,
 } from "./document/document";
+import { parseDxfToEntities } from "./document/dxfImport";
 import {
   applyDerivedToSketch,
   applyEntityExprs,
@@ -148,6 +149,27 @@ const fmt = (n: number) => {
   const r = Math.round(n * 1000) / 1000;
   return Number.isInteger(r) ? String(r) : String(r);
 };
+
+// DXF has no reliable notion of physical units — imported coordinates are bare
+// numbers. We convert to Open Poly's millimetres with a scale the user picks;
+// the $INSUNITS header code (when present) preselects the likely source unit.
+type DxfUnitsKey = "mm" | "cm" | "m" | "in";
+const DXF_UNITS: { key: DxfUnitsKey; label: string; scale: number }[] = [
+  { key: "mm", label: "Millimeters (1:1)", scale: 1 },
+  { key: "cm", label: "Centimeters (×10)", scale: 10 },
+  { key: "m", label: "Meters (×1000)", scale: 1000 },
+  { key: "in", label: "Inches (×25.4)", scale: 25.4 },
+];
+const dxfScaleOf = (key: DxfUnitsKey) => DXF_UNITS.find((u) => u.key === key)?.scale ?? 1;
+// AutoCAD $INSUNITS values we recognise → our unit key (1=in, 4=mm, 5=cm, 6=m).
+const INSUNITS_TO_KEY: Record<number, DxfUnitsKey> = { 1: "in", 4: "mm", 5: "cm", 6: "m" };
+/** Read the DXF header's `$INSUNITS` (a code-9 name followed by a code-70 int)
+ *  and map it to a unit key, so the dialog can preselect. Returns null if absent
+ *  or unrecognised (caller defaults to mm). */
+function guessDxfUnits(text: string): DxfUnitsKey | null {
+  const m = /\$INSUNITS\s*\r?\n\s*70\s*\r?\n\s*(\d+)/.exec(text);
+  return m ? (INSUNITS_TO_KEY[Number(m[1])] ?? null) : null;
+}
 
 // The geometric constraints grouped behind the one toolbar button, in flyout
 // order. (Dimensional constraints and the construction toggle stay separate.)
@@ -1211,6 +1233,23 @@ export default function App() {
   };
   const newSolidRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const dxfInputRef = useRef<HTMLInputElement>(null);
+  // The "Import ▾" flyout (STEP part / DXF sketch) in the Parts panel.
+  const [importMenuOpen, setImportMenuOpen] = useState(false);
+  const importMenuRef = useRef<HTMLDivElement>(null);
+  // The DXF placement dialog: raw file text + a live parse preview (counts), plus
+  // the chosen destination plane and unit scale. Held open until the user
+  // confirms; the sketch is built from `text` re-parsed at the chosen scale.
+  const [dxfDialog, setDxfDialog] = useState<
+    | {
+        fileName: string;
+        text: string;
+        planeKey: string;
+        unitsKey: DxfUnitsKey;
+        preview: { total: number; skipped: number };
+      }
+    | null
+  >(null);
   const startDimensionRef = useRef<() => void>(() => {});
   const dimPendingRef = useRef(dimPending);
   dimPendingRef.current = dimPending;
@@ -1733,6 +1772,16 @@ export default function App() {
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
   }, [newSolidOpen]);
+
+  // Close the Parts "Import ▾" flyout when clicking outside it.
+  useEffect(() => {
+    if (!importMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!importMenuRef.current?.contains(e.target as Node)) setImportMenuOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [importMenuOpen]);
 
   // Resolution (variables + params -> numbers) is synchronous and pure; memoize
   // it so the UI can read evaluated values without re-running the kernel.
@@ -4606,6 +4655,59 @@ export default function App() {
     selectFeature(id);
   };
 
+  // DXF import: parse into native sketch geometry (unlike STEP, which stays an
+  // opaque body). Picking the file opens a placement dialog to choose the plane
+  // and unit scale; the sketch is created on confirm.
+  const handleDxfFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const text = await file.text();
+    let preview = { total: 0, skipped: 0 };
+    try {
+      const res = parseDxfToEntities(text); // scale-independent counts for preview
+      preview = {
+        total: res.entities.length,
+        skipped: Object.values(res.skipped).reduce((a, b) => a + b, 0),
+      };
+    } catch {
+      flashSketchMsg("Couldn't read that DXF file.");
+      return;
+    }
+    setDxfDialog({
+      fileName: file.name,
+      text,
+      planeKey: "datum:plane-top",
+      unitsKey: guessDxfUnits(text) ?? "mm", // preselect from the $INSUNITS header
+      preview,
+    });
+  };
+
+  const confirmDxfImport = () => {
+    if (!dxfDialog) return;
+    const { entities, skipped } = parseDxfToEntities(dxfDialog.text, { scale: dxfScaleOf(dxfDialog.unitsKey) });
+    if (entities.length === 0) {
+      flashSketchMsg("No importable geometry found in that DXF.");
+      setDxfDialog(null);
+      return;
+    }
+    const ref = planeKeyToRef(dxfDialog.planeKey);
+    const { doc: withSketch, id } = addSketch(doc, ref);
+    const next = addSketchEntities(withSketch, id, entities);
+    setDoc(next);
+    selectFeature(id);
+    setEditingSketchId(id);
+    setSketchTool("select");
+    setFullyConstrained(false);
+    viewApiRef.current?.lookAtFrame(frameOf(ref, resolved.planeFrames));
+    const skippedCount = Object.values(skipped).reduce((a, b) => a + b, 0);
+    const skipMsg = skippedCount
+      ? ` (skipped ${skippedCount} unsupported: ${Object.keys(skipped).join(", ")})`
+      : "";
+    flashSketchMsg(`Imported ${entities.length} entities from ${dxfDialog.fileName}${skipMsg}.`);
+    setDxfDialog(null);
+  };
+
   // Delete key from the viewport: whole bodies/sketches (feature, face, edge,
   // vertex picks) are removed entirely; sketchEntity picks remove just that
   // line/curve. Bare sketchPoint/sketchFace picks have no deletion target.
@@ -4836,20 +4938,46 @@ export default function App() {
           />
           <div className="parts-header">
             <h2 className="params-heading">Parts</h2>
-            <button
-              className="parts-import"
-              type="button"
-              title="Import a STEP file as a new part (⌘I / Ctrl+I)"
-              onClick={() => importInputRef.current?.click()}
-            >
-              ⤓ Import STEP
-            </button>
+            <div className="parts-import" ref={importMenuRef}>
+              <button
+                type="button"
+                title="Import a STEP part or a DXF sketch"
+                onClick={() => setImportMenuOpen((o) => !o)}
+              >
+                ⤓ Import ▾
+              </button>
+              {importMenuOpen && (
+                <div className="mt-menu mt-menu-right">
+                  <button
+                    type="button"
+                    title="Import a STEP file as a new part (⌘I / Ctrl+I)"
+                    onClick={() => { setImportMenuOpen(false); importInputRef.current?.click(); }}
+                  >
+                    STEP part…
+                  </button>
+                  <button
+                    type="button"
+                    title="Import a DXF drawing as an editable sketch"
+                    onClick={() => { setImportMenuOpen(false); dxfInputRef.current?.click(); }}
+                  >
+                    DXF sketch…
+                  </button>
+                </div>
+              )}
+            </div>
             <input
               ref={importInputRef}
               type="file"
               accept=".step,.stp,.STEP,.STP"
               style={{ display: "none" }}
               onChange={handleImportFile}
+            />
+            <input
+              ref={dxfInputRef}
+              type="file"
+              accept=".dxf,.DXF"
+              style={{ display: "none" }}
+              onChange={handleDxfFile}
             />
           </div>
           <SolidsList
@@ -5824,6 +5952,46 @@ export default function App() {
             </DraggableDialog>
             );
           })()}
+          {dxfDialog && (
+            <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
+              <div className="ed-title" data-drag-handle>Import DXF sketch</div>
+              <div className="ed-hint">
+                {dxfDialog.fileName} — {dxfDialog.preview.total} entit{dxfDialog.preview.total === 1 ? "y" : "ies"}
+                {dxfDialog.preview.skipped > 0 && `, ${dxfDialog.preview.skipped} unsupported skipped`}
+              </div>
+              <label className="ed-field">
+                <span>Plane</span>
+                <select
+                  value={dxfDialog.planeKey}
+                  onChange={(e) => setDxfDialog((d) => (d ? { ...d, planeKey: e.target.value } : d))}
+                >
+                  <option value="datum:plane-top">Top</option>
+                  <option value="datum:plane-front">Front</option>
+                  <option value="datum:plane-right">Right</option>
+                  {userPlanes.map((pl) => (
+                    <option key={pl.id} value={`plane:${pl.id}`}>{pl.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="ed-field">
+                <span>Units</span>
+                <select
+                  value={dxfDialog.unitsKey}
+                  onChange={(e) => setDxfDialog((d) => (d ? { ...d, unitsKey: e.target.value as DxfUnitsKey } : d))}
+                >
+                  {DXF_UNITS.map((u) => (
+                    <option key={u.key} value={u.key}>{u.label}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="ed-actions">
+                <button className="ed-primary" onClick={confirmDxfImport} disabled={dxfDialog.preview.total === 0}>
+                  Import
+                </button>
+                <button onClick={() => setDxfDialog(null)}>Cancel</button>
+              </div>
+            </DraggableDialog>
+          )}
           {planeDialog && (
             <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
               <div className="ed-title" data-drag-handle>Reference plane</div>

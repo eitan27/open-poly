@@ -42,6 +42,7 @@ import {
   validateVariableNames,
 } from "../document/document";
 import { detectSketchRegions } from "../document/regions";
+import { parseDxfToEntities } from "../document/dxfImport";
 import { applyDerived, applyDerivedToSketch } from "../document/derived";
 import { evaluateExpression } from "../document/expression";
 import { solveSketch } from "../sketch/solver";
@@ -487,6 +488,10 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
     const doc = ctx.getDoc();
     let next: Document;
     let createdId: string | undefined;
+    // A non-fatal note the op wants surfaced against the feature it created
+    // (e.g. DXF entity types that were skipped) — merged into the result's
+    // warnings at the tail, keyed by createdId.
+    let opWarning: string | undefined;
 
     switch (op.op) {
       case "addPrimitive": {
@@ -847,6 +852,29 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         createdId = r.id;
         break;
       }
+      case "importDxf": {
+        const plane = resolvePlaneRef(ctx, op.plane);
+        let parsed;
+        try {
+          parsed = parseDxfToEntities(op.source, { scale: op.scale });
+        } catch (e) {
+          throw new OpError("invalid_op", `Couldn't parse the DXF: ${(e as Error).message}`);
+        }
+        if (parsed.entities.length === 0) {
+          throw new OpError("invalid_op", "No importable geometry found in the DXF (LINE/CIRCLE/ARC/POLYLINE/SPLINE/TEXT).");
+        }
+        const r = addSketch(doc, plane);
+        let d = addSketchEntities(r.doc, r.id, parsed.entities);
+        if (op.name) d = renameFeature(d, r.id, op.name);
+        next = d;
+        createdId = r.id;
+        const skipped = Object.entries(parsed.skipped);
+        if (skipped.length) {
+          const n = skipped.reduce((a, [, c]) => a + c, 0);
+          opWarning = `Skipped ${n} unsupported DXF ${n === 1 ? "entity" : "entities"}: ${skipped.map(([t, c]) => `${t}×${c}`).join(", ")}.`;
+        }
+        break;
+      }
       // --- Multi-document ops: these switch/mutate the WORKSPACE, not `doc`,
       // so they bypass the shared setDoc tail and settle their own regen.
       case "openDocument": {
@@ -904,7 +932,9 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
     // non-fatal warnings (topological references re-matched / partially lost
     // after this edit) so the agent can verify a re-match landed right.
     const { errors, warnings: regenWarnings } = await ctx.waitForRegen();
-    const warnings = regenWarnings && Object.keys(regenWarnings).length ? regenWarnings : undefined;
+    let warnings = regenWarnings && Object.keys(regenWarnings).length ? regenWarnings : undefined;
+    // Fold in an op-level note (e.g. skipped DXF entities) against its feature.
+    if (opWarning && createdId) warnings = { ...(warnings ?? {}), [createdId]: opWarning };
     // If the feature this op created failed to build, surface it as the op's
     // own failure so the agent self-corrects instead of building on nothing.
     if (createdId && errors[createdId]) {

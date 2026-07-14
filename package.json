@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@salusoft89/planegcs": "^1.1.7",
+    "dxf-parser": "^1.1.2",
     "opentype.js": "^1.3.4",
     "polygon-clipping": "^0.15.7",
     "react": "^19.2.7",

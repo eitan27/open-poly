@@ -220,6 +220,52 @@ describe("applyOperation — sketch + extrude (no kernel)", () => {
   });
 });
 
+describe("applyOperation — import_dxf", () => {
+  const dxf = (...pairs: Array<[number, string | number]>) => {
+    const lines = ["0", "SECTION", "2", "ENTITIES"];
+    for (const [c, v] of pairs) lines.push(String(c), String(v));
+    lines.push("0", "ENDSEC", "0", "EOF");
+    return lines.join("\n");
+  };
+
+  it("imports a DXF as an editable sketch on the chosen plane, scaled", async () => {
+    const { ctx, doc } = makeCtx();
+    const source = dxf(
+      [0, "LINE"], [8, 0], [10, 0], [20, 0], [11, 10], [21, 0],
+      [0, "CIRCLE"], [8, 0], [10, 5], [20, 5], [40, 2],
+    );
+    const r = await apply(ctx, { op: "importDxf", source, plane: { datum: "front" }, scale: 2, name: "Plate" });
+    expect(r.ok).toBe(true);
+    const sketch = doc().features.find((f) => f.id === r.createdId);
+    expect(sketch?.type).toBe("sketch");
+    if (sketch?.type !== "sketch") throw new Error("expected sketch");
+    expect(sketch.name).toBe("Plate");
+    expect(sketch.plane).toMatchObject({ kind: "datum", id: "plane-front" });
+    expect(sketch.entities).toHaveLength(2);
+    const circle = sketch.entities.find((e) => e.type === "circle");
+    expect(circle && circle.type === "circle" && circle.r).toBe(4); // 2 × scale
+  });
+
+  it("rejects a DXF with no importable geometry", async () => {
+    const { ctx } = makeCtx();
+    const source = dxf([0, "ELLIPSE"], [8, 0], [10, 0], [20, 0], [11, 5], [21, 0], [40, 0.5]);
+    const r = await apply(ctx, { op: "importDxf", source, plane: { datum: "top" } });
+    expect(r).toMatchObject({ ok: false, errorKind: "invalid_op" });
+  });
+
+  it("warns about skipped unsupported entities against the created sketch", async () => {
+    const { ctx } = makeCtx();
+    const source = dxf(
+      [0, "LINE"], [8, 0], [10, 0], [20, 0], [11, 10], [21, 0],
+      [0, "ELLIPSE"], [8, 0], [10, 0], [20, 0], [11, 5], [21, 0], [40, 0.5],
+    );
+    const r = await apply(ctx, { op: "importDxf", source, plane: { datum: "top" } });
+    expect(r.ok).toBe(true);
+    expect(r.warnings?.[r.createdId!]).toMatch(/skipped 1 unsupported/i);
+    expect(r.warnings?.[r.createdId!]).toMatch(/ELLIPSE/);
+  });
+});
+
 describe("applyOperation — sketch constraints & dimensions", () => {
   // Add a sketch and return the ctx plus the ids of its entities (in order), so
   // constraint tests can reference the concrete entity ids the agent would read

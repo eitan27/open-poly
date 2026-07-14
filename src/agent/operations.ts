@@ -449,6 +449,19 @@ export const operationSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("setRollback"), index: z.number().int().min(0) }),
   z.object({ op: z.literal("select"), refs: z.array(selectionSchema) }),
   z.object({ op: z.literal("importStep"), source: z.string(), name: z.string().optional() }),
+  // Import a DXF drawing as an editable sketch (unlike importStep, which brings
+  // in an opaque body). `source` is the DXF file text; `plane` places the sketch
+  // (datum / reference-plane id / body face); `scale` multiplies all coordinates
+  // (DXF is unitless — use 25.4 if the drawing is in inches, else 1 = mm).
+  // Unsupported entity types (HATCH, DIMENSION, ellipses, blocks …) are skipped
+  // and reported as a warning; the resulting geometry is free (unconstrained).
+  z.object({
+    op: z.literal("importDxf"),
+    source: z.string(),
+    plane: planeRefSchema,
+    scale: z.number().positive().optional(),
+    name: z.string().optional(),
+  }),
   // --- Multi-document ops (Phase 8.7 M4). These act on the WORKSPACE, not the
   // model: opening/creating/duplicating switches the working document (undo
   // history resets — a document boundary). Ids come from list_documents.

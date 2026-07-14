@@ -496,6 +496,9 @@
   margin-bottom: 0;
 }
 .parts-import {
+  position: relative;
+}
+.parts-import > button {
   font-size: 11px;
   padding: 3px 8px;
   color: #cfe0ff;
@@ -505,8 +508,13 @@
   cursor: pointer;
   white-space: nowrap;
 }
-.parts-import:hover {
+.parts-import > button:hover {
   background: #344058;
+}
+/* Right-align a flyout so it drops from a right-edge button without overflowing. */
+.mt-menu-right {
+  left: auto;
+  right: 0;
 }
 
 /* --- Variables --- */
