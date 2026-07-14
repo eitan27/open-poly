@@ -525,15 +525,23 @@ function createViewCube(): ViewCube {
   const cornerNormalTex = solidCubeTexture("#4a5570"); // slightly lighter than the faces so corners read as pressable
   const cornerHoverTex = solidCubeTexture("#5d6d96"); // hover: lighter still
   const cornerGeom = new THREE.SphereGeometry(0.09, 16, 12);
-  disposables.push(cornerGeom, cornerNormalTex, cornerHoverTex);
+  // A slightly larger BackSide sphere behind each nub = a blue outline ring, shown
+  // only on hover (matching the faces' blue hover border).
+  const cornerOutlineGeom = new THREE.SphereGeometry(0.125, 16, 12);
+  disposables.push(cornerGeom, cornerOutlineGeom, cornerNormalTex, cornerHoverTex);
   for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+    const outlineMat = new THREE.MeshBasicMaterial({ color: 0x6ea0ff, side: THREE.BackSide });
+    const outline = new THREE.Mesh(cornerOutlineGeom, outlineMat);
+    outline.position.set(sx * 0.5, sy * 0.5, sz * 0.5);
+    outline.visible = false;
+    group.add(outline);
     const mat = new THREE.MeshBasicMaterial({ map: cornerNormalTex });
     const nub = new THREE.Mesh(cornerGeom, mat);
     nub.position.set(sx * 0.5, sy * 0.5, sz * 0.5);
-    nub.userData = { hit: { dir: [sx, sy, sz], up: [0, 0, 1] } as CubeHit, texNormal: cornerNormalTex, texHover: cornerHoverTex };
+    nub.userData = { hit: { dir: [sx, sy, sz], up: [0, 0, 1] } as CubeHit, texNormal: cornerNormalTex, texHover: cornerHoverTex, outline };
     group.add(nub);
     targets.push(nub);
-    disposables.push(mat);
+    disposables.push(outlineMat, mat);
   }
 
   const raycaster = new THREE.Raycaster();
@@ -547,6 +555,9 @@ function createViewCube(): ViewCube {
     const mat = obj.material as THREE.MeshBasicMaterial;
     // Faces and corner nubs both swap their (solid or labelled) texture on hover.
     mat.map = on ? ud.texHover : ud.texNormal;
+    // Corner nubs also show their blue outline ring on hover (faces draw theirs
+    // into the texture; a sphere gets it from a BackSide shell behind it).
+    if (ud.outline) (ud.outline as THREE.Mesh).visible = on;
   };
   const setHovered = (obj: THREE.Mesh | null) => {
     if (obj === hovered) return;
