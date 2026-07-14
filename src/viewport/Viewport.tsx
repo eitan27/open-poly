@@ -442,9 +442,9 @@ function viewCubeFaceTexture(label: string, hover: boolean): THREE.CanvasTexture
   const c = document.createElement("canvas");
   c.width = c.height = S;
   const g = c.getContext("2d")!;
-  g.fillStyle = hover ? "#2f3a52" : "#252a34";
+  g.fillStyle = hover ? "#4c5a7c" : "#3b4356";
   g.fillRect(0, 0, S, S);
-  g.strokeStyle = hover ? "#4f8cff" : "#59617a";
+  g.strokeStyle = hover ? "#6ea0ff" : "#6b748c";
   g.lineWidth = hover ? 8 : 6;
   g.strokeRect(3, 3, S - 6, S - 6);
   g.fillStyle = hover ? "#ffffff" : "#e6e8ee";
@@ -488,8 +488,8 @@ function createViewCube(): ViewCube {
   cubeScene.add(group);
 
   // A solid body + crisp edges so the six label planes read as one cube.
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.98, 0.98), new THREE.MeshBasicMaterial({ color: 0x1b1f27 }));
-  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x59617a }));
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.98, 0.98), new THREE.MeshBasicMaterial({ color: 0x2c3340 }));
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x6b748c }));
   group.add(body, edges);
   const disposables: { dispose(): void }[] = [body.geometry, body.material as THREE.Material, edges.geometry, edges.material as THREE.Material];
 
@@ -522,8 +522,8 @@ function createViewCube(): ViewCube {
   // which renders through a different colour-space path) so a nub is exactly the
   // same gray as the face it sits on, hinting it's pressable without reading as a
   // loud dot.
-  const cornerNormalTex = solidCubeTexture("#252a34"); // = face background
-  const cornerHoverTex = solidCubeTexture("#2f3a52"); // = face hover background
+  const cornerNormalTex = solidCubeTexture("#4a5570"); // slightly lighter than the faces so corners read as pressable
+  const cornerHoverTex = solidCubeTexture("#5d6d96"); // hover: lighter still
   const cornerGeom = new THREE.SphereGeometry(0.09, 16, 12);
   disposables.push(cornerGeom, cornerNormalTex, cornerHoverTex);
   for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
