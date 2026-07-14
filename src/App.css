@@ -511,8 +511,11 @@
 .parts-import > button:hover {
   background: #344058;
 }
-/* Right-align a flyout so it drops from a right-edge button without overflowing. */
-.mt-menu-right {
+/* Right-align a flyout so it drops from a right-edge button and opens leftward,
+ *  staying inside the scrollable .panel (which clips horizontal overflow) instead
+ *  of spilling past its right border. Compound selector so it beats .mt-menu's
+ *  `left: 0` regardless of rule order. */
+.mt-menu.mt-menu-right {
   left: auto;
   right: 0;
 }
