@@ -1312,6 +1312,11 @@ export function Viewport({
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     let down: { x: number; y: number } | null = null;
+    // The ViewCube target under the press, if the press landed on the cube. A
+    // release that barely moved navigates to it (a click); a release that dragged
+    // is left to OrbitControls (grab-and-orbit). Either way the cube press is
+    // suppressed from the normal selection click. Set in onGizmoDown.
+    let cubeHit: CubeHit | null = null;
     // An in-progress drag of unconstrained sketch geometry (Select tool, inside a
     // sketch). `origins` are the pre-drag uv of the points being moved; `single`
     // distinguishes a one-vertex drag (snap to cursor) from a body/region
@@ -1827,6 +1832,17 @@ export function Viewport({
         else onSelectRef.current(pickSelection(e.clientX, e.clientY), snappedUvAt(e.clientX, e.clientY));
         return;
       }
+      // A press that started on the ViewCube: a click (barely moved) snaps to that
+      // face/corner; a drag was already handled by OrbitControls (grab-orbit). In
+      // both cases skip the normal selection click.
+      if (cubeHit) {
+        const hit = cubeHit;
+        const clicked = !down || Math.hypot(e.clientX - down.x, e.clientY - down.y) <= 5;
+        cubeHit = null;
+        down = null;
+        if (clicked) goToCube(hit);
+        return;
+      }
       if (!down) return;
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       down = null;
@@ -1879,16 +1895,14 @@ export function Viewport({
       // set and toggles the element off if it is already selected.
       onSelectRef.current(pickSelection(e.clientX, e.clientY), snappedUvAt(e.clientX, e.clientY));
     };
-    // Capture-phase so a gizmo click is claimed before OrbitControls' own
-    // pointerdown listener (attached when it was constructed, earlier in
-    // registration order) can start a rotate drag from the same press.
+    // Record the ViewCube target under the press but DON'T claim the event, so
+    // OrbitControls still gets it and a drag grab-orbits the camera (the cube
+    // tracks it). onUp decides click (navigate) vs drag (leave to OrbitControls),
+    // and suppresses the selection click either way. Capture-phase so `cubeHit`
+    // is set before onUp runs.
     const onGizmoDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
-      const hit = viewCube.pick(renderer, e.clientX, e.clientY);
-      if (!hit) return;
-      e.stopPropagation();
-      e.preventDefault();
-      goToCube(hit);
+      cubeHit = viewCube.pick(renderer, e.clientX, e.clientY);
     };
     const onGizmoLeave = () => viewCube.clearHover();
     renderer.domElement.addEventListener("pointerdown", onGizmoDown, true);
