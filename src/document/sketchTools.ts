@@ -227,6 +227,61 @@ export function detectSingleChain(entities: SketchEntity[]): ChainEdge[] | null 
   return order.length === edges.length ? order : null;
 }
 
+/** Ids of every entity in the connected component of `seedId` — the transitive
+ *  closure of "shares an endpoint with". Used by double-click to grab a whole
+ *  connected outline (e.g. an imported DXF of many small edges) in one gesture,
+ *  ready to offset. Endpoints are matched at a tolerance that absorbs solver
+ *  residue and arc-endpoint rounding; closed entities (circles) and pointlike
+ *  ones (point/text) have no endpoints, so they're their own component. */
+export function connectedEntityIds(seedId: string, entities: SketchEntity[]): string[] {
+  // Endpoints within TOL are the same junction. Grid-bucketed with a neighbour
+  // sweep + true distance test so points straddling a bucket edge still match
+  // (a plain rounded key would split them) — robust to solver residue and
+  // computed arc-endpoint noise, not just exactly-coincident coordinates.
+  const TOL = 1e-4;
+  const bucket = (v: number) => Math.round(v / TOL);
+  const endsOf = (e: SketchEntity): Vec2[] => {
+    if (e.type === "line") return [e.a, e.b];
+    if (e.type === "arc") return [ptOnCircle(e.c, e.r, e.start), ptOnCircle(e.c, e.r, e.end)];
+    if (e.type === "spline" && e.points.length >= 2) return [e.points[0], e.points[e.points.length - 1]];
+    return [];
+  };
+
+  // Spatial index of every endpoint, and each entity's own endpoints.
+  const grid = new Map<string, { id: string; p: Vec2 }[]>();
+  const endpointsOfId = new Map<string, Vec2[]>();
+  for (const e of entities) {
+    const es = endsOf(e);
+    if (es.length) endpointsOfId.set(e.id, es);
+    for (const p of es) {
+      const k = `${bucket(p[0])},${bucket(p[1])}`;
+      const arr = grid.get(k);
+      if (arr) arr.push({ id: e.id, p });
+      else grid.set(k, [{ id: e.id, p }]);
+    }
+  }
+  const touching = (p: Vec2): string[] => {
+    const cx = bucket(p[0]), cy = bucket(p[1]);
+    const ids: string[] = [];
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (const { id, p: q } of grid.get(`${cx + dx},${cy + dy}`) ?? [])
+          if (Math.hypot(q[0] - p[0], q[1] - p[1]) <= TOL) ids.push(id);
+    return ids;
+  };
+
+  // Breadth-first flood from the seed over shared endpoints.
+  const seen = new Set<string>([seedId]);
+  const stack = [seedId];
+  while (stack.length) {
+    const id = stack.pop()!;
+    for (const p of endpointsOfId.get(id) ?? [])
+      for (const nb of touching(p))
+        if (!seen.has(nb)) { seen.add(nb); stack.push(nb); }
+  }
+  return [...seen];
+}
+
 // During offset, each chain edge is oriented in traversal order (p0 -> p1).
 type Oriented =
   | { kind: "line"; p0: Vec2; p1: Vec2 }

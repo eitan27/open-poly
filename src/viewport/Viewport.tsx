@@ -611,6 +611,7 @@ export function Viewport({
   highlightBodyIds,
   booleanHighlight,
   onSelect,
+  onSketchEntityDouble,
   datumVisibility,
   userPlanes,
   transformEdit,
@@ -650,6 +651,10 @@ export function Viewport({
    *  tools), so pick-tool flows that need a coordinate — the circular pattern's
    *  center — get one without a second click path. */
   onSelect: (picked: Selection | null, sketchUv?: Vec2) => void;
+  /** Double-clicking a sketch entity while the Select tool is active (used to
+   *  grab a whole connected chain — e.g. a DXF outline of many small edges — in
+   *  one gesture for offsetting). Only fires for a `sketchEntity` hit. */
+  onSketchEntityDouble?: (sketchId: string, entityId: string) => void;
   datumVisibility: Record<DatumId, boolean>;
   /** User reference planes to render + make pickable (for sketch / plane base). */
   userPlanes: RenderPlane[];
@@ -698,6 +703,8 @@ export function Viewport({
   booleanHighlightRef.current = booleanHighlight;
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const onSketchEntityDoubleRef = useRef(onSketchEntityDouble);
+  onSketchEntityDoubleRef.current = onSketchEntityDouble;
   const userPlanesRef = useRef(userPlanes);
   userPlanesRef.current = userPlanes;
   const transformEditRef = useRef(transformEdit);
@@ -1936,11 +1943,20 @@ export function Viewport({
       cubeHit = viewCube.pick(renderer, e.clientX, e.clientY);
     };
     const onGizmoLeave = () => viewCube.clearHover();
+    // Double-click on a sketch entity (Select tool only): grab its whole
+    // connected chain in one gesture. The two constituent single clicks still
+    // toggle the entity via onUp; the chain-select that follows replaces it.
+    const onDblClick = (e: MouseEvent) => {
+      if (!activeFrameRef.current || sketchToolRef.current !== "select") return;
+      const sel = pickSelection(e.clientX, e.clientY);
+      if (sel?.kind === "sketchEntity") onSketchEntityDoubleRef.current?.(sel.sketchId, sel.entityId);
+    };
     renderer.domElement.addEventListener("pointerdown", onGizmoDown, true);
     renderer.domElement.addEventListener("pointerleave", onGizmoLeave);
     renderer.domElement.addEventListener("pointermove", onMove);
     renderer.domElement.addEventListener("pointerdown", onDown);
     renderer.domElement.addEventListener("pointerup", onUp);
+    renderer.domElement.addEventListener("dblclick", onDblClick);
 
     const resize = () => {
       const w = container.clientWidth;
@@ -1995,6 +2011,7 @@ export function Viewport({
       renderer.domElement.removeEventListener("pointermove", onMove);
       renderer.domElement.removeEventListener("pointerdown", onDown);
       renderer.domElement.removeEventListener("pointerup", onUp);
+      renderer.domElement.removeEventListener("dblclick", onDblClick);
       viewCube.dispose();
       controls.dispose();
       transformControls.detach();

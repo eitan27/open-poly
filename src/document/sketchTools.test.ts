@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  connectedEntityIds,
   detectSingleChain,
   fitProjectedPolyline,
   mirrorEntity,
@@ -112,6 +113,37 @@ describe("detectSingleChain", () => {
   it("rejects a non-offsettable entity (spline) in the selection", () => {
     const spline: SketchEntity = { type: "spline", id: "sp", points: [[0, 0], [1, 1], [2, 0]] };
     expect(detectSingleChain([spline])).toBeNull();
+  });
+});
+
+describe("connectedEntityIds", () => {
+  it("floods the whole connected chain from any seed, ignoring a disjoint piece", () => {
+    // A closed square (4 lines) + one disjoint line elsewhere.
+    const square = [
+      line("a", [0, 0], [10, 0]),
+      line("b", [10, 0], [10, 10]),
+      line("c", [10, 10], [0, 10]),
+      line("d", [0, 10], [0, 0]),
+    ];
+    const stray = line("e", [50, 50], [60, 50]);
+    const all: SketchEntity[] = [...square, stray];
+    expect(new Set(connectedEntityIds("b", all))).toEqual(new Set(["a", "b", "c", "d"]));
+    expect(connectedEntityIds("e", all)).toEqual(["e"]);
+  });
+
+  it("bridges a line into an arc at a shared endpoint and welds sub-tolerance gaps", () => {
+    const l = line("l", [0, 0], [10, 0]);
+    // Arc starting where the line ends (10,0), 90° up.
+    const arc: SketchEntity = { type: "arc", id: "arc", c: [10, 5], r: 5, start: -Math.PI / 2, end: 0 };
+    // A second line meeting the first's start with a ~5e-5 gap (within 1e-4).
+    const l2 = line("l2", [0, 0.00005], [0, -10]);
+    expect(new Set(connectedEntityIds("l", [l, arc, l2]))).toEqual(new Set(["l", "arc", "l2"]));
+  });
+
+  it("treats a lone circle / point as its own component", () => {
+    const circle: SketchEntity = { type: "circle", id: "c", c: [0, 0], r: 5 };
+    const pt: SketchEntity = { type: "point", id: "p", p: [0, 0] };
+    expect(connectedEntityIds("c", [circle, pt])).toEqual(["c"]);
   });
 });
 

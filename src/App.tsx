@@ -101,6 +101,7 @@ import { DocumentsDialog } from "./ui/DocumentsDialog";
 import {
   arcFrom3,
   circleFrom3,
+  connectedEntityIds,
   detectSingleChain,
   fitProjectedPolyline,
   loopSegments,
@@ -930,6 +931,15 @@ export default function App() {
       if (i >= 0) return prev.filter((_, j) => j !== i);
       return [...prev, picked];
     });
+  };
+  // Double-click a sketch entity → select its whole connected chain (every entity
+  // transitively sharing an endpoint). Makes offsetting an imported outline of
+  // many small edges a single gesture instead of a rubber-band drag.
+  const handleSketchEntityDouble = (sketchId: string, entityId: string) => {
+    const sk = doc.features.find((f) => f.id === sketchId);
+    if (sk?.type !== "sketch") return;
+    const ids = connectedEntityIds(entityId, sk.entities);
+    setSelection(ids.map((id) => ({ kind: "sketchEntity", sketchId, entityId: id })));
   };
   const [picking, setPicking] = useState(false);
   // What the plane/face pick flow is for: starting a sketch, or the base of a
@@ -5035,6 +5045,7 @@ export default function App() {
             highlightBodyIds={highlightBodyIds}
             booleanHighlight={booleanHighlight}
             onSelect={handlePick}
+            onSketchEntityDouble={handleSketchEntityDouble}
             datumVisibility={datumVisibility}
             userPlanes={userPlanes}
             transformEdit={transformEdit}
