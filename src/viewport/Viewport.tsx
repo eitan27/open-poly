@@ -404,6 +404,175 @@ const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, numb
   iso: { dir: [1, -1, 0.8], up: [0, 0, 1] },
 };
 
+// --- On-canvas ViewCube -----------------------------------------------------
+// A small labelled cube in the top-right corner (BELOW the modeling toolbar).
+// Each face is a named view (Z-up: +Z Top, -Z Bottom, +X Right, -X Left, +Y
+// Back, -Y Front) and each of the 8 corners is a 3/4 iso view looking down that
+// corner's diagonal; clicking either tweens to it. Faces/corners highlight on
+// hover. It's drawn as an overlay into the SAME WebGL canvas, with `autoClear`
+// managed so its render pass never wipes the main scene.
+const VIEWCUBE_DIM = 108; // corner size in CSS px
+const VIEWCUBE_TOP = 60; // px from the canvas top — clears the modeling toolbar
+const VIEWCUBE_RIGHT = 14;
+const VIEWCUBE_FACES: { view: ViewName; label: string; normal: [number, number, number]; up: [number, number, number] }[] = [
+  { view: "right", label: "RIGHT", normal: [1, 0, 0], up: [0, 0, 1] },
+  { view: "left", label: "LEFT", normal: [-1, 0, 0], up: [0, 0, 1] },
+  { view: "back", label: "BACK", normal: [0, 1, 0], up: [0, 0, 1] },
+  { view: "front", label: "FRONT", normal: [0, -1, 0], up: [0, 0, 1] },
+  { view: "top", label: "TOP", normal: [0, 0, 1], up: [0, 1, 0] },
+  { view: "bottom", label: "BOTTOM", normal: [0, 0, -1], up: [0, 1, 0] },
+];
+
+/** A face label rendered to a canvas texture. `hover` swaps to an accent look. */
+function viewCubeFaceTexture(label: string, hover: boolean): THREE.CanvasTexture {
+  const S = 128;
+  const c = document.createElement("canvas");
+  c.width = c.height = S;
+  const g = c.getContext("2d")!;
+  g.fillStyle = hover ? "#2f3a52" : "#252a34";
+  g.fillRect(0, 0, S, S);
+  g.strokeStyle = hover ? "#4f8cff" : "#59617a";
+  g.lineWidth = hover ? 8 : 6;
+  g.strokeRect(3, 3, S - 6, S - 6);
+  g.fillStyle = hover ? "#ffffff" : "#e6e8ee";
+  g.font = "600 23px ui-sans-serif, system-ui, -apple-system, sans-serif";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(label, S / 2, S / 2 + 1);
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/** A navigation target under a cube click: a named face view, or a free camera
+ *  direction (the corners → iso 3/4 views). */
+type CubeHit = { view: ViewName } | { dir: [number, number, number]; up: [number, number, number] };
+
+interface ViewCube {
+  /** Overlay the cube into the top-right corner, oriented to mirror `mainCamera`. */
+  render(renderer: THREE.WebGLRenderer, mainCamera: THREE.Camera): void;
+  /** The nav target under a client point (updating the hover highlight), or null
+   *  if the cursor isn't over the cube. */
+  pick(renderer: THREE.WebGLRenderer, clientX: number, clientY: number): CubeHit | null;
+  /** Drop any hover highlight (e.g. when the pointer leaves the canvas). */
+  clearHover(): void;
+  dispose(): void;
+}
+
+function createViewCube(): ViewCube {
+  const cubeScene = new THREE.Scene();
+  // Frustum snug around the unit cube's iso silhouette (~±0.87 at the corners)
+  // so it fills the corner region — a big, easy click target.
+  const cam = new THREE.OrthographicCamera(-0.92, 0.92, 0.92, -0.92, 0.1, 10);
+  cam.position.set(0, 0, 3);
+  cam.lookAt(0, 0, 0);
+  cam.updateMatrixWorld(true);
+  const group = new THREE.Group();
+  cubeScene.add(group);
+
+  // A solid body + crisp edges so the six label planes read as one cube.
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.98, 0.98), new THREE.MeshBasicMaterial({ color: 0x1b1f27 }));
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x59617a }));
+  group.add(body, edges);
+  const disposables: { dispose(): void }[] = [body.geometry, body.material as THREE.Material, edges.geometry, edges.material as THREE.Material];
+
+  // Per-object hover appearance: faces swap their label texture, corners swap
+  // colour. Stored on userData so a single applyHover handles both.
+  const targets: THREE.Mesh[] = [];
+
+  // One label plane per face, oriented by an explicit basis (local +Z → outward
+  // normal, local +Y → the face's up) so every label reads upright.
+  const x = new THREE.Vector3(), y = new THREE.Vector3(), z = new THREE.Vector3();
+  for (const f of VIEWCUBE_FACES) {
+    const texNormal = viewCubeFaceTexture(f.label, false);
+    const texHover = viewCubeFaceTexture(f.label, true);
+    const mat = new THREE.MeshBasicMaterial({ map: texNormal });
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+    z.set(...f.normal).normalize();
+    y.set(...f.up).normalize();
+    x.crossVectors(y, z).normalize();
+    plane.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+    plane.position.copy(z).multiplyScalar(0.5);
+    plane.userData = { hit: { view: f.view } as CubeHit, kind: "face", texNormal, texHover };
+    group.add(plane);
+    targets.push(plane);
+    disposables.push(plane.geometry, mat, texNormal, texHover);
+  }
+
+  // A small nub at each of the 8 corners → the iso view looking down that corner's
+  // diagonal (camera position = the corner direction, Z-up). Coloured to match the
+  // faces (fill + hover tint) so they read as part of the cube, not loud dots.
+  const CORNER_NORMAL = 0x252a34; // = face background
+  const CORNER_HOVER = 0x2f3a52; // = face hover background
+  const cornerGeom = new THREE.SphereGeometry(0.09, 16, 12);
+  disposables.push(cornerGeom);
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+    const mat = new THREE.MeshBasicMaterial({ color: CORNER_NORMAL });
+    const nub = new THREE.Mesh(cornerGeom, mat);
+    nub.position.set(sx * 0.5, sy * 0.5, sz * 0.5);
+    nub.userData = { hit: { dir: [sx, sy, sz], up: [0, 0, 1] } as CubeHit, kind: "corner", colorNormal: CORNER_NORMAL, colorHover: CORNER_HOVER };
+    group.add(nub);
+    targets.push(nub);
+    disposables.push(mat);
+  }
+
+  const raycaster = new THREE.Raycaster();
+  const size = new THREE.Vector2();
+  const prevVp = new THREE.Vector4();
+  let hovered: THREE.Mesh | null = null;
+
+  const applyHover = (obj: THREE.Mesh | null, on: boolean) => {
+    if (!obj) return;
+    const ud = obj.userData;
+    const mat = obj.material as THREE.MeshBasicMaterial;
+    if (ud.kind === "face") mat.map = on ? ud.texHover : ud.texNormal;
+    else mat.color.setHex(on ? ud.colorHover : ud.colorNormal);
+  };
+  const setHovered = (obj: THREE.Mesh | null) => {
+    if (obj === hovered) return;
+    applyHover(hovered, false);
+    hovered = obj;
+    applyHover(hovered, true);
+  };
+
+  return {
+    render(renderer, mainCamera) {
+      group.quaternion.copy(mainCamera.quaternion).invert();
+      renderer.getSize(size);
+      renderer.autoClear = false;
+      renderer.clearDepth();
+      renderer.getViewport(prevVp);
+      // WebGL viewport y is measured from the bottom.
+      renderer.setViewport(size.x - VIEWCUBE_DIM - VIEWCUBE_RIGHT, size.y - VIEWCUBE_DIM - VIEWCUBE_TOP, VIEWCUBE_DIM, VIEWCUBE_DIM);
+      renderer.render(cubeScene, cam);
+      renderer.setViewport(prevVp.x, prevVp.y, prevVp.z, prevVp.w);
+      renderer.autoClear = true;
+    },
+    pick(renderer, clientX, clientY) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      renderer.getSize(size);
+      const left = rect.left + size.x - VIEWCUBE_DIM - VIEWCUBE_RIGHT;
+      const top = rect.top + VIEWCUBE_TOP;
+      const lx = clientX - left, ly = clientY - top;
+      if (lx < 0 || lx > VIEWCUBE_DIM || ly < 0 || ly > VIEWCUBE_DIM) {
+        setHovered(null);
+        return null;
+      }
+      group.updateMatrixWorld(true);
+      raycaster.setFromCamera(new THREE.Vector2((lx / VIEWCUBE_DIM) * 2 - 1, -(ly / VIEWCUBE_DIM) * 2 + 1), cam);
+      const obj = raycaster.intersectObjects(targets, false)[0]?.object as THREE.Mesh | undefined;
+      setHovered(obj ?? null);
+      return (obj?.userData.hit as CubeHit | undefined) ?? null;
+    },
+    clearHover() {
+      setHovered(null);
+    },
+    dispose() {
+      for (const d of disposables) d.dispose();
+    },
+  };
+}
+
 export function Viewport({
   meshes,
   ghostMeshes,
@@ -606,6 +775,13 @@ export function Viewport({
     };
     controls.target.set(0, 0, 0);
     controls.update();
+
+    // On-canvas navigation ViewCube (replaces the old view-buttons row): a small
+    // labelled cube drawn into the top-right corner of this same WebGL canvas.
+    // It tracks whichever camera is current (perspective/orthographic) since
+    // `render` is passed `state.camera` each frame; clicks route through
+    // `goToView` below so its up-vectors match the named views exactly.
+    const viewCube = createViewCube();
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.65));
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
@@ -994,6 +1170,13 @@ export function Viewport({
       state.tween = { from: camera.position.clone(), to, up, start: performance.now() };
       controls.target.copy(target);
     };
+    const goToDir = (dir: [number, number, number], up: [number, number, number]) => {
+      const to = new THREE.Vector3(...dir).normalize().multiplyScalar(VIEW_DISTANCE);
+      startTween(to, new THREE.Vector3(...up), new THREE.Vector3(0, 0, 0));
+    };
+    const goToView = (name: ViewName) => goToDir(VIEWS[name].dir, VIEWS[name].up);
+    // Navigate to a ViewCube face (named view) or corner (an iso 3/4 direction).
+    const goToCube = (hit: CubeHit) => ("view" in hit ? goToView(hit.view) : goToDir(hit.dir, hit.up));
     // --- Body-edge lookup (shared by the Project/Convert tool's id- and
     // name-based edge queries). Edge groups carry a build-local `edgeId` and a
     // persistent `name`; the LineSegments buffer is consecutive world-space pairs
@@ -1026,9 +1209,7 @@ export function Viewport({
     };
     apiRef.current = {
       setView(name) {
-        const v = VIEWS[name];
-        const to = new THREE.Vector3(...v.dir).normalize().multiplyScalar(VIEW_DISTANCE);
-        startTween(to, new THREE.Vector3(...v.up), new THREE.Vector3(0, 0, 0));
+        goToView(name);
       },
       setProjection(mode) {
         const isOrtho = (camera as THREE.OrthographicCamera).isOrthographicCamera === true;
@@ -1062,6 +1243,8 @@ export function Viewport({
         (transformControls as unknown as { camera: THREE.Camera }).camera = next;
         state.camera = next;
         controls.update();
+        // The ViewCube reads `state.camera` each frame (see the animate loop),
+        // so a projection swap needs no work here.
       },
       lookAtFrame(frame) {
         const origin = new THREE.Vector3(...frame.origin);
@@ -1525,6 +1708,12 @@ export function Viewport({
         }
         return;
       }
+      // ViewCube hover: pick() updates the cube's own highlight and reports the
+      // target under the cursor (null when off the cube, which also clears it).
+      if (viewCube.pick(renderer, e.clientX, e.clientY)) {
+        renderer.domElement.style.cursor = "pointer";
+        return;
+      }
       // Selection (hover) is active when idle OR editing a sketch with the Select
       // tool. Drop a stale hover when neither applies.
       const selecting =
@@ -1690,6 +1879,20 @@ export function Viewport({
       // set and toggles the element off if it is already selected.
       onSelectRef.current(pickSelection(e.clientX, e.clientY), snappedUvAt(e.clientX, e.clientY));
     };
+    // Capture-phase so a gizmo click is claimed before OrbitControls' own
+    // pointerdown listener (attached when it was constructed, earlier in
+    // registration order) can start a rotate drag from the same press.
+    const onGizmoDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const hit = viewCube.pick(renderer, e.clientX, e.clientY);
+      if (!hit) return;
+      e.stopPropagation();
+      e.preventDefault();
+      goToCube(hit);
+    };
+    const onGizmoLeave = () => viewCube.clearHover();
+    renderer.domElement.addEventListener("pointerdown", onGizmoDown, true);
+    renderer.domElement.addEventListener("pointerleave", onGizmoLeave);
     renderer.domElement.addEventListener("pointermove", onMove);
     renderer.domElement.addEventListener("pointerdown", onDown);
     renderer.domElement.addEventListener("pointerup", onUp);
@@ -1734,6 +1937,7 @@ export function Viewport({
       }
       controls.update();
       renderer.render(scene, camera);
+      viewCube.render(renderer, state.camera);
       frame = requestAnimationFrame(animate);
     };
     animate();
@@ -1741,9 +1945,12 @@ export function Viewport({
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      renderer.domElement.removeEventListener("pointerdown", onGizmoDown, true);
+      renderer.domElement.removeEventListener("pointerleave", onGizmoLeave);
       renderer.domElement.removeEventListener("pointermove", onMove);
       renderer.domElement.removeEventListener("pointerdown", onDown);
       renderer.domElement.removeEventListener("pointerup", onUp);
+      viewCube.dispose();
       controls.dispose();
       transformControls.detach();
       transformControls.dispose();

@@ -952,62 +952,29 @@
   pointer-events: none;
 }
 
-.view-controls {
+/* Named views + iso corners live on the on-canvas gizmo (top-right); this small
+   round button is tucked just below the gizmo and resets to the iso view. */
+.view-reset {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-  padding: 6px;
-  background: rgba(24, 26, 32, 0.82);
-  border: 1px solid #2a2d35;
-  border-radius: 8px;
-  backdrop-filter: blur(4px);
-}
-
-.view-controls button {
-  background: #232730;
-  border: 1px solid #313643;
-  color: #d6d9e0;
-  border-radius: 5px;
-  padding: 5px 8px;
-  font-size: 11px;
-  cursor: pointer;
-  min-width: 46px;
-}
-
-.view-controls button:hover {
-  background: #2c313c;
-  border-color: #4f8cff;
-}
-
-/* Perspective/orthographic toggle — sits next to Iso on the bottom row. */
-.proj-toggle {
-  grid-column: span 2;
+  top: 176px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  background: #232730;
-  border: 1px solid #313643;
-  color: #d6d9e0;
-  border-radius: 5px;
-  padding: 5px 8px;
-  font-size: 11px;
+  padding: 0;
+  color: #c7cbd4;
+  background: rgba(24, 26, 32, 0.82);
+  border: 1px solid #2a2d35;
+  border-radius: 999px;
   cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
+  backdrop-filter: blur(4px);
 }
 
-.proj-toggle:hover {
-  background: #2c313c;
+.view-reset:hover {
+  color: #cfe0ff;
   border-color: #4f8cff;
-}
-
-.proj-toggle input {
-  cursor: pointer;
-  margin: 0;
 }
 
 .datum-label {
@@ -1980,7 +1947,6 @@
 
   /* Give the viewport's floating controls a touch more breathing room from the
      edges and each other so they stay tappable. */
-  .view-controls button,
   .model-toolbar > button,
   .mt-dropdown > button {
     padding: 7px 10px;
