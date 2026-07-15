@@ -293,10 +293,7 @@ function revolveSketchRegion(
 ): NamedShape {
   const { outline, frame } = profile;
   if (outline.length < 3) throw new Error("revolve: profile needs at least 3 points");
-  const plane = planeOf(frame);
-  let pen = draw().movePointerTo(outline[0]);
-  for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
-  const face = (pen.close().sketchOnPlane(plane) as { face(): Face }).face();
+  const face = regionFace(profile, planeOf(frame));
   return revolveFromFace(face, axisOrigin, axisDir, angleRad, symmetric, id);
 }
 
@@ -341,6 +338,40 @@ function profileDrawing(profile: RegionProfile) {
   let pen = draw().movePointerTo(outline[0]);
   for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
   return pen.close();
+}
+
+/** A closed polyline ring (uv) as a Drawing — used to subtract region holes. */
+function ringDrawing(ring: [number, number][]) {
+  const closed =
+    ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1];
+  const pts = closed ? ring.slice(0, -1) : ring;
+  let pen = draw().movePointerTo(pts[0]);
+  for (let i = 1; i < pts.length; i++) pen = pen.lineTo(pts[i]);
+  return pen.close();
+}
+
+/** The region as a Drawing with its island `holes` cut out — a proper
+ *  face-with-holes (frame/annulus) rather than a solid outer outline. Falls
+ *  back to the plain outer profile when the region has no holes. */
+function regionDrawing(profile: RegionProfile) {
+  let d = profileDrawing(profile);
+  for (const hole of profile.holes ?? []) {
+    if (hole.length >= 3) d = d.cut(ringDrawing(hole));
+  }
+  return d;
+}
+
+/** The single fillable Face for a region, holes included. A plain (hole-free)
+ *  Drawing sketches to a Sketch/CompoundSketch with `.face()`; once holes are
+ *  cut, `sketchOnPlane` yields a `Sketches` collection whose lone member is the
+ *  face-with-holes — unwrap it. */
+function regionFace(profile: RegionProfile, plane: Plane): Face {
+  const sk = regionDrawing(profile).sketchOnPlane(plane) as unknown as
+    | { face?: () => Face; sketches?: Array<{ face?: () => Face }> };
+  if (typeof sk.face === "function") return sk.face();
+  const parts = (sk.sketches ?? []).filter((s) => typeof s.face === "function");
+  if (parts.length === 1) return parts[0].face!();
+  throw new Error("region profile did not resolve to a single face");
 }
 
 /** Resolve `shape`'s faces to a name map, given hash→name maps for the swept
@@ -454,10 +485,7 @@ function sketchRegionFace(
 ): { face: Face; normal: Vector } {
   const { outline, frame } = profile;
   if (outline.length < 3) throw new Error("extrude: profile needs at least 3 points");
-  const plane = planeOf(frame);
-  let pen = draw().movePointerTo(outline[0]);
-  for (let i = 1; i < outline.length; i++) pen = pen.lineTo(outline[i]);
-  const face = (pen.close().sketchOnPlane(plane) as { face(): Face }).face();
+  const face = regionFace(profile, planeOf(frame));
   return { face, normal: new Vector(frame.normal) };
 }
 

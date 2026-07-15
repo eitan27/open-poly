@@ -157,6 +157,59 @@ describe("detectSketchRegions — subregions at T-junctions and crossings", () =
   });
 });
 
+describe("detectSketchRegions — nested island loops (holes)", () => {
+  // A big box with a smaller, free-floating box entirely inside it (the inner
+  // box touches nothing). The outer region should read as the frame (big minus
+  // small), the inner box as its own face — each independently selectable.
+  const big = () => [
+    line([0, 0], [10, 0]), line([10, 0], [10, 10]), line([10, 10], [0, 10]), line([0, 10], [0, 0]),
+  ];
+  const small = () => [
+    line([3, 3], [6, 3]), line([6, 3], [6, 6]), line([6, 6], [3, 6]), line([3, 6], [3, 3]),
+  ];
+
+  it("makes the outer region an annulus and the inner box its own region", () => {
+    const regions = detectSketchRegions([...big(), ...small()]);
+    expect(regions).toHaveLength(2);
+    const outer = regions.find((r) => r.area > 50)!;
+    const inner = regions.find((r) => r.area < 50)!;
+    expect(inner.area).toBeCloseTo(9, 5); // 3×3 box
+    expect(outer.area).toBeCloseTo(100 - 9, 5); // big minus the hole
+    expect(outer.holes ?? []).toHaveLength(1); // the inner box is a hole
+    expect(inner.holes ?? []).toHaveLength(0);
+  });
+
+  it("keeps three concentric boxes as three rings/faces with subtracted areas", () => {
+    const mid = [
+      line([2, 2], [8, 2]), line([8, 2], [8, 8]), line([8, 8], [2, 8]), line([2, 8], [2, 2]),
+    ]; // 6×6 = 36
+    const tiny = [
+      line([4, 4], [6, 4]), line([6, 4], [6, 6]), line([6, 6], [4, 6]), line([4, 6], [4, 4]),
+    ]; // 2×2 = 4
+    const regions = detectSketchRegions([...big(), ...mid, ...tiny]);
+    expect(regions).toHaveLength(3);
+    expect(areas([...big(), ...mid, ...tiny])).toEqual([4, 32, 64]); // 4, 36−4, 100−36
+  });
+
+  it("a free-floating circle inside a box becomes a hole of the box", () => {
+    const circle: SketchEntity = { type: "circle", id: "c", c: [5, 5], r: 2 };
+    const regions = detectSketchRegions([...big(), circle]);
+    expect(regions).toHaveLength(2);
+    const box = regions.find((r) => r.area > 50)!;
+    expect(box.holes ?? []).toHaveLength(1);
+    expect(box.area).toBeCloseTo(100 - Math.PI * 4, 1); // 48-gon disk area
+  });
+
+  it("side-by-side (non-nested) regions get no holes", () => {
+    // Two separate boxes; neither contains the other.
+    const a = [line([0, 0], [2, 0]), line([2, 0], [2, 2]), line([2, 2], [0, 2]), line([0, 2], [0, 0])];
+    const b = [line([5, 0], [7, 0]), line([7, 0], [7, 2]), line([7, 2], [5, 2]), line([5, 2], [5, 0])];
+    const regions = detectSketchRegions([...a, ...b]);
+    expect(regions).toHaveLength(2);
+    for (const r of regions) expect(r.holes ?? []).toHaveLength(0);
+  });
+});
+
 const arc = (c: Vec2, r: number, start: number, end: number): SketchEntity => ({ type: "arc", id: `a${n++}`, c, r, start, end });
 const spline = (points: Vec2[]): SketchEntity => ({ type: "spline", id: `s${n++}`, points });
 

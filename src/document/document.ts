@@ -861,7 +861,7 @@ export function resolveDocument(doc: Document): ResolveResult {
           if (sketch?.type !== "sketch") throw new Error("extrude: profile sketch not found");
           const region = detectSketchRegions(sketch.entities).find((r) => r.id === prof.regionId);
           if (!region) throw new Error("extrude: profile region not found");
-          profile = { kind: "sketchRegion" as const, outline: region.outline, frame: frameOf(sketch.plane, planeFrames) };
+          profile = { kind: "sketchRegion" as const, outline: region.outline, holes: region.holes, frame: frameOf(sketch.plane, planeFrames) };
         } else if (prof.kind === "sketchText") {
           // Bake the text entity's value/height/rotation/anchor + plane frame; the
           // worker re-builds the glyph wires (with counters/holes) and extrudes.
@@ -1039,7 +1039,7 @@ export function resolveDocument(doc: Document): ResolveResult {
         features.push({
           id: f.id,
           type: "revolve",
-          profile: { kind: "sketchRegion", outline: region.outline, frame },
+          profile: { kind: "sketchRegion", outline: region.outline, holes: region.holes, frame },
           angle,
           symmetric: f.symmetric ?? false,
           ...axisPart,

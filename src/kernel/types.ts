@@ -58,7 +58,7 @@ export type ProfileSegment =
  *  `segments`/`segmentStart`, when present, give the same loop as exact curves
  *  (lines + arcs) — the kernel prefers them over the faceted `outline`. */
 export type ResolvedProfile =
-  | { kind: "sketchRegion"; outline: [number, number][]; frame: ResolvedFrame; segmentStart?: [number, number]; segments?: ProfileSegment[] }
+  | { kind: "sketchRegion"; outline: [number, number][]; frame: ResolvedFrame; segmentStart?: [number, number]; segments?: ProfileSegment[]; holes?: [number, number][][] }
   // `faceName` is the persistent topological name (preferred); `center` (+
   // optional `normal`, for planar faces) is the geometric fingerprint used to
   // re-match the face when the name no longer exists on the rebuilt body.

@@ -2396,6 +2396,11 @@ export function Viewport({
       // only shows on hover/selection.
       for (const region of s.regions) {
         const shape = new THREE.Shape(region.outline.map((p) => new THREE.Vector2(p[0], p[1])));
+        // Carve inner loops out of the fill so the mesh is a true annulus: a
+        // click inside a hole falls through to the nested region behind it.
+        for (const hole of region.holes ?? []) {
+          shape.holes.push(new THREE.Path(hole.map((p) => new THREE.Vector2(p[0], p[1]))));
+        }
         const geom2d = new THREE.ShapeGeometry(shape);
         const flat = geom2d.getAttribute("position");
         const world = new Float32Array(flat.count * 3);
@@ -2416,16 +2421,19 @@ export function Viewport({
         fill.userData.sketchId = s.id;
         fill.userData.regionId = region.id;
         fill.userData.isRegion = true;
-        // Closed boundary loop in world space (line-segment pairs) for fat-line
-        // highlighting when the sketch face is selected.
+        // Closed boundary loops in world space (line-segment pairs) for fat-line
+        // highlighting when the sketch face is selected — the outer outline plus
+        // every hole boundary, so an annular frame highlights its inner edge too.
         const ow: number[] = [];
-        const n = region.outline.length;
-        for (let i = 0; i < n; i++) {
-          const p = region.outline[i];
-          const q = region.outline[(i + 1) % n];
-          const wp = uvToWorld(s.frame, p[0], p[1]);
-          const wq = uvToWorld(s.frame, q[0], q[1]);
-          ow.push(wp[0], wp[1], wp[2], wq[0], wq[1], wq[2]);
+        for (const loop of [region.outline, ...(region.holes ?? [])]) {
+          const n = loop.length;
+          for (let i = 0; i < n; i++) {
+            const p = loop[i];
+            const q = loop[(i + 1) % n];
+            const wp = uvToWorld(s.frame, p[0], p[1]);
+            const wq = uvToWorld(s.frame, q[0], q[1]);
+            ow.push(wp[0], wp[1], wp[2], wq[0], wq[1], wq[2]);
+          }
         }
         fill.userData.outlineWorld = ow;
         state.sketchGroup.add(fill);

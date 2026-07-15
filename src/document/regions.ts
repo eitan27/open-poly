@@ -19,6 +19,11 @@ export interface SketchRegion {
   id: string;
   outline: Vec2[]; // closed loop of uv points (curves tessellated)
   area: number;
+  /** Closed inner loops (uv, curves tessellated) carved out of this region — a
+   *  free-floating loop entirely inside another face reads as a hole, so the
+   *  outer face is the frame/annulus and the inner loop is its own region. Empty
+   *  or absent when the region is simply connected (the common case). */
+  holes?: Vec2[][];
   /** Ids of the sketch entities (lines/arcs/splines/circle) that bound this
    *  region, so a selection of those entities can stand in for a direct pick of
    *  the region (see `regionsEnclosedBy`). */
@@ -34,6 +39,45 @@ const coord = (v: number) => {
   return s === "-0.0000" ? "0.0000" : s;
 };
 const key = (p: Vec2) => `${coord(p[0])},${coord(p[1])}`;
+
+/** Even-odd point-in-polygon test (ray cast). Boundary cases are irrelevant
+ *  here — we only ever test a point taken from strictly inside another face. */
+function pointInPoly(p: Vec2, poly: Vec2[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const yi = poly[i][1], yj = poly[j][1];
+    if ((yi > p[1]) !== (yj > p[1])) {
+      const x = poly[i][0] + ((p[1] - yi) / (yj - yi)) * (poly[j][0] - poly[i][0]);
+      if (p[0] < x) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** A point guaranteed strictly inside a simple polygon: scan a horizontal line
+ *  through the vertical mid-height and take the midpoint of the widest interior
+ *  span. Robust for non-convex faces (an L-shaped cell) where the centroid can
+ *  fall outside; falls back to the centroid only if the scan finds no span. */
+function interiorPoint(poly: Vec2[]): Vec2 {
+  let minY = Infinity, maxY = -Infinity;
+  for (const p of poly) { if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1]; }
+  const y = (minY + maxY) / 2;
+  const xs: number[] = [];
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const yi = poly[i][1], yj = poly[j][1];
+    if ((yi > y) !== (yj > y)) xs.push(poly[i][0] + ((y - yi) / (yj - yi)) * (poly[j][0] - poly[i][0]));
+  }
+  xs.sort((a, b) => a - b);
+  let bestMid = 0, bestW = -1;
+  for (let i = 0; i + 1 < xs.length; i += 2) {
+    const w = xs[i + 1] - xs[i];
+    if (w > bestW) { bestW = w; bestMid = (xs[i] + xs[i + 1]) / 2; }
+  }
+  if (bestW >= 0) return [bestMid, y];
+  let cx = 0, cy = 0;
+  for (const p of poly) { cx += p[0]; cy += p[1]; }
+  return [cx / poly.length, cy / poly.length];
+}
 
 /** Signed area (CCW positive) via the shoelace formula. */
 function signedArea(pts: Vec2[]): number {
@@ -335,6 +379,35 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
       .map((r) => ({ r, c: centroid(r) }))
       .sort((p, q) => p.c[0] - q.c[0] || p.c[1] - q.c[1])
       .forEach(({ r }, k) => { r.id = `${r.id}~${k}`; });
+  }
+
+  // Island nesting → holes. Adjacent cells of a connected sketch come out as
+  // siblings (no containment), but a free-floating loop wholly inside another
+  // face is a separate connected component the planar graph can't tie together.
+  // Detect it geometrically: each region whose interior point lies inside a
+  // larger region's outline becomes a hole of the SMALLEST such region, so a
+  // box with an inner loop reads as an annulus + the inner face. Faces don't
+  // overlap, so a single interior-point test is decisive.
+  if (regions.length > 1) {
+    const rep = regions.map((r) => interiorPoint(r.outline));
+    const origArea = regions.map((r) => r.area);
+    const parent = regions.map((_r, i) => {
+      let best = -1, bestArea = Infinity;
+      for (let j = 0; j < regions.length; j++) {
+        if (j === i || origArea[j] <= origArea[i]) continue;
+        if (pointInPoly(rep[i], regions[j].outline) && origArea[j] < bestArea) {
+          bestArea = origArea[j];
+          best = j;
+        }
+      }
+      return best;
+    });
+    for (let i = 0; i < regions.length; i++) {
+      const p = parent[i];
+      if (p < 0) continue;
+      (regions[p].holes ??= []).push(regions[i].outline);
+      regions[p].area -= origArea[i]; // subtract from the ORIGINAL area (holes nest)
+    }
   }
 
   return regions;
