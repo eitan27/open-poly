@@ -1720,6 +1720,61 @@ function buildBodies(
   return { bodies, failures, timings, warnings };
 }
 
+/** Bodies with more faces than this mesh per-face (see `meshFaceByFace`); below it,
+ *  replicad's one-shot whole-shape mesh is faster. Large imported STEP assemblies
+ *  (a populated PCB is ~80k faces) are the case this guards against. */
+const PER_FACE_MESH_THRESHOLD = 5000;
+
+/** Deflection (mm) for a large body's tessellation, scaled to its size so the
+ *  triangle count stays bounded regardless of the model's absolute scale. */
+function referenceMeshOpts(shape: Shape3D): { tolerance: number; angularTolerance: number } {
+  let diag = 100;
+  try {
+    const bb = shape.boundingBox;
+    diag = Math.hypot(bb.width, bb.height, bb.depth) || diag;
+    bb.delete();
+  } catch { /* fall back to the default diagonal */ }
+  // ~0.3% of the diagonal, clamped to a sane band — coarse enough to be light,
+  // fine enough to read a reference part.
+  return { tolerance: Math.min(2, Math.max(0.2, diag * 0.003)), angularTolerance: 0.5 };
+}
+
+/** Mesh a shape ONE FACE AT A TIME. replicad's `Shape.mesh()` runs `BRepMesh` over
+ *  the whole compound, holding every face's triangulation simultaneously — which
+ *  exhausts the (bounded) wasm heap on huge assemblies. Here each face is meshed,
+ *  its triangles extracted, then `BRepTools.Clean`-ed to release the triangulation
+ *  before the next, so peak memory stays at a single face. A per-face guard skips a
+ *  pathological face rather than failing the whole import. Returns replicad's
+ *  `MeshedFaces` shape (edges are omitted — a reference body doesn't need them). */
+function meshFaceByFace(shape: Shape3D, opts: { tolerance: number; angularTolerance: number }): MeshedFaces {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const vChunks: number[][] = [], nChunks: number[][] = [], tChunks: number[][] = [];
+  const faceGroups: { start: number; count: number; faceId: number }[] = [];
+  let nodeOffset = 0, triLen = 0, skipped = 0;
+  shape.faces.forEach((face) => {
+    try {
+      const im = new oc.BRepMesh_IncrementalMesh_2(face.wrapped, opts.tolerance, false, opts.angularTolerance, false);
+      im.delete();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tri = (face as any).triangulation(nodeOffset) as { vertices: number[]; trianglesIndexes: number[]; verticesNormals: number[] } | null;
+      if (tri) {
+        faceGroups.push({ start: triLen, count: tri.trianglesIndexes.length, faceId: face.hashCode });
+        tChunks.push(tri.trianglesIndexes); triLen += tri.trianglesIndexes.length;
+        vChunks.push(tri.vertices); nodeOffset += tri.vertices.length / 3;
+        nChunks.push(tri.verticesNormals);
+      }
+      oc.BRepTools.Clean(face.wrapped, true); // free THIS face's triangulation
+    } catch {
+      skipped++; // a single un-meshable face shouldn't sink the whole body
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (face as any).delete?.();
+  });
+  if (skipped) console.warn(`mesh: skipped ${skipped} un-meshable face(s) of ${faceGroups.length + skipped}`);
+  return { triangles: tChunks.flat(), vertices: vChunks.flat(), normals: nChunks.flat(), faceGroups };
+}
+
 function regenerate(
   features: ResolvedFeature[],
   emit?: (result: RegenFeatureResult) => void,
@@ -1742,8 +1797,17 @@ function regenerate(
       usedMeshes.add(b.key);
       let cached = meshCache.get(b.key);
       if (!cached) {
-        const faces = b.shape.mesh(MESH_OPTS);
-        const edges = b.shape.meshEdges(MESH_OPTS);
+        // Huge bodies (large imported assemblies) mesh per-face so peak memory
+        // stays bounded — replicad's whole-shape mesh holds every triangulation at
+        // once and exhausts the heap. Normal bodies use the faster one-shot path.
+        let faces: MeshedFaces, edges: MeshedEdges;
+        if (b.names.size > PER_FACE_MESH_THRESHOLD) {
+          faces = meshFaceByFace(b.shape, referenceMeshOpts(b.shape));
+          edges = { lines: [], edgeGroups: [] }; // edges omitted for a reference body
+        } else {
+          faces = b.shape.mesh(MESH_OPTS);
+          edges = b.shape.meshEdges(MESH_OPTS);
+        }
         // Attach each face's / edge's persistent name (matched by build-local hash)
         // so the app carries stable references across rebuilds.
         if (faces.faceGroups) {
