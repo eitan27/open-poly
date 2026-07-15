@@ -2093,6 +2093,47 @@ export function Viewport({
     const observer = new ResizeObserver(resize);
     observer.observe(container);
 
+    // Keep near/far bracketing the scene each frame so a fixed frustum never
+    // clips geometry — notably the origin datum planes when Home frames a body
+    // far from the origin, leaving the origin behind the camera's near plane.
+    // The reference box always includes the origin region (grid + datum planes)
+    // so those stay visible from any camera pose. An orthographic camera may use
+    // a negative near (parallel projection renders "behind" the camera plane
+    // correctly); perspective keeps near positive.
+    const clipBox = new THREE.Box3();
+    const clipSphere = new THREE.Sphere();
+    const clipDir = new THREE.Vector3();
+    const clipTmp = new THREE.Vector3();
+    const REF_MIN = new THREE.Vector3(-130, -130, -130); // grid (±120) + datum planes
+    const REF_MAX = new THREE.Vector3(130, 130, 130);
+    const syncClipPlanes = () => {
+      clipBox.makeEmpty();
+      for (const c of group.children) {
+        if (c instanceof THREE.Mesh && c.userData.featureId && !c.userData.isRegion) clipBox.expandByObject(c);
+      }
+      for (const c of sketchGroup.children) {
+        if (c instanceof THREE.LineSegments && c.userData.sketchId) clipBox.expandByObject(c);
+      }
+      clipBox.expandByPoint(REF_MIN);
+      clipBox.expandByPoint(REF_MAX);
+      clipBox.getBoundingSphere(clipSphere);
+      // Signed depth of the sphere centre along the view direction (target − eye).
+      clipDir.copy(controls.target).sub(camera.position);
+      if (clipDir.lengthSq() < 1e-9) return;
+      clipDir.normalize();
+      const depth = clipTmp.copy(clipSphere.center).sub(camera.position).dot(clipDir);
+      const r = clipSphere.radius + 1; // slack so nothing sits exactly on a plane
+      let near = depth - r;
+      const far = depth + r;
+      // Perspective needs a positive near; ortho is happy with a negative one.
+      if (!(camera as THREE.OrthographicCamera).isOrthographicCamera) near = Math.max(r * 1e-3, near);
+      if (camera.near !== near || camera.far !== far) {
+        camera.near = near;
+        camera.far = far;
+        camera.updateProjectionMatrix();
+      }
+    };
+
     let frame = 0;
     const animate = () => {
       if (state.tween) {
@@ -2104,6 +2145,7 @@ export function Viewport({
         if (t >= 1) state.tween = null;
       }
       controls.update();
+      syncClipPlanes();
       renderer.render(scene, camera);
       viewCube.render(renderer, state.camera);
       frame = requestAnimationFrame(animate);
