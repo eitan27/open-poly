@@ -1734,9 +1734,11 @@ function referenceMeshOpts(shape: Shape3D): { tolerance: number; angularToleranc
     diag = Math.hypot(bb.width, bb.height, bb.depth) || diag;
     bb.delete();
   } catch { /* fall back to the default diagonal */ }
-  // ~0.3% of the diagonal, clamped to a sane band — coarse enough to be light,
-  // fine enough to read a reference part.
-  return { tolerance: Math.min(2, Math.max(0.2, diag * 0.003)), angularTolerance: 0.5 };
+  // ~0.5% of the diagonal, clamped to a sane band. An imported assembly is a
+  // reference body (you model an enclosure AROUND it, not on it), so it's tuned
+  // coarse to keep the triangle count — and thus GPU load and per-regen transfer
+  // — low. Raise the factor for lighter/faster, lower it for crisper curves.
+  return { tolerance: Math.min(5, Math.max(0.4, diag * 0.005)), angularTolerance: 0.6 };
 }
 
 /** Mesh a shape ONE FACE AT A TIME. replicad's `Shape.mesh()` runs `BRepMesh` over
@@ -1746,13 +1748,22 @@ function referenceMeshOpts(shape: Shape3D): { tolerance: number; angularToleranc
  *  before the next, so peak memory stays at a single face. A per-face guard skips a
  *  pathological face rather than failing the whole import. Returns replicad's
  *  `MeshedFaces` shape (edges are omitted — a reference body doesn't need them). */
-function meshFaceByFace(shape: Shape3D, opts: { tolerance: number; angularTolerance: number }): MeshedFaces {
+function meshFaceByFace(
+  shape: Shape3D,
+  opts: { tolerance: number; angularTolerance: number },
+  onProgress?: (done: number, total: number) => void,
+): MeshedFaces {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   const vChunks: number[][] = [], nChunks: number[][] = [], tChunks: number[][] = [];
   const faceGroups: { start: number; count: number; faceId: number }[] = [];
   let nodeOffset = 0, triLen = 0, skipped = 0;
-  shape.faces.forEach((face) => {
+  const faces = shape.faces;
+  const total = faces.length;
+  faces.forEach((face, i) => {
+    // Report progress periodically — posting from the worker doesn't block it, and
+    // the main thread (idle during our synchronous mesh) can paint a status.
+    if (onProgress && i % 2000 === 0) onProgress(i, total);
     try {
       const im = new oc.BRepMesh_IncrementalMesh_2(face.wrapped, opts.tolerance, false, opts.angularTolerance, false);
       im.delete();
@@ -1771,6 +1782,7 @@ function meshFaceByFace(shape: Shape3D, opts: { tolerance: number; angularTolera
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (face as any).delete?.();
   });
+  onProgress?.(total, total);
   if (skipped) console.warn(`mesh: skipped ${skipped} un-meshable face(s) of ${faceGroups.length + skipped}`);
   // Concatenate the per-face chunks straight into typed arrays (fill, not `.flat()`
   // — ~4× faster at this scale, and the result transfers to the main thread as a
@@ -1788,6 +1800,7 @@ function meshFaceByFace(shape: Shape3D, opts: { tolerance: number; angularTolera
 function regenerate(
   features: ResolvedFeature[],
   emit?: (result: RegenFeatureResult) => void,
+  onMeshProgress?: (featureId: string, done: number, total: number) => void,
 ): { results: RegenFeatureResult[]; warnings: Record<string, string> } {
   const buildT0 = performance.now();
   const usedBuilders = new Set<string>();
@@ -1812,18 +1825,19 @@ function regenerate(
         // once and exhausts the heap. Normal bodies use the faster one-shot path.
         let faces: MeshedFaces, edges: MeshedEdges;
         if (b.names.size > PER_FACE_MESH_THRESHOLD) {
-          faces = meshFaceByFace(b.shape, referenceMeshOpts(b.shape));
+          // Large imported assembly: mesh per-face so peak memory stays bounded
+          // (replicad's whole-shape mesh holds every triangulation at once and
+          // exhausts the heap). Produce typed arrays — this mesh is millions of
+          // triangles and re-transfers to the main thread every regen, so the
+          // ArrayBuffer copy (vs per-number structured clone) is a big win here.
+          faces = meshFaceByFace(b.shape, referenceMeshOpts(b.shape), (done, total) => onMeshProgress?.(b.id, done, total));
           edges = { lines: [], edgeGroups: [] }; // edges omitted for a reference body
         } else {
-          // replicad returns number[]; repack as typed arrays so the mesh transfers
-          // to the main thread as an ArrayBuffer copy, not a per-number clone.
-          const rf = b.shape.mesh(MESH_OPTS);
-          const re = b.shape.meshEdges(MESH_OPTS);
-          faces = {
-            vertices: new Float32Array(rf.vertices), triangles: new Uint32Array(rf.triangles),
-            normals: rf.normals ? new Float32Array(rf.normals) : undefined, faceGroups: rf.faceGroups,
-          };
-          edges = { lines: new Float32Array(re.lines), edgeGroups: re.edgeGroups };
+          // Normal body: replicad's one-shot mesh (number[]). Small meshes clone
+          // across the worker boundary instantly, so typed-array repacking would
+          // only add overhead with no transfer benefit.
+          faces = b.shape.mesh(MESH_OPTS);
+          edges = b.shape.meshEdges(MESH_OPTS);
         }
         // Attach each face's / edge's persistent name (matched by build-local hash)
         // so the app carries stable references across rebuilds.
@@ -1908,8 +1922,10 @@ ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
     let res: KernelResponse;
     switch (req.op) {
       case "regenerate": {
-        const { results, warnings } = regenerate(req.features, (result) =>
-          ctx.postMessage({ id: req.id, ok: true, op: "regenerate-progress", result }),
+        const { results, warnings } = regenerate(
+          req.features,
+          (result) => ctx.postMessage({ id: req.id, ok: true, op: "regenerate-progress", result }),
+          (featureId, done, total) => ctx.postMessage({ id: req.id, ok: true, op: "mesh-progress", featureId, done, total }),
         );
         res = { id: req.id, ok: true, op: "regenerate", results, warnings };
         break;

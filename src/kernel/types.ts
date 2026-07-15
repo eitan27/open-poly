@@ -169,6 +169,7 @@ export interface Kernel {
   regenerate(
     features: ResolvedFeature[],
     onProgress?: (result: RegenFeatureResult) => void,
+    onMeshProgress?: (featureId: string, done: number, total: number) => void,
   ): Promise<RegenOutcome>;
   /** Replays the feature list and exports the result body with `bodyId`.
    *  Geometry is authored in millimetres throughout, so STEP declares "mm". */
