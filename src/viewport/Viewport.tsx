@@ -170,7 +170,11 @@ export interface ViewportApi {
   /** Switch the camera between perspective and orthographic projection,
    *  preserving the current view (position/target and apparent scale). */
   setProjection(mode: "perspective" | "orthographic"): void;
-  lookAtFrame(frame: PlaneFrameData): void;
+  /** Orient the camera face-on to `frame` (looking down its normal, up = vAxis).
+   *  Aims at `aim` when given — the point the user actually clicked to start the
+   *  sketch — else the frame origin, and keeps the current viewing distance so
+   *  entering a sketch doesn't yank the camera to a fixed far standoff. */
+  lookAtFrame(frame: PlaneFrameData, aim?: [number, number, number]): void;
   /** Orient to `frame` like `lookAtFrame`, but centre the view on the given
    *  in-plane (u,v) bounds and zoom so they fit — used after a DXF import, whose
    *  geometry can sit far from the plane origin (and so be off-screen with the
@@ -674,7 +678,9 @@ export function Viewport({
    *  panel's live readout). Must not trigger a regenerate. */
   onTransformPreview: (delta: TransformDelta) => void;
   picking: boolean;
-  onPick: (ref: SketchPlaneRef) => void;
+  /** `aim` is the clicked world point (face picks only) so the sketch view can
+   *  orient onto the face the user actually clicked, not the plane origin. */
+  onPick: (ref: SketchPlaneRef, aim?: [number, number, number]) => void;
   /** When true (during a revolve "Select axis" arming), a pick in `picking` mode
    *  is routed to `onAxisPick` instead of `onPick`, accepting a sketch line, a
    *  body face, or a datum/reference plane from one click stream. */
@@ -1289,10 +1295,14 @@ export function Viewport({
         // The ViewCube reads `state.camera` each frame (see the animate loop),
         // so a projection swap needs no work here.
       },
-      lookAtFrame(frame) {
-        const origin = new THREE.Vector3(...frame.origin);
+      lookAtFrame(frame, aim) {
         const normal = new THREE.Vector3(...frame.normal).normalize();
-        startTween(origin.clone().add(normal.multiplyScalar(VIEW_DISTANCE)), new THREE.Vector3(...frame.vAxis), origin);
+        // Aim at the clicked point (the user's actual action) when we have it,
+        // else the frame origin. Keep the current camera→target distance so the
+        // view re-orients face-on without jumping to a fixed far standoff.
+        const target = aim ? new THREE.Vector3(...aim) : new THREE.Vector3(...frame.origin);
+        const dist = camera.position.distanceTo(controls.target) || VIEW_DISTANCE;
+        startTween(target.clone().add(normal.multiplyScalar(dist)), new THREE.Vector3(...frame.vAxis), target);
       },
       frameSketchBounds(frame, min, max) {
         const O = new THREE.Vector3(...frame.origin);
@@ -1957,7 +1967,7 @@ export function Viewport({
         } else {
           const featureId = (p.mesh.userData.featureId as string) ?? "";
           const frame = deriveFaceFrame([p.point.x, p.point.y, p.point.z], [p.normal.x, p.normal.y, p.normal.z]);
-          onPickRef.current({ kind: "face", featureId, frame });
+          onPickRef.current({ kind: "face", featureId, frame }, [p.point.x, p.point.y, p.point.z]);
         }
         return;
       }

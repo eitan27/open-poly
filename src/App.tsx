@@ -3379,7 +3379,7 @@ export default function App() {
     return [...renderSketches, ...extra];
   }, [renderSketches, offsetPreview, mirrorSession, projectSession, patternPreview, textDraft, resolved.scope, dimFrame]);
 
-  const startSketchOn = (ref: SketchPlaneRef) => {
+  const startSketchOn = (ref: SketchPlaneRef, aim?: [number, number, number]) => {
     const { doc: next, id } = addSketch(doc, ref);
     setDoc(next);
     selectFeature(id);
@@ -3387,7 +3387,10 @@ export default function App() {
     setEditingSketchId(id);
     setSketchTool("select");
     setFullyConstrained(false);
-    viewApiRef.current?.lookAtFrame(frameOf(ref, resolved.planeFrames));
+    // Orient onto the face at the point the user clicked (aim), keeping their
+    // current zoom — so the sketch view stays on the geometry they just picked
+    // instead of jumping to the plane origin at a fixed far distance.
+    viewApiRef.current?.lookAtFrame(frameOf(ref, resolved.planeFrames), aim);
   };
 
   // Open the reference-plane dialog and arm the base pick (offset is the default
@@ -3406,14 +3409,14 @@ export default function App() {
 
   // The plane/face pick resolved: start a sketch on it, or fill the plane
   // dialog's base / second reference (whichever slot is armed).
-  const handlePickRef = (ref: SketchPlaneRef) => {
+  const handlePickRef = (ref: SketchPlaneRef, aim?: [number, number, number]) => {
     if (pickPurpose === "plane") {
       setPicking(false);
       if (planePick === "refB") setPlaneDialog((d) => (d ? { ...d, refB: ref } : d));
       else setPlaneDialog((d) => (d ? { ...d, base: ref } : d));
       setPlanePick(null);
     } else {
-      startSketchOn(ref);
+      startSketchOn(ref, aim);
     }
   };
 
