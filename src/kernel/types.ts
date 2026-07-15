@@ -3,10 +3,18 @@
 // swap-point that lets us replace the implementation with direct opencascade.js
 // calls later without touching the rest of the app.
 
+// Mesh buffers are typed arrays (Float32Array positions/normals, Uint32Array
+// indices) so the worker→main postMessage copies raw ArrayBuffers (a fast memcpy)
+// instead of structured-cloning millions of JS numbers — the difference is ~100×
+// on a large imported assembly. `number[]` is still permitted for main-thread-only
+// producers (e.g. transform-ghost previews that never cross the worker boundary).
+export type FloatBuffer = Float32Array | number[];
+export type IndexBuffer = Uint32Array | number[];
+
 export interface MeshedFaces {
-  vertices: number[];
-  triangles: number[];
-  normals?: number[];
+  vertices: FloatBuffer;
+  triangles: IndexBuffer;
+  normals?: FloatBuffer;
   /** Maps ranges of the triangle buffer back to a topological face. `faceId` is
    *  the build-local pick id (OCCT hash); `name` is the persistent topological
    *  name (stable across rebuilds) used by feature references. */
@@ -14,7 +22,7 @@ export interface MeshedFaces {
 }
 
 export interface MeshedEdges {
-  lines: number[];
+  lines: FloatBuffer;
   /** Maps ranges of the line buffer back to a topological edge. `edgeId` is the
    *  build-local pick id; `name` is the persistent name (derived from the two
    *  adjacent faces' names) used by feature references like chamfer/fillet. */

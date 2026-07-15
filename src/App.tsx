@@ -473,7 +473,7 @@ function transformMeshPayload(
   mapPt: (p: [number, number, number]) => [number, number, number],
   mapVec: (v: [number, number, number]) => [number, number, number],
 ): ShapeMeshPayload {
-  const mapFlat = (src: number[], fn: (p: [number, number, number]) => [number, number, number]) => {
+  const mapFlat = (src: ArrayLike<number>, fn: (p: [number, number, number]) => [number, number, number]) => {
     const out = new Array<number>(src.length);
     for (let i = 0; i < src.length; i += 3) {
       const [x, y, z] = fn([src[i], src[i + 1], src[i + 2]]);

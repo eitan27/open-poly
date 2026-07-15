@@ -1772,7 +1772,17 @@ function meshFaceByFace(shape: Shape3D, opts: { tolerance: number; angularTolera
     (face as any).delete?.();
   });
   if (skipped) console.warn(`mesh: skipped ${skipped} un-meshable face(s) of ${faceGroups.length + skipped}`);
-  return { triangles: tChunks.flat(), vertices: vChunks.flat(), normals: nChunks.flat(), faceGroups };
+  // Concatenate the per-face chunks straight into typed arrays (fill, not `.flat()`
+  // — ~4× faster at this scale, and the result transfers to the main thread as a
+  // raw ArrayBuffer copy instead of a per-element structured clone).
+  const fillF = (chunks: number[][]): Float32Array => {
+    const out = new Float32Array(chunks.reduce((s, c) => s + c.length, 0));
+    let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+    return out;
+  };
+  const triangles = new Uint32Array(triLen);
+  { let o = 0; for (const c of tChunks) { triangles.set(c, o); o += c.length; } }
+  return { triangles, vertices: fillF(vChunks), normals: fillF(nChunks), faceGroups };
 }
 
 function regenerate(
@@ -1805,8 +1815,15 @@ function regenerate(
           faces = meshFaceByFace(b.shape, referenceMeshOpts(b.shape));
           edges = { lines: [], edgeGroups: [] }; // edges omitted for a reference body
         } else {
-          faces = b.shape.mesh(MESH_OPTS);
-          edges = b.shape.meshEdges(MESH_OPTS);
+          // replicad returns number[]; repack as typed arrays so the mesh transfers
+          // to the main thread as an ArrayBuffer copy, not a per-number clone.
+          const rf = b.shape.mesh(MESH_OPTS);
+          const re = b.shape.meshEdges(MESH_OPTS);
+          faces = {
+            vertices: new Float32Array(rf.vertices), triangles: new Uint32Array(rf.triangles),
+            normals: rf.normals ? new Float32Array(rf.normals) : undefined, faceGroups: rf.faceGroups,
+          };
+          edges = { lines: new Float32Array(re.lines), edgeGroups: re.edgeGroups };
         }
         // Attach each face's / edge's persistent name (matched by build-local hash)
         // so the app carries stable references across rebuilds.
