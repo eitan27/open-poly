@@ -44,6 +44,40 @@ function ensureOC(): Promise<void> {
   return ocReady;
 }
 
+/** Turn a thrown value into a readable message. OCCT raises C++ exceptions that
+ *  emscripten surfaces to JS as a raw *pointer number*, so `String(err)` yields
+ *  a meaningless heap address (e.g. "241558136") and the real message is lost.
+ *  `Standard_Failure` isn't exposed as an embind class in this build, so we can't
+ *  call `Caught()`/`GetMessageString()`. Instead we recover the exception's C++
+ *  *type name* straight from the Itanium ABI layout that emscripten's own
+ *  `ExceptionInfo` walks: the thrown pointer's `__cxa_exception` header (24 bytes
+ *  before it) holds the `std::type_info*` at +4, whose +4 is the length-prefixed
+ *  mangled name (e.g. "20Standard_OutOfMemory"). That class alone tells OOM apart
+ *  from a geometry/construction failure. This path must never throw — out-of-range
+ *  typed-array reads yield `undefined` (falsy), and everything is guarded. */
+function errorMessage(err: unknown): string {
+  if (typeof err !== "number") return err instanceof Error ? err.message : String(err);
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const oc = getOC() as any;
+    const HEAPU32: Uint32Array | undefined = oc?.HEAPU32;
+    const HEAPU8: Uint8Array | undefined = oc?.HEAPU8;
+    if (HEAPU32 && HEAPU8) {
+      const typeInfo = HEAPU32[(err - 24 + 4) >> 2]; // std::type_info* from the exception header
+      const namePtr = typeInfo ? HEAPU32[(typeInfo + 4) >> 2] : 0; // type_info::__type_name
+      if (namePtr) {
+        let raw = "";
+        for (let p = namePtr; HEAPU8[p] && raw.length < 128; p++) raw += String.fromCharCode(HEAPU8[p]);
+        const name = raw.replace(/^\d+/, ""); // drop the Itanium length prefix
+        if (name) return `OCCT ${name} (exception ${err})`;
+      }
+    }
+  } catch {
+    /* fall through to the raw pointer so we still return *something* */
+  }
+  return `OCCT exception (undecoded pointer ${err})`;
+}
+
 // The bundled sketch font, loaded into replicad's text system once (lazily, only
 // when a document actually extrudes text). Same asset the UI renders glyph
 // previews from (`src/document/text.ts`), so the solid matches the preview.
@@ -1679,7 +1713,7 @@ function buildBodies(
         bodies.push({ id: feature.id, key, ...buildCached(key, used, () => loftBody(regions as Extract<ResolvedProfile, { kind: "sketchRegion" }>[], feature.id)) });
       }
     } catch (err) {
-      failures.push({ id: feature.id, ok: false, error: String(err) });
+      failures.push({ id: feature.id, ok: false, error: errorMessage(err) });
     }
     timings.push({ id: feature.id, type: feature.type, ms: performance.now() - t0 });
   }
@@ -1724,7 +1758,7 @@ function regenerate(
       }
       result = { id: b.id, ok: true, mesh: { name: b.id, faces: cached.faces, edges: cached.edges } };
     } catch (err) {
-      result = { id: b.id, ok: false, error: String(err) };
+      result = { id: b.id, ok: false, error: errorMessage(err) };
     } finally {
       b.shape.delete();
     }
@@ -1807,6 +1841,6 @@ ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
     }
     ctx.postMessage(res);
   } catch (err) {
-    ctx.postMessage({ id: req.id, ok: false, error: String(err) } as KernelResponse);
+    ctx.postMessage({ id: req.id, ok: false, error: errorMessage(err) } as KernelResponse);
   }
 };

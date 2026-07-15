@@ -1853,7 +1853,11 @@ export default function App() {
           const regenErrors: Record<string, string> = { ...resolved.errors };
           for (const r of results) {
             if (r.ok) nextMeshes.push({ id: r.id, mesh: r.mesh });
-            else regenErrors[r.id] = r.error;
+            else {
+              regenErrors[r.id] = r.error;
+              const name = doc.features.find((f) => f.id === r.id)?.name ?? r.id;
+              console.error(`[open-poly] feature "${name}" (${r.id}) failed:`, r.error);
+            }
           }
           setRawMeshes(nextMeshes);
           setRegenSettledSeq((s) => s + 1);
@@ -4553,6 +4557,16 @@ export default function App() {
     Object.keys(errors).length +
     Object.keys(resolved.variableErrors).length +
     Object.keys(resolved.variableNameErrors).length;
+  // Human-readable breakdown of every current error, shown when hovering the
+  // status badge (the count alone is a dead end otherwise). Feature errors are
+  // labelled by feature name; variable errors by their key.
+  const errorDetail = [
+    ...Object.entries(errors).map(
+      ([id, msg]) => `${doc.features.find((f) => f.id === id)?.name ?? id}: ${msg}`,
+    ),
+    ...Object.entries(resolved.variableErrors).map(([k, msg]) => `Variable ${k}: ${msg}`),
+    ...Object.entries(resolved.variableNameErrors).map(([k, msg]) => `Variable name ${k}: ${msg}`),
+  ].join("\n");
   const status = fatal
     ? "kernel error"
     : busy
@@ -4836,7 +4850,7 @@ export default function App() {
             ● Agent connected
           </span>
         )}
-        <span className={`status ${statusClass}`} title={fatal ?? undefined}>
+        <span className={`status ${statusClass}`} title={fatal ?? (errorDetail || undefined)}>
           {status}
         </span>
       </header>
