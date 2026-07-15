@@ -108,6 +108,42 @@ export function parseDxfToEntities(
   return { entities: healEndpoints(entities), counts, skipped, warnings };
 }
 
+/** Axis-aligned (u,v) bounding box of a set of sketch entities, or null when
+ *  there's no geometry with a finite extent. Arcs are sampled and circles use
+ *  their four cardinal points, so a DXF that lands far from the origin (its own
+ *  coordinates often start at hundreds of mm) can be framed by the viewport
+ *  instead of leaving the camera pointed at an empty origin. */
+export function sketchEntitiesBounds(
+  entities: SketchEntity[],
+): { min: Vec2; max: Vec2 } | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const see = (x: number, y: number) => {
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  };
+  const ARC_SAMPLES = 24;
+  for (const e of entities) {
+    switch (e.type) {
+      case "line": see(e.a[0], e.a[1]); see(e.b[0], e.b[1]); break;
+      case "circle":
+        see(e.c[0] - e.r, e.c[1]); see(e.c[0] + e.r, e.c[1]);
+        see(e.c[0], e.c[1] - e.r); see(e.c[0], e.c[1] + e.r);
+        break;
+      case "arc":
+        for (let i = 0; i <= ARC_SAMPLES; i++) {
+          const a = e.start + ((e.end - e.start) * i) / ARC_SAMPLES;
+          see(e.c[0] + e.r * Math.cos(a), e.c[1] + e.r * Math.sin(a));
+        }
+        break;
+      case "spline": for (const p of e.points) see(p[0], p[1]); break;
+      case "point": see(e.p[0], e.p[1]); break;
+      case "text": see(e.p[0], e.p[1]); see(e.p[0], e.p[1] + e.height); break;
+    }
+  }
+  if (!Number.isFinite(minX)) return null;
+  return { min: [minX, minY], max: [maxX, maxY] };
+}
+
 /** Weld near-coincident endpoints and drop degenerate segments so an exported
  *  outline — often thousands of separate LINE segments with sub-micron gaps —
  *  chains into a closed loop that region detection can actually enclose. Without

@@ -171,6 +171,11 @@ export interface ViewportApi {
    *  preserving the current view (position/target and apparent scale). */
   setProjection(mode: "perspective" | "orthographic"): void;
   lookAtFrame(frame: PlaneFrameData): void;
+  /** Orient to `frame` like `lookAtFrame`, but centre the view on the given
+   *  in-plane (u,v) bounds and zoom so they fit — used after a DXF import, whose
+   *  geometry can sit far from the plane origin (and so be off-screen with the
+   *  default framing). `min`/`max` are the entities' 2D bounding box. */
+  frameSketchBounds(frame: PlaneFrameData, min: [number, number], max: [number, number]): void;
   /** Project a world point to pixel coords relative to the canvas top-left. */
   worldToScreen(p: [number, number, number]): { x: number; y: number };
   /** The ordered world-space polyline of a body edge (by feature + edge id), as
@@ -1288,6 +1293,41 @@ export function Viewport({
         const origin = new THREE.Vector3(...frame.origin);
         const normal = new THREE.Vector3(...frame.normal).normalize();
         startTween(origin.clone().add(normal.multiplyScalar(VIEW_DISTANCE)), new THREE.Vector3(...frame.vAxis), origin);
+      },
+      frameSketchBounds(frame, min, max) {
+        const O = new THREE.Vector3(...frame.origin);
+        const U = new THREE.Vector3(...frame.uAxis);
+        const V = new THREE.Vector3(...frame.vAxis);
+        const N = new THREE.Vector3(...frame.normal).normalize();
+        // Bounds centre mapped from (u,v) into world space — the point we aim at.
+        const cu = (min[0] + max[0]) / 2, cv = (min[1] + max[1]) / 2;
+        const center = O.clone()
+          .add(U.clone().multiplyScalar(cu))
+          .add(V.clone().multiplyScalar(cv));
+        // In-plane half-extents with a margin so the geometry isn't edge-to-edge.
+        // Guard against a zero-size box (single point / all-coincident import).
+        const MARGIN = 1.15;
+        const halfW = Math.max((max[0] - min[0]) / 2, 1e-3) * MARGIN;
+        const halfH = Math.max((max[1] - min[1]) / 2, 1e-3) * MARGIN;
+        if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+          // Orthographic: fit by setting zoom so both axes are inside the frustum
+          // (which resize keeps at the canvas aspect). Distance is irrelevant to
+          // scale, so keep the standard VIEW_DISTANCE for a stable near/far.
+          const oc = camera as THREE.OrthographicCamera;
+          const frustHalfW = (oc.right - oc.left) / 2;
+          const frustHalfH = (oc.top - oc.bottom) / 2;
+          oc.zoom = Math.min(frustHalfW / halfW, frustHalfH / halfH);
+          oc.updateProjectionMatrix();
+          startTween(center.clone().add(N.clone().multiplyScalar(VIEW_DISTANCE)), new THREE.Vector3(...frame.vAxis), center);
+        } else {
+          // Perspective: fit by pulling the camera back to the distance whose
+          // frustum spans the bounds on the tighter axis.
+          const rect = renderer.domElement.getBoundingClientRect();
+          const aspect = rect.width / rect.height || 1;
+          const t = Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2);
+          const dist = Math.max(halfH, halfW / aspect) / t;
+          startTween(center.clone().add(N.clone().multiplyScalar(dist)), new THREE.Vector3(...frame.vAxis), center);
+        }
       },
       worldToScreen(p) {
         const v = new THREE.Vector3(p[0], p[1], p[2]).project(camera);

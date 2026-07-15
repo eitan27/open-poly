@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDxfToEntities, arcFromBulge } from "./dxfImport";
+import { parseDxfToEntities, arcFromBulge, sketchEntitiesBounds } from "./dxfImport";
 import type { SketchEntity, Vec2 } from "./types";
 
 /** Build a minimal DXF ENTITIES section from raw (code,value) pair lines. */
@@ -146,5 +146,40 @@ describe("parseDxfToEntities", () => {
     const { entities, skipped } = parseDxfToEntities(src);
     expect(entities).toHaveLength(0);
     expect(skipped.ELLIPSE).toBe(1);
+  });
+});
+
+describe("sketchEntitiesBounds", () => {
+  it("returns null when there is no geometry", () => {
+    expect(sketchEntitiesBounds([])).toBeNull();
+  });
+
+  it("covers line endpoints, circle rims, and arc sweeps", () => {
+    const entities: SketchEntity[] = [
+      { type: "line", id: "l", a: [0, 0], b: [10, 4] },
+      { type: "circle", id: "c", c: [20, 5], r: 3 }, // rim reaches x=23, y=2..8
+      { type: "arc", id: "a", c: [0, 0], r: 5, start: 0, end: Math.PI / 2 }, // stays in +x/+y quadrant
+    ];
+    const b = sketchEntitiesBounds(entities)!;
+    expect(b.min[0]).toBeCloseTo(0);
+    expect(b.min[1]).toBeCloseTo(0);
+    expect(b.max[0]).toBeCloseTo(23); // circle right rim
+    expect(b.max[1]).toBeCloseTo(8); // circle top rim
+  });
+
+  it("frames geometry that sits far from the origin (the DXF import case)", () => {
+    // A box centred near (135, 515) — like an exported drawing in its own coords.
+    const entities: SketchEntity[] = [
+      { type: "line", id: "1", a: [70, 471], b: [200, 471] },
+      { type: "line", id: "2", a: [200, 471], b: [200, 559] },
+      { type: "line", id: "3", a: [200, 559], b: [70, 559] },
+      { type: "line", id: "4", a: [70, 559], b: [70, 471] },
+    ];
+    const b = sketchEntitiesBounds(entities)!;
+    expect(b.min).toEqual([70, 471]);
+    expect(b.max).toEqual([200, 559]);
+    const cx = (b.min[0] + b.max[0]) / 2, cy = (b.min[1] + b.max[1]) / 2;
+    expect(cx).toBeCloseTo(135);
+    expect(cy).toBeCloseTo(515);
   });
 });

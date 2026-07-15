@@ -40,7 +40,7 @@ import {
   updateParam,
   updateVariable,
 } from "./document/document";
-import { parseDxfToEntities } from "./document/dxfImport";
+import { parseDxfToEntities, sketchEntitiesBounds } from "./document/dxfImport";
 import {
   applyDerivedToSketch,
   applyEntityExprs,
@@ -4709,7 +4709,13 @@ export default function App() {
     setEditingSketchId(id);
     setSketchTool("select");
     setFullyConstrained(false);
-    viewApiRef.current?.lookAtFrame(frameOf(ref, resolved.planeFrames));
+    // Frame the imported geometry, not the plane origin — a DXF's own coordinates
+    // often sit far from (0,0), so aiming at the origin leaves the sketch
+    // off-screen (the "imported but nothing visible" report).
+    const frame = frameOf(ref, resolved.planeFrames);
+    const bounds = sketchEntitiesBounds(entities);
+    if (bounds) viewApiRef.current?.frameSketchBounds(frame, bounds.min, bounds.max);
+    else viewApiRef.current?.lookAtFrame(frame);
     const skippedCount = Object.values(skipped).reduce((a, b) => a + b, 0);
     const skipMsg = skippedCount
       ? ` (skipped ${skippedCount} unsupported: ${Object.keys(skipped).join(", ")})`
