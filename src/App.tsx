@@ -2952,8 +2952,11 @@ export default function App() {
       }
 
       // ---- Modeling toolbar ----
-      if (key === "h" && primaryFeatureId) {
-        setDoc(setSuppressed(doc, primaryFeatureId, !doc.features.find((f) => f.id === primaryFeatureId)?.suppressed));
+      // Home: iso view zoomed to fit all bodies + visible sketches. (This key
+      // used to Hide/suppress the selected feature — that now lives only on the
+      // timeline's per-feature eye toggle.)
+      if (key === "h") {
+        viewApiRef.current?.homeView();
         return;
       }
       if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && primaryFeatureId) {
@@ -5675,18 +5678,20 @@ export default function App() {
           )}
           {editingSketch && sketchMsg && <div className="sketch-msg" role="alert">⚠ {sketchMsg}</div>}
           {/* Named views (Top/Front/Right/…) + iso corners live on the on-canvas
-              navigation gizmo (see Viewport.tsx). This small reset button, tucked
-              at the gizmo's bottom-right, snaps back to the default iso view.
+              navigation gizmo (see Viewport.tsx). This small Home button, tucked
+              at the gizmo's bottom-right, snaps to the iso view zoomed to fit
+              every body in the scene.
               (The perspective/orthographic toggle is TODO — a future settings
               menu; the viewport API still exposes setProjection.) */}
           <button
             className="view-reset"
-            title="Reset to iso view (7)"
-            onClick={() => viewApiRef.current?.setView("iso")}
+            title="Home — iso view, fit all (H)"
+            onClick={() => viewApiRef.current?.homeView()}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="3 4 3 10 9 10" />
-              <path d="M5.5 15a8 8 0 1 0 2-8.5L3 10" />
+              <path d="M3 10.5 12 3l9 7.5" />
+              <path d="M5 9.5V20h14V9.5" />
+              <path d="M9.5 20v-6h5v6" />
             </svg>
           </button>
           {!editingSketch && !picking && (

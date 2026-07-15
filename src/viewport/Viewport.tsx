@@ -167,6 +167,10 @@ export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | 
 
 export interface ViewportApi {
   setView(name: ViewName): void;
+  /** Snap to the default iso 3/4 view, zoomed to fit every body and every
+   *  visible sketch in the scene (bounding-sphere fit + margin). Falls back to
+   *  the plain iso view about the world origin when nothing is modelled yet. */
+  homeView(): void;
   /** Switch the camera between perspective and orthographic projection,
    *  preserving the current view (position/target and apparent scale). */
   setProjection(mode: "perspective" | "orthographic"): void;
@@ -1259,6 +1263,59 @@ export function Viewport({
     apiRef.current = {
       setView(name) {
         goToView(name);
+      },
+      homeView() {
+        const dir = new THREE.Vector3(...VIEWS.iso.dir).normalize();
+        const up = new THREE.Vector3(...VIEWS.iso.up);
+        // Bounds of every solid (body face meshes) plus every rendered sketch
+        // outline. Suppressed/hidden sketches aren't in the group, so keying on
+        // the rendered geometry naturally respects sketch visibility. Datum
+        // planes and sketch region fills are skipped — they'd over-inflate the fit.
+        const box = new THREE.Box3();
+        let any = false;
+        // Body face meshes live in `group`; rendered sketch outlines live in
+        // `sketchGroup` (the thin LineSegments with a plain position attribute —
+        // not the fat LineSegments2 display line, whose instanced geometry
+        // doesn't give usable bounds). Suppressed/hidden sketches aren't in the
+        // group, so keying on rendered geometry respects sketch visibility.
+        for (const child of group.children) {
+          if (child instanceof THREE.Mesh && child.userData.featureId && !child.userData.isRegion) {
+            box.expandByObject(child);
+            any = true;
+          }
+        }
+        for (const child of sketchGroup.children) {
+          if (child instanceof THREE.LineSegments && child.userData.sketchId) {
+            box.expandByObject(child);
+            any = true;
+          }
+        }
+        if (!any || box.isEmpty()) {
+          // Nothing modelled yet: the plain default iso about the world origin.
+          startTween(dir.clone().multiplyScalar(VIEW_DISTANCE), up, new THREE.Vector3(0, 0, 0));
+          return;
+        }
+        const center = box.getCenter(new THREE.Vector3());
+        const radius = Math.max(box.getBoundingSphere(new THREE.Sphere()).radius, 1e-3);
+        const MARGIN = 1.15;
+        if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+          // Orthographic: distance doesn't scale, so fit via zoom against the
+          // frustum's tighter half-extent (resize keeps it at the canvas aspect).
+          const oc = camera as THREE.OrthographicCamera;
+          const frustHalf = Math.min((oc.right - oc.left) / 2, (oc.top - oc.bottom) / 2);
+          oc.zoom = frustHalf / (radius * MARGIN);
+          oc.updateProjectionMatrix();
+          startTween(center.clone().add(dir.clone().multiplyScalar(VIEW_DISTANCE)), up, center);
+        } else {
+          // Perspective: pull back so the bounding sphere fits the tighter of the
+          // vertical/horizontal FOVs.
+          const rect = renderer.domElement.getBoundingClientRect();
+          const aspect = rect.width / rect.height || 1;
+          const vFov = THREE.MathUtils.degToRad(CAMERA_FOV);
+          const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
+          const dist = (radius * MARGIN) / Math.sin(Math.min(vFov, hFov) / 2);
+          startTween(center.clone().add(dir.clone().multiplyScalar(dist)), up, center);
+        }
       },
       setProjection(mode) {
         const isOrtho = (camera as THREE.OrthographicCamera).isOrthographicCamera === true;
