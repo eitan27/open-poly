@@ -14,5 +14,8 @@ export type KernelResponse =
   // for the whole fold. The final "regenerate" message is still authoritative
   // (it also removes bodies that no longer exist).
   | { id: number; ok: true; op: "regenerate-progress"; result: RegenFeatureResult }
+  // Coarse progress while meshing a huge body face-by-face (a long import), so the
+  // UI can show "processing N/M faces". `featureId` is the body being meshed.
+  | { id: number; ok: true; op: "mesh-progress"; featureId: string; done: number; total: number }
   | { id: number; ok: true; op: "export"; blob: Blob }
   | { id: number; ok: false; error: string };

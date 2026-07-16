@@ -6,7 +6,23 @@ import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { getEdgeId, getFaceId, syncGeometries } from "replicad-threejs-helper";
-import type { ShapeMeshPayload } from "../kernel/types";
+import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
+
+/** Build a body's three.js geometry from a meshed payload. Wraps replicad's
+ *  `syncGeometries`, then re-sets the index: our mesh indices are `Uint32Array`
+ *  (so the mesh transfers from the worker as a raw ArrayBuffer copy), but
+ *  `BufferGeometry.setIndex` only auto-wraps plain `number[]` — a typed array is
+ *  assigned raw and won't render, so we install it as a proper `BufferAttribute`. */
+function syncBodyGeometry(name: string, faces: MeshedFaces, edges: MeshedEdges) {
+  // The helper types its input as `number[]` buffers; at runtime it feeds them to
+  // Float32BufferAttribute/setIndex, which accept typed arrays too. Cast past the
+  // narrow types (we fix the one case it can't handle — a typed index — below).
+  const meshes = [{ name, faces, edges }] as unknown as Parameters<typeof syncGeometries>[0];
+  const [geometry] = syncGeometries(meshes, []);
+  const tri = faces.triangles;
+  if (ArrayBuffer.isView(tri)) geometry.faces.setIndex(new THREE.BufferAttribute(tri as Uint32Array, 1));
+  return geometry;
+}
 import type { SketchEntity, Vec2 } from "../document/types";
 import type { SketchRegion } from "../document/regions";
 import {
@@ -2204,7 +2220,7 @@ export function Viewport({
     hoverBodyRef.current = null;
     disposeGroup(state.group);
     for (const { id, mesh, color, opacity } of meshes) {
-      const [geometry] = syncGeometries([{ name: id, faces: mesh.faces, edges: mesh.edges }], []);
+      const geometry = syncBodyGeometry(id, mesh.faces, mesh.edges);
       // Material array: index 0 = this body's own color, 1 = hover (shared),
       // 2 = selected. The selected material is per-body: the body's own colour
       // blended toward the highlight orange, so the original colour still shows
@@ -2266,10 +2282,7 @@ export function Viewport({
     }
     state.ghostGroup.clear();
     ghostMeshes.forEach((ghost, i) => {
-      const [geometry] = syncGeometries(
-        [{ name: `ghost${i}`, faces: ghost.mesh.faces, edges: ghost.mesh.edges }],
-        [],
-      );
+      const geometry = syncBodyGeometry(`ghost${i}`, ghost.mesh.faces, ghost.mesh.edges);
       const faceMesh = new THREE.Mesh(geometry.faces, state.ghostMaterial);
       const edges = new THREE.LineSegments(geometry.lines, state.ghostLineMaterial);
       state.ghostGroup.add(faceMesh, edges);

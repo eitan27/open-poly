@@ -10,6 +10,7 @@ type Pending =
       resolve: (value: RegenOutcome) => void;
       reject: (reason: Error) => void;
       onProgress?: (result: RegenFeatureResult) => void;
+      onMeshProgress?: (featureId: string, done: number, total: number) => void;
     }
   | { op: "export"; resolve: (value: Blob) => void; reject: (reason: Error) => void };
 
@@ -30,6 +31,10 @@ export class KernelClient implements Kernel {
       // and keep the request pending (don't resolve or delete it yet).
       if (res.ok && res.op === "regenerate-progress") {
         if (p.op === "regenerate") p.onProgress?.(res.result);
+        return;
+      }
+      if (res.ok && res.op === "mesh-progress") {
+        if (p.op === "regenerate") p.onMeshProgress?.(res.featureId, res.done, res.total);
         return;
       }
       this.pending.delete(res.id);
@@ -56,11 +61,12 @@ export class KernelClient implements Kernel {
   regenerate(
     features: ResolvedFeature[],
     onProgress?: (result: RegenFeatureResult) => void,
+    onMeshProgress?: (featureId: string, done: number, total: number) => void,
   ): Promise<RegenOutcome> {
     const id = this.nextId++;
     const req: KernelRequest = { id, op: "regenerate", features };
     return new Promise<RegenOutcome>((resolve, reject) => {
-      this.pending.set(id, { op: "regenerate", resolve, reject, onProgress });
+      this.pending.set(id, { op: "regenerate", resolve, reject, onProgress, onMeshProgress });
       this.worker.postMessage(req);
     });
   }

@@ -44,6 +44,40 @@ function ensureOC(): Promise<void> {
   return ocReady;
 }
 
+/** Turn a thrown value into a readable message. OCCT raises C++ exceptions that
+ *  emscripten surfaces to JS as a raw *pointer number*, so `String(err)` yields
+ *  a meaningless heap address (e.g. "241558136") and the real message is lost.
+ *  `Standard_Failure` isn't exposed as an embind class in this build, so we can't
+ *  call `Caught()`/`GetMessageString()`. Instead we recover the exception's C++
+ *  *type name* straight from the Itanium ABI layout that emscripten's own
+ *  `ExceptionInfo` walks: the thrown pointer's `__cxa_exception` header (24 bytes
+ *  before it) holds the `std::type_info*` at +4, whose +4 is the length-prefixed
+ *  mangled name (e.g. "20Standard_OutOfMemory"). That class alone tells OOM apart
+ *  from a geometry/construction failure. This path must never throw — out-of-range
+ *  typed-array reads yield `undefined` (falsy), and everything is guarded. */
+function errorMessage(err: unknown): string {
+  if (typeof err !== "number") return err instanceof Error ? err.message : String(err);
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const oc = getOC() as any;
+    const HEAPU32: Uint32Array | undefined = oc?.HEAPU32;
+    const HEAPU8: Uint8Array | undefined = oc?.HEAPU8;
+    if (HEAPU32 && HEAPU8) {
+      const typeInfo = HEAPU32[(err - 24 + 4) >> 2]; // std::type_info* from the exception header
+      const namePtr = typeInfo ? HEAPU32[(typeInfo + 4) >> 2] : 0; // type_info::__type_name
+      if (namePtr) {
+        let raw = "";
+        for (let p = namePtr; HEAPU8[p] && raw.length < 128; p++) raw += String.fromCharCode(HEAPU8[p]);
+        const name = raw.replace(/^\d+/, ""); // drop the Itanium length prefix
+        if (name) return `OCCT ${name} (exception ${err})`;
+      }
+    }
+  } catch {
+    /* fall through to the raw pointer so we still return *something* */
+  }
+  return `OCCT exception (undecoded pointer ${err})`;
+}
+
 // The bundled sketch font, loaded into replicad's text system once (lazily, only
 // when a document actually extrudes text). Same asset the UI renders glyph
 // previews from (`src/document/text.ts`), so the solid matches the preview.
@@ -1679,16 +1713,94 @@ function buildBodies(
         bodies.push({ id: feature.id, key, ...buildCached(key, used, () => loftBody(regions as Extract<ResolvedProfile, { kind: "sketchRegion" }>[], feature.id)) });
       }
     } catch (err) {
-      failures.push({ id: feature.id, ok: false, error: String(err) });
+      failures.push({ id: feature.id, ok: false, error: errorMessage(err) });
     }
     timings.push({ id: feature.id, type: feature.type, ms: performance.now() - t0 });
   }
   return { bodies, failures, timings, warnings };
 }
 
+/** Bodies with more faces than this mesh per-face (see `meshFaceByFace`); below it,
+ *  replicad's one-shot whole-shape mesh is faster. Large imported STEP assemblies
+ *  (a populated PCB is ~80k faces) are the case this guards against. */
+const PER_FACE_MESH_THRESHOLD = 5000;
+
+/** Deflection (mm) for a large body's tessellation, scaled to its size so the
+ *  triangle count stays bounded regardless of the model's absolute scale. */
+function referenceMeshOpts(shape: Shape3D): { tolerance: number; angularTolerance: number } {
+  let diag = 100;
+  try {
+    const bb = shape.boundingBox;
+    diag = Math.hypot(bb.width, bb.height, bb.depth) || diag;
+    bb.delete();
+  } catch { /* fall back to the default diagonal */ }
+  // ~0.5% of the diagonal, clamped to a sane band. An imported assembly is a
+  // reference body (you model an enclosure AROUND it, not on it), so it's tuned
+  // coarse to keep the triangle count — and thus GPU load and per-regen transfer
+  // — low. Raise the factor for lighter/faster, lower it for crisper curves.
+  return { tolerance: Math.min(5, Math.max(0.4, diag * 0.005)), angularTolerance: 0.6 };
+}
+
+/** Mesh a shape ONE FACE AT A TIME. replicad's `Shape.mesh()` runs `BRepMesh` over
+ *  the whole compound, holding every face's triangulation simultaneously — which
+ *  exhausts the (bounded) wasm heap on huge assemblies. Here each face is meshed,
+ *  its triangles extracted, then `BRepTools.Clean`-ed to release the triangulation
+ *  before the next, so peak memory stays at a single face. A per-face guard skips a
+ *  pathological face rather than failing the whole import. Returns replicad's
+ *  `MeshedFaces` shape (edges are omitted — a reference body doesn't need them). */
+function meshFaceByFace(
+  shape: Shape3D,
+  opts: { tolerance: number; angularTolerance: number },
+  onProgress?: (done: number, total: number) => void,
+): MeshedFaces {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const vChunks: number[][] = [], nChunks: number[][] = [], tChunks: number[][] = [];
+  const faceGroups: { start: number; count: number; faceId: number }[] = [];
+  let nodeOffset = 0, triLen = 0, skipped = 0;
+  const faces = shape.faces;
+  const total = faces.length;
+  faces.forEach((face, i) => {
+    // Report progress periodically — posting from the worker doesn't block it, and
+    // the main thread (idle during our synchronous mesh) can paint a status.
+    if (onProgress && i % 2000 === 0) onProgress(i, total);
+    try {
+      const im = new oc.BRepMesh_IncrementalMesh_2(face.wrapped, opts.tolerance, false, opts.angularTolerance, false);
+      im.delete();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tri = (face as any).triangulation(nodeOffset) as { vertices: number[]; trianglesIndexes: number[]; verticesNormals: number[] } | null;
+      if (tri) {
+        faceGroups.push({ start: triLen, count: tri.trianglesIndexes.length, faceId: face.hashCode });
+        tChunks.push(tri.trianglesIndexes); triLen += tri.trianglesIndexes.length;
+        vChunks.push(tri.vertices); nodeOffset += tri.vertices.length / 3;
+        nChunks.push(tri.verticesNormals);
+      }
+      oc.BRepTools.Clean(face.wrapped, true); // free THIS face's triangulation
+    } catch {
+      skipped++; // a single un-meshable face shouldn't sink the whole body
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (face as any).delete?.();
+  });
+  onProgress?.(total, total);
+  if (skipped) console.warn(`mesh: skipped ${skipped} un-meshable face(s) of ${faceGroups.length + skipped}`);
+  // Concatenate the per-face chunks straight into typed arrays (fill, not `.flat()`
+  // — ~4× faster at this scale, and the result transfers to the main thread as a
+  // raw ArrayBuffer copy instead of a per-element structured clone).
+  const fillF = (chunks: number[][]): Float32Array => {
+    const out = new Float32Array(chunks.reduce((s, c) => s + c.length, 0));
+    let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+    return out;
+  };
+  const triangles = new Uint32Array(triLen);
+  { let o = 0; for (const c of tChunks) { triangles.set(c, o); o += c.length; } }
+  return { triangles, vertices: fillF(vChunks), normals: fillF(nChunks), faceGroups };
+}
+
 function regenerate(
   features: ResolvedFeature[],
   emit?: (result: RegenFeatureResult) => void,
+  onMeshProgress?: (featureId: string, done: number, total: number) => void,
 ): { results: RegenFeatureResult[]; warnings: Record<string, string> } {
   const buildT0 = performance.now();
   const usedBuilders = new Set<string>();
@@ -1708,8 +1820,25 @@ function regenerate(
       usedMeshes.add(b.key);
       let cached = meshCache.get(b.key);
       if (!cached) {
-        const faces = b.shape.mesh(MESH_OPTS);
-        const edges = b.shape.meshEdges(MESH_OPTS);
+        // Huge bodies (large imported assemblies) mesh per-face so peak memory
+        // stays bounded — replicad's whole-shape mesh holds every triangulation at
+        // once and exhausts the heap. Normal bodies use the faster one-shot path.
+        let faces: MeshedFaces, edges: MeshedEdges;
+        if (b.names.size > PER_FACE_MESH_THRESHOLD) {
+          // Large imported assembly: mesh per-face so peak memory stays bounded
+          // (replicad's whole-shape mesh holds every triangulation at once and
+          // exhausts the heap). Produce typed arrays — this mesh is millions of
+          // triangles and re-transfers to the main thread every regen, so the
+          // ArrayBuffer copy (vs per-number structured clone) is a big win here.
+          faces = meshFaceByFace(b.shape, referenceMeshOpts(b.shape), (done, total) => onMeshProgress?.(b.id, done, total));
+          edges = { lines: [], edgeGroups: [] }; // edges omitted for a reference body
+        } else {
+          // Normal body: replicad's one-shot mesh (number[]). Small meshes clone
+          // across the worker boundary instantly, so typed-array repacking would
+          // only add overhead with no transfer benefit.
+          faces = b.shape.mesh(MESH_OPTS);
+          edges = b.shape.meshEdges(MESH_OPTS);
+        }
         // Attach each face's / edge's persistent name (matched by build-local hash)
         // so the app carries stable references across rebuilds.
         if (faces.faceGroups) {
@@ -1724,7 +1853,7 @@ function regenerate(
       }
       result = { id: b.id, ok: true, mesh: { name: b.id, faces: cached.faces, edges: cached.edges } };
     } catch (err) {
-      result = { id: b.id, ok: false, error: String(err) };
+      result = { id: b.id, ok: false, error: errorMessage(err) };
     } finally {
       b.shape.delete();
     }
@@ -1793,8 +1922,10 @@ ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
     let res: KernelResponse;
     switch (req.op) {
       case "regenerate": {
-        const { results, warnings } = regenerate(req.features, (result) =>
-          ctx.postMessage({ id: req.id, ok: true, op: "regenerate-progress", result }),
+        const { results, warnings } = regenerate(
+          req.features,
+          (result) => ctx.postMessage({ id: req.id, ok: true, op: "regenerate-progress", result }),
+          (featureId, done, total) => ctx.postMessage({ id: req.id, ok: true, op: "mesh-progress", featureId, done, total }),
         );
         res = { id: req.id, ok: true, op: "regenerate", results, warnings };
         break;
@@ -1807,6 +1938,6 @@ ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
     }
     ctx.postMessage(res);
   } catch (err) {
-    ctx.postMessage({ id: req.id, ok: false, error: String(err) } as KernelResponse);
+    ctx.postMessage({ id: req.id, ok: false, error: errorMessage(err) } as KernelResponse);
   }
 };

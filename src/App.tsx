@@ -145,6 +145,10 @@ import {
 } from "./viewport/Viewport";
 import "./App.css";
 
+/** Log each regen's end-to-end round-trip time to the console. Off by default;
+ *  enable with `?perf` in the URL to objectively compare responsiveness. */
+const PERF_LOG = typeof location !== "undefined" && location.search.includes("perf");
+
 /** Compact number formatting for the dimension input (trims trailing zeros). */
 const fmt = (n: number) => {
   const r = Math.round(n * 1000) / 1000;
@@ -473,7 +477,7 @@ function transformMeshPayload(
   mapPt: (p: [number, number, number]) => [number, number, number],
   mapVec: (v: [number, number, number]) => [number, number, number],
 ): ShapeMeshPayload {
-  const mapFlat = (src: number[], fn: (p: [number, number, number]) => [number, number, number]) => {
+  const mapFlat = (src: ArrayLike<number>, fn: (p: [number, number, number]) => [number, number, number]) => {
     const out = new Array<number>(src.length);
     for (let i = 0; i < src.length; i += 3) {
       const [x, y, z] = fn([src[i], src[i + 1], src[i + 2]]);
@@ -1377,6 +1381,9 @@ export default function App() {
   // partially lost. Shown as an amber badge in the timeline.
   const [warnings, setWarnings] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  // Coarse progress while the kernel meshes a huge imported body face-by-face
+  // (a long-running import); null when no such mesh is in flight.
+  const [meshProgress, setMeshProgress] = useState<{ done: number; total: number } | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
 
   // Agent regen coordinator (Phase 9 L3). The regen effect feeds these refs the
@@ -1831,6 +1838,9 @@ export default function App() {
       const myStart = (regenStartSeqRef.current += 1);
       // Captured outcome handed to anyone awaiting this regen (the agent layer).
       let settle: RegenSettle = { errors: { ...resolved.errors } };
+      // Optional end-to-end latency measurement (submit → results). Enable with
+      // `?perf` in the URL to objectively compare regen responsiveness.
+      const perfT0 = PERF_LOG ? performance.now() : 0;
 
       kernel
         .regenerate(resolved.features, (r) => {
@@ -1846,6 +1856,8 @@ export default function App() {
             else next.push({ id: r.id, mesh: r.mesh });
             return next;
           });
+        }, (_featureId, done, total) => {
+          if (!cancelled) setMeshProgress(done < total ? { done, total } : null);
         })
         .then(({ results, warnings: regenWarnings }) => {
           if (cancelled) return;
@@ -1853,7 +1865,11 @@ export default function App() {
           const regenErrors: Record<string, string> = { ...resolved.errors };
           for (const r of results) {
             if (r.ok) nextMeshes.push({ id: r.id, mesh: r.mesh });
-            else regenErrors[r.id] = r.error;
+            else {
+              regenErrors[r.id] = r.error;
+              const name = doc.features.find((f) => f.id === r.id)?.name ?? r.id;
+              console.error(`[open-poly] feature "${name}" (${r.id}) failed:`, r.error);
+            }
           }
           setRawMeshes(nextMeshes);
           setRegenSettledSeq((s) => s + 1);
@@ -1875,6 +1891,8 @@ export default function App() {
         .finally(() => {
           if (cancelled) return;
           setBusy(false);
+          setMeshProgress(null);
+          if (PERF_LOG) console.log(`[perf] regen round-trip ${(performance.now() - perfT0).toFixed(0)} ms (${resolved.features.length} features)`);
           // Resolve only waiters that began before this regen started; keep the
           // rest pending for a later regen.
           const stillWaiting: typeof regenWaitersRef.current = [];
@@ -4553,10 +4571,22 @@ export default function App() {
     Object.keys(errors).length +
     Object.keys(resolved.variableErrors).length +
     Object.keys(resolved.variableNameErrors).length;
+  // Human-readable breakdown of every current error, shown when hovering the
+  // status badge (the count alone is a dead end otherwise). Feature errors are
+  // labelled by feature name; variable errors by their key.
+  const errorDetail = [
+    ...Object.entries(errors).map(
+      ([id, msg]) => `${doc.features.find((f) => f.id === id)?.name ?? id}: ${msg}`,
+    ),
+    ...Object.entries(resolved.variableErrors).map(([k, msg]) => `Variable ${k}: ${msg}`),
+    ...Object.entries(resolved.variableNameErrors).map(([k, msg]) => `Variable name ${k}: ${msg}`),
+  ].join("\n");
   const status = fatal
     ? "kernel error"
     : busy
-      ? "regenerating…"
+      ? meshProgress
+        ? `processing ${Math.round((100 * meshProgress.done) / Math.max(1, meshProgress.total))}%…`
+        : "processing…"
       : errorCount > 0
         ? `${errorCount} error${errorCount > 1 ? "s" : ""}`
         : "up to date";
@@ -4666,9 +4696,9 @@ export default function App() {
     if (!file) return;
     const text = await file.text();
     const base = file.name.replace(/\.(step|stp)$/i, "");
-    const { doc: next, id } = addImport(doc, text, base);
+    const { doc: next } = addImport(doc, text, base);
     setDoc(next);
-    selectFeature(id);
+    selectFeature(null); // leave the import deselected — it's usually reference context
   };
 
   // DXF import: parse into native sketch geometry (unlike STEP, which stays an
@@ -4836,7 +4866,7 @@ export default function App() {
             ● Agent connected
           </span>
         )}
-        <span className={`status ${statusClass}`} title={fatal ?? undefined}>
+        <span className={`status ${statusClass}`} title={fatal ?? (errorDetail || undefined)}>
           {status}
         </span>
       </header>
