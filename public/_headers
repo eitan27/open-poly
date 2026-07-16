@@ -1,0 +1,6 @@
+# Cloudflare Pages custom headers.
+#
+# version.json is polled by the running app to detect new deploys, so it must
+# never be served stale from a CDN/browser cache — always revalidate.
+/version.json
+  Cache-Control: no-cache

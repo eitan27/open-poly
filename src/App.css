@@ -262,6 +262,32 @@
   flex: 1;
 }
 
+/* Informational sibling of .recovery-banner: a calm blue "a new version is
+   available" notice with an inline Refresh link. */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: #cfe4ff;
+  background: #1e2a3a;
+  border-bottom: 1px solid #2d4257;
+  flex: 0 0 auto;
+}
+
+.update-banner span {
+  flex: 1;
+}
+
+.update-banner .banner-link {
+  color: #8ec5ff;
+}
+
+.update-banner .banner-link:hover {
+  color: #b8dbff;
+}
+
 /* An inline text link within a banner sentence (e.g. "…in the Documents
    menu…") — deliberately NOT a boxed button off to the side, so the action
    sits right where you're reading instead of needing to notice a separate

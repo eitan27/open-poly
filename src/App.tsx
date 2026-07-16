@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type ReactNode } from "react";
 import { KernelClient } from "./kernel/KernelClient";
+import { useUpdateAvailable } from "./useVersionCheck";
 import {
   addBoolean,
   addDressUp,
@@ -674,6 +675,8 @@ export default function App() {
   const [docRecoveryBanner, setDocRecoveryBanner] = useState<
     { kind: "corrupted"; name: string } | { kind: "unreadable" } | null
   >(null);
+  // True once a newer build has been deployed — surfaces a "refresh" banner.
+  const updateAvailable = useUpdateAvailable();
   const [selection, setSelection] = useState<Selection[]>([]);
   const featureIdOf = (s: Selection): string =>
     s.kind === "feature" ? s.id : "featureId" in s ? s.featureId : s.sketchId;
@@ -4870,6 +4873,14 @@ export default function App() {
           {status}
         </span>
       </header>
+      {updateAvailable && (
+        <div className="update-banner">
+          <span>A new version of Open Poly is available.</span>
+          <button className="banner-link" onClick={() => location.reload()}>
+            Refresh
+          </button>
+        </div>
+      )}
       {docRecoveryBanner && (
         <div className="recovery-banner">
           <span>
