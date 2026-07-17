@@ -2352,8 +2352,8 @@ export default function App() {
   }, [editingSketch, dimInput]);
 
   const measure = useMemo(
-    () => measureSelection(selection, doc, meshes),
-    [selection, doc, meshes],
+    () => measureSelection(selection, doc, meshes, resolved.scope),
+    [selection, doc, meshes, resolved.scope],
   );
 
   // Every selected profile an Extrude could consume: sketch regions, planar

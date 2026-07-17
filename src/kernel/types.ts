@@ -11,14 +11,27 @@
 export type FloatBuffer = Float32Array | number[];
 export type IndexBuffer = Uint32Array | number[];
 
+/** Analytic facts about a face's underlying surface, resolved in the worker from
+ *  the kernel. The tessellation alone can't supply these — a cylinder and a
+ *  finely-faceted prism have identical triangles — so a radius has to come from
+ *  OCCT. Only the faces we can describe unambiguously get one. */
+export type FaceSurface =
+  /** A cylindrical face: a hole's bore, a shaft's side. */
+  | { kind: "cylinder"; radius: number }
+  /** A flat face bounded by a single circle. */
+  | { kind: "disc"; radius: number }
+  /** A flat ring: a circular face with exactly one circular hole in it. */
+  | { kind: "annulus"; radius: number; innerRadius: number };
+
 export interface MeshedFaces {
   vertices: FloatBuffer;
   triangles: IndexBuffer;
   normals?: FloatBuffer;
   /** Maps ranges of the triangle buffer back to a topological face. `faceId` is
    *  the build-local pick id (OCCT hash); `name` is the persistent topological
-   *  name (stable across rebuilds) used by feature references. */
-  faceGroups?: { start: number; count: number; faceId: number; name?: string }[];
+   *  name (stable across rebuilds) used by feature references; `surface` is the
+   *  analytic description, when the face has one we can name. */
+  faceGroups?: { start: number; count: number; faceId: number; name?: string; surface?: FaceSurface }[];
 }
 
 export interface MeshedEdges {

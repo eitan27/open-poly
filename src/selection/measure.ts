@@ -1,7 +1,8 @@
 // Derives readable measurements for the current selection (length / radius /
 // area / coordinates), used by the bottom-right info pane.
-import type { Document } from "../document/types";
-import { detectSketchRegions } from "../document/regions";
+import type { Document, SketchEntity } from "../document/types";
+import { detectSketchRegions, type SketchRegion } from "../document/regions";
+import { evaluateExpression, type Scope } from "../document/expression";
 import type { MeshedEdges, MeshedFaces } from "../kernel/types";
 import type { FeatureMesh, Selection } from "../viewport/Viewport";
 
@@ -53,41 +54,142 @@ function edgeLength(edges: MeshedEdges, edgeId: number): number {
   return len;
 }
 
+type Vec3 = [number, number, number];
+
+/** Perpendicular distance from `q` to the infinite line through `p` along unit `d`. */
+function distToLine(q: Vec3, p: Vec3, d: Vec3): number {
+  const wx = q[0] - p[0];
+  const wy = q[1] - p[1];
+  const wz = q[2] - p[2];
+  const t = wx * d[0] + wy * d[1] + wz * d[2];
+  return Math.hypot(wx - t * d[0], wy - t * d[1], wz - t * d[2]);
+}
+
+/** The infinite line a STRAIGHT edge lies on — `p` a point on it, `d` a unit
+ *  direction. Null for a curved edge (no single direction) or a degenerate one.
+ *  The tessellated polyline is the only geometry we have here, so straightness is
+ *  "every vertex lies on the chord", which a curve's sagitta fails comfortably. */
+function edgeLine(edges: MeshedEdges, edgeId: number): { p: Vec3; d: Vec3 } | null {
+  const g = edges.edgeGroups?.find((eg) => eg.edgeId === edgeId);
+  if (!g || g.count < 2) return null;
+  const { lines } = edges;
+  const at = (v: number): Vec3 => [lines[v * 3], lines[v * 3 + 1], lines[v * 3 + 2]];
+  const p = at(g.start);
+  // The farthest vertex fixes the direction robustly — a closed or doubled-back
+  // polyline can end where it started, so the last vertex won't do.
+  let far = p;
+  let farLen = 0;
+  for (let v = g.start; v < g.start + g.count; v++) {
+    const q = at(v);
+    const len = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
+    if (len > farLen) {
+      farLen = len;
+      far = q;
+    }
+  }
+  if (farLen < 1e-9) return null;
+  const d: Vec3 = [(far[0] - p[0]) / farLen, (far[1] - p[1]) / farLen, (far[2] - p[2]) / farLen];
+  // Relative tolerance: vertices are float32, so an absolute epsilon is too tight.
+  for (let v = g.start; v < g.start + g.count; v++) {
+    if (distToLine(at(v), p, d) > 1e-4 * farLen) return null;
+  }
+  return { p, d };
+}
+
+/** Distance between two PARALLEL straight edges, or null if they aren't parallel
+ *  (skew/intersecting lines have no single distance — an angle is the right
+ *  measure there). Matches the sketch dimension's parallel tolerance: the sine of
+ *  the angle between the directions. */
+function parallelEdgeDistance(a: { p: Vec3; d: Vec3 }, b: { p: Vec3; d: Vec3 }): number | null {
+  const cx = a.d[1] * b.d[2] - a.d[2] * b.d[1];
+  const cy = a.d[2] * b.d[0] - a.d[0] * b.d[2];
+  const cz = a.d[0] * b.d[1] - a.d[1] * b.d[0];
+  if (Math.hypot(cx, cy, cz) > 1e-3) return null; // not parallel
+  return distToLine(b.p, a.p, a.d);
+}
+
+/** A circle entity's radius, evaluated against the variable scope when it's
+ *  expression-driven (`r: "dia/2"`) — the stored `.r` is a stale literal after a
+ *  variable changes, since only the regen re-evaluates it, not this raw doc. */
+function circleRadius(e: Extract<SketchEntity, { type: "circle" }>, scope: Scope): number {
+  const expr = e.exprs?.r;
+  if (!expr) return e.r;
+  try {
+    return evaluateExpression(expr, scope);
+  } catch {
+    return e.r;
+  }
+}
+
+/** The radius of a sketch region bounded by exactly one circle (a disc), else
+ *  null — the shared test behind a circular sketch face and a circular extrude. */
+function circleRadiusOfRegion(region: SketchRegion, entities: SketchEntity[], scope: Scope): number | null {
+  if (region.holes?.length || region.entityIds.length !== 1) return null;
+  const e = entities.find((x) => x.id === region.entityIds[0]);
+  return e?.type === "circle" ? circleRadius(e, scope) : null;
+}
+
+/** The true radius of a faceted circular face, traced from the extrude that made
+ *  it back to its source sketch circle. An extruded circle is a POLYGONAL prism
+ *  (the kernel can't boolean a real cylinder), so the radius is nowhere in the
+ *  mesh — but a face named "{extrudeId}/start|end|side{n}" belongs to that
+ *  extrude, and if its profile was a lone circle, every one of its faces (caps +
+ *  wall facets) shares that circle's radius. Re-derived from the live document on
+ *  every regen, so it tracks edits to the circle, its driving variable, or any
+ *  earlier timeline feature; a downstream op that renames/splits the face drops
+ *  the "{extrudeId}/…" prefix, and the diameter correctly disappears. */
+function extrudedCircleRadius(doc: Document, faceName: string | undefined, scope: Scope): number | null {
+  if (!faceName) return null;
+  const feat = doc.features.find((f) => f.id === faceName.split("/")[0]);
+  if (feat?.type !== "extrude") return null;
+  const profile = feat.profile;
+  if (profile.kind !== "sketchRegion") return null;
+  const sk = doc.features.find((f) => f.id === profile.sketchId);
+  if (sk?.type !== "sketch") return null;
+  const region = detectSketchRegions(sk.entities).find((r) => r.id === profile.regionId);
+  return region ? circleRadiusOfRegion(region, sk.entities, scope) : null;
+}
+
 export function measureSelection(
   selection: Selection[],
   doc: Document,
   meshes: FeatureMesh[],
+  scope: Scope = {},
 ): MeasureInfo | null {
   if (selection.length === 0) return null;
-  if (selection.length > 1) return measureMany(selection, doc, meshes);
-  return measureOne(selection[0], doc, meshes);
+  if (selection.length > 1) return measureMany(selection, meshes);
+  return measureOne(selection[0], doc, meshes, scope);
 }
 
 /** Aggregate measurement for a multi-element selection. */
-function measureMany(selection: Selection[], doc: Document, meshes: FeatureMesh[]): MeasureInfo {
-  let length = 0;
+function measureMany(selection: Selection[], meshes: FeatureMesh[]): MeasureInfo {
   let area = 0;
   for (const s of selection) {
-    if (s.kind === "sketchEntity") {
-      const sk = doc.features.find((f) => f.id === s.sketchId);
-      const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === s.entityId) : undefined;
-      if (e?.type === "line") length += Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]);
-      else if (e?.type === "arc") length += e.r * Math.abs(e.end - e.start);
-    } else if (s.kind === "edge") {
-      const m = meshes.find((x) => x.id === s.featureId);
-      if (m) length += edgeLength(m.mesh.edges, s.edgeId);
-    } else if (s.kind === "face") {
+    if (s.kind === "face") {
       const m = meshes.find((x) => x.id === s.featureId);
       if (m) area += faceArea(m.mesh.faces, s.faceId);
     }
   }
   const rows = [{ label: "Selected", value: String(selection.length) }];
-  if (length > 0) rows.push({ label: "Total length", value: fmt(length) });
   if (area > 0) rows.push({ label: "Total area", value: fmt(area) });
+
+  // Two parallel straight edges → their separation, the thing you actually want
+  // when you pick two edges of a solid.
+  const [s0, s1] = selection;
+  if (selection.length === 2 && s0.kind === "edge" && s1.kind === "edge") {
+    const m0 = meshes.find((x) => x.id === s0.featureId);
+    const m1 = meshes.find((x) => x.id === s1.featureId);
+    const l0 = m0 && edgeLine(m0.mesh.edges, s0.edgeId);
+    const l1 = m1 && edgeLine(m1.mesh.edges, s1.edgeId);
+    if (l0 && l1) {
+      const dist = parallelEdgeDistance(l0, l1);
+      if (dist !== null) rows.push({ label: "Parallel distance", value: fmt(dist) });
+    }
+  }
   return { title: "Selection", rows };
 }
 
-function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[]): MeasureInfo | null {
+function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[], scope: Scope): MeasureInfo | null {
   if (selection.kind === "sketchEntity") {
     const sk = doc.features.find((f) => f.id === selection.sketchId);
     if (sk?.type !== "sketch") return null;
@@ -97,13 +199,7 @@ function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[]):
       return { title: "Line", rows: [{ label: "Length", value: fmt(Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1])) }] };
     }
     if (e.type === "circle") {
-      return {
-        title: "Circle",
-        rows: [
-          { label: "Radius", value: fmt(e.r) },
-          { label: "Diameter", value: fmt(2 * e.r) },
-        ],
-      };
+      return { title: "Circle", rows: [{ label: "Diameter", value: fmt(2 * circleRadius(e, scope)) }] };
     }
     if (e.type === "arc") {
       return {
@@ -134,7 +230,12 @@ function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[]):
     const sk = doc.features.find((f) => f.id === selection.sketchId);
     if (sk?.type !== "sketch") return null;
     const region = detectSketchRegions(sk.entities).find((r) => r.id === selection.regionId);
-    return region ? { title: "Sketch face", rows: [{ label: "Area", value: fmt(region.area) }] } : null;
+    if (!region) return null;
+    const rows = [{ label: "Area", value: fmt(region.area) }];
+    // A region bounded by a single circle is a disc → show its diameter too.
+    const r = circleRadiusOfRegion(region, sk.entities, scope);
+    if (r !== null) rows.push({ label: "Diameter", value: fmt(2 * r) });
+    return { title: "Sketch face", rows };
   }
 
   if (selection.kind === "sketchPoint") {
@@ -161,7 +262,22 @@ function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[]):
   if (selection.kind === "face") {
     const m = meshes.find((x) => x.id === selection.featureId);
     if (!m) return null;
-    return { title: "Face", rows: [{ label: "Area", value: fmt(faceArea(m.mesh.faces, selection.faceId)) }] };
+    const rows = [{ label: "Area", value: fmt(faceArea(m.mesh.faces, selection.faceId)) }];
+    const group = m.mesh.faces.faceGroups?.find((g) => g.faceId === selection.faceId);
+    // Diameter, for the faces the kernel could describe analytically (see FaceSurface).
+    const s = group?.surface;
+    if (s?.kind === "cylinder" || s?.kind === "disc") {
+      rows.push({ label: "Diameter", value: fmt(2 * s.radius) });
+    } else if (s?.kind === "annulus") {
+      rows.push({ label: "Outer diameter", value: fmt(2 * s.radius) });
+      rows.push({ label: "Inner diameter", value: fmt(2 * s.innerRadius) });
+    } else {
+      // No analytic surface (a faceted extruded circle) → trace back to the
+      // source sketch circle for its diameter.
+      const r = extrudedCircleRadius(doc, group?.name, scope);
+      if (r !== null) rows.push({ label: "Diameter", value: fmt(2 * r) });
+    }
+    return { title: "Face", rows };
   }
 
   if (selection.kind === "edge") {

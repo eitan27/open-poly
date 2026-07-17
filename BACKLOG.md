@@ -1,5 +1,112 @@
 # Backlog
 
+## Proposed: adjustable cross-section view
+
+**Status:** design sketch, not started.
+
+**What:** a section view — pick a plane, drag it through the model, see the interior.
+Onshape's "Section view".
+
+### The core call: view state, NOT a feature
+It changes nothing about the geometry — not mass properties, not export, not what a
+downstream feature sees. So it must **not** go in the timeline (rollback/reorder would
+interact with it in ways nobody wants) and **not** in undo. It lives in document meta
+(so it survives reload) as a view mode, toggled from the toolbar.
+
+### Interaction
+- Plane ref reuses the existing `add_sketch` plane union (`{datum}` / `{planeId}` /
+  `{bodyId, faceName}`) — the resolution code and agent schema already exist.
+- Default: Front datum through origin; if a face/plane is selected, use that.
+- Drag handle along the normal + numeric offset field + flip. **Live drag is the point** —
+  the real use is scrubbing through a part hunting for a too-thin wall.
+
+### Rendering, two stages (ship both; stage 1 alone looks like a bug)
+1. **GPU clipping.** A `THREE.Plane` on the body materials with
+   `renderer.localClippingEnabled = true`. Use **local** (per-material) clipping, not
+   global `renderer.clippingPlanes` — global also slices the grid, datum planes, origin
+   marker and view cube. Materials are already centralized (`Viewport.tsx:247-265`), so
+   assigning the plane to just the body + edge materials is contained.
+2. **Capping.** Raw clipping makes solids look hollow (you see the inside of the far
+   wall, unlit, no material at the cut). Standard fix is the stencil-buffer trick: render
+   back faces to stencil, draw a cap quad through it. Real-time, no kernel work. Fiddly
+   with multiple bodies (needs a stencil pass per body to keep per-body colors).
+
+**Kernel-exact alternative** (`BRepAlgoAPI_Common` vs a half-space, or OCCT section
+curves) gives true cut edges you could snap/dimension to, but is far too slow to drag and
+would re-run every regen. If wanted later, layer it as a "settle" pass: GPU-clip while
+dragging, exact curves once the drag ends. Not v1.
+
+### Gotchas
+- **Picking must respect the clip.** Three.js clipping is a fragment-shader op — the
+  raycaster knows nothing about it. Sectioned, clicking into the opening selects the
+  invisible back face. Needs a half-space test in the pick path. Not optional; this is
+  what would make the feature feel broken.
+- **Sketch mode:** keep the section (sketching on an interior face is a real use), but
+  exempt sketch entities + grid from the clip, same as datums.
+- **Fat lines:** outlines use `LineSegments2`/`LineMaterial` (`Viewport.tsx:5-6, 252`), a
+  custom shader. Clipping works but the plane must be assigned explicitly — easy to miss,
+  and you'd get edges floating in the cut-away void.
+
+### Why it matters for the agent (arguably the real prize)
+`screenshot` only shows the exterior, so the agent cannot verify interiors — it can build
+a bushing and confirm the sketch region area, but never *see* that the bore is right. A
+`set_section_view` MCP op (plane ref, offset, flip, on/off) with `screenshot` rendering
+through it turns the guide's read→plan→one-op→**verify** loop from "the outside looks
+plausible" into real inspection. Cheap once the view state exists — same state the UI
+toggle writes. Rare case where agent value and human value point the same way.
+
+### v1 scope
+One section plane, any plane ref, live drag + offset + flip, stencil capping in a flat
+neutral color, clip-aware picking, persisted in doc meta, plus the MCP op.
+**v2:** multiple simultaneous planes (corner cuts), exact section curves. Resist multiple
+planes until asked — one plane covers the overwhelming majority of real use.
+
+## Kernel: booleans fail on ANALYTIC primitive curved surfaces (not all curves)
+
+**Status:** investigated 2026-07; root cause of why extruded circles/arcs are faceted.
+Not a fix, a finding + the shipped workaround.
+
+### The finding (all tested this session, in-app)
+This OCCT wasm build fails booleans **specifically on analytic primitive surfaces vs a
+plane** — NOT on curvature in general:
+
+| Boolean | Result |
+|---|---|
+| box − box, box ∪ box | ✅ works |
+| faceted-cylinder − box (an extruded-circle cut today) | ✅ works |
+| **primitive cylinder (`gp_Cyl`) − box / ∪ box**, any offset | ❌ `StdFail_NotDone` |
+| **sphere − box** | ❌ `StdFail_NotDone` |
+| coaxial cylinders subtract | ❌ `StdFail_NotDone` |
+| **B-spline swept solid (circle-along-spline) − box** | ✅ works (4-face smooth tube) |
+| B-spline swept tube ∪ scoop (the shipped chute) | ✅ works (just slow — see `BOOL_FUZZY`) |
+
+So it's the surface **representation**, not curvature: an analytic `gp_Cyl`/sphere against
+a plane chokes OCCT's boolean here; a B-spline curved surface booleans fine.
+
+### Why this shapes the app
+- **Extrude builds its profile face from the faceted `outline` polyline** (never the exact
+  `segments` that sweep/loft pass), so an extruded **circle OR arc is a polygonal prism** —
+  e.g. an extruded half-disc is 51 faces. That's deliberate cover: the faceted (planar)
+  wall keeps cuts/bosses working.
+- **Making extrude smooth by passing `segments`** (tried, reverted) turns the wall into an
+  analytic `gp_Cyl` → the exact surface type that can't be booleaned → every circle cut/boss
+  breaks. Confirmed a primitive cylinder − box also fails, so it's not the construction.
+- **Sweep/loft are smooth AND booleanable** because they emit B-spline surfaces.
+
+### Shipped workaround (diameter readout only)
+`measure.ts` `extrudedCircleRadius` traces a face named `{extrudeId}/start|end|side{n}`
+back to its source sketch circle and reads the radius, re-derived every regen (tracks
+variable + timeline edits). Correct diameters on faceted extruded circles without touching
+geometry. Geometry stays a faceted prism.
+
+### Promising avenue for true round holes/bosses (not attempted)
+The blocker is the analytic `gp_Cyl`, not curvature. Building an extruded circle as a
+**B-spline** wall (pipe/sweep-style construction rather than a straight prism of an analytic
+circle) may give a smooth wall that *also* cuts — the way the swept tube does. Separate
+investigation; more promising than "faceting is forced." A newer OCCT wasm that fixes the
+analytic-vs-plane boolean would also solve it. `BOOL_FUZZY` at 0.01 does NOT help (algorithm
+failure, not tolerance).
+
 ## Shelved: viewport geometry reuse (Opt A) + lazy-regen-on-load (Opt B)
 
 **Status:** shelved on branch `shelved/viewport-geom-reuse-and-lazy-regen`

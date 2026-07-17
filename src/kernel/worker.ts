@@ -6,7 +6,7 @@ import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
 import {
   setOC, makeBaseBox, makeCylinder, makeSphere, draw, drawPointsInterpolation, Plane,
-  cast, getOC, Vector, HASH_CODE_MAX, exportSTEP, measureVolume, loadFont,
+  cast, getOC, localGC, Vector, HASH_CODE_MAX, exportSTEP, measureVolume, loadFont,
   Blueprint, BlueprintSketcher, CompoundBlueprint,
 } from "replicad";
 import type { Shape3D, Face, Edge, Sketch } from "replicad";
@@ -18,6 +18,7 @@ import type {
   BooleanOp,
   ExportFormat,
   ExtrudeExtent,
+  FaceSurface,
   MeshedEdges,
   MeshedFaces,
   RegenFeatureResult,
@@ -971,6 +972,66 @@ function unifyBody(named: NamedShape): NamedShape {
   return u;
 }
 
+/** Analytic surface facts per face, straight from the kernel — the tessellation
+ *  can't tell a cylinder from a finely-faceted prism, so a radius has to come
+ *  from OCCT. Returns hashCode -> surface, for the faces we can describe
+ *  unambiguously (a cylinder, a flat disc, a flat ring with ONE round hole). */
+function faceSurfacesFrom(shape: Shape3D): Map<number, FaceSurface> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const out = new Map<number, FaceSurface>();
+  // Only ever delete objects WE create. replicad's clone() shares `wrapped`, and
+  // outerWire()/innerWires() call this.delete() on it — using them here would free
+  // the very shape a downstream boolean still needs. So we go through OCCT
+  // directly and scope our own temporaries with localGC.
+
+  /** The radius of a wire that traces exactly one circle, else null. OCCT may
+   *  split a circle into several arcs, so accept any number of co-radial ones. */
+  const circleRadius = (wire: { edges: Edge[] }): number | null => {
+    let r: number | null = null;
+    for (const e of wire.edges) {
+      if (e.geomType !== "CIRCLE") return null;
+      const [reg, gc] = localGC();
+      const ad = reg(new oc.BRepAdaptor_Curve_2(e.wrapped));
+      const er = ad.Circle().Radius() as number;
+      gc();
+      if (r !== null && Math.abs(er - r) > 1e-7) return null; // arcs of different circles
+      r = er;
+    }
+    return r;
+  };
+
+  for (const f of shape.faces) {
+    if (f.geomType === "CYLINDRE") {
+      const [reg, gc] = localGC();
+      const ad = reg(new oc.BRepAdaptor_Surface_2(f.wrapped, true));
+      out.set(f.hashCode, { kind: "cylinder", radius: ad.Cylinder().Radius() as number });
+      gc();
+      continue;
+    }
+    if (f.geomType !== "PLANE") continue;
+    // Split the face's wires into the outer boundary and any holes without the
+    // self-deleting helpers: BRepTools.OuterWire gives a fresh handle to compare.
+    const [reg, gc] = localGC();
+    const outerTopo = reg(oc.BRepTools.OuterWire(f.wrapped));
+    const wires = f.wires;
+    const outerWire = wires.find((w) => w.wrapped.IsSame(outerTopo));
+    const inners = wires.filter((w) => !w.wrapped.IsSame(outerTopo));
+    gc();
+    if (!outerWire) continue;
+    const outer = circleRadius(outerWire);
+    if (outer === null) continue;
+    if (inners.length === 0) {
+      out.set(f.hashCode, { kind: "disc", radius: outer });
+    } else if (inners.length === 1) {
+      // Several holes, or a non-circular one → no unambiguous inner diameter.
+      const inner = circleRadius(inners[0]);
+      if (inner !== null) out.set(f.hashCode, { kind: "annulus", radius: outer, innerRadius: inner });
+    }
+  }
+  return out;
+}
+
 /** Edge names are DERIVED from face names: an edge is the intersection of two
  *  faces, so its name is the sorted pair of their names (e.g. "id/+x∩id/+z").
  *  Stable wherever both adjacent faces are named. Returns hashCode -> name. */
@@ -1842,7 +1903,15 @@ function regenerate(
         // Attach each face's / edge's persistent name (matched by build-local hash)
         // so the app carries stable references across rebuilds.
         if (faces.faceGroups) {
-          faces.faceGroups = faces.faceGroups.map((g) => ({ ...g, name: b.names.get(g.faceId) }));
+          // Surface classification walks every face with an OCCT adaptor, so skip
+          // it for huge reference bodies (the per-face mesh path) — they're
+          // reference-only, and the pass would cost more than it's worth.
+          const surfaces = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceSurfacesFrom(b.shape);
+          faces.faceGroups = faces.faceGroups.map((g) => ({
+            ...g,
+            name: b.names.get(g.faceId),
+            surface: surfaces?.get(g.faceId),
+          }));
         }
         if (edges.edgeGroups) {
           const edgeNames = edgeNamesFrom(b.shape, b.names);
