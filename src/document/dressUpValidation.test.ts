@@ -1,0 +1,75 @@
+import { describe, it, expect } from "vitest";
+import { validateDressUpSize, mapDressUpKernelError } from "./dressUpValidation";
+
+const scope = { wall: 4, gap: 0 };
+
+describe("validateDressUpSize — sync scenarios", () => {
+  it("empty field: no error, no value (button disabled, nothing sent to kernel)", () => {
+    expect(validateDressUpSize("", scope, "fillet")).toEqual({ error: null, value: null });
+    expect(validateDressUpSize("   ", scope, "fillet")).toEqual({ error: null, value: null });
+  });
+
+  it("valid positive number resolves to a value with no error", () => {
+    expect(validateDressUpSize("3", scope, "fillet")).toEqual({ error: null, value: 3 });
+  });
+
+  it("valid expression using a variable resolves", () => {
+    expect(validateDressUpSize("wall/2", scope, "chamfer")).toEqual({ error: null, value: 2 });
+  });
+
+  it("zero and negative are rejected with an op-specific message", () => {
+    expect(validateDressUpSize("0", scope, "fillet")).toEqual({
+      error: "Radius must be greater than 0.",
+      value: null,
+    });
+    expect(validateDressUpSize("-3", scope, "chamfer")).toEqual({
+      error: "Distance must be greater than 0.",
+      value: null,
+    });
+  });
+
+  it("incomplete expression keeps the parser's specific wording, no value", () => {
+    const r = validateDressUpSize("4+", scope, "fillet");
+    expect(r.value).toBeNull();
+    expect(r.error).toBe("Unexpected end of expression");
+  });
+
+  it('"5e" keeps the specific token in the message', () => {
+    const r = validateDressUpSize("5e", scope, "fillet");
+    expect(r.value).toBeNull();
+    expect(r.error).toBe('Unexpected "e"');
+  });
+
+  it("unknown identifier is reworded name -> variable, keeping the name", () => {
+    const r = validateDressUpSize("asdf", scope, "fillet");
+    expect(r.value).toBeNull();
+    expect(r.error).toBe('Unknown variable "asdf"');
+  });
+
+  it("invalid character keeps the specific character", () => {
+    const r = validateDressUpSize("5$", scope, "fillet");
+    expect(r.value).toBeNull();
+    expect(r.error).toBe('Unexpected character "$"');
+  });
+});
+
+describe("mapDressUpKernelError — geometry failures", () => {
+  it("maps an OCCT exception on a valid size to actionable, op-specific copy", () => {
+    expect(mapDressUpKernelError("OCCT Standard_Failure (exception 241558136)", "fillet")).toBe(
+      "That radius is too large for the selected edge(s) — try a smaller value.",
+    );
+    expect(mapDressUpKernelError("OCCT exception (undecoded pointer 12345)", "chamfer")).toBe(
+      "That distance is too large for the selected edge(s) — try a smaller value.",
+    );
+  });
+
+  it("maps out-of-memory to its own message", () => {
+    expect(mapDressUpKernelError("OCCT Standard_OutOfMemory (exception 42)", "fillet")).toBe(
+      "This operation ran out of memory — try a smaller value.",
+    );
+  });
+
+  it("passes an already-readable non-OCCT message through unchanged", () => {
+    expect(mapDressUpKernelError("No edges selected", "fillet")).toBe("No edges selected");
+  });
+});

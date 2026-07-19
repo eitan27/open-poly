@@ -81,6 +81,7 @@ import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, worldToUv, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
 import { evaluateExpression } from "./document/expression";
+import { validateDressUpSize, mapDressUpKernelError } from "./document/dressUpValidation";
 import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
 import {
@@ -1146,6 +1147,11 @@ export default function App() {
   const [dressUpDialog, setDressUpDialog] = useState<
     { op: "chamfer" | "fillet"; size: string; x: number; y: number } | null
   >(null);
+  // Validation for the chamfer/fillet dialog: a human-readable message when the
+  // current size is unsatisfiable (e.g. a fillet radius larger than the
+  // geometry), or null when it builds cleanly. Set live as the user types and
+  // re-checked authoritatively before commit, so an invalid size can't close it.
+  const [dressUpError, setDressUpError] = useState<string | null>(null);
   // Revolve dialog. The user arms a profile face and an axis (a sketch line or a
   // plane) by clicking in the viewport — like the Boolean dialog — then sets the
   // angle (Full 360° vs. a specified angle + optional symmetric sweep). `armed`
@@ -2666,18 +2672,99 @@ export default function App() {
   const openDressUp = (op: "chamfer" | "fillet") => {
     if (!dressUpTarget) return;
     const s = (dressUpTarget.anchor && viewApiRef.current?.worldToScreen(dressUpTarget.anchor)) || { x: 240, y: 160 };
+    setDressUpError(null);
     setDressUpDialog({ op, size: "2", x: s.x, y: s.y });
   };
 
-  const createDressUp = () => {
+  const createDressUp = async () => {
     if (!dressUpTarget || !dressUpDialog) return;
+    // Synchronous gate first: an empty/garbage/≤0 size never reaches the kernel.
+    // Empty is silently ignored (no error, just a no-op); anything invalid keeps
+    // the dialog open with its message.
+    const sv = validateDressUpSize(dressUpDialog.size, resolved.scope, dressUpDialog.op);
+    if (sv.value === null) {
+      setDressUpError(null);
+      return;
+    }
     const { doc: next, id } = addDressUp(
       doc, dressUpDialog.op, dressUpTarget.targetId, dressUpTarget.edges, dressUpDialog.size, dressUpTarget.edgeRefs,
     );
+    // Authoritative pre-commit check against the kernel: an unsatisfiable size
+    // (radius too big, degenerate edge) keeps the dialog open with the error
+    // rather than committing a broken feature. Runs even if the live-validation
+    // effect hasn't caught up (e.g. Enter pressed immediately after typing).
+    const kernel = kernelRef.current;
+    if (ready && kernel) {
+      const resolvedNext = resolveDocument(next);
+      let err: string | null = resolvedNext.errors[id] ?? null;
+      if (!err) {
+        try {
+          const { results } = await kernel.regenerate(resolvedNext.features);
+          const hit = results.find((r) => r.id === id);
+          if (hit && !hit.ok) err = hit.error;
+        } catch (e) {
+          err = String((e as Error)?.message ?? e);
+        }
+      }
+      if (err) {
+        setDressUpError(mapDressUpKernelError(err, dressUpDialog.op));
+        return;
+      }
+    }
     setDoc(next);
     selectFeature(id);
     setDressUpDialog(null);
+    setDressUpError(null);
   };
+
+  // Live geometry validation of the chamfer/fillet dialog. The sync part of
+  // validation (empty / unparseable / ≤ 0) is done in render off the raw size —
+  // instant, and never touches the kernel. This effect covers only the case that
+  // NEEDS the kernel: a valid positive size that OCCT still can't build (e.g. a
+  // fillet radius too large for the edges). It regenerates a throwaway doc
+  // (mirrors createDressUp, minus setDoc), debounced so each keystroke on a heavy
+  // body stays responsive. `dressUpError` holds only this async error.
+  useEffect(() => {
+    if (!dressUpDialog || !dressUpTarget) {
+      setDressUpError(null);
+      return;
+    }
+    const sv = validateDressUpSize(dressUpDialog.size, resolved.scope, dressUpDialog.op);
+    if (sv.value === null) {
+      // Empty/invalid/≤0 — surfaced synchronously in the dialog; clear any stale
+      // geometry error and don't build.
+      setDressUpError(null);
+      return;
+    }
+    const kernel = kernelRef.current;
+    if (!ready || !kernel) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      const { doc: next, id } = addDressUp(
+        doc, dressUpDialog.op, dressUpTarget.targetId, dressUpTarget.edges, dressUpDialog.size, dressUpTarget.edgeRefs,
+      );
+      const resolvedNext = resolveDocument(next);
+      const resolveErr = resolvedNext.errors[id];
+      if (resolveErr) {
+        if (!cancelled) setDressUpError(mapDressUpKernelError(resolveErr, dressUpDialog.op));
+        return;
+      }
+      kernel
+        .regenerate(resolvedNext.features)
+        .then(({ results }) => {
+          if (cancelled) return;
+          const hit = results.find((r) => r.id === id);
+          setDressUpError(hit && !hit.ok ? mapDressUpKernelError(hit.error, dressUpDialog.op) : null);
+        })
+        .catch((err) => {
+          if (!cancelled) setDressUpError(mapDressUpKernelError(String(err?.message ?? err), dressUpDialog.op));
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [dressUpDialog, dressUpTarget, doc, ready, resolved.scope]);
 
   // The single body a Transform would move, resolved from the selection: any
   // pick (feature / face / edge / vertex) on exactly one rendered body. In-place
@@ -5898,27 +5985,37 @@ export default function App() {
               </div>
             </DraggableDialog>
           )}
-          {dressUpDialog && (
-            <DraggableDialog className="extrude-dialog" style={{ left: dressUpDialog.x, top: dressUpDialog.y }}>
-              <div className="ed-title" data-drag-handle>{dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}</div>
-              <label className="ed-field">
-                <span>{dressUpDialog.op === "chamfer" ? "Distance" : "Radius"}</span>
-                <input
-                  autoFocus
-                  value={dressUpDialog.size}
-                  onChange={(e) => setDressUpDialog((d) => (d ? { ...d, size: e.target.value } : d))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") createDressUp();
-                    else if (e.key === "Escape") setDressUpDialog(null);
-                  }}
-                />
-              </label>
-              <div className="ed-actions">
-                <button className="ed-primary" onClick={createDressUp}>Create</button>
-                <button onClick={() => setDressUpDialog(null)}>Cancel</button>
-              </div>
-            </DraggableDialog>
-          )}
+          {dressUpDialog && (() => {
+            // Synchronous validation (empty / unparseable / ≤ 0) is instant and
+            // kernel-free; the async geometry error (size too big) lives in
+            // `dressUpError`. Show whichever applies; empty stays silent.
+            const sv = validateDressUpSize(dressUpDialog.size, resolved.scope, dressUpDialog.op);
+            const message = sv.value === null ? sv.error : dressUpError;
+            const disabled = sv.value === null || !!dressUpError;
+            return (
+              <DraggableDialog className="extrude-dialog" style={{ left: dressUpDialog.x, top: dressUpDialog.y }}>
+                <div className="ed-title" data-drag-handle>{dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}</div>
+                <label className="ed-field">
+                  <span>{dressUpDialog.op === "chamfer" ? "Distance" : "Radius"}</span>
+                  <input
+                    autoFocus
+                    onFocus={(e) => e.currentTarget.select()}
+                    value={dressUpDialog.size}
+                    onChange={(e) => setDressUpDialog((d) => (d ? { ...d, size: e.target.value } : d))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") createDressUp();
+                      else if (e.key === "Escape") { setDressUpDialog(null); setDressUpError(null); }
+                    }}
+                  />
+                </label>
+                {message && <p className="ed-warning">{message}</p>}
+                <div className="ed-actions">
+                  <button className="ed-primary" onClick={createDressUp} disabled={disabled}>Create</button>
+                  <button onClick={() => { setDressUpDialog(null); setDressUpError(null); }}>Cancel</button>
+                </div>
+              </DraggableDialog>
+            );
+          })()}
           {revolveDialog && (() => {
             const profileLabel = revolveDialog.profile
               ? doc.features.find((f) => f.id === revolveDialog.profile!.sketchId)?.name ?? "Region"

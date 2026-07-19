@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export interface VarOption {
   name: string;
@@ -51,6 +51,13 @@ export function DimValueInput({ value, onChange, onSubmit, onCancel, variables }
   const inputRef = useRef<HTMLInputElement>(null);
 
   const suggestions = useMemo(() => matchVariables(value, variables), [value, variables]);
+
+  // Pre-select the prepopulated value on mount so the first keystroke overwrites
+  // the current dimension rather than appending to it. Mount-only (not onFocus)
+  // so completing a variable — which refocuses the field — doesn't reselect.
+  useEffect(() => {
+    inputRef.current?.select();
+  }, []);
 
   const hl = Math.min(highlight, Math.max(0, suggestions.length - 1));
 
