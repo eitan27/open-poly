@@ -61,6 +61,92 @@ neutral color, clip-aware picking, persisted in doc meta, plus the MCP op.
 **v2:** multiple simultaneous planes (corner cuts), exact section curves. Resist multiple
 planes until asked — one plane covers the overwhelming majority of real use.
 
+## Proposed: sketch inference lines (alignment guides) + snap-clarity fixes
+
+**Status:** designed 2026-07 (this spec), not started. Two parts — a small visual-clarity
+fix that should land FIRST, then the inference system.
+
+### Part 0 — snap visual clarity (small, prerequisite)
+Sketch mode forces every body to 16% opacity (`sketchDimActive` → `opacity = 0.16`,
+`Viewport.tsx:2230`). Snapping is already **coplanar-only** (candidates pass an `onPlane`
+test, `Viewport.tsx:~2583`, 0.05mm tol) — you can NEVER snap to a parallel face's edge — but
+the see-through body makes it LOOK ambiguous. Purely cosmetic fixes:
+- **Tint the active sketch face** (faint fill on the exact face being sketched) so the plane
+  is unmistakable. Primary fix.
+- **Light up the whole coplanar edge on an edge-snap** (not just today's dot `snapMarker`),
+  so you see it's a real in-plane edge and its extent.
+Do this before inference — guides only feel good when you can see what you're snapping to.
+
+### Part 1 — inference lines
+While drawing, hovering a key point/line **arms** it as a reference; moving away shows dotted
+**guide lines**; the cursor snaps onto a guide; where two guides cross, that **intersection
+is snappable**; and a guide that maps to a real relationship captures the **constraint**.
+
+**Fits existing code.** `resolveSnap` (`Viewport.tsx:~1516`) already does a weak version:
+step 3 computes H/V of the draft segment relative to the last point (`ref`) and
+`handleSketchClick` (`App.tsx:3659`) captures it as a `horizontal`/`vertical` constraint.
+Inference generalizes both. Reuses `snapPointsRef`/`snapLinesRef` (coplanar candidates),
+`SNAP_PX=12`, `ANGLE_SNAP` (~3.4°), `snapMarker`, and the hv→constraint path.
+
+**Two mechanically-different snap kinds (don't conflate):**
+- **Positional guide** — a line THROUGH an armed point; snapping means the cursor lies on it.
+  From a bare point: horizontal + vertical. From a point-on-line: also perpendicular +
+  parallel/collinear through that point.
+- **Directional (angle) snap** — the segment being drawn matches a direction, pivoting on the
+  fixed draft start; the cursor sweeps a ray. This is today's H/V step generalized: check the
+  draft angle against {0°, 90°} PLUS {θ, θ+90°} of each **armed line** → parallel / perpendicular
+  to an existing line. (Arming = dwell-hover a line's body; highlight it.) This is the
+  "draw a wall parallel to another wall" case and is high value.
+
+**Arming model.** Dwell (~120–200ms) to arm a point or a line, Onshape-style (not instant, or
+you spray guides). The draft's last point is always an implicit anchor. Cap ~3 armed refs
+(LRU); age out after a few seconds; clear on tool change / Escape.
+
+**Guide-intersection snapping.** For each pair of active guides, snap to their intersection
+(skip near-parallel); also guide×coplanar-edge and guide×draft-segment intersections. An
+intersection carries BOTH meanings.
+
+**Precedence (highest first), with hysteresis so it doesn't flicker/jump:**
+1. exact vertex/key point → 2. guide∩guide and guide∩edge intersection → 3. on a coplanar
+edge → 4. single positional guide → 5. directional/angle snap (H/V/parallel/perp — same tier
+as today's H/V) → 6. free. Once snapped, require extra px past tolerance before releasing.
+
+**Constraint capture** (via existing `addSketchConstraints`): H→`horizontal`, V→`vertical`,
+perp-guide→`perpendicular`, parallel(guide or angle)→`parallel`; an intersection captures both.
+Confirmed available: horizontal/vertical/parallel/perpendicular/equal/tangent/coincident/
+pointOnLine/midpoint. **Two gaps to decide before MVP:** (a) **collinear** to an edge — no such
+constraint; express as `parallel`+`pointOnLine` or add one. (b) A constraint only forms when the
+reference is an **active-sketch entity** (we have its id, like today's `activeId ? e.id`);
+against a **body edge** (parallel-to-a-body-edge, point-alignment) it's **snap-only** (places the
+geometry, no persistent constraint) — matches Onshape when there's nothing to constrain. Option:
+auto-project the body edge into the sketch first, then constrain. Default MVP: snap-only.
+
+**Rendering.** Dotted guide (dashed `LineMaterial`, muted, distinct color per meaning),
+constant-pixel dashes; an inference **badge** near the cursor (`—`/`|`/`⊥`/`∥`) so captured
+constraints are predictable; intersection marker reuses `snapMarker` in a distinct color;
+fade in on arm, out on disarm.
+
+**Data / structure.** `inferenceAnchorsRef: { uv; lineDir?; sourceId?; armedAt }[]`. Pure,
+unit-testable helpers: `guidesForAnchor`, `snapToGuides`, `guideIntersections`, and an
+arbitration `resolveSnapV2` extending the current return with a `meanings` field.
+
+**MVP scope (agreed):** hovered-point positional guides (H/V + perp/parallel from a
+point-on-line); **armed line-direction references → parallel/perpendicular angle snap of the
+drawn segment**; guide∩guide + guide∩edge intersection; capture H/V/perp/parallel; dotted
+guides + badges; precedence + hysteresis.
+**v2:** tangent guides, arc/circle quadrant anchors, point-to-point alignment (+ optional
+auto construction line), symmetry inference, collinear constraint.
+
+**Tests.** Unit (pure): guide generation per anchor kind, cursor→guide projection + tol,
+guide/guide & guide/edge intersection, arbitration precedence + hysteresis, meaning→constraint
+mapping. e2e: draw a line, hover another line's endpoint, move perpendicular → assert dotted
+guide + a `perpendicular` constraint; arm a line, draw parallel → assert `parallel`; two
+anchors → assert intersection snaps.
+
+**Risks.** (1) FEEL — precedence + hysteresis tuning needs iteration in the real app, not just
+unit tests. (2) Clutter — the arm-dwell, ~3-ref cap, and TTL are what keep it from being a
+light show; err toward fewer, stickier guides. (3) The two constraint gaps above.
+
 ## Kernel: booleans fail on ANALYTIC primitive curved surfaces (not all curves)
 
 **Status:** investigated 2026-07; root cause of why extruded circles/arcs are faceted.
