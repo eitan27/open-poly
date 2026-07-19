@@ -5201,6 +5201,11 @@ export default function App() {
                 ? { datumId: editingSketch.plane.kind === "datum" ? editingSketch.plane.id : null }
                 : null
             }
+            activeSketchFace={
+              editingSketch && editingSketch.plane.kind === "face"
+                ? { bodyId: editingSketch.plane.featureId, frame: editingSketch.plane.frame }
+                : null
+            }
             sketchTool={sketchTool}
             sketches={renderSketchesWithPreview}
             activeSketchId={editingSketchId}

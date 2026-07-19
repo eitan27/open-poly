@@ -31,6 +31,7 @@ import {
   type PlaneFrameData,
   type SketchPlaneId,
   type SketchPlaneRef,
+  type Vec3,
 } from "../document/planes";
 import {
   arcFrom3,
@@ -282,6 +283,9 @@ interface SceneState {
   pendingCommit: { bodyId: string; delta: THREE.Matrix4; meshRef: unknown } | null;
   previewLine: THREE.Line;
   snapMarker: THREE.Mesh;
+  // Lights up the WHOLE edge being snapped to (not just the marker dot), so you
+  // can see it's a real in-plane edge and its extent. Fat line (screen-px width).
+  snapEdgeLine: LineSegments2;
   tween: { from: THREE.Vector3; to: THREE.Vector3; up: THREE.Vector3; start: number } | null;
 }
 
@@ -314,6 +318,21 @@ const makeBodyMaterial = (color: number) =>
     color, metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide,
     polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
   });
+
+// Fat lines (LineMaterial) draw half-linewidth ROUND endcaps that overhang the
+// segment on both ends, so a highlighted/sketch line reads longer than its true
+// extent. The instanced box's uv.y is 1..-1 over the line body and runs out to
+// ±2 for the caps (see LineSegmentsGeometry), so discarding uv.y outside [-1, 1]
+// squares the ends off exactly at the endpoints — butt caps, no overhang.
+const buttCaps = (mat: LineMaterial): LineMaterial => {
+  mat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "void main() {",
+      "void main() {\n\t\t\tif ( vUv.y < - 1.0 || vUv.y > 1.0 ) discard; // butt caps",
+    );
+  };
+  return mat;
+};
 
 const VIEW_DISTANCE = 220;
 const TWEEN_MS = 300;
@@ -652,6 +671,7 @@ export function Viewport({
   axisPick,
   onAxisPick,
   activeSketch,
+  activeSketchFace,
   sketchTool,
   sketches,
   activeSketchId,
@@ -707,6 +727,10 @@ export function Viewport({
   axisPick: boolean;
   onAxisPick: (pick: RevolveAxisPick) => void;
   activeSketch: { datumId: SketchPlaneId | null } | null;
+  /** When the active sketch is on a body face, the body id + the face's frozen
+   *  frame — used to TINT that face so it's unmistakable which surface (vs a
+   *  see-through parallel face) you're sketching/snapping on. */
+  activeSketchFace: { bodyId: string; frame: PlaneFrameData } | null;
   sketchTool: SketchTool;
   sketches: RenderSketch[];
   activeSketchId: string | null;
@@ -746,6 +770,10 @@ export function Viewport({
   onTransformPreviewRef.current = onTransformPreview;
   const meshesRef = useRef(meshes);
   meshesRef.current = meshes;
+  // Resolved (per current build) faceIds of the body face the active sketch sits
+  // on — every face coplanar with the sketch frame. The per-frame face-material
+  // loop reads this to tint them (index 4).
+  const activeSketchFaceRef = useRef<{ bodyId: string; faceIds: Set<number> } | null>(null);
   const hoverSelRef = useRef<Selection | null>(null);
   const applyHighlightsRef = useRef<() => void>(() => {});
 
@@ -874,13 +902,13 @@ export function Viewport({
     // to these; index 0 is the per-sketch base material set in the render effect).
 
     // Fat-line overlay (real line width) for the highlighted body edge.
-    const highlightMaterial = new LineMaterial({
+    const highlightMaterial = buttCaps(new LineMaterial({
       vertexColors: true,
       linewidth: 3,
       worldUnits: false,
       depthTest: false,
       transparent: true,
-    });
+    }));
     const highlightOverlay = new LineSegments2(new LineSegmentsGeometry(), highlightMaterial);
     highlightOverlay.renderOrder = 11;
     highlightOverlay.frustumCulled = false;
@@ -1025,7 +1053,16 @@ export function Viewport({
     snapMarker.renderOrder = 12;
     snapMarker.visible = false;
     keepConstantPixelRadius(snapMarker, 1.4, SNAP_PIXEL_RADIUS);
-    scene.add(previewLine, snapMarker);
+    // Whole-edge snap highlight: a bright FAT line over the edge under the cursor,
+    // drawn on top (depthTest off) so it reads even against the dimmed body.
+    const snapEdgeMaterial = buttCaps(new LineMaterial({
+      color: 0xffe14a, linewidth: 4, worldUnits: false, depthTest: false, transparent: true,
+    }));
+    const snapEdgeLine = new LineSegments2(new LineSegmentsGeometry(), snapEdgeMaterial);
+    snapEdgeLine.renderOrder = 11;
+    snapEdgeLine.frustumCulled = false;
+    snapEdgeLine.visible = false;
+    scene.add(previewLine, snapMarker, snapEdgeLine);
 
     const state: SceneState = {
       renderer, scene, camera, controls, group,
@@ -1035,7 +1072,7 @@ export function Viewport({
       liveDrag: null,
       pendingCommit: null,
       ghostGroup, ghostMaterial, ghostLineMaterial,
-      previewLine, snapMarker, tween: null,
+      previewLine, snapMarker, snapEdgeLine, tween: null,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
@@ -1064,12 +1101,15 @@ export function Viewport({
         const bh = booleanHighlightRef.current;
         const wholeGhost = bh?.cyan.has(fid) ?? false;
         const wholeOrange = bh?.orange.has(fid) ?? false;
+        const asf = activeSketchFaceRef.current;
+        const asfFaces = asf?.bodyId === fid ? asf.faceIds : null;
         let dirty = false;
         geom.groups.forEach((g: { materialIndex?: number }, i: number) => {
           const faceId = fg[i]?.faceId;
           const selF = wholeSel || sels.some((s) => s.kind === "face" && s.featureId === fid && s.faceId === faceId);
           const hovF = wholeHov || (hovered?.kind === "face" && hovered.featureId === fid && hovered.faceId === faceId);
-          const idx = wholeGhost ? 3 : selF || wholeOrange ? 2 : hovF ? 1 : 0;
+          const sketchF = asfFaces?.has(faceId as number) ?? false;
+          const idx = wholeGhost ? 3 : selF || wholeOrange ? 2 : hovF ? 1 : sketchF ? 4 : 0;
           if (g.materialIndex !== idx) { g.materialIndex = idx; dirty = true; }
         });
         if (dirty) (geom as THREE.BufferGeometry & { groupsNeedUpdate: boolean }).groupsNeedUpdate = true;
@@ -1525,6 +1565,9 @@ export function Viewport({
       /** The snap landed on an existing corner (endpoint/origin) — the line tool
        *  ends its chain here rather than continuing to the next segment. */
       atVertex?: boolean;
+      /** For an edge snap: the full segment snapped to (uv), so the whole edge
+       *  can be highlighted, not just the marker dot. */
+      seg?: [Vec2, Vec2];
     } => {
       const frame = activeFrameRef.current!;
       const distPx = (c: Vec2) => {
@@ -1570,11 +1613,12 @@ export function Viewport({
       // 2. nearest point on a coplanar edge
       let bestLine: Vec2 | null = null;
       let bestLineId: string | undefined;
+      let bestSeg: [Vec2, Vec2] | undefined;
       let bestLD = SNAP_PX;
       for (const seg of snapLinesRef.current) {
         const q = nearestOnSegment(raw, seg.a, seg.b);
         const d = distPx(q);
-        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = seg.id; }
+        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = seg.id; bestSeg = [seg.a, seg.b]; }
       }
       if (bestLine)
         return {
@@ -1582,6 +1626,7 @@ export function Viewport({
           kind: "edge",
           hv: hvOf(bestLine),
           on: bestLineId ? { id: bestLineId, mid: false } : undefined,
+          seg: bestSeg,
         };
       // 3. horizontal / vertical inference relative to the last placed point
       if (ref) {
@@ -1921,9 +1966,10 @@ export function Viewport({
         if (!raw) {
           state.previewLine.visible = false;
           state.snapMarker.visible = false;
+          state.snapEdgeLine.visible = false;
           return;
         }
-        const { uv, kind } = snap(raw, e.clientX, e.clientY);
+        const { uv, kind, seg } = snap(raw, e.clientX, e.clientY);
         const poly = previewPolyline(sketchToolRef.current, draftRef.current, uv, polygonSidesRef.current);
         if (poly && poly.length >= 2) {
           setPolyline(state.previewLine.geometry, poly.map((p) => uvToWorld(frame, p[0], p[1])));
@@ -1939,6 +1985,15 @@ export function Viewport({
         } else {
           state.snapMarker.visible = false;
         }
+        // Light up the whole edge when snapping to one.
+        if (kind === "edge" && seg) {
+          const a = uvToWorld(frame, seg[0][0], seg[0][1]);
+          const b = uvToWorld(frame, seg[1][0], seg[1][1]);
+          state.snapEdgeLine.geometry.setPositions([a[0], a[1], a[2], b[0], b[1], b[2]]);
+          state.snapEdgeLine.visible = true;
+        } else {
+          state.snapEdgeLine.visible = false;
+        }
         return;
       }
       // Selection hover (idle, or sketch mode with the Select tool). Hide any
@@ -1946,6 +2001,7 @@ export function Viewport({
       if (frame) {
         state.previewLine.visible = false;
         state.snapMarker.visible = false;
+        state.snapEdgeLine.visible = false;
       }
       const sel = pickSelection(e.clientX, e.clientY);
       if (!sameSelection(sel, hoverSelRef.current)) {
@@ -2098,6 +2154,7 @@ export function Viewport({
       camera.updateProjectionMatrix();
       highlightMaterial.resolution.set(w, h); // fat-line width is in screen pixels
       highlightMaterialDash.resolution.set(w, h);
+      snapEdgeMaterial.resolution.set(w, h);
       // Sketch display lines are fat lines too — keep their screen-space width.
       for (const child of sketchGroup.children) {
         if (child.userData.isSketchDisplay) {
@@ -2197,6 +2254,8 @@ export function Viewport({
       ghostLineMaterial.dispose();
       previewLine.geometry.dispose();
       snapMarker.geometry.dispose();
+      snapEdgeLine.geometry.dispose();
+      (snapEdgeLine.material as THREE.Material).dispose();
       pointMarkers.geometry.dispose();
       (pointMarkers.material as THREE.Material).dispose();
       selectedMaterial.dispose();
@@ -2231,11 +2290,16 @@ export function Viewport({
       baseMaterial.opacity = state.sketchDimActive ? 0.16 : opacity;
       const selColor = new THREE.Color(color).lerp(EDGE_SEL_COLOR, 0.7);
       const selectedMaterial = makeBodyMaterial(selColor.getHex());
+      // The active sketch's own face renders OPAQUE in the body's own colour, so
+      // it's a solid surface (occluding any see-through parallel face) rather than
+      // dimmed like the rest of the body. Per-body (own colour), like base/selected.
+      const sketchFaceMaterial = makeBodyMaterial(color);
       const faceMesh = new THREE.Mesh(geometry.faces, [
         baseMaterial,
         state.hoverMaterial,
         selectedMaterial,
         state.ghostMaterial, // index 3 = boolean tool / intersect (translucent cyan)
+        sketchFaceMaterial, // index 4 = the active sketch's own face (opaque, body colour)
       ]);
       faceMesh.userData.featureId = id;
       // The body's own opacity (pre-dim), so the sketch-dim effect can restore
@@ -2469,7 +2533,7 @@ export function Viewport({
       if (solidPts.length >= 6) {
         const fatGeom = new LineSegmentsGeometry();
         fatGeom.setPositions(solidPts);
-        const fatMat = new LineMaterial({
+        const fatMat = buttCaps(new LineMaterial({
           color: sketchBaseColor(s.id === activeSketchId, sketchFullyConstrainedRef.current),
           linewidth: SKETCH_LINE_WIDTH,
           worldUnits: false,
@@ -2479,7 +2543,7 @@ export function Viewport({
           polygonOffset: true,
           polygonOffsetFactor: -2,
           polygonOffsetUnits: -2,
-        });
+        }));
         const size = state.renderer.getSize(new THREE.Vector2());
         fatMat.resolution.set(size.x, size.y);
         const fat = new LineSegments2(fatGeom, fatMat);
@@ -2568,6 +2632,7 @@ export function Viewport({
     if (!active) {
       state.previewLine.visible = false;
       state.snapMarker.visible = false;
+      state.snapEdgeLine.visible = false;
       snapPointsRef.current = [];
       snapLinesRef.current = [];
       return;
@@ -2634,6 +2699,47 @@ export function Viewport({
     snapPointsRef.current = points;
     snapLinesRef.current = lines;
   }, [sketches, activeSketchId, meshes, sketchFullyConstrained, fontTick]);
+
+  // Resolve which faces of the sketched body lie on the sketch plane, so the
+  // face-material loop can tint them. A planar face is classified from one
+  // triangle: coplanar with the frame (point-to-plane distance ~0) and its
+  // normal parallel to the frame normal. Re-derived on every build.
+  useEffect(() => {
+    if (!activeSketchFace) {
+      activeSketchFaceRef.current = null;
+      return;
+    }
+    const body = meshes.find((x) => x.id === activeSketchFace.bodyId);
+    const faces = body?.mesh.faces;
+    if (!faces?.faceGroups) {
+      activeSketchFaceRef.current = null;
+      return;
+    }
+    const { origin: O, normal: Nraw } = activeSketchFace.frame;
+    const nl = Math.hypot(Nraw[0], Nraw[1], Nraw[2]) || 1;
+    const N: Vec3 = [Nraw[0] / nl, Nraw[1] / nl, Nraw[2] / nl];
+    const { vertices, triangles } = faces;
+    const v = (i: number): Vec3 => [vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]];
+    const faceIds = new Set<number>();
+    for (const g of faces.faceGroups) {
+      if (g.count < 3) continue;
+      const a = v(triangles[g.start]);
+      const b = v(triangles[g.start + 1]);
+      const c = v(triangles[g.start + 2]);
+      // Coplanar: the first vertex sits on the frame plane.
+      if (Math.abs((a[0] - O[0]) * N[0] + (a[1] - O[1]) * N[1] + (a[2] - O[2]) * N[2]) > 0.05) continue;
+      // Parallel: the triangle's normal is (anti)parallel to the frame normal.
+      const e1: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const e2: Vec3 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const fn: Vec3 = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      const fnl = Math.hypot(fn[0], fn[1], fn[2]);
+      if (fnl < 1e-9) continue;
+      const sin = Math.hypot(fn[1] * N[2] - fn[2] * N[1], fn[2] * N[0] - fn[0] * N[2], fn[0] * N[1] - fn[1] * N[0]) / fnl;
+      if (sin > 1e-2) continue;
+      faceIds.add(g.faceId);
+    }
+    activeSketchFaceRef.current = faceIds.size ? { bodyId: activeSketchFace.bodyId, faceIds } : null;
+  }, [activeSketchFace, meshes]);
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
@@ -2910,12 +3016,13 @@ function disposeGroup(group: THREE.Group): void {
   for (const child of group.children) {
     if (child instanceof THREE.Mesh) {
       child.geometry.dispose();
-      // material[0] (base colour) and [2] (per-body selected tint) are created
-      // per-body in the rebuild effect; [1] (hover) is shared and disposed on
-      // unmount instead.
+      // material[0] (base colour), [2] (per-body selected tint) and [4] (per-body
+      // opaque active-sketch face) are created per-body in the rebuild effect;
+      // [1] (hover) and [3] (ghost) are shared and disposed on unmount instead.
       if (Array.isArray(child.material)) {
         child.material[0]?.dispose();
         child.material[2]?.dispose();
+        child.material[4]?.dispose();
       }
     } else if (child instanceof THREE.LineSegments) {
       child.geometry.dispose();
