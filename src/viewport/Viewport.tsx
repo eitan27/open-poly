@@ -398,7 +398,7 @@ const SKETCH_COLOR_IDLE = 0x9aa6cc; // not the active sketch
 /** On-screen width (px) of solid sketch lines — a touch heavier than the 1px
  *  default so entities read clearly and the constrained-state colour is easy to
  *  see. Drawn as fat lines (LineMaterial), since LineBasicMaterial ignores it. */
-const SKETCH_LINE_WIDTH = 2.0;
+const SKETCH_LINE_WIDTH = 3.5;
 const sketchBaseColor = (active: boolean, fullyConstrained: boolean): number =>
   active ? (fullyConstrained ? SKETCH_COLOR_FULL : SKETCH_COLOR_UNDER) : SKETCH_COLOR_IDLE;
 
