@@ -287,8 +287,10 @@ interface SceneState {
   // Lights up the WHOLE edge being snapped to (not just the marker dot), so you
   // can see it's a real in-plane edge and its extent. Fat line (screen-px width).
   snapEdgeLine: LineSegments2;
-  // Dotted inference/alignment guides shown while an inference snap is active.
-  guideOverlay: THREE.LineSegments;
+  // Dotted inference/alignment guides shown while an inference snap is active
+  // (fat dashed line), plus small square markers on each anchor point (fat solid).
+  guideOverlay: LineSegments2;
+  anchorOverlay: LineSegments2;
   // A small DOM chip near the cursor showing the active inference glyph(s)
   // (—/|/∥/⊥), so it's clear which constraint a click will capture.
   guideBadge: HTMLDivElement;
@@ -1078,15 +1080,25 @@ export function Viewport({
     snapEdgeLine.renderOrder = 11;
     snapEdgeLine.frustumCulled = false;
     snapEdgeLine.visible = false;
-    // Dotted inference/alignment guides (drawn on top of the dimmed model).
-    const guideOverlay = new THREE.LineSegments(
-      new THREE.BufferGeometry(),
-      new THREE.LineDashedMaterial({ color: 0x8fb4ff, dashSize: 2, gapSize: 2, depthTest: false, transparent: true, opacity: 0.9 }),
-    );
+    // Dotted inference/alignment guides — a fat dashed line so its width reads,
+    // and small square markers on each anchor point in the same colour + width.
+    const GUIDE_COLOR = 0x8fb4ff;
+    const guideMaterial = new LineMaterial({
+      color: GUIDE_COLOR, linewidth: 2, worldUnits: false, dashed: true,
+      dashSize: 1.4, gapSize: 0.9, depthTest: false, transparent: true, opacity: 0.9,
+    });
+    const guideOverlay = new LineSegments2(new LineSegmentsGeometry(), guideMaterial);
     guideOverlay.renderOrder = 10;
     guideOverlay.frustumCulled = false;
     guideOverlay.visible = false;
-    scene.add(previewLine, snapMarker, snapEdgeLine, guideOverlay);
+    const anchorMaterial = new LineMaterial({
+      color: GUIDE_COLOR, linewidth: 2, worldUnits: false, depthTest: false, transparent: true, opacity: 0.9,
+    });
+    const anchorOverlay = new LineSegments2(new LineSegmentsGeometry(), anchorMaterial);
+    anchorOverlay.renderOrder = 10;
+    anchorOverlay.frustumCulled = false;
+    anchorOverlay.visible = false;
+    scene.add(previewLine, snapMarker, snapEdgeLine, guideOverlay, anchorOverlay);
     const guideBadge = document.createElement("div");
     guideBadge.style.cssText =
       "position:fixed;pointer-events:none;z-index:9999;padding:1px 6px;border-radius:4px;" +
@@ -1101,7 +1113,7 @@ export function Viewport({
       liveDrag: null,
       pendingCommit: null,
       ghostGroup, ghostMaterial, ghostLineMaterial,
-      previewLine, snapMarker, snapEdgeLine, guideOverlay, guideBadge, tween: null,
+      previewLine, snapMarker, snapEdgeLine, guideOverlay, anchorOverlay, guideBadge, tween: null,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
@@ -2051,6 +2063,7 @@ export function Viewport({
           state.snapMarker.visible = false;
           state.snapEdgeLine.visible = false;
           state.guideOverlay.visible = false;
+          state.anchorOverlay.visible = false;
           state.guideBadge.style.display = "none";
           return;
         }
@@ -2082,19 +2095,40 @@ export function Viewport({
         } else {
           state.snapEdgeLine.visible = false;
         }
-        // Draw each active guide as a dotted line from its anchor (the key point
-        // it emanates from) to the snap point under the cursor — not across the
-        // whole viewport.
+        // Draw each active guide as a dashed line from its anchor (the key point)
+        // to the snap point under the cursor, and a small square marker on each
+        // distinct anchor (constant screen size).
         if (kind === "guide" && guideLines && guideLines.length) {
-          const pts: THREE.Vector3[] = [];
+          const bw = uvToWorld(frame, uv[0], uv[1]);
+          const gpos: number[] = [];
+          const anchors: Vec2[] = [];
           for (const g of guideLines) {
-            const a = uvToWorld(frame, g.origin[0], g.origin[1]);
-            const b = uvToWorld(frame, uv[0], uv[1]);
-            pts.push(new THREE.Vector3(a[0], a[1], a[2]), new THREE.Vector3(b[0], b[1], b[2]));
+            const aw = uvToWorld(frame, g.origin[0], g.origin[1]);
+            gpos.push(aw[0], aw[1], aw[2], bw[0], bw[1], bw[2]);
+            if (!anchors.some((a) => a[0] === g.origin[0] && a[1] === g.origin[1])) anchors.push(g.origin);
           }
-          state.guideOverlay.geometry.setFromPoints(pts);
+          state.guideOverlay.geometry.setPositions(gpos);
           state.guideOverlay.computeLineDistances();
           state.guideOverlay.visible = true;
+          // Anchor squares, sized to a constant pixel extent at the current zoom.
+          const bufH = renderer.getDrawingBufferSize(new THREE.Vector2()).y;
+          const oc = camera as THREE.OrthographicCamera;
+          const worldPerPx = oc.isOrthographicCamera
+            ? (oc.top - oc.bottom) / oc.zoom / bufH
+            : (2 * (camera as THREE.PerspectiveCamera).position.distanceTo(new THREE.Vector3(...frame.origin)) *
+                Math.tan(((camera as THREE.PerspectiveCamera).fov * Math.PI) / 360)) / bufH;
+          const hw = worldPerPx * 14; // half-width in world units (~14 buffer px)
+          const spos: number[] = [];
+          for (const o of anchors) {
+            const c: Vec2[] = [[o[0] - hw, o[1] - hw], [o[0] + hw, o[1] - hw], [o[0] + hw, o[1] + hw], [o[0] - hw, o[1] + hw]];
+            for (let i = 0; i < 4; i++) {
+              const p = uvToWorld(frame, c[i][0], c[i][1]);
+              const q = uvToWorld(frame, c[(i + 1) % 4][0], c[(i + 1) % 4][1]);
+              spos.push(p[0], p[1], p[2], q[0], q[1], q[2]);
+            }
+          }
+          state.anchorOverlay.geometry.setPositions(spos);
+          state.anchorOverlay.visible = true;
           const glyph = { horizontal: "—", vertical: "|", parallel: "//", perpendicular: "⊥" } as const;
           const badge = [...new Set((meanings ?? []).map((m) => glyph[m.meaning]))].join(" ");
           if (badge) {
@@ -2107,6 +2141,7 @@ export function Viewport({
           }
         } else {
           state.guideOverlay.visible = false;
+          state.anchorOverlay.visible = false;
           state.guideBadge.style.display = "none";
         }
         return;
@@ -2118,6 +2153,7 @@ export function Viewport({
         state.snapMarker.visible = false;
         state.snapEdgeLine.visible = false;
         state.guideOverlay.visible = false;
+        state.anchorOverlay.visible = false;
         state.guideBadge.style.display = "none";
       }
       const sel = pickSelection(e.clientX, e.clientY);
@@ -2272,6 +2308,8 @@ export function Viewport({
       highlightMaterial.resolution.set(w, h); // fat-line width is in screen pixels
       highlightMaterialDash.resolution.set(w, h);
       snapEdgeMaterial.resolution.set(w, h);
+      guideMaterial.resolution.set(w, h);
+      anchorMaterial.resolution.set(w, h);
       // Sketch display lines are fat lines too — keep their screen-space width.
       for (const child of sketchGroup.children) {
         if (child.userData.isSketchDisplay) {
@@ -2375,6 +2413,8 @@ export function Viewport({
       (snapEdgeLine.material as THREE.Material).dispose();
       guideOverlay.geometry.dispose();
       (guideOverlay.material as THREE.Material).dispose();
+      anchorOverlay.geometry.dispose();
+      (anchorOverlay.material as THREE.Material).dispose();
       guideBadge.remove();
       pointMarkers.geometry.dispose();
       (pointMarkers.material as THREE.Material).dispose();
@@ -2754,6 +2794,7 @@ export function Viewport({
       state.snapMarker.visible = false;
       state.snapEdgeLine.visible = false;
       state.guideOverlay.visible = false;
+      state.anchorOverlay.visible = false;
       state.guideBadge.style.display = "none";
       armedRef.current = { points: [], lines: [] };
       snapPointsRef.current = [];
