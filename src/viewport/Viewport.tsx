@@ -399,6 +399,10 @@ const PICK_DEPTH_TOL = 1;
 const SKETCH_COLOR_UNDER = 0x4d8dff; // active, under-constrained (free DOF)
 const SKETCH_COLOR_FULL = 0x33d27a; // active, fully constrained
 const SKETCH_COLOR_IDLE = 0x9aa6cc; // not the active sketch
+// Inference guides read as helpers, NOT real geometry: a muted lavender-grey,
+// distinct from the sketch/construction blue, and drawn slightly thinner.
+const GUIDE_COLOR = 0xa6a9d0;
+const GUIDE_LINE_WIDTH = 1.5;
 /** On-screen width (px) of solid sketch lines — a touch heavier than the 1px
  *  default so entities read clearly and the constrained-state colour is easy to
  *  see. Drawn as fat lines (LineMaterial), since LineBasicMaterial ignores it. */
@@ -1086,9 +1090,8 @@ export function Viewport({
     snapEdgeLine.visible = false;
     // Dotted inference/alignment guides — a fat dashed line so its width reads,
     // and small square markers on each anchor point in the same colour + width.
-    const GUIDE_COLOR = 0x8fb4ff;
     const guideMaterial = new LineMaterial({
-      color: GUIDE_COLOR, linewidth: 2, worldUnits: false, dashed: true,
+      color: GUIDE_COLOR, linewidth: GUIDE_LINE_WIDTH, worldUnits: false, dashed: true,
       dashSize: 1.4, gapSize: 0.9, depthTest: false, transparent: true, opacity: 0.9,
     });
     const guideOverlay = new LineSegments2(new LineSegmentsGeometry(), guideMaterial);
@@ -1096,7 +1099,7 @@ export function Viewport({
     guideOverlay.frustumCulled = false;
     guideOverlay.visible = false;
     const anchorMaterial = new LineMaterial({
-      color: GUIDE_COLOR, linewidth: 2, worldUnits: false, depthTest: false, transparent: true, opacity: 0.9,
+      color: GUIDE_COLOR, linewidth: GUIDE_LINE_WIDTH, worldUnits: false, depthTest: false, transparent: true, opacity: 0.9,
     });
     const anchorOverlay = new LineSegments2(new LineSegmentsGeometry(), anchorMaterial);
     anchorOverlay.renderOrder = 10;
@@ -1106,7 +1109,7 @@ export function Viewport({
     const guideBadge = document.createElement("div");
     guideBadge.style.cssText =
       "position:fixed;pointer-events:none;z-index:9999;padding:1px 6px;border-radius:4px;" +
-      "background:rgba(18,22,31,0.92);color:#8fb4ff;font:600 13px/1.3 ui-sans-serif,system-ui,sans-serif;display:none;";
+      "background:rgba(18,22,31,0.92);color:#c2c5e2;font:600 13px/1.3 ui-sans-serif,system-ui,sans-serif;display:none;";
     document.body.appendChild(guideBadge);
 
     const state: SceneState = {
@@ -2086,7 +2089,7 @@ export function Viewport({
           const w = uvToWorld(frame, uv[0], uv[1]);
           state.snapMarker.position.set(w[0], w[1], w[2]);
           (state.snapMarker.material as THREE.MeshBasicMaterial).color.set(
-            kind === "edge" ? 0x36d6c3 : kind === "guide" ? 0x8fb4ff : 0xffe14a,
+            kind === "edge" ? 0x36d6c3 : kind === "guide" ? GUIDE_COLOR : 0xffe14a,
           );
           state.snapMarker.visible = true;
         } else {
@@ -2670,8 +2673,11 @@ export function Viewport({
       const baseMat = new THREE.LineBasicMaterial({
         color: sketchBaseColor(s.id === activeSketchId, sketchFullyConstrainedRef.current),
       });
+      // Kept invisible — construction lines are drawn by a fat DASHED display line
+      // below (same width + colour as solid sketch lines), so this thin twin only
+      // exists for the group structure / picking.
       const constructionMat = new THREE.LineDashedMaterial({
-        color: 0xe0a64f, dashSize: 1.4, gapSize: 0.9,
+        color: 0xe0a64f, dashSize: 1.4, gapSize: 0.9, transparent: true, opacity: 0,
       });
       // Associative/derived geometry (offset/mirror/projected) — a distinct
       // purple so it reads as driven, not free, geometry.
@@ -2690,21 +2696,26 @@ export function Viewport({
       baseMat.opacity = 0;
       state.sketchGroup.add(seg);
 
-      // Fat display line: the solid (non-construction) entity segments rendered a
-      // touch thicker via LineMaterial, coloured by the sketch's constrained
-      // state. Construction geometry keeps its thin dashed look from `seg`.
-      const solidPts = pts.filter((_, i) => {
-        const vert = Math.floor(i / 3);
-        const g = entityGroups.find((eg) => vert >= eg.start && vert < eg.start + eg.count);
-        return g != null && !g.construction;
-      });
-      if (solidPts.length >= 6) {
+      // Fat display lines, coloured by the sketch's constrained state: the solid
+      // (non-construction) entities, and the construction entities as a DASHED fat
+      // line of the SAME width + colour (only the dash pattern marks them as
+      // construction). Both drawn a touch thicker via LineMaterial.
+      const size = state.renderer.getSize(new THREE.Vector2());
+      const sketchColor = sketchBaseColor(s.id === activeSketchId, sketchFullyConstrainedRef.current);
+      const addFat = (want: (g: (typeof entityGroups)[number]) => boolean, dashed: boolean) => {
+        const fpts = pts.filter((_, i) => {
+          const vert = Math.floor(i / 3);
+          const g = entityGroups.find((eg) => vert >= eg.start && vert < eg.start + eg.count);
+          return g != null && want(g);
+        });
+        if (fpts.length < 6) return;
         const fatGeom = new LineSegmentsGeometry();
-        fatGeom.setPositions(solidPts);
+        fatGeom.setPositions(fpts);
         const fatMat = buttCaps(new LineMaterial({
-          color: sketchBaseColor(s.id === activeSketchId, sketchFullyConstrainedRef.current),
+          color: sketchColor,
           linewidth: SKETCH_LINE_WIDTH,
           worldUnits: false,
+          ...(dashed && { dashed: true, dashSize: 1.4, gapSize: 0.9 }),
           // Nudge toward the camera so the fat line wins over the (coincident)
           // thin line without turning depth testing off — sketches behind a solid
           // body still read as occluded.
@@ -2712,15 +2723,17 @@ export function Viewport({
           polygonOffsetFactor: -2,
           polygonOffsetUnits: -2,
         }));
-        const size = state.renderer.getSize(new THREE.Vector2());
         fatMat.resolution.set(size.x, size.y);
         const fat = new LineSegments2(fatGeom, fatMat);
+        if (dashed) fat.computeLineDistances();
         fat.frustumCulled = false;
         fat.renderOrder = 4;
         fat.userData.sketchId = s.id;
         fat.userData.isSketchDisplay = true;
         state.sketchGroup.add(fat);
-      }
+      };
+      addFat((g) => !g.construction, false);
+      addFat((g) => g.construction, true);
 
       // Small dots at the active sketch's selectable/draggable vertices, so those
       // key points are visible and grabbable. Rebuilt with the geometry each
