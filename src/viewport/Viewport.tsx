@@ -1110,7 +1110,7 @@ export function Viewport({
     const guideBadge = document.createElement("div");
     guideBadge.style.cssText =
       "position:fixed;pointer-events:none;z-index:9999;padding:1px 6px;border-radius:4px;" +
-      "background:rgba(18,22,31,0.92);color:#e0a64f;font:600 13px/1.3 ui-sans-serif,system-ui,sans-serif;display:none;";
+      "background:rgba(18,22,31,0.92);color:#c2c5e2;font:600 13px/1.3 ui-sans-serif,system-ui,sans-serif;display:none;";
     document.body.appendChild(guideBadge);
 
     const state: SceneState = {
