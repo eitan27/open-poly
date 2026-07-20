@@ -1072,6 +1072,10 @@ export function Viewport({
     const previewLine = new Line2(new LineGeometry(), previewMaterial);
     previewLine.frustumCulled = false;
     previewLine.visible = false;
+    // Above the guide/anchor overlays (renderOrder 10) so the opaque preview line
+    // occludes a coincident guide, but below the snap marker/edge (11–12). All use
+    // depthTest:false, so draw order alone decides who's on top.
+    previewLine.renderOrder = 10.5;
     const snapMarker = new THREE.Mesh(
       new THREE.SphereGeometry(1.4, 16, 16),
       new THREE.MeshBasicMaterial({ color: 0xffe14a, depthTest: false }),
