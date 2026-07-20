@@ -61,7 +61,35 @@ neutral color, clip-aware picking, persisted in doc meta, plus the MCP op.
 **v2:** multiple simultaneous planes (corner cuts), exact section curves. Resist multiple
 planes until asked — one plane covers the overwhelming majority of real use.
 
-## Proposed: sketch inference lines (alignment guides) + snap-clarity fixes
+## Sketch inference lines (alignment guides) + snap-clarity fixes
+
+**Status:** SHIPPED 2026-07 (Part 0 + Part 1 MVP, deployed). Only **hysteresis** remains
+(deferred — snap stickiness so competing guides don't flicker; best judged by real use).
+Commits: `e7a1dae` (Part 0), `c9c24df` inference core + tests, `840df13` viewport wiring,
+`5855717` parallel/perp constraint capture, `741328f` badge, `ed214ae` bounded guide,
+`5ff2feb` anchor square + fat guide, `d9167bd` fat preview line, `6e087ae`/`6a8a275`/
+`ce78081`/`837791c` styling (construction fat-dashed, guide amber+thin, dashed construction
+snap highlight, neutral badge, preview occludes guide). Pure geometry core is unit-tested
+in `src/sketch/inference.ts` + `inference.test.ts` (13 tests); the rest is viewport
+rendering verified in-app.
+
+**Shipped visual language** (see also the line/vertex table below, kept in the code):
+- Solid blue fat line = real sketch geometry; dashed blue fat line = construction (same
+  width/colour, only the dash differs); thin amber dashed = inference guide (a helper, not
+  real); purple = derived/associative.
+- Anchor square + snap dot + guide line share the amber; the constraint badge (—/|/⊥/// near
+  the cursor) is neutral. Snapping onto a construction edge highlights it dashed.
+- The opaque preview line renders above the guide (renderOrder 10.5) so it occludes a
+  coincident guide.
+
+**Known follow-ups / rough edges (small):**
+- Guides can render while the **Select** tool is active (not only while drawing) — minor,
+  gate to draw-tools if it bothers.
+- The multi-click preview polyline doesn't show a marker at the in-progress vertex unless a
+  guide/snap is active (see the vertex table).
+- Hysteresis (the one deferred MVP item).
+
+<details><summary>Original design spec (for reference)</summary>
 
 **Status:** designed 2026-07 (this spec), not started. Two parts — a small visual-clarity
 fix that should land FIRST, then the inference system.
@@ -146,6 +174,8 @@ anchors → assert intersection snaps.
 **Risks.** (1) FEEL — precedence + hysteresis tuning needs iteration in the real app, not just
 unit tests. (2) Clutter — the arm-dwell, ~3-ref cap, and TTL are what keep it from being a
 light show; err toward fewer, stickier guides. (3) The two constraint gaps above.
+
+</details>
 
 ## Kernel: booleans fail on ANALYTIC primitive curved surfaces (not all curves)
 
