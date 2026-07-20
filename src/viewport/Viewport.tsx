@@ -24,6 +24,7 @@ function syncBodyGeometry(name: string, faces: MeshedFaces, edges: MeshedEdges) 
   return geometry;
 }
 import type { SketchEntity, Vec2 } from "../document/types";
+import { buildGuides, snapToGuides, type Guide } from "../sketch/inference";
 import type { SketchRegion } from "../document/regions";
 import {
   deriveFaceFrame,
@@ -286,6 +287,8 @@ interface SceneState {
   // Lights up the WHOLE edge being snapped to (not just the marker dot), so you
   // can see it's a real in-plane edge and its extent. Fat line (screen-px width).
   snapEdgeLine: LineSegments2;
+  // Dotted inference/alignment guides shown while an inference snap is active.
+  guideOverlay: THREE.LineSegments;
   tween: { from: THREE.Vector3; to: THREE.Vector3; up: THREE.Vector3; start: number } | null;
 }
 
@@ -791,6 +794,10 @@ export function Viewport({
   selectionFilterRef.current = selectionFilter;
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  // Inference "armed" refs: key points and edge directions the cursor has recently
+  // brushed, which emit alignment guides while drawing. Capped + time-limited so
+  // they fade rather than pile up (Onshape-style priming).
+  const armedRef = useRef<{ points: { uv: Vec2; at: number }[]; lines: { dir: Vec2; refId?: string; at: number }[] }>({ points: [], lines: [] });
   const polygonSidesRef = useRef(polygonSides);
   polygonSidesRef.current = polygonSides;
   const sketchFullyConstrainedRef = useRef(sketchFullyConstrained);
@@ -1062,7 +1069,15 @@ export function Viewport({
     snapEdgeLine.renderOrder = 11;
     snapEdgeLine.frustumCulled = false;
     snapEdgeLine.visible = false;
-    scene.add(previewLine, snapMarker, snapEdgeLine);
+    // Dotted inference/alignment guides (drawn on top of the dimmed model).
+    const guideOverlay = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineDashedMaterial({ color: 0x8fb4ff, dashSize: 2, gapSize: 2, depthTest: false, transparent: true, opacity: 0.9 }),
+    );
+    guideOverlay.renderOrder = 10;
+    guideOverlay.frustumCulled = false;
+    guideOverlay.visible = false;
+    scene.add(previewLine, snapMarker, snapEdgeLine, guideOverlay);
 
     const state: SceneState = {
       renderer, scene, camera, controls, group,
@@ -1072,7 +1087,7 @@ export function Viewport({
       liveDrag: null,
       pendingCommit: null,
       ghostGroup, ghostMaterial, ghostLineMaterial,
-      previewLine, snapMarker, snapEdgeLine, tween: null,
+      previewLine, snapMarker, snapEdgeLine, guideOverlay, tween: null,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
@@ -1557,7 +1572,7 @@ export function Viewport({
       clientY: number,
     ): {
       uv: Vec2;
-      kind: "point" | "edge" | "h" | "v" | "free";
+      kind: "point" | "edge" | "h" | "v" | "guide" | "free";
       hv?: "horizontal" | "vertical";
       /** What an active-sketch entity the snapped point should attach to: its
        *  midpoint (`mid: true`) or a point on its body (`mid: false`). */
@@ -1568,6 +1583,9 @@ export function Viewport({
       /** For an edge snap: the full segment snapped to (uv), so the whole edge
        *  can be highlighted, not just the marker dot. */
       seg?: [Vec2, Vec2];
+      /** For a guide (inference) snap: the guide lines the point lies on, to draw
+       *  as dotted alignment lines. */
+      guideLines?: Guide[];
     } => {
       const frame = activeFrameRef.current!;
       const distPx = (c: Vec2) => {
@@ -1628,15 +1646,63 @@ export function Viewport({
           on: bestLineId ? { id: bestLineId, mid: false } : undefined,
           seg: bestSeg,
         };
-      // 3. horizontal / vertical inference relative to the last placed point
-      if (ref) {
-        const ang = Math.atan2(raw[1] - ref[1], raw[0] - ref[0]);
-        const dH = Math.min(Math.abs(ang), Math.abs(Math.abs(ang) - Math.PI));
-        const dV = Math.abs(Math.abs(ang) - Math.PI / 2);
-        if (dH < ANGLE_SNAP) return { uv: [raw[0], ref[1]], kind: "h", hv: "horizontal" };
-        if (dV < ANGLE_SNAP) return { uv: [ref[0], raw[1]], kind: "v", hv: "vertical" };
+      // 3. Inference guides: horizontal/vertical/parallel/perpendicular lines from
+      // the draft start, armed key points, and armed edge directions. Subsumes the
+      // old draft-start H/V step (the draft start emits its own H/V guides).
+      const armed = armedRef.current;
+      const guides = buildGuides({
+        points: armed.points.map((a) => ({ p: a.uv })),
+        draftStart: ref,
+        armedDirs: armed.lines.map((l) => ({ dir: l.dir, refId: l.refId })),
+      });
+      if (guides.length) {
+        const pxOf = (uv: Vec2): Vec2 => {
+          const w = uvToWorld(frame, uv[0], uv[1]);
+          const px = projectToPx(new THREE.Vector3(w[0], w[1], w[2]));
+          return [px.x, px.y];
+        };
+        const gs = snapToGuides(raw, guides, pxOf, SNAP_PX);
+        if (gs) {
+          const hv = gs.meanings.some((m) => m.meaning === "horizontal")
+            ? "horizontal"
+            : gs.meanings.some((m) => m.meaning === "vertical")
+              ? "vertical"
+              : undefined;
+          return { uv: gs.uv, kind: "guide", hv, guideLines: gs.guides };
+        }
       }
       return { uv: raw, kind: "free" };
+    };
+
+    // Arm the just-hovered key point / edge direction as an inference source, so
+    // its guides show once the cursor moves away. Time-limited + capped so armed
+    // sources fade rather than accumulate.
+    const ARM_TTL = 4000;
+    const ARM_CAP = 3;
+    const armFromSnap = (
+      kind: "point" | "edge" | "h" | "v" | "guide" | "free",
+      uv: Vec2,
+      seg: [Vec2, Vec2] | undefined,
+      refId: string | undefined,
+    ) => {
+      const now = performance.now();
+      const armed = armedRef.current;
+      armed.points = armed.points.filter((a) => now - a.at < ARM_TTL);
+      armed.lines = armed.lines.filter((a) => now - a.at < ARM_TTL);
+      if (kind === "point") {
+        armed.points = armed.points.filter((a) => Math.hypot(a.uv[0] - uv[0], a.uv[1] - uv[1]) > 1e-6);
+        armed.points.push({ uv, at: now });
+        if (armed.points.length > ARM_CAP) armed.points.shift();
+      } else if (kind === "edge" && seg) {
+        const dx = seg[1][0] - seg[0][0];
+        const dy = seg[1][1] - seg[0][1];
+        const n = Math.hypot(dx, dy) || 1;
+        const dir: Vec2 = [dx / n, dy / n];
+        // Drop a near-parallel armed direction (keep the freshest) before adding.
+        armed.lines = armed.lines.filter((a) => Math.abs(a.dir[0] * dir[1] - a.dir[1] * dir[0]) > 1e-3);
+        armed.lines.push({ dir, refId, at: now });
+        if (armed.lines.length > ARM_CAP) armed.lines.shift();
+      }
     };
 
     const pick = (clientX: number, clientY: number) => {
@@ -1967,9 +2033,11 @@ export function Viewport({
           state.previewLine.visible = false;
           state.snapMarker.visible = false;
           state.snapEdgeLine.visible = false;
+          state.guideOverlay.visible = false;
           return;
         }
-        const { uv, kind, seg } = snap(raw, e.clientX, e.clientY);
+        const { uv, kind, seg, on, guideLines } = snap(raw, e.clientX, e.clientY);
+        armFromSnap(kind, uv, seg, on?.id);
         const poly = previewPolyline(sketchToolRef.current, draftRef.current, uv, polygonSidesRef.current);
         if (poly && poly.length >= 2) {
           setPolyline(state.previewLine.geometry, poly.map((p) => uvToWorld(frame, p[0], p[1])));
@@ -1977,10 +2045,12 @@ export function Viewport({
         } else {
           state.previewLine.visible = false;
         }
-        if (kind === "point" || kind === "edge") {
+        if (kind === "point" || kind === "edge" || kind === "guide") {
           const w = uvToWorld(frame, uv[0], uv[1]);
           state.snapMarker.position.set(w[0], w[1], w[2]);
-          (state.snapMarker.material as THREE.MeshBasicMaterial).color.set(kind === "edge" ? 0x36d6c3 : 0xffe14a);
+          (state.snapMarker.material as THREE.MeshBasicMaterial).color.set(
+            kind === "edge" ? 0x36d6c3 : kind === "guide" ? 0x8fb4ff : 0xffe14a,
+          );
           state.snapMarker.visible = true;
         } else {
           state.snapMarker.visible = false;
@@ -1994,6 +2064,21 @@ export function Viewport({
         } else {
           state.snapEdgeLine.visible = false;
         }
+        // Draw the active inference guides as long dotted lines through the snap.
+        if (kind === "guide" && guideLines && guideLines.length) {
+          const L = 1000;
+          const pts: THREE.Vector3[] = [];
+          for (const g of guideLines) {
+            const a = uvToWorld(frame, uv[0] - L * g.dir[0], uv[1] - L * g.dir[1]);
+            const b = uvToWorld(frame, uv[0] + L * g.dir[0], uv[1] + L * g.dir[1]);
+            pts.push(new THREE.Vector3(a[0], a[1], a[2]), new THREE.Vector3(b[0], b[1], b[2]));
+          }
+          state.guideOverlay.geometry.setFromPoints(pts);
+          state.guideOverlay.computeLineDistances();
+          state.guideOverlay.visible = true;
+        } else {
+          state.guideOverlay.visible = false;
+        }
         return;
       }
       // Selection hover (idle, or sketch mode with the Select tool). Hide any
@@ -2002,6 +2087,7 @@ export function Viewport({
         state.previewLine.visible = false;
         state.snapMarker.visible = false;
         state.snapEdgeLine.visible = false;
+        state.guideOverlay.visible = false;
       }
       const sel = pickSelection(e.clientX, e.clientY);
       if (!sameSelection(sel, hoverSelRef.current)) {
@@ -2256,6 +2342,8 @@ export function Viewport({
       snapMarker.geometry.dispose();
       snapEdgeLine.geometry.dispose();
       (snapEdgeLine.material as THREE.Material).dispose();
+      guideOverlay.geometry.dispose();
+      (guideOverlay.material as THREE.Material).dispose();
       pointMarkers.geometry.dispose();
       (pointMarkers.material as THREE.Material).dispose();
       selectedMaterial.dispose();
@@ -2633,6 +2721,8 @@ export function Viewport({
       state.previewLine.visible = false;
       state.snapMarker.visible = false;
       state.snapEdgeLine.visible = false;
+      state.guideOverlay.visible = false;
+      armedRef.current = { points: [], lines: [] };
       snapPointsRef.current = [];
       snapLinesRef.current = [];
       return;

@@ -45,11 +45,13 @@ export interface Guide {
   refId?: string;
 }
 
-/** The chosen snap: a point plus the meaning(s) of the guide(s) it lies on (one
- *  for a single guide, two for a guide intersection). */
+/** The chosen snap: a point, the meaning(s) of the guide(s) it lies on (one for a
+ *  single guide, two for a guide intersection), and those guide lines themselves
+ *  (so the caller can render them as dotted alignment lines). */
 export interface GuideSnap {
   uv: Vec2;
   meanings: { meaning: Meaning; refId?: string }[];
+  guides: Guide[];
 }
 
 const EPS = 1e-9;
@@ -166,5 +168,5 @@ export function snapToGuides(
       meanings.push({ meaning: g.meaning, refId: g.refId });
     }
   }
-  return { uv: best.uv, meanings };
+  return { uv: best.uv, meanings, guides: hit };
 }
