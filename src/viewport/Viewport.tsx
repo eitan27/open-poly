@@ -2082,13 +2082,14 @@ export function Viewport({
         } else {
           state.snapEdgeLine.visible = false;
         }
-        // Draw the active inference guides as long dotted lines through the snap.
+        // Draw each active guide as a dotted line from its anchor (the key point
+        // it emanates from) to the snap point under the cursor — not across the
+        // whole viewport.
         if (kind === "guide" && guideLines && guideLines.length) {
-          const L = 1000;
           const pts: THREE.Vector3[] = [];
           for (const g of guideLines) {
-            const a = uvToWorld(frame, uv[0] - L * g.dir[0], uv[1] - L * g.dir[1]);
-            const b = uvToWorld(frame, uv[0] + L * g.dir[0], uv[1] + L * g.dir[1]);
+            const a = uvToWorld(frame, g.origin[0], g.origin[1]);
+            const b = uvToWorld(frame, uv[0], uv[1]);
             pts.push(new THREE.Vector3(a[0], a[1], a[2]), new THREE.Vector3(b[0], b[1], b[2]));
           }
           state.guideOverlay.geometry.setFromPoints(pts);
