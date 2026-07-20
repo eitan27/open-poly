@@ -289,6 +289,9 @@ interface SceneState {
   snapEdgeLine: LineSegments2;
   // Dotted inference/alignment guides shown while an inference snap is active.
   guideOverlay: THREE.LineSegments;
+  // A small DOM chip near the cursor showing the active inference glyph(s)
+  // (—/|/∥/⊥), so it's clear which constraint a click will capture.
+  guideBadge: HTMLDivElement;
   tween: { from: THREE.Vector3; to: THREE.Vector3; up: THREE.Vector3; start: number } | null;
 }
 
@@ -1084,6 +1087,11 @@ export function Viewport({
     guideOverlay.frustumCulled = false;
     guideOverlay.visible = false;
     scene.add(previewLine, snapMarker, snapEdgeLine, guideOverlay);
+    const guideBadge = document.createElement("div");
+    guideBadge.style.cssText =
+      "position:fixed;pointer-events:none;z-index:9999;padding:1px 6px;border-radius:4px;" +
+      "background:rgba(18,22,31,0.92);color:#8fb4ff;font:600 13px/1.3 ui-sans-serif,system-ui,sans-serif;display:none;";
+    document.body.appendChild(guideBadge);
 
     const state: SceneState = {
       renderer, scene, camera, controls, group,
@@ -1093,7 +1101,7 @@ export function Viewport({
       liveDrag: null,
       pendingCommit: null,
       ghostGroup, ghostMaterial, ghostLineMaterial,
-      previewLine, snapMarker, snapEdgeLine, guideOverlay, tween: null,
+      previewLine, snapMarker, snapEdgeLine, guideOverlay, guideBadge, tween: null,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
@@ -2043,9 +2051,10 @@ export function Viewport({
           state.snapMarker.visible = false;
           state.snapEdgeLine.visible = false;
           state.guideOverlay.visible = false;
+          state.guideBadge.style.display = "none";
           return;
         }
-        const { uv, kind, seg, on, guideLines } = snap(raw, e.clientX, e.clientY);
+        const { uv, kind, seg, on, guideLines, meanings } = snap(raw, e.clientX, e.clientY);
         armFromSnap(kind, uv, seg, on?.id);
         const poly = previewPolyline(sketchToolRef.current, draftRef.current, uv, polygonSidesRef.current);
         if (poly && poly.length >= 2) {
@@ -2085,8 +2094,19 @@ export function Viewport({
           state.guideOverlay.geometry.setFromPoints(pts);
           state.guideOverlay.computeLineDistances();
           state.guideOverlay.visible = true;
+          const glyph = { horizontal: "—", vertical: "|", parallel: "//", perpendicular: "⊥" } as const;
+          const badge = [...new Set((meanings ?? []).map((m) => glyph[m.meaning]))].join(" ");
+          if (badge) {
+            state.guideBadge.textContent = badge;
+            state.guideBadge.style.left = `${e.clientX + 14}px`;
+            state.guideBadge.style.top = `${e.clientY + 14}px`;
+            state.guideBadge.style.display = "block";
+          } else {
+            state.guideBadge.style.display = "none";
+          }
         } else {
           state.guideOverlay.visible = false;
+          state.guideBadge.style.display = "none";
         }
         return;
       }
@@ -2097,6 +2117,7 @@ export function Viewport({
         state.snapMarker.visible = false;
         state.snapEdgeLine.visible = false;
         state.guideOverlay.visible = false;
+        state.guideBadge.style.display = "none";
       }
       const sel = pickSelection(e.clientX, e.clientY);
       if (!sameSelection(sel, hoverSelRef.current)) {
@@ -2353,6 +2374,7 @@ export function Viewport({
       (snapEdgeLine.material as THREE.Material).dispose();
       guideOverlay.geometry.dispose();
       (guideOverlay.material as THREE.Material).dispose();
+      guideBadge.remove();
       pointMarkers.geometry.dispose();
       (pointMarkers.material as THREE.Material).dispose();
       selectedMaterial.dispose();
@@ -2731,6 +2753,7 @@ export function Viewport({
       state.snapMarker.visible = false;
       state.snapEdgeLine.visible = false;
       state.guideOverlay.visible = false;
+      state.guideBadge.style.display = "none";
       armedRef.current = { points: [], lines: [] };
       snapPointsRef.current = [];
       snapLinesRef.current = [];
