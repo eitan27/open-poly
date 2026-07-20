@@ -399,10 +399,10 @@ const PICK_DEPTH_TOL = 1;
 const SKETCH_COLOR_UNDER = 0x4d8dff; // active, under-constrained (free DOF)
 const SKETCH_COLOR_FULL = 0x33d27a; // active, fully constrained
 const SKETCH_COLOR_IDLE = 0x9aa6cc; // not the active sketch
-// Inference guides read as helpers, NOT real geometry: a muted lavender-grey,
+// Inference guides read as helpers, NOT real geometry: a yellow-orange amber,
 // distinct from the sketch/construction blue, and drawn slightly thinner.
-const GUIDE_COLOR = 0xa6a9d0;
-const GUIDE_LINE_WIDTH = 1.5;
+const GUIDE_COLOR = 0xe0a64f;
+const GUIDE_LINE_WIDTH = 1.25;
 /** On-screen width (px) of solid sketch lines — a touch heavier than the 1px
  *  default so entities read clearly and the constrained-state colour is easy to
  *  see. Drawn as fat lines (LineMaterial), since LineBasicMaterial ignores it. */
@@ -844,7 +844,7 @@ export function Viewport({
   //    origin) — snapping the line tool there ends the polyline chain.
   // Undefined for body edges / other-sketch geometry (not constrainable here).
   const snapPointsRef = useRef<{ uv: Vec2; midpointOf?: string; vertex?: boolean }[]>([]);
-  const snapLinesRef = useRef<{ a: Vec2; b: Vec2; id?: string }[]>([]);
+  const snapLinesRef = useRef<{ a: Vec2; b: Vec2; id?: string; construction?: boolean }[]>([]);
 
   const hoverPlaneRef = useRef<DatumId | null>(null);
   const hoverUserPlaneRef = useRef<string | null>(null);
@@ -1083,6 +1083,7 @@ export function Viewport({
     // drawn on top (depthTest off) so it reads even against the dimmed body.
     const snapEdgeMaterial = buttCaps(new LineMaterial({
       color: 0xffe14a, linewidth: 4, worldUnits: false, depthTest: false, transparent: true,
+      dashSize: 1.4, gapSize: 0.9, // used only when `dashed` is toggled on (construction edges)
     }));
     const snapEdgeLine = new LineSegments2(new LineSegmentsGeometry(), snapEdgeMaterial);
     snapEdgeLine.renderOrder = 11;
@@ -1109,7 +1110,7 @@ export function Viewport({
     const guideBadge = document.createElement("div");
     guideBadge.style.cssText =
       "position:fixed;pointer-events:none;z-index:9999;padding:1px 6px;border-radius:4px;" +
-      "background:rgba(18,22,31,0.92);color:#c2c5e2;font:600 13px/1.3 ui-sans-serif,system-ui,sans-serif;display:none;";
+      "background:rgba(18,22,31,0.92);color:#e0a64f;font:600 13px/1.3 ui-sans-serif,system-ui,sans-serif;display:none;";
     document.body.appendChild(guideBadge);
 
     const state: SceneState = {
@@ -1616,6 +1617,8 @@ export function Viewport({
       /** For an edge snap: the full segment snapped to (uv), so the whole edge
        *  can be highlighted, not just the marker dot. */
       seg?: [Vec2, Vec2];
+      /** The snapped edge belongs to a construction line — highlight it dashed. */
+      construction?: boolean;
       /** For a guide (inference) snap: the guide lines the point lies on, to draw
        *  as dotted alignment lines. */
       guideLines?: Guide[];
@@ -1668,11 +1671,12 @@ export function Viewport({
       let bestLine: Vec2 | null = null;
       let bestLineId: string | undefined;
       let bestSeg: [Vec2, Vec2] | undefined;
+      let bestConstruction = false;
       let bestLD = SNAP_PX;
       for (const seg of snapLinesRef.current) {
         const q = nearestOnSegment(raw, seg.a, seg.b);
         const d = distPx(q);
-        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = seg.id; bestSeg = [seg.a, seg.b]; }
+        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = seg.id; bestSeg = [seg.a, seg.b]; bestConstruction = !!seg.construction; }
       }
       if (bestLine)
         return {
@@ -1681,6 +1685,7 @@ export function Viewport({
           hv: hvOf(bestLine),
           on: bestLineId ? { id: bestLineId, mid: false } : undefined,
           seg: bestSeg,
+          construction: bestConstruction,
         };
       // 3. Inference guides: horizontal/vertical/parallel/perpendicular lines from
       // the draft start, armed key points, and armed edge directions. Subsumes the
@@ -2074,7 +2079,7 @@ export function Viewport({
           state.guideBadge.style.display = "none";
           return;
         }
-        const { uv, kind, seg, on, guideLines, meanings } = snap(raw, e.clientX, e.clientY);
+        const { uv, kind, seg, on, guideLines, meanings, construction } = snap(raw, e.clientX, e.clientY);
         armFromSnap(kind, uv, seg, on?.id);
         const poly = previewPolyline(sketchToolRef.current, draftRef.current, uv, polygonSidesRef.current);
         if (poly && poly.length >= 2) {
@@ -2095,11 +2100,14 @@ export function Viewport({
         } else {
           state.snapMarker.visible = false;
         }
-        // Light up the whole edge when snapping to one.
+        // Light up the whole edge when snapping to one — dashed if it's a
+        // construction line, so the highlight matches the line's own style.
         if (kind === "edge" && seg) {
           const a = uvToWorld(frame, seg[0][0], seg[0][1]);
           const b = uvToWorld(frame, seg[1][0], seg[1][1]);
           state.snapEdgeLine.geometry.setPositions([a[0], a[1], a[2], b[0], b[1], b[2]]);
+          snapEdgeMaterial.dashed = !!construction;
+          if (construction) state.snapEdgeLine.computeLineDistances();
           state.snapEdgeLine.visible = true;
         } else {
           state.snapEdgeLine.visible = false;
@@ -2837,11 +2845,11 @@ export function Viewport({
       return [d.dot(U), d.dot(V)];
     };
     const points: { uv: Vec2; midpointOf?: string; vertex?: boolean }[] = [{ uv: [0, 0], vertex: true }];
-    const lines: { a: Vec2; b: Vec2; id?: string }[] = [];
+    const lines: { a: Vec2; b: Vec2; id?: string; construction?: boolean }[] = [];
     // `id` is the active-sketch line entity this segment belongs to (so a drawn
     // endpoint landing on its body → point-on-line, on its midpoint → midpoint).
     // Endpoints are `vertex` corners (they end the line-tool chain when snapped).
-    const addSeg = (aw: THREE.Vector3, bw: THREE.Vector3, id?: string) => {
+    const addSeg = (aw: THREE.Vector3, bw: THREE.Vector3, id?: string, construction?: boolean) => {
       const aOn = onPlane(aw);
       const bOn = onPlane(bw);
       if (aOn) points.push({ uv: toUv(aw), vertex: true });
@@ -2850,7 +2858,7 @@ export function Viewport({
         const a = toUv(aw);
         const b = toUv(bw);
         points.push({ uv: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], midpointOf: id }); // midpoint
-        lines.push({ a, b, id });
+        lines.push({ a, b, id, construction });
       }
     };
     const addPoint = (uv: Vec2, midpointOf?: string, vertex?: boolean) => {
@@ -2867,6 +2875,7 @@ export function Viewport({
             new THREE.Vector3(...uvToWorld(s.frame, e.a[0], e.a[1])),
             new THREE.Vector3(...uvToWorld(s.frame, e.b[0], e.b[1])),
             activeId ? e.id : undefined,
+            e.construction,
           );
         } else if (sameFrame && e.type === "circle") {
           addPoint(e.c); // centre (radius/quadrant snaps are a later refinement)
