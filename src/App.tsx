@@ -3656,7 +3656,13 @@ export default function App() {
   // A snapped click on the sketch plane (already in uv coords). Drives the
   // multi-click construction tools. `hv` records a horizontal/vertical inference
   // (line tool) so it can be captured as a constraint.
-  const handleSketchClick = (uv: Vec2, hv?: "horizontal" | "vertical", on?: { id: string; mid: boolean }, atVertex?: boolean) => {
+  const handleSketchClick = (
+    uv: Vec2,
+    hv?: "horizontal" | "vertical",
+    on?: { id: string; mid: boolean },
+    atVertex?: boolean,
+    meanings?: { meaning: "horizontal" | "vertical" | "parallel" | "perpendicular"; refId?: string }[],
+  ) => {
     if (!editingSketchId || sketchTool === "select" || sketchTool === "offset") return;
     const sketchId = editingSketchId;
     // Drawing solves immediately: the constraints captured while drawing (auto
@@ -3706,6 +3712,18 @@ export default function App() {
           let next = addSketchEntities(doc, sketchId, [line]);
           const cons: SketchConstraint[] = [];
           if (hv) cons.push({ id: genId(), type: hv, entity: line.id });
+          else {
+            // A parallel/perpendicular inference guide → constrain the drawn
+            // segment to its reference line. One direction constraint only (H/V
+            // already covered above), and only against a real (non-derived) line
+            // still in the sketch, so a stale ref can't over-constrain.
+            const dir = meanings?.find((m) => (m.meaning === "parallel" || m.meaning === "perpendicular") && m.refId);
+            const sk = doc.features.find((f) => f.id === sketchId);
+            const ref = sk?.type === "sketch" ? sk.entities.find((x) => x.id === dir?.refId) : undefined;
+            if (dir?.refId && ref?.type === "line" && !ref.derivedFrom) {
+              cons.push({ id: genId(), type: dir.meaning as "parallel" | "perpendicular", a: line.id, b: dir.refId });
+            }
+          }
           // Keep an endpoint attached to whatever it was snapped onto: a line's
           // body → point-on-line; a line/arc midpoint → midpoint — so a later
           // dimension can't slide it off.

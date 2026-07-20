@@ -740,7 +740,13 @@ export function Viewport({
   sketchFullyConstrained: boolean;
   draft: Vec2[];
   polygonSides: number;
-  onSketchClick: (uv: Vec2, hv?: "horizontal" | "vertical", on?: { id: string; mid: boolean }, atVertex?: boolean) => void;
+  onSketchClick: (
+    uv: Vec2,
+    hv?: "horizontal" | "vertical",
+    on?: { id: string; mid: boolean },
+    atVertex?: boolean,
+    meanings?: { meaning: "horizontal" | "vertical" | "parallel" | "perpendicular"; refId?: string }[],
+  ) => void;
   /** Live drag of unconstrained sketch geometry: each frame reports the points
    *  being moved (by original uv → target uv); App re-solves so constraints stay
    *  satisfied while free DOF follow the cursor. */
@@ -1586,6 +1592,9 @@ export function Viewport({
       /** For a guide (inference) snap: the guide lines the point lies on, to draw
        *  as dotted alignment lines. */
       guideLines?: Guide[];
+      /** For a guide snap: the meanings hit, so the click can capture a
+       *  parallel/perpendicular constraint (H/V go through `hv`). */
+      meanings?: { meaning: "horizontal" | "vertical" | "parallel" | "perpendicular"; refId?: string }[];
     } => {
       const frame = activeFrameRef.current!;
       const distPx = (c: Vec2) => {
@@ -1668,7 +1677,7 @@ export function Viewport({
             : gs.meanings.some((m) => m.meaning === "vertical")
               ? "vertical"
               : undefined;
-          return { uv: gs.uv, kind: "guide", hv, guideLines: gs.guides };
+          return { uv: gs.uv, kind: "guide", hv, guideLines: gs.guides, meanings: gs.meanings };
         }
       }
       return { uv: raw, kind: "free" };
@@ -2191,7 +2200,7 @@ export function Viewport({
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) return;
         const s = snap(raw, e.clientX, e.clientY);
-        onSketchClickRef.current(s.uv, s.hv, s.on, s.atVertex);
+        onSketchClickRef.current(s.uv, s.hv, s.on, s.atVertex, s.meanings);
         return;
       }
       // Selection click (idle, or sketch + Select tool). App accumulates into a
