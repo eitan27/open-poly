@@ -5,6 +5,8 @@ import { TransformControls } from "three/examples/jsm/controls/TransformControls
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
+import { Line2 } from "three/examples/jsm/lines/Line2.js";
+import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { getEdgeId, getFaceId, syncGeometries } from "replicad-threejs-helper";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 
@@ -282,7 +284,9 @@ interface SceneState {
    *  re-pin the dragged matrix onto each rebuild until the body's mesh reference
    *  actually changes (the real geometry), avoiding a flash back to the origin. */
   pendingCommit: { bodyId: string; delta: THREE.Matrix4; meshRef: unknown } | null;
-  previewLine: THREE.Line;
+  // The rubber-band preview while drawing (line/rect/arc/polygon), as a fat line
+  // so it reads as clearly as a committed sketch line.
+  previewLine: Line2;
   snapMarker: THREE.Mesh;
   // Lights up the WHOLE edge being snapped to (not just the marker dot), so you
   // can see it's a real in-plane edge and its extent. Fat line (screen-px width).
@@ -398,7 +402,7 @@ const SKETCH_COLOR_IDLE = 0x9aa6cc; // not the active sketch
 /** On-screen width (px) of solid sketch lines — a touch heavier than the 1px
  *  default so entities read clearly and the constrained-state colour is easy to
  *  see. Drawn as fat lines (LineMaterial), since LineBasicMaterial ignores it. */
-const SKETCH_LINE_WIDTH = 3.5;
+const SKETCH_LINE_WIDTH = 2.0;
 const sketchBaseColor = (active: boolean, fullyConstrained: boolean): number =>
   active ? (fullyConstrained ? SKETCH_COLOR_FULL : SKETCH_COLOR_UNDER) : SKETCH_COLOR_IDLE;
 
@@ -1058,10 +1062,10 @@ export function Viewport({
       onTransformPreviewRef.current(d);
     });
 
-    const previewLine = new THREE.Line(
-      new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ color: 0x7da8ff }),
-    );
+    const previewMaterial = new LineMaterial({
+      color: 0x7da8ff, linewidth: 3, worldUnits: false, depthTest: false, transparent: true,
+    });
+    const previewLine = new Line2(new LineGeometry(), previewMaterial);
     previewLine.frustumCulled = false;
     previewLine.visible = false;
     const snapMarker = new THREE.Mesh(
@@ -2071,7 +2075,9 @@ export function Viewport({
         armFromSnap(kind, uv, seg, on?.id);
         const poly = previewPolyline(sketchToolRef.current, draftRef.current, uv, polygonSidesRef.current);
         if (poly && poly.length >= 2) {
-          setPolyline(state.previewLine.geometry, poly.map((p) => uvToWorld(frame, p[0], p[1])));
+          const flat: number[] = [];
+          for (const p of poly) { const w = uvToWorld(frame, p[0], p[1]); flat.push(w[0], w[1], w[2]); }
+          state.previewLine.geometry.setPositions(flat);
           state.previewLine.visible = true;
         } else {
           state.previewLine.visible = false;
@@ -2310,6 +2316,7 @@ export function Viewport({
       snapEdgeMaterial.resolution.set(w, h);
       guideMaterial.resolution.set(w, h);
       anchorMaterial.resolution.set(w, h);
+      previewMaterial.resolution.set(w, h);
       // Sketch display lines are fat lines too — keep their screen-space width.
       for (const child of sketchGroup.children) {
         if (child.userData.isSketchDisplay) {
@@ -2408,6 +2415,7 @@ export function Viewport({
       ghostMaterial.dispose();
       ghostLineMaterial.dispose();
       previewLine.geometry.dispose();
+      (previewLine.material as THREE.Material).dispose();
       snapMarker.geometry.dispose();
       snapEdgeLine.geometry.dispose();
       (snapEdgeLine.material as THREE.Material).dispose();
@@ -2908,12 +2916,6 @@ export function Viewport({
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
 
-function setPolyline(geom: THREE.BufferGeometry, pts: [number, number, number][]) {
-  const arr: number[] = [];
-  for (const p of pts) arr.push(p[0], p[1], p[2]);
-  geom.setAttribute("position", new THREE.Float32BufferAttribute(arr, 3));
-  geom.computeBoundingSphere();
-}
 
 /** Append world-space segment endpoints for an entity to a flat buffer. */
 function entitySegments(e: SketchEntity, frame: PlaneFrameData, out: number[]) {
