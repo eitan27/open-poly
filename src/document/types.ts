@@ -116,12 +116,19 @@ export type ProjectRef =
   | { kind: "vertex"; featureId: string; point: [number, number, number] };
 
 /** A reference to a specific point in a sketch: a named vertex of an entity
- *  (a line's "a"/"b" end, a circle/arc's "c" centre), or the sketch origin.
- *  Resolved to live coordinates at solve time, so it survives re-solves that
- *  move the geometry. */
+ *  (a line's "a"/"b" end, a circle/arc's "c" centre), the sketch origin, or a
+ *  fixed external point. Resolved to live coordinates at solve time, so it
+ *  survives re-solves that move the geometry. */
 export type PointRef =
   | { entity: string; at: "a" | "b" | "c" }
-  | { origin: true };
+  | { origin: true }
+  /** A fixed point in the sketch plane's uv coordinates — an EXTERNAL reference
+   *  such as a solid/body vertex projected orthographically onto the sketch
+   *  plane. Immovable: a coincident / point-on-line to it moves the *sketch*
+   *  geometry to meet this point, never the reverse. Stored as uv (not as a
+   *  live body-vertex handle) because body vertices have no stable identity
+   *  across kernel rebuilds — the same best-effort model the Project tool uses. */
+  | { fixed: Vec2 };
 
 /** One side of a linear distance dimension. The choice mirrors the selection:
  *  a picked point/centre/origin → `point` (measured to that exact point); a

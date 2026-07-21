@@ -33,6 +33,7 @@ export function footOnLine(p: Vec2, a: Vec2, b: Vec2): Vec2 {
 /** Live coordinates of a PointRef (origin, or an entity's named vertex/centre). */
 export function pointRefCoord(ref: PointRef, entities: SketchEntity[]): Vec2 | null {
   if ("origin" in ref) return [0, 0];
+  if ("fixed" in ref) return ref.fixed;
   const e = entities.find((x) => x.id === ref.entity);
   if (!e) return null;
   if (e.type === "line") return ref.at === "a" ? e.a : e.b;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { solveSketch } from "./solver";
 import { measureBetween, resolveSide } from "./distanceDim";
-import type { DistanceRef, SketchConstraint, SketchEntity } from "../document/types";
+import type { DistanceRef, SketchConstraint, SketchEntity, Vec2 } from "../document/types";
 
 // A line from the sketch origin to (10, 0).
 const line: SketchEntity = { type: "line", id: "L", a: [0, 0], b: [10, 0] };
@@ -68,6 +68,85 @@ describe("solveSketch pointOnLine", () => {
     expect(Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1])).toBeCloseTo(50, 3);
     // Origin end stayed pinned.
     expect(Math.hypot(d.a[0], d.a[1])).toBeLessThan(1e-6);
+  });
+
+  it("moves a line so its endpoint reaches a fixed body vertex, holding under a re-solve", async () => {
+    // The reported bug: making a sketch entity's vertex coincident with a solid
+    // face's vertex. The solid vertex is an EXTERNAL fixed point (its projected
+    // uv), so the sketch endpoint must travel to it — and STAY there when the
+    // sketch is re-solved (a length dimension used to drag it back / to origin).
+    const vertexUv: Vec2 = [30, 40]; // a projected solid-face corner
+    const seg: SketchEntity = { type: "line", id: "L", a: [0, 0], b: [10, 0] };
+    const constraints: SketchConstraint[] = [
+      { id: "co", type: "coincident", a: { entity: "L", at: "b" }, b: { fixed: vertexUv } },
+    ];
+    const res = await solveSketch([seg], constraints);
+    expect(res.hasConflicts).toBe(false);
+    const l = res.entities[0];
+    if (l.type !== "line") throw new Error("line");
+    // The free "b" end landed exactly on the fixed vertex...
+    expect(l.b[0]).toBeCloseTo(30, 4);
+    expect(l.b[1]).toBeCloseTo(40, 4);
+    // ...while the untouched "a" end stayed put.
+    expect(l.a[0]).toBeCloseTo(0, 4);
+    expect(l.a[1]).toBeCloseTo(0, 4);
+  });
+
+  it("keeps a sketch vertex pinned to a fixed body vertex when a dimension re-solves", async () => {
+    // Same anchor, but now a length dimension also acts on the line. The pinned
+    // end must not be dragged off the vertex — the line grows from the other end.
+    const vertexUv: Vec2 = [20, 0];
+    const seg: SketchEntity = { type: "line", id: "L", a: [20, 0], b: [10, 0] };
+    const constraints: SketchConstraint[] = [
+      { id: "co", type: "coincident", a: { entity: "L", at: "a" }, b: { fixed: vertexUv } },
+      { id: "h", type: "horizontal", entity: "L" },
+      { id: "d", type: "distance", entity: "L", value: 25 },
+    ];
+    const res = await solveSketch([seg], constraints);
+    expect(res.hasConflicts).toBe(false);
+    const l = res.entities[0];
+    if (l.type !== "line") throw new Error("line");
+    // The anchored "a" end stayed exactly on the fixed vertex (20, 0)...
+    expect(l.a[0]).toBeCloseTo(20, 4);
+    expect(l.a[1]).toBeCloseTo(0, 4);
+    // ...and the line is now 25 long (dimension enforced from the free end).
+    expect(Math.hypot(l.b[0] - l.a[0], l.b[1] - l.a[1])).toBeCloseTo(25, 3);
+  });
+
+  it("orders coincident by anchor: fixed body vertex on side A also pins the sketch end", async () => {
+    // Same as above but the fixed point is side A (not B) — the anchor detection
+    // must be symmetric so which side the user picked first doesn't matter.
+    const vertexUv: Vec2 = [-5, 12];
+    const seg: SketchEntity = { type: "line", id: "L", a: [0, 0], b: [10, 0] };
+    const constraints: SketchConstraint[] = [
+      { id: "co", type: "coincident", a: { fixed: vertexUv }, b: { entity: "L", at: "b" } },
+    ];
+    const res = await solveSketch([seg], constraints);
+    expect(res.hasConflicts).toBe(false);
+    const l = res.entities[0];
+    if (l.type !== "line") throw new Error("line");
+    expect(l.b[0]).toBeCloseTo(-5, 4);
+    expect(l.b[1]).toBeCloseTo(12, 4);
+  });
+
+  it("pulls a line onto a fixed body vertex (point-on-line with a fixed point)", async () => {
+    // A fixed body vertex constrained to lie ON a sketch line: the immovable
+    // point stays put, so the line must move to pass through it. (The line starts
+    // offset from the vertex, as it would after snapping — not degenerately on an
+    // axis through it, which is a separate planegcs convergence edge case.)
+    const vertexUv: Vec2 = [15, 25];
+    const seg: SketchEntity = { type: "line", id: "L", a: [0, 10], b: [40, 10] };
+    const constraints: SketchConstraint[] = [
+      { id: "h", type: "horizontal", entity: "L" },
+      { id: "p", type: "pointOnLine", point: { fixed: vertexUv }, line: "L" },
+    ];
+    const res = await solveSketch([seg], constraints);
+    expect(res.hasConflicts).toBe(false);
+    const l = res.entities[0];
+    if (l.type !== "line") throw new Error("line");
+    // Horizontal line raised to y = 25 so the fixed vertex sits on it.
+    expect(l.a[1]).toBeCloseTo(25, 3);
+    expect(l.b[1]).toBeCloseTo(25, 3);
   });
 
   it("pulls the origin onto a line (line + origin coincident)", async () => {
