@@ -512,15 +512,15 @@ function constraintRefsEntity(c: SketchConstraint, entityId: string): boolean {
     case "tangent":
       return c.a === entityId || c.b === entityId;
     case "coincident": {
-      const refs = (r: typeof c.a) => !("origin" in r) && r.entity === entityId;
+      const refs = (r: typeof c.a) => "entity" in r && r.entity === entityId;
       return refs(c.a) || refs(c.b);
     }
     case "pointOnLine":
-      return c.line === entityId || (!("origin" in c.point) && c.point.entity === entityId);
+      return c.line === entityId || ("entity" in c.point && c.point.entity === entityId);
     case "midpoint":
-      return c.target === entityId || (!("origin" in c.point) && c.point.entity === entityId);
+      return c.target === entityId || ("entity" in c.point && c.point.entity === entityId);
     case "distanceBetween": {
-      const refs = (r: typeof c.a) => (r.on === "point" ? !("origin" in r.ref) && r.ref.entity === entityId : r.entity === entityId);
+      const refs = (r: typeof c.a) => (r.on === "point" ? "entity" in r.ref && r.ref.entity === entityId : r.entity === entityId);
       return refs(c.a) || refs(c.b);
     }
     case "horizontal":

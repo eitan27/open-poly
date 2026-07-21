@@ -128,6 +128,7 @@ export function resolvePatternCenter(
   // NB: check the PointRef variants FIRST — the entity variant also has an
   // `at` field (the vertex name), so `"at" in center` alone would match it.
   if ("origin" in center) return [0, 0];
+  if ("fixed" in center) return center.fixed;
   if (!("entity" in center)) return center.at;
   const e = byId.get(center.entity);
   if (!e) return null;

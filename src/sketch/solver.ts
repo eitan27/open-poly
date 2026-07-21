@@ -92,9 +92,11 @@ export async function solveSketch(
   // Grabbed points (drag): pinned at their current position so neighbours follow.
   const lockedKeys = new Set((opts.lockedPoints ?? []).map(key));
   // Resolve a PointRef to live coordinates: the origin is the sketch origin
-  // (0,0); otherwise the named vertex of the referenced entity.
+  // (0,0); a fixed point is its stored uv (a projected body vertex); otherwise
+  // the named vertex of the referenced entity.
   const refCoord = (ref: PointRef): Vec2 | null => {
     if ("origin" in ref) return [0, 0];
+    if ("fixed" in ref) return ref.fixed;
     const e = entities.find((x) => x.id === ref.entity);
     if (!e) return null;
     if (e.type === "line") return ref.at === "a" ? e.a : e.b;
@@ -106,14 +108,14 @@ export async function solveSketch(
     }
     return null;
   };
-  const ensurePoint = (p: Vec2): string => {
+  const ensurePoint = (p: Vec2, forceFixed = false): string => {
     const k = key(p);
     let id = pointIdByKey.get(k);
     if (!id) {
       id = `pt${pc++}`;
       pointIdByKey.set(k, id);
       keyToCoord.set(k, p);
-      prims.push({ id, type: "point", x: p[0], y: p[1], fixed: k === ORIGIN_KEY || lockedKeys.has(k) });
+      prims.push({ id, type: "point", x: p[0], y: p[1], fixed: forceFixed || k === ORIGIN_KEY || lockedKeys.has(k) });
     }
     return id;
   };
@@ -300,16 +302,20 @@ export async function solveSketch(
     } else if (c.type === "coincident") {
       const pa = refCoord(c.a);
       const pb = refCoord(c.b);
-      const aIsOrigin = "origin" in c.a;
-      const bIsOrigin = "origin" in c.b;
-      if (pa && pb && !(aIsOrigin && bIsOrigin)) {
-        if (aIsOrigin || bIsOrigin) {
-          // Anchor the non-origin point at the sketch origin: lock both
-          // coordinates to 0 so re-solves (e.g. a length dimension) can't drag
-          // it off the origin.
-          const p = ensurePoint(aIsOrigin ? pb : pa);
-          prims.push({ id, type: "coordinate_x", p_id: p, x: 0 });
-          prims.push({ id: `${id}~y`, type: "coordinate_y", p_id: p, y: 0 });
+      // A side is "anchored" (immovable) when it's the sketch origin or a fixed
+      // external point (a projected body vertex). Coincidence then moves the
+      // *other* point to meet it; the anchor itself never moves.
+      const aAnchored = "origin" in c.a || "fixed" in c.a;
+      const bAnchored = "origin" in c.b || "fixed" in c.b;
+      if (pa && pb && !(aAnchored && bAnchored)) {
+        if (aAnchored || bAnchored) {
+          // Pin the free (non-anchored) point onto the anchored coordinate: lock
+          // both of its coordinates so re-solves (e.g. a length dimension) can't
+          // drag it away. Origin anchors to (0,0); a fixed body vertex to its uv.
+          const target = aAnchored ? pa : pb;
+          const p = ensurePoint(aAnchored ? pb : pa);
+          prims.push({ id, type: "coordinate_x", p_id: p, x: target[0] });
+          prims.push({ id: `${id}~y`, type: "coordinate_y", p_id: p, y: target[1] });
         } else {
           const p1 = ensurePoint(pa);
           const p2 = ensurePoint(pb);
@@ -319,11 +325,15 @@ export async function solveSketch(
         }
       }
     } else if (c.type === "pointOnLine") {
-      // A point (entity vertex or origin) lies on a line — keeps a drawn endpoint
-      // attached to the line it landed on, or pulls the origin onto a line.
+      // A point (entity vertex, origin, or a fixed body vertex) lies on a line —
+      // keeps a drawn endpoint attached to the line it landed on, or pulls a
+      // fixed/origin point onto the line (the line moves to reach a fixed point).
       const p = refCoord(c.point);
       if (p && lineIdByEntity.has(c.line)) {
-        prims.push({ id, type: "point_on_line_pl", p_id: ensurePoint(p), l_id: lineIdByEntity.get(c.line) });
+        // A fixed external point must stay put so the line adjusts to it, not the
+        // reverse (the origin is already pinned via ORIGIN_KEY).
+        const pid = ensurePoint(p, "fixed" in c.point);
+        prims.push({ id, type: "point_on_line_pl", p_id: pid, l_id: lineIdByEntity.get(c.line) });
       }
     } else if (c.type === "midpoint") {
       const p = refCoord(c.point);

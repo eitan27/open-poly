@@ -76,6 +76,7 @@ import type {
   Vec2,
 } from "./document/types";
 import { measureBetween, resolveSide } from "./sketch/distanceDim";
+import { planCoincident, coincidentEnabled as coincidentIsEnabled } from "./sketch/coincidentSelection";
 import type { BooleanOp, MeshedEdges, MeshedFaces, ShapeMeshPayload } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
@@ -4159,7 +4160,7 @@ export default function App() {
       op = { id: opId, kind: "linearPattern", sourceIds: sess.sourceIds, count: sess.count, dx: sess.dx, dy: sess.dy };
     } else {
       let center = sess.center!;
-      if (!("entity" in center) && !("origin" in center)) {
+      if (!("entity" in center) && !("origin" in center) && "at" in center) {
         const pid = genId();
         next = addSketchEntities(next, sketchId, [{ type: "point", id: pid, p: center.at, construction: true }]);
         center = { entity: pid, at: "c" };
@@ -4401,8 +4402,33 @@ export default function App() {
     return null;
   };
 
-  const samePointRef = (x: PointRef, y: PointRef) =>
-    "origin" in x || "origin" in y ? "origin" in x && "origin" in y : x.entity === y.entity && x.at === y.at;
+  const samePointRef = (x: PointRef, y: PointRef): boolean => {
+    if ("origin" in x || "origin" in y) return "origin" in x && "origin" in y;
+    if ("fixed" in x || "fixed" in y)
+      return "fixed" in x && "fixed" in y && x.fixed[0] === y.fixed[0] && x.fixed[1] === y.fixed[1];
+    return x.entity === y.entity && x.at === y.at;
+  };
+
+  // Selected "points" available to a coincident / point-on-line constraint:
+  //  • a sketch vertex (entity endpoint / centre, or the origin) → EDITABLE, the
+  //    solver may move it.
+  //  • a body/solid vertex → an EXTERNAL fixed reference, projected orthographically
+  //    onto the active sketch plane. Immovable, so a coincidence pulls the sketch
+  //    geometry onto it. This is what makes "sketch vertex ↔ solid face vertex"
+  //    coincidence work (previously a solid vertex was ignored, so the button was
+  //    either disabled or a lone sketch point silently anchored to the origin).
+  const selectedPointRefs: { ref: PointRef; editable: boolean }[] = editingSketch
+    ? selection.flatMap((s): { ref: PointRef; editable: boolean }[] => {
+        if (s.kind === "sketchPoint" && s.sketchId === editingSketch.id) {
+          const ref = pointRefAt(s.point);
+          return ref ? [{ ref, editable: true }] : [];
+        }
+        if (s.kind === "vertex" && dimFrame) {
+          return [{ ref: { fixed: worldToUv(dimFrame, s.point) }, editable: false }];
+        }
+        return [];
+      })
+    : [];
 
   // Resolve the current selection to a pair of distance sides for a linear
   // dimension: a selected point/centre/origin → a `point` side; a selected line →
@@ -4441,46 +4467,31 @@ export default function App() {
     return [a, b];
   };
 
-  // Coincident, dispatched on the selection:
-  //  • one point + one line → the point lies ON the line (point-on-line). This
-  //    is the "select a square's edge + the origin" case (origin pulled onto it),
-  //    and "select a point + an edge" (point attached to the edge).
-  //  • two points → make them coincident.
-  //  • one point → anchor it to the origin.
+  // Coincident, dispatched on the selection (see planCoincident):
+  //  • one point + one line → the point lies ON the line (point-on-line). Covers
+  //    "square's edge + origin" (origin pulled onto it), "point + edge" (point
+  //    attached), and "solid vertex + edge" (the edge moves onto the vertex).
+  //  • two points → make them coincident — INCLUDING a sketch vertex + a solid
+  //    face vertex (the sketch vertex snaps onto the solid's projected vertex).
+  //  • one movable sketch vertex → anchor it to the origin.
   const addCoincident = async () => {
-    const pts = selectedSketchPoints;
-    const lines = selectedSketchLines;
-
-    // Point-on-line: exactly one selected point and one selected line.
-    if (pts.length === 1 && lines.length === 1) {
-      const point = pointRefAt(pts[0]);
-      const line = lines[0].id;
-      if (!point) return;
-      // A point that's an endpoint of the very line it's snapping to is moot.
-      if (!("origin" in point) && point.entity === line) return;
+    const plan = planCoincident(selectedPointRefs, selectedSketchLines.map((l) => l.id));
+    if (!plan) return;
+    if (plan.kind === "pointOnLine") {
       const exists = editingSketch?.constraints.some(
-        (c) => c.type === "pointOnLine" && c.line === line && samePointRef(c.point, point),
+        (c) => c.type === "pointOnLine" && c.line === plan.lineId && samePointRef(c.point, plan.point),
       );
       if (exists) return;
-      await commitConstraint({ id: genId(), type: "pointOnLine", point, line }, "Point on line");
+      await commitConstraint({ id: genId(), type: "pointOnLine", point: plan.point, line: plan.lineId }, "Point on line");
       return;
     }
-
-    let a: PointRef | null = null;
-    let b: PointRef | null = null;
-    if (pts.length === 1) {
-      a = pointRefAt(pts[0]);
-      b = { origin: true };
-    } else if (pts.length === 2) {
-      a = pointRefAt(pts[0]);
-      b = pointRefAt(pts[1]);
-    }
-    if (!a || !b) return;
+    const a = plan.kind === "originAnchor" ? plan.point : plan.a;
+    const b: PointRef = plan.kind === "originAnchor" ? { origin: true } : plan.b;
     if (samePointRef(a, b)) return;
     const exists = editingSketch?.constraints.some(
       (c) =>
         c.type === "coincident" &&
-        ((samePointRef(c.a, a!) && samePointRef(c.b, b!)) || (samePointRef(c.a, b!) && samePointRef(c.b, a!))),
+        ((samePointRef(c.a, a) && samePointRef(c.b, b)) || (samePointRef(c.a, b) && samePointRef(c.b, a))),
     );
     if (exists) return;
     await commitConstraint({ id: genId(), type: "coincident", a, b }, "Coincident");
@@ -4508,9 +4519,7 @@ export default function App() {
   // The seven geometric constraints, keyed for the grouped toolbar button: the
   // icon/kbd node, tooltip, whether the current selection makes it applicable,
   // and the action. `enabled` mirrors each constraint's own selection rule.
-  const coincidentEnabled =
-    (selectedSketchPoints.length === 1 && selectedSketchLines.length === 1) ||
-    ((selectedSketchPoints.length === 1 || selectedSketchPoints.length === 2) && selectedSketchLines.length === 0);
+  const coincidentEnabled = coincidentIsEnabled(selectedPointRefs, selectedSketchLines.map((l) => l.id));
   const constraintDefs: Record<
     ConstraintKind,
     { node: ReactNode; title: string; enabled: boolean; apply: () => void }
@@ -4550,7 +4559,7 @@ export default function App() {
     },
     coincident: {
       node: <>⌖</>,
-      title: "Coincident — a point + a line puts the point on the line; one point anchors it to the origin; two points make them coincident",
+      title: "Coincident — two points make them coincident (a sketch vertex snaps onto a solid/body vertex too); a point + a line puts the point on the line; one point anchors it to the origin",
       enabled: coincidentEnabled,
       apply: addCoincident,
     },

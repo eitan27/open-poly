@@ -966,7 +966,9 @@ const uniqueNames = (groups?: { name?: string }[]): string[] =>
 /** The entity ids a constraint touches (a point ref → its entity id, or the
  *  literal "origin"), for the scene summary. */
 function pointRefId(r: PointRef): string {
-  return "origin" in r ? "origin" : r.entity;
+  if ("origin" in r) return "origin";
+  if ("fixed" in r) return "fixed";
+  return r.entity;
 }
 function distanceRefIds(r: DistanceRef): string[] {
   return r.on === "point" ? [pointRefId(r.ref)] : [r.entity];
