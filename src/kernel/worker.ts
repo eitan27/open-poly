@@ -5,7 +5,7 @@
 import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
 import {
-  setOC, makeBaseBox, makeCylinder, makeSphere, draw, drawPointsInterpolation, Plane,
+  setOC, makeBaseBox, makeSphere, makeSolid, draw, drawPointsInterpolation, Plane,
   cast, getOC, localGC, Vector, HASH_CODE_MAX, exportSTEP, measureVolume, loadFont,
   Blueprint, BlueprintSketcher, CompoundBlueprint,
 } from "replicad";
@@ -152,13 +152,37 @@ function axisFaceName(f: Face): string | null {
   return (dom[1] >= 0 ? "+" : "-") + dom[0];
 }
 
+/** Number of facets a primitive cylinder's circle is approximated with. Higher =
+ *  smoother wall (at more faces); 96 reads as visually round while still being a
+ *  polygonal prism (so it booleans — see facetedCylinderShape). */
+const CIRCLE_FACETS = 96;
+
+/** A cylinder built as a FACETED prism (a 48-gon extruded along +Z), not an
+ *  analytic `gp_Cyl`. This OCCT/wasm build can't boolean an analytic cylinder
+ *  against a plane (see BACKLOG) — so cutting/fusing anything with an analytic
+ *  cylinder throws StdFail_NotDone. A faceted wall booleans fine, exactly as
+ *  extruded circles already do here (they're polygonal prisms for the same
+ *  reason), so the two now behave — and look — identically. The diameter is
+ *  recovered for the readout by tracing the face back to this feature's radius
+ *  (measure.ts `extrudedCircleRadius`). */
+function facetedCylinderShape(radius: number, height: number): Shape3D {
+  const outline: [number, number][] = [];
+  for (let i = 0; i < CIRCLE_FACETS; i++) {
+    const a = (2 * Math.PI * i) / CIRCLE_FACETS;
+    outline.push([radius * Math.cos(a), radius * Math.sin(a)]);
+  }
+  const frame: ResolvedFrame = { origin: [0, 0, 0], uAxis: [1, 0, 0], vAxis: [0, 1, 0], normal: [0, 0, 1] };
+  const face = regionFace({ kind: "sketchRegion", outline, frame }, planeOf(frame));
+  return prismFromFace(face, new Vector([0, 0, 1]), height, "cyl").shape;
+}
+
 /** Build a primitive solid and name its (axis-aligned) faces, scoped by id. */
 function buildPrimitive(feature: Extract<ResolvedFeature, { type: "primitive" }>): NamedShape {
   const p = feature.params;
   let shape: Shape3D;
   switch (feature.kind) {
     case "box": shape = makeBaseBox(p.width, p.depth, p.height); break;
-    case "cylinder": shape = makeCylinder(p.radius, p.height); break;
+    case "cylinder": shape = facetedCylinderShape(p.radius, p.height); break;
     case "sphere": shape = makeSphere(p.radius); break;
     default: throw new Error(`Unknown feature kind: ${(feature as { kind: string }).kind}`);
   }
@@ -232,6 +256,82 @@ function compoundOf(pieces: NamedShape[]): NamedShape {
   return { shape: cast(comp) as Shape3D, names };
 }
 
+/** Sample an edge into world-space points (a fine polyline), via OCCT's
+ *  tangential-deflection discretiser — the same method replicad uses to mesh
+ *  edges. A straight edge yields its two ends; a curve, points along it. */
+function sampleEdgePoints(edge: Edge, tol = 0.05, angTol = 0.15): V3[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const adaptor = new oc.BRepAdaptor_Curve_2(edge.wrapped);
+  const d = new oc.GCPnts_TangentialDeflection_2(adaptor, tol, angTol, 2, 1e-9, 1e-7);
+  const pts: V3[] = [];
+  for (let i = 1; i <= d.NbPoints(); i++) {
+    const p = d.Value(i);
+    pts.push([p.X(), p.Y(), p.Z()]);
+  }
+  d.delete();
+  adaptor.delete();
+  return pts;
+}
+
+/** Chain a wire's edges into one ordered ring of world points. Edges aren't
+ *  guaranteed to come out in loop order, so segments are stitched by matching
+ *  endpoints; the closing duplicate is dropped. */
+function chainWirePoints(edges: Edge[]): V3[] {
+  const near = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-4;
+  const segs = edges.map((e) => sampleEdgePoints(e)).filter((s) => s.length >= 2);
+  if (segs.length === 0) return [];
+  const used = new Array(segs.length).fill(false);
+  const ring: V3[] = [...segs[0]];
+  used[0] = true;
+  for (let n = 1; n < segs.length; n++) {
+    const tail = ring[ring.length - 1];
+    let found = false;
+    for (let i = 0; i < segs.length; i++) {
+      if (used[i]) continue;
+      const s = segs[i];
+      if (near(s[0], tail)) { ring.push(...s.slice(1)); used[i] = true; found = true; break; }
+      if (near(s[s.length - 1], tail)) { ring.push(...s.slice(0, -1).reverse()); used[i] = true; found = true; break; }
+    }
+    if (!found) break;
+  }
+  if (ring.length > 1 && near(ring[0], ring[ring.length - 1])) ring.pop();
+  return ring;
+}
+
+/** Replace a body-face profile that has CURVED boundary edges (a cylinder cap,
+ *  a filleted face…) with a FACETED planar face of the same outline on the same
+ *  plane. Prisming an analytic circle/arc face makes an analytic `gp_Cyl` side
+ *  wall, and this OCCT build fails booleans of an analytic cylinder against a
+ *  plane (see BACKLOG) — so cutting/fusing such an extrude throws StdFail_NotDone.
+ *  A faceted (polygonal) wall booleans fine, matching how sketch-region extrudes
+ *  already facet their profile. Straight-edged faces are returned unchanged
+ *  (they prism to planar walls and stay exact). */
+function facetedProfileFace(face: Face, normal: Vector): { face: Face; normal: Vector } {
+  if (!face.edges.some((e) => e.geomType !== "LINE")) return { face, normal };
+  const n = vunit(normal.toTuple() as V3);
+  const origin = face.center.toTuple() as V3;
+  // A u axis perpendicular to the normal (cross with the world axis least aligned
+  // with n, so the cross product is well-conditioned).
+  const ax: V3 =
+    Math.abs(n[0]) <= Math.abs(n[1]) && Math.abs(n[0]) <= Math.abs(n[2]) ? [1, 0, 0]
+    : Math.abs(n[1]) <= Math.abs(n[2]) ? [0, 1, 0] : [0, 0, 1];
+  const uAxis = vunit(vcross(n, ax));
+  const vAxis = vcross(n, uAxis);
+  const toUv = (p: V3): [number, number] => {
+    const d: V3 = [p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]];
+    return [d[0] * uAxis[0] + d[1] * uAxis[1] + d[2] * uAxis[2], d[0] * vAxis[0] + d[1] * vAxis[1] + d[2] * vAxis[2]];
+  };
+  const outer = chainWirePoints(face.clone().outerWire().edges).map(toUv);
+  if (outer.length < 3) return { face, normal }; // couldn't facet — keep the exact face
+  const holes = face.innerWires()
+    .map((w) => chainWirePoints(w.edges).map(toUv))
+    .filter((r) => r.length >= 3);
+  const frame: ResolvedFrame = { origin, uAxis, vAxis, normal: n };
+  const faceted = regionFace({ kind: "sketchRegion", outline: outer, holes, frame }, planeOf(frame));
+  return { face: faceted, normal: new Vector(n) };
+}
+
 /** Extrude a profile face along `dir` and name the result from MakePrism's
  *  history: the two caps (start/end) and one side face per profile edge. */
 function prismFromFace(profileFace: Face, dir: Vector, signedDist: number, id: string): NamedShape {
@@ -255,9 +355,108 @@ function prismFromFace(profileFace: Face, dir: Vector, signedDist: number, id: s
   return { shape, names };
 }
 
+/** A FACETED revolve: loft (ruled) through rotated copies of the profile's outer
+ *  wire, so the surface of revolution is polygonal, not an analytic `gp_Cyl`/cone
+ *  /torus — which this OCCT/wasm build can't boolean (see BACKLOG). Matches how
+ *  cylinders + extruded circles are already faceted, so a revolve can be cut/fused
+ *  like any other body. Returns null (→ analytic fallback) for cases the ruled
+ *  loft can't handle: a profile with holes (ThruSections lofts a single wire per
+ *  section) or one touching the axis (degenerate sections at the pole). */
+function facetedRevolveFromFace(
+  profileFace: Face,
+  axisOrigin: number[],
+  axisDir: number[],
+  angleRad: number,
+  symmetric: boolean,
+  id: string,
+): NamedShape | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  // NB: replicad's outerWire()/innerWires() DELETE their receiver, so always call
+  // them on clones — `profileFace` must stay valid for the analytic fallback.
+  if (profileFace.clone().innerWires().length > 0) return null; // holed cross-section → analytic
+  const outer = profileFace.clone().outerWire();
+  // Reject a profile that reaches the axis: any boundary point on the axis line
+  // makes a pole where the rotated sections collapse (ThruSections fails/degenerates).
+  const [ox, oy, oz] = axisOrigin;
+  const ad = vunit(axisDir as V3);
+  const distToAxis = (pt: number[]) => {
+    const d: V3 = [pt[0] - ox, pt[1] - oy, pt[2] - oz];
+    const t = d[0] * ad[0] + d[1] * ad[1] + d[2] * ad[2];
+    const perp: V3 = [d[0] - t * ad[0], d[1] - t * ad[1], d[2] - t * ad[2]];
+    return Math.hypot(perp[0], perp[1], perp[2]);
+  };
+  for (const e of outer.edges) {
+    for (const p of sampleEdgePoints(e)) if (distToAxis(p) < 1e-4) { outer.delete(); return null; }
+  }
+
+  const full = angleRad >= 2 * Math.PI - 1e-6;
+  const start = symmetric ? -angleRad / 2 : 0;
+  const steps = Math.max(3, Math.round((CIRCLE_FACETS * Math.min(angleRad, 2 * Math.PI)) / (2 * Math.PI)));
+  const pnt = new oc.gp_Pnt_3(ox, oy, oz);
+  const dir = new oc.gp_Dir_4(ad[0], ad[1], ad[2]);
+  const ax1 = new oc.gp_Ax1_2(pnt, dir);
+  // A FULL revolve closes the loop (section at 2π coincides with 0), so the loft
+  // must NOT cap its ends — isSolid=true would cap first AND last at the seam
+  // plane, leaving a double-walled membrane there. Build a ruled SHELL and weld
+  // it into a solid instead. A PARTIAL revolve genuinely needs the end caps, so
+  // it lofts as a solid (isSolid=true) and the first/last profile faces cap it.
+  const builder = new oc.BRepOffsetAPI_ThruSections(!full, true, 1e-6);
+  for (let k = 0; k <= steps; k++) {
+    const a = start + (angleRad * k) / steps;
+    const trsf = new oc.gp_Trsf_1();
+    trsf.SetRotation_1(ax1, a);
+    const xf = new oc.BRepBuilderAPI_Transform_2(outer.wrapped, trsf, true);
+    const w = cast(xf.Shape());
+    builder.AddWire(w.wrapped);
+    // NB: do NOT delete the section wire `w` — the built loft references it (as
+    // loftBody's wires are likewise never deleted). Only the transient transform
+    // helpers are freed.
+    trsf.delete();
+    xf.delete();
+  }
+  let result: NamedShape | null = null;
+  try {
+    const progress = new oc.Message_ProgressRange_1();
+    builder.Build(progress);
+    progress.delete();
+    if (builder.IsDone()) {
+      const lofted = cast(builder.Shape()) as Shape3D;
+      // Full: the ruled result is a closed shell → weld to a solid; partial: it's
+      // already a solid. Bail to the analytic path if it comes out empty.
+      let shape = full ? (makeSolid([lofted]) as unknown as Shape3D) : lofted;
+      // Clean the closing seam: UnifySameDomain merges the coplanar cap segments
+      // into single annulus faces and unifies the duplicate seam edges the weld
+      // leaves behind, so the seam reads as a smooth (hideable) edge, not a crack.
+      try {
+        const unifier = new oc.ShapeUpgrade_UnifySameDomain_2(shape.wrapped, true, true, false);
+        unifier.Build();
+        shape = cast(unifier.Shape()) as Shape3D;
+        unifier.delete();
+      } catch { /* keep the un-unified shape if the pass isn't available */ }
+      if (shape.faces.length > 0) {
+        const caps = new Map<number, string>();
+        if (!full) {
+          try { caps.set(hashOf(builder.FirstShape()), `${id}/start`); } catch { /* none */ }
+          try { caps.set(hashOf(builder.LastShape()), `${id}/end`); } catch { /* none */ }
+        }
+        result = namesFromHistory(shape, id, caps, new Map());
+      }
+    }
+  } catch {
+    result = null;
+  }
+  builder.delete();
+  ax1.delete();
+  dir.delete();
+  pnt.delete();
+  return result;
+}
+
 /** Revolve a profile face around an axis by `angleRad`, naming the result from
  *  MakeRevol's history: the swept side faces (one per profile edge) and, for a
- *  partial revolve, the two caps. */
+ *  partial revolve, the two caps. Prefers a FACETED loft (booleanable); falls
+ *  back to this analytic MakeRevol when the profile has holes / touches the axis. */
 function revolveFromFace(
   profileFace: Face,
   axisOrigin: number[],
@@ -266,6 +465,8 @@ function revolveFromFace(
   symmetric: boolean,
   id: string,
 ): NamedShape {
+  const faceted = facetedRevolveFromFace(profileFace, axisOrigin, axisDir, angleRad, symmetric, id);
+  if (faceted) return faceted;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   const pnt = new oc.gp_Pnt_3(axisOrigin[0], axisOrigin[1], axisOrigin[2]);
@@ -1541,7 +1742,11 @@ function buildBodies(
           const r = bodyProfileFace(
             requireBody(bodies, profile.sourceId), profile.faceName, profile.center, profile.normal, warn, "profile face",
           );
-          faces = [r.face]; normal = r.normal;
+          // Facet a curved profile face (cylinder cap, fillet…) so its extruded
+          // wall is planar and can be cut/fused — an analytic cylinder wall can't
+          // (StdFail_NotDone). No-op for straight-edged faces.
+          const ff = facetedProfileFace(r.face, r.normal);
+          faces = [ff.face]; normal = ff.normal;
         }
         const face = faces[0]; // representative for through-all / up-to-face sizing
 
@@ -1858,6 +2063,83 @@ function meshFaceByFace(
   return { triangles, vertices: fillF(vChunks), normals: fillF(nChunks), faceGroups };
 }
 
+// Two faces meeting below this angle read as one smooth surface: their shared
+// edge is a facet seam (or a tangent fillet blend), not a real crease. Used to
+// smooth shading + hide seam edges so faceted curved bodies (cylinder/revolve/
+// extruded circle) DISPLAY as round while the kernel still booleans the facets.
+const CREASE_DOT = Math.cos((22 * Math.PI) / 180);
+
+/** Edge hashCodes whose two adjacent faces meet below the crease angle (a facet
+ *  seam / tangent blend). Same face-adjacency walk as edgeNamesFrom. */
+function smoothEdgeHashes(shape: Shape3D): Set<number> {
+  const adj = new Map<number, V3[]>();
+  for (const f of shape.faces) {
+    let n: V3;
+    try { n = vunit(f.normalAt(f.center).normalized().toTuple() as V3); } catch { continue; }
+    for (const e of f.edges) {
+      const arr = adj.get(e.hashCode);
+      if (arr) arr.push(n); else adj.set(e.hashCode, [n]);
+    }
+  }
+  const smooth = new Set<number>();
+  for (const [h, ns] of adj) {
+    if (ns.length === 2 && v3dot(ns[0], ns[1]) > CREASE_DOT) smooth.add(h);
+  }
+  return smooth;
+}
+
+/** Drop the smooth (facet-seam) edges from a meshed edge set, so only real
+ *  feature edges render/pick. `lines` is flat xyz; `edgeGroups` index it by
+ *  point. */
+function filterSmoothEdges(edges: MeshedEdges, smooth: Set<number>): MeshedEdges {
+  if (!edges.edgeGroups || smooth.size === 0) return edges;
+  const src = edges.lines;
+  const outLines: number[] = [];
+  const outGroups: NonNullable<MeshedEdges["edgeGroups"]> = [];
+  for (const g of edges.edgeGroups) {
+    if (smooth.has(g.edgeId)) continue;
+    const startPt = outLines.length / 3;
+    for (let i = g.start * 3; i < (g.start + g.count) * 3; i++) outLines.push(src[i]);
+    outGroups.push({ ...g, start: startPt });
+  }
+  return { lines: outLines, edgeGroups: outGroups };
+}
+
+/** Smooth a mesh's per-vertex normals so faceted curved walls SHADE as round.
+ *  Coincident vertices are clustered by crease angle: normals within a cluster
+ *  (a facet seam) are averaged; clusters across a real crease (a box corner, a
+ *  cap↔wall rim) stay distinct, keeping sharp features crisp. Mutates in place;
+ *  never touches vertices/triangles/faceGroups, so picking + measurement are
+ *  unaffected. */
+function smoothMeshNormals(faces: MeshedFaces): void {
+  const V = faces.vertices, N = faces.normals;
+  if (!V || !N) return;
+  const nv = V.length / 3;
+  const groups = new Map<string, number[]>();
+  for (let vi = 0; vi < nv; vi++) {
+    const k = `${Math.round(V[vi * 3] * 1e4)},${Math.round(V[vi * 3 + 1] * 1e4)},${Math.round(V[vi * 3 + 2] * 1e4)}`;
+    const arr = groups.get(k);
+    if (arr) arr.push(vi); else groups.set(k, [vi]);
+  }
+  for (const arr of groups.values()) {
+    if (arr.length < 2) continue;
+    const clusters: { sum: V3; rep: V3; members: number[] }[] = [];
+    for (const vi of arr) {
+      const n: V3 = [N[vi * 3], N[vi * 3 + 1], N[vi * 3 + 2]];
+      let c = clusters.find((cl) => v3dot(cl.rep, n) > CREASE_DOT);
+      if (!c) { c = { sum: [0, 0, 0], rep: n, members: [] }; clusters.push(c); }
+      c.sum[0] += n[0]; c.sum[1] += n[1]; c.sum[2] += n[2];
+      c.members.push(vi);
+    }
+    if (clusters.length < 2 && arr.length < 3) continue;
+    for (const c of clusters) {
+      const L = Math.hypot(c.sum[0], c.sum[1], c.sum[2]) || 1;
+      const a: V3 = [c.sum[0] / L, c.sum[1] / L, c.sum[2] / L];
+      for (const vi of c.members) { N[vi * 3] = a[0]; N[vi * 3 + 1] = a[1]; N[vi * 3 + 2] = a[2]; }
+    }
+  }
+}
+
 function regenerate(
   features: ResolvedFeature[],
   emit?: (result: RegenFeatureResult) => void,
@@ -1899,6 +2181,13 @@ function regenerate(
           // only add overhead with no transfer benefit.
           faces = b.shape.mesh(MESH_OPTS);
           edges = b.shape.meshEdges(MESH_OPTS);
+          // Display-only smoothing: faceted curved bodies (cylinder/revolve/
+          // extruded circle) are genuinely polygonal, so shade their walls smooth
+          // and drop the facet seam edges — they READ as round while the kernel
+          // keeps booleaning the facets. Sharp features (creases above the
+          // threshold) are preserved. Geometry the kernel sees is untouched.
+          smoothMeshNormals(faces);
+          edges = filterSmoothEdges(edges, smoothEdgeHashes(b.shape));
         }
         // Attach each face's / edge's persistent name (matched by build-local hash)
         // so the app carries stable references across rebuilds.

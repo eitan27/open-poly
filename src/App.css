@@ -1736,8 +1736,16 @@
   border-radius: 5px;
 }
 
-.constraint-list li:hover {
+.constraint-list li:hover,
+.constraint-list li.cl-hover {
   background: #1b1e26;
+}
+
+/* Hovering a constraint emphasises its name (matching the entities lit up in
+   the viewport) so the row and the geometry read as the same thing. */
+.constraint-list li.cl-hover > span {
+  color: #7fd4c8;
+  font-weight: 600;
 }
 
 .constraint-list .cl-del {
@@ -1870,6 +1878,108 @@
      the trailing ✕ — stay within the dialog's bounds. */
   align-self: stretch;
   min-width: 0;
+}
+
+/* --- Active-edit panel (constraints + parameters, floating over the viewport) --- */
+
+/* Anchored below the model toolbar and right of the sketch toolbar's column, so
+   it clears both at its default position (it's draggable from there). Wider than
+   the mini-dialogs because it hosts the full parameter editor, and capped in
+   height so a long constraints list scrolls instead of running off-screen. */
+.extrude-dialog.edit-panel {
+  left: 66px;
+  top: 58px;
+  width: 232px;
+  gap: 8px;
+  max-height: calc(100% - 76px);
+  overflow-y: auto;
+  /* Inherit the creation-dialog blue border (no grey override) so an edit menu
+     reads identically to Extrude/Revolve/etc. */
+}
+
+.ep-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Only the title itself drags, so the ✕ stays clickable. */
+.edit-panel .ed-title {
+  flex: 1;
+}
+
+.ep-close {
+  background: transparent;
+  border: none;
+  color: #8a8f9c;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 3px;
+  cursor: pointer;
+}
+
+.ep-close:hover {
+  color: #e6e8ee;
+}
+
+/* Section label inside the panel — styled like the creation dialogs' own
+   sub-labels (.bool-group-label: "Base"/"Profile"/…), not the old bold sidebar
+   heading, so the edit menu matches Extrude/Revolve/Boolean. */
+.ep-heading {
+  margin: 2px 0 -2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a8f9c;
+}
+
+.edit-panel .constraint-list {
+  max-height: 150px;
+}
+
+/* Match the params inside the floating panel to the creation-dialog look:
+   flex rows (label left, control right) like .ed-field, not the sidebar's
+   two-column grid. Scoped to .edit-panel so the (now-unused) sidebar styles
+   are untouched. */
+.edit-panel .params {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.edit-panel .param-name-input {
+  margin-bottom: 2px;
+  font-size: 13px;
+}
+
+.edit-panel .param-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+}
+
+.edit-panel .param-label {
+  font-size: 12px;
+  color: #8a8f9c;
+}
+
+.edit-panel .param-input {
+  width: 112px;
+  flex: 0 0 auto;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.edit-panel .param-static {
+  font-size: 12px;
+  color: #cfe0ff;
+}
+
+.edit-panel .sketch-btn {
+  margin-top: 2px;
 }
 
 /* The boolean dialog holds three longer op labels (Union/Subtract/Intersect),

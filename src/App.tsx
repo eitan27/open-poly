@@ -38,7 +38,14 @@ import {
   setSketchEntities,
   setSuppressed,
   setTransform,
+  updateBoolean,
+  updateDressUp,
+  updateExtrude,
+  updateMirror,
   updateParam,
+  updatePattern,
+  updatePlane,
+  updateRevolve,
   updateVariable,
 } from "./document/document";
 import { parseDxfToEntities, sketchEntitiesBounds } from "./document/dxfImport";
@@ -58,6 +65,7 @@ import type {
   ProjectRef,
   Document,
   EdgeRef,
+  Feature,
   ExtrudeExtent,
   ExtrudeProfile,
   FeatureKind,
@@ -84,7 +92,7 @@ import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, worldToUv, type Pla
 import { evaluateExpression } from "./document/expression";
 import { validateDressUpSize, mapDressUpKernelError } from "./document/dressUpValidation";
 import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
-import { FEATURE_DEFS, FEATURE_KINDS } from "./document/featureDefs";
+import { FEATURE_DEFS, FEATURE_KINDS, featureTypeLabel } from "./document/featureDefs";
 import {
   deleteDoc,
   duplicateDoc,
@@ -128,6 +136,7 @@ import { DraggableDialog } from "./ui/DraggableDialog";
 import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
 import { DimValueInput, type VarOption } from "./ui/DimValueInput";
 import { FeatureTree } from "./ui/FeatureTree";
+import { EditPanel } from "./ui/EditPanel";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
 import { VariablesPanel } from "./ui/VariablesPanel";
@@ -224,6 +233,66 @@ const constraintLabel = (c: SketchConstraint): string => {
     case "coincident": return "origin" in c.a || "origin" in c.b ? "Coincident (origin)" : "Coincident";
     case "pointOnLine": return "origin" in c.point ? "On line (origin)" : "Point on line";
     case "midpoint": return "Midpoint";
+  }
+};
+
+/** The uv position a PointRef resolves to in its sketch, or null if it can't be
+ *  resolved (a `{fixed}` external point resolves to its stored uv). Used to drop
+ *  a point marker where a constraint acts. */
+const pointRefUv = (entities: SketchEntity[], ref: PointRef): Vec2 | null => {
+  if ("origin" in ref) return [0, 0];
+  if ("fixed" in ref) return ref.fixed;
+  const e = entities.find((x) => x.id === ref.entity);
+  if (!e) return null;
+  if (e.type === "line") return ref.at === "b" ? e.b : e.a;
+  if (e.type === "point") return e.p;
+  if (e.type === "circle") return e.c;
+  if (e.type === "arc") {
+    if (ref.at === "c") return e.c;
+    const ang = ref.at === "b" ? e.end : e.start;
+    return [e.c[0] + e.r * Math.cos(ang), e.c[1] + e.r * Math.sin(ang)];
+  }
+  return null;
+};
+
+/** The sketch entities + points a constraint references, as viewport Selections,
+ *  so hovering the constraint in the list lights them up. Entity refs become
+ *  `sketchEntity`; point refs become a precise `sketchPoint` marker (plus the
+ *  owning line/target entity for context). */
+const constraintSelections = (
+  sketchId: string,
+  entities: SketchEntity[],
+  c: SketchConstraint,
+): Selection[] => {
+  const ent = (entityId: string): Selection => ({ kind: "sketchEntity", sketchId, entityId });
+  const pt = (ref: PointRef): Selection[] => {
+    const uv = pointRefUv(entities, ref);
+    const out: Selection[] = uv ? [{ kind: "sketchPoint", sketchId, point: uv }] : [];
+    if ("entity" in ref) out.push(ent(ref.entity));
+    return out;
+  };
+  const dist = (ref: DistanceRef): Selection[] =>
+    ref.on === "point" ? pt(ref.ref) : [ent(ref.entity)];
+  switch (c.type) {
+    case "horizontal":
+    case "vertical":
+    case "distance":
+    case "radius":
+      return [ent(c.entity)];
+    case "parallel":
+    case "perpendicular":
+    case "equal":
+    case "tangent":
+    case "angle":
+      return [ent(c.a), ent(c.b)];
+    case "distanceBetween":
+      return [...dist(c.a), ...dist(c.b)];
+    case "coincident":
+      return [...pt(c.a), ...pt(c.b)];
+    case "pointOnLine":
+      return [...pt(c.point), ent(c.line)];
+    case "midpoint":
+      return [...pt(c.point), ent(c.target)];
   }
 };
 
@@ -964,6 +1033,7 @@ export default function App() {
     angleAxis: "u" | "v";
     angle: string;
     points: [number, number, number][];
+    editId?: string;
   } | null>(null);
   // What the next viewport pick fills in the plane dialog (null = not arming a
   // plane pick). "base"/"refB" use plane/face pick mode; "point" reads a vertex /
@@ -973,7 +1043,7 @@ export default function App() {
   // `plane === "face"` mirrors across a picked planar body face, stored in
   // `faceRef` (a frozen frame snapshot, like a sketch-on-face placement).
   const [mirrorDialog, setMirrorDialog] = useState<
-    { targetId: string; plane: string; faceRef: { featureId: string; frame: PlaneFrameData } | null } | null
+    { targetId: string; plane: string; faceRef: { featureId: string; frame: PlaneFrameData } | null; editId?: string } | null
   >(null);
   // Armed by the Mirror dialog: the next clicked planar body face is the plane.
   const [pickingMirrorFace, setPickingMirrorFace] = useState(false);
@@ -1003,6 +1073,7 @@ export default function App() {
     angle: string;
     symmetric: boolean;
     arming: "target" | "dir1" | "dir2" | "axis" | null;
+    editId?: string;
   } | null>(null);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
@@ -1095,6 +1166,9 @@ export default function App() {
   const [fullyConstrained, setFullyConstrained] = useState(false);
   // The last solve reported conflicting/redundant (over-)constraints.
   const [solveConflict, setSolveConflict] = useState(false);
+  // The constraints-list row the pointer is over, so the viewport lights up the
+  // entities/points that constraint acts on.
+  const [hoveredConstraintId, setHoveredConstraintId] = useState<string | null>(null);
   // A transient banner shown over the sketch (e.g. a rejected, conflicting
   // dimension), auto-dismissed after a few seconds.
   const [sketchMsg, setSketchMsg] = useState<string | null>(null);
@@ -1126,9 +1200,50 @@ export default function App() {
   // Armed dimension mode: D was pressed with nothing selected; the next picked
   // line/circle becomes the dimension target.
   const [dimPending, setDimPending] = useState(false);
+  // Double-click on a feature WITHOUT a creation dialog (primitive / import /
+  // sweep / loft) opens its parameters in the floating EditPanel. null = closed.
+  // Features that DO have a creation dialog re-open that dialog in edit mode
+  // instead (see the edit* openers).
+  const [editParamsId, setEditParamsId] = useState<string | null>(null);
+  // Editing an existing feature through its creation dialog applies changes LIVE
+  // (so every change is previewed by the real regen), reverting on Cancel. The
+  // snapshot is the feature as it was when the dialog opened; `editSeedRef` skips
+  // the first (seed) live-sync so opening doesn't write an identical no-op step.
+  const editSnapshotRef = useRef<Feature | null>(null);
+  const editSeedRef = useRef(false);
+  // A signature of the last params a live-sync effect applied. The effects list
+  // doc-derived values (e.g. re-picked profiles) in their deps, so a doc change
+  // re-runs them; without this guard the restore in cancelEdit would immediately
+  // re-apply the stale dialog values (a feedback loop). Skipping re-runs whose
+  // params are unchanged breaks that loop and also skips the open-time seed.
+  const editSigRef = useRef<string | null>(null);
+  // Returns true if this live-sync run should proceed to apply. Seeds/loops skip.
+  const shouldLiveApply = (sig: string): boolean => {
+    if (editSeedRef.current) { editSeedRef.current = false; editSigRef.current = sig; return false; }
+    if (sig === editSigRef.current) return false;
+    editSigRef.current = sig;
+    return true;
+  };
+  // Begin/commit/cancel an in-place dialog edit. Every edit* opener calls
+  // beginEdit; each dialog's Confirm calls commitEdit (keep the live changes);
+  // each close path calls cancelEdit (a no-op after commit, else revert to the
+  // snapshot taken when the dialog opened).
+  const beginEdit = (feature: Feature) => {
+    editSnapshotRef.current = feature;
+    editSeedRef.current = true;
+    editSigRef.current = null;
+  };
+  const commitEdit = () => { editSnapshotRef.current = null; };
+  const cancelEdit = () => {
+    const snap = editSnapshotRef.current;
+    editSnapshotRef.current = null;
+    if (snap) setDoc((prev) => ({ ...prev, features: prev.features.map((f) => (f.id === snap.id ? snap : f)) }));
+  };
   // The extrude dialog (anchored at the profile) while choosing parameters.
+  // `editId` set ⇒ editing an existing extrude in place (Confirm updates it);
+  // else creating from the current profile selection.
   const [extrudeDialog, setExtrudeDialog] = useState<
-    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; extent: ExtrudeExtent; targetId: string | null; upTo: UpToFaceRef | null; x: number; y: number } | null
+    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; extent: ExtrudeExtent; targetId: string | null; upTo: UpToFaceRef | null; x: number; y: number; editId?: string } | null
   >(null);
   // True while the extrude dialog's "Select a face" pick is armed: the next
   // body face clicked in the viewport fills the up-to-face target.
@@ -1146,7 +1261,7 @@ export default function App() {
   const [revolvePreview, setRevolvePreview] = useState<FeatureMesh["mesh"] | null>(null);
   const [revolvePreviewError, setRevolvePreviewError] = useState<string | null>(null);
   const [dressUpDialog, setDressUpDialog] = useState<
-    { op: "chamfer" | "fillet"; size: string; x: number; y: number } | null
+    { op: "chamfer" | "fillet"; size: string; x: number; y: number; editId?: string } | null
   >(null);
   // Validation for the chamfer/fillet dialog: a human-readable message when the
   // current size is unsatisfiable (e.g. a fillet radius larger than the
@@ -1167,6 +1282,7 @@ export default function App() {
       symmetric: boolean;
       x: number;
       y: number;
+      editId?: string;
     } | null
   >(null);
   // The Transform feature currently being edited with the gizmo (a floating
@@ -1435,6 +1551,7 @@ export default function App() {
     base: string | null;
     tools: string[];
     armed: "base" | "tools" | null;
+    editId?: string;
   } | null>(null);
 
   // Own the worker's lifecycle here so each mount cycle (incl. StrictMode's
@@ -2200,15 +2317,30 @@ export default function App() {
     [doc, bodyIds],
   );
 
-  const selected = useMemo(
-    () => doc.features.find((f) => f.id === primaryFeatureId) ?? null,
-    [doc, primaryFeatureId],
-  );
 
   const editingSketch = useMemo(() => {
     const f = doc.features.find((x) => x.id === editingSketchId);
     return f && f.type === "sketch" ? f : null;
   }, [doc, editingSketchId]);
+
+  // The no-dialog feature whose params panel is open (double-click), if it still
+  // exists. The panel closes automatically once the selection moves elsewhere.
+  const editParamsFeature = useMemo(
+    () => (editParamsId ? doc.features.find((f) => f.id === editParamsId) ?? null : null),
+    [editParamsId, doc],
+  );
+  useEffect(() => {
+    if (editParamsId && editParamsId !== primaryFeatureId) setEditParamsId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primaryFeatureId]);
+
+  // Viewport emphasis driven by the constraints-list hover (independent of the
+  // pointer): the entities/points the hovered constraint acts on.
+  const constraintEmphasis = useMemo<Selection[]>(() => {
+    if (!editingSketch || !hoveredConstraintId) return [];
+    const c = editingSketch.constraints.find((x) => x.id === hoveredConstraintId);
+    return c ? constraintSelections(editingSketch.id, editingSketch.entities, c) : [];
+  }, [editingSketch, hoveredConstraintId]);
 
   // The single dimensionable entity selected inside the active sketch (a line →
   // length, or a circle → radius). Null unless exactly one such entity is held.
@@ -2410,6 +2542,17 @@ export default function App() {
     return profiles;
   }, [selection, meshes, doc]);
 
+  // What the extrude dialog operates on. Creating: the selected profiles above.
+  // Editing (editId set): a re-picked profile from the selection if there is one,
+  // else the feature's own current profile — so the dialog is never empty and
+  // re-picking a region/face just works through the normal selection.
+  const extrudeDialogProfiles = useMemo((): ExtrudeProfile[] => {
+    if (!extrudeDialog?.editId) return extrudeProfiles;
+    if (extrudeProfiles.length > 0) return extrudeProfiles;
+    const f = doc.features.find((x) => x.id === extrudeDialog.editId);
+    return f?.type === "extrude" ? [f.profile] : [];
+  }, [extrudeDialog, extrudeProfiles, doc]);
+
   // World-space anchor for the extrude dialog: a body face's centroid, or a
   // sketch region's centroid mapped to 3D. Anchored on the first profile when
   // several are selected.
@@ -2476,25 +2619,40 @@ export default function App() {
   };
 
   const createExtrude = () => {
-    if (extrudeProfiles.length === 0 || !extrudeDialog) return;
+    if (extrudeDialogProfiles.length === 0 || !extrudeDialog) return;
     // Add/Remove require a target body to affect.
     if (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) return;
     // Up to face requires a chosen target face.
     if (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) return;
+    const opts = {
+      distance: extrudeDialog.distance,
+      flip: extrudeDialog.flip,
+      extent: extrudeDialog.extent,
+      mode: extrudeDialog.mode,
+      targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
+      upTo: extrudeDialog.extent === "upToFace" ? extrudeDialog.upTo ?? undefined : undefined,
+    };
+    // Editing: update the one feature in place with the (possibly re-picked)
+    // first profile — an edit doesn't split into several features.
+    if (extrudeDialog.editId) {
+      const profile = extrudeDialogProfiles[0];
+      let next = updateExtrude(doc, extrudeDialog.editId, profile, opts);
+      if (profile.kind === "sketchRegion" || profile.kind === "sketchText") {
+        next = setSuppressed(next, profile.sketchId, true);
+      }
+      setDoc(next);
+      selectFeature(extrudeDialog.editId);
+      commitEdit();
+      closeExtrudeDialog();
+      return;
+    }
     // One Extrude feature per selected profile, sharing the dialog's settings —
     // folded into a single undo step by threading `next` through every
     // addExtrude/setSuppressed call before the one setDoc at the end.
     let next = doc;
     let lastId = "";
-    for (const profile of extrudeProfiles) {
-      const res = addExtrude(next, profile, {
-        distance: extrudeDialog.distance,
-        flip: extrudeDialog.flip,
-        extent: extrudeDialog.extent,
-        mode: extrudeDialog.mode,
-        targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
-        upTo: extrudeDialog.extent === "upToFace" ? extrudeDialog.upTo ?? undefined : undefined,
-      });
+    for (const profile of extrudeDialogProfiles) {
+      const res = addExtrude(next, profile, opts);
       // Hide the source sketch once it's been consumed by an extrude. It stays
       // in place and editable — toggle the timeline eye (or edit it) to bring
       // it back.
@@ -2510,9 +2668,64 @@ export default function App() {
   };
 
   // Dismiss the extrude dialog, also disarming any pending up-to-face pick.
+  // cancelEdit reverts a live in-place edit (no-op after Confirm/commitEdit).
   const closeExtrudeDialog = () => {
     setExtrudeDialog(null);
     setPickingUpFace(false);
+    cancelEdit();
+  };
+
+  // Live-preview an extrude edit: apply the dialog's current settings to the
+  // feature as they change, so the real body updates under the dialog.
+  useEffect(() => {
+    const d = extrudeDialog;
+    if (!d?.editId) return;
+    const profile = extrudeDialogProfiles[0];
+    if (!profile) return;
+    const opts = {
+      distance: d.distance,
+      flip: d.flip,
+      extent: d.extent,
+      mode: d.mode,
+      targetId: d.mode === "new" ? undefined : d.targetId ?? undefined,
+      upTo: d.extent === "upToFace" ? d.upTo ?? undefined : undefined,
+    };
+    if (!shouldLiveApply(JSON.stringify({ e: d.editId, profile, opts }))) return;
+    setDoc((prev) => updateExtrude(prev, d.editId!, profile, opts), `edit:${d.editId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    extrudeDialog?.editId,
+    extrudeDialog?.distance,
+    extrudeDialog?.flip,
+    extrudeDialog?.extent,
+    extrudeDialog?.mode,
+    extrudeDialog?.targetId,
+    extrudeDialog?.upTo,
+    extrudeDialogProfiles,
+  ]);
+
+  // Re-open the extrude dialog to edit an existing extrude in place. Seeds the
+  // dialog from the feature's own profile (so it's never empty even though the
+  // source sketch is suppressed); re-picking to any visible region/face/text
+  // works through the normal selection.
+  const editExtrude = (id: string) => {
+    const f = doc.features.find((x) => x.id === id);
+    if (f?.type !== "extrude") return;
+    beginEdit(f);
+    selectFeature(id);
+    const world = profileAnchorWorld();
+    const s = (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
+    setExtrudeDialog({
+      mode: f.mode,
+      distance: f.distance,
+      flip: f.flip,
+      extent: f.extent,
+      targetId: f.targetId ?? null,
+      upTo: f.upTo ?? null,
+      x: s.x,
+      y: s.y,
+      editId: id,
+    });
   };
 
   // Live ghost preview of the extrude dialog: mirrors the main regen effect
@@ -2523,6 +2736,9 @@ export default function App() {
   useEffect(() => {
     if (
       !extrudeDialog ||
+      // Editing shows the committed feature live (no throwaway ghost — that
+      // would double the body); the create-only ghost is for new extrudes.
+      extrudeDialog.editId ||
       extrudeProfiles.length === 0 ||
       (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) ||
       (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo)
@@ -2602,7 +2818,9 @@ export default function App() {
   // Re-runs as the angle / symmetric / arming change. Debounced so dragging the
   // angle field stays responsive.
   useEffect(() => {
-    if (!revolveDialog || !revolveDialog.profile || !revolveDialog.axis) {
+    if (!revolveDialog || revolveDialog.editId || !revolveDialog.profile || !revolveDialog.axis) {
+      // Editing shows the committed revolve live; the create-only ghost would
+      // double the body.
       setRevolvePreview(null);
       setRevolvePreviewError(null);
       return;
@@ -2677,8 +2895,56 @@ export default function App() {
     setDressUpDialog({ op, size: "2", x: s.x, y: s.y });
   };
 
+  // Re-open the chamfer/fillet dialog to edit in place. Seeds op + size from the
+  // feature; its edges stay referenced (re-pick by clicking edges on the body).
+  const editDressUp = (id: string) => {
+    const f = doc.features.find((x) => x.id === id);
+    if (f?.type !== "dressup") return;
+    beginEdit(f);
+    selectFeature(id);
+    setDressUpError(null);
+    setDressUpDialog({ op: f.op, size: f.size, x: 240, y: 160, editId: id });
+  };
+  const closeDressUpDialog = () => {
+    setDressUpDialog(null);
+    setDressUpError(null);
+    cancelEdit();
+  };
+
+  // Which edges/body the dialog dresses: a re-picked edge selection if present,
+  // else (editing) the feature's own referenced edges.
+  const dressUpDialogTarget = useMemo(() => {
+    if (!dressUpDialog?.editId) return dressUpTarget;
+    if (dressUpTarget) return dressUpTarget;
+    const f = doc.features.find((x) => x.id === dressUpDialog.editId);
+    return f?.type === "dressup"
+      ? { targetId: f.targetId, edges: f.edges, edgeRefs: f.edgeRefs ?? [], anchor: null as [number, number, number] | null }
+      : null;
+  }, [dressUpDialog, dressUpTarget, doc]);
+
+  // Add a new dress-up, or (editing) update the existing one in place — shared by
+  // the commit and the live-validation effect so both build the same doc.
+  const applyDressUp = (base: Document, t: NonNullable<typeof dressUpDialogTarget>, d: NonNullable<typeof dressUpDialog>) =>
+    d.editId
+      ? { doc: updateDressUp(base, d.editId, { op: d.op, targetId: t.targetId, edges: t.edges, size: d.size, edgeRefs: t.edgeRefs }), id: d.editId }
+      : addDressUp(base, d.op, t.targetId, t.edges, d.size, t.edgeRefs);
+
+  // Live-preview a chamfer/fillet edit: apply the new size/edges to the real
+  // feature as they change (skipping empty/invalid sizes). The existing async
+  // validation effect still surfaces an unsatisfiable radius as `dressUpError`.
+  useEffect(() => {
+    const d = dressUpDialog;
+    const t = dressUpDialogTarget;
+    if (!d?.editId || !t) return;
+    if (validateDressUpSize(d.size, resolved.scope, d.op).value === null) return;
+    const spec = { op: d.op, targetId: t.targetId, edges: t.edges, size: d.size, edgeRefs: t.edgeRefs };
+    if (!shouldLiveApply(JSON.stringify({ e: d.editId, spec }))) return;
+    setDoc((prev) => updateDressUp(prev, d.editId!, spec), `edit:${d.editId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dressUpDialog?.editId, dressUpDialog?.size, dressUpDialog?.op, dressUpDialogTarget]);
+
   const createDressUp = async () => {
-    if (!dressUpTarget || !dressUpDialog) return;
+    if (!dressUpDialogTarget || !dressUpDialog) return;
     // Synchronous gate first: an empty/garbage/≤0 size never reaches the kernel.
     // Empty is silently ignored (no error, just a no-op); anything invalid keeps
     // the dialog open with its message.
@@ -2687,9 +2953,7 @@ export default function App() {
       setDressUpError(null);
       return;
     }
-    const { doc: next, id } = addDressUp(
-      doc, dressUpDialog.op, dressUpTarget.targetId, dressUpTarget.edges, dressUpDialog.size, dressUpTarget.edgeRefs,
-    );
+    const { doc: next, id } = applyDressUp(doc, dressUpDialogTarget, dressUpDialog);
     // Authoritative pre-commit check against the kernel: an unsatisfiable size
     // (radius too big, degenerate edge) keeps the dialog open with the error
     // rather than committing a broken feature. Runs even if the live-validation
@@ -2714,6 +2978,7 @@ export default function App() {
     }
     setDoc(next);
     selectFeature(id);
+    commitEdit();
     setDressUpDialog(null);
     setDressUpError(null);
   };
@@ -2726,7 +2991,7 @@ export default function App() {
   // (mirrors createDressUp, minus setDoc), debounced so each keystroke on a heavy
   // body stays responsive. `dressUpError` holds only this async error.
   useEffect(() => {
-    if (!dressUpDialog || !dressUpTarget) {
+    if (!dressUpDialog || !dressUpDialogTarget) {
       setDressUpError(null);
       return;
     }
@@ -2741,9 +3006,7 @@ export default function App() {
     if (!ready || !kernel) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      const { doc: next, id } = addDressUp(
-        doc, dressUpDialog.op, dressUpTarget.targetId, dressUpTarget.edges, dressUpDialog.size, dressUpTarget.edgeRefs,
-      );
+      const { doc: next, id } = applyDressUp(doc, dressUpDialogTarget, dressUpDialog);
       const resolvedNext = resolveDocument(next);
       const resolveErr = resolvedNext.errors[id];
       if (resolveErr) {
@@ -2765,7 +3028,8 @@ export default function App() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [dressUpDialog, dressUpTarget, doc, ready, resolved.scope]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dressUpDialog, dressUpDialogTarget, doc, ready, resolved.scope]);
 
   // The single body a Transform would move, resolved from the selection: any
   // pick (feature / face / edge / vertex) on exactly one rendered body. In-place
@@ -2843,19 +3107,62 @@ export default function App() {
       setPicking(false);
       setPickPurpose("sketch");
     }
+    cancelEdit();
   };
+
+  // Live-preview a revolve edit.
+  useEffect(() => {
+    const d = revolveDialog;
+    if (!d?.editId || !d.profile || !d.axis) return;
+    const angle = d.mode === "full" ? "360" : d.degrees;
+    const symmetric = d.mode === "angle" && d.symmetric;
+    if (!shouldLiveApply(JSON.stringify({ e: d.editId, p: d.profile, a: d.axis, angle, symmetric }))) return;
+    setDoc((prev) => updateRevolve(prev, d.editId!, d.profile!, d.axis!, angle, symmetric), `edit:${d.editId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revolveDialog?.editId, revolveDialog?.profile, revolveDialog?.axis, revolveDialog?.mode, revolveDialog?.degrees, revolveDialog?.symmetric]);
 
   const createRevolve = () => {
     if (!revolveDialog || !revolveDialog.profile || !revolveDialog.axis) return;
     // Full revolve = 360°; symmetric is meaningless there, so force it off.
     const angle = revolveDialog.mode === "full" ? "360" : revolveDialog.degrees;
     const symmetric = revolveDialog.mode === "angle" && revolveDialog.symmetric;
+    if (revolveDialog.editId) {
+      let next = updateRevolve(doc, revolveDialog.editId, revolveDialog.profile, revolveDialog.axis, angle, symmetric);
+      next = setSuppressed(next, revolveDialog.profile.sketchId, true);
+      setDoc(next);
+      selectFeature(revolveDialog.editId);
+      commitEdit();
+      closeRevolveDialog();
+      return;
+    }
     const { doc: created, id } = addRevolve(doc, revolveDialog.profile, revolveDialog.axis, angle, symmetric);
     // Hide the originating sketch once it's been consumed (like extrude does).
     const next = setSuppressed(created, revolveDialog.profile.sketchId, true);
     setDoc(next);
     selectFeature(id);
     closeRevolveDialog();
+  };
+
+  // Re-open the revolve dialog to edit in place, seeded from the feature.
+  const editRevolve = (id: string) => {
+    const f = doc.features.find((x) => x.id === id);
+    if (f?.type !== "revolve") return;
+    beginEdit(f);
+    selectFeature(id);
+    const full = f.angle === "360";
+    const world = profileAnchorWorld();
+    const s = (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
+    setRevolveDialog({
+      profile: f.profile,
+      axis: f.axis,
+      armed: null,
+      mode: full ? "full" : "angle",
+      degrees: full ? "90" : f.angle,
+      symmetric: f.symmetric,
+      x: s.x,
+      y: s.y,
+      editId: id,
+    });
   };
 
   // Sweep needs a profile region + a path entity (line / arc / spline). They may
@@ -2943,6 +3250,7 @@ export default function App() {
         else if (patternDialog && picking) { setPicking(false); setPickPurpose("sketch"); }
         else if (patternDialog) closePattern();
         else if (transformEditId) cancelTransform();
+        else if (editParamsId) setEditParamsId(null);
         else if (picking) setPicking(false);
         // Esc finishes an in-progress draft: the spline commits its accumulated
         // points (like ending a polyline); every other tool just abandons the
@@ -3158,6 +3466,7 @@ export default function App() {
     oneSelectedLine,
     primaryFeatureId,
     polySidesOpen,
+    editParamsId,
   ]);
 
   const openLoft = () => {
@@ -3174,7 +3483,21 @@ export default function App() {
   const closeMirror = () => {
     setMirrorDialog(null);
     setPickingMirrorFace(false);
+    cancelEdit();
   };
+  // Live-preview a mirror edit as the plane choice changes.
+  useEffect(() => {
+    const d = mirrorDialog;
+    if (!d?.editId) return;
+    const ref: SketchPlaneRef | null =
+      d.plane === "face"
+        ? d.faceRef ? { kind: "face", featureId: d.faceRef.featureId, frame: d.faceRef.frame } : null
+        : planeKeyToRef(d.plane);
+    if (!ref) return;
+    if (!shouldLiveApply(JSON.stringify({ e: d.editId, t: d.targetId, ref }))) return;
+    setDoc((prev) => updateMirror(prev, d.editId!, d.targetId, ref), `edit:${d.editId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mirrorDialog?.editId, mirrorDialog?.plane, mirrorDialog?.faceRef, mirrorDialog?.targetId]);
   const createMirror = () => {
     if (!mirrorDialog) return;
     const ref: SketchPlaneRef | null =
@@ -3184,10 +3507,32 @@ export default function App() {
           : null
         : planeKeyToRef(mirrorDialog.plane);
     if (!ref) return; // a face plane was chosen but none picked yet
+    if (mirrorDialog.editId) {
+      setDoc(updateMirror(doc, mirrorDialog.editId, mirrorDialog.targetId, ref));
+      selectFeature(mirrorDialog.editId);
+      commitEdit();
+      closeMirror();
+      return;
+    }
     const { doc: next, id } = addMirror(doc, mirrorDialog.targetId, ref);
     setDoc(next);
     closeMirror();
     selectFeature(id);
+  };
+
+  // Re-open the Mirror dialog to edit an existing mirror in place. The mirror
+  // plane seeds back to its dialog key (datum / reference plane / picked face).
+  const editMirror = (id: string) => {
+    const f = doc.features.find((x) => x.id === id);
+    if (f?.type !== "mirror") return;
+    beginEdit(f);
+    selectFeature(id);
+    const planeKey =
+      f.plane.kind === "datum" ? `datum:${f.plane.id}`
+      : f.plane.kind === "plane" ? `plane:${f.plane.planeId}`
+      : "face";
+    const faceRef = f.plane.kind === "face" ? { featureId: f.plane.featureId, frame: f.plane.frame } : null;
+    setMirrorDialog({ targetId: f.targetId, plane: planeKey, faceRef, editId: id });
   };
 
   // Open the Pattern dialog. Always available: like Revolve, a body is armed
@@ -3210,7 +3555,34 @@ export default function App() {
       setPicking(false);
       setPickPurpose("sketch");
     }
+    cancelEdit();
   };
+  // The PatternFeature fields the dialog currently describes (shared by commit
+  // and live-preview so they can't drift).
+  const patternFieldsOf = (d: NonNullable<typeof patternDialog>) =>
+    d.kind === "linear"
+      ? {
+          kind: "linear" as const,
+          dir1: d.dir1, count1: d.count1, spacing1: d.spacing1, flip1: d.flip1,
+          ...(d.dir2on && d.dir2 ? { dir2: d.dir2, count2: d.count2, spacing2: d.spacing2, flip2: d.flip2 } : {}),
+        }
+      : {
+          kind: "circular" as const,
+          axis: d.axis!,
+          count: d.count,
+          angle: d.mode === "full" ? "360" : d.angle,
+          symmetric: d.mode === "angle" && d.symmetric,
+        };
+  // Live-preview a pattern edit (skips while the dialog is in an invalid state).
+  useEffect(() => {
+    const d = patternDialog;
+    if (!d?.editId || !d.targetId || patternDialogWarning) return;
+    if (d.kind === "circular" && !d.axis) return;
+    const fields = patternFieldsOf(d);
+    if (!shouldLiveApply(JSON.stringify({ e: d.editId, t: d.targetId, fields }))) return;
+    setDoc((prev) => updatePattern(prev, d.editId!, d.targetId!, fields), `edit:${d.editId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patternDialog, patternDialogWarning]);
   // Arm the shared axis-pick stream to fill one of the dialog's reference slots.
   const armPatternPick = (slot: "dir1" | "dir2" | "axis") => {
     setPatternDialog((d) => (d ? { ...d, arming: slot } : d));
@@ -3221,29 +3593,48 @@ export default function App() {
     const d = patternDialog;
     if (!d || !d.targetId || patternDialogWarning) return;
     if (d.kind === "circular" && !d.axis) return;
-    const { doc: next, id } = addPattern(
-      doc,
-      d.targetId,
-      d.kind === "linear"
-        ? {
-            kind: "linear",
-            dir1: d.dir1, count1: d.count1, spacing1: d.spacing1, flip1: d.flip1,
-            ...(d.dir2on && d.dir2
-              ? { dir2: d.dir2, count2: d.count2, spacing2: d.spacing2, flip2: d.flip2 }
-              : {}),
-          }
-        : {
-            kind: "circular",
-            axis: d.axis!,
-            count: d.count,
-            // Full circle is just angle "360"; symmetric is meaningless there.
-            angle: d.mode === "full" ? "360" : d.angle,
-            symmetric: d.mode === "angle" && d.symmetric,
-          },
-    );
+    const fields = patternFieldsOf(d);
+    if (d.editId) {
+      setDoc(updatePattern(doc, d.editId, d.targetId, fields));
+      selectFeature(d.editId);
+      commitEdit();
+      closePattern();
+      return;
+    }
+    const { doc: next, id } = addPattern(doc, d.targetId, fields);
     setDoc(next);
     closePattern();
     selectFeature(id);
+  };
+
+  // Re-open the Pattern dialog to edit an existing pattern in place. Seeds every
+  // field from the feature; refs (dir/axis) re-pick through the same axis stream.
+  const editPattern = (id: string) => {
+    const f = doc.features.find((x) => x.id === id);
+    if (f?.type !== "pattern") return;
+    beginEdit(f);
+    selectFeature(id);
+    const full = (f.angle ?? "360") === "360";
+    setPatternDialog({
+      kind: f.kind,
+      targetId: f.targetId,
+      dir1: f.dir1 ?? { world: "x" },
+      count1: f.count1 ?? "3",
+      spacing1: f.spacing1 ?? "25",
+      flip1: f.flip1 ?? false,
+      dir2on: !!f.dir2,
+      dir2: f.dir2 ?? null,
+      count2: f.count2 ?? "2",
+      spacing2: f.spacing2 ?? "25",
+      flip2: f.flip2 ?? false,
+      axis: f.axis ?? null,
+      count: f.count ?? "6",
+      mode: full ? "full" : "angle",
+      angle: full ? "90" : (f.angle ?? "90"),
+      symmetric: f.symmetric ?? false,
+      arming: null,
+      editId: id,
+    });
   };
 
   // Create a Transform on the selected body and open the gizmo to edit it.
@@ -3517,7 +3908,29 @@ export default function App() {
     setPlaneDialog(null);
     setPlanePick(null);
     setPicking(false);
+    cancelEdit();
   };
+
+  // Live-preview a plane edit (pure geometry — no kernel; the plane frame just
+  // re-resolves). Skips incomplete specs so a half-armed re-pick doesn't error.
+  useEffect(() => {
+    const d = planeDialog;
+    if (!d?.editId) return;
+    if (d.method === "through" ? d.points.length !== 3 : !d.base) return;
+    if (d.method === "midplane" && !d.refB) return;
+    const spec = {
+      method: d.method,
+      base: d.base ?? { kind: "datum" as const, id: "plane-top" },
+      offset: d.offset,
+      refB: d.refB ?? undefined,
+      angleAxis: d.angleAxis,
+      angle: d.angle,
+      points: d.method === "through" ? d.points : undefined,
+    };
+    if (!shouldLiveApply(JSON.stringify({ e: d.editId, spec }))) return;
+    setDoc((prev) => updatePlane(prev, d.editId!, spec), `edit:${d.editId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planeDialog?.editId, planeDialog?.method, planeDialog?.base, planeDialog?.offset, planeDialog?.refB, planeDialog?.angleAxis, planeDialog?.angle, planeDialog?.points]);
 
   // The plane/face pick resolved: start a sketch on it, or fill the plane
   // dialog's base / second reference (whichever slot is armed).
@@ -3606,18 +4019,48 @@ export default function App() {
     } else if (method === "midplane" && !refB) {
       return;
     }
-    const { doc: next, id } = addPlane(doc, {
+    const spec = {
       method,
-      base: base ?? { kind: "datum", id: "plane-top" }, // unused for "through"
+      base: base ?? { kind: "datum" as const, id: "plane-top" }, // unused for "through"
       offset,
       refB: refB ?? undefined,
       angleAxis,
       angle,
       points: method === "through" ? points : undefined,
-    });
+    };
+    if (planeDialog.editId) {
+      setDoc(updatePlane(doc, planeDialog.editId, spec));
+      selectFeature(planeDialog.editId);
+      commitEdit();
+      closePlaneDialog();
+      return;
+    }
+    const { doc: next, id } = addPlane(doc, spec);
     setDoc(next);
     selectFeature(id);
     closePlaneDialog();
+  };
+
+  // Re-open the reference-plane dialog to edit an existing plane. Seeds the
+  // method + refs + params; re-picking base/refB works through the same
+  // plane-pick stream as creation (Confirm → updatePlane).
+  const editPlane = (id: string) => {
+    const f = doc.features.find((x) => x.id === id);
+    if (f?.type !== "plane") return;
+    beginEdit(f);
+    selectFeature(id);
+    setPlaneDialog({
+      method: f.method ?? "offset",
+      base: f.base ?? null,
+      offset: f.offset,
+      refB: f.refB ?? null,
+      angleAxis: f.angleAxis ?? "u",
+      angle: f.angle ?? "30",
+      points: f.points ?? [],
+      editId: id,
+    });
+    setPickPurpose("plane");
+    setPlanePick(null); // don't auto-arm a re-pick; the user clicks a slot to re-pick
   };
 
   const editSketch = (id: string) => {
@@ -3644,15 +4087,31 @@ export default function App() {
     setSelection([]); // so the next click (e.g. a face to extrude) starts fresh
   };
 
-  // Double-clicking a timeline row enters its edit mode directly — sketches and
-  // transforms have a distinct edit mode (gizmo / sketch canvas); every other
-  // feature type already shows editable fields in the param editor on select,
-  // so a double-click there is just a (harmless) select.
-  const handleTreeDoubleClick = (id: string) => {
+  // Double-clicking a timeline row (or a body) opens that feature's ONE editor:
+  // sketch → sketch canvas; transform → gizmo; every operation with a creation
+  // dialog re-opens it populated in edit mode (Confirm updates in place, inputs
+  // re-pickable); everything else (primitive / import / sweep / loft) opens its
+  // parameters in the floating panel. There's no separate "params-on-select"
+  // surface any more — selection just highlights.
+  const openFeatureEditor = (id: string) => {
     const f = doc.features.find((x) => x.id === id);
-    if (f?.type === "sketch") editSketch(id);
-    else if (f?.type === "transform") editTransform(id);
+    if (!f) return;
+    switch (f.type) {
+      case "sketch": editSketch(id); break;
+      case "transform": editTransform(id); break;
+      case "extrude": editExtrude(id); break;
+      case "plane": editPlane(id); break;
+      case "revolve": editRevolve(id); break;
+      case "boolean": editBoolean(id); break;
+      case "mirror": editMirror(id); break;
+      case "pattern": editPattern(id); break;
+      case "dressup": editDressUp(id); break;
+      default: // primitive / import / sweep / loft — no creation dialog
+        selectFeature(id);
+        setEditParamsId(id);
+    }
   };
+  const handleTreeDoubleClick = openFeatureEditor;
 
   // A snapped click on the sketch plane (already in uv coords). Drives the
   // multi-click construction tools. `hv` records a horizontal/vertical inference
@@ -4746,18 +5205,58 @@ export default function App() {
     });
   };
 
+  // Valid operand list for the current boolean dialog, or null while incomplete.
+  const booleanOperands = (d: NonNullable<typeof booleanDialog>): string[] | null =>
+    d.op === "subtract"
+      ? d.base && d.tools.length >= 1 ? [d.base, ...d.tools] : null
+      : d.operandIds.length >= 2 ? d.operandIds : null;
+  const closeBooleanDialog = () => {
+    setBooleanDialog(null);
+    cancelEdit();
+  };
+  // Live-preview a boolean edit as operands/op change.
+  useEffect(() => {
+    const d = booleanDialog;
+    if (!d?.editId) return;
+    const operands = booleanOperands(d);
+    if (!operands) return;
+    if (!shouldLiveApply(JSON.stringify({ e: d.editId, op: d.op, operands }))) return;
+    setDoc((prev) => updateBoolean(prev, d.editId!, d.op, operands), `edit:${d.editId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booleanDialog]);
   const confirmBoolean = () => {
     if (!booleanDialog) return;
     const d = booleanDialog;
-    const operands =
-      d.op === "subtract"
-        ? d.base && d.tools.length >= 1 ? [d.base, ...d.tools] : null
-        : d.operandIds.length >= 2 ? d.operandIds : null;
+    const operands = booleanOperands(d);
     if (!operands) return;
+    if (d.editId) {
+      setDoc(updateBoolean(doc, d.editId, d.op, operands));
+      selectFeature(d.editId);
+      commitEdit();
+      closeBooleanDialog();
+      return;
+    }
     const { doc: next, id } = addBoolean(doc, d.op, operands);
     setDoc(next);
     selectFeature(id);
-    setBooleanDialog(null);
+    closeBooleanDialog();
+  };
+
+  // Re-open the Boolean dialog to edit an existing boolean in place. Seeds the op
+  // + operands; clicking bodies re-picks operands exactly as at creation.
+  const editBoolean = (id: string) => {
+    const f = doc.features.find((x) => x.id === id);
+    if (f?.type !== "boolean") return;
+    beginEdit(f);
+    selectFeature(id);
+    setBooleanDialog({
+      op: f.op,
+      operandIds: f.operands,
+      base: f.operands[0] ?? null,
+      tools: f.operands.slice(1),
+      armed: null,
+      editId: id,
+    });
   };
 
   // Per-operand viewport highlight while the dialog is open: union → all orange;
@@ -5172,43 +5671,16 @@ export default function App() {
             isolatedId={isolatedBodyId}
             onIsolate={handleIsolate}
           />
-          {editingSketch && editingSketch.constraints.length > 0 && (
-            <>
-              <h2 className="params-heading">
-                Constraints
-                {solveConflict && <span className="constraint-warn" title="Over-constrained / conflicting"> ⚠ conflict</span>}
-              </h2>
-              <ul className="constraint-list">
-                {editingSketch.constraints.map((c) => (
-                  <li key={c.id}>
-                    <span>{constraintLabel(c)}</span>
-                    <button className="cl-del" title="Delete constraint" onClick={() => deleteConstraint(c.id)}>
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          <h2 className="params-heading">Parameters</h2>
-          <ParamEditor
-            feature={selected}
-            error={selected ? (errors[selected.id] ?? null) : null}
-            editingSketchId={editingSketchId}
-            onChangeParam={(id, name, value) =>
-              setDoc(updateParam(doc, id, name, value), `param:${id}:${name}`)
-            }
-            onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}
-            onEditSketch={editSketch}
-            onFinishSketch={finishSketch}
-            onEditTransform={editTransform}
-          />
+          {/* Constraints + Parameters used to live here, below Parts, where the
+              thing you were editing was easy to miss. They're now the floating
+              EditPanel over the viewport (see below). */}
         </aside>
         <main className="viewport">
           <Viewport
             meshes={viewportMeshes}
             ghostMeshes={ghostMeshes}
             selection={selection}
+            emphasize={constraintEmphasis}
             highlightBodyIds={highlightBodyIds}
             booleanHighlight={booleanHighlight}
             onSelect={handlePick}
@@ -5352,6 +5824,60 @@ export default function App() {
               ⁙ Pattern{kbd("X")}
             </button>
           </div>
+          {/* The floating edit panel. It shows in two cases only (never on a
+              plain selection — that just highlights): the constraints of the
+              sketch being edited, and the parameters of a double-clicked
+              no-dialog feature (primitive / import / sweep / loft). Every other
+              feature type opens its own creation dialog in edit mode instead. */}
+          {(editParamsFeature || (editingSketch && editingSketch.constraints.length > 0)) && (
+            <EditPanel
+              title={editParamsFeature ? featureTypeLabel(editParamsFeature) : "Sketch"}
+              targetKey={`${editingSketchId ?? ""}|${editParamsId ?? ""}`}
+              onClose={editParamsFeature ? () => setEditParamsId(null) : undefined}
+            >
+              {editingSketch && editingSketch.constraints.length > 0 && (
+                <>
+                  <div className="ep-heading">
+                    Constraints ({editingSketch.constraints.length})
+                    {solveConflict && <span className="constraint-warn" title="Over-constrained / conflicting"> ⚠ conflict</span>}
+                  </div>
+                  <ul className="constraint-list">
+                    {editingSketch.constraints.map((c) => (
+                      <li
+                        key={c.id}
+                        className={hoveredConstraintId === c.id ? "cl-hover" : ""}
+                        onMouseEnter={() => setHoveredConstraintId(c.id)}
+                        onMouseLeave={() => setHoveredConstraintId((id) => (id === c.id ? null : id))}
+                      >
+                        <span>{constraintLabel(c)}</span>
+                        <button className="cl-del" title="Delete constraint" onClick={() => deleteConstraint(c.id)}>
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {editParamsFeature && (
+                <>
+                  {/* No "Parameters" heading — the title already names the type,
+                      matching the creation dialogs (which go straight to fields). */}
+                  <ParamEditor
+                    feature={editParamsFeature}
+                    error={errors[editParamsFeature.id] ?? null}
+                    editingSketchId={editingSketchId}
+                    onChangeParam={(id, name, value) =>
+                      setDoc(updateParam(doc, id, name, value), `param:${id}:${name}`)
+                    }
+                    onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}
+                    onEditSketch={editSketch}
+                    onFinishSketch={finishSketch}
+                    onEditTransform={editTransform}
+                  />
+                </>
+              )}
+            </EditPanel>
+          )}
           {editingSketch && (
             <div className="sketch-toolbar">
               {SKETCH_LAYOUT.map((slot) => {
@@ -5907,7 +6433,8 @@ export default function App() {
           {extrudeDialog && (
             <DraggableDialog className="extrude-dialog" style={{ left: extrudeDialog.x, top: extrudeDialog.y }}>
               <div className="ed-title" data-drag-handle>
-                Extrude{extrudeProfiles.length > 1 ? ` (${extrudeProfiles.length} profiles)` : ""}
+                {extrudeDialog.editId ? "Edit extrude" : "Extrude"}
+                {!extrudeDialog.editId && extrudeDialogProfiles.length > 1 ? ` (${extrudeDialogProfiles.length} profiles)` : ""}
               </div>
               <div className="ed-modes">
                 {(["new", "add", "remove"] as const).map((m) => (
@@ -6011,7 +6538,7 @@ export default function App() {
                   }
                   onClick={createExtrude}
                 >
-                  Create
+                  {extrudeDialog.editId ? "Done" : "Create"}
                 </button>
                 <button onClick={closeExtrudeDialog}>Cancel</button>
               </div>
@@ -6026,7 +6553,9 @@ export default function App() {
             const disabled = sv.value === null || !!dressUpError;
             return (
               <DraggableDialog className="extrude-dialog" style={{ left: dressUpDialog.x, top: dressUpDialog.y }}>
-                <div className="ed-title" data-drag-handle>{dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}</div>
+                <div className="ed-title" data-drag-handle>
+                  {dressUpDialog.editId ? "Edit " : ""}{dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}
+                </div>
                 <label className="ed-field">
                   <span>{dressUpDialog.op === "chamfer" ? "Distance" : "Radius"}</span>
                   <input
@@ -6036,14 +6565,14 @@ export default function App() {
                     onChange={(e) => setDressUpDialog((d) => (d ? { ...d, size: e.target.value } : d))}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") createDressUp();
-                      else if (e.key === "Escape") { setDressUpDialog(null); setDressUpError(null); }
+                      else if (e.key === "Escape") closeDressUpDialog();
                     }}
                   />
                 </label>
                 {message && <p className="ed-warning">{message}</p>}
                 <div className="ed-actions">
-                  <button className="ed-primary" onClick={createDressUp} disabled={disabled}>Create</button>
-                  <button onClick={() => { setDressUpDialog(null); setDressUpError(null); }}>Cancel</button>
+                  <button className="ed-primary" onClick={createDressUp} disabled={disabled}>{dressUpDialog.editId ? "Done" : "Create"}</button>
+                  <button onClick={closeDressUpDialog}>Cancel</button>
                 </div>
               </DraggableDialog>
             );
@@ -6068,7 +6597,7 @@ export default function App() {
             };
             return (
             <DraggableDialog className="extrude-dialog" style={{ left: revolveDialog.x, top: revolveDialog.y }}>
-              <div className="ed-title" data-drag-handle>Revolve</div>
+              <div className="ed-title" data-drag-handle>{revolveDialog.editId ? "Edit revolve" : "Revolve"}</div>
               <div className="ed-hint">Arm a profile face, then an axis — a sketch line, a plane, or a body face.</div>
               <div className="bool-group-label">Profile</div>
               {profileLabel ? (
@@ -6140,7 +6669,7 @@ export default function App() {
                   disabled={!revolveDialog.profile || !revolveDialog.axis}
                   onClick={createRevolve}
                 >
-                  Create
+                  {revolveDialog.editId ? "Done" : "Create"}
                 </button>
                 <button onClick={closeRevolveDialog}>Cancel</button>
               </div>
@@ -6189,7 +6718,7 @@ export default function App() {
           )}
           {planeDialog && (
             <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
-              <div className="ed-title" data-drag-handle>Reference plane</div>
+              <div className="ed-title" data-drag-handle>{planeDialog.editId ? "Edit plane" : "Reference plane"}</div>
               <label className="ed-field">
                 <span>Method</span>
                 <select
@@ -6296,7 +6825,7 @@ export default function App() {
                   }
                   onClick={createPlane}
                 >
-                  Create
+                  {planeDialog.editId ? "Done" : "Create"}
                 </button>
                 <button onClick={closePlaneDialog}>Cancel</button>
               </div>
@@ -6398,6 +6927,7 @@ export default function App() {
       {booleanDialog && (
         <BooleanDialog
           op={booleanDialog.op}
+          editing={!!booleanDialog.editId}
           candidates={booleanCandidates}
           operandIds={booleanDialog.operandIds}
           base={booleanDialog.base}
@@ -6413,7 +6943,7 @@ export default function App() {
             setBooleanDialog((d) => (d ? { ...d, tools: d.tools.filter((x) => x !== id) } : d))
           }
           onConfirm={confirmBoolean}
-          onCancel={() => setBooleanDialog(null)}
+          onCancel={closeBooleanDialog}
         />
       )}
       {mirrorDialog && (
@@ -6490,7 +7020,7 @@ export default function App() {
         const armTarget = () => setPatternDialog((p) => (p ? { ...p, targetId: null, arming: "target" } : p));
         return (
           <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
-            <div className="ed-title" data-drag-handle>Pattern</div>
+            <div className="ed-title" data-drag-handle>{d.editId ? "Edit pattern" : "Pattern"}</div>
             <div className="ed-modes">
               {(["linear", "circular"] as const).map((k) => (
                 <button
@@ -6712,7 +7242,7 @@ export default function App() {
                 disabled={!!patternDialogWarning || (d.kind === "circular" && !d.axis)}
                 onClick={createPattern}
               >
-                Create
+                {d.editId ? "Done" : "Create"}
               </button>
               <button onClick={closePattern}>Cancel</button>
             </div>

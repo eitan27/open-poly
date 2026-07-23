@@ -672,6 +672,7 @@ export function Viewport({
   meshes,
   ghostMeshes,
   selection,
+  emphasize,
   highlightBodyIds,
   booleanHighlight,
   onSelect,
@@ -704,6 +705,10 @@ export function Viewport({
   /** Live preview bodies to render translucently (empty = none). */
   ghostMeshes: GhostMesh[];
   selection: Selection[];
+  /** Externally-driven emphasis, rendered in the hover colour on top of the
+   *  pointer's own hover (e.g. hovering a row in the constraints list lights up
+   *  the entities/points that constraint references). Independent of the mouse. */
+  emphasize?: Selection[];
   /** Body ids whose whole body should highlight (modifier features resolve to
    *  the body they affect — see App). */
   highlightBodyIds: Set<string>;
@@ -776,6 +781,8 @@ export function Viewport({
   selectionRef.current = selection;
   const highlightBodyIdsRef = useRef(highlightBodyIds);
   highlightBodyIdsRef.current = highlightBodyIds;
+  const emphasizeRef = useRef(emphasize);
+  emphasizeRef.current = emphasize;
   const booleanHighlightRef = useRef(booleanHighlight);
   booleanHighlightRef.current = booleanHighlight;
   const onSelectRef = useRef(onSelect);
@@ -1242,6 +1249,8 @@ export function Viewport({
       };
       for (const s of sels) addOverlay(s, EDGE_SEL_COLOR);
       if (hovered) addOverlay(hovered, EDGE_HOV_COLOR);
+      // Externally-driven emphasis (constraints-list hover) rides the hover colour.
+      for (const s of emphasizeRef.current ?? []) addOverlay(s, EDGE_HOV_COLOR);
       if (overlayPos.length >= 6) {
         // Build a fresh geometry each time — re-using one via setPositions does
         // not grow the rendered instance count when more segments are added.
@@ -1286,6 +1295,10 @@ export function Viewport({
         const w = ptWorld(hovered);
         if (w) { ptPos.push(w[0], w[1], w[2]); ptCol.push(EDGE_HOV_COLOR.r, EDGE_HOV_COLOR.g, EDGE_HOV_COLOR.b); }
       }
+      for (const s of emphasizeRef.current ?? []) {
+        const w = ptWorld(s);
+        if (w) { ptPos.push(w[0], w[1], w[2]); ptCol.push(EDGE_HOV_COLOR.r, EDGE_HOV_COLOR.g, EDGE_HOV_COLOR.b); }
+      }
       if (ptPos.length > 0) {
         pointMarkers.geometry.setAttribute("position", new THREE.Float32BufferAttribute(ptPos, 3));
         pointMarkers.geometry.setAttribute("color", new THREE.Float32BufferAttribute(ptCol, 3));
@@ -1323,6 +1336,21 @@ export function Viewport({
           const mat = child.material as THREE.MeshBasicMaterial;
           mat.opacity = isSel ? 0.32 : isHov ? 0.16 : 0;
           mat.color.set(isSel ? 0xff9d3c : 0x36d6c3);
+        }
+      }
+
+      // Reference planes (user-created): brighten when selected as a feature or
+      // hovered. Datums use their own hover path; user planes are pickable
+      // features, so selection (from the viewport OR the timeline) lights them up.
+      for (const c of planeGroup.children) {
+        const pid = c.userData.planeId as string | undefined;
+        if (!pid) continue;
+        const selP = sels.some((s) => s.kind === "feature" && s.id === pid);
+        const hovP = hoverUserPlaneRef.current === pid || (hovered?.kind === "feature" && hovered.id === pid);
+        if (c instanceof THREE.Mesh) {
+          (c.material as THREE.MeshBasicMaterial).opacity = selP ? 0.34 : hovP ? 0.3 : 0.1;
+        } else if (c instanceof THREE.LineSegments) {
+          (c.material as THREE.LineBasicMaterial).opacity = selP || hovP ? 0.9 : 0.5;
         }
       }
     };
@@ -1906,6 +1934,16 @@ export function Viewport({
           if (flt.body) return { kind: "feature", id: fid };
         }
       }
+      // Reference planes (user-created) are the LOWEST-priority pick — only when
+      // nothing else was hit under the cursor and it's not behind a body face.
+      // Selecting one returns a plain feature selection, so it highlights in the
+      // viewport AND its timeline row lights up, like any other feature.
+      const planeObjs = planeGroup.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
+      const planeHit = raycaster.intersectObjects(planeObjs, false)[0];
+      if (planeHit && planeHit.distance <= faceDist + PICK_DEPTH_TOL) {
+        const pid = planeHit.object.userData.planeId as string | undefined;
+        if (pid) return { kind: "feature", id: pid };
+      }
       return null;
     };
     // What a press inside the active sketch (Select tool) would grab to drag: a
@@ -1998,7 +2036,7 @@ export function Viewport({
       }
       if (hoverUserPlaneRef.current) {
         hoverUserPlaneRef.current = null;
-        applyUserPlaneAppearance(state, null);
+        applyHighlights();
       }
       renderer.domElement.style.cursor = "";
     };
@@ -2060,7 +2098,7 @@ export function Viewport({
           applyDatumAppearance(state, p.id);
         } else if (p.kind === "userplane") {
           hoverUserPlaneRef.current = p.planeId;
-          applyUserPlaneAppearance(state, p.planeId);
+          applyHighlights();
         } else if (p.kind === "face" && p.faceId !== undefined && p.featureId) {
           // Highlight just the hovered face (+ its boundary edges), not the body.
           nextHover = { kind: "face", featureId: p.featureId, faceId: p.faceId };
@@ -2089,7 +2127,15 @@ export function Viewport({
         if (poly && poly.length >= 2) {
           const flat: number[] = [];
           for (const p of poly) { const w = uvToWorld(frame, p[0], p[1]); flat.push(w[0], w[1], w[2]); }
-          state.previewLine.geometry.setPositions(flat);
+          // Rebuild the geometry fresh rather than setPositions on the reused one:
+          // a fat LineGeometry doesn't grow its instance count when the point count
+          // increases (same gotcha as the highlight overlay), so a spline preview
+          // that gains points per click would otherwise render only its first
+          // segment.
+          const g = new LineGeometry();
+          g.setPositions(flat);
+          state.previewLine.geometry.dispose();
+          state.previewLine.geometry = g;
           state.previewLine.visible = true;
         } else {
           state.previewLine.visible = false;
@@ -2540,7 +2586,7 @@ export function Viewport({
   // changes.
   useEffect(() => {
     applyHighlightsRef.current();
-  }, [selection, highlightBodyIds, booleanHighlight]);
+  }, [selection, emphasize, highlightBodyIds, booleanHighlight]);
 
   // Datum visibility (user toggle) + sketch mode (dim solids, hide the inactive
   // planes while editing).
@@ -3191,18 +3237,6 @@ function applyDatumAppearance(state: SceneState, hovered: DatumId | null): void 
   }
 }
 
-// Mirrors applyDatumAppearance for user-created reference planes, which live
-// in state.planeGroup rather than state.datums.
-function applyUserPlaneAppearance(state: SceneState, hovered: string | null): void {
-  for (const c of state.planeGroup.children) {
-    const hot = c.userData.planeId === hovered;
-    if (c instanceof THREE.Mesh) {
-      (c.material as THREE.MeshBasicMaterial).opacity = hot ? 0.3 : 0.1;
-    } else if (c instanceof THREE.LineSegments) {
-      (c.material as THREE.LineBasicMaterial).opacity = hot ? 0.9 : 0.5;
-    }
-  }
-}
 
 function disposeGroup(group: THREE.Group): void {
   for (const child of group.children) {

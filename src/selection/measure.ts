@@ -141,6 +141,12 @@ function circleRadiusOfRegion(region: SketchRegion, entities: SketchEntity[], sc
 function extrudedCircleRadius(doc: Document, faceName: string | undefined, scope: Scope): number | null {
   if (!faceName) return null;
   const feat = doc.features.find((f) => f.id === faceName.split("/")[0]);
+  // A primitive cylinder is now a faceted prism too (so it can boolean), so its
+  // faces carry no analytic radius — read it straight off the feature's param.
+  if (feat?.type === "primitive" && feat.kind === "cylinder") {
+    const r = evaluateExpression(feat.params.radius ?? "", scope);
+    return Number.isFinite(r) && r > 0 ? r : null;
+  }
   if (feat?.type !== "extrude") return null;
   const profile = feat.profile;
   if (profile.kind !== "sketchRegion") return null;

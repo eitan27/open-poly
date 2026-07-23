@@ -410,6 +410,111 @@ export function addImport(
   return insertFeature(doc, feature);
 }
 
+// --- In-place feature edits (double-click re-opens a feature's creation dialog;
+//     Confirm routes here instead of add*). Each preserves the feature's
+//     identity (id, name, suppressed) + appearance (color/opacity/hidden) and its
+//     timeline position, swapping only the inputs/params. ---
+
+export function updateExtrude(
+  doc: Document,
+  id: string,
+  profile: ExtrudeProfile,
+  opts: {
+    distance?: string;
+    flip?: boolean;
+    extent?: ExtrudeFeature["extent"];
+    mode?: ExtrudeFeature["mode"];
+    targetId?: string;
+    upTo?: ExtrudeFeature["upTo"];
+  } = {},
+): Document {
+  return mapFeature(doc, id, (f) =>
+    f.type === "extrude"
+      ? {
+          ...f,
+          profile,
+          distance: opts.distance ?? f.distance,
+          flip: opts.flip ?? f.flip,
+          extent: opts.extent ?? f.extent,
+          mode: opts.mode ?? f.mode,
+          targetId: opts.targetId,
+          upTo: opts.upTo,
+        }
+      : f,
+  );
+}
+
+export function updateBoolean(doc: Document, id: string, op: BooleanOp, operands: string[]): Document {
+  return mapFeature(doc, id, (f) => (f.type === "boolean" ? { ...f, op, operands } : f));
+}
+
+export function updateDressUp(
+  doc: Document,
+  id: string,
+  spec: { op: "chamfer" | "fillet"; targetId: string; edges: string[]; size: string; edgeRefs?: EdgeRef[] },
+): Document {
+  return mapFeature(doc, id, (f) =>
+    f.type === "dressup"
+      ? { ...f, op: spec.op, targetId: spec.targetId, edges: spec.edges, edgeRefs: spec.edgeRefs, size: spec.size }
+      : f,
+  );
+}
+
+export function updatePlane(
+  doc: Document,
+  id: string,
+  spec: {
+    method: PlaneMethod;
+    base: SketchPlaneRef;
+    offset?: string;
+    refB?: SketchPlaneRef;
+    angleAxis?: "u" | "v";
+    angle?: string;
+    points?: [number, number, number][];
+  },
+): Document {
+  return mapFeature(doc, id, (f) =>
+    f.type === "plane"
+      ? {
+          ...f,
+          method: spec.method,
+          base: spec.base,
+          offset: spec.offset ?? f.offset,
+          refB: spec.refB,
+          angleAxis: spec.angleAxis,
+          angle: spec.angle,
+          points: spec.points,
+        }
+      : f,
+  );
+}
+
+export function updateRevolve(
+  doc: Document,
+  id: string,
+  profile: { sketchId: string; regionId: string },
+  axis: RevolveAxis,
+  angle: string,
+  symmetric: boolean,
+): Document {
+  return mapFeature(doc, id, (f) =>
+    f.type === "revolve" ? { ...f, profile, axis, angle, symmetric } : f,
+  );
+}
+
+export function updateMirror(doc: Document, id: string, targetId: string, plane: SketchPlaneRef): Document {
+  return mapFeature(doc, id, (f) => (f.type === "mirror" ? { ...f, targetId, plane } : f));
+}
+
+export function updatePattern(
+  doc: Document,
+  id: string,
+  targetId: string,
+  fields: Omit<PatternFeature, "id" | "type" | "name" | "suppressed" | "targetId" | "color" | "opacity">,
+): Document {
+  return mapFeature(doc, id, (f) => (f.type === "pattern" ? { ...f, targetId, ...fields } : f));
+}
+
 /** Resolve every (active) reference-plane feature to a concrete frame, keyed by
  *  plane feature id. Processed in document order so a plane may be based on an
  *  earlier plane. Pure geometry — no kernel needed. */

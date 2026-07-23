@@ -9,6 +9,8 @@ export interface BooleanCandidate {
 
 interface Props {
   op: BooleanOp;
+  /** Editing an existing boolean (re-titles the dialog + primary button). */
+  editing?: boolean;
   candidates: BooleanCandidate[];
   /** Operands for union / intersect (a flat list). */
   operandIds: string[];
@@ -28,6 +30,7 @@ interface Props {
 
 export function BooleanDialog({
   op,
+  editing,
   candidates,
   operandIds,
   base,
@@ -53,7 +56,7 @@ export function BooleanDialog({
 
   return (
     <DraggableDialog className="extrude-dialog boolean-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
-      <div className="ed-title" data-drag-handle>Boolean operation</div>
+      <div className="ed-title" data-drag-handle>{editing ? "Edit boolean" : "Boolean operation"}</div>
       <div className="ed-modes">
         {BOOLEAN_OPS.map((o) => (
           <button key={o} className={op === o ? "active" : ""} onClick={() => onOpChange(o)}>
@@ -104,7 +107,7 @@ export function BooleanDialog({
       )}
 
       <div className="ed-actions">
-        <button className="ed-primary" disabled={!canConfirm} onClick={onConfirm}>Confirm</button>
+        <button className="ed-primary" disabled={!canConfirm} onClick={onConfirm}>{editing ? "Done" : "Confirm"}</button>
         <button onClick={onCancel}>Cancel</button>
       </div>
     </DraggableDialog>

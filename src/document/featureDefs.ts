@@ -1,7 +1,7 @@
 // Static metadata for each feature kind: which parameters it exposes and their
 // defaults. Drives both the parameter editor UI and new-feature creation.
 import type { BooleanOp } from "../kernel/types";
-import type { FeatureKind } from "./types";
+import type { Feature, FeatureKind } from "./types";
 
 export interface ParamDef {
   name: string;
@@ -62,3 +62,24 @@ export const BOOLEAN_OP_LABELS: Record<BooleanOp, string> = {
   subtract: "Subtract",
   intersect: "Intersect",
 };
+
+/** What KIND of thing a feature is ("Extrude", "Fillet", "Box"), as opposed to
+ *  its user-editable `name`. Shown in the timeline rows and as the edit panel's
+ *  title. Primitives fall through to their `FEATURE_DEFS` label. */
+export function featureTypeLabel(feature: Feature): string {
+  switch (feature.type) {
+    case "sketch": return "Sketch";
+    case "extrude": return "Extrude";
+    case "dressup": return feature.op === "chamfer" ? "Chamfer" : "Fillet";
+    case "boolean": return BOOLEAN_OP_LABELS[feature.op];
+    case "plane": return "Plane";
+    case "transform": return "Transform";
+    case "import": return "Import";
+    case "mirror": return "Mirror";
+    case "pattern": return "Pattern";
+    case "revolve": return "Revolve";
+    case "sweep": return "Sweep";
+    case "loft": return "Loft";
+    default: return FEATURE_DEFS[feature.kind].label;
+  }
+}

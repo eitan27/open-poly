@@ -209,6 +209,31 @@ a plane chokes OCCT's boolean here; a B-spline curved surface booleans fine.
   breaks. Confirmed a primitive cylinder − box also fails, so it's not the construction.
 - **Sweep/loft are smooth AND booleanable** because they emit B-spline surfaces.
 
+### FIXED 2026-07 — the primitive cylinder + body-face extrudes are faceted too
+The remaining analytic-cylinder holes are closed by extending the faceting the app already
+did for extruded circles:
+- **`buildPrimitive` cylinder = a faceted `CIRCLE_FACETS`-gon prism** (`facetedCylinderShape`
+  in `worker.ts`), not `makeCylinder`'s `gp_Cyl`. So `cylinder − box`, `cylinder ∪ box`,
+  and cutting/bossing a cylinder's own cap all boolean fine now. Looks identical to an
+  extruded circle (already faceted); diameter readout preserved by teaching
+  `extrudedCircleRadius` to read a primitive cylinder's `radius` param.
+- **Extruding a curved body face** (`facetedProfileFace`) rebuilds the profile as a faceted
+  planar face (sampling the boundary wires via OCCT `GCPnts_TangentialDeflection`) before
+  prisming, so the extruded wall is planar → booleanable. Straight-edged faces are untouched.
+- **Revolve is a faceted loft too** (`facetedRevolveFromFace`): a ruled `BRepOffsetAPI_
+  ThruSections` through `CIRCLE_FACETS` rotated copies of the profile's outer wire, instead
+  of `BRepPrimAPI_MakeRevol`'s analytic surfaces of revolution. So a revolve body now
+  cuts/fuses like any other (extruding a revolve face used to fail `StdFail_NotDone`). Falls
+  back to analytic `MakeRevol` for the two cases the ruled loft can't do — a profile with
+  **holes** (ThruSections is one wire/section) or one **touching the axis** (pole degenerates);
+  those stay smooth-but-unbooleanable, as before. NB replicad `outerWire()`/`innerWires()`
+  DELETE their receiver — always call on a `.clone()`.
+- `NurbsConvert`/`ShapeCustom` are NOT in this wasm build (checked), so B-spline conversion
+  of analytic surfaces isn't available — faceting is the fix within this build. **Sphere is
+  still analytic** (`makeSphere`) so sphere booleans still fail; faceting a sphere needs a
+  UV-meshed solid, not a 2D-prism, so it's left for later. Verified by
+  `scripts/verify-circular-extrude.mjs` (cylinder + curved-face + revolve cases).
+
 ### Shipped workaround (diameter readout only)
 `measure.ts` `extrudedCircleRadius` traces a face named `{extrudeId}/start|end|side{n}`
 back to its source sketch circle and reads the radius, re-derived every regen (tracks

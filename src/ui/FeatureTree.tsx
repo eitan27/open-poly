@@ -1,4 +1,4 @@
-import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "../document/featureDefs";
+import { featureTypeLabel } from "../document/featureDefs";
 import type { Document } from "../document/types";
 import type { DatumId } from "../viewport/Viewport";
 import { EyeIcon, SuppressIcon } from "./icons";
@@ -83,33 +83,7 @@ export function FeatureTree({
                 onClick={() => onSelect(feature.id)}
                 onDoubleClick={() => onDoubleClick(feature.id)}
               >
-                <span className="row-kind">
-                  {feature.type === "sketch"
-                    ? "Sketch"
-                    : feature.type === "extrude"
-                      ? "Extrude"
-                      : feature.type === "dressup"
-                        ? feature.op === "chamfer" ? "Chamfer" : "Fillet"
-                        : feature.type === "boolean"
-                          ? BOOLEAN_OP_LABELS[feature.op]
-                          : feature.type === "plane"
-                            ? "Plane"
-                            : feature.type === "transform"
-                              ? "Transform"
-                              : feature.type === "import"
-                                ? "Import"
-                                : feature.type === "mirror"
-                                  ? "Mirror"
-                                  : feature.type === "pattern"
-                                  ? "Pattern"
-                                  : feature.type === "revolve"
-                                    ? "Revolve"
-                                    : feature.type === "sweep"
-                                      ? "Sweep"
-                                      : feature.type === "loft"
-                                        ? "Loft"
-                                        : FEATURE_DEFS[feature.kind].label}
-                </span>
+                <span className="row-kind">{featureTypeLabel(feature)}</span>
                 <span className="row-name">{feature.name}</span>
                 {error && <span className="row-badge" title={error}>!</span>}
                 {!error && warning && <span className="row-badge warn" title={warning}>⚠</span>}

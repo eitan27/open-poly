@@ -941,24 +941,101 @@ docs in different tabs works naturally and becomes the recommended pattern.
 > multi-document for both the human (dialog, title, thumbnails, .json files)
 > and the agent (list/open/new/rename/duplicate + document identity in reads).
 
-### Phase 8.5 — UI/UX backlog (next polish pass) — IN PROGRESS (6/8 done)
+### Phase 8.5 — UI/UX backlog (next polish pass) — IN PROGRESS (7/8 done)
 
-> Remaining: **#1** (relocate Constraints + Parameters into a movable panel) and
-> **#5** (timeline formatting). Items #2, #3, #4, #6, #7, #8 are ✅ DONE.
+> Remaining: **#5** (timeline formatting). Items #1, #2, #3, #4, #6, #7, #8 are ✅ DONE.
 
 A focused pass on layout, discoverability, and the two interactions that still
 feel rough (extrude extents, boolean operand picking), plus shortcuts and the
 spline tool. Captured 2026-06-21.
 
-1. **Relocate the Constraints list + Parameters so they're discoverable.**
-   Today both sit in the left sidebar *below* the Parts list, so when you're
-   editing a sketch or a solid they're easy to miss. Move the active-edit
-   panel (constraints while sketching; parameters while a feature is selected)
-   somewhere it reads as "the thing you're editing" — e.g. a small **movable
-   dialog anchored top-left of the viewport** (like the Extrude mini-dialog),
-   appearing on edit and dismissing when done. Open to alternatives (a docked
-   context panel, a right rail). See Phase 2b "Constraint management" + the
-   `ParamEditor`/constraints JSX in `App.tsx`.
+1. **Relocate the Constraints list + Parameters so they're discoverable. ✅ DONE.**
+   Both used to sit in the left sidebar *below* the Parts list, easy to miss.
+   Now a **movable `EditPanel`** (`ui/EditPanel.tsx`) floats over the viewport,
+   anchored below the model toolbar / right of the sketch toolbar (`left:66 top:58`,
+   draggable by its title bar via `DraggableDialog`). It mounts **only** when
+   something is being edited — a selected feature (its Parameters, titled with the
+   feature type via the new `featureTypeLabel` in `featureDefs.ts`) and/or the
+   active sketch's Constraints. A ✕ hides it; the next selection brings it back
+   (keyed on `targetKey`). Verified end-to-end by `scripts/verify-edit-panel.mjs`
+   (5 checks). See `ui/ParamEditor`; the sidebar tail is now empty below Parts.
+   **Panel follow-up (2026-07): constraint-list hover highlighting.** Hovering a
+   constraint row emphasises its name (`.cl-hover`, teal) and lights up the
+   entities/points it acts on in the viewport, via a new `emphasize?: Selection[]`
+   prop on `Viewport` (hover colour, pointer-independent). Mapping =
+   `constraintSelections` in `App.tsx` (`constraintEmphasis` memo); point refs →
+   precise uv markers via `pointRefUv`. Verified by
+   `scripts/verify-constraint-hover.mjs`.
+
+   **Unified edit model (2026-07): one editor per feature, opened by double-click.**
+   Selection now only highlights — it no longer pops a params surface (that was
+   redundant with, e.g., the Transform gizmo dialog). Double-clicking a timeline
+   row opens the single editor for that feature (`openFeatureEditor` in `App.tsx`):
+   - `sketch` → sketch-edit mode; `transform` → gizmo dialog (both pre-existing).
+   - Features **with a creation dialog** (`extrude`, `plane`, `revolve`, `boolean`,
+     `mirror`, `pattern`, `chamfer/fillet`) re-open that dialog **populated in edit
+     mode**: each dialog state carries an `editId`, the `edit*` opener seeds it from
+     the feature, inputs stay **re-pickable** through the existing selection/arm
+     paths, and Confirm ("Done") routes to a new in-place `update*` document setter
+     (`updateExtrude/Plane/Revolve/Boolean/DressUp/Mirror/Pattern`) that preserves
+     id/name/appearance/timeline-position instead of `add*`-ing a duplicate.
+   - Features **without a creation dialog** (`primitive`, `import`, `sweep`, `loft`)
+     open their `ParamEditor` in the floating `EditPanel` (`editParamsId`), which now
+     also hosts the sketch Constraints list. Live edits via `updateParam`; ✕ / Esc /
+     select-away close it.
+   Doc setters unit-tested (`document/editInPlace.test.ts`, 6). E2E:
+   `scripts/verify-edit-dialogs.mjs` (single-click no panel; primitive params;
+   extrude edit updates in place, no duplicate) + `scripts/verify-edit-transform-plane.mjs`
+   (transform de-dup; plane edit in place).
+
+   **Edit-mode polish (2026-07):**
+   - *Live preview on every edit.* Editing a dialog feature applies changes to the
+     doc **live** (a per-dialog "live-sync" effect → `update*` under one coalesced
+     `edit:<id>` undo step), so the real regen previews each change; **Cancel**
+     reverts to a snapshot taken on open (`beginEdit`/`commitEdit`/`cancelEdit`).
+     `shouldLiveApply` (a params-signature guard) skips the open-time seed and
+     breaks the doc→effect feedback loop that would otherwise re-apply on the
+     Cancel restore. No-dialog params (box/cylinder/sweep/loft) already previewed
+     live via `updateParam`. Verified by `scripts/verify-edit-preview.mjs`.
+   - *Reference planes are clickable in the viewport.* `pickSelection` raycasts the
+     user-plane quads (lowest priority) → a `feature` selection, so a plane
+     highlights in the viewport AND its timeline row lights up (and vice-versa);
+     `applyHighlights` brightens a selected/hovered plane (folded in the old
+     `applyUserPlaneAppearance`).
+   - *Params box styled like the dialogs.* `.edit-panel` param rows use the
+     creation-dialog `.ed-field` flex look (label left / control right), and the
+     panel now shares the creation-dialog **blue border** + lighter section labels
+     (dropped the bold sidebar heading + redundant "Parameters" label), so a
+     solid/sketch edit menu reads identically to Extrude/Revolve/etc.
+
+   **Circular-face extrude fix (2026-07).** Extruding/booleaning a cylinder face
+   used to fail (`StdFail_NotDone`) — the analytic `gp_Cyl` boolean bug (see
+   BACKLOG). Fixed by faceting: the **cylinder primitive** is now a faceted prism
+   (`facetedCylinderShape`), and **curved body-face profiles** are rebuilt as
+   faceted planar faces (`facetedProfileFace`, boundary sampled via OCCT
+   `GCPnts_TangentialDeflection`) before prisming. Both look like the already-
+   faceted extruded circles; diameter readout preserved. Verified by
+   `scripts/verify-circular-extrude.mjs`. (Sphere booleans still analytic-limited.)
+   **Revolve too (2026-07):** revolve is now a faceted ruled loft
+   (`facetedRevolveFromFace`, `BRepOffsetAPI_ThruSections` over rotated profile
+   wires) instead of analytic `MakeRevol`, so extruding/cutting a revolve face
+   works. Falls back to analytic `MakeRevol` for holed / axis-touching profiles.
+
+   **Smooth DISPLAY of faceted bodies (2026-07).** Faceted curved bodies now
+   *render* round while staying faceted for the kernel: `smoothMeshNormals`
+   averages per-vertex normals within a crease-angle smooth group (walls shade
+   smooth; real corners stay sharp), and `smoothEdgeHashes` + `filterSmoothEdges`
+   drop the near-tangent facet-seam edges. Full revolves additionally run
+   `ShapeUpgrade_UnifySameDomain` to merge coplanar cap segments + unify the
+   loft's closing-seam edges (a faint wall seam can still remain). Display-only —
+   picking / measurement / booleans use the untouched faceted solid. `CREASE_DOT`
+   (~22°) is the single crease threshold; `CIRCLE_FACETS` unchanged (96).
+
+   **Spline draft-preview regression fixed (2026-07).** The fat-line `previewLine`
+   reused one `LineGeometry` via `setPositions`, which doesn't grow its rendered
+   instance count as points accumulate — so a spline-in-progress drew only its
+   first segment. Rebuilt fresh each update (same workaround as the highlight
+   overlay). Sketch geometry + commit were always fine; this was render-only.
 
 2. **Improve Extrude "Through All" + move extents to a dropdown — ✅ DONE.**
    Extent picker moved to a **dropdown** (Blind / Symmetric / Through All / Up to
