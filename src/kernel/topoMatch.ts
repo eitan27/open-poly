@@ -182,3 +182,103 @@ export function matchEdges(
   for (let r = 0; r < refs.length; r++) if (!result[r]) result[r] = { kind: "lost" };
   return result;
 }
+
+/** What a Shell feature stored about a removed face when it was picked
+ *  (persistent name matched first, like `EdgeRefFingerprint`; `center` is the
+ *  face's centroid, absent only for a legacy ref with no fingerprint). */
+export interface NamedFaceRefFingerprint {
+  name: string;
+  center?: Vec3;
+  normal?: Vec3;
+}
+
+/** A face of the rebuilt body, offered as a match candidate for `matchFaces`. */
+export interface NamedFaceCandidate {
+  /** Current persistent name (unnamed faces can still match geometrically). */
+  name?: string;
+  center: Vec3;
+  /** Unit normal — only for planar faces. */
+  normal?: Vec3;
+}
+
+export type FaceMatch =
+  | { kind: "name"; index: number } // exact persistent-name hit
+  | { kind: "base"; index: number } // unique match after stripping #n suffixes
+  | { kind: "geom"; index: number } // geometric fingerprint match
+  | { kind: "lost" }; // nothing plausible — surface to the user
+
+/** Re-resolve a set of stored face references (e.g. Shell's removed faces)
+ *  against the rebuilt body's faces. Three passes, each consuming candidates
+ *  one-to-one — mirrors `matchEdges`:
+ *  1. exact persistent-name match;
+ *  2. unique base-name match (both sides stripped of `#n` suffixes);
+ *  3. geometric match (centroid + normal), best-score-first so two refs can't
+ *     fight over one candidate.
+ *  Returns one FaceMatch per ref, in order. */
+export function matchFaces(
+  refs: readonly NamedFaceRefFingerprint[],
+  candidates: readonly NamedFaceCandidate[],
+  scale: number,
+): FaceMatch[] {
+  const s = Math.max(scale, 1);
+  const result: FaceMatch[] = new Array(refs.length).fill(null as unknown as FaceMatch);
+  const taken = new Set<number>();
+
+  // Pass 1: exact names.
+  for (let r = 0; r < refs.length; r++) {
+    const i = candidates.findIndex((c, ci) => !taken.has(ci) && c.name === refs[r].name);
+    if (i >= 0) {
+      result[r] = { kind: "name", index: i };
+      taken.add(i);
+    }
+  }
+
+  // Pass 2: base names, only when unambiguous (exactly one unused candidate
+  // shares the base — with several, the suffix order isn't meaningful and
+  // geometry decides instead).
+  for (let r = 0; r < refs.length; r++) {
+    if (result[r]) continue;
+    const base = stripNameSuffixes(refs[r].name);
+    const hits: number[] = [];
+    for (let ci = 0; ci < candidates.length; ci++) {
+      if (taken.has(ci)) continue;
+      const cn = candidates[ci].name;
+      if (cn && stripNameSuffixes(cn) === base) hits.push(ci);
+    }
+    if (hits.length === 1) {
+      result[r] = { kind: "base", index: hits[0] };
+      taken.add(hits[0]);
+    }
+  }
+
+  // Pass 3: geometry. Collect every plausible (ref, candidate) pair, then
+  // assign globally best-first so the closest pairing wins.
+  const pairs: { r: number; ci: number; score: number }[] = [];
+  for (let r = 0; r < refs.length; r++) {
+    if (result[r]) continue;
+    const ref = refs[r];
+    if (!ref.center) continue; // legacy ref with no fingerprint — nothing to match on
+    for (let ci = 0; ci < candidates.length; ci++) {
+      if (taken.has(ci)) continue;
+      const c = candidates[ci];
+      const distScore = len(sub(c.center, ref.center)) / s;
+      if (distScore > FACE_DIST_REJECT) continue;
+      let score = distScore;
+      if (ref.normal && c.normal) {
+        score += FACE_NORMAL_WEIGHT * (1 - Math.abs(dot(ref.normal, c.normal)));
+      } else if (ref.normal !== undefined || c.normal !== undefined) {
+        score += FACE_TYPE_PENALTY;
+      }
+      pairs.push({ r, ci, score });
+    }
+  }
+  pairs.sort((a, b) => a.score - b.score);
+  for (const p of pairs) {
+    if (result[p.r] || taken.has(p.ci)) continue;
+    result[p.r] = { kind: "geom", index: p.ci };
+    taken.add(p.ci);
+  }
+
+  for (let r = 0; r < refs.length; r++) if (!result[r]) result[r] = { kind: "lost" };
+  return result;
+}

@@ -42,7 +42,15 @@ import {
   isRightAngle,
   legFits,
 } from "../geom/chamferWedge";
-import { matchEdges, matchFace, type EdgeCandidate, type FaceCandidate } from "./topoMatch";
+import {
+  matchEdges,
+  matchFace,
+  matchFaces,
+  type EdgeCandidate,
+  type FaceCandidate,
+  type NamedFaceCandidate,
+  type NamedFaceRefFingerprint,
+} from "./topoMatch";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -2220,6 +2228,141 @@ function boxFromBounds([lo, hi]: [Vec3, Vec3], margin: number): Shape3D {
   return box.translate((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2] - margin) as Shape3D;
 }
 
+/** Re-resolve a Shell's stored face references (the faces to remove) against
+ *  the body's current faces — mirrors `resolveDressUpEdges`: exact persistent
+ *  name first, then a suffix-insensitive base-name match, then a geometric
+ *  match on the stored fingerprint (centroid + normal). Emits a warning for
+ *  every re-matched or lost face; only outright-lost faces are dropped. */
+function resolveShellFaces(
+  target: Body,
+  faceNames: string[],
+  faceRefs: ResolvedFaceRef[] | undefined,
+  warn: Warn | undefined,
+): { hits: Face[]; lost: string[] } {
+  const faces = target.shape.faces;
+
+  // Fast path: every requested name still exists — no fingerprinting needed.
+  const byName = new Map<string, number>();
+  faces.forEach((f, i) => {
+    const nm = target.names.get(f.hashCode);
+    if (nm !== undefined && !byName.has(nm)) byName.set(nm, i);
+  });
+  if (faceNames.every((nm) => byName.has(nm))) {
+    return { hits: faceNames.map((nm) => faces[byName.get(nm)!]), lost: [] };
+  }
+
+  // Slow path: build geometric candidates and match all refs one-to-one.
+  const candidates: NamedFaceCandidate[] = faces.map((f) => ({
+    name: target.names.get(f.hashCode),
+    center: f.center.toTuple() as [number, number, number],
+    normal: f.geomType === "PLANE" ? (f.normalAt().normalized().toTuple() as [number, number, number]) : undefined,
+  }));
+  const refs: NamedFaceRefFingerprint[] = faceNames.map((nm, i) => ({
+    name: nm,
+    center: faceRefs?.[i]?.center,
+    normal: faceRefs?.[i]?.normal,
+  }));
+  const matches = matchFaces(refs, candidates, bboxDiagonal(target.shape));
+
+  const hits: Face[] = [];
+  const lost: string[] = [];
+  matches.forEach((m, i) => {
+    if (m.kind === "lost") {
+      lost.push(faceNames[i]);
+      return;
+    }
+    hits.push(faces[m.index]);
+    if (m.kind !== "name") {
+      const nowName = candidates[m.index].name;
+      warn?.(
+        `face "${faceNames[i]}" was renamed by an upstream edit; re-matched ` +
+          `${m.kind === "base" ? "by base name" : "geometrically"}${nowName ? ` (now "${nowName}")` : ""}`,
+      );
+    }
+  });
+  return { hits, lost };
+}
+
+/** Hollow out a body: remove the named faces (they become openings) and offset
+ *  the remaining wall inward by `thickness`, propagating face names through
+ *  the operation's history (kept faces keep their names; each kept face's new
+ *  inner-offset face is named `"<name>/in"`). Zero faces makes a fully sealed
+ *  hollow shell. Uses OCCT's `BRepOffsetAPI_MakeThickSolid` (the same op
+ *  replicad's `.shell()` wraps) directly, since the running-fold model needs
+ *  the target's `NamedShape` history, which replicad's high-level API doesn't
+ *  expose. Modifies geometry; returns a NamedShape. */
+function shellNamed(
+  target: Body,
+  faceNames: string[],
+  faceRefs: ResolvedFaceRef[] | undefined,
+  thickness: number,
+  warn?: Warn,
+): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const { hits, lost } = resolveShellFaces(target, faceNames, faceRefs, warn);
+  if (faceNames.length > 0 && hits.length === 0) {
+    throw new Error(
+      "shell: none of the picked faces could be re-found on the body (an upstream edit changed its shape) — edit the feature to re-pick them",
+    );
+  }
+  if (lost.length > 0) {
+    warn?.(
+      `${lost.length} of ${faceNames.length} faces could not be re-found and were skipped: ${lost.join(", ")} — edit the feature to re-pick them`,
+    );
+  }
+  const removedHashes = new Set(hits.map((f) => f.hashCode));
+  const facesToRemove = new oc.TopTools_ListOfShape_1();
+  for (const f of hits) facesToRemove.Append_1(f.wrapped);
+
+  const builder = new oc.BRepOffsetAPI_MakeThickSolid();
+  const progress = new oc.Message_ProgressRange_1();
+  builder.MakeThickSolidByJoin(
+    target.shape.wrapped,
+    facesToRemove,
+    -thickness,
+    1e-3,
+    oc.BRepOffset_Mode.BRepOffset_Skin,
+    false,
+    false,
+    oc.GeomAbs_JoinType.GeomAbs_Arc,
+    false,
+    progress,
+  );
+  const shape = cast(builder.Shape()) as Shape3D;
+
+  const names = new Map<number, string>();
+  const used = new Map<string, number>();
+  const assign = (h: number, name: string) => {
+    const c = used.get(name) ?? 0;
+    used.set(name, c + 1);
+    names.set(h, c === 0 ? name : `${name}#${c}`);
+  };
+  for (const f of target.shape.faces) {
+    // A removed face is skipped unconditionally: MakeThickSolidByJoin doesn't
+    // reliably flag its "closing" faces IsDeleted (unlike a boolean/fillet),
+    // so trusting IsDeleted here can leak the old name onto a stray hash that
+    // happens to collide with an unrelated face in the result.
+    if (removedHashes.has(f.hashCode)) continue;
+    const nm = target.names.get(f.hashCode);
+    if (!nm || builder.IsDeleted(f.wrapped)) continue;
+    const images = drainList(builder.Modified(f.wrapped));
+    if (images.length === 0) names.set(f.hashCode, nm);
+    else for (const img of images) assign(hashOf(img), nm);
+  }
+  // The new inner-wall faces, generated as the offset image of each face that
+  // was kept (an opening has no offset image of its own).
+  for (const f of target.shape.faces) {
+    if (removedHashes.has(f.hashCode)) continue;
+    const nm = target.names.get(f.hashCode);
+    if (!nm) continue;
+    for (const g of drainList(builder.Generated(f.wrapped))) assign(hashOf(g), `${nm}/in`);
+  }
+  facesToRemove.delete();
+  builder.delete();
+  return { shape, names };
+}
+
 const AXIS_DIR: Record<"x" | "y" | "z", [number, number, number]> = {
   x: [1, 0, 0],
   y: [0, 1, 0],
@@ -2810,6 +2953,14 @@ function buildBodies(
           if (afterLocal !== res) afterLocal.shape.delete();
           clipBox?.delete();
         }
+        target.shape.delete();
+        target.shape = res.shape;
+        target.names = res.names;
+        target.key = contentKey(feature, [target.key]);
+      } else if (feature.type === "shell") {
+        // Hollow out the target body in place, keeping its id.
+        const target = requireBody(bodies, feature.targetId);
+        const res = shellNamed(target, feature.faces, feature.faceRefs, feature.thickness, warn);
         target.shape.delete();
         target.shape = res.shape;
         target.names = res.names;

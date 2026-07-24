@@ -20,6 +20,7 @@ import {
   addPattern,
   addPlane,
   addRevolve,
+  addShell,
   addSketch,
   addSketchConstraints,
   addSweep,
@@ -53,7 +54,7 @@ import {
   type SketchPlaneId,
   type SketchPlaneRef,
 } from "../document/planes";
-import type { DistanceRef, Document, EdgeRef, ExtrudeProfile, Feature, PatternAxisRef, PatternDirRef, PointRef, PrimitiveFeature, RevolveAxis, SketchConstraint, SketchEntity, SketchFeature, Variable, Vec2 } from "../document/types";
+import type { DistanceRef, Document, EdgeRef, ExtrudeProfile, FaceRef, Feature, PatternAxisRef, PatternDirRef, PointRef, PrimitiveFeature, RevolveAxis, SketchConstraint, SketchEntity, SketchFeature, Variable, Vec2 } from "../document/types";
 import { listMeta } from "../storage/db";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 import type { SectionViewState } from "../document/sectionView";
@@ -189,6 +190,14 @@ function edgeFingerprintByName(edges: MeshedEdges, name: string): EdgeRef {
     }
   }
   return { name, mid: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2], length };
+}
+
+/** Geometric fingerprint of a named face (centroid + averaged normal), stored
+ *  with a Shell alongside the persistent name so the kernel can re-match the
+ *  face if an upstream edit renames it — mirrors `edgeFingerprintByName`. */
+function faceFingerprintByName(faces: MeshedFaces, name: string): FaceRef {
+  const g = faceGeomByName(faces, name);
+  return g ? { name, center: g.center, normal: g.normal } : { name };
 }
 
 function bbox(faces: MeshedFaces): { min: [number, number, number]; max: [number, number, number] } | undefined {
@@ -815,6 +824,20 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
             })
           : undefined;
         const r = addDressUp(doc, op.kind, op.targetId, expanded, op.size, edgeRefs, op.angle, op.flip, op.faces, faceRefs);
+        next = r.doc;
+        createdId = r.id;
+        break;
+      }
+      case "shell": {
+        requireFeature(doc, op.targetId);
+        // Bake geometric fingerprints for the named faces (from the target's
+        // tessellation) so the kernel can re-match them if a later upstream
+        // edit renames the faces. A name the mesh doesn't know stays a
+        // bare name-only ref — the kernel will report it properly.
+        const faces = op.faces ?? [];
+        const mesh = ctx.getMeshes().find((m) => m.id === op.targetId);
+        const faceRefs = mesh ? faces.map((nm) => faceFingerprintByName(mesh.mesh.faces, nm)) : undefined;
+        const r = addShell(doc, op.targetId, faces, op.thickness, faceRefs);
         next = r.doc;
         createdId = r.id;
         break;
