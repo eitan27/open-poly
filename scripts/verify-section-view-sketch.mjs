@@ -120,7 +120,18 @@ await page.waitForTimeout(150);
 const center = await toScreen(floorPoint);
 await clickPx(canvas.x + center.x, canvas.y + center.y);
 await clickPx(canvas.x + center.x + 30, canvas.y + center.y);
-await page.waitForTimeout(200);
+// The second click commits the circle asynchronously (a constraint solve
+// runs first) — poll rather than a fixed sleep.
+await page
+  .waitForFunction(
+    (id) => {
+      const f = window.__openpoly.document().features.find((x) => x.id === id);
+      return (f?.entities ?? []).some((e) => e.type === "circle");
+    },
+    sk?.id,
+    { timeout: 5000 },
+  )
+  .catch(() => {});
 
 doc = await read({ read: "document" });
 const sketchNow = doc.features.find((f) => f.id === sk?.id);

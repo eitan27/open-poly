@@ -36,6 +36,7 @@ import {
   type SketchPlaneRef,
   type Vec3,
 } from "../document/planes";
+import { resolveSectionPlane, sectionKeeps } from "../document/sectionView";
 import {
   arcFrom3,
   circleFrom3,
@@ -1974,9 +1975,16 @@ export function Viewport({
 
     // Section view clips body geometry only — datums, user reference planes,
     // sketch entities and regions stay pickable regardless (same exemption as
-    // their rendering: see the clippingPlanes assignments above).
-    const sectionAllows = (p: THREE.Vector3): boolean =>
-      !sectionViewRef.current.enabled || sectionPlane.distanceToPoint(p) >= -1e-6;
+    // their rendering: see the clippingPlanes assignments above). Routed
+    // through the same pure `resolveSectionPlane`/`sectionKeeps` the render
+    // sync (syncSectionPlane, below) and the unit tests use — one definition
+    // of "which side is kept," so picking and the GPU clip can't drift apart.
+    const sectionAllows = (p: THREE.Vector3): boolean => {
+      const sv = sectionViewRef.current;
+      if (!sv.enabled) return true;
+      const plane = resolveSectionPlane(sv.frame, sv.offset, sv.flip);
+      return sectionKeeps(plane, [p.x, p.y, p.z]);
+    };
 
     const pick = (clientX: number, clientY: number) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -2692,7 +2700,6 @@ export function Viewport({
     // always runs first in animate()) so the cap/widget comfortably cover
     // whatever's currently in the scene.
     const sectionOrigin = new THREE.Vector3();
-    const sectionNormal = new THREE.Vector3();
     const sectionEffNormal = new THREE.Vector3();
     const sectionU = new THREE.Vector3();
     const sectionV = new THREE.Vector3();
@@ -2708,11 +2715,10 @@ export function Viewport({
         return;
       }
       const f = sv.frame;
-      sectionNormal.set(f.normal[0], f.normal[1], f.normal[2]).normalize();
       const offset = sectionDrag ? sectionDrag.offset : sv.offset;
-      sectionOrigin.set(f.origin[0], f.origin[1], f.origin[2]).addScaledVector(sectionNormal, offset);
-      sectionEffNormal.copy(sectionNormal);
-      if (sv.flip) sectionEffNormal.negate();
+      const resolved = resolveSectionPlane(f, offset, sv.flip);
+      sectionOrigin.set(resolved.origin[0], resolved.origin[1], resolved.origin[2]);
+      sectionEffNormal.set(resolved.normal[0], resolved.normal[1], resolved.normal[2]);
       sectionPlane.setFromNormalAndCoplanarPoint(sectionEffNormal, sectionOrigin);
 
       sectionU.set(f.uAxis[0], f.uAxis[1], f.uAxis[2]).normalize();
