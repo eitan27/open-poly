@@ -322,8 +322,12 @@ driving variable changes — is **met**.
 **Done — navigation & entry**
 - Clickable/snappable **origin point**; the three datum **planes** (Top/Front/
   Right) rendered faintly, hover/click-selectable (selecting one starts a sketch);
-  **standard view navigation** (digits `1`–`7`). (A true interactive ViewCube is a
-  later nicety.)
+  **standard view navigation** (digits `1`–`7`) plus an **on-canvas interactive
+  ViewCube — ✅ DONE** (`createViewCube` in `Viewport.tsx`, replacing the old
+  view-buttons row): a rendered cube with a canvas-texture label per face,
+  hover highlighting, and click-to-navigate on both faces (named views) and
+  corners (iso 3/4 views), plus a Home button tucked at its corner that snaps
+  to iso-zoomed-to-fit.
 - Pick a plane/planar face → sketch (camera normal-to); **snapping** (endpoints /
   midpoints / origin / coplanar edges); delete; **double-click** a timeline row to
   edit its feature.
