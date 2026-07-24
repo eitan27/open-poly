@@ -89,6 +89,7 @@ import type { BooleanOp, MeshedEdges, MeshedFaces, ShapeMeshPayload } from "./ke
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, worldToUv, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
+import { DEFAULT_SECTION_VIEW, type SectionViewState } from "./document/sectionView";
 import { evaluateExpression } from "./document/expression";
 import { validateDressUpSize, mapDressUpKernelError } from "./document/dressUpValidation";
 import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
@@ -1022,7 +1023,8 @@ export default function App() {
   const [picking, setPicking] = useState(false);
   // What the plane/face pick flow is for: starting a sketch, or the base of a
   // new reference plane.
-  const [pickPurpose, setPickPurpose] = useState<"sketch" | "plane" | "revolveAxis" | "patternAxis" | "patternDir">("sketch");
+  const [pickPurpose, setPickPurpose] =
+    useState<"sketch" | "plane" | "revolveAxis" | "patternAxis" | "patternDir" | "sectionPlane">("sketch");
   // The reference-plane dialog. `method` chooses the placement; the relevant
   // fields are filled by picks (base/refB planes-or-faces; points) or text inputs.
   const [planeDialog, setPlaneDialog] = useState<{
@@ -1402,6 +1404,12 @@ export default function App() {
     "plane-right": true,
   });
   const viewApiRef = useRef<ViewportApi | null>(null);
+  // Section view: pure viewport state — no undo, no timeline (see BACKLOG.md).
+  // Same bucket as datumVisibility/selFilter above: it changes nothing about the
+  // geometry, so it never goes through setDoc. `offset` is measured along the
+  // ref's own (unflipped) normal; `flip` picks which half is kept. Persisted to
+  // IndexedDB alongside the doc (see storage/db.ts) but outside `doc` itself.
+  const [sectionView, setSectionView] = useState<SectionViewState>(DEFAULT_SECTION_VIEW);
 
   const setSketchTool = (t: SketchTool) => {
     // Activating Text with a single text entity selected re-opens it for editing
@@ -1613,6 +1621,7 @@ export default function App() {
             // viewport stays blank until that full rebuild finishes.
             if (record.meshes?.length) setRawMeshes(record.meshes);
             resetDoc(migrated);
+            setSectionView(record.sectionView ?? DEFAULT_SECTION_VIEW);
             // Default the Variables section open/collapsed by the restored count.
             setVariablesOpen(migrated.variables.length < VARS_OPEN_THRESHOLD);
           } catch (err) {
@@ -1652,10 +1661,11 @@ export default function App() {
         updatedAt: Date.now(),
         createdAt: docCreatedAtRef.current,
         meshes: rawMeshes,
+        sectionView,
       }).catch((err) => console.warn("autosave failed:", err));
     }, 600);
     return () => clearTimeout(t);
-  }, [doc, rawMeshes, docName, persistLoaded]);
+  }, [doc, rawMeshes, docName, persistLoaded, sectionView]);
 
   // Mirror the document name to the browser tab.
   useEffect(() => {
@@ -1677,8 +1687,9 @@ export default function App() {
       updatedAt: Date.now(),
       createdAt: docCreatedAtRef.current,
       meshes: rawMeshes,
+      sectionView,
     }).catch((err) => console.warn("flush save failed:", err));
-  }, [doc, docName, rawMeshes, persistLoaded]);
+  }, [doc, docName, rawMeshes, persistLoaded, sectionView]);
 
   /** Snapshot the CURRENT viewport into `meta.thumb` for `docId`, downscaled
    *  to ~256 px (offscreen canvas — capturePNG is Retina-sized, and a 2×/4×
@@ -1744,6 +1755,7 @@ export default function App() {
       setSelection([]);
       setRawMeshes(record.meshes ?? []);
       resetDoc(migrated); // clears undo history — a document boundary
+      setSectionView(record.sectionView ?? DEFAULT_SECTION_VIEW);
       setVariablesOpen(migrated.variables.length < VARS_OPEN_THRESHOLD);
     },
     [resetDoc],
@@ -1937,6 +1949,17 @@ export default function App() {
   docRef.current = doc;
   const resolvedRef = useRef(resolved);
   resolvedRef.current = resolved;
+
+  // The section-view ref resolved to a concrete frame. Falls back to the
+  // default (Front datum) if the ref pointed at a since-deleted reference
+  // plane — a datum or a frozen face frame (the common cases) always resolve.
+  const sectionFrame = useMemo(() => {
+    try {
+      return frameOf(sectionView.ref, resolved.planeFrames);
+    } catch {
+      return frameOf(DEFAULT_SECTION_VIEW.ref);
+    }
+  }, [sectionView.ref, resolved.planeFrames]);
 
   // User-created reference planes that resolved to a frame — rendered in the
   // viewport and selectable for sketching / as a base for further planes.
@@ -2298,6 +2321,7 @@ export default function App() {
 
   const { status: agentStatus } = useAgentBridge({
     doc, setDoc, selection, setSelection,
+    sectionView, setSectionView,
     meshesRef: agentMeshesRef, errorsRef: agentErrorsRef, waitForRegen, viewApiRef,
     docApiRef: agentDocApiRef,
   });
@@ -3940,6 +3964,10 @@ export default function App() {
       if (planePick === "refB") setPlaneDialog((d) => (d ? { ...d, refB: ref } : d));
       else setPlaneDialog((d) => (d ? { ...d, base: ref } : d));
       setPlanePick(null);
+    } else if (pickPurpose === "sectionPlane") {
+      setPicking(false);
+      setPickPurpose("sketch");
+      setSectionView((s) => ({ ...s, ref, offset: 0, flip: false, enabled: true }));
     } else {
       startSketchOn(ref, aim);
     }
@@ -5715,6 +5743,8 @@ export default function App() {
             onSketchDragMove={handleSketchDragMove}
             onSketchDragEnd={handleSketchDragEnd}
             selectionFilter={selFilter}
+            sectionView={{ enabled: sectionView.enabled, frame: sectionFrame, offset: sectionView.offset, flip: sectionView.flip }}
+            onSectionOffsetChange={(offset) => setSectionView((s) => ({ ...s, offset }))}
             apiRef={viewApiRef}
           />
           <div className="model-toolbar">
@@ -6380,6 +6410,48 @@ export default function App() {
               <path d="M9.5 20v-6h5v6" />
             </svg>
           </button>
+          {/* Section view toggle: a peer of Home in the same view-controls corner
+              (not a modeling op — no undo, no timeline; see SectionViewState).
+              Dragging the plane's own on-canvas handle changes the offset; this
+              button only turns the feature on/off. */}
+          <button
+            className={"view-reset section-view-toggle" + (sectionView.enabled ? " active" : "")}
+            title={sectionView.enabled ? "Section view: on — click to turn off" : "Section view: cut through the model to see the interior"}
+            aria-pressed={sectionView.enabled}
+            onClick={() => setSectionView((s) => ({ ...s, enabled: !s.enabled }))}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="5" y="4" width="14" height="16" rx="1" />
+              <path d="M2 12h20" />
+            </svg>
+          </button>
+          {sectionView.enabled && (
+            <div className="section-view-panel" title="Section view">
+              <span className="section-view-label">{planeRefLabel(sectionView.ref)}</span>
+              <input
+                type="number"
+                className="section-view-offset"
+                value={sectionView.offset.toFixed(2)}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v)) setSectionView((s) => ({ ...s, offset: v }));
+                }}
+              />
+              <button
+                className={sectionView.flip ? "active" : ""}
+                title="Flip which side is kept"
+                onClick={() => setSectionView((s) => ({ ...s, flip: !s.flip }))}
+              >
+                ⇅ Flip
+              </button>
+              <button
+                title="Pick a different plane or face to cut through"
+                onClick={() => { setPickPurpose("sectionPlane"); setPicking(true); }}
+              >
+                ⌖ Pick plane
+              </button>
+            </div>
+          )}
           {!editingSketch && !picking && (
             <div className="sel-filters" title="Selection filters — what a click can pick">
               <span className="sel-filters-label">Selection filters</span>

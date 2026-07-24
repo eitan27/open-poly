@@ -1014,6 +1014,69 @@
   border-color: #4f8cff;
 }
 
+/* Section view toggle: a peer of .view-reset (Home) in the same corner, sitting
+   just to its left. */
+.section-view-toggle {
+  right: 52px;
+}
+
+.section-view-toggle.active {
+  color: #cfe0ff;
+  border-color: #4f8cff;
+  background: rgba(30, 42, 68, 0.9);
+}
+
+/* The offset/flip/re-pick strip, shown while section view is on. Bottom-right —
+   mirrors .sel-filters' bottom-left placement, so the two never collide. */
+.section-view-panel {
+  position: absolute;
+  right: 12px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: rgba(24, 26, 32, 0.82);
+  border: 1px solid #2a2d35;
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  z-index: 15;
+}
+
+.section-view-label {
+  font-size: 11px;
+  color: #9aa0ab;
+  white-space: nowrap;
+  padding-right: 2px;
+}
+
+.section-view-offset {
+  width: 64px;
+  padding: 3px 6px;
+  font-size: 11px;
+  color: #e6e8ee;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+}
+
+.section-view-panel button {
+  padding: 3px 9px;
+  font-size: 11px;
+  color: #6b7180;
+  background: rgba(24, 26, 32, 0.8);
+  border: 1px solid #2a2d35;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.section-view-panel button.active {
+  color: #cfe0ff;
+  border-color: #4f8cff;
+  background: rgba(30, 42, 68, 0.9);
+}
+
 .datum-label {
   position: absolute;
   left: 12px;

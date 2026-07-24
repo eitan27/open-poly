@@ -11,6 +11,7 @@
 // stores in ONE transaction so they can't drift.
 import type { Document } from "../document/types";
 import type { ShapeMeshPayload } from "../kernel/types";
+import type { SectionViewState } from "../document/sectionView";
 
 const DB_NAME = "open-poly";
 const DB_VERSION = 2;
@@ -33,6 +34,11 @@ export interface StoredDoc {
    *  meshes are replaced the moment regen settles. Optional (older records and
    *  documents that never regenerated have none). */
   meshes?: { id: string; mesh: ShapeMeshPayload }[];
+  /** Section-view UI state (plane ref, offset, flip, on/off) — pure view state,
+   *  never part of `doc`/undo (see document/sectionView.ts), but persisted here
+   *  so reopening a document restores it. Absent on records written before this
+   *  field existed, and on any freshly-created document. */
+  sectionView?: SectionViewState;
 }
 
 /** The list-view projection of a document — everything a picker needs, nothing

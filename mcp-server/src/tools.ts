@@ -48,6 +48,7 @@ const OP_DESCRIPTIONS: Record<string, string> = {
   delete: "Delete a feature (undoable).",
   setRollback: "Move the timeline rollback bar to an index (features at/after it are not regenerated).",
   select: "Set the viewport selection (so a screenshot highlights what you mean).",
+  setSectionView: "Cut the model with a plane to see the interior (view-only — no undo, no geometry change). plane (datum/planeId/body face) defaults to the current section plane; offset is a signed distance along its normal; flip picks which half is kept. Turn on, then screenshot to inspect a bore/wall/interior a normal screenshot can't show.",
   importStep: "Import a body from STEP file text.",
   importDxf: "Import a DXF drawing as an EDITABLE sketch (not an opaque body like import_step). source is the DXF file text; plane places the sketch (datum/planeId/body face); scale multiplies all coordinates (DXF is unitless — 25.4 if the drawing is in inches, else 1 = mm). Handles LINE/CIRCLE/ARC/POLYLINE(bulges)/SPLINE/TEXT; unsupported types are skipped and reported as a warning. Imported geometry is free (unconstrained).",
   openDocument: "Switch the working document to `id` (from list_documents). Resolves after its geometry regenerates; undo history resets. Check get_scene_summary's documentId/documentName before assuming which file you're in.",

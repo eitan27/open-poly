@@ -1,11 +1,35 @@
 # Backlog
 
-## Proposed: adjustable cross-section view
+## Adjustable cross-section view
 
-**Status:** design sketch, not started.
+**Status:** SHIPPED 2026-07. v1 scope as designed below: one section plane, any plane
+ref, live drag + numeric offset + flip, stencil capping in a flat neutral color,
+clip-aware picking, persisted across reload, plus the `setSectionView` MCP op.
 
 **What:** a section view — pick a plane, drag it through the model, see the interior.
 Onshape's "Section view".
+
+**Where it landed vs. the design sketch below** (small refinements, same intent):
+- **State lives beside `doc`, not inside it.** `Document` has no meta bucket, so
+  `SectionViewState` (`document/sectionView.ts`) is a sibling `useState` in `App.tsx` —
+  same bucket as `datumVisibility`/`selFilter` — and persists as `StoredDoc.sectionView`
+  in IndexedDB (`storage/db.ts`), not inside the document JSON.
+- **Toggle lives next to Home** (`.view-reset` sibling, top-right corner), not a generic
+  toolbar button — Home and section view are both one-click view state, not modeling ops.
+- **The clip plane never structurally empties.** `SceneState.sectionClipPlanes` always
+  holds exactly one `THREE.Plane`; "off" parks it far from the model (`FAR_PLANE_CONSTANT`)
+  instead of emptying the array. Toggling a material's clippingPlanes array length without
+  bumping `material.needsUpdate` doesn't recompile its shader (verified against the
+  installed three.js source) — parking the plane sidesteps that entirely, so toggling is a
+  pure per-frame uniform update, never a shader recompile.
+- **The drag handle** (a constant-pixel-size cone on the plane's normal) runs its own tiny
+  drag (skew-line-closest-point math on the existing raycaster), not `TransformControls` —
+  one axis, no rotate handles to fight, consistent with the codebase's other custom
+  pointer-drag flows (sketch entity dragging).
+- **Stencil caps are always neutral** (one shared material/geometry across bodies), per the
+  v1 scope call below.
+
+### The core call: view state, NOT a feature
 
 ### The core call: view state, NOT a feature
 It changes nothing about the geometry — not mass properties, not export, not what a

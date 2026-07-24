@@ -448,6 +448,19 @@ export const operationSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("delete"), featureId: z.string() }),
   z.object({ op: z.literal("setRollback"), index: z.number().int().min(0) }),
   z.object({ op: z.literal("select"), refs: z.array(selectionSchema) }),
+  // View-only cross-section (see BACKLOG.md "adjustable cross-section view") —
+  // like `select`, mutates viewport state, not the document (no undo, no
+  // regen). `plane` defaults to the current section plane (Front datum on the
+  // very first use); omit `offset`/`flip` to leave them as they are. The
+  // paired `screenshot` op renders through it, so the agent can actually
+  // inspect an interior instead of only ever seeing exteriors.
+  z.object({
+    op: z.literal("setSectionView"),
+    enabled: z.boolean(),
+    plane: planeRefSchema.optional(),
+    offset: z.number().optional(),
+    flip: z.boolean().optional(),
+  }),
   z.object({ op: z.literal("importStep"), source: z.string(), name: z.string().optional() }),
   // Import a DXF drawing as an editable sketch (unlike importStep, which brings
   // in an opaque body). `source` is the DXF file text; `plane` places the sketch

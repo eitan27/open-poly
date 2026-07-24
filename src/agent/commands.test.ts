@@ -5,6 +5,7 @@ import { expandEntities, operationSchema } from "./operations";
 import { createDocument, resolveDocument } from "../document/document";
 import { applyDerived } from "../document/derived";
 import type { Document } from "../document/types";
+import { DEFAULT_SECTION_VIEW } from "../document/sectionView";
 import type { Selection } from "../viewport/Viewport";
 
 // A minimal in-memory AgentContext. Doc mutations are pure, so no kernel is
@@ -31,6 +32,8 @@ function makeCtx(initial: Document = createDocument()) {
     setDoc: (n) => { doc = n; },
     getSelection: () => selection,
     setSelection: (s) => { selection = s; },
+    getSectionView: () => DEFAULT_SECTION_VIEW,
+    setSectionView: () => {},
     getMeshes: () => [],
     getErrors: () => resolveDocument(doc).errors,
     waitForRegen: async () => ({ errors: resolveDocument(doc).errors }),
@@ -369,6 +372,7 @@ describe("applyOperation — construction, extent, revolve, mirror", () => {
     const ctx: AgentContext = {
       getDoc: () => d, setDoc: (n) => { d = n; },
       getSelection: () => sel, setSelection: (s) => { sel = s; },
+      getSectionView: () => DEFAULT_SECTION_VIEW, setSectionView: () => {},
       getMeshes: () => [{
         id: "target-body",
         mesh: {
@@ -792,6 +796,7 @@ describe("applyOperation — dressUp edge fingerprints", () => {
     const ctx: AgentContext = {
       getDoc: () => d, setDoc: (n) => { d = n; },
       getSelection: () => sel, setSelection: (s) => { sel = s; },
+      getSectionView: () => DEFAULT_SECTION_VIEW, setSectionView: () => {},
       getMeshes: () => [{
         id: bodyId,
         mesh: {
@@ -830,6 +835,7 @@ describe("applyOperation — regen warnings surface in the result", () => {
     const ctx: AgentContext = {
       getDoc: () => d, setDoc: (n) => { d = n; },
       getSelection: () => sel, setSelection: (s) => { sel = s; },
+      getSectionView: () => DEFAULT_SECTION_VIEW, setSectionView: () => {},
       getMeshes: () => [],
       getErrors: () => resolveDocument(d).errors,
       waitForRegen: async () => ({ errors: resolveDocument(d).errors, warnings: pendingWarnings }),

@@ -55,6 +55,7 @@ import {
 import type { DistanceRef, Document, EdgeRef, ExtrudeProfile, Feature, PatternAxisRef, PatternDirRef, PointRef, PrimitiveFeature, RevolveAxis, SketchConstraint, SketchEntity, SketchFeature, Variable, Vec2 } from "../document/types";
 import { listMeta } from "../storage/db";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
+import type { SectionViewState } from "../document/sectionView";
 import type { Selection, ViewName } from "../viewport/Viewport";
 import {
   expandEntities,
@@ -96,6 +97,8 @@ export interface AgentContext {
   setDoc(next: Document): void;
   getSelection(): Selection[];
   setSelection(sel: Selection[]): void;
+  getSectionView(): SectionViewState;
+  setSectionView(next: SectionViewState): void;
   /** The latest regenerated bodies — fed synchronously when regen settles, so a
    *  read right after an awaited mutation sees fresh geometry (not stale React
    *  state). */
@@ -844,6 +847,16 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       }
       case "select": {
         ctx.setSelection(op.refs as Selection[]);
+        return { ok: true };
+      }
+      case "setSectionView": {
+        const cur = ctx.getSectionView();
+        ctx.setSectionView({
+          enabled: op.enabled,
+          ref: op.plane ? resolvePlaneRef(ctx, op.plane) : cur.ref,
+          offset: op.offset ?? cur.offset,
+          flip: op.flip ?? cur.flip,
+        });
         return { ok: true };
       }
       case "importStep": {

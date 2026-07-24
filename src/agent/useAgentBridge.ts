@@ -31,6 +31,7 @@ import {
 import { BridgeClient, type BridgeStatus } from "./bridgeClient";
 import { genId } from "../document/document";
 import type { Document } from "../document/types";
+import type { SectionViewState } from "../document/sectionView";
 import type { Selection, ViewName, ViewportApi } from "../viewport/Viewport";
 
 interface BridgeDeps {
@@ -39,6 +40,9 @@ interface BridgeDeps {
   setDoc: (next: Document) => void;
   selection: Selection[];
   setSelection: (sel: Selection[]) => void;
+  /** Section view — pure viewport state, like selection (no undo/regen). */
+  sectionView: SectionViewState;
+  setSectionView: (next: SectionViewState) => void;
   /** Latest regenerated bodies, fed synchronously when regen settles. */
   meshesRef: RefObject<AgentMesh[]>;
   /** Merged per-feature error map (resolve + kernel), refreshed each regen. */
@@ -104,6 +108,10 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
   setDocRef.current = deps.setDoc;
   const setSelectionRef = useRef(deps.setSelection);
   setSelectionRef.current = deps.setSelection;
+  const sectionViewRef = useRef(deps.sectionView);
+  sectionViewRef.current = deps.sectionView;
+  const setSectionViewRef = useRef(deps.setSectionView);
+  setSectionViewRef.current = deps.setSectionView;
   const waitForRegenRef = useRef(deps.waitForRegen);
   waitForRegenRef.current = deps.waitForRegen;
   // These refs are owned by App's regen effect (synchronously fresh on settle).
@@ -122,6 +130,11 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
       setSelection: (sel) => {
         selectionRef.current = sel;
         setSelectionRef.current(sel);
+      },
+      getSectionView: () => sectionViewRef.current,
+      setSectionView: (next) => {
+        sectionViewRef.current = next;
+        setSectionViewRef.current(next);
       },
       getMeshes: () => meshesRef.current,
       getErrors: () => errorsRef.current,
