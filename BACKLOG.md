@@ -203,10 +203,11 @@ light show; err toward fewer, stickier guides. (3) The two constraint gaps above
 
 ## Kernel: booleans fail on ANALYTIC primitive curved surfaces (not all curves)
 
-**Status:** investigated 2026-07; root cause of why extruded circles/arcs are faceted.
-Not a fix, a finding + the shipped workaround.
+**Status:** investigated 2026-07; **re-verified via a validation spike 2026-07-25/26 — the
+finding stands, faceting is required** (see "Re-investigated" below). Root cause of why
+extruded circles/arcs are faceted. Not a fix — a finding + the shipped workaround.
 
-### The finding (all tested this session, in-app)
+### The finding (all tested in-app)
 This OCCT wasm build fails booleans **specifically on analytic primitive surfaces vs a
 plane** — NOT on curvature in general:
 
@@ -264,6 +265,31 @@ back to its source sketch circle and reads the radius, re-derived every regen (t
 variable + timeline edits). Correct diameters on faceted extruded circles without touching
 geometry. Geometry stays a faceted prism.
 
+### Re-investigated 2026-07-25/26 — validation spike CONFIRMS faceting is required
+Before building a "logical-face layer" to fix the circular selection/snapping UX, we
+questioned whether the analytic-boolean blocker still held. Ran a real spike: gated all
+faceting behind an `ANALYTIC_CURVES` flag (`facetedCylinderShape`→`makeCylinder`, skip
+`facetedProfileFace`, skip `facetedRevolveFromFace`, send exact arc `segments` on
+extrude/revolve profiles), flipped it ON, and ran `scripts/verify-circular-extrude.mjs`
+against the live app.
+
+**Result: 5 real `StdFail_NotDone` failures** — `cylinder − box`, `cylinder ∪ box`,
+`extrude cylinder cap (remove)`, `cut a face of a 360°/90° revolve` — i.e. exactly the
+finding above. Faceting is required; the spike was reverted, nothing shipped.
+
+**False-negative trap (record this):** those analytic booleans FAIL in the full app pipeline
+but PASS in isolation. A Node harness AND a direct in-browser call of the *same* ops
+(`makeCylinder − makeBaseBox`, sphere − box, coaxial subtract, even the exact
+`cyl(18,40) ∪ box(20,20,60)` / `− box(12,12,80)` geometry) all returned `done=true` valid
+solids — and stayed green after replicating `translate(0,0,0)`, face-naming, and per-face
+meshing. Only the full pipeline (`buildBodies` fold + running body set + history propagation)
+reproduces the failure; the exact ingredient that trips OCCT is unidentified. **Do not judge
+whether faceting can be dropped by an isolated boolean probe — it will lie.**
+
+**Consequence:** the circular/cylindrical selection + snapping UX must be solved with a
+logical-face layer OVER the facets (group facet faces/edges into one logical cylinder/circle;
+synthesize analytic centre/radius), NOT by switching to analytic geometry.
+
 ### Promising avenue for true round holes/bosses (not attempted)
 The blocker is the analytic `gp_Cyl`, not curvature. Building an extruded circle as a
 **B-spline** wall (pipe/sweep-style construction rather than a straight prism of an analytic
@@ -271,6 +297,13 @@ circle) may give a smooth wall that *also* cuts — the way the swept tube does.
 investigation; more promising than "faceting is forced." A newer OCCT wasm that fixes the
 analytic-vs-plane boolean would also solve it. `BOOL_FUZZY` at 0.01 does NOT help (algorithm
 failure, not tolerance).
+
+_Version check 2026-07-25:_ we are on the latest replicad — `replicad@0.23.1` /
+`replicad-opencascadejs@0.23.0` (pinned since commit 0, never bumped) — bundling OCCT
+~7.7–7.8; latest OCCT is 7.9.3 (Dec 2025). There is **no drop-in newer wasm**: OCCT 7.9.x
+means a custom `opencascade.js` build, and whether it fixes this is speculative — stock OCCT
+booleans cylinder−box fine (and so does this build *in isolation*), so the pipeline-specific
+failure may not be a version bug at all.
 
 ## Shelved: viewport geometry reuse (Opt A) + lazy-regen-on-load (Opt B)
 
