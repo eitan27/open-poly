@@ -7,6 +7,7 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getEdgeId, getFaceId, syncGeometries } from "replicad-threejs-helper";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 
@@ -359,10 +360,12 @@ const makeBodyMaterial = (color: number, clippingPlanes: THREE.Plane[]) =>
 // represent "section view off" without emptying any material's clippingPlanes
 // array (see SceneState.sectionPlane).
 const FAR_PLANE_CONSTANT = 1e6;
-// Cap-quad half-size floor/margin: big enough to fully cover a tiny part, and a
-// generous multiple of the model's bounding-sphere radius for larger ones.
-const SECTION_CAP_MIN_SIZE = 150;
-const SECTION_CAP_MARGIN = 2.4;
+// Cap/plane-widget full span = 2·(in-plane reach to the bodies)·MARGIN, floored
+// at MIN_SIZE. MARGIN is a small pad past the cross-section so the plane hugs the
+// actual part rather than filling the viewport (clipSphere would size it to the
+// ±130 reference box); MIN_SIZE keeps a modest plane visible for tiny/empty scenes.
+const SECTION_CAP_MIN_SIZE = 20;
+const SECTION_CAP_MARGIN = 1.1;
 // renderOrder base for the stencil-cap passes — comfortably above every other
 // renderOrder used in this file (highest existing is pointMarkers at 13), and
 // each body claims a strictly increasing 3-slot range (back, front, cap) so the
@@ -1158,14 +1161,44 @@ export function Viewport({
     sectionWidget.add(sectionWidgetBorder);
     scene.add(sectionWidget);
 
-    const sectionHandleGeom = new THREE.ConeGeometry(1, 2.4, 16);
-    sectionHandleGeom.rotateX(Math.PI / 2); // cone's own +Y axis → local +Z (points along the normal)
-    const sectionHandleMat = new THREE.MeshBasicMaterial({ color: 0x5da9ff, depthTest: false, transparent: true, opacity: 0.9 });
+    // Drag handle: an arrow (cone head + cylinder tail) pointing along the plane's
+    // normal, so it reads as a 3D grab handle with an obvious pointing direction —
+    // not a flat 2D triangle. Built +Y-up then rotated so +Y → +Z (the normal).
+    const sectionHandleHead = new THREE.ConeGeometry(1, 1.7, 20).translate(0, 0.85, 0);
+    const sectionHandleTail = new THREE.CylinderGeometry(0.34, 0.34, 1.9, 16).translate(0, -0.95, 0);
+    const sectionHandleGeom = mergeGeometries([sectionHandleHead, sectionHandleTail])!;
+    sectionHandleGeom.rotateX(Math.PI / 2); // +Y (apex forward) → local +Z (the normal)
+    sectionHandleHead.dispose();
+    sectionHandleTail.dispose();
+    // Lit (not MeshBasic) so the cone/shaft shade into a 3D form; drawn on top
+    // (depthTest off) like the old handle. color/emissive swap on hover/drag —
+    // see setSectionHandleHot.
+    const SECTION_HANDLE_COLD = new THREE.Color(0x4f90e0);
+    const SECTION_HANDLE_HOT = new THREE.Color(0xe6f4ff);
+    const SECTION_HANDLE_EMISSIVE_COLD = new THREE.Color(0x12304f);
+    const SECTION_HANDLE_EMISSIVE_HOT = new THREE.Color(0x59a6e6);
+    const sectionHandleMat = new THREE.MeshStandardMaterial({
+      color: SECTION_HANDLE_COLD, emissive: SECTION_HANDLE_EMISSIVE_COLD,
+      metalness: 0.1, roughness: 0.5, depthTest: false, transparent: true, opacity: 0.95,
+    });
     const sectionHandle = new THREE.Mesh(sectionHandleGeom, sectionHandleMat);
     sectionHandle.renderOrder = 14;
     sectionHandle.visible = false;
-    keepConstantPixelRadius(sectionHandle, 1, 16);
+    // Base pixel size; bumped ~18% while hot so the handle also grows a touch on
+    // hover/drag. keepConstantPixelRadius reads this live each frame.
+    const sectionHandlePx = { base: 22.5, hot: false };
+    keepConstantPixelRadius(sectionHandle, 1, () => sectionHandlePx.base * (sectionHandlePx.hot ? 1.18 : 1));
     scene.add(sectionHandle);
+    let sectionHandleHot = false;
+    // Toggle the handle's hover/drag highlight (brighter fill + stronger glow + a
+    // small size bump — see sectionHandlePx).
+    const setSectionHandleHot = (hot: boolean) => {
+      if (hot === sectionHandleHot) return;
+      sectionHandleHot = hot;
+      sectionHandlePx.hot = hot;
+      sectionHandleMat.color.copy(hot ? SECTION_HANDLE_HOT : SECTION_HANDLE_COLD);
+      sectionHandleMat.emissive.copy(hot ? SECTION_HANDLE_EMISSIVE_HOT : SECTION_HANDLE_EMISSIVE_COLD);
+    };
 
     // Per-body stencil-cap triples (see createSectionCapTriple), rebuilt in the
     // mesh-rebuild effect below. The cap quad geometry/material are shared across
@@ -1178,6 +1211,58 @@ export function Viewport({
       stencilWrite: true, stencilRef: 0, stencilFunc: THREE.NotEqualStencilFunc,
       stencilFail: THREE.ReplaceStencilOp, stencilZFail: THREE.ReplaceStencilOp, stencilZPass: THREE.ReplaceStencilOp,
     });
+    // Mechanical section hatch: 45° stripes over the (stencil-masked) cap fill so
+    // the cross-section reads as cut solid material, not just another face. Drawn
+    // in WORLD space projected onto the cut plane's own u/v axes, so the hatch
+    // lives ON the cut face — it rotates and scales with the part when you orbit,
+    // like a real drawing's section lines (not a screen-locked overlay). The
+    // uniforms (plane origin/axes + spacing) are refreshed each frame in
+    // syncSectionPlane; 45° comes from banding on (u+v). fwidth() antialiases the
+    // stripe edges so they stay crisp at any zoom.
+    const sectionHatchUniforms = {
+      uHatchOrigin: { value: new THREE.Vector3() },
+      uHatchU: { value: new THREE.Vector3(1, 0, 0) },
+      uHatchV: { value: new THREE.Vector3(0, 1, 0) },
+      uHatchSpacing: { value: 4 },
+      uHatchHalfWidth: { value: 0.35 },
+      uHatchColor: { value: new THREE.Color(0x2b2f36) },
+    };
+    sectionCapMaterial.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, sectionHatchUniforms);
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec3 vHatchWorld;")
+        .replace(
+          "#include <project_vertex>",
+          "#include <project_vertex>\n\tvHatchWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;",
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          "#include <common>\nvarying vec3 vHatchWorld;\nuniform vec3 uHatchOrigin;\nuniform vec3 uHatchU;\nuniform vec3 uHatchV;\nuniform float uHatchSpacing;\nuniform float uHatchHalfWidth;\nuniform vec3 uHatchColor;",
+        )
+        .replace(
+          "#include <dithering_fragment>",
+          `#include <dithering_fragment>
+          {
+            vec3 rel = vHatchWorld - uHatchOrigin;
+            float across = dot(rel, uHatchU) + dot(rel, uHatchV); // ⟂ to the 45° lines
+            float along  = dot(rel, uHatchU) - dot(rel, uHatchV); // along the 45° lines
+            // Squiggle: sinusoidally offset each line across its width as it runs,
+            // so the hatch reads hand-drawn rather than ruled. Amplitude/wavelength
+            // scale with spacing to hold their look at every zoom/part size.
+            float wobble = uHatchSpacing * 0.3 * sin(along / (uHatchSpacing * 0.8));
+            float coord = (across + wobble) / uHatchSpacing;
+            float f = fract(coord);
+            float dist = min(f, 1.0 - f) * uHatchSpacing;   // world dist to nearest line
+            float aa = fwidth(coord) * uHatchSpacing + 1e-4; // antialias band
+            float line = 1.0 - smoothstep(uHatchHalfWidth - aa, uHatchHalfWidth + aa, dist);
+            gl_FragColor.rgb = mix(gl_FragColor.rgb, uHatchColor, line * 0.9);
+          }`,
+        );
+    };
+    // Distinct cache key so this custom program isn't shared with any other
+    // MeshStandardMaterial's compiled shader.
+    sectionCapMaterial.customProgramCacheKey = () => "section-cap-hatch";
 
     // Transform gizmo: an invisible proxy object that the TransformControls move,
     // whose position/rotation are read back as the active Transform feature's
@@ -2304,6 +2389,25 @@ export function Viewport({
         renderer.domElement.style.cursor = "pointer";
         return;
       }
+      // Section drag-handle hover: brighten the arrow + show a grab cursor when the
+      // pointer is over it (mirrors the drag-start hit test in onDown; skipped in
+      // picking mode, which the handle opts out of there too).
+      if (!pickingRef.current && sectionViewRef.current.enabled) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
+        if (raycaster.intersectObject(sectionHandle, false).length > 0) {
+          // Drop any body/face/plane hover so it doesn't stay stuck behind the
+          // handle highlight when the pointer slides from a body onto the arrow.
+          clearHover();
+          if (hoverSelRef.current) { hoverSelRef.current = null; applyHighlights(); }
+          setSectionHandleHot(true);
+          renderer.domElement.style.cursor = "grab";
+          return;
+        }
+      }
+      setSectionHandleHot(false);
       // Selection (hover) is active when idle OR editing a sketch with the Select
       // tool. Drop a stale hover when neither applies.
       const selecting =
@@ -2478,6 +2582,7 @@ export function Viewport({
           const committed = sectionViewRef.current.offset;
           sectionDrag = { axisOrigin, axisDir, grabDelta: committed - s0, offset: committed };
           controls.enabled = false;
+          setSectionHandleHot(true);
           renderer.domElement.setPointerCapture(e.pointerId);
           renderer.domElement.style.cursor = "grabbing";
           return;
@@ -2661,6 +2766,12 @@ export function Viewport({
     // correctly); perspective keeps near positive.
     const clipBox = new THREE.Box3();
     const clipSphere = new THREE.Sphere();
+    // Bodies-only bounds (clipSphere always includes the ±130 reference box, so it
+    // can't size anything to the actual part). Refreshed alongside clipSphere in
+    // syncClipPlanes: the sphere scales the section hatch spacing; the AABB is
+    // projected onto the cut plane's axes to size the cap/widget tight to the part.
+    const partSphere = new THREE.Sphere();
+    const partBox = new THREE.Box3();
     const clipDir = new THREE.Vector3();
     const clipTmp = new THREE.Vector3();
     const REF_MIN = new THREE.Vector3(-130, -130, -130); // grid (±120) + datum planes
@@ -2672,6 +2783,15 @@ export function Viewport({
       }
       for (const c of sketchGroup.children) {
         if (c instanceof THREE.LineSegments && c.userData.sketchId) clipBox.expandByObject(c);
+      }
+      // Part-only bounds (before the reference box inflates clipBox). Empty scene
+      // → radius 0 / empty box, which the size floor and hatch spacing handle.
+      if (clipBox.isEmpty()) {
+        partSphere.set(partSphere.center.set(0, 0, 0), 0);
+        partBox.makeEmpty();
+      } else {
+        clipBox.getBoundingSphere(partSphere);
+        partBox.copy(clipBox);
       }
       clipBox.expandByPoint(REF_MIN);
       clipBox.expandByPoint(REF_MAX);
@@ -2696,15 +2816,25 @@ export function Viewport({
     // Re-resolve the section plane, widget, cap group and handle every frame
     // from the current frame/offset/flip (or, mid-drag, from `sectionDrag`'s
     // live offset — see the field comment). Cheap: transform-only, no geometry
-    // rebuild. Sized off `clipSphere` (just refreshed by syncClipPlanes, which
-    // always runs first in animate()) so the cap/widget comfortably cover
-    // whatever's currently in the scene.
+    // rebuild. Sized off `partBox`/`partSphere` (just refreshed by syncClipPlanes,
+    // which always runs first in animate()) so the cap/widget hug the actual bodies.
     const sectionOrigin = new THREE.Vector3();
     const sectionEffNormal = new THREE.Vector3();
     const sectionU = new THREE.Vector3();
     const sectionV = new THREE.Vector3();
     const sectionBasis = new THREE.Matrix4();
     const sectionUpZ = new THREE.Vector3(0, 0, 1);
+    const sectionBoxC = new THREE.Vector3();
+    const sectionBoxS = new THREE.Vector3();
+    // Half-extent of the (axis-aligned) part box along an in-plane unit axis, plus
+    // the part centre's offset from the cut origin along it → how far the quad must
+    // reach along that axis to cover the cross-section. |axis·size|/2 is the AABB's
+    // projected half-width; exact because partBox is axis-aligned.
+    const reachAlongAxis = (axis: THREE.Vector3): number => {
+      const half = 0.5 * (Math.abs(axis.x) * sectionBoxS.x + Math.abs(axis.y) * sectionBoxS.y + Math.abs(axis.z) * sectionBoxS.z);
+      const off = Math.abs(sectionBoxC.x * axis.x + sectionBoxC.y * axis.y + sectionBoxC.z * axis.z);
+      return off + half;
+    };
     const syncSectionPlane = () => {
       const sv = sectionViewRef.current;
       sectionWidget.visible = sv.enabled;
@@ -2712,6 +2842,7 @@ export function Viewport({
       sectionHandle.visible = sv.enabled;
       if (!sv.enabled) {
         sectionPlane.set(sectionUpZ, FAR_PLANE_CONSTANT);
+        setSectionHandleHot(false);
         return;
       }
       const f = sv.frame;
@@ -2721,10 +2852,36 @@ export function Viewport({
       sectionEffNormal.set(resolved.normal[0], resolved.normal[1], resolved.normal[2]);
       sectionPlane.setFromNormalAndCoplanarPoint(sectionEffNormal, sectionOrigin);
 
+      // Orient the (square, DoubleSide) cap/widget quad IN the cut plane. Derive
+      // v from the effective normal rather than trusting the frame's stored vAxis:
+      // some frames are left-handed (the Front datum: uAxis×vAxis = −normal), and
+      // makeBasis(u, vAxis, n) on a left-handed triple builds a REFLECTION, from
+      // which setFromRotationMatrix can't recover a valid rotation — the quad then
+      // lands ~90° out of the cut plane (lying flat on XY for a Front section). u
+      // is ⟂ the normal for any orthonormal frame, so v = n×u keeps the basis
+      // orthonormal AND right-handed (det +1) for every plane.
       sectionU.set(f.uAxis[0], f.uAxis[1], f.uAxis[2]).normalize();
-      sectionV.set(f.vAxis[0], f.vAxis[1], f.vAxis[2]).normalize();
+      sectionV.crossVectors(sectionEffNormal, sectionU).normalize();
       sectionBasis.makeBasis(sectionU, sectionV, sectionEffNormal);
-      const size = Math.max(SECTION_CAP_MIN_SIZE, clipSphere.radius * SECTION_CAP_MARGIN);
+      // Size the cap + plane widget to the ACTUAL bodies, not clipSphere (which is
+      // padded to the ±130 reference box, making the plane ~540 units — huge, and
+      // overrunning the camera far plane so its corners clip). Project the part's
+      // AABB onto the cut plane's own u/v axes so the quad hugs the cross-section
+      // tightly — using the 3D radius would let the depth ⟂ to the cut inflate it.
+      // The quad spans ±size/2, so size = 2·reach·margin just covers the section.
+      partBox.getCenter(sectionBoxC).sub(sectionOrigin);
+      partBox.getSize(sectionBoxS);
+      const reach = partBox.isEmpty() ? 0 : Math.max(reachAlongAxis(sectionU), reachAlongAxis(sectionV));
+      const size = Math.max(SECTION_CAP_MIN_SIZE, reach * 2 * SECTION_CAP_MARGIN);
+      // Refresh the section-hatch uniforms: same plane origin/axes as the cap, and
+      // a spacing scaled to the model so the stripe density reads the same whether
+      // it's a 20 mm bracket or a 2 m assembly (≈24 lines across the part).
+      sectionHatchUniforms.uHatchOrigin.value.copy(sectionOrigin);
+      sectionHatchUniforms.uHatchU.value.copy(sectionU);
+      sectionHatchUniforms.uHatchV.value.copy(sectionV);
+      const hatchSpacing = Math.max(1.5, partSphere.radius * 0.06);
+      sectionHatchUniforms.uHatchSpacing.value = hatchSpacing;
+      sectionHatchUniforms.uHatchHalfWidth.value = hatchSpacing * 0.07;
       sectionWidget.position.copy(sectionOrigin);
       sectionWidget.quaternion.setFromRotationMatrix(sectionBasis);
       sectionWidget.scale.set(size, size, 1);
@@ -3517,7 +3674,7 @@ const SNAP_PIXEL_RADIUS = 12;
  *  `pxRadius` device pixels regardless of zoom — the world-space equivalent of
  *  PointsMaterial's sizeAttenuation:false. `geomRadius` is the mesh's base
  *  SphereGeometry radius. */
-function keepConstantPixelRadius(mesh: THREE.Mesh, geomRadius: number, pxRadius: number): void {
+function keepConstantPixelRadius(mesh: THREE.Mesh, geomRadius: number, pxRadius: number | (() => number)): void {
   const world = new THREE.Vector3();
   const size = new THREE.Vector2();
   mesh.onBeforeRender = (renderer, _scene, camera) => {
@@ -3531,7 +3688,8 @@ function keepConstantPixelRadius(mesh: THREE.Mesh, geomRadius: number, pxRadius:
       const dist = pc.position.distanceTo(mesh.getWorldPosition(world));
       worldPerPx = (2 * dist * Math.tan((pc.fov * Math.PI) / 360)) / h;
     }
-    mesh.scale.setScalar((worldPerPx * pxRadius) / geomRadius);
+    const px = typeof pxRadius === "function" ? pxRadius() : pxRadius;
+    mesh.scale.setScalar((worldPerPx * px) / geomRadius);
   };
 }
 const PLANE_TINTS: Record<"plane-top" | "plane-front" | "plane-right", number> = {

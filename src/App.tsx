@@ -1410,6 +1410,10 @@ export default function App() {
   // ref's own (unflipped) normal; `flip` picks which half is kept. Persisted to
   // IndexedDB alongside the doc (see storage/db.ts) but outside `doc` itself.
   const [sectionView, setSectionView] = useState<SectionViewState>(DEFAULT_SECTION_VIEW);
+  // Camera projection. The viewport boots orthographic (see Viewport.tsx), so this
+  // mirrors that default; the toolbar toggle flips it via the viewport API. View-
+  // only, like sectionView — not part of the document.
+  const [perspective, setPerspective] = useState(false);
 
   const setSketchTool = (t: SketchTool) => {
     // Activating Text with a single text entity selected re-opens it for editing
@@ -6396,9 +6400,7 @@ export default function App() {
           {/* Named views (Top/Front/Right/…) + iso corners live on the on-canvas
               navigation gizmo (see Viewport.tsx). This small Home button, tucked
               at the gizmo's bottom-right, snaps to the iso view zoomed to fit
-              every body in the scene.
-              (The perspective/orthographic toggle is TODO — a future settings
-              menu; the viewport API still exposes setProjection.) */}
+              every body in the scene. */}
           <button
             className="view-reset"
             title="Home — iso view, fit all (H)"
@@ -6408,6 +6410,28 @@ export default function App() {
               <path d="M3 10.5 12 3l9 7.5" />
               <path d="M5 9.5V20h14V9.5" />
               <path d="M9.5 20v-6h5v6" />
+            </svg>
+          </button>
+          {/* Perspective/orthographic toggle — a peer of Home/Section in the view-
+              controls corner. View-only (the camera swap lives in the viewport API);
+              the icon shows a box in one-point perspective, filled while active. */}
+          <button
+            className={"view-reset perspective-toggle" + (perspective ? " active" : "")}
+            title={perspective ? "Perspective view: on — click for orthographic" : "Orthographic view — click for perspective"}
+            aria-pressed={perspective}
+            onClick={() => {
+              const next = !perspective;
+              setPerspective(next);
+              viewApiRef.current?.setProjection(next ? "perspective" : "orthographic");
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {/* Cube seen from a front corner (perspective feel via the asymmetric
+                  top). Outer silhouette, then the 3 inner edges from the near
+                  top-corner — each ends exactly on a silhouette vertex, so nothing
+                  dangles. */}
+              <path d="M4 8 12 5 20 7 20 16 12 21 4 18Z" />
+              <path d="M12 11 4 8M12 11 20 7M12 11 12 21" />
             </svg>
           </button>
           {/* Section view toggle: a peer of Home in the same view-controls corner

@@ -1026,6 +1026,18 @@
   background: rgba(30, 42, 68, 0.9);
 }
 
+/* Perspective/orthographic toggle: another .view-reset peer, one slot further
+   left of the section-view toggle (Home 14px → Section 52px → this 90px). */
+.perspective-toggle {
+  right: 90px;
+}
+
+.perspective-toggle.active {
+  color: #cfe0ff;
+  border-color: #4f8cff;
+  background: rgba(30, 42, 68, 0.9);
+}
+
 /* The offset/flip/re-pick strip, shown while section view is on. Bottom-right —
    mirrors .sel-filters' bottom-left placement, so the two never collide. */
 .section-view-panel {
