@@ -2088,6 +2088,92 @@ function smoothEdgeHashes(shape: Shape3D): Set<number> {
   return smooth;
 }
 
+/** Group faces into LOGICAL surfaces: the connected components of the face graph
+ *  whose edges are the "smooth" (sub-crease) seams — i.e. all the flat facets of
+ *  one faceted cylinder/revolve/extruded-circle, plus any tangent fillet blend,
+ *  collapse into a single cluster, while a box's six faces each stay a singleton.
+ *  Returns faceHash -> a stable representative faceHash for its cluster. Same
+ *  crease test + adjacency walk as smoothEdgeHashes, so clusters == exactly the
+ *  regions the display already shades as one smooth surface. */
+function faceClustersFrom(shape: Shape3D): Map<number, number> {
+  const parent = new Map<number, number>();
+  const find = (x: number): number => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    while (parent.get(x) !== r) { const nx = parent.get(x)!; parent.set(x, r); x = nx; }
+    return r;
+  };
+  const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+  // edge hash -> the (≤2) adjacent faces, each with its outward normal at centre.
+  const adj = new Map<number, { h: number; n: V3 }[]>();
+  for (const f of shape.faces) {
+    let n: V3;
+    try { n = vunit(f.normalAt(f.center).normalized().toTuple() as V3); } catch { continue; }
+    const fh = f.hashCode;
+    if (!parent.has(fh)) parent.set(fh, fh);
+    for (const e of f.edges) {
+      const arr = adj.get(e.hashCode);
+      if (arr) arr.push({ h: fh, n }); else adj.set(e.hashCode, [{ h: fh, n }]);
+    }
+  }
+  for (const fs of adj.values()) {
+    if (fs.length === 2 && v3dot(fs[0].n, fs[1].n) > CREASE_DOT) union(fs[0].h, fs[1].h);
+  }
+  const out = new Map<number, number>();
+  for (const h of parent.keys()) out.set(h, find(h));
+  return out;
+}
+
+// Two straight segments meeting below this turn angle read as one smooth curve —
+// the chords of a faceted circle/arc (a 96-gon turns 3.75°/segment). A real corner
+// (box rim = 90°, chamfer = 45°) stays a separate edge.
+const CHAIN_DOT = Math.cos((35 * Math.PI) / 180);
+
+/** Group edges into LOGICAL curves: the tangent-continuous chains of straight
+ *  segments that approximate one smooth circle/arc (a faceted cylinder's N rim
+ *  chords), so a click on any chord selects the whole ring. Returns edgeHash -> a
+ *  representative edgeHash for its chain; a sharp-cornered edge is a singleton.
+ *  Two edges chain when, at a shared vertex, their tangents-into-the-edge oppose
+ *  (dot < −CHAIN_DOT) — i.e. they continue smoothly through it. A prism rim
+ *  corner also has the vertical seam edge, but its ⟂ tangent fails the test, so
+ *  only the two rim chords chain. */
+function edgeChainsFrom(shape: Shape3D): Map<number, number> {
+  const parent = new Map<number, number>();
+  const find = (x: number): number => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    while (parent.get(x) !== r) { const nx = parent.get(x)!; parent.set(x, r); x = nx; }
+    return r;
+  };
+  const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+  const vkey = (p: V3) => `${Math.round(p[0] * 1e3)},${Math.round(p[1] * 1e3)},${Math.round(p[2] * 1e3)}`;
+  // vertex -> the edge-ends there, each with the unit tangent pointing INTO the edge.
+  const atVertex = new Map<string, { h: number; tan: V3 }[]>();
+  for (const e of shape.edges) {
+    const h = e.hashCode;
+    if (!parent.has(h)) parent.set(h, h);
+    let pts: V3[];
+    try { pts = sampleEdgePoints(e); } catch { continue; }
+    if (pts.length < 2) continue;
+    const a = pts[0], a2 = pts[1], b = pts[pts.length - 1], b2 = pts[pts.length - 2];
+    const tanA = vunit([a2[0] - a[0], a2[1] - a[1], a2[2] - a[2]]);
+    const tanB = vunit([b2[0] - b[0], b2[1] - b[1], b2[2] - b[2]]);
+    for (const [p, tan] of [[a, tanA], [b, tanB]] as [V3, V3][]) {
+      const k = vkey(p);
+      const arr = atVertex.get(k);
+      if (arr) arr.push({ h, tan }); else atVertex.set(k, [{ h, tan }]);
+    }
+  }
+  for (const arr of atVertex.values()) {
+    for (let i = 0; i < arr.length; i++)
+      for (let j = i + 1; j < arr.length; j++)
+        if (arr[i].h !== arr[j].h && v3dot(arr[i].tan, arr[j].tan) < -CHAIN_DOT) union(arr[i].h, arr[j].h);
+  }
+  const out = new Map<number, number>();
+  for (const h of parent.keys()) out.set(h, find(h));
+  return out;
+}
+
 /** Drop the smooth (facet-seam) edges from a meshed edge set, so only real
  *  feature edges render/pick. `lines` is flat xyz; `edgeGroups` index it by
  *  point. */
@@ -2196,15 +2282,22 @@ function regenerate(
           // it for huge reference bodies (the per-face mesh path) — they're
           // reference-only, and the pass would cost more than it's worth.
           const surfaces = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceSurfacesFrom(b.shape);
+          // Logical-surface clustering (whole-cylinder selection). Skipped for huge
+          // reference bodies alongside surface classification — same O(faces) walk.
+          const clusters = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceClustersFrom(b.shape);
           faces.faceGroups = faces.faceGroups.map((g) => ({
             ...g,
             name: b.names.get(g.faceId),
             surface: surfaces?.get(g.faceId),
+            clusterId: clusters?.get(g.faceId),
           }));
         }
         if (edges.edgeGroups) {
           const edgeNames = edgeNamesFrom(b.shape, b.names);
-          edges.edgeGroups = edges.edgeGroups.map((g) => ({ ...g, name: edgeNames.get(g.edgeId) }));
+          // Chain tangent-continuous chords (whole-circle edge selection); skipped
+          // for huge reference bodies alongside the surface/cluster passes.
+          const chains = b.names.size > PER_FACE_MESH_THRESHOLD ? null : edgeChainsFrom(b.shape);
+          edges.edgeGroups = edges.edgeGroups.map((g) => ({ ...g, name: edgeNames.get(g.edgeId), chainId: chains?.get(g.edgeId) }));
         }
         cached = { faces, edges };
         meshCache.set(b.key, cached);

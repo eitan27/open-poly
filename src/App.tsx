@@ -1085,6 +1085,12 @@ export default function App() {
   // segment's start gets a point-on-line / midpoint constraint (the end of each
   // segment is constrained from its own snap).
   const lineStartOnRef = useRef<{ id: string; mid: boolean } | undefined>(undefined);
+  // A drawn point that snapped to BODY geometry (a hole rim/centre) pins to that
+  // world spot via a coincident-to-`{fixed}` constraint, so the snap LASTS across
+  // drags/solves instead of holding only by coincident-coordinate merge. These
+  // remember the fixed uv for the line start / circle centre (committed later).
+  const lineStartFixedRef = useRef<Vec2 | undefined>(undefined);
+  const circleCenterFixedRef = useRef<Vec2 | undefined>(undefined);
   // The committed polygon side count (used when drawing). The dialog edits a
   // free-text draft and commits it via Set, so typing isn't fought by live clamping.
   const [polygonSides, setPolygonSides] = useState(6);
@@ -4154,6 +4160,7 @@ export default function App() {
     on?: { id: string; mid: boolean },
     atVertex?: boolean,
     meanings?: { meaning: "horizontal" | "vertical" | "parallel" | "perpendicular"; refId?: string }[],
+    onFixed?: Vec2,
   ) => {
     if (!editingSketchId || sketchTool === "select" || sketchTool === "offset") return;
     const sketchId = editingSketchId;
@@ -4199,6 +4206,7 @@ export default function App() {
         if (draft.length === 0) {
           setDraft([uv]);
           lineStartOnRef.current = on; // remember an entity the start landed on
+          lineStartFixedRef.current = onFixed; // …or a body point it pinned to
         } else {
           const line = lineEntity(draft[0], uv);
           let next = addSketchEntities(doc, sketchId, [line]);
@@ -4225,10 +4233,17 @@ export default function App() {
               : { id: genId(), type: "pointOnLine", point: { entity: line.id, at }, line: t.id };
           if (lineStartOnRef.current) cons.push(attach("a", lineStartOnRef.current));
           if (on) cons.push(attach("b", on));
+          // A body-geometry snap (hole rim/centre) → pin that endpoint to the spot
+          // with a coincident-to-`{fixed}`, so it can't drift on a later drag.
+          const pin = (at: "a" | "b", p: Vec2): SketchConstraint =>
+            ({ id: genId(), type: "coincident", a: { entity: line.id, at }, b: { fixed: p } });
+          if (lineStartFixedRef.current) cons.push(pin("a", lineStartFixedRef.current));
+          if (onFixed) cons.push(pin("b", onFixed));
           if (cons.length) next = addSketchConstraints(next, sketchId, cons);
           // The chain continues from this end; it's now constrained, so the next
           // segment's start needs no further attachment.
           lineStartOnRef.current = undefined;
+          lineStartFixedRef.current = undefined;
           // Landing this endpoint on an existing corner (another entity's endpoint
           // or the origin) closes the polyline — end the chain instead of drawing
           // on from there. Snapping back onto the chain's own point doesn't count.
@@ -4257,10 +4272,21 @@ export default function App() {
         }
         break;
       case "circle-center":
-        if (draft.length === 0) setDraft([uv]);
-        else {
+        if (draft.length === 0) {
+          setDraft([uv]);
+          circleCenterFixedRef.current = onFixed; // centre may pin to a hole centre
+        } else {
           const r = Math.hypot(uv[0] - draft[0][0], uv[1] - draft[0][1]);
-          commit([mark({ type: "circle", id: genId(), c: draft[0], r })]);
+          const circle = mark({ type: "circle" as const, id: genId(), c: draft[0], r });
+          let next = addSketchEntities(doc, sketchId, [circle]);
+          // Pin the centre to the body circle it snapped to (concentric that LASTS).
+          if (circleCenterFixedRef.current) {
+            next = addSketchConstraints(next, sketchId, [
+              { id: genId(), type: "coincident", a: { entity: circle.id, at: "c" }, b: { fixed: circleCenterFixedRef.current } },
+            ]);
+          }
+          void applyAndSolve(next);
+          circleCenterFixedRef.current = undefined;
           setDraft([]);
         }
         break;

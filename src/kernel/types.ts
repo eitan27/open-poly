@@ -30,16 +30,25 @@ export interface MeshedFaces {
   /** Maps ranges of the triangle buffer back to a topological face. `faceId` is
    *  the build-local pick id (OCCT hash); `name` is the persistent topological
    *  name (stable across rebuilds) used by feature references; `surface` is the
-   *  analytic description, when the face has one we can name. */
-  faceGroups?: { start: number; count: number; faceId: number; name?: string; surface?: FaceSurface }[];
+   *  analytic description, when the face has one we can name. `clusterId` groups
+   *  the facets of ONE logical curved surface (a faceted cylinder's N side
+   *  faces, a tangent fillet blend) — faces joined across sub-crease "smooth"
+   *  edges share a clusterId, so a click selects the whole surface, not a slice.
+   *  Build-local (a representative face's hash); a flat box face is its own
+   *  singleton cluster. */
+  faceGroups?: { start: number; count: number; faceId: number; name?: string; surface?: FaceSurface; clusterId?: number }[];
 }
 
 export interface MeshedEdges {
   lines: FloatBuffer;
   /** Maps ranges of the line buffer back to a topological edge. `edgeId` is the
    *  build-local pick id; `name` is the persistent name (derived from the two
-   *  adjacent faces' names) used by feature references like chamfer/fillet. */
-  edgeGroups?: { start: number; count: number; edgeId: number; name?: string }[];
+   *  adjacent faces' names) used by feature references like chamfer/fillet.
+   *  `chainId` groups the tangent-continuous straight segments that approximate
+   *  ONE smooth curve (a faceted circle's N rim chords) so a click selects the
+   *  whole circle, not a chord. Build-local (a representative edge's hash); a
+   *  sharp-cornered edge is its own singleton chain. */
+  edgeGroups?: { start: number; count: number; edgeId: number; name?: string; chainId?: number }[];
 }
 
 /** A tessellated shape ready to be uploaded to three.js. */

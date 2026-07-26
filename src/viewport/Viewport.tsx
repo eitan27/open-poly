@@ -537,24 +537,28 @@ const posKey = (x: number, y: number, z: number) =>
 function faceBoundaryEdges(
   faceGeom: THREE.BufferGeometry,
   edgeGeom: THREE.BufferGeometry,
-  faceId: number,
+  faceIds: Set<number>,
 ): [number, number][] {
   const fg = faceGeom.userData.faceGroups as { faceId: number }[] | undefined;
   const eg = edgeGeom.userData.edgeGroups as { start: number; count: number; edgeId: number }[] | undefined;
   if (!fg || !eg) return [];
-  const groupIdx = fg.findIndex((g) => g.faceId === faceId);
-  if (groupIdx < 0) return [];
-  const grp = faceGeom.groups[groupIdx];
-  if (!grp) return [];
 
-  // Collect the rounded positions of every vertex used by this face's triangles.
+  // Collect the rounded positions of every vertex used by the selected face(s)'
+  // triangles. For a logical cylinder this is the whole facet cluster, so an edge
+  // "on the face" means on the cluster — the facet seams between them are already
+  // filtered out of the edge mesh, leaving just the real boundary (the rim rings).
   const faceVerts = new Set<string>();
   const fpos = faceGeom.getAttribute("position");
   const index = faceGeom.getIndex();
-  for (let i = grp.start; i < grp.start + grp.count; i++) {
-    const v = index ? index.getX(i) : i;
-    faceVerts.add(posKey(fpos.getX(v), fpos.getY(v), fpos.getZ(v)));
-  }
+  fg.forEach((g, gi) => {
+    if (!faceIds.has(g.faceId)) return;
+    const grp = faceGeom.groups[gi];
+    if (!grp) return;
+    for (let i = grp.start; i < grp.start + grp.count; i++) {
+      const v = index ? index.getX(i) : i;
+      faceVerts.add(posKey(fpos.getX(v), fpos.getY(v), fpos.getZ(v)));
+    }
+  });
 
   const epos = edgeGeom.getAttribute("position");
   const ranges: [number, number][] = [];
@@ -880,6 +884,7 @@ export function Viewport({
     on?: { id: string; mid: boolean },
     atVertex?: boolean,
     meanings?: { meaning: "horizontal" | "vertical" | "parallel" | "perpendicular"; refId?: string }[],
+    onFixed?: Vec2,
   ) => void;
   /** Live drag of unconstrained sketch geometry: each frame reports the points
    *  being moved (by original uv → target uv); App re-solves so constraints stay
@@ -975,8 +980,13 @@ export function Viewport({
   //  • a point with `vertex` = an existing corner (line/arc endpoint, or the
   //    origin) — snapping the line tool there ends the polyline chain.
   // Undefined for body edges / other-sketch geometry (not constrainable here).
-  const snapPointsRef = useRef<{ uv: Vec2; midpointOf?: string; vertex?: boolean }[]>([]);
+  const snapPointsRef = useRef<{ uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number } }[]>([]);
   const snapLinesRef = useRef<{ a: Vec2; b: Vec2; id?: string; construction?: boolean }[]>([]);
+  // Circles (centre + radius, in the active sketch's uv) coplanar with the sketch
+  // — a hole rim, a cylinder cap. Their centre + quadrant points are added to
+  // snapPointsRef; this list drives the on-circle (nearest-point-on-the-ring)
+  // snap so drawing hugs the true circle, not its faceted chords.
+  const snapCirclesRef = useRef<{ c: Vec2; r: number }[]>([]);
 
   const hoverPlaneRef = useRef<DatumId | null>(null);
   const hoverUserPlaneRef = useRef<string | null>(null);
@@ -1422,7 +1432,7 @@ export function Viewport({
         if (!(child instanceof THREE.Mesh)) continue;
         const fid = child.userData.featureId as string;
         const geom = child.geometry;
-        const fg = geom.userData.faceGroups as { faceId: number }[] | undefined;
+        const fg = geom.userData.faceGroups as { faceId: number; clusterId?: number }[] | undefined;
         if (!fg) continue;
         const wholeSel = highlightBodyIdsRef.current.has(fid);
         const wholeHov = hovered?.kind === "feature" && hovered.id === fid;
@@ -1433,11 +1443,24 @@ export function Viewport({
         const wholeOrange = bh?.orange.has(fid) ?? false;
         const asf = activeSketchFaceRef.current;
         const asfFaces = asf?.bodyId === fid ? asf.faceIds : null;
+        // Logical-face selection: a click on any facet of a faceted cylinder
+        // highlights the WHOLE surface. `cl` maps a picked faceId to its cluster
+        // representative (falls back to the id itself for flat/singleton faces or
+        // reference bodies that carry no clusterId), then we match by cluster.
+        const clMap = new Map<number, number>();
+        for (const g of fg) if (g.clusterId !== undefined) clMap.set(g.faceId, g.clusterId);
+        const cl = (id: number) => clMap.get(id) ?? id;
+        const selClusters = new Set(
+          sels.filter((s) => s.kind === "face" && s.featureId === fid).map((s) => cl((s as { faceId: number }).faceId)),
+        );
+        const hovCluster =
+          hovered?.kind === "face" && hovered.featureId === fid ? cl(hovered.faceId) : undefined;
         let dirty = false;
         geom.groups.forEach((g: { materialIndex?: number }, i: number) => {
           const faceId = fg[i]?.faceId;
-          const selF = wholeSel || sels.some((s) => s.kind === "face" && s.featureId === fid && s.faceId === faceId);
-          const hovF = wholeHov || (hovered?.kind === "face" && hovered.featureId === fid && hovered.faceId === faceId);
+          const fc = cl(faceId as number);
+          const selF = wholeSel || selClusters.has(fc);
+          const hovF = wholeHov || (hovCluster !== undefined && fc === hovCluster);
           const sketchF = asfFaces?.has(faceId as number) ?? false;
           const idx = wholeGhost ? 3 : selF || wholeOrange ? 2 : hovF ? 1 : sketchF ? 4 : 0;
           if (g.materialIndex !== idx) { g.materialIndex = idx; dirty = true; }
@@ -1470,9 +1493,15 @@ export function Viewport({
             (x): x is THREE.LineSegments =>
               x instanceof THREE.LineSegments && x.userData.isBodyEdges && x.userData.featureId === s.featureId,
           );
-          const eg = child?.geometry.userData.edgeGroups as { start: number; count: number; edgeId: number }[] | undefined;
-          const g = eg?.find((x) => x.edgeId === s.edgeId);
-          if (child && g) pushRange(child.geometry, g.start, g.count, c);
+          const eg = child?.geometry.userData.edgeGroups as { start: number; count: number; edgeId: number; chainId?: number }[] | undefined;
+          if (child && eg) {
+            // Logical-edge selection: highlight every chord of the picked edge's
+            // chain (the whole faceted circle), not just the one segment.
+            const chain = eg.find((x) => x.edgeId === s.edgeId)?.chainId;
+            for (const g of eg)
+              if (g.edgeId === s.edgeId || (chain !== undefined && g.chainId === chain))
+                pushRange(child.geometry, g.start, g.count, c);
+          }
         } else if (s.kind === "sketchEntity") {
           const child = sketchChild(s.sketchId);
           const eg = child?.geometry.userData.entityGroups as { start: number; count: number; entityId: string; construction?: boolean }[] | undefined;
@@ -1500,7 +1529,14 @@ export function Viewport({
               x instanceof THREE.LineSegments && x.userData.isBodyEdges && x.userData.featureId === s.featureId,
           );
           if (faceMesh && edgeMesh) {
-            for (const [start, count] of faceBoundaryEdges(faceMesh.geometry, edgeMesh.geometry, s.faceId)) {
+            // Boundary of the whole logical face (the picked facet's cluster), so a
+            // selected cylinder outlines its rim rings, not one facet's strip.
+            const fgm = faceMesh.geometry.userData.faceGroups as { faceId: number; clusterId?: number }[] | undefined;
+            const selCluster = fgm?.find((g) => g.faceId === s.faceId)?.clusterId;
+            const clusterIds = new Set<number>(
+              selCluster !== undefined && fgm ? fgm.filter((g) => g.clusterId === selCluster).map((g) => g.faceId) : [s.faceId],
+            );
+            for (const [start, count] of faceBoundaryEdges(faceMesh.geometry, edgeMesh.geometry, clusterIds)) {
               pushRange(edgeMesh.geometry, start, count, c);
             }
           }
@@ -1641,7 +1677,7 @@ export function Viewport({
     // name-based edge queries). Edge groups carry a build-local `edgeId` and a
     // persistent `name`; the LineSegments buffer is consecutive world-space pairs
     // [p0,p1, p1,p2, …] (no mesh transform). ---
-    type EdgeGroup = { start: number; count: number; edgeId: number; name?: string };
+    type EdgeGroup = { start: number; count: number; edgeId: number; name?: string; chainId?: number };
     const bodyEdgeGroups = (featureId: string): EdgeGroup[] | undefined => {
       const child = group.children.find(
         (x): x is THREE.LineSegments =>
@@ -1937,6 +1973,9 @@ export function Viewport({
       /** For a guide snap: the meanings hit, so the click can capture a
        *  parallel/perpendicular constraint (H/V go through `hv`). */
       meanings?: { meaning: "horizontal" | "vertical" | "parallel" | "perpendicular"; refId?: string }[];
+      /** The body circle this snap references (centre/quadrant/on-ring) — drawn
+       *  as a highlight so it's clear which hole/rim you're snapping to. */
+      circle?: { c: Vec2; r: number };
     } => {
       const frame = activeFrameRef.current!;
       const distPx = (c: Vec2) => {
@@ -1961,7 +2000,7 @@ export function Viewport({
       // 1. nearest snap point (static candidates + the current draft points).
       // Draft points carry no `vertex` flag, so snapping back onto the chain's
       // own in-progress point never counts as closing on an existing corner.
-      let best: { uv: Vec2; midpointOf?: string; vertex?: boolean } | null = null;
+      let best: { uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number } } | null = null;
       let bestD = SNAP_PX;
       for (const c of snapPointsRef.current) {
         const d = distPx(c.uv);
@@ -1978,17 +2017,30 @@ export function Viewport({
           hv: hvOf(best.uv),
           on: best.midpointOf ? { id: best.midpointOf, mid: true } : undefined,
           atVertex: best.vertex,
+          circle: best.circle,
         };
       // 2. nearest point on a coplanar edge
       let bestLine: Vec2 | null = null;
       let bestLineId: string | undefined;
       let bestSeg: [Vec2, Vec2] | undefined;
       let bestConstruction = false;
+      let bestLineCircle: { c: Vec2; r: number } | undefined;
       let bestLD = SNAP_PX;
       for (const seg of snapLinesRef.current) {
         const q = nearestOnSegment(raw, seg.a, seg.b);
         const d = distPx(q);
-        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = seg.id; bestSeg = [seg.a, seg.b]; bestConstruction = !!seg.construction; }
+        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = seg.id; bestSeg = [seg.a, seg.b]; bestConstruction = !!seg.construction; bestLineCircle = undefined; }
+      }
+      // On-circle: nearest point on a coplanar ring (a hole rim / cap). Competes
+      // at the same tier as edges; the exact centre/quadrants already won above as
+      // points. No `id`/`seg` — it's a positional snap, no constraint attached.
+      for (const circ of snapCirclesRef.current) {
+        const dx = raw[0] - circ.c[0], dy = raw[1] - circ.c[1];
+        const len = Math.hypot(dx, dy);
+        if (len < 1e-6) continue;
+        const q: Vec2 = [circ.c[0] + (circ.r * dx) / len, circ.c[1] + (circ.r * dy) / len];
+        const d = distPx(q);
+        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = undefined; bestSeg = undefined; bestConstruction = false; bestLineCircle = circ; }
       }
       if (bestLine)
         return {
@@ -1998,6 +2050,7 @@ export function Viewport({
           on: bestLineId ? { id: bestLineId, mid: false } : undefined,
           seg: bestSeg,
           construction: bestConstruction,
+          circle: bestLineCircle,
         };
       // 3. Inference guides: horizontal/vertical/parallel/perpendicular lines from
       // the draft start, armed key points, and armed edge directions. Subsumes the
@@ -2455,7 +2508,7 @@ export function Viewport({
           state.guideBadge.style.display = "none";
           return;
         }
-        const { uv, kind, seg, on, guideLines, meanings, construction } = snap(raw, e.clientX, e.clientY);
+        const { uv, kind, seg, on, guideLines, meanings, construction, circle } = snap(raw, e.clientX, e.clientY);
         armFromSnap(kind, uv, seg, on?.id);
         const poly = previewPolyline(sketchToolRef.current, draftRef.current, uv, polygonSidesRef.current);
         if (poly && poly.length >= 2) {
@@ -2485,14 +2538,34 @@ export function Viewport({
           state.snapMarker.visible = false;
         }
         // Light up the whole edge when snapping to one — dashed if it's a
-        // construction line, so the highlight matches the line's own style.
-        if (kind === "edge" && seg) {
+        // construction line, so the highlight matches the line's own style. A
+        // circle snap (centre/quadrant/on-ring) instead outlines the WHOLE ring,
+        // so it's clear which hole/rim you're referencing (concentric feedback).
+        // Rebuild the geometry fresh each time (a fat LineSegmentsGeometry doesn't
+        // grow its instance count on reuse — see previewLine), since a ring (64
+        // segments) and a straight edge (1) alternate on this one object.
+        const setSnapEdge = (pos: number[], dashed: boolean) => {
+          const g = new LineSegmentsGeometry();
+          g.setPositions(pos);
+          state.snapEdgeLine.geometry.dispose();
+          state.snapEdgeLine.geometry = g;
+          snapEdgeMaterial.dashed = dashed;
+          if (dashed) state.snapEdgeLine.computeLineDistances();
+          state.snapEdgeLine.visible = true;
+        };
+        if (circle) {
+          const seg2 = 64, ringPos: number[] = [];
+          for (let i = 0; i < seg2; i++) {
+            const a0 = (2 * Math.PI * i) / seg2, a1 = (2 * Math.PI * (i + 1)) / seg2;
+            const p = uvToWorld(frame, circle.c[0] + circle.r * Math.cos(a0), circle.c[1] + circle.r * Math.sin(a0));
+            const q = uvToWorld(frame, circle.c[0] + circle.r * Math.cos(a1), circle.c[1] + circle.r * Math.sin(a1));
+            ringPos.push(p[0], p[1], p[2], q[0], q[1], q[2]);
+          }
+          setSnapEdge(ringPos, false);
+        } else if (kind === "edge" && seg) {
           const a = uvToWorld(frame, seg[0][0], seg[0][1]);
           const b = uvToWorld(frame, seg[1][0], seg[1][1]);
-          state.snapEdgeLine.geometry.setPositions([a[0], a[1], a[2], b[0], b[1], b[2]]);
-          snapEdgeMaterial.dashed = !!construction;
-          if (construction) state.snapEdgeLine.computeLineDistances();
-          state.snapEdgeLine.visible = true;
+          setSnapEdge([a[0], a[1], a[2], b[0], b[1], b[2]], !!construction);
         } else {
           state.snapEdgeLine.visible = false;
         }
@@ -2693,7 +2766,9 @@ export function Viewport({
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) return;
         const s = snap(raw, e.clientX, e.clientY);
-        onSketchClickRef.current(s.uv, s.hv, s.on, s.atVertex, s.meanings);
+        // A snap onto a body circle (its centre/quadrant/rim) carries `circle`;
+        // pass its uv as the fixed pin so the draw commits a lasting coincident.
+        onSketchClickRef.current(s.uv, s.hv, s.on, s.atVertex, s.meanings, s.circle ? s.uv : undefined);
         return;
       }
       // Selection click (idle, or sketch + Select tool). App accumulates into a
@@ -3390,6 +3465,7 @@ export function Viewport({
       armedRef.current = { points: [], lines: [] };
       snapPointsRef.current = [];
       snapLinesRef.current = [];
+      snapCirclesRef.current = [];
       return;
     }
 
@@ -3406,7 +3482,7 @@ export function Viewport({
       const d = w.clone().sub(O);
       return [d.dot(U), d.dot(V)];
     };
-    const points: { uv: Vec2; midpointOf?: string; vertex?: boolean }[] = [{ uv: [0, 0], vertex: true }];
+    const points: { uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number } }[] = [{ uv: [0, 0], vertex: true }];
     const lines: { a: Vec2; b: Vec2; id?: string; construction?: boolean }[] = [];
     // `id` is the active-sketch line entity this segment belongs to (so a drawn
     // endpoint landing on its body → point-on-line, on its midpoint → midpoint).
@@ -3452,8 +3528,27 @@ export function Viewport({
       }
     }
     for (const [aw, bw] of collectBodyEdges(state.group)) addSeg(aw, bw);
+    // Circular body edges coplanar with the sketch (a hole rim, a cylinder cap):
+    // offer the centre + the four quadrant points as snaps, and the true ring for
+    // on-circle snapping — so drawing a concentric circle or hitting the rim is
+    // natural instead of chasing faceted chords.
+    const circles: { c: Vec2; r: number }[] = [];
+    for (const circ of collectBodyCircles(state.group)) {
+      if (!onPlane(circ.center)) continue;
+      if (Math.abs(circ.normal.dot(N)) < 0.999) continue; // ring must lie in the sketch plane
+      const c = toUv(circ.center);
+      const r = circ.radius;
+      const ring = { c, r };
+      points.push({ uv: c, vertex: true, circle: ring }); // centre
+      points.push({ uv: [c[0] + r, c[1]], vertex: true, circle: ring }); // quadrants (u/v of the frame)
+      points.push({ uv: [c[0] - r, c[1]], vertex: true, circle: ring });
+      points.push({ uv: [c[0], c[1] + r], vertex: true, circle: ring });
+      points.push({ uv: [c[0], c[1] - r], vertex: true, circle: ring });
+      circles.push(ring);
+    }
     snapPointsRef.current = points;
     snapLinesRef.current = lines;
+    snapCirclesRef.current = circles;
   }, [sketches, activeSketchId, meshes, sketchFullyConstrained, fontTick]);
 
   // Resolve which faces of the sketched body lie on the sketch plane, so the
@@ -3635,6 +3730,54 @@ function collectBodyEdges(group: THREE.Group): [THREE.Vector3, THREE.Vector3][] 
     }
   }
   return segments;
+}
+
+/** Fit a circle to a set of points, or null if they don't form one. Centre is
+ *  the centroid, radius the mean distance; accepted only when every point sits
+ *  within 2% of that radius (a closed ring). The plane normal is taken from three
+ *  well-separated points, so it's independent of the points' storage order. */
+function fitCircle(pts: THREE.Vector3[]): { center: THREE.Vector3; radius: number; normal: THREE.Vector3 } | null {
+  if (pts.length < 8) return null;
+  const center = new THREE.Vector3();
+  for (const p of pts) center.add(p);
+  center.divideScalar(pts.length);
+  let sum = 0;
+  const radii = pts.map((p) => { const r = p.distanceTo(center); sum += r; return r; });
+  const radius = sum / radii.length;
+  if (radius < 1e-3) return null;
+  for (const r of radii) if (Math.abs(r - radius) > 0.02 * radius) return null;
+  const p0 = pts[0], p1 = pts[Math.floor(pts.length / 3)], p2 = pts[Math.floor((2 * pts.length) / 3)];
+  const normal = new THREE.Vector3().crossVectors(p1.clone().sub(p0), p2.clone().sub(p0));
+  if (normal.lengthSq() < 1e-9) return null;
+  return { center, radius, normal: normal.normalize() };
+}
+
+/** Circular edges of the running bodies (a hole rim, a cylinder cap), fitted from
+ *  each edge CHAIN (the faceted circle's chords, grouped by chainId). Returns
+ *  world-space centre/radius/normal; the sketch snap layer keeps the ones
+ *  coplanar with the active plane and offers centre/quadrant/on-ring snaps. */
+function collectBodyCircles(group: THREE.Group): { center: THREE.Vector3; radius: number; normal: THREE.Vector3 }[] {
+  const out: { center: THREE.Vector3; radius: number; normal: THREE.Vector3 }[] = [];
+  for (const child of group.children) {
+    if (!(child instanceof THREE.LineSegments)) continue;
+    const eg = child.geometry.userData.edgeGroups as { start: number; count: number; edgeId: number; chainId?: number }[] | undefined;
+    const pos = child.geometry.getAttribute("position");
+    if (!eg || !pos) continue;
+    // Group segments by chain (an un-chained edge is its own candidate).
+    const byChain = new Map<number | string, { start: number; count: number }[]>();
+    for (const g of eg) {
+      const k = g.chainId ?? `e${g.edgeId}`;
+      const arr = byChain.get(k);
+      if (arr) arr.push(g); else byChain.set(k, [g]);
+    }
+    for (const groups of byChain.values()) {
+      const pts: THREE.Vector3[] = [];
+      for (const g of groups) for (let v = g.start; v < g.start + g.count; v++) pts.push(new THREE.Vector3().fromBufferAttribute(pos, v));
+      const circ = fitCircle(pts);
+      if (circ) out.push(circ);
+    }
+  }
+  return out;
 }
 
 /** Mute TransformControls' default pure-RGB arrows so the gizmo fits the muted

@@ -54,6 +54,45 @@ function edgeLength(edges: MeshedEdges, edgeId: number): number {
   return len;
 }
 
+/** The face ids of the whole logical surface a picked facet belongs to (its
+ *  cluster) — a faceted cylinder's N side facets, so measurements sum over the
+ *  real surface, not one slice. Falls back to just the picked face. */
+function faceClusterIds(faces: MeshedFaces, faceId: number): number[] {
+  const g = faces.faceGroups?.find((fg) => fg.faceId === faceId);
+  if (g?.clusterId === undefined || !faces.faceGroups) return [faceId];
+  return faces.faceGroups.filter((fg) => fg.clusterId === g.clusterId).map((fg) => fg.faceId);
+}
+
+/** The edge ids of the whole logical curve a picked segment belongs to (its
+ *  chain) — a faceted circle's N chords. Falls back to just the picked edge. */
+function edgeChainIds(edges: MeshedEdges, edgeId: number): number[] {
+  const g = edges.edgeGroups?.find((eg) => eg.edgeId === edgeId);
+  if (g?.chainId === undefined || !edges.edgeGroups) return [edgeId];
+  return edges.edgeGroups.filter((eg) => eg.chainId === g.chainId).map((eg) => eg.edgeId);
+}
+
+/** If an edge chain traces a full circle, its radius; else null. Fits a radius
+ *  about the chain's centroid and accepts it only when every vertex sits within
+ *  2% of that radius — true for a closed ring (centroid == centre), false for an
+ *  arc (centroid off the axis → radii spread) or any non-circular chain. */
+function edgeChainRadius(edges: MeshedEdges, ids: number[]): number | null {
+  if (ids.length < 6) return null; // too few chords to trust as a circle
+  const groups = ids.map((id) => edges.edgeGroups!.find((eg) => eg.edgeId === id)).filter(Boolean) as NonNullable<MeshedEdges["edgeGroups"]>;
+  const { lines } = edges;
+  const pts: Vec3[] = [];
+  for (const g of groups) for (let v = g.start; v < g.start + g.count; v++) pts.push([lines[v * 3], lines[v * 3 + 1], lines[v * 3 + 2]]);
+  if (pts.length < 6) return null;
+  const c: Vec3 = [0, 0, 0];
+  for (const p of pts) { c[0] += p[0]; c[1] += p[1]; c[2] += p[2]; }
+  c[0] /= pts.length; c[1] /= pts.length; c[2] /= pts.length;
+  let sum = 0;
+  const radii = pts.map((p) => { const r = Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2]); sum += r; return r; });
+  const r = sum / radii.length;
+  if (r < 1e-6) return null;
+  for (const ri of radii) if (Math.abs(ri - r) > 0.02 * r) return null; // not a full circle
+  return r;
+}
+
 type Vec3 = [number, number, number];
 
 /** Perpendicular distance from `q` to the infinite line through `p` along unit `d`. */
@@ -268,7 +307,9 @@ function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[], 
   if (selection.kind === "face") {
     const m = meshes.find((x) => x.id === selection.featureId);
     if (!m) return null;
-    const rows = [{ label: "Area", value: fmt(faceArea(m.mesh.faces, selection.faceId)) }];
+    // Sum over the whole logical face (a cylinder's facet cluster), not one slice.
+    const clusterArea = faceClusterIds(m.mesh.faces, selection.faceId).reduce((sum, id) => sum + faceArea(m.mesh.faces, id), 0);
+    const rows = [{ label: "Area", value: fmt(clusterArea) }];
     const group = m.mesh.faces.faceGroups?.find((g) => g.faceId === selection.faceId);
     // Diameter, for the faces the kernel could describe analytically (see FaceSurface).
     const s = group?.surface;
@@ -289,7 +330,14 @@ function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[], 
   if (selection.kind === "edge") {
     const m = meshes.find((x) => x.id === selection.featureId);
     if (!m) return null;
-    return { title: "Edge", rows: [{ label: "Length", value: fmt(edgeLength(m.mesh.edges, selection.edgeId)) }] };
+    // Sum over the whole logical edge (a faceted circle's chords), not one chord.
+    const ids = edgeChainIds(m.mesh.edges, selection.edgeId);
+    const length = ids.reduce((sum, id) => sum + edgeLength(m.mesh.edges, id), 0);
+    const radius = edgeChainRadius(m.mesh.edges, ids);
+    const rows = radius !== null
+      ? [{ label: "Diameter", value: fmt(2 * radius) }, { label: "Circumference", value: fmt(length) }]
+      : [{ label: "Length", value: fmt(length) }];
+    return { title: radius !== null ? "Circle" : "Edge", rows };
   }
 
   return null;

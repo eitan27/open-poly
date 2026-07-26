@@ -285,3 +285,81 @@ describe("distance between two parallel edges", () => {
     ]);
   });
 });
+
+// --- Logical-surface / logical-edge measurement (facet clustering, Phase A–C) ---
+
+/** A body with two unit right-triangle faces (area 0.5 each). When `clusterId`
+ *  is set on both, they're ONE logical surface — a picked facet measures the
+ *  whole cluster's area, not one slice. */
+function twoFacetBody(clusterId?: number): FeatureMesh {
+  return {
+    id: "c",
+    mesh: {
+      name: "c",
+      faces: {
+        vertices: [0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0, 0, 3, 0, 0, 2, 1, 0],
+        triangles: [0, 1, 2, 3, 4, 5],
+        faceGroups: [
+          { start: 0, count: 3, faceId: 10, clusterId },
+          { start: 3, count: 3, faceId: 11, clusterId },
+        ],
+      },
+      edges: { lines: [], edgeGroups: [] },
+    },
+    color: 0,
+    opacity: 1,
+  } as unknown as FeatureMesh;
+}
+
+describe("cluster-summed face area", () => {
+  it("sums the area over every facet in the cluster", () => {
+    const rows = measureSelection([{ kind: "face", featureId: "c", faceId: 10 } as unknown as Selection], doc, [twoFacetBody(10)])?.rows;
+    expect(rows).toContainEqual({ label: "Area", value: "1" }); // 0.5 + 0.5
+  });
+
+  it("measures only the picked facet when there's no cluster", () => {
+    const rows = measureSelection([{ kind: "face", featureId: "c", faceId: 10 } as unknown as Selection], doc, [twoFacetBody(undefined)])?.rows;
+    expect(rows).toContainEqual({ label: "Area", value: "0.5" });
+  });
+});
+
+/** A body whose edges tessellate one circle of radius `r` as `n` chords, all
+ *  sharing a chainId — a faceted circular edge (a hole rim / cap). */
+function ringBody(id: string, r: number, n: number, chainId = 999): FeatureMesh {
+  const lines: number[] = [];
+  const edgeGroups: { start: number; count: number; edgeId: number; chainId: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (2 * Math.PI * i) / n, b = (2 * Math.PI * (i + 1)) / n;
+    const start = lines.length / 3;
+    lines.push(r * Math.cos(a), r * Math.sin(a), 0, r * Math.cos(b), r * Math.sin(b), 0);
+    edgeGroups.push({ start, count: 2, edgeId: i, chainId });
+  }
+  return { id, mesh: { name: id, faces: { vertices: [], triangles: [] }, edges: { lines, edgeGroups } }, color: 0, opacity: 1 } as unknown as FeatureMesh;
+}
+
+describe("logical circular-edge measurement", () => {
+  it("reads a faceted-circle chain as a Circle with diameter + circumference", () => {
+    const info = measureSelection([pick("r", 0)], doc, [ringBody("r", 5, 64)]);
+    expect(info?.title).toBe("Circle");
+    expect(info?.rows).toContainEqual({ label: "Diameter", value: "10" });
+    const circ = Number(info?.rows.find((row) => row.label === "Circumference")?.value);
+    expect(circ).toBeCloseTo(2 * Math.PI * 5, 0); // faceted perimeter ≈ πd
+  });
+
+  it("falls back to Length for a single straight edge (no chain)", () => {
+    const info = measureSelection([pick("b", 0)], doc, [body("b", [[[0, 0, 0], [10, 0, 0]]])]);
+    expect(info?.title).toBe("Edge");
+    expect(info?.rows).toContainEqual({ label: "Length", value: "10" });
+  });
+
+  it("sums length over a non-circular chain without calling it a Circle", () => {
+    // 8 collinear unit segments sharing a chain → total length 8, not a ring.
+    const lines: number[] = [];
+    const edgeGroups: { start: number; count: number; edgeId: number; chainId: number }[] = [];
+    for (let i = 0; i < 8; i++) { lines.push(i, 0, 0, i + 1, 0, 0); edgeGroups.push({ start: i * 2, count: 2, edgeId: i, chainId: 1 }); }
+    const b = { id: "s", mesh: { name: "s", faces: { vertices: [], triangles: [] }, edges: { lines, edgeGroups } }, color: 0, opacity: 1 } as unknown as FeatureMesh;
+    const info = measureSelection([pick("s", 3)], doc, [b]);
+    expect(info?.title).toBe("Edge");
+    expect(info?.rows).toContainEqual({ label: "Length", value: "8" });
+  });
+});
