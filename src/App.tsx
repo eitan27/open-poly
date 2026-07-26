@@ -85,6 +85,7 @@ import type {
 } from "./document/types";
 import { measureBetween, resolveSide } from "./sketch/distanceDim";
 import { planCoincident, coincidentEnabled as coincidentIsEnabled } from "./sketch/coincidentSelection";
+import { pinConstraints } from "./sketch/snapPins";
 import type { BooleanOp, MeshedEdges, MeshedFaces, ShapeMeshPayload } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
@@ -1091,6 +1092,9 @@ export default function App() {
   // remember the fixed uv for the line start / circle centre (committed later).
   const lineStartFixedRef = useRef<Vec2 | undefined>(undefined);
   const circleCenterFixedRef = useRef<Vec2 | undefined>(undefined);
+  // The body-pin (onFixed) of each accumulated draft click, parallel to `draft` —
+  // so a rect/polygon corner snapped to a hole pins at commit time.
+  const draftFixedRef = useRef<(Vec2 | undefined)[]>([]);
   // The committed polygon side count (used when drawing). The dialog edits a
   // free-text draft and commits it via Set, so typing isn't fought by live clamping.
   const [polygonSides, setPolygonSides] = useState(6);
@@ -4184,11 +4188,14 @@ export default function App() {
     const lineEntity = (a: Vec2, b: Vec2): SketchEntity => mark({ type: "line", id: genId(), a, b });
     const loopLines = (pts: Vec2[]) => loopSegments(pts).map(([a, b]) => lineEntity(a, b));
 
+    // Body-geometry snaps → lasting coincident-to-{fixed} pins (see snapPins).
+    const makePins = (entities: SketchEntity[], p: (Vec2 | undefined)[]) => pinConstraints(entities, p, genId);
+
     // Commit a rectangle as 4 looped lines plus the implicit horizontal/vertical
     // constraints (each edge is axis-aligned, so it's exactly H or V). Without
     // these a "rectangle" is just four coincident lines, free to shear the
-    // moment any later constraint is added.
-    const commitRect = (pts: Vec2[]) => {
+    // moment any later constraint is added. `pins` pins any corner snapped to a body point.
+    const commitRect = (pts: Vec2[], pins: (Vec2 | undefined)[] = []) => {
       const segs = loopSegments(pts);
       const lines = segs.map(([a, b]) => lineEntity(a, b));
       let next = addSketchEntities(doc, sketchId, lines);
@@ -4197,6 +4204,7 @@ export default function App() {
         type: Math.abs(b[0] - a[0]) >= Math.abs(b[1] - a[1]) ? "horizontal" : "vertical",
         entity: lines[i].id,
       }));
+      cons.push(...makePins(lines, pins));
       next = addSketchConstraints(next, sketchId, cons);
       void applyAndSolve(next);
     };
@@ -4258,17 +4266,20 @@ export default function App() {
         }
         break;
       case "rect-corner":
-        if (draft.length === 0) setDraft([uv]);
+        if (draft.length === 0) { setDraft([uv]); draftFixedRef.current = [onFixed]; }
         else {
-          commitRect(rectangleCorners(draft[0], uv));
-          setDraft([]);
+          // Both opposite corners (draft[0], uv) are rectangle corners → pin either
+          // that snapped to a hole. The other two corners aren't snap targets.
+          commitRect(rectangleCorners(draft[0], uv), [draftFixedRef.current[0], onFixed]);
+          setDraft([]); draftFixedRef.current = [];
         }
         break;
       case "rect-center":
-        if (draft.length === 0) setDraft([uv]);
+        if (draft.length === 0) { setDraft([uv]); draftFixedRef.current = [onFixed]; }
         else {
-          commitRect(rectangleFromCenter(draft[0], uv));
-          setDraft([]);
+          // Only the corner (uv) is a rectangle vertex; the centre (draft[0]) isn't.
+          commitRect(rectangleFromCenter(draft[0], uv), [onFixed]);
+          setDraft([]); draftFixedRef.current = [];
         }
         break;
       case "circle-center":
@@ -4301,7 +4312,13 @@ export default function App() {
       case "polygon":
         if (draft.length === 0) setDraft([uv]);
         else {
-          commit(loopLines(regularPolygon(draft[0], uv, polygonSides)));
+          // The clicked vertex (uv) is a polygon corner → pins if snapped to a
+          // hole. The centre (draft[0]) isn't a referenceable vertex, so it can't.
+          const polyLines = loopLines(regularPolygon(draft[0], uv, polygonSides));
+          let next = addSketchEntities(doc, sketchId, polyLines);
+          const cons = makePins(polyLines, [onFixed]);
+          if (cons.length) next = addSketchConstraints(next, sketchId, cons);
+          void applyAndSolve(next);
           setDraft([]);
         }
         break;

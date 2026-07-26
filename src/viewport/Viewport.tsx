@@ -980,8 +980,8 @@ export function Viewport({
   //  • a point with `vertex` = an existing corner (line/arc endpoint, or the
   //    origin) — snapping the line tool there ends the polyline chain.
   // Undefined for body edges / other-sketch geometry (not constrainable here).
-  const snapPointsRef = useRef<{ uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number } }[]>([]);
-  const snapLinesRef = useRef<{ a: Vec2; b: Vec2; id?: string; construction?: boolean }[]>([]);
+  const snapPointsRef = useRef<{ uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number }; external?: boolean }[]>([]);
+  const snapLinesRef = useRef<{ a: Vec2; b: Vec2; id?: string; construction?: boolean; external?: boolean }[]>([]);
   // Circles (centre + radius, in the active sketch's uv) coplanar with the sketch
   // — a hole rim, a cylinder cap. Their centre + quadrant points are added to
   // snapPointsRef; this list drives the on-circle (nearest-point-on-the-ring)
@@ -1976,6 +1976,9 @@ export function Viewport({
       /** The body circle this snap references (centre/quadrant/on-ring) — drawn
        *  as a highlight so it's clear which hole/rim you're snapping to. */
       circle?: { c: Vec2; r: number };
+      /** A uv to PIN this snap to (a coincident-to-{fixed}) when it landed on body
+       *  geometry (a rim/centre/quadrant or a body edge) — so the snap lasts. */
+      onFixed?: Vec2;
     } => {
       const frame = activeFrameRef.current!;
       const distPx = (c: Vec2) => {
@@ -2000,7 +2003,7 @@ export function Viewport({
       // 1. nearest snap point (static candidates + the current draft points).
       // Draft points carry no `vertex` flag, so snapping back onto the chain's
       // own in-progress point never counts as closing on an existing corner.
-      let best: { uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number } } | null = null;
+      let best: { uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number }; external?: boolean } | null = null;
       let bestD = SNAP_PX;
       for (const c of snapPointsRef.current) {
         const d = distPx(c.uv);
@@ -2018,6 +2021,8 @@ export function Viewport({
           on: best.midpointOf ? { id: best.midpointOf, mid: true } : undefined,
           atVertex: best.vertex,
           circle: best.circle,
+          // Pin to body geometry (a circle centre/quadrant, or a body-edge point).
+          onFixed: best.circle || best.external ? best.uv : undefined,
         };
       // 2. nearest point on a coplanar edge
       let bestLine: Vec2 | null = null;
@@ -2025,11 +2030,12 @@ export function Viewport({
       let bestSeg: [Vec2, Vec2] | undefined;
       let bestConstruction = false;
       let bestLineCircle: { c: Vec2; r: number } | undefined;
+      let bestLineExternal = false;
       let bestLD = SNAP_PX;
       for (const seg of snapLinesRef.current) {
         const q = nearestOnSegment(raw, seg.a, seg.b);
         const d = distPx(q);
-        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = seg.id; bestSeg = [seg.a, seg.b]; bestConstruction = !!seg.construction; bestLineCircle = undefined; }
+        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = seg.id; bestSeg = [seg.a, seg.b]; bestConstruction = !!seg.construction; bestLineCircle = undefined; bestLineExternal = !!seg.external; }
       }
       // On-circle: nearest point on a coplanar ring (a hole rim / cap). Competes
       // at the same tier as edges; the exact centre/quadrants already won above as
@@ -2040,7 +2046,7 @@ export function Viewport({
         if (len < 1e-6) continue;
         const q: Vec2 = [circ.c[0] + (circ.r * dx) / len, circ.c[1] + (circ.r * dy) / len];
         const d = distPx(q);
-        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = undefined; bestSeg = undefined; bestConstruction = false; bestLineCircle = circ; }
+        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = undefined; bestSeg = undefined; bestConstruction = false; bestLineCircle = circ; bestLineExternal = true; }
       }
       if (bestLine)
         return {
@@ -2048,6 +2054,7 @@ export function Viewport({
           kind: "edge",
           hv: hvOf(bestLine),
           on: bestLineId ? { id: bestLineId, mid: false } : undefined,
+          onFixed: bestLineExternal ? bestLine : undefined,
           seg: bestSeg,
           construction: bestConstruction,
           circle: bestLineCircle,
@@ -2766,9 +2773,10 @@ export function Viewport({
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) return;
         const s = snap(raw, e.clientX, e.clientY);
-        // A snap onto a body circle (its centre/quadrant/rim) carries `circle`;
-        // pass its uv as the fixed pin so the draw commits a lasting coincident.
-        onSketchClickRef.current(s.uv, s.hv, s.on, s.atVertex, s.meanings, s.circle ? s.uv : undefined);
+        // `onFixed` is set when the snap landed on BODY geometry (a rim/centre/
+        // quadrant or a body edge); pass it so the draw commits a lasting
+        // coincident-to-{fixed} instead of a positional-only snap.
+        onSketchClickRef.current(s.uv, s.hv, s.on, s.atVertex, s.meanings, s.onFixed);
         return;
       }
       // Selection click (idle, or sketch + Select tool). App accumulates into a
@@ -3482,21 +3490,23 @@ export function Viewport({
       const d = w.clone().sub(O);
       return [d.dot(U), d.dot(V)];
     };
-    const points: { uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number } }[] = [{ uv: [0, 0], vertex: true }];
-    const lines: { a: Vec2; b: Vec2; id?: string; construction?: boolean }[] = [];
+    const points: { uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number }; external?: boolean }[] = [{ uv: [0, 0], vertex: true }];
+    const lines: { a: Vec2; b: Vec2; id?: string; construction?: boolean; external?: boolean }[] = [];
     // `id` is the active-sketch line entity this segment belongs to (so a drawn
     // endpoint landing on its body → point-on-line, on its midpoint → midpoint).
     // Endpoints are `vertex` corners (they end the line-tool chain when snapped).
-    const addSeg = (aw: THREE.Vector3, bw: THREE.Vector3, id?: string, construction?: boolean) => {
+    // `external` marks BODY geometry (no sketch entity to constrain to) — snapping
+    // there pins the drawn point to the spot with a coincident-to-{fixed}.
+    const addSeg = (aw: THREE.Vector3, bw: THREE.Vector3, id?: string, construction?: boolean, external?: boolean) => {
       const aOn = onPlane(aw);
       const bOn = onPlane(bw);
-      if (aOn) points.push({ uv: toUv(aw), vertex: true });
-      if (bOn) points.push({ uv: toUv(bw), vertex: true });
+      if (aOn) points.push({ uv: toUv(aw), vertex: true, external });
+      if (bOn) points.push({ uv: toUv(bw), vertex: true, external });
       if (aOn && bOn) {
         const a = toUv(aw);
         const b = toUv(bw);
-        points.push({ uv: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], midpointOf: id }); // midpoint
-        lines.push({ a, b, id, construction });
+        points.push({ uv: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], midpointOf: id, external }); // midpoint
+        lines.push({ a, b, id, construction, external });
       }
     };
     const addPoint = (uv: Vec2, midpointOf?: string, vertex?: boolean) => {
@@ -3527,7 +3537,7 @@ export function Viewport({
         }
       }
     }
-    for (const [aw, bw] of collectBodyEdges(state.group)) addSeg(aw, bw);
+    for (const [aw, bw] of collectBodyEdges(state.group)) addSeg(aw, bw, undefined, undefined, true);
     // Circular body edges coplanar with the sketch (a hole rim, a cylinder cap):
     // offer the centre + the four quadrant points as snaps, and the true ring for
     // on-circle snapping — so drawing a concentric circle or hitting the rim is
