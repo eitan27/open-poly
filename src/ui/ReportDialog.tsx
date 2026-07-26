@@ -80,7 +80,9 @@ export function ReportDialog({ onClose, getDocJson, getScreenshot, version }: Pr
         {result?.url ? (
           <div className="report-done">
             <p>Thanks — your report was filed.</p>
-            <a href={result.url} target="_blank" rel="noreferrer">View issue ↗</a>
+            {/* A "View issue ↗" link (href={result.url}) belongs here, but the repo
+                is private so the link would 404 for reporters. Restore it once
+                open-poly is public. See memory: report-issue-feature. */}
             <button className="report-submit" onClick={onClose}>Done</button>
           </div>
         ) : (
