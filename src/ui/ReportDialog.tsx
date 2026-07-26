@@ -14,6 +14,10 @@ interface Props {
   version: string;
 }
 
+// Screenshot attach isn't wired up yet, so its option is hidden. Flip to true
+// once it is (the getScreenshot plumbing is already in place).
+const SCREENSHOTS_SUPPORTED = false;
+
 type Category = "bug" | "missing_feature" | "confusing" | "other";
 const CATEGORIES: { value: Category; label: string }[] = [
   { value: "bug", label: "🐛 Bug" },
@@ -25,8 +29,10 @@ const CATEGORIES: { value: Category; label: string }[] = [
 export function ReportDialog({ onClose, getDocJson, getScreenshot, version }: Props) {
   const [category, setCategory] = useState<Category>("bug");
   const [description, setDescription] = useState("");
-  const [includeDoc, setIncludeDoc] = useState(true);
-  const [includeShot, setIncludeShot] = useState(true);
+  // Default OFF (opt-in) — the document may hold geometry the user would rather
+  // not send. Screenshot stays off + hidden until it's supported.
+  const [includeDoc, setIncludeDoc] = useState(false);
+  const [includeShot, setIncludeShot] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ url?: string; error?: string } | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -97,7 +103,9 @@ export function ReportDialog({ onClose, getDocJson, getScreenshot, version }: Pr
             </label>
             <div className="report-attach">
               <label><input type="checkbox" checked={includeDoc} onChange={(e) => setIncludeDoc(e.target.checked)} /> Include my current document (helps reproduce)</label>
-              <label><input type="checkbox" checked={includeShot} onChange={(e) => setIncludeShot(e.target.checked)} /> Include a screenshot</label>
+              {SCREENSHOTS_SUPPORTED && (
+                <label><input type="checkbox" checked={includeShot} onChange={(e) => setIncludeShot(e.target.checked)} /> Include a screenshot</label>
+              )}
             </div>
             <p className="report-note">Also sent: app version <code>{version.slice(0, 12)}</code>, your browser, and the page URL.</p>
             {result?.error && <p className="report-error">{result.error}</p>}
