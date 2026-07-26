@@ -5553,8 +5553,8 @@ export default function App() {
           >
             ?
           </button>
-          <button className="tool-btn" onClick={() => setReportOpen(true)} title="Report an issue / send feedback">
-            🐞
+          <button className="text-btn" onClick={() => setReportOpen(true)} title="Report an issue">
+            Report an issue
           </button>
         </div>
         {agentStatus === "connected" && (

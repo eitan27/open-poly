@@ -153,46 +153,54 @@
 .report-field textarea {
   width: 100%;
   box-sizing: border-box;
-  background: #1e2128;
-  color: #e7eaf0;
-  border: 1px solid #2f333c;
-  border-radius: 6px;
-  padding: 7px 9px;
-  font: inherit;
+  background: #0f1115;
+  color: #e6e8ee;
+  border: 1px solid #2a2d35;
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 13px;
+  font-family: inherit;
   resize: vertical;
 }
+.report-field textarea { line-height: 1.4; }
 .report-attach {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: 12px;
   margin: 6px 0 4px;
 }
 .report-attach label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
-.report-note { font-size: 11.5px; color: #7c828e; margin: 6px 0 10px; }
+.report-note { font-size: 11px; color: #7c828e; margin: 6px 0 12px; }
 .report-note code, .report-done code { color: #9fd0ff; }
-.report-error { font-size: 12.5px; color: #ff8f8f; margin: 4px 0 8px; }
+.report-error { font-size: 12px; color: #ff8f8f; margin: 4px 0 8px; }
 .report-actions { display: flex; justify-content: flex-end; gap: 8px; }
+/* Primary — matches the app's blue action buttons (.sketch-banner button). */
 .report-submit {
-  background: #2f6ea0;
-  color: #eaf2ff;
-  border: 1px solid #3f83bb;
-  border-radius: 6px;
-  padding: 7px 14px;
+  background: #4f8cff;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-family: inherit;
   cursor: pointer;
-  font: inherit;
 }
-.report-submit:disabled { opacity: 0.5; cursor: default; }
+.report-submit:hover:not(:disabled) { background: #3f7af0; }
+.report-submit:disabled { opacity: 0.4; cursor: default; }
+/* Secondary — matches .text-btn. */
 .report-cancel {
-  background: transparent;
-  color: #c7cbd4;
-  border: 1px solid #2f333c;
+  background: #232730;
+  color: #d6d9e0;
+  border: 1px solid #313643;
   border-radius: 6px;
-  padding: 7px 14px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-family: inherit;
   cursor: pointer;
-  font: inherit;
 }
-.report-done { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.report-cancel:hover:not(:disabled) { border-color: #4f8cff; }
+.report-done { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; font-size: 13px; }
 .report-done a { color: #9fd0ff; }
 
 .docs-header {
