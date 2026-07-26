@@ -111,6 +111,7 @@ import { copyName, dedupeName, nextUntitled } from "./storage/docNames";
 import { parseDocFile, serializeDocFile } from "./storage/docFile";
 import { CorruptDocError } from "./storage/docErrors";
 import { DocumentsDialog } from "./ui/DocumentsDialog";
+import { ReportDialog } from "./ui/ReportDialog";
 import {
   arcFrom3,
   circleFrom3,
@@ -729,6 +730,7 @@ export default function App() {
   // active document changes (dialog highlight, the multi-tab guard effect).
   const [activeId, setActiveId] = useState<string | null>(null);
   const [docsDialogOpen, setDocsDialogOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   // Left panel visibility. Togglable at any width; on a phone it's an
   // off-canvas drawer over the viewport, so it starts hidden there to keep the
   // 3D view (the point of the app) front and centre.
@@ -5551,6 +5553,9 @@ export default function App() {
           >
             ?
           </button>
+          <button className="tool-btn" onClick={() => setReportOpen(true)} title="Report an issue / send feedback">
+            🐞
+          </button>
         </div>
         {agentStatus === "connected" && (
           <span className="agent-badge" title="An LLM agent is connected to this tab">
@@ -5618,6 +5623,14 @@ export default function App() {
           onRename={renameDocument}
           onExport={exportDocument}
           onImport={importDocumentFile}
+        />
+      )}
+      {reportOpen && (
+        <ReportDialog
+          onClose={() => setReportOpen(false)}
+          version={__BUILD_ID__}
+          getDocJson={() => { try { return JSON.stringify(doc); } catch { return null; } }}
+          getScreenshot={() => viewApiRef.current?.capturePNG({ plain: true }) ?? null}
         />
       )}
       <div className={"body" + (sidebarOpen ? "" : " sidebar-closed")}>

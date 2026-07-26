@@ -121,6 +121,80 @@
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
+/* Report-an-issue dialog */
+.report-dialog {
+  width: min(460px, calc(100vw - 48px));
+  background: #16181d;
+  border: 1px solid #2a2d35;
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  color: #c7cbd4;
+}
+.report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.report-field {
+  display: block;
+  margin-bottom: 10px;
+}
+.report-field > span {
+  display: block;
+  font-size: 12px;
+  color: #9aa0ab;
+  margin-bottom: 4px;
+}
+.report-field select,
+.report-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1e2128;
+  color: #e7eaf0;
+  border: 1px solid #2f333c;
+  border-radius: 6px;
+  padding: 7px 9px;
+  font: inherit;
+  resize: vertical;
+}
+.report-attach {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  margin: 6px 0 4px;
+}
+.report-attach label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.report-note { font-size: 11.5px; color: #7c828e; margin: 6px 0 10px; }
+.report-note code, .report-done code { color: #9fd0ff; }
+.report-error { font-size: 12.5px; color: #ff8f8f; margin: 4px 0 8px; }
+.report-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.report-submit {
+  background: #2f6ea0;
+  color: #eaf2ff;
+  border: 1px solid #3f83bb;
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+.report-submit:disabled { opacity: 0.5; cursor: default; }
+.report-cancel {
+  background: transparent;
+  color: #c7cbd4;
+  border: 1px solid #2f333c;
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+.report-done { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.report-done a { color: #9fd0ff; }
+
 .docs-header {
   display: flex;
   align-items: center;

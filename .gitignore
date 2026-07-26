@@ -22,3 +22,7 @@ node_modules/.tmp/
 
 # local claude settings
 .claude/settings.local.json
+
+# wrangler local secrets
+.dev.vars
+.wrangler/
