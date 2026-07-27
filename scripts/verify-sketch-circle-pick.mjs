@@ -110,13 +110,84 @@ if (line) {
   const dRim = Math.abs(Math.hypot(line.b[0] - C[0], line.b[1] - C[1]) - R);
   check("its start snapped exactly to the circle's centre", dCentre < 1e-6, `off by ${dCentre.toFixed(4)}mm`);
   check("its end snapped exactly onto the rim", dRim < 0.05, `radius off by ${dRim.toFixed(4)}mm`);
-  // NOT a check: snapping to a sketch circle (centre or rim) is positional by
-  // design — there's no point-on-circle constraint in the model, and pinning to
-  // a fixed uv would fight the circle's own parameters when it moves or is
-  // re-dimensioned. So the endpoint lands exactly on the rim but isn't tied to
-  // it: re-dimensioning the circle later won't drag the line's end along.
-  const attached = s2.constraints.map((c) => c.type);
-  console.log(`  note: snap constraints recorded — ${attached.join(", ") || "none (positional snap, by design)"}`);
+  // The rim snap is parametric, not just positional: it records a
+  // point-on-circle so the endpoint rides the rim afterwards.
+  const onCircle = s2.constraints.filter((c) => c.type === "pointOnCircle");
+  check("the rim snap is recorded as a point-on-circle constraint", onCircle.length === 1,
+    s2.constraints.map((c) => c.type).join(", ") || "none");
+
+  // …so growing the circle must grow the line with it.
+  // Back to the Select tool first — the Line tool is still armed from drawing,
+  // and a click would start another segment instead of selecting.
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("s");
+  await page.waitForTimeout(200);
+  await apply({ op: "select", refs: [] });
+  await clickWorld(rim(200)); // away from the line's endpoint
+  await page.keyboard.press("d");
+  await page.waitForTimeout(300);
+  await page.locator(".dim-input input").fill("35");
+  await page.keyboard.press("Enter");
+  await waitIdle();
+  const s3 = (await read({ read: "document" })).features.find((f) => f.id === sketchId2);
+  const c3 = s3.entities.find((e) => e.type === "circle");
+  const l3 = s3.entities.find((e) => e.type === "line");
+  const endR = Math.hypot(l3.b[0] - c3.c[0], l3.b[1] - c3.c[1]);
+  const startOff = Math.hypot(l3.a[0] - c3.c[0], l3.a[1] - c3.c[1]);
+  check("re-dimensioning the circle keeps the line's end on the rim",
+    Math.abs(c3.r - 35) < 0.01 && Math.abs(endR - 35) < 0.05,
+    `r=${c3.r?.toFixed(2)} end at ${endR.toFixed(2)} from centre`);
+  check("…and its start still at the centre", startOff < 0.05, `off by ${startOff.toFixed(3)}mm`);
+  check("…so the line now spans the new radius",
+    Math.abs(Math.hypot(l3.b[0] - l3.a[0], l3.b[1] - l3.a[1]) - 35) < 0.05,
+    `length ${Math.hypot(l3.b[0] - l3.a[0], l3.b[1] - l3.a[1]).toFixed(2)}`);
+}
+
+// --- 4. A SMALL circle is selectable without zooming in --------------------------
+// The centre used to beat the rim on any click within the 12px snap radius, so a
+// circle drawn smaller than that was unpickable until you zoomed in.
+await apply({ op: "newDocument" });
+await waitIdle();
+const smallC = [10, 0];
+const smallR = 1.5;
+const sk3 = await apply({ op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "circle", c: smallC, r: smallR }] });
+await waitIdle();
+await page.locator(".tree-row", { hasText: "Sketch" }).first().dblclick();
+await page.waitForTimeout(600);
+{
+  const px = await page.evaluate(
+    ([a, b]) => {
+      const p = window.__openpoly.worldToScreen(a);
+      const q = window.__openpoly.worldToScreen(b);
+      return Math.hypot(p.x - q.x, p.y - q.y);
+    },
+    [[smallC[0], smallC[1], 0], [smallC[0] + smallR, smallC[1], 0]],
+  );
+  console.log(`\n  small circle: r=${smallR}mm ≈ ${px.toFixed(1)}px on screen (snap radius is 12px)`);
+  const hits = [];
+  for (const deg of [0, 90, 180, 270]) {
+    await apply({ op: "select", refs: [] });
+    const w = [smallC[0] + smallR * Math.cos((deg * Math.PI) / 180), smallC[1] + smallR * Math.sin((deg * Math.PI) / 180), 0];
+    const s = await page.evaluate((p) => window.__openpoly.worldToScreen(p), w);
+    await page.mouse.click(canvas.x + s.x, canvas.y + s.y);
+    await page.waitForTimeout(220);
+    const sel = await read({ read: "selection" });
+    const one = (Array.isArray(sel) ? sel : sel?.selection ?? [])[0];
+    hits.push(one?.kind === "sketchEntity" ? "•" : `✗${deg}(${one?.kind ?? "none"})`);
+  }
+  check("a circle smaller than the snap radius is still selectable by its rim",
+    hits.every((h) => h === "•"), hits.join(" "));
+  await apply({ op: "select", refs: [] });
+  // NOT a check — a known gap, unchanged by this fix: the sketch-POINT branch of
+  // the picker sits inside the "a sketch line is within EDGE_PICK_PX" gate, so a
+  // circle's centre only resolves to a point when the rim is also within 6px.
+  // Clicking a centre otherwise falls through to the enclosed region.
+  const sc = await page.evaluate((p) => window.__openpoly.worldToScreen(p), [smallC[0], smallC[1], 0]);
+  await page.mouse.click(canvas.x + sc.x, canvas.y + sc.y);
+  await page.waitForTimeout(220);
+  const sel = await read({ read: "selection" });
+  const one = (Array.isArray(sel) ? sel : sel?.selection ?? [])[0];
+  console.log(`  note: clicking the circle's centre selects ${one?.kind ?? "nothing"} (point picking needs the rim in range too)`);
 }
 
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);

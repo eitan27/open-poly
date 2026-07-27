@@ -622,6 +622,8 @@ function constraintRefsEntity(c: SketchConstraint, entityId: string): boolean {
     }
     case "pointOnLine":
       return c.line === entityId || ("entity" in c.point && c.point.entity === entityId);
+    case "pointOnCircle":
+      return c.circle === entityId || ("entity" in c.point && c.point.entity === entityId);
     case "midpoint":
       return c.target === entityId || ("entity" in c.point && c.point.entity === entityId);
     case "distanceBetween": {

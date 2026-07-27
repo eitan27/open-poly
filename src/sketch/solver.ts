@@ -335,6 +335,16 @@ export async function solveSketch(
         const pid = ensurePoint(p, "fixed" in c.point);
         prims.push({ id, type: "point_on_line_pl", p_id: pid, l_id: lineIdByEntity.get(c.line) });
       }
+    } else if (c.type === "pointOnCircle") {
+      // A point lies on a circle's (or arc's) rim: parametric in the circle's
+      // centre AND radius, so the point tracks it as it moves or resizes —
+      // unlike the positional snap this replaces, which just placed the point.
+      const p = refCoord(c.point);
+      if (p && circleIdByEntity.has(c.circle)) {
+        prims.push({ id, type: "point_on_circle", p_id: ensurePoint(p, "fixed" in c.point), c_id: circleIdByEntity.get(c.circle) });
+      } else if (p && arcIdByEntity.has(c.circle)) {
+        prims.push({ id, type: "point_on_arc", p_id: ensurePoint(p, "fixed" in c.point), a_id: arcIdByEntity.get(c.circle) });
+      }
     } else if (c.type === "midpoint") {
       const p = refCoord(c.point);
       const target = entities.find((x) => x.id === c.target);

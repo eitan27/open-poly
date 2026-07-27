@@ -1005,6 +1005,8 @@ function constraintRefIds(c: SketchConstraint): string[] {
       return [pointRefId(c.a), pointRefId(c.b)];
     case "pointOnLine":
       return [pointRefId(c.point), c.line];
+    case "pointOnCircle":
+      return [pointRefId(c.point), c.circle];
     case "midpoint":
       return [pointRefId(c.point), c.target];
   }

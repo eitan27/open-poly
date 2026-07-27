@@ -1023,8 +1023,9 @@ export function Viewport({
   // snapPointsRef; this list drives the on-circle (nearest-point-on-the-ring)
   // snap so drawing hugs the true circle, not its faceted chords.
   /** Coplanar rings to snap onto. `external` = body geometry (a hole rim / cap),
-   *  which pins the drawn point; a sketch circle's rim snaps positionally only. */
-  const snapCirclesRef = useRef<{ c: Vec2; r: number; external?: boolean }[]>([]);
+   *  which PINS the drawn point in place; `id` = an active-sketch circle, whose
+   *  rim attaches the drawn point parametrically (point-on-circle). */
+  const snapCirclesRef = useRef<{ c: Vec2; r: number; external?: boolean; id?: string }[]>([]);
 
   const hoverPlaneRef = useRef<DatumId | null>(null);
   const hoverUserPlaneRef = useRef<string | null>(null);
@@ -2084,7 +2085,7 @@ export function Viewport({
         if (len < 1e-6) continue;
         const q: Vec2 = [circ.c[0] + (circ.r * dx) / len, circ.c[1] + (circ.r * dy) / len];
         const d = distPx(q);
-        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = undefined; bestSeg = undefined; bestConstruction = false; bestLineCircle = circ; bestLineExternal = !!circ.external; }
+        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = circ.id; bestSeg = undefined; bestConstruction = false; bestLineCircle = circ; bestLineExternal = !!circ.external; }
       }
       if (bestLine)
         return {
@@ -2297,10 +2298,15 @@ export function Viewport({
         if (sid) {
           const sketch = sketchesRef.current.find((s) => s.id === sid);
           const frame = obj.userData.frame as PlaneFrameData | undefined;
-          // Sketch point (endpoint / centre) takes priority over the entity.
+          // Sketch point (endpoint / centre) takes priority over the entity —
+          // but only when it's the NEARER of the two. It used to win on being
+          // within SNAP_PX at all, which made a small circle unselectable: any
+          // click on a rim closer than 12px to the centre returned the centre
+          // point, so the circle could only be picked by zooming until its
+          // radius exceeded the snap radius.
           if (sketch && frame) {
             let best: Vec2 | null = null;
-            let bestD = SNAP_PX;
+            let bestD = Math.min(SNAP_PX, sketchPx);
             for (const uv of sketchPointCandidates(sketch)) {
               const w = uvToWorld(frame, uv[0], uv[1]);
               const px = projectToPx(new THREE.Vector3(w[0], w[1], w[2]));
@@ -3535,7 +3541,7 @@ export function Viewport({
     const points: { uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number }; external?: boolean }[] = [{ uv: [0, 0], vertex: true }];
     const lines: { a: Vec2; b: Vec2; id?: string; construction?: boolean; external?: boolean }[] = [];
     /** Rings from the sketch's own circles (see the on-circle snap below). */
-    const sketchRings: { c: Vec2; r: number }[] = [];
+    const sketchRings: { c: Vec2; r: number; id?: string }[] = [];
     // `id` is the active-sketch line entity this segment belongs to (so a drawn
     // endpoint landing on its body → point-on-line, on its midpoint → midpoint).
     // Endpoints are `vertex` corners (they end the line-tool chain when snapped).
@@ -3571,12 +3577,13 @@ export function Viewport({
           );
         } else if (sameFrame && e.type === "circle") {
           addPoint(e.c); // centre
-          // …and the rim: an on-circle snap so a line drawn from the centre
-          // lands exactly on the edge instead of wherever the cursor was. Not
-          // `external`, so it stays a positional snap — pinning a point of a
-          // sketch circle to a fixed uv would fight the circle's own parameters
-          // if it later moves or is re-dimensioned.
-          sketchRings.push({ c: e.c, r: e.r });
+          // …and the rim: an on-circle snap, so a line drawn from the centre
+          // lands exactly on the edge. Carrying the entity id (for the ACTIVE
+          // sketch) makes the landing parametric — the click attaches a
+          // point-on-circle constraint, so the endpoint rides the rim when the
+          // circle is moved or re-dimensioned. Body rims pin instead (`external`)
+          // since there's no sketch entity to constrain to.
+          sketchRings.push({ c: e.c, r: e.r, id: activeId ? e.id : undefined });
         } else if (sameFrame && e.type === "arc") {
           addPoint(e.c);
           addPoint([e.c[0] + e.r * Math.cos(e.start), e.c[1] + e.r * Math.sin(e.start)], undefined, true);
@@ -3592,7 +3599,7 @@ export function Viewport({
     // offer the centre + the four quadrant points as snaps, and the true ring for
     // on-circle snapping — so drawing a concentric circle or hitting the rim is
     // natural instead of chasing faceted chords.
-    const circles: { c: Vec2; r: number; external?: boolean }[] = [];
+    const circles: { c: Vec2; r: number; external?: boolean; id?: string }[] = [];
     for (const circ of collectBodyCircles(state.group)) {
       if (!onPlane(circ.center)) continue;
       if (Math.abs(circ.normal.dot(N)) < 0.999) continue; // ring must lie in the sketch plane

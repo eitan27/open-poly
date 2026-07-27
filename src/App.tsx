@@ -238,6 +238,7 @@ const constraintLabel = (c: SketchConstraint): string => {
     case "tangent": return "Tangent";
     case "coincident": return "origin" in c.a || "origin" in c.b ? "Coincident (origin)" : "Coincident";
     case "pointOnLine": return "origin" in c.point ? "On line (origin)" : "Point on line";
+    case "pointOnCircle": return "Point on circle";
     case "midpoint": return "Midpoint";
   }
 };
@@ -297,6 +298,8 @@ const constraintSelections = (
       return [...pt(c.a), ...pt(c.b)];
     case "pointOnLine":
       return [...pt(c.point), ent(c.line)];
+    case "pointOnCircle":
+      return [...pt(c.point), ent(c.circle)];
     case "midpoint":
       return [...pt(c.point), ent(c.target)];
   }
@@ -4265,12 +4268,20 @@ export default function App() {
             }
           }
           // Keep an endpoint attached to whatever it was snapped onto: a line's
-          // body → point-on-line; a line/arc midpoint → midpoint — so a later
-          // dimension can't slide it off.
-          const attach = (at: "a" | "b", t: { id: string; mid: boolean }): SketchConstraint =>
-            t.mid
-              ? { id: genId(), type: "midpoint", point: { entity: line.id, at }, target: t.id }
-              : { id: genId(), type: "pointOnLine", point: { entity: line.id, at }, line: t.id };
+          // body → point-on-line; a circle's/arc's rim → point-on-circle (so the
+          // end rides the rim when the circle is re-dimensioned); a line/arc
+          // midpoint → midpoint — so a later dimension can't slide it off.
+          const baseSk = base.features.find((f) => f.id === sketchId);
+          const targetType = (id: string) =>
+            baseSk?.type === "sketch" ? baseSk.entities.find((x) => x.id === id)?.type : undefined;
+          const attach = (at: "a" | "b", t: { id: string; mid: boolean }): SketchConstraint => {
+            const point = { entity: line.id, at } as const;
+            if (t.mid) return { id: genId(), type: "midpoint", point, target: t.id };
+            const kind = targetType(t.id);
+            return kind === "circle" || kind === "arc"
+              ? { id: genId(), type: "pointOnCircle", point, circle: t.id }
+              : { id: genId(), type: "pointOnLine", point, line: t.id };
+          };
           if (lineStartOnRef.current) cons.push(attach("a", lineStartOnRef.current));
           if (on) cons.push(attach("b", on));
           // A body-geometry snap (hole rim/centre) → pin that endpoint to the spot

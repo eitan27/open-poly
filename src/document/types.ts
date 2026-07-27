@@ -163,6 +163,10 @@ export type SketchConstraint =
   | { id: string; type: "coincident"; a: PointRef; b: PointRef }
   // A point (entity vertex or origin) constrained to lie on a line entity.
   | { id: string; type: "pointOnLine"; point: PointRef; line: string }
+  // A point constrained to lie ON the rim of a circle (or arc) — what a drawn
+  // endpoint snapped to a circle's edge gets, so it follows the rim when the
+  // circle is moved or re-dimensioned instead of staying where it was drawn.
+  | { id: string; type: "pointOnCircle"; point: PointRef; circle: string }
   // A point constrained to the midpoint of a line, or the mid-arc point of an arc.
   | { id: string; type: "midpoint"; point: PointRef; target: string };
 
