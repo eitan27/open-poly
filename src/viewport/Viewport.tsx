@@ -500,6 +500,42 @@ const PICK_DETECT_PX = 12;
 // 2–3 mm face becomes selectable with only modest zoom.
 const VERTEX_PICK_PX = 8;
 const EDGE_PICK_PX = 6;
+
+/**
+ * The intersection whose point is nearest the cursor **in pixels**, ignoring
+ * hits beyond `maxDistance` (depth).
+ *
+ * Three.js sorts intersections by ray depth, and a sketch is planar: every
+ * segment within the raycaster's world-space Line threshold comes back at the
+ * *same* distance, so the sort is a tie and the array keeps buffer order.
+ * Taking `[0]` therefore returns an arbitrary segment near the cursor rather
+ * than the one under it — on a tessellated entity (circle, arc, spline, text)
+ * typically a whole chord away. That gap then failed the EDGE_PICK_PX gate and
+ * made circle rims unselectable, while straight lines (one long segment, no
+ * neighbours) kept working.
+ */
+function nearestHitInPixels(
+  hits: THREE.Intersection[],
+  toPx: (p: THREE.Vector3) => { x: number; y: number },
+  clientX: number,
+  clientY: number,
+  maxDistance = Infinity,
+): { hit: THREE.Intersection; px: number } | null {
+  let best: THREE.Intersection | null = null;
+  let bestPx = Infinity;
+  for (const h of hits) {
+    if (h.distance > maxDistance) continue;
+    const p = toPx(h.point);
+    const px = Math.hypot(p.x - clientX, p.y - clientY);
+    // Exact ties happen at a shared vertex between two segments — prefer the
+    // nearer one so an overlapping sketch in front still wins.
+    if (px < bestPx || (px === bestPx && best !== null && h.distance < best.distance)) {
+      bestPx = px;
+      best = h;
+    }
+  }
+  return best ? { hit: best, px: bestPx } : null;
+}
 // Depth slack (world mm): an edge/line counts as "in front of" the face under the
 // cursor if it's within this of the face hit — covers tessellation seams where a
 // face's own boundary edge sits a hair behind the triangles.
@@ -986,7 +1022,9 @@ export function Viewport({
   // — a hole rim, a cylinder cap. Their centre + quadrant points are added to
   // snapPointsRef; this list drives the on-circle (nearest-point-on-the-ring)
   // snap so drawing hugs the true circle, not its faceted chords.
-  const snapCirclesRef = useRef<{ c: Vec2; r: number }[]>([]);
+  /** Coplanar rings to snap onto. `external` = body geometry (a hole rim / cap),
+   *  which pins the drawn point; a sketch circle's rim snaps positionally only. */
+  const snapCirclesRef = useRef<{ c: Vec2; r: number; external?: boolean }[]>([]);
 
   const hoverPlaneRef = useRef<DatumId | null>(null);
   const hoverUserPlaneRef = useRef<string | null>(null);
@@ -2046,7 +2084,7 @@ export function Viewport({
         if (len < 1e-6) continue;
         const q: Vec2 = [circ.c[0] + (circ.r * dx) / len, circ.c[1] + (circ.r * dy) / len];
         const d = distPx(q);
-        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = undefined; bestSeg = undefined; bestConstruction = false; bestLineCircle = circ; bestLineExternal = true; }
+        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = undefined; bestSeg = undefined; bestConstruction = false; bestLineCircle = circ; bestLineExternal = !!circ.external; }
       }
       if (bestLine)
         return {
@@ -2198,7 +2236,7 @@ export function Viewport({
       const worldPerPx = worldPerPixel(depth, rect.height);
       raycaster.params.Line = { threshold: worldPerPx * PICK_DETECT_PX };
       const edgeHit = raycaster.intersectObjects(bodyEdges, false).find((h) => sectionAllows(h.point));
-      const sketchHit = raycaster.intersectObjects(sketchSegs, false)[0];
+      const sketchHits = raycaster.intersectObjects(sketchSegs, false);
 
       // Selection filters: which body-geometry kinds the picker may return.
       // (Sketch picks below are unaffected — they belong to sketch editing.)
@@ -2233,11 +2271,15 @@ export function Viewport({
         };
       }
       // Sketch line gated the same way (pixel gap to the line), so it doesn't
-      // steal a wide band from the sketch region behind it.
-      const sketchPx = sketchHit
-        ? (() => { const p = projectToPx(sketchHit.point); return Math.hypot(p.x - clientX, p.y - clientY); })()
-        : Infinity;
-      const sketchOk = !!sketchHit && sketchHit.distance <= faceDist + PICK_DEPTH_TOL && sketchPx <= EDGE_PICK_PX;
+      // steal a wide band from the sketch region behind it. The hit is chosen by
+      // PIXEL distance, not intersect order — see nearestHitInPixels: taking [0]
+      // made circles (and every other tessellated entity) unclickable on their
+      // rim. Occluded hits drop out first, so a line behind a face can't win
+      // over one in front of it.
+      const sketchNear = nearestHitInPixels(sketchHits, projectToPx, clientX, clientY, faceDist + PICK_DEPTH_TOL);
+      const sketchHit = sketchNear?.hit;
+      const sketchPx = sketchNear ? sketchNear.px : Infinity;
+      const sketchOk = !!sketchHit && sketchPx <= EDGE_PICK_PX;
 
       // Vertex is the highest-priority element (a point beats any edge/face/line).
       if (flt.vertex && edgeInfo && edgeInfo.vertexPx <= VERTEX_PICK_PX) {
@@ -3492,6 +3534,8 @@ export function Viewport({
     };
     const points: { uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number }; external?: boolean }[] = [{ uv: [0, 0], vertex: true }];
     const lines: { a: Vec2; b: Vec2; id?: string; construction?: boolean; external?: boolean }[] = [];
+    /** Rings from the sketch's own circles (see the on-circle snap below). */
+    const sketchRings: { c: Vec2; r: number }[] = [];
     // `id` is the active-sketch line entity this segment belongs to (so a drawn
     // endpoint landing on its body → point-on-line, on its midpoint → midpoint).
     // Endpoints are `vertex` corners (they end the line-tool chain when snapped).
@@ -3526,7 +3570,13 @@ export function Viewport({
             e.construction,
           );
         } else if (sameFrame && e.type === "circle") {
-          addPoint(e.c); // centre (radius/quadrant snaps are a later refinement)
+          addPoint(e.c); // centre
+          // …and the rim: an on-circle snap so a line drawn from the centre
+          // lands exactly on the edge instead of wherever the cursor was. Not
+          // `external`, so it stays a positional snap — pinning a point of a
+          // sketch circle to a fixed uv would fight the circle's own parameters
+          // if it later moves or is re-dimensioned.
+          sketchRings.push({ c: e.c, r: e.r });
         } else if (sameFrame && e.type === "arc") {
           addPoint(e.c);
           addPoint([e.c[0] + e.r * Math.cos(e.start), e.c[1] + e.r * Math.sin(e.start)], undefined, true);
@@ -3542,13 +3592,13 @@ export function Viewport({
     // offer the centre + the four quadrant points as snaps, and the true ring for
     // on-circle snapping — so drawing a concentric circle or hitting the rim is
     // natural instead of chasing faceted chords.
-    const circles: { c: Vec2; r: number }[] = [];
+    const circles: { c: Vec2; r: number; external?: boolean }[] = [];
     for (const circ of collectBodyCircles(state.group)) {
       if (!onPlane(circ.center)) continue;
       if (Math.abs(circ.normal.dot(N)) < 0.999) continue; // ring must lie in the sketch plane
       const c = toUv(circ.center);
       const r = circ.radius;
-      const ring = { c, r };
+      const ring = { c, r, external: true };
       points.push({ uv: c, vertex: true, circle: ring }); // centre
       points.push({ uv: [c[0] + r, c[1]], vertex: true, circle: ring }); // quadrants (u/v of the frame)
       points.push({ uv: [c[0] - r, c[1]], vertex: true, circle: ring });
@@ -3558,7 +3608,7 @@ export function Viewport({
     }
     snapPointsRef.current = points;
     snapLinesRef.current = lines;
-    snapCirclesRef.current = circles;
+    snapCirclesRef.current = [...circles, ...sketchRings];
   }, [sketches, activeSketchId, meshes, sketchFullyConstrained, fontTick]);
 
   // Resolve which faces of the sketched body lie on the sketch plane, so the
