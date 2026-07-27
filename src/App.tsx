@@ -140,6 +140,9 @@ import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
 import { DimValueInput, type VarOption } from "./ui/DimValueInput";
 import { FeatureTree } from "./ui/FeatureTree";
 import { EditPanel } from "./ui/EditPanel";
+import { OverflowColumn, type ColumnSlot } from "./ui/OverflowColumn";
+import { OverflowToolbar } from "./ui/OverflowToolbar";
+import type { ToolbarItem, ToolbarRow } from "./ui/toolbarOverflow";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
 import { VariablesPanel } from "./ui/VariablesPanel";
@@ -613,22 +616,24 @@ const DATUM_ROWS: { id: DatumId; kind: string; label: string }[] = [
   { id: "plane-right", kind: "Plane", label: "Right" },
 ];
 
-const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; title: string; sc: string }[] = [
-  { tool: "select", label: "↖", title: "Select (S)", sc: "S" },
-  { tool: "line", label: "╱", title: "Line (L)", sc: "L" },
-  { tool: "rect-corner", label: "▭", title: "Rectangle: 2 corners (R)", sc: "R" },
-  { tool: "rect-center", label: "⊞", title: "Rectangle: center + corner (Shift+R)", sc: "⇧R" },
-  { tool: "circle-center", label: "○", title: "Circle: center + radius (C)", sc: "C" },
-  { tool: "circle-3p", label: "◔", title: "Circle: 3 points (Shift+C)", sc: "⇧C" },
-  { tool: "polygon", label: "⬢", title: "Regular polygon (P)", sc: "P" },
-  { tool: "arc-3p", label: "⌒", title: "Arc: 3 points (A)", sc: "A" },
-  { tool: "spline", label: "∿", title: "Spline (Shift+S): click points, Esc to finish", sc: "⇧S" },
-  { tool: "offset", label: <OffsetIcon />, title: "Offset (O): select a single chain of edges, then drag / type the distance", sc: "O" },
-  { tool: "mirror", label: "◫", title: "Mirror (M): click a line to arm the mirror axis, then click entities to mirror; Enter commits, Esc cancels", sc: "M" },
-  { tool: "pattern-linear", label: "⋯", title: "Linear pattern (X): click entities to repeat, set count + step; Enter commits, Esc cancels", sc: "X" },
-  { tool: "pattern-circular", label: "⊛", title: "Circular pattern (Shift+X): click the center point, then entities to repeat; Enter commits, Esc cancels", sc: "⇧X" },
-  { tool: "project", label: "⧉", title: "Project / Convert (U): click body edges & vertices to project them onto the sketch; Enter commits, Esc cancels", sc: "U" },
-  { tool: "text", label: "T", title: "Text (T): click to place, then type the text & height; Enter commits, Esc cancels", sc: "T" },
+// `name` is the plain-text name the More flyout lists and searches on (the
+// label is an icon, the title a full sentence).
+const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; name: string; title: string; sc: string }[] = [
+  { tool: "select", label: "↖", name: "Select", title: "Select (S)", sc: "S" },
+  { tool: "line", label: "╱", name: "Line", title: "Line (L)", sc: "L" },
+  { tool: "rect-corner", label: "▭", name: "Rectangle: 2 corners", title: "Rectangle: 2 corners (R)", sc: "R" },
+  { tool: "rect-center", label: "⊞", name: "Rectangle: center", title: "Rectangle: center + corner (Shift+R)", sc: "⇧R" },
+  { tool: "circle-center", label: "○", name: "Circle: center + radius", title: "Circle: center + radius (C)", sc: "C" },
+  { tool: "circle-3p", label: "◔", name: "Circle: 3 points", title: "Circle: 3 points (Shift+C)", sc: "⇧C" },
+  { tool: "polygon", label: "⬢", name: "Polygon", title: "Regular polygon (P)", sc: "P" },
+  { tool: "arc-3p", label: "⌒", name: "Arc", title: "Arc: 3 points (A)", sc: "A" },
+  { tool: "spline", label: "∿", name: "Spline", title: "Spline (Shift+S): click points, Esc to finish", sc: "⇧S" },
+  { tool: "offset", label: <OffsetIcon />, name: "Offset", title: "Offset (O): select a single chain of edges, then drag / type the distance", sc: "O" },
+  { tool: "mirror", label: "◫", name: "Mirror", title: "Mirror (M): click a line to arm the mirror axis, then click entities to mirror; Enter commits, Esc cancels", sc: "M" },
+  { tool: "pattern-linear", label: "⋯", name: "Linear pattern", title: "Linear pattern (X): click entities to repeat, set count + step; Enter commits, Esc cancels", sc: "X" },
+  { tool: "pattern-circular", label: "⊛", name: "Circular pattern", title: "Circular pattern (Shift+X): click the center point, then entities to repeat; Enter commits, Esc cancels", sc: "⇧X" },
+  { tool: "project", label: "⧉", name: "Project / Convert", title: "Project / Convert (U): click body edges & vertices to project them onto the sketch; Enter commits, Esc cancels", sc: "U" },
+  { tool: "text", label: "T", name: "Text", title: "Text (T): click to place, then type the text & height; Enter commits, Esc cancels", sc: "T" },
 ];
 const sketchToolMeta = (t: SketchTool) => SKETCH_TOOLS.find((x) => x.tool === t)!;
 
@@ -638,9 +643,9 @@ const sketchToolMeta = (t: SketchTool) => SKETCH_TOOLS.find((x) => x.tool === t)
 // constraint button. Shortcuts are unchanged: the bare key picks variant[0],
 // Shift the second (see SKETCH_KEYS / SKETCH_SHIFT_KEYS).
 const SKETCH_GROUPS = {
-  rect: { title: "Rectangle (R = 2 corners, Shift+R = center)", variants: ["rect-corner", "rect-center"] as const },
-  circle: { title: "Circle (C = center + radius, Shift+C = 3 points)", variants: ["circle-center", "circle-3p"] as const },
-  pattern: { title: "Pattern (X = linear, Shift+X = circular)", variants: ["pattern-linear", "pattern-circular"] as const },
+  rect: { name: "Rectangle", title: "Rectangle (R = 2 corners, Shift+R = center)", variants: ["rect-corner", "rect-center"] as const },
+  circle: { name: "Circle", title: "Circle (C = center + radius, Shift+C = 3 points)", variants: ["circle-center", "circle-3p"] as const },
+  pattern: { name: "Pattern", title: "Pattern (X = linear, Shift+X = circular)", variants: ["pattern-linear", "pattern-circular"] as const },
 };
 type SketchGroupId = keyof typeof SKETCH_GROUPS;
 // Short display names for the variants shown in each group's vertical flyout.
@@ -1097,6 +1102,27 @@ export default function App() {
   // The body-pin (onFixed) of each accumulated draft click, parallel to `draft` —
   // so a rect/polygon corner snapped to a hole pins at commit time.
   const draftFixedRef = useRef<(Vec2 | undefined)[]>([]);
+  // The document the NEXT sketch edit builds on, and a counter identifying the
+  // most recent commit. Solving is async (planegcs runs off the main thread), so
+  // between a click and its solved result landing, the `doc` a handler closed
+  // over is stale: a second click would build on a document that never saw the
+  // first one and silently drop it — drawing a polyline faster than the solve
+  // round-trip (~150ms) used to lose whole segments. Every sketch commit writes
+  // this ref synchronously so back-to-back edits stack, and stamps the counter
+  // so a superseded solve can't overwrite the newer geometry. See
+  // commitSketchEdit.
+  // Bumped by "/" to toggle the active toolbar's More flyout (the modeling bar
+  // while modelling, the sketch column while editing a sketch — they're never
+  // both usable at once).
+  const [modelMoreRequest, setModelMoreRequest] = useState(0);
+  const [sketchMoreRequest, setSketchMoreRequest] = useState(0);
+  const sketchBaseDocRef = useRef(doc);
+  const sketchCommitSeqRef = useRef(0);
+  // Any other source of document change (undo, the agent, loading a document)
+  // becomes the new base.
+  useEffect(() => {
+    sketchBaseDocRef.current = doc;
+  }, [doc]);
   // The committed polygon side count (used when drawing). The dialog edits a
   // free-text draft and commits it via Set, so typing isn't fought by live clamping.
   const [polygonSides, setPolygonSides] = useState(6);
@@ -1385,7 +1411,6 @@ export default function App() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
-  const newSolidRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const dxfInputRef = useRef<HTMLInputElement>(null);
   // The "Import ▾" flyout (STEP part / DXF sketch) in the Parts panel.
@@ -1935,15 +1960,8 @@ export default function App() {
     };
   }, [activeId]);
 
-  // Close the "New Body" dropdown when clicking anywhere outside it.
-  useEffect(() => {
-    if (!newSolidOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (!newSolidRef.current?.contains(e.target as Node)) setNewSolidOpen(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    return () => window.removeEventListener("mousedown", onDown);
-  }, [newSolidOpen]);
+  // ("New Body" closes on an outside click too, but that dropdown now lives
+  // inside <OverflowToolbar>, which owns the listener.)
 
   // Close the Parts "Import ▾" flyout when clicking outside it.
   useEffect(() => {
@@ -3308,6 +3326,14 @@ export default function App() {
         setShowShortcuts((s) => !s);
         return;
       }
+      // "/" opens (or closes) the More flyout of whichever toolbar is live, so
+      // every tool — including the ones that didn't fit — is a search away.
+      if (e.key === "/") {
+        e.preventDefault();
+        if (editingSketchId) setSketchMoreRequest((n) => n + 1);
+        else setModelMoreRequest((n) => n + 1);
+        return;
+      }
       // Enter commits the in-progress sketch Mirror (its previews → real entities).
       if (e.key === "Enter" && mirrorSessionRef.current) {
         e.preventDefault();
@@ -4170,21 +4196,25 @@ export default function App() {
   ) => {
     if (!editingSketchId || sketchTool === "select" || sketchTool === "offset") return;
     const sketchId = editingSketchId;
+    // Build on the last committed sketch rather than this render's `doc`, which
+    // is stale while the previous click's solve is still running (see
+    // sketchBaseDocRef — clicking faster than the solver used to drop segments).
+    const base = sketchBaseDocRef.current;
     // Drawing solves immediately: the constraints captured while drawing (auto
     // H/V, rectangle edges, shared corners) are enforced on the spot, the geometry
     // snaps clean, and the fully-constrained / conflict status stays live — so
     // there's no separate "Solve" step. For the chained line tool, the next
     // segment continues from the *solved* endpoint so the chain stays coincident.
     const applyAndSolve = async (mutated: Document, chainLineId?: string) => {
-      const solved = await solveSketchIn(mutated, sketchId);
-      setDoc(solved);
-      if (chainLineId) {
+      const solved = await commitSketchEdit(mutated, sketchId);
+      // Superseded by a later click — that one owns the draft/chain now.
+      if (chainLineId && solved) {
         const sk = solved.features.find((f) => f.id === sketchId);
         const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === chainLineId) : undefined;
         if (e?.type === "line") setDraft([e.b]);
       }
     };
-    const commit = (entities: SketchEntity[]) => void applyAndSolve(addSketchEntities(doc, sketchId, entities));
+    const commit = (entities: SketchEntity[]) => void applyAndSolve(addSketchEntities(base, sketchId, entities));
     // Stamp construction (reference) geometry when that draw-mode is on.
     const mark = <T extends SketchEntity>(e: T): T => (constructionMode ? { ...e, construction: true } : e);
     const lineEntity = (a: Vec2, b: Vec2): SketchEntity => mark({ type: "line", id: genId(), a, b });
@@ -4200,7 +4230,7 @@ export default function App() {
     const commitRect = (pts: Vec2[], pins: (Vec2 | undefined)[] = []) => {
       const segs = loopSegments(pts);
       const lines = segs.map(([a, b]) => lineEntity(a, b));
-      let next = addSketchEntities(doc, sketchId, lines);
+      let next = addSketchEntities(base, sketchId, lines);
       const cons: SketchConstraint[] = segs.map(([a, b], i) => ({
         id: genId(),
         type: Math.abs(b[0] - a[0]) >= Math.abs(b[1] - a[1]) ? "horizontal" : "vertical",
@@ -4219,7 +4249,7 @@ export default function App() {
           lineStartFixedRef.current = onFixed; // …or a body point it pinned to
         } else {
           const line = lineEntity(draft[0], uv);
-          let next = addSketchEntities(doc, sketchId, [line]);
+          let next = addSketchEntities(base, sketchId, [line]);
           const cons: SketchConstraint[] = [];
           if (hv) cons.push({ id: genId(), type: hv, entity: line.id });
           else {
@@ -4228,7 +4258,7 @@ export default function App() {
             // already covered above), and only against a real (non-derived) line
             // still in the sketch, so a stale ref can't over-constrain.
             const dir = meanings?.find((m) => (m.meaning === "parallel" || m.meaning === "perpendicular") && m.refId);
-            const sk = doc.features.find((f) => f.id === sketchId);
+            const sk = base.features.find((f) => f.id === sketchId);
             const ref = sk?.type === "sketch" ? sk.entities.find((x) => x.id === dir?.refId) : undefined;
             if (dir?.refId && ref?.type === "line" && !ref.derivedFrom) {
               cons.push({ id: genId(), type: dir.meaning as "parallel" | "perpendicular", a: line.id, b: dir.refId });
@@ -4291,7 +4321,7 @@ export default function App() {
         } else {
           const r = Math.hypot(uv[0] - draft[0][0], uv[1] - draft[0][1]);
           const circle = mark({ type: "circle" as const, id: genId(), c: draft[0], r });
-          let next = addSketchEntities(doc, sketchId, [circle]);
+          let next = addSketchEntities(base, sketchId, [circle]);
           // Pin the centre to the body circle it snapped to (concentric that LASTS).
           if (circleCenterFixedRef.current) {
             next = addSketchConstraints(next, sketchId, [
@@ -4317,7 +4347,7 @@ export default function App() {
           // The clicked vertex (uv) is a polygon corner → pins if snapped to a
           // hole. The centre (draft[0]) isn't a referenceable vertex, so it can't.
           const polyLines = loopLines(regularPolygon(draft[0], uv, polygonSides));
-          let next = addSketchEntities(doc, sketchId, polyLines);
+          let next = addSketchEntities(base, sketchId, polyLines);
           const cons = makePins(polyLines, [onFixed]);
           if (cons.length) next = addSketchConstraints(next, sketchId, cons);
           void applyAndSolve(next);
@@ -4384,8 +4414,12 @@ export default function App() {
     if (!editingSketchId || sketchTool !== "spline" || draft.length < 2) return false;
     const e: SketchEntity = { type: "spline", id: genId(), points: draft };
     const sketchId = editingSketchId;
-    const mutated = addSketchEntities(doc, sketchId, [constructionMode ? { ...e, construction: true } : e]);
-    void solveSketchIn(mutated, sketchId).then(setDoc);
+    // Same base-not-`doc` rule as the click path: Esc can land while the solve
+    // of the last point's click is still in flight.
+    const mutated = addSketchEntities(sketchBaseDocRef.current, sketchId, [
+      constructionMode ? { ...e, construction: true } : e,
+    ]);
+    void commitSketchEdit(mutated, sketchId);
     setDraft([]);
     return true;
   };
@@ -4452,6 +4486,45 @@ export default function App() {
       setSolveConflict(res.hasConflicts);
     }
     return solved;
+  };
+
+  /**
+   * Claim the next sketch commit: `mutated` becomes, synchronously, the document
+   * every later edit builds on — solving is async, so by the time it returns the
+   * caller's `doc` is long stale. Returns the stamp to hand to finish/abandon.
+   */
+  const beginSketchEdit = (mutated: Document): number => {
+    sketchBaseDocRef.current = mutated;
+    return ++sketchCommitSeqRef.current;
+  };
+
+  /**
+   * Publish a solved commit, unless a newer one has claimed the sketch since.
+   * A superseded result is dropped rather than merged: the newer edit was built
+   * on top of this mutation and its own solve covers the whole sketch, so the
+   * document converges either way.
+   */
+  const finishSketchEdit = (seq: number, solved: Document): boolean => {
+    if (seq !== sketchCommitSeqRef.current) return false;
+    sketchBaseDocRef.current = solved;
+    setDoc(solved);
+    return true;
+  };
+
+  /** Give up a claimed commit (a dimension the solver rejected), restoring the
+   *  base it was built on — unless a later edit has already claimed the sketch,
+   *  in which case that edit's document (which contains this abandoned mutation)
+   *  is the one in play and rolling back would drop its work instead. */
+  const abandonSketchEdit = (seq: number, previous: Document): void => {
+    if (seq === sketchCommitSeqRef.current) sketchBaseDocRef.current = previous;
+  };
+
+  /** claim → solve → publish, for edits that are always accepted. Returns the
+   *  solved document, or null if superseded. */
+  const commitSketchEdit = async (mutated: Document, sketchId: string): Promise<Document | null> => {
+    const seq = beginSketchEdit(mutated);
+    const solved = await solveSketchIn(mutated, sketchId);
+    return finishSketchEdit(seq, solved) ? solved : null;
   };
 
   // --- Live sketch dragging -------------------------------------------------
@@ -4598,10 +4671,12 @@ export default function App() {
       ...(allConstruction ? { construction: true } : {}),
     };
     const sketchId = editingSketch.id;
-    const next = addDerivedOp(doc, sketchId, op);
+    // Build on the last committed sketch, not this render's `doc` — see
+    // sketchBaseDocRef: a drawn segment may still be solving.
+    const next = addDerivedOp(sketchBaseDocRef.current, sketchId, op);
     setOffsetSession(null);
     setSketchToolState("select");
-    setDoc(await solveSketchIn(next, sketchId));
+    void commitSketchEdit(next, sketchId);
   };
 
   // Re-edit a committed offset op's distance: write the new expression and
@@ -4609,9 +4684,9 @@ export default function App() {
   const commitOffsetEdit = async () => {
     if (!offsetEdit || !editingSketch) return;
     const sketchId = editingSketch.id;
-    const next = setDerivedOffsetDistance(doc, sketchId, offsetEdit.opId, offsetEdit.value);
+    const next = setDerivedOffsetDistance(sketchBaseDocRef.current, sketchId, offsetEdit.opId, offsetEdit.value);
     setOffsetEdit(null);
-    setDoc(await solveSketchIn(next, sketchId));
+    void commitSketchEdit(next, sketchId);
   };
 
   const cancelMirror = () => {
@@ -4639,11 +4714,11 @@ export default function App() {
       sourceIds: sess.sourceIds,
     };
     const sketchId = editingSketch.id;
-    const next = addDerivedOp(doc, sketchId, op);
+    const next = addDerivedOp(sketchBaseDocRef.current, sketchId, op);
     setMirrorSession(null);
     setSelection([]);
     setSketchToolState("select");
-    setDoc(await solveSketchIn(next, sketchId));
+    void commitSketchEdit(next, sketchId);
   };
   commitMirrorRef.current = commitMirror;
 
@@ -4689,7 +4764,7 @@ export default function App() {
       }
     }
     const sketchId = editingSketch.id;
-    let next = doc;
+    let next = sketchBaseDocRef.current;
     const opId = genId();
     let op: DerivedOp;
     if (sess.kind === "linear") {
@@ -4715,7 +4790,7 @@ export default function App() {
     setPatternSession(null);
     setSelection([]);
     setSketchToolState("select");
-    setDoc(await solveSketchIn(next, sketchId));
+    void commitSketchEdit(next, sketchId);
   };
   commitPatternRef.current = commitPattern;
 
@@ -4741,11 +4816,11 @@ export default function App() {
       id: `${op.id}:${i}`,
       derivedFrom: op.id,
     }));
-    let next = addDerivedOp(doc, sketchId, op);
+    let next = addDerivedOp(sketchBaseDocRef.current, sketchId, op);
     next = addSketchEntities(next, sketchId, seeded);
     setProjectSession(null);
     setSketchToolState("select");
-    setDoc(await solveSketchIn(next, sketchId));
+    void commitSketchEdit(next, sketchId);
   };
   commitProjectRef.current = commitProject;
 
@@ -4850,15 +4925,25 @@ export default function App() {
   const commitConstraint = async (constraint: SketchConstraint, name: string) => {
     if (!editingSketch) return;
     const sketchId = editingSketch.id;
-    const candidate = addSketchConstraints(doc, sketchId, [constraint]);
+    // Build on the last committed sketch (a drawn segment may still be solving)
+    // and claim the commit up front, so an edit made while the solve below runs
+    // stacks on this constraint instead of overwriting it. A rejection hands the
+    // claim back — see abandonSketchEdit.
+    const previous = sketchBaseDocRef.current;
+    const candidate = addSketchConstraints(previous, sketchId, [constraint]);
     const candidateSk = candidate.features.find((f) => f.id === sketchId);
     if (candidateSk?.type !== "sketch") return;
+    const seq = beginSketchEdit(candidate);
+    const reject = (msg: string) => {
+      abandonSketchEdit(seq, previous);
+      flashSketchMsg(msg);
+      setSelection([]);
+    };
     const { doc: solved, res } = await runSolve(candidate, sketchId);
     // The solver threw: storing the constraint anyway would silently freeze the
     // sketch (saved but never enforced), so reject it like a failed solve.
     if (!res) {
-      flashSketchMsg(`${name} couldn't be solved — not applied.`);
-      setSelection([]);
+      reject(`${name} couldn't be solved — not applied.`);
       return;
     }
     // A contradictory geometric constraint (e.g. forcing a horizontal and a
@@ -4871,22 +4956,20 @@ export default function App() {
       sk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
     if (res.hasConflicts || res.status >= 2 || degenerate) {
       const culprits = conflictNames(candidateSk.constraints, res, constraint.id);
-      flashSketchMsg(
+      reject(
         culprits.length
           ? `${name} conflicts with ${culprits.join(" + ")} — not applied. Edit or remove that constraint (Constraints list) instead.`
           : `${name} conflicts with existing constraints — not applied. Edit or remove the conflicting one instead.`,
       );
-      setSelection([]);
       return;
     }
     if (await introducedRedundancy(candidateSk.entities, candidateSk.constraints, constraint.id, res)) {
-      flashSketchMsg(`${name} is already implied by existing constraints — not added.`);
-      setSelection([]);
+      reject(`${name} is already implied by existing constraints — not added.`);
       return;
     }
     setFullyConstrained(res.dof === 0 && !res.hasConflicts);
     setSolveConflict(res.hasConflicts);
-    setDoc(solved);
+    finishSketchEdit(seq, solved);
     setSelection([]);
   };
 
@@ -5056,36 +5139,48 @@ export default function App() {
   // icon/kbd node, tooltip, whether the current selection makes it applicable,
   // and the action. `enabled` mirrors each constraint's own selection rule.
   const coincidentEnabled = coincidentIsEnabled(selectedPointRefs, selectedSketchLines.map((l) => l.id));
+  // `icon` is the bare glyph (what the More flyout's icon column shows); `node`
+  // is the toolbar button's content — the same glyph plus the "?" shortcut hint.
   const constraintDefs: Record<
     ConstraintKind,
-    { node: ReactNode; title: string; enabled: boolean; apply: () => void }
+    { icon: ReactNode; node: ReactNode; sc?: string; title: string; enabled: boolean; apply: () => void }
   > = {
     horizontal: {
+      icon: <HorizontalIcon />,
       node: <><HorizontalIcon />{kbd("H")}</>,
+      sc: "H",
       title: "Horizontal (H) — select a line",
       enabled: !!oneSelectedLine,
       apply: () => oneSelectedLine && addHVConstraint("horizontal", oneSelectedLine.id),
     },
     vertical: {
+      icon: <VerticalIcon />,
       node: <><VerticalIcon />{kbd("V")}</>,
+      sc: "V",
       title: "Vertical (V) — select a line",
       enabled: !!oneSelectedLine,
       apply: () => oneSelectedLine && addHVConstraint("vertical", oneSelectedLine.id),
     },
     parallel: {
+      icon: <ParallelIcon />,
       node: <><ParallelIcon />{kbd("⇧P")}</>,
+      sc: "⇧P",
       title: "Parallel (Shift+P) — select two lines",
       enabled: !!twoSelectedLines,
       apply: () => twoSelectedLines && addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id),
     },
     perpendicular: {
+      icon: <>⊥</>,
       node: <>⊥{kbd("N")}</>,
+      sc: "N",
       title: "Perpendicular (N) — select two lines",
       enabled: !!twoSelectedLines,
       apply: () => twoSelectedLines && addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id),
     },
     equal: {
+      icon: <>＝</>,
       node: <>＝{kbd("=")}</>,
+      sc: "=",
       title: "Equal (=) — select two lines (equal length) or two circles/arcs (equal radius)",
       enabled: !!(twoSelectedLines || twoRadiusEntities),
       apply: () => {
@@ -5094,12 +5189,14 @@ export default function App() {
       },
     },
     coincident: {
+      icon: <>⌖</>,
       node: <>⌖</>,
       title: "Coincident — two points make them coincident (a sketch vertex snaps onto a solid/body vertex too); a point + a line puts the point on the line; one point anchors it to the origin",
       enabled: coincidentEnabled,
       apply: addCoincident,
     },
     tangent: {
+      icon: <>◯⌐</>,
       node: <>◯⌐</>,
       title: "Tangent — select two curves (circle/arc) or a line and a curve",
       enabled: !!tangentPair,
@@ -5110,9 +5207,8 @@ export default function App() {
   // Remove a single constraint (from the constraints list) and re-solve.
   const deleteConstraint = async (id: string) => {
     if (!editingSketch) return;
-    let next = removeSketchConstraint(doc, editingSketch.id, id);
-    next = await solveSketchIn(next, editingSketch.id);
-    setDoc(next);
+    const next = removeSketchConstraint(sketchBaseDocRef.current, editingSketch.id, id);
+    await commitSketchEdit(next, editingSketch.id);
   };
 
   // Reopen the editor for an existing constraint (double-clicking its label).
@@ -5160,7 +5256,13 @@ export default function App() {
       x.on !== y.on ? false : x.on === "point" && y.on === "point" ? samePointRef(x.ref, y.ref) : (x as { entity: string }).entity === (y as { entity: string }).entity;
     const samePairRefs = (p: [DistanceRef, DistanceRef], q: [DistanceRef, DistanceRef]) =>
       (sameSide(p[0], q[0]) && sameSide(p[1], q[1])) || (sameSide(p[0], q[1]) && sameSide(p[1], q[0]));
-    const kept = editingSketch.constraints.filter((c) => {
+    // Filter the constraints of the LAST COMMITTED sketch, not this render's —
+    // rebuilding the list from a stale copy would drop anything a still-solving
+    // edit added (see sketchBaseDocRef).
+    const previous = sketchBaseDocRef.current;
+    const baseSk = previous.features.find((f) => f.id === sketchId);
+    if (baseSk?.type !== "sketch") return;
+    const kept = baseSk.constraints.filter((c) => {
       if (c.id === dimInput.editId) return false; // the one being edited is replaced
       if (kind === "distance") return !(c.type === "distanceBetween" && dimInput.refs != null && samePairRefs([c.a, c.b], dimInput.refs));
       if (kind === "angle") return !(c.type === "angle" && samePair(c.a, c.b));
@@ -5173,9 +5275,17 @@ export default function App() {
         : kind === "angle"
           ? { id: genId(), type: "angle", a: entityId, b: entityId2!, value }
           : { id: genId(), type: kind === "radius" ? "radius" : "distance", entity: entityId, value };
-    const candidate = setSketchConstraints(doc, sketchId, [...kept, added]);
+    const candidate = setSketchConstraints(previous, sketchId, [...kept, added]);
     const candidateSk = candidate.features.find((f) => f.id === sketchId);
     if (candidateSk?.type !== "sketch") return;
+    // Claim the commit before solving so a concurrent edit stacks on this
+    // dimension; a rejection below hands the claim back.
+    const seq = beginSketchEdit(candidate);
+    const reject = (msg: string) => {
+      abandonSketchEdit(seq, previous);
+      flashSketchMsg(msg);
+      setSelection([]);
+    };
     const { doc: solved, res } = await runSolve(candidate, sketchId);
     // A dimension the solver can't satisfy would otherwise be saved as a dead
     // constraint that silently freezes (or wrecks) the geometry. Reject it and tell
@@ -5186,8 +5296,7 @@ export default function App() {
     // also reject: storing the dimension unsolved would show the new value on the
     // label while the geometry silently stays put.
     if (!res) {
-      flashSketchMsg(`That ${kind} couldn't be solved — not applied.`);
-      setSelection([]);
+      reject(`That ${kind} couldn't be solved — not applied.`);
       return;
     }
     const sk = solved.features.find((f) => f.id === sketchId);
@@ -5196,27 +5305,23 @@ export default function App() {
       sk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
     if (res.hasConflicts || res.status >= 2 || degenerate) {
       const culprits = conflictNames(candidateSk.constraints, res, added.id);
-      flashSketchMsg(
+      reject(
         culprits.length
           ? `That ${kind} conflicts with ${culprits.join(" + ")} — not applied. Edit or remove that constraint (Constraints list) instead.`
           : `That ${kind} can't be satisfied with the existing constraints — not applied. Edit or remove a conflicting one instead.`,
       );
-      setSelection([]);
       return;
     }
     // A dimension on an already-driven length (e.g. the opposite side of a
     // rectangle) solves "fine" but is dead weight: it changes nothing now and
     // makes every later edit of the coupled dimension conflict. Reject it.
     if (await introducedRedundancy(candidateSk.entities, candidateSk.constraints, added.id, res)) {
-      flashSketchMsg(
-        `That ${kind} is already driven by the existing constraints — not added. Edit the existing dimension instead.`,
-      );
-      setSelection([]);
+      reject(`That ${kind} is already driven by the existing constraints — not added. Edit the existing dimension instead.`);
       return;
     }
     setFullyConstrained(res.dof === 0 && !res.hasConflicts);
     setSolveConflict(res.hasConflicts);
-    setDoc(solved);
+    finishSketchEdit(seq, solved);
     setSelection([]);
   };
 
@@ -5486,6 +5591,367 @@ export default function App() {
     if (editingSketchId && featureIds.has(editingSketchId)) setEditingSketchId(null);
     if (entityRefs.length > 0) setFullyConstrained(false);
   };
+
+  // The sketch toolbar as slots: <OverflowColumn> shows as many as fit down the
+  // window and moves the rest into its "⋯" flyout. Each slot carries the rows
+  // the flyout lists for it — a separator or the constraint-count badge carries
+  // none, so it simply drops out when there's no room.
+  const sketchToolRow = (tool: SketchTool, extra?: Partial<ToolbarRow>): ToolbarRow => {
+    const t = sketchToolMeta(tool);
+    return {
+      id: `tool:${tool}`,
+      itemId: `tool:${tool}`,
+      icon: t.label,
+      label: t.name,
+      shortcut: t.sc,
+      title: t.title,
+      disabled: false,
+      keywords: [],
+      onSelect: () => setSketchTool(tool),
+      ...extra,
+    };
+  };
+  const sketchSlots: ColumnSlot[] = !editingSketch ? [] : [
+    ...SKETCH_LAYOUT.map((slot): ColumnSlot => {
+      if (slot.kind === "tool") {
+        const t = sketchToolMeta(slot.tool);
+        // Offset needs a selected chain of edges — grey it out when
+        // nothing is selected.
+        const disabled = slot.tool === "offset" && selectedSketchEntities.length === 0;
+        return {
+          id: `tool:${t.tool}`,
+          rows: [sketchToolRow(slot.tool, { disabled })],
+          node: (
+            <button
+              className={sketchTool === t.tool ? "active" : ""}
+              title={t.title}
+              disabled={disabled}
+              onClick={() => setSketchTool(t.tool)}
+            >
+              {t.label}{kbd(t.sc)}
+            </button>
+          ),
+        };
+      }
+      const g = SKETCH_GROUPS[slot.group];
+      const variant =
+        slot.group === "circle" ? circleVariant : slot.group === "rect" ? rectVariant : patternVariant;
+      const groupActive = (g.variants as readonly SketchTool[]).includes(sketchTool);
+      const expanded = expandedSketchGroup === slot.group;
+      const vm = sketchToolMeta(variant);
+      return {
+        id: `group:${slot.group}`,
+        // Both variants are searchable in their own right ("3 points", "center").
+        rows: g.variants.map((tv) =>
+          sketchToolRow(tv, {
+            id: `group:${slot.group}/${tv}`,
+            label: `${g.name} ▸ ${SKETCH_VARIANT_NAME[tv] ?? sketchToolMeta(tv).name}`,
+          }),
+        ),
+        node: (
+          <div className="sketch-group">
+            {/* Primary applies the last-used variant; ▸ opens the vertical
+                flyout of variants (to the right of the toolbar). */}
+            <button
+              className={"sketch-group-primary" + (groupActive ? " active" : "")}
+              title={vm.title}
+              onClick={() => setSketchTool(variant)}
+            >
+              {vm.label}{kbd(vm.sc)}
+            </button>
+            <button
+              className={"sketch-group-arrow" + (expanded ? " expanded" : "")}
+              title={g.title}
+              aria-expanded={expanded}
+              onClick={() => setExpandedSketchGroup(expanded ? null : slot.group)}
+            >
+              ▸
+            </button>
+            {expanded && (
+              <div className="sketch-flyout">
+                {g.variants.map((tv) => {
+                  const t = sketchToolMeta(tv);
+                  return (
+                    <button
+                      key={tv}
+                      className={sketchTool === tv ? "active" : ""}
+                      title={t.title}
+                      onClick={() => setSketchTool(tv)}
+                    >
+                      <span className="cf-icon">{t.label}</span>
+                      <span className="cf-name">{SKETCH_VARIANT_NAME[tv] ?? t.title}{kbd(t.sc)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ),
+      };
+    }),
+    {
+      id: "dimension",
+      rows: [{
+        id: "dimension", itemId: "dimension", icon: "↔", label: "Dimension", shortcut: "D",
+        title: "Dimension (D): a line (length), circle (radius), or two lines (angle) — pick one if none selected",
+        disabled: false, keywords: ["length", "radius", "angle", "distance"], onSelect: () => startDimension(),
+      }],
+      node: (
+        <button
+          title="Dimension (D): a line (length), circle (radius), or two lines (angle) — pick one if none selected"
+          className={dimPending ? "active" : ""}
+          onClick={startDimension}
+        >
+          ↔{kbd("D")}
+        </button>
+      ),
+    },
+    { id: "sep1", rows: [], node: <div className="sketch-toolbar-sep" /> },
+    {
+      id: "constraints",
+      rows: CONSTRAINT_ORDER.map((k) => ({
+        id: `constraint:${k}`,
+        itemId: "constraints",
+        icon: constraintDefs[k].icon,
+        label: CONSTRAINT_NAME[k],
+        shortcut: constraintDefs[k].sc,
+        title: constraintDefs[k].title,
+        disabled: !constraintDefs[k].enabled,
+        keywords: ["constraint"],
+        onSelect: () => { setConstraintChoice(k); constraintDefs[k].apply(); },
+      })),
+      node: (
+        /* All seven geometric constraints behind one button: the primary
+           applies the last-used one; ▸ opens a vertical flyout (to the
+           right of the toolbar) of every choice. Disabled choices show
+           what selection they need via their tooltip. */
+        <div className="constraint-group">
+          <button
+            className="constraint-primary"
+            title={constraintDefs[constraintChoice].title}
+            disabled={!constraintDefs[constraintChoice].enabled}
+            onClick={() => constraintDefs[constraintChoice].apply()}
+          >
+            {constraintDefs[constraintChoice].node}
+          </button>
+          <button
+            className={"constraint-arrow" + (constraintFlyoutOpen ? " expanded" : "")}
+            title="More constraints"
+            aria-expanded={constraintFlyoutOpen}
+            onClick={() => setConstraintFlyoutOpen((v) => !v)}
+          >
+            ▸
+          </button>
+          {constraintFlyoutOpen && (
+            <div className="constraint-flyout">
+              {CONSTRAINT_ORDER.map((k) => {
+                const d = constraintDefs[k];
+                return (
+                  <button
+                    key={k}
+                    className={k === constraintChoice ? "active" : ""}
+                    title={d.title}
+                    disabled={!d.enabled}
+                    onClick={() => {
+                      setConstraintChoice(k);
+                      setConstraintFlyoutOpen(false);
+                      d.apply();
+                    }}
+                  >
+                    <span className="cf-icon">{d.node}</span>
+                    <span className="cf-name">{CONSTRAINT_NAME[k]}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ),
+    },
+    { id: "sep2", rows: [], node: <div className="sketch-toolbar-sep" /> },
+    {
+      id: "construction",
+      rows: [{
+        id: "construction", itemId: "construction", icon: <ConstructionIcon />, label: "Construction", shortcut: "Q",
+        title: "Construction (Q): reference geometry — toggle the draw mode, or convert the selection",
+        disabled: false, keywords: ["reference", "guide"], onSelect: () => toggleConstruction(),
+      }],
+      node: (
+        <button
+          title={
+            selectedSketchEntities.length > 0
+              ? "Construction (Q): toggle construction (reference) geometry on the selection"
+              : "Construction (Q): draw reference geometry (toggle)"
+          }
+          className={constructionMode ? "active" : ""}
+          onClick={toggleConstruction}
+        >
+          <ConstructionIcon />{kbd("Q")}
+        </button>
+      ),
+    },
+    ...(editingSketch.constraints.length > 0
+      ? [{
+          id: "constraint-count",
+          rows: [],
+          node: (
+            <span
+              className={`constraint-count${solveConflict ? " conflict" : ""}`}
+              title={
+                solveConflict
+                  ? "Over-constrained / conflicting constraints"
+                  : `${editingSketch.constraints.length} constraints${fullyConstrained ? " · fully constrained" : ""}`
+              }
+            >
+              {solveConflict ? "⚠" : fullyConstrained ? "✓" : editingSketch.constraints.length}
+            </span>
+          ),
+        } satisfies ColumnSlot]
+      : []),
+  ];
+
+  // The modeling toolbar as data: <OverflowToolbar> renders as many of these as
+  // fit and collapses the rest into its searchable "More ▾" flyout. `keywords`
+  // are the search-only synonyms (they never show in the UI).
+  const modelTools: ToolbarItem[] = [
+    {
+      id: "sketch",
+      icon: "✎",
+      label: "Sketch",
+      shortcut: "S",
+      title: "Sketch (S): start a sketch — pick a plane or face",
+      keywords: ["draw", "2d", "profile"],
+      disabled: !!editingSketch || picking,
+      onSelect: () => { setPickPurpose("sketch"); setPicking(true); },
+    },
+    {
+      id: "body",
+      icon: "◧",
+      label: "Body",
+      shortcut: "N",
+      title: "New Body (N): create a new solid body",
+      keywords: ["new", "primitive", "solid"],
+      disabled: !!editingSketch,
+      onSelect: () => setNewSolidOpen((o) => !o),
+      choices: FEATURE_KINDS.map((kind) => ({
+        id: kind,
+        label: FEATURE_DEFS[kind].label,
+        onSelect: () => handleAdd(kind),
+      })),
+      choicesOpen: newSolidOpen,
+      onChoicesOpenChange: setNewSolidOpen,
+    },
+    {
+      id: "plane",
+      icon: "⧉",
+      label: "Plane",
+      shortcut: "P",
+      title: "Plane (P): create a reference plane (offset, midplane, at-angle, or through 3 points)",
+      keywords: ["datum", "reference", "offset", "midplane"],
+      disabled: !!editingSketch || picking || !!planeDialog,
+      onSelect: openPlaneDialog,
+    },
+    {
+      id: "extrude",
+      icon: "⬆",
+      label: "Extrude",
+      shortcut: "E",
+      title: "Extrude (E): extrude the selected sketch region(s) and/or face(s)",
+      keywords: ["pad", "boss", "pocket", "cut", "hole"],
+      disabled: extrudeProfiles.length === 0 || !!editingSketch || picking || !!extrudeDialog,
+      onSelect: openExtrudeDialog,
+    },
+    {
+      id: "revolve",
+      icon: "⟳",
+      label: "Revolve",
+      shortcut: "R",
+      title: "Revolve (R): arm a profile face + an axis (edge or plane) in the dialog",
+      keywords: ["lathe", "turn", "axis"],
+      disabled: !!editingSketch || picking || !!revolveDialog,
+      onSelect: openRevolve,
+    },
+    {
+      id: "sweep",
+      icon: "⊃",
+      label: "Sweep",
+      shortcut: "W",
+      title: "Sweep (W): sweep a sketch region along a path — line / arc / spline (select both)",
+      keywords: ["path", "rail"],
+      disabled: !sweepInputs || !!editingSketch || picking,
+      onSelect: openSweep,
+    },
+    {
+      id: "loft",
+      icon: "⌧",
+      label: "Loft",
+      shortcut: "L",
+      title: "Loft (L): loft through 2+ sketch regions (select the sections)",
+      keywords: ["blend", "sections"],
+      disabled: !loftInputs || !!editingSketch || picking,
+      onSelect: openLoft,
+    },
+    {
+      id: "chamfer",
+      icon: "◣",
+      label: "Chamfer",
+      shortcut: "C",
+      title: "Chamfer (C): chamfer the selected edge(s)",
+      keywords: ["bevel", "edge"],
+      disabled: !dressUpTarget || !!editingSketch || picking,
+      onSelect: () => openDressUp("chamfer"),
+    },
+    {
+      id: "fillet",
+      icon: "◖",
+      label: "Fillet",
+      shortcut: "F",
+      title: "Fillet (F): round the selected edge(s)",
+      keywords: ["round", "radius", "edge"],
+      disabled: !dressUpTarget || !!editingSketch || picking,
+      onSelect: () => openDressUp("fillet"),
+    },
+    {
+      id: "boolean",
+      icon: "⊕",
+      label: "Boolean",
+      shortcut: "B",
+      title: "Boolean (B): union / subtract / intersect",
+      keywords: ["union", "subtract", "intersect", "combine", "cut"],
+      disabled: bodyIds.size < 2 || !!editingSketch || picking,
+      onSelect: openBooleanDialog,
+    },
+    {
+      id: "transform",
+      icon: "✥",
+      label: "Transform",
+      shortcut: "T",
+      title: "Transform (T): move / rotate the selected body",
+      keywords: ["move", "rotate", "translate"],
+      disabled: !transformTarget || !!editingSketch || picking || !!transformEditId,
+      onSelect: openTransform,
+    },
+    {
+      id: "mirror",
+      icon: "⇋",
+      label: "Mirror",
+      shortcut: "M",
+      title: "Mirror (M): mirror the selected body across a plane",
+      keywords: ["reflect", "symmetry"],
+      disabled: !transformTarget || !!editingSketch || picking,
+      onSelect: openMirror,
+    },
+    {
+      id: "pattern",
+      icon: "⁙",
+      label: "Pattern",
+      shortcut: "X",
+      title: "Pattern (X): arm a body, then a linear run/grid or a circular ring",
+      keywords: ["array", "linear", "circular", "grid", "repeat"],
+      disabled: !!editingSketch || picking || !!patternDialog,
+      onSelect: openPattern,
+    },
+  ];
 
   return (
     <div className="app">
@@ -5807,113 +6273,12 @@ export default function App() {
             onSectionOffsetChange={(offset) => setSectionView((s) => ({ ...s, offset }))}
             apiRef={viewApiRef}
           />
-          <div className="model-toolbar">
-            <button
-              title="Sketch (S): start a sketch — pick a plane or face"
-              disabled={!!editingSketch || picking}
-              onClick={() => { setPickPurpose("sketch"); setPicking(true); }}
-            >
-              ✎ Sketch{kbd("S")}
-            </button>
-            <div className="mt-dropdown" ref={newSolidRef}>
-              <button
-                title="New Body (N): create a new solid body"
-                disabled={!!editingSketch}
-                onClick={() => setNewSolidOpen((o) => !o)}
-              >
-                ◧ Body ▾{kbd("N")}
-              </button>
-              {newSolidOpen && (
-                <div className="mt-menu">
-                  {FEATURE_KINDS.map((kind) => (
-                    <button
-                      key={kind}
-                      onClick={() => { handleAdd(kind); setNewSolidOpen(false); }}
-                    >
-                      {FEATURE_DEFS[kind].label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <button
-              title="Plane (P): create a reference plane (offset, midplane, at-angle, or through 3 points)"
-              disabled={!!editingSketch || picking || !!planeDialog}
-              onClick={openPlaneDialog}
-            >
-              ⧉ Plane{kbd("P")}
-            </button>
-            <button
-              title="Extrude (E): extrude the selected sketch region(s) and/or face(s)"
-              disabled={extrudeProfiles.length === 0 || !!editingSketch || picking || !!extrudeDialog}
-              onClick={openExtrudeDialog}
-            >
-              ⬆ Extrude{kbd("E")}
-            </button>
-            <button
-              title="Revolve (R): arm a profile face + an axis (edge or plane) in the dialog"
-              disabled={!!editingSketch || picking || !!revolveDialog}
-              onClick={openRevolve}
-            >
-              ⟳ Revolve{kbd("R")}
-            </button>
-            <button
-              title="Sweep (W): sweep a sketch region along a path — line / arc / spline (select both)"
-              disabled={!sweepInputs || !!editingSketch || picking}
-              onClick={openSweep}
-            >
-              ⊃ Sweep{kbd("W")}
-            </button>
-            <button
-              title="Loft (L): loft through 2+ sketch regions (select the sections)"
-              disabled={!loftInputs || !!editingSketch || picking}
-              onClick={openLoft}
-            >
-              ⌧ Loft{kbd("L")}
-            </button>
-            <button
-              title="Chamfer (C): chamfer the selected edge(s)"
-              disabled={!dressUpTarget || !!editingSketch || picking}
-              onClick={() => openDressUp("chamfer")}
-            >
-              ◣ Chamfer{kbd("C")}
-            </button>
-            <button
-              title="Fillet (F): round the selected edge(s)"
-              disabled={!dressUpTarget || !!editingSketch || picking}
-              onClick={() => openDressUp("fillet")}
-            >
-              ◖ Fillet{kbd("F")}
-            </button>
-            <button
-              title="Boolean (B): union / subtract / intersect"
-              disabled={bodyIds.size < 2 || !!editingSketch || picking}
-              onClick={openBooleanDialog}
-            >
-              ⊕ Boolean{kbd("B")}
-            </button>
-            <button
-              title="Transform (T): move / rotate the selected body"
-              disabled={!transformTarget || !!editingSketch || picking || !!transformEditId}
-              onClick={openTransform}
-            >
-              ✥ Transform{kbd("T")}
-            </button>
-            <button
-              title="Mirror (M): mirror the selected body across a plane"
-              disabled={!transformTarget || !!editingSketch || picking}
-              onClick={openMirror}
-            >
-              ⇋ Mirror{kbd("M")}
-            </button>
-            <button
-              title="Pattern (X): arm a body, then a linear run/grid or a circular ring"
-              disabled={!!editingSketch || picking || !!patternDialog}
-              onClick={openPattern}
-            >
-              ⁙ Pattern{kbd("X")}
-            </button>
-          </div>
+          <OverflowToolbar
+            className="model-toolbar"
+            items={modelTools}
+            showShortcuts={showShortcuts}
+            openRequest={modelMoreRequest}
+          />
           {/* The floating edit panel. It shows in two cases only (never on a
               plain selection — that just highlights): the constraints of the
               sketch being edited, and the parameters of a double-clicked
@@ -5968,151 +6333,13 @@ export default function App() {
               )}
             </EditPanel>
           )}
-          {editingSketch && (
-            <div className="sketch-toolbar">
-              {SKETCH_LAYOUT.map((slot) => {
-                if (slot.kind === "tool") {
-                  const t = sketchToolMeta(slot.tool);
-                  // Offset needs a selected chain of edges — grey it out when
-                  // nothing is selected.
-                  const disabled = slot.tool === "offset" && selectedSketchEntities.length === 0;
-                  return (
-                    <button
-                      key={t.tool}
-                      className={sketchTool === t.tool ? "active" : ""}
-                      title={t.title}
-                      disabled={disabled}
-                      onClick={() => setSketchTool(t.tool)}
-                    >
-                      {t.label}{kbd(t.sc)}
-                    </button>
-                  );
-                }
-                const g = SKETCH_GROUPS[slot.group];
-                const variant =
-                  slot.group === "circle" ? circleVariant : slot.group === "rect" ? rectVariant : patternVariant;
-                const groupActive = (g.variants as readonly SketchTool[]).includes(sketchTool);
-                const expanded = expandedSketchGroup === slot.group;
-                const vm = sketchToolMeta(variant);
-                return (
-                  <div className="sketch-group" key={slot.group}>
-                    {/* Primary applies the last-used variant; ▸ opens the vertical
-                        flyout of variants (to the right of the toolbar). */}
-                    <button
-                      className={"sketch-group-primary" + (groupActive ? " active" : "")}
-                      title={vm.title}
-                      onClick={() => setSketchTool(variant)}
-                    >
-                      {vm.label}{kbd(vm.sc)}
-                    </button>
-                    <button
-                      className={"sketch-group-arrow" + (expanded ? " expanded" : "")}
-                      title={g.title}
-                      aria-expanded={expanded}
-                      onClick={() => setExpandedSketchGroup(expanded ? null : slot.group)}
-                    >
-                      ▸
-                    </button>
-                    {expanded && (
-                      <div className="sketch-flyout">
-                        {g.variants.map((tv) => {
-                          const t = sketchToolMeta(tv);
-                          return (
-                            <button
-                              key={tv}
-                              className={sketchTool === tv ? "active" : ""}
-                              title={t.title}
-                              onClick={() => setSketchTool(tv)}
-                            >
-                              <span className="cf-icon">{t.label}</span>
-                              <span className="cf-name">{SKETCH_VARIANT_NAME[tv] ?? t.title}{kbd(t.sc)}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              <button
-                title="Dimension (D): a line (length), circle (radius), or two lines (angle) — pick one if none selected"
-                className={dimPending ? "active" : ""}
-                onClick={startDimension}
-              >
-                ↔{kbd("D")}
-              </button>
-              <div className="sketch-toolbar-sep" />
-              {/* All seven geometric constraints behind one button: the primary
-                  applies the last-used one; ▸ opens a vertical flyout (to the
-                  right of the toolbar) of every choice. Disabled choices show
-                  what selection they need via their tooltip. */}
-              <div className="constraint-group">
-                <button
-                  className="constraint-primary"
-                  title={constraintDefs[constraintChoice].title}
-                  disabled={!constraintDefs[constraintChoice].enabled}
-                  onClick={() => constraintDefs[constraintChoice].apply()}
-                >
-                  {constraintDefs[constraintChoice].node}
-                </button>
-                <button
-                  className={"constraint-arrow" + (constraintFlyoutOpen ? " expanded" : "")}
-                  title="More constraints"
-                  aria-expanded={constraintFlyoutOpen}
-                  onClick={() => setConstraintFlyoutOpen((v) => !v)}
-                >
-                  ▸
-                </button>
-                {constraintFlyoutOpen && (
-                  <div className="constraint-flyout">
-                    {CONSTRAINT_ORDER.map((k) => {
-                      const d = constraintDefs[k];
-                      return (
-                        <button
-                          key={k}
-                          className={k === constraintChoice ? "active" : ""}
-                          title={d.title}
-                          disabled={!d.enabled}
-                          onClick={() => {
-                            setConstraintChoice(k);
-                            setConstraintFlyoutOpen(false);
-                            d.apply();
-                          }}
-                        >
-                          <span className="cf-icon">{d.node}</span>
-                          <span className="cf-name">{CONSTRAINT_NAME[k]}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              <div className="sketch-toolbar-sep" />
-              <button
-                title={
-                  selectedSketchEntities.length > 0
-                    ? "Construction (Q): toggle construction (reference) geometry on the selection"
-                    : "Construction (Q): draw reference geometry (toggle)"
-                }
-                className={constructionMode ? "active" : ""}
-                onClick={toggleConstruction}
-              >
-                <ConstructionIcon />{kbd("Q")}
-              </button>
-              {editingSketch.constraints.length > 0 && (
-                <span
-                  className={`constraint-count${solveConflict ? " conflict" : ""}`}
-                  title={
-                    solveConflict
-                      ? "Over-constrained / conflicting constraints"
-                      : `${editingSketch.constraints.length} constraints${fullyConstrained ? " · fully constrained" : ""}`
-                  }
-                >
-                  {solveConflict ? "⚠" : fullyConstrained ? "✓" : editingSketch.constraints.length}
-                </span>
-              )}
-            </div>
-          )}
+          {editingSketch && <OverflowColumn
+              className="sketch-toolbar"
+              slots={sketchSlots}
+              openRequest={sketchMoreRequest}
+              showShortcuts={showShortcuts}
+              searchPlaceholder="Search sketch tools…"
+            />}
           {dimPending && (
             <div className="dim-hint">Pick a line or circle to dimension · Esc to cancel</div>
           )}

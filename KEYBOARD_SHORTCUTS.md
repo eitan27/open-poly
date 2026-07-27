@@ -19,6 +19,7 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 | Cancel current mode / dialog | `Esc` |
 | Dimension selected line/circle | `D` (sketch mode) |
 | Spline: finish + commit accumulated points | `Esc` (sketch mode, spline tool — matches how the line tool ends a chain; `Esc` with no draft still cancels the tool) |
+| Find a tool ("More" flyout) | `/` — opens the search flyout of whichever toolbar is live (sketch column while editing a sketch, modeling bar otherwise). Lists the buttons that didn't fit; typing searches every tool in that bar, `↑`/`↓` + `Enter` to pick. Works even when nothing is hidden, as a plain tool search. |
 
 ## Modeling toolbar (available whenever you're not editing a sketch)
 

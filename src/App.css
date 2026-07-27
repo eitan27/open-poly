@@ -1234,20 +1234,73 @@
 }
 
 /* --- Viewport modeling toolbar (top-left) --- */
-.model-toolbar {
+/* The wrapper marks out the width the bar may use (the bar is only as wide as
+   its buttons); OverflowToolbar measures it to decide what fits. It must not
+   swallow clicks over the empty space beside the bar. */
+/* No z-index: the bar must keep painting *below* the later siblings it can
+   overlap (the centred sketch banner), exactly as it did before it was wrapped. */
+.tb-wrap {
+  display: flex;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.tb-wrap > * {
+  pointer-events: auto;
+}
+
+.model-toolbar-wrap {
   position: absolute;
   left: 12px;
   top: 12px;
+  right: 12px;
+}
+
+/* NOTE: the frosted background lives on the .tb-blur child, NOT here. A
+   backdrop-filter on this element would make it a stacking context, which would
+   trap its dropdown/flyout z-indexes inside the bar — the viewport's own corner
+   controls (Home / section view / perspective) come later in the DOM and would
+   then paint over an open menu. Keeping the bar itself at z-index:auto also
+   preserves the old paint order against the centred sketch banner. */
+.model-toolbar {
+  position: relative;
   display: flex;
   gap: 4px;
   padding: 5px;
-  background: rgba(24, 26, 32, 0.85);
+  max-width: 100%;
   border: 1px solid #2a2d35;
   border-radius: 8px;
+}
+
+/* The bar's frosted panel, as a layer instead of a filter on the bar. z-index 0
+   (not -1, which would escape to the viewport and hide behind the canvas) puts
+   it below the buttons, which are positioned so they paint after it. */
+.tb-blur {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: rgba(24, 26, 32, 0.85);
+  border-radius: inherit;
   backdrop-filter: blur(4px);
 }
 
-.model-toolbar > button,
+.model-toolbar > button {
+  position: relative;
+}
+
+/* The off-screen copy of the full button row that the overflow measurement
+   reads: laid out exactly like the bar, but never painted and never hit. */
+.tb-mirror {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  gap: inherit;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.model-toolbar button,
 .mt-dropdown > button {
   padding: 6px 10px;
   font-size: 12px;
@@ -1312,18 +1365,194 @@
   background: #2c313c;
 }
 
-.sketch-toolbar {
+/* --- Overflow "More ▾" button + its search flyout --- */
+.tb-more {
+  position: relative;
+  display: flex;
+}
+
+.model-toolbar .tb-more-btn {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.tb-more-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  display: flex;
+  flex-direction: column;
+  width: 232px;
+  padding: 5px;
+  background: rgba(28, 30, 38, 0.97);
+  border: 1px solid #313643;
+  border-radius: 7px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  z-index: 26;
+  backdrop-filter: blur(4px);
+}
+
+.tb-more-search {
+  width: 100%;
+  padding: 6px 8px;
+  margin-bottom: 5px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #e6e8ee;
+  background: #171a21;
+  border: 1px solid #313643;
+  border-radius: 5px;
+  outline: none;
+}
+
+.tb-more-search:focus {
+  border-color: #4f8cff;
+}
+
+.tb-more-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* Two class levels so the rows read as a menu wherever the flyout is used —
+   they must beat both `.model-toolbar button` and `.sketch-toolbar button`
+   (the latter is declared later in this file and would otherwise win). */
+.tb-more-menu .tb-more-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  text-align: left;
+  color: #d6d9e0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+/* Hover and keyboard highlight are the same state — the arrow keys move it. */
+.tb-more-menu .tb-more-list button.active:not(:disabled) {
+  background: #2c313c;
+  border-color: #4f8cff;
+}
+
+.tb-more-menu .tb-more-list button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tb-row-icon {
+  flex: 0 0 14px;
+  text-align: center;
+  color: #9aa1b1;
+}
+
+.tb-row-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tb-row-kbd {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  font-size: 10px;
+  color: #9aa1b1;
+  background: #232730;
+  border: 1px solid #313643;
+  border-radius: 4px;
+}
+
+.tb-more-empty {
+  padding: 8px;
+  font-size: 12px;
+  color: #7e8494;
+}
+
+/* Anchors the column; the More flyout is a sibling of the column inside it, so
+   it escapes the column's clipping (see .tbc-more-menu). Shrink-wraps the
+   column, and passes clicks through anywhere it isn't. */
+.sketch-toolbar-wrap {
   position: absolute;
   left: 12px;
   top: 58px;
+  pointer-events: none;
+}
+
+.tbc-wrap > * {
+  pointer-events: auto;
+}
+
+.sketch-toolbar {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 5px;
-  background: rgba(24, 26, 32, 0.85);
   border: 1px solid #2a2d35;
   border-radius: 8px;
-  backdrop-filter: blur(4px);
+  /* The column is given the exact height of what fits (OverflowColumn); the
+     tools below that are still laid out — so measuring stays stable — and are
+     clipped here. Background + blur live on .tb-blur for the same
+     stacking-context reason as the modeling toolbar. */
+  overflow: hidden;
+}
+
+/* The tool slots: positioned so they paint above the .tb-blur layer, and never
+   flex-shrunk — the column carries an explicit height, so without this the
+   slots would squeeze to fit it instead of overflowing to be clipped. */
+.sketch-toolbar > [data-slot] {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+/* The overflow button, pinned to the bottom of the visible column. Labelled
+   "More" in words: every glyph that reads as "and the rest" (⋯, ⋮, ▾) is
+   already a sketch tool's icon — ⋯ is the linear pattern. */
+.tbc-more {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 5px;
+  display: flex;
+}
+
+/* "More ▸" has to fit one line inside the ~50px icon column: smaller than the
+   16px tool glyphs, tight padding, and no wrapping. */
+.sketch-toolbar .tbc-more-btn {
+  flex: 1;
+  gap: 2px;
+  padding: 0 3px;
+  font-size: 11px;
+  letter-spacing: 0;
+  white-space: nowrap;
+  color: #9aa1b1;
+}
+
+.tbc-more-arrow {
+  font-size: 10px;
+}
+
+/* Open state matches the group arrows' expanded look. */
+.sketch-toolbar .tbc-more-btn.expanded {
+  background: #1e2a44;
+  border-color: #4f8cff;
+  color: #cfe0ff;
+}
+
+/* Beside the column (a sibling of it, so the column's overflow clip doesn't cut
+   it off), bottom-aligned with the More button it belongs to. */
+.tbc-more-menu {
+  right: auto;
+  top: auto;
+  left: calc(100% + 6px);
+  bottom: 0;
 }
 
 .sketch-toolbar button {
@@ -2252,6 +2481,7 @@
   /* Give the viewport's floating controls a touch more breathing room from the
      edges and each other so they stay tappable. */
   .model-toolbar > button,
+  .model-toolbar > .tb-more > button,
   .mt-dropdown > button {
     padding: 7px 10px;
   }

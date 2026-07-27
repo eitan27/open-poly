@@ -1,13 +1,18 @@
-// Verifies the active-edit panel (Phase 8.5 #1): Constraints + Parameters moved
-// out of the left sidebar into a movable dialog floating over the viewport.
-//   1. Nothing selected + no sketch → no panel at all.
-//   2. Selecting a feature → panel appears with that feature's Parameters.
-//   3. Editing a sketch with constraints → panel shows the Constraints section.
-//   4. The panel is draggable by its title bar.
-//   5. The sidebar no longer contains Constraints/Parameters.
+// Verifies the active-edit panel: Constraints + Parameters live in a movable
+// dialog floating over the viewport, not in the left sidebar.
+//   1. Nothing being edited → no panel at all.
+//   2. Selection alone does NOT open it — selecting only highlights. (The
+//      "params-on-select" surface was deliberately removed; every feature has
+//      ONE editor, opened by double-click.)
+//   3. Double-clicking a no-dialog feature (primitive / import / sweep / loft)
+//      opens its parameters, titled with the feature type — no "Parameters"
+//      heading, since the title already names it.
+//   4. The panel is draggable by its title bar, and ✕ closes it.
+//   5. Editing a sketch with constraints shows the Constraints section.
+//   6. The sidebar no longer contains Parameters.
 import { chromium } from "playwright";
 
-const URL = process.env.URL ?? "http://localhost:5174/";
+const URL = process.env.URL ?? "http://localhost:5173/";
 const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
 const page = await context.newPage();
@@ -40,20 +45,36 @@ const panel = page.locator(".edit-panel");
 // 1. Empty document, nothing selected.
 check("no panel when nothing is being edited", (await panel.count()) === 0);
 
-// 2. A selected feature shows its parameters.
+// 2. Selecting a feature highlights it but opens nothing.
 const box = await apply({ op: "addPrimitive", kind: "box", params: { width: 40, depth: 30, height: 20 } });
+const boxId = box.id ?? box.createdId;
 await waitIdle();
-await apply({ op: "select", refs: [{ kind: "feature", id: box.id ?? box.createdId }] });
+await apply({ op: "select", refs: [{ kind: "feature", id: boxId }] });
 await page.waitForTimeout(400);
-check("panel appears for a selected feature", (await panel.count()) === 1);
-check("panel titled with the feature type", (await panel.locator(".ed-title").textContent()) === "Box");
+check("selection alone does not open the panel", (await panel.count()) === 0);
+
+// 3. Double-clicking the timeline row opens that feature's parameters.
+await page.locator(".tree-row", { hasText: "Box" }).first().dblclick();
+await page.waitForTimeout(400);
+check("double-clicking a primitive opens its parameters", (await panel.count()) === 1);
+check("panel is titled with the feature type", (await panel.locator(".ed-title").textContent()) === "Box");
 const headings = await panel.locator(".ep-heading").allTextContents();
-check("panel shows Parameters", headings.includes("Parameters"), headings.join(", "));
-const widthVal = await panel.locator(".param-field", { hasText: "Width" }).locator("input").inputValue();
-check("parameter value is editable in the panel", widthVal === "40", `width=${widthVal}`);
+check("no redundant 'Parameters' heading (the title names it)", !headings.includes("Parameters"), headings.join(", ") || "(none)");
+const widthField = panel.locator(".param-field", { hasText: "Width" }).locator("input");
+check("parameter value is editable in the panel", (await widthField.inputValue()) === "40",
+  `width=${await widthField.inputValue()}`);
+
+// Editing a parameter through the panel drives a rebuild.
+await widthField.fill("55");
+await widthField.press("Enter");
+await waitIdle();
+const doc1 = await page.evaluate(() => window.__openpoly.read({ read: "document" }));
+const boxFeature = (doc1.document ?? doc1).features.find((f) => f.id === boxId);
+check("editing a parameter updates the feature", String(boxFeature?.params?.width) === "55",
+  `width=${boxFeature?.params?.width}`);
 await page.screenshot({ path: "/tmp/edit-panel-feature.png" });
 
-// 4. Drag by the title bar moves it.
+// 4. Drag by the title bar moves it; ✕ closes it.
 const before = await panel.boundingBox();
 const title = await panel.locator(".ed-title").boundingBox();
 await page.mouse.move(title.x + title.width / 2, title.y + title.height / 2);
@@ -67,8 +88,11 @@ check(
   Math.round(after.x - before.x) === 120 && Math.round(after.y - before.y) === 80,
   `moved ${Math.round(after.x - before.x)},${Math.round(after.y - before.y)}`,
 );
+await panel.locator(".ep-close").click();
+await page.waitForTimeout(200);
+check("✕ closes the panel", (await panel.count()) === 0);
 
-// 3. A sketch with constraints shows the Constraints section.
+// 5. A sketch with constraints shows the Constraints section.
 const sk = await apply({ op: "addSketch", plane: { datum: "front" }, entities: [
   { shape: "line", a: [0, 0], b: [40, 0] },
   { shape: "line", a: [40, 0], b: [40, 30] },
@@ -86,9 +110,9 @@ const h2 = await panel.locator(".ep-heading").allTextContents();
 check("panel shows Constraints while editing a sketch", h2.some((t) => t.startsWith("Constraints")), h2.join(", "));
 await page.screenshot({ path: "/tmp/edit-panel-sketch.png" });
 
-// 5. The sidebar is clean.
+// 6. The sidebar is clean.
 const sidebar = await page.locator("aside.panel").textContent();
-check("sidebar no longer lists Constraints/Parameters", !/Parameters/.test(sidebar), sidebar.slice(0, 200));
+check("sidebar no longer lists Parameters", !/Parameters/.test(sidebar), sidebar.slice(0, 200));
 
 await browser.close();
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nAll checks passed");

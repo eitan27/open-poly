@@ -88,7 +88,7 @@ check("section view is on before sketching", toggleActive);
 
 // --- Pick the pocket floor, exposed by the cut, and start a sketch on it ---
 const floorPoint = [8, 8, 8]; // center of the pocket floor (x = 20 − 12mm depth)
-await page.click('.model-toolbar button[title^="Sketch"]');
+await page.click(".model-toolbar > button[title^=\"Sketch\"]");
 await page.waitForTimeout(150);
 await clickWorld(floorPoint);
 await page.waitForTimeout(300);

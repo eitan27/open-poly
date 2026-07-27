@@ -1,0 +1,185 @@
+import {
+  cloneElement,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement,
+} from "react";
+import { MoreFlyout } from "./MoreFlyout";
+import { fitCount, type ToolbarRow } from "./toolbarOverflow";
+
+/** One entry in a vertical toolbar: the element itself, plus how it appears in
+ *  the More flyout when it doesn't fit. */
+export interface ColumnSlot {
+  id: string;
+  /** Rendered into the bar as-is (cloned only to add a `visibility` style). */
+  node: ReactElement<{ style?: CSSProperties }>;
+  /** Rows the flyout lists/searches for this slot. A slot with none (a
+   *  separator, a status badge) just disappears when it doesn't fit. */
+  rows: ToolbarRow[];
+}
+
+interface Props {
+  /** Bar class (e.g. "sketch-toolbar"), so it keeps its own look. */
+  className: string;
+  slots: ColumnSlot[];
+  /** Gap to leave below the bar, in px. */
+  bottomMargin?: number;
+  /** Bump to toggle the More flyout from outside (the "/" shortcut). */
+  openRequest?: number;
+  /** The global "?" hint toggle — appends "(/)" to the More button. */
+  showShortcuts?: boolean;
+  /** Search box placeholder, naming this bar's tools. */
+  searchPlaceholder?: string;
+}
+
+/**
+ * The vertical counterpart of OverflowToolbar: a floating column that never
+ * runs off the bottom of the window. Slots that don't fit are left in the DOM
+ * but made `visibility: hidden` — they keep their layout boxes, so measuring
+ * stays stable no matter how many are showing (the horizontal bar needs a
+ * hidden mirror for the same reason) — and the column is given the exact height
+ * of what fits, so its panel still ends in a clean rounded edge. The hidden
+ * tools move into a "More" flyout pinned to the bottom of the column, opening
+ * beside it.
+ */
+export function OverflowColumn({
+  className,
+  slots,
+  bottomMargin = 12,
+  openRequest,
+  showShortcuts,
+  searchPlaceholder,
+}: Props) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState<{ count: number; height: number } | null>(null);
+  /** null = closed; otherwise the flyout's starting search text. */
+  const [menuQuery, setMenuQuery] = useState<string | null>(null);
+  const menuOpen = menuQuery !== null;
+
+  const visibleCount = fit ? fit.count : slots.length;
+  const hidden = slots.slice(visibleCount);
+  const hasHidden = hidden.length > 0;
+
+  // Measure after every render (slot list, labels and the panel's position can
+  // all change) and on resize; the state write is guarded so it settles.
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+
+    const measure = () => {
+      const style = getComputedStyle(bar);
+      const padTop = parseFloat(style.paddingTop);
+      const chrome =
+        padTop +
+        parseFloat(style.paddingBottom) +
+        parseFloat(style.borderTopWidth) +
+        parseFloat(style.borderBottomWidth);
+      const gap = parseFloat(style.rowGap || style.gap) || 0;
+      // Slot elements only — the More button and its flyout are out of flow.
+      const kids = (Array.from(bar.children) as HTMLElement[]).filter((el) => el.dataset.slot === "1");
+      if (kids.length === 0) return;
+      const heights = kids.map((k) => k.getBoundingClientRect().height);
+      // The column is anchored at the top; what's left is the window below it.
+      const top = bar.getBoundingClientRect().top;
+      const avail = window.innerHeight - top - bottomMargin - chrome;
+      const moreHeight = moreRef.current?.getBoundingClientRect().height ?? heights[0] ?? 0;
+      const count = fitCount(heights, gap, avail, moreHeight);
+      const shown = heights.slice(0, count);
+      const height =
+        chrome +
+        shown.reduce((a, b) => a + b, 0) +
+        gap * Math.max(0, shown.length - 1) +
+        (count < heights.length ? gap + moreHeight : 0);
+      setFit((f) => (f && f.count === count && Math.abs(f.height - height) < 0.5 ? f : { count, height }));
+    };
+
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  });
+
+  const closeMenu = () => setMenuQuery(null);
+
+  // "/" from the app: toggle the flyout. It opens even when everything fits
+  // (no More button then) — as a plain "find me a tool" search.
+  useEffect(() => {
+    if (!openRequest) return;
+    setMenuQuery((q) => (q === null ? "" : null));
+  }, [openRequest]);
+
+  // The window grew and everything fits again — nothing left to anchor to.
+  useEffect(() => {
+    if (!hasHidden && menuOpen) closeMenu();
+  }, [hasHidden]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // The popup is a sibling of the button, not a child — so test for it by
+      // class as well, or clicking into its search box would close it.
+      if (moreRef.current?.contains(target) || target.closest?.(".tb-more-menu")) return;
+      closeMenu();
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [menuOpen]);
+
+  const allRows = slots.flatMap((s) => s.rows);
+  // Opened by "/" with nothing hidden, the flyout lists every tool rather than
+  // an empty box.
+  const hiddenRows = hasHidden ? hidden.flatMap((s) => s.rows) : allRows;
+
+  return (
+    // The flyout is a SIBLING of the column, not a child: the column clips its
+    // overflowing slots, and a popup inside it would be clipped to the column's
+    // width too — landing on top of the visible tools instead of beside them.
+    <div className={`tbc-wrap ${className}-wrap`} ref={wrapRef}>
+      <div className={className} ref={barRef} style={fit ? { height: fit.height } : undefined}>
+        {/* The frosted panel, as a child layer — see .tb-blur in App.css for why
+            the blur can't sit on the bar itself. */}
+        <div className="tb-blur" />
+        {slots.map((slot, i) =>
+          cloneElement(slot.node, {
+            key: slot.id,
+            "data-slot": "1",
+            style: i < visibleCount ? slot.node.props.style : { ...slot.node.props.style, visibility: "hidden" },
+          } as Partial<{ style?: CSSProperties }>),
+        )}
+        {hasHidden && (
+          <div className="tbc-more" ref={moreRef}>
+            <button
+              className={"tbc-more-btn" + (menuOpen ? " expanded" : "")}
+              title={`${hiddenRows.length} more tool${hiddenRows.length === 1 ? "" : "s"} — click to search all tools`}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => (menuOpen ? closeMenu() : setMenuQuery(""))}
+            >
+              {/* ▸ = "opens to the right", the same affordance the rectangle /
+                  circle / pattern groups use for their variant flyouts. */}
+              More<span className="tbc-more-arrow">▸</span>
+              {showShortcuts ? <span className="kbd-hint">(/)</span> : null}
+            </button>
+          </div>
+        )}
+      </div>
+      {menuOpen && (
+        <MoreFlyout
+          key={menuQuery}
+          className="tb-more-menu tbc-more-menu"
+          rows={allRows}
+          defaultRows={hiddenRows}
+          initialQuery={menuQuery}
+          placeholder={searchPlaceholder}
+          onRun={(row) => row.onSelect()}
+          onClose={closeMenu}
+        />
+      )}
+    </div>
+  );
+}
