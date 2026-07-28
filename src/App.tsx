@@ -112,6 +112,8 @@ import { parseDocFile, serializeDocFile } from "./storage/docFile";
 import { CorruptDocError } from "./storage/docErrors";
 import { DocumentsDialog } from "./ui/DocumentsDialog";
 import { ReportDialog } from "./ui/ReportDialog";
+import { SettingsDialog } from "./ui/SettingsDialog";
+import { useSettings } from "./settings/useSettings";
 import {
   arcFrom3,
   circleFrom3,
@@ -746,6 +748,11 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [docsDialogOpen, setDocsDialogOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // User preferences (colour theme, viewport helpers, …). Owned here and read
+  // by the topbar, the Viewport and the dialogs; persisted to localStorage, NOT
+  // to the document — they follow the person, not the model.
+  const { settings, update: updateSettings, resolvedTheme } = useSettings();
   // Left panel visibility. Togglable at any width; on a phone it's an
   // off-canvas drawer over the viewport, so it starts hidden there to keep the
   // 3D view (the point of the app) front and centre.
@@ -1352,9 +1359,14 @@ export default function App() {
   >(null);
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
-  // Toggle (via the "?" button in the topbar, or the "?" key) that appends each
-  // toolbar button's keyboard shortcut to its label, e.g. "⬆ Extrude (E)".
-  const [showShortcuts, setShowShortcuts] = useState(false);
+  // Toggle (via the "?" button in the topbar, the "?" key, or Settings) that
+  // appends each toolbar button's keyboard shortcut to its label, e.g.
+  // "⬆ Extrude (E)". Persisted, so it survives a reload like the other prefs.
+  const showShortcuts = settings.showShortcuts;
+  const toggleShortcuts = useCallback(
+    () => updateSettings((s) => ({ showShortcuts: !s.showShortcuts })),
+    [updateSettings],
+  );
   const kbd = (sc: string): ReactNode =>
     showShortcuts ? <span className="kbd-hint">{sc}</span> : null;
   // Collapsed circle/rectangle flyouts: which group (if any) is expanded, and the
@@ -3333,7 +3345,7 @@ export default function App() {
       // "?" toggles the keyboard-shortcut hints appended to toolbar labels.
       if (e.key === "?") {
         e.preventDefault();
-        setShowShortcuts((s) => !s);
+        toggleShortcuts();
         return;
       }
       // "/" opens (or closes) the More flyout of whichever toolbar is live, so
@@ -6052,11 +6064,19 @@ export default function App() {
           </button>
           <button
             className={"tool-btn" + (showShortcuts ? " active" : "")}
-            onClick={() => setShowShortcuts((s) => !s)}
+            onClick={toggleShortcuts}
             title="Show keyboard shortcuts in button labels (?)"
             aria-pressed={showShortcuts}
           >
             ?
+          </button>
+          <button
+            className={"tool-btn" + (settingsOpen ? " active" : "")}
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+            aria-label="Settings"
+          >
+            ⚙
           </button>
           <button className="text-btn" onClick={() => setReportOpen(true)} title="Report an issue">
             Report an issue
@@ -6128,7 +6148,11 @@ export default function App() {
           onRename={renameDocument}
           onExport={exportDocument}
           onImport={importDocumentFile}
+          requireConfirm={settings.confirmDelete}
         />
+      )}
+      {settingsOpen && (
+        <SettingsDialog settings={settings} onChange={updateSettings} onClose={() => setSettingsOpen(false)} />
       )}
       {reportOpen && (
         <ReportDialog
@@ -6310,6 +6334,10 @@ export default function App() {
             selectionFilter={selFilter}
             sectionView={{ enabled: sectionView.enabled, frame: sectionFrame, offset: sectionView.offset, flip: sectionView.flip }}
             onSectionOffsetChange={(offset) => setSectionView((s) => ({ ...s, offset }))}
+            theme={resolvedTheme}
+            showGrid={settings.showGrid}
+            showAxes={settings.showAxes}
+            showViewCube={settings.showViewCube}
             apiRef={viewApiRef}
           />
           <OverflowToolbar

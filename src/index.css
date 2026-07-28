@@ -1,6 +1,266 @@
+/* Colour tokens.
+ *
+ * Every colour in App.css goes through one of these. `:root` holds the DARK
+ * palette — the app's original look and still its default — and the
+ * `[data-theme="light"]` block below overrides the same names. Nothing else in
+ * the stylesheet knows a theme exists.
+ *
+ * The attribute is written to <html> by settings.ts (from main.tsx, before the
+ * first paint). Two facts about the ramps make the light overrides readable:
+ *
+ *   • `--text-1 … --text-9` run brightest → dimmest ON DARK, which means
+ *     darkest → lightest on light. The number is contrast rank, not lightness.
+ *   • `--*-rgb` tokens are bare "r, g, b" triples for the translucent HUD
+ *     panels floating over the 3D viewport; the alpha stays at the use site so
+ *     each panel keeps its own transparency across both themes.
+ *
+ * 3D viewport colours (scene background, grid, hatch) can't read CSS variables
+ * — those live in src/settings/viewportTheme.ts and are kept in step by hand.
+ */
+
 :root {
+  /* --- surfaces --- */
+  --bg-app: #14161b;
+  --bg-chrome: #1b1d23;
+  --bg-panel: #16181d;
+  --bg-panel-2: #171a21;
+  --bg-panel-3: #181a20;
+  --bg-raised: #1a1c22;
+  --bg-raised-2: #1a1d24;
+  --bg-raised-3: #1b1e26;
+  --bg-sunken: #0f1115;
+  --bg-sunken-2: #101216;
+  --bg-row-hover: #20242c;
+  --bg-control: #232730;
+  --bg-control-hover: #2c313c;
+
+  /* --- borders --- */
+  --border: #2a2d35;
+  --border-subtle: #23262e;
+  --border-control: #313643;
+  --border-strong: #3b4252;
+  --border-strong-2: #3a3f4b;
+  --border-hover: #4a5266;
+
+  /* --- neutral text, 1 = highest contrast --- */
+  --text-1: #eef2f8;
+  --text-2: #e6e8ee;
+  --text-3: #d6d9e0;
+  --text-4: #c3c8d2;
+  --text-5: #aeb4c0;
+  --text-6: #9aa1b1;
+  --text-7: #8a8f9c;
+  --text-8: #7d8290;
+  --text-9: #6f7480;
+  --text-on-accent: #ffffff;
+
+  /* --- accent (blue): the action / selection colour --- */
+  --accent: #4f8cff;
+  --accent-hover: #3f7af0;
+  --accent-rgb: 79, 140, 255;
+  --accent-dim: #6f8fd1;
+  --accent-soft: #9fb6e6;
+  --accent-bright: #6db0ff;
+  --accent-bright-2: #8ec5ff;
+  --accent-pale: #b9d0ff;
+  --accent-pale-2: #9fd0ff;
+  --accent-pale-3: #b8dbff;
+  --accent-palest: #cfe0ff;
+  --accent-surface: #1e2a44;
+  --accent-surface-2: #15233a;
+  --accent-surface-3: #1e2a3a;
+  --accent-surface-4: #2a3346;
+  --accent-surface-5: #2c3550;
+  --accent-surface-6: #344058;
+  --accent-surface-7: #3a4252;
+  --accent-border: #294063;
+  --accent-border-3: #2d4257;
+  --accent-border-4: #3a465f;
+  --accent-border-2: #3a4a6a;
+  --accent-ring: #32406090;
+
+  /* --- danger (red) --- */
+  --danger: #ff6b6b;
+  --danger-text: #ff8f8f;
+  --danger-text-2: #ff9d9d;
+  --danger-text-3: #f08a8a;
+  --danger-text-soft: #f0a0a0;
+  --danger-pale: #ffd2d2;
+  --danger-pale-2: #ffc2c2;
+  --danger-border: #5a2a2a;
+  --danger-border-strong: #b04545;
+  --danger-border-hot: #e0524f;
+  --danger-surface: #3a2124;
+  --danger-surface-2: #3a1717;
+  --danger-surface-3: #2a1517;
+
+  /* --- warning (amber) --- */
+  --warn: #ffd24a;
+  --warn-text: #ffe3a3;
+  --warn-text-2: #f0c060;
+  --warn-text-3: #ffe6b0;
+  --warn-text-4: #ffd9a8;
+  --warn-text-5: #f0d9a8;
+  --warn-dot: #ffb84d;
+  --warn-dot-glow: rgba(255, 184, 77, 0.6);
+  --warn-border: #d98a3a;
+  --warn-border-2: #b9892f;
+  --warn-surface: #574722;
+  --warn-surface-2: #3a2f12;
+  --warn-surface-3: #4a3a1c;
+  --warn-surface-4: #5a4622;
+  --warn-surface-5: #6a5a30;
+  --warn-surface-6: #7d6a3a;
+  --warn-surface-7: #4a4326;
+
+  /* --- success (green) --- */
+  --ok: #6fcf97;
+  --ok-2: #5fd08a;
+  --ok-teal: #7fd4c8;
+  --ok-surface: #15301f;
+
+  /* --- overlays, scrims and shadows --- */
+  --overlay: rgba(8, 9, 12, 0.6);
+  --overlay-2: rgba(6, 7, 10, 0.5);
+  --shadow-panel: rgba(0, 0, 0, 0.55);
+  --shadow-strong: rgba(0, 0, 0, 0.5);
+  --shadow-soft: rgba(0, 0, 0, 0.45);
+  --shadow-xs: rgba(0, 0, 0, 0.28);
+  --keycap-bg: rgba(10, 12, 16, 0.4);
+  --keycap-border: rgba(255, 255, 255, 0.14);
+  --tint-soft: rgba(255, 255, 255, 0.04);
+
+  /* --- frosted HUD panels over the viewport (alpha applied at use site) --- */
+  --hud-rgb: 24, 26, 32;
+  --hud-accent-rgb: 30, 42, 68;
+  --hud-accent-3-rgb: 26, 32, 46;
+  --hud-accent-2-rgb: 40, 56, 90;
+  --hud-warn-rgb: 40, 33, 20;
+  --hud-hot-rgb: 60, 38, 18;
+
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  /* Surfaces invert the stack: the page is a cool grey and the panels that sat
+     *darker* than it on dark now sit *lighter* (white), which is what keeps
+     dialogs and the topbar reading as "on top of" the app. */
+  --bg-app: #eef1f6;
+  --bg-chrome: #ffffff;
+  --bg-panel: #ffffff;
+  --bg-panel-2: #f4f6fa;
+  --bg-panel-3: #f8f9fc;
+  --bg-raised: #f2f5fa;
+  --bg-raised-2: #eff3f9;
+  --bg-raised-3: #f2f4f9;
+  --bg-sunken: #f4f6fa;
+  --bg-sunken-2: #e8ecf3;
+  --bg-row-hover: #e7ecf4;
+  --bg-control: #eff2f7;
+  --bg-control-hover: #e2e8f2;
+
+  --border: #dde2ea;
+  --border-subtle: #e7ebf2;
+  --border-control: #ccd3e0;
+  --border-strong: #b6bfcd;
+  --border-strong-2: #c1c9d6;
+  --border-hover: #98a3b5;
+
+  --text-1: #0d1119;
+  --text-2: #1a1f2b;
+  --text-3: #29303e;
+  --text-4: #3a4252;
+  --text-5: #4a5364;
+  --text-6: #5a6373;
+  --text-7: #69717f;
+  --text-8: #78808d;
+  --text-9: #878e9a;
+  --text-on-accent: #ffffff;
+
+  /* The pale-on-dark accents become deep-on-light: they are text sitting on the
+     accent SURFACES, which flipped from navy to pale blue. */
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-rgb: 37, 99, 235;
+  --accent-dim: #4a6ba8;
+  --accent-soft: #3a5fa6;
+  --accent-bright: #1a63c9;
+  --accent-bright-2: #1a5cb8;
+  --accent-pale: #12539f;
+  --accent-pale-2: #14589f;
+  --accent-pale-3: #164e94;
+  --accent-palest: #0f3f80;
+  --accent-surface: #e2ecfd;
+  --accent-surface-2: #edf3ff;
+  --accent-surface-3: #e9f0fb;
+  --accent-surface-4: #dde8f9;
+  --accent-surface-5: #d6e3fa;
+  --accent-surface-6: #cbdcf7;
+  --accent-surface-7: #d2dced;
+  --accent-border: #bad0f2;
+  --accent-border-3: #b3caee;
+  --accent-border-4: #b0c6e8;
+  --accent-border-2: #a9c3ea;
+  --accent-ring: #b9cdeb90;
+
+  --danger: #d32f2f;
+  --danger-text: #c62828;
+  --danger-text-2: #c02f2f;
+  --danger-text-3: #b93030;
+  --danger-text-soft: #b33a3a;
+  --danger-pale: #8e1f1f;
+  --danger-pale-2: #942222;
+  --danger-border: #f0bcbc;
+  --danger-border-strong: #dd8080;
+  --danger-border-hot: #d0453f;
+  --danger-surface: #fdecec;
+  --danger-surface-2: #fbe1e1;
+  --danger-surface-3: #fdf1f1;
+
+  --warn: #a86f00;
+  --warn-text: #7a5510;
+  --warn-text-2: #8a6100;
+  --warn-text-3: #7d5a14;
+  --warn-text-4: #86571a;
+  --warn-text-5: #7f5c1c;
+  --warn-dot: #e08b1a;
+  --warn-dot-glow: rgba(224, 139, 26, 0.55);
+  --warn-border: #d9a441;
+  --warn-border-2: #c39033;
+  --warn-surface: #fbf0d2;
+  --warn-surface-2: #faf1d8;
+  --warn-surface-3: #fcf2d6;
+  --warn-surface-4: #f8e9be;
+  --warn-surface-5: #f2ddab;
+  --warn-surface-6: #ecd398;
+  --warn-surface-7: #f5e5b6;
+
+  --ok: #15804d;
+  --ok-2: #12784a;
+  --ok-teal: #0f7a6e;
+  --ok-surface: #ddf3e6;
+
+  /* Shadows go blue-black and much softer — full-strength black reads as dirt
+     on a light surface rather than as depth. */
+  --overlay: rgba(28, 34, 46, 0.35);
+  --overlay-2: rgba(28, 34, 46, 0.28);
+  --shadow-panel: rgba(23, 33, 54, 0.18);
+  --shadow-strong: rgba(23, 33, 54, 0.16);
+  --shadow-soft: rgba(23, 33, 54, 0.13);
+  --shadow-xs: rgba(23, 33, 54, 0.1);
+  --keycap-bg: rgba(0, 0, 0, 0.06);
+  --keycap-border: rgba(0, 0, 0, 0.14);
+  --tint-soft: rgba(0, 0, 0, 0.04);
+
+  --hud-rgb: 252, 253, 255;
+  --hud-accent-rgb: 226, 236, 253;
+  --hud-accent-3-rgb: 231, 239, 252;
+  --hud-accent-2-rgb: 208, 226, 250;
+  --hud-warn-rgb: 251, 240, 210;
+  --hud-hot-rgb: 253, 233, 214;
+
+  color-scheme: light;
 }
 
 * {
@@ -16,7 +276,7 @@ body,
 }
 
 body {
-  background: #14161b;
-  color: #e6e8ee;
+  background: var(--bg-app);
+  color: var(--text-2);
   overflow: hidden;
 }

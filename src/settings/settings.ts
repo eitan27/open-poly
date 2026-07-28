@@ -1,0 +1,118 @@
+// User preferences: the handful of choices that belong to the PERSON, not to a
+// document. They live in localStorage (not IndexedDB alongside documents) so
+// they survive deleting every document, and so the very first paint can read
+// them synchronously — a theme fetched asynchronously is a flash of the wrong
+// one. Storage is best-effort: private browsing can throw on both read and
+// write, and the app must work fine with the defaults when it does.
+
+/** What the user picked. "system" defers to the OS light/dark preference. */
+export type ThemeChoice = "dark" | "light" | "system";
+/** What that choice resolves to right now — the only two things we can paint. */
+export type ResolvedTheme = "dark" | "light";
+
+export interface Settings {
+  /** Colour theme. Dark is the original (and still the default) look. */
+  theme: ThemeChoice;
+  /** Show keyboard-shortcut key caps inside toolbar button labels. */
+  showShortcuts: boolean;
+  /** Draw the ground grid in the 3D viewport. */
+  showGrid: boolean;
+  /** Draw the world axes (the red/green/blue origin triad). */
+  showAxes: boolean;
+  /** Show the on-canvas navigation cube in the top-right of the viewport. */
+  showViewCube: boolean;
+  /** Ask before deleting a document (the one destructive, unundoable action). */
+  confirmDelete: boolean;
+}
+
+export const DEFAULT_SETTINGS: Settings = {
+  theme: "dark",
+  showShortcuts: false,
+  showGrid: true,
+  showAxes: true,
+  showViewCube: true,
+  confirmDelete: true,
+};
+
+const KEY = "openpoly.settings";
+
+/** Coerce whatever was in storage into a valid Settings. Unknown keys are
+ *  dropped and wrong-typed values fall back per-field, so a settings blob
+ *  written by an older (or newer) build can never wedge the app. */
+function coerce(raw: unknown): Settings {
+  const out = { ...DEFAULT_SETTINGS };
+  if (!raw || typeof raw !== "object") return out;
+  const o = raw as Record<string, unknown>;
+  if (o.theme === "dark" || o.theme === "light" || o.theme === "system") out.theme = o.theme;
+  for (const k of ["showShortcuts", "showGrid", "showAxes", "showViewCube", "confirmDelete"] as const) {
+    if (typeof o[k] === "boolean") out[k] = o[k] as boolean;
+  }
+  return out;
+}
+
+export function loadSettings(): Settings {
+  try {
+    const raw = localStorage.getItem(KEY);
+    return raw ? coerce(JSON.parse(raw)) : { ...DEFAULT_SETTINGS };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+export function saveSettings(s: Settings): void {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(s));
+  } catch {
+    /* best-effort — private browsing / blocked storage */
+  }
+}
+
+/** The OS preference, used when `theme` is "system". Defaults to dark when the
+ *  browser can't tell us (matchMedia missing, or no preference expressed) —
+ *  dark is this app's own default, so "system" never downgrades a user who
+ *  never picked. */
+export function systemTheme(): ResolvedTheme {
+  try {
+    return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
+export function resolveTheme(choice: ThemeChoice): ResolvedTheme {
+  return choice === "system" ? systemTheme() : choice;
+}
+
+/** Paint the resolved theme onto <html>. Every colour in the stylesheet reads
+ *  from custom properties keyed off this attribute, and `color-scheme` gets the
+ *  browser's own chrome (scrollbars, form controls, the canvas behind the app)
+ *  to match — without it a light app keeps dark scrollbars. */
+export function applyTheme(theme: ResolvedTheme): void {
+  const root = document.documentElement;
+  root.setAttribute("data-theme", theme);
+  root.style.colorScheme = theme;
+  // Mobile browsers tint their own chrome (the address bar, the task switcher
+  // card) from this. Values match --bg-chrome in index.css.
+  let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.name = "theme-color";
+    document.head.appendChild(meta);
+  }
+  meta.content = theme === "light" ? "#ffffff" : "#1b1d23";
+}
+
+/** Subscribe to OS light/dark changes. Returns an unsubscribe function; a
+ *  no-op where matchMedia isn't available. */
+export function watchSystemTheme(onChange: (theme: ResolvedTheme) => void): () => void {
+  let mq: MediaQueryList | undefined;
+  try {
+    mq = window.matchMedia?.("(prefers-color-scheme: light)");
+  } catch {
+    return () => {};
+  }
+  if (!mq) return () => {};
+  const handler = (e: MediaQueryListEvent) => onChange(e.matches ? "light" : "dark");
+  mq.addEventListener("change", handler);
+  return () => mq.removeEventListener("change", handler);
+}

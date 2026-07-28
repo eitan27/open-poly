@@ -10,6 +10,8 @@ import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getEdgeId, getFaceId, syncGeometries } from "replicad-threejs-helper";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
+import type { ResolvedTheme } from "../settings/settings";
+import { VIEWPORT_THEMES, type ViewCubePalette } from "../settings/viewportTheme";
 
 /** Build a body's three.js geometry from a meshed payload. Wraps replicad's
  *  `syncGeometries`, then re-sets the index: our mesh indices are `Uint32Array`
@@ -320,6 +322,16 @@ interface SceneState {
   // Constant-pixel-size drag handle (a cone) sitting on the plane's normal —
   // dragging it along the normal changes the offset (see onDown/onMove).
   sectionHandle: THREE.Mesh;
+  // Ground grid + world axis triad. Held so the appearance effect can recolour
+  // them for the theme and toggle them from settings without rebuilding the
+  // scene.
+  grid: THREE.GridHelper;
+  axes: THREE.AxesHelper;
+  viewCube: ViewCube;
+  // The navigation cube is drawn as a second viewport pass inside the animation
+  // loop rather than being a scene object, so hiding it is a flag the loop
+  // reads, not an `.visible`.
+  viewCubeVisible: boolean;
 }
 
 /** Build the world matrix for a transform feature's values, matching the kernel's
@@ -655,17 +667,17 @@ function solidCubeTexture(color: string): THREE.CanvasTexture {
 }
 
 /** A face label rendered to a canvas texture. `hover` swaps to an accent look. */
-function viewCubeFaceTexture(label: string, hover: boolean): THREE.CanvasTexture {
+function viewCubeFaceTexture(label: string, hover: boolean, p: ViewCubePalette): THREE.CanvasTexture {
   const S = 128;
   const c = document.createElement("canvas");
   c.width = c.height = S;
   const g = c.getContext("2d")!;
-  g.fillStyle = hover ? "#4c5a7c" : "#3b4356";
+  g.fillStyle = hover ? p.faceFillHover : p.faceFill;
   g.fillRect(0, 0, S, S);
-  g.strokeStyle = hover ? "#6ea0ff" : "#6b748c";
+  g.strokeStyle = hover ? p.faceBorderHover : p.faceBorder;
   g.lineWidth = hover ? 8 : 6;
   g.strokeRect(3, 3, S - 6, S - 6);
-  g.fillStyle = hover ? "#ffffff" : "#e6e8ee";
+  g.fillStyle = hover ? p.faceLabelHover : p.faceLabel;
   g.font = "600 23px ui-sans-serif, system-ui, -apple-system, sans-serif";
   g.textAlign = "center";
   g.textBaseline = "middle";
@@ -691,10 +703,14 @@ interface ViewCube {
   pick(renderer: THREE.WebGLRenderer, clientX: number, clientY: number): CubeHit | null;
   /** Drop any hover highlight (e.g. when the pointer leaves the canvas). */
   clearHover(): void;
+  /** Repaint for a colour theme. Both themes' face/nub textures are built up
+   *  front and simply swapped — a theme flip is a handful of pointer
+   *  assignments, not a canvas re-render, and there is nothing to dispose. */
+  setTheme(theme: ResolvedTheme): void;
   dispose(): void;
 }
 
-function createViewCube(): ViewCube {
+function createViewCube(initialTheme: ResolvedTheme): ViewCube {
   const cubeScene = new THREE.Scene();
   // Frustum snug around the unit cube's iso silhouette (~±0.87 at the corners)
   // so it fills the corner region — a big, easy click target.
@@ -705,9 +721,16 @@ function createViewCube(): ViewCube {
   const group = new THREE.Group();
   cubeScene.add(group);
 
+  // Every themed texture is built once, for both themes, and indexed by theme
+  // below — see setTheme. `pal` is whichever one is currently showing.
+  const palettes = { dark: VIEWPORT_THEMES.dark.cube, light: VIEWPORT_THEMES.light.cube };
+  let pal = palettes[initialTheme];
+
   // A solid body + crisp edges so the six label planes read as one cube.
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.98, 0.98), new THREE.MeshBasicMaterial({ color: 0x2c3340 }));
-  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x6b748c }));
+  const bodyMat = new THREE.MeshBasicMaterial({ color: pal.body });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.98, 0.98), bodyMat);
+  const edgeMat = new THREE.LineBasicMaterial({ color: pal.edge });
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), edgeMat);
   group.add(body, edges);
   const disposables: { dispose(): void }[] = [body.geometry, body.material as THREE.Material, edges.geometry, edges.material as THREE.Material];
 
@@ -719,8 +742,12 @@ function createViewCube(): ViewCube {
   // normal, local +Y → the face's up) so every label reads upright.
   const x = new THREE.Vector3(), y = new THREE.Vector3(), z = new THREE.Vector3();
   for (const f of VIEWCUBE_FACES) {
-    const texNormal = viewCubeFaceTexture(f.label, false);
-    const texHover = viewCubeFaceTexture(f.label, true);
+    const themed = {
+      dark: { normal: viewCubeFaceTexture(f.label, false, palettes.dark), hover: viewCubeFaceTexture(f.label, true, palettes.dark) },
+      light: { normal: viewCubeFaceTexture(f.label, false, palettes.light), hover: viewCubeFaceTexture(f.label, true, palettes.light) },
+    };
+    const texNormal = themed[initialTheme].normal;
+    const texHover = themed[initialTheme].hover;
     const mat = new THREE.MeshBasicMaterial({ map: texNormal });
     const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
     z.set(...f.normal).normalize();
@@ -728,10 +755,10 @@ function createViewCube(): ViewCube {
     x.crossVectors(y, z).normalize();
     plane.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
     plane.position.copy(z).multiplyScalar(0.5);
-    plane.userData = { hit: { view: f.view } as CubeHit, kind: "face", texNormal, texHover };
+    plane.userData = { hit: { view: f.view } as CubeHit, kind: "face", texNormal, texHover, themed };
     group.add(plane);
     targets.push(plane);
-    disposables.push(plane.geometry, mat, texNormal, texHover);
+    disposables.push(plane.geometry, mat, themed.dark.normal, themed.dark.hover, themed.light.normal, themed.light.hover);
   }
 
   // A small nub at each of the 8 corners → the iso view looking down that corner's
@@ -740,23 +767,31 @@ function createViewCube(): ViewCube {
   // which renders through a different colour-space path) so a nub is exactly the
   // same gray as the face it sits on, hinting it's pressable without reading as a
   // loud dot.
-  const cornerNormalTex = solidCubeTexture("#4a5570"); // slightly lighter than the faces so corners read as pressable
-  const cornerHoverTex = solidCubeTexture("#5d6d96"); // hover: lighter still
+  const cornerThemed = {
+    dark: { normal: solidCubeTexture(palettes.dark.corner), hover: solidCubeTexture(palettes.dark.cornerHover) },
+    light: { normal: solidCubeTexture(palettes.light.corner), hover: solidCubeTexture(palettes.light.cornerHover) },
+  };
   const cornerGeom = new THREE.SphereGeometry(0.09, 16, 12);
   // A slightly larger BackSide sphere behind each nub = a blue outline ring, shown
   // only on hover (matching the faces' blue hover border).
   const cornerOutlineGeom = new THREE.SphereGeometry(0.125, 16, 12);
-  disposables.push(cornerGeom, cornerOutlineGeom, cornerNormalTex, cornerHoverTex);
+  disposables.push(cornerGeom, cornerOutlineGeom, cornerThemed.dark.normal, cornerThemed.dark.hover, cornerThemed.light.normal, cornerThemed.light.hover);
+  const outlineMats: THREE.MeshBasicMaterial[] = [];
   for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
-    const outlineMat = new THREE.MeshBasicMaterial({ color: 0x6ea0ff, side: THREE.BackSide });
+    const outlineMat = new THREE.MeshBasicMaterial({ color: pal.cornerOutline, side: THREE.BackSide });
+    outlineMats.push(outlineMat);
     const outline = new THREE.Mesh(cornerOutlineGeom, outlineMat);
     outline.position.set(sx * 0.5, sy * 0.5, sz * 0.5);
     outline.visible = false;
     group.add(outline);
-    const mat = new THREE.MeshBasicMaterial({ map: cornerNormalTex });
+    const mat = new THREE.MeshBasicMaterial({ map: cornerThemed[initialTheme].normal });
     const nub = new THREE.Mesh(cornerGeom, mat);
     nub.position.set(sx * 0.5, sy * 0.5, sz * 0.5);
-    nub.userData = { hit: { dir: [sx, sy, sz], up: [0, 0, 1] } as CubeHit, texNormal: cornerNormalTex, texHover: cornerHoverTex, outline };
+    nub.userData = {
+      hit: { dir: [sx, sy, sz], up: [0, 0, 1] } as CubeHit,
+      texNormal: cornerThemed[initialTheme].normal, texHover: cornerThemed[initialTheme].hover,
+      themed: cornerThemed, outline,
+    };
     group.add(nub);
     targets.push(nub);
     disposables.push(outlineMat, mat);
@@ -816,6 +851,25 @@ function createViewCube(): ViewCube {
     clearHover() {
       setHovered(null);
     },
+    setTheme(theme) {
+      pal = palettes[theme];
+      bodyMat.color.set(pal.body);
+      edgeMat.color.set(pal.edge);
+      for (const m of outlineMats) m.color.set(pal.cornerOutline);
+      // Re-point every face/nub at its texture pair for the new theme. Anything
+      // currently hovered keeps its hover texture, so a theme change mid-hover
+      // doesn't blink the highlight off.
+      for (const obj of targets) {
+        const ud = obj.userData as {
+          texNormal: THREE.Texture;
+          texHover: THREE.Texture;
+          themed: Record<ResolvedTheme, { normal: THREE.Texture; hover: THREE.Texture }>;
+        };
+        ud.texNormal = ud.themed[theme].normal;
+        ud.texHover = ud.themed[theme].hover;
+        (obj.material as THREE.MeshBasicMaterial).map = obj === hovered ? ud.texHover : ud.texNormal;
+      }
+    },
     dispose() {
       for (const d of disposables) d.dispose();
     },
@@ -855,6 +909,10 @@ export function Viewport({
   selectionFilter,
   sectionView,
   onSectionOffsetChange,
+  theme,
+  showGrid,
+  showAxes,
+  showViewCube,
   apiRef,
 }: {
   meshes: FeatureMesh[];
@@ -938,6 +996,15 @@ export function Viewport({
   /** Fired on every drag frame of the plane handle with the new offset (along
    *  the frame's unflipped normal) — cheap, since this is plain view state. */
   onSectionOffsetChange: (offset: number) => void;
+  /** Resolved colour theme (user settings, "system" already folded in). Drives
+   *  the scene background + grid; see settings/viewportTheme.ts for why the rest
+   *  of the scene deliberately doesn't move. */
+  theme: ResolvedTheme;
+  /** Scene helpers, all user settings: the ground grid, the world axis triad,
+   *  and the on-canvas navigation cube. */
+  showGrid: boolean;
+  showAxes: boolean;
+  showViewCube: boolean;
   apiRef: { current: ViewportApi | null };
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1051,7 +1118,12 @@ export function Viewport({
     renderer.localClippingEnabled = true;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1b1d23);
+    // Mount-time theme. This effect deliberately runs once (deps: [apiRef]) —
+    // rebuilding the whole scene on a theme flip would drop the camera, the
+    // selection and every cached mesh — so later changes are applied in place
+    // by the appearance effect below.
+    const theme0 = VIEWPORT_THEMES[theme];
+    scene.background = new THREE.Color(theme0.background);
 
     // `let` (not const): the perspective/orthographic toggle swaps this binding.
     // Every closure below reads `camera`, so reassigning it repoints them all;
@@ -1095,7 +1167,7 @@ export function Viewport({
     // It tracks whichever camera is current (perspective/orthographic) since
     // `render` is passed `state.camera` each frame; clicks route through
     // `goToView` below so its up-vectors match the named views exactly.
-    const viewCube = createViewCube();
+    const viewCube = createViewCube(theme);
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.65));
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
@@ -1105,10 +1177,13 @@ export function Viewport({
     fill.position.set(-80, -40, -60);
     scene.add(fill);
 
-    const grid = new THREE.GridHelper(240, 24, 0x3a3d48, 0x282b33);
+    const grid = new THREE.GridHelper(240, 24, theme0.gridMajor, theme0.gridMinor);
     grid.rotation.x = Math.PI / 2;
+    grid.visible = showGrid;
     scene.add(grid);
-    scene.add(new THREE.AxesHelper(45));
+    const axes = new THREE.AxesHelper(45);
+    axes.visible = showAxes;
+    scene.add(axes);
 
     const datums = createDatums(scene);
 
@@ -1435,10 +1510,12 @@ export function Viewport({
     anchorOverlay.frustumCulled = false;
     anchorOverlay.visible = false;
     scene.add(previewLine, snapMarker, snapEdgeLine, guideOverlay, anchorOverlay);
+    // Appended to <body> (not the canvas container) so it can't be clipped, and
+    // styled from App.css rather than inline so it picks up the colour theme
+    // like every other chip — only `display` and the cursor-following position
+    // are set from here.
     const guideBadge = document.createElement("div");
-    guideBadge.style.cssText =
-      "position:fixed;pointer-events:none;z-index:9999;padding:1px 6px;border-radius:4px;" +
-      "background:rgba(18,22,31,0.92);color:#c2c5e2;font:600 13px/1.3 ui-sans-serif,system-ui,sans-serif;display:none;";
+    guideBadge.className = "guide-badge";
     document.body.appendChild(guideBadge);
 
     const state: SceneState = {
@@ -1452,6 +1529,7 @@ export function Viewport({
       previewLine, snapMarker, snapEdgeLine, guideOverlay, anchorOverlay, guideBadge, tween: null,
       sectionPlane, sectionClipPlanes, sectionWidget, sectionCapGroup, sectionCapGeometry,
       sectionCapMaterial, sectionHandle,
+      grid, axes, viewCube, viewCubeVisible: showViewCube,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
@@ -2493,7 +2571,7 @@ export function Viewport({
       }
       // ViewCube hover: pick() updates the cube's own highlight and reports the
       // target under the cursor (null when off the cube, which also clears it).
-      if (viewCube.pick(renderer, e.clientX, e.clientY)) {
+      if (state.viewCubeVisible && viewCube.pick(renderer, e.clientX, e.clientY)) {
         renderer.domElement.style.cursor = "pointer";
         return;
       }
@@ -2838,7 +2916,7 @@ export function Viewport({
     // is set before onUp runs.
     const onGizmoDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
-      cubeHit = viewCube.pick(renderer, e.clientX, e.clientY);
+      cubeHit = state.viewCubeVisible ? viewCube.pick(renderer, e.clientX, e.clientY) : null;
     };
     const onGizmoLeave = () => viewCube.clearHover();
     // Double-click on a sketch entity (Select tool only): grab its whole
@@ -3042,7 +3120,7 @@ export function Viewport({
       syncClipPlanes();
       syncSectionPlane();
       renderer.render(scene, camera);
-      viewCube.render(renderer, state.camera);
+      if (state.viewCubeVisible) viewCube.render(renderer, state.camera);
       frame = requestAnimationFrame(animate);
     };
     animate();
@@ -3112,6 +3190,32 @@ export function Viewport({
       stateRef.current = null;
     };
   }, [apiRef]);
+
+  // Appearance: colour theme + which scene helpers are drawn. Applied in place
+  // on the live scene, so switching theme mid-model keeps the camera, the
+  // selection and every meshed body exactly where they were. The scene renders
+  // on rAF, so there is nothing to invalidate — the next frame picks these up.
+  useEffect(() => {
+    const state = stateRef.current;
+    if (!state) return;
+    const t = VIEWPORT_THEMES[theme];
+    (state.scene.background as THREE.Color).set(t.background);
+    // GridHelper bakes its two colours into per-vertex colours at construction:
+    // the first half of the vertices are the centre lines, the rest the cells.
+    const colors = state.grid.geometry.getAttribute("color") as THREE.BufferAttribute;
+    const major = new THREE.Color(t.gridMajor);
+    const minor = new THREE.Color(t.gridMinor);
+    // Two centre lines × 2 endpoints = 4 vertices, always laid down first.
+    for (let i = 0; i < colors.count; i++) {
+      const c = i < 4 ? major : minor;
+      colors.setXYZ(i, c.r, c.g, c.b);
+    }
+    colors.needsUpdate = true;
+    state.grid.visible = showGrid;
+    state.axes.visible = showAxes;
+    state.viewCubeVisible = showViewCube;
+    state.viewCube.setTheme(theme);
+  }, [theme, showGrid, showAxes, showViewCube]);
 
   // Rebuild the rendered bodies whenever the meshes or selection change.
   useEffect(() => {
