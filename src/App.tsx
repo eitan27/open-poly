@@ -652,6 +652,13 @@ const SKETCH_GROUPS = {
 };
 type SketchGroupId = keyof typeof SKETCH_GROUPS;
 // Short display names for the variants shown in each group's vertical flyout.
+/** Below this (mm) a drawn segment/radius is nothing: a zero-size entity is
+ *  invisible AND unpickable, so it can never be selected or deleted again — and
+ *  it drags the sketch's degrees of freedom around invisibly. Drawing one is an
+ *  easy slip (a double-click, or a second click the snap pulls back onto the
+ *  first), so the draw tools refuse instead of committing it. */
+const MIN_SEGMENT = 1e-3;
+
 const SKETCH_VARIANT_NAME: Partial<Record<SketchTool, string>> = {
   "rect-corner": "2 corners",
   "rect-center": "Center",
@@ -4251,6 +4258,9 @@ export default function App() {
           lineStartOnRef.current = on; // remember an entity the start landed on
           lineStartFixedRef.current = onFixed; // …or a body point it pinned to
         } else {
+          // Clicking the same point twice would commit a zero-length line —
+          // ignore it and keep the chain going (see MIN_SEGMENT).
+          if (Math.hypot(uv[0] - draft[0][0], uv[1] - draft[0][1]) < MIN_SEGMENT) break;
           const line = lineEntity(draft[0], uv);
           let next = addSketchEntities(base, sketchId, [line]);
           const cons: SketchConstraint[] = [];
@@ -4311,6 +4321,7 @@ export default function App() {
       case "rect-corner":
         if (draft.length === 0) { setDraft([uv]); draftFixedRef.current = [onFixed]; }
         else {
+          if (Math.abs(uv[0] - draft[0][0]) < MIN_SEGMENT || Math.abs(uv[1] - draft[0][1]) < MIN_SEGMENT) break;
           // Both opposite corners (draft[0], uv) are rectangle corners → pin either
           // that snapped to a hole. The other two corners aren't snap targets.
           commitRect(rectangleCorners(draft[0], uv), [draftFixedRef.current[0], onFixed]);
@@ -4320,6 +4331,7 @@ export default function App() {
       case "rect-center":
         if (draft.length === 0) { setDraft([uv]); draftFixedRef.current = [onFixed]; }
         else {
+          if (Math.abs(uv[0] - draft[0][0]) < MIN_SEGMENT || Math.abs(uv[1] - draft[0][1]) < MIN_SEGMENT) break;
           // Only the corner (uv) is a rectangle vertex; the centre (draft[0]) isn't.
           commitRect(rectangleFromCenter(draft[0], uv), [onFixed]);
           setDraft([]); draftFixedRef.current = [];
@@ -4331,6 +4343,7 @@ export default function App() {
           circleCenterFixedRef.current = onFixed; // centre may pin to a hole centre
         } else {
           const r = Math.hypot(uv[0] - draft[0][0], uv[1] - draft[0][1]);
+          if (r < MIN_SEGMENT) break; // a second click on the centre → no circle
           const circle = mark({ type: "circle" as const, id: genId(), c: draft[0], r });
           let next = addSketchEntities(base, sketchId, [circle]);
           // Pin the centre to the body circle it snapped to (concentric that LASTS).
@@ -4355,6 +4368,7 @@ export default function App() {
       case "polygon":
         if (draft.length === 0) setDraft([uv]);
         else {
+          if (Math.hypot(uv[0] - draft[0][0], uv[1] - draft[0][1]) < MIN_SEGMENT) break;
           // The clicked vertex (uv) is a polygon corner → pins if snapped to a
           // hole. The centre (draft[0]) isn't a referenceable vertex, so it can't.
           const polyLines = loopLines(regularPolygon(draft[0], uv, polygonSides));
@@ -4528,6 +4542,22 @@ export default function App() {
    *  is the one in play and rolling back would drop its work instead. */
   const abandonSketchEdit = (seq: number, previous: Document): void => {
     if (seq === sketchCommitSeqRef.current) sketchBaseDocRef.current = previous;
+  };
+
+  /** Ids of the sketch's lines that have collapsed to (near) nothing. A drawn
+   *  constraint that COLLAPSES a line is rejected — but one that merely leaves an
+   *  already-collapsed line alone must not be, or a single stray zero-length
+   *  segment (an easy accidental double-click: invisible, and unselectable
+   *  afterwards) would make every dimension in the sketch look unsolvable. */
+  const degenerateLineIds = (d: Document, sketchId: string): Set<string> => {
+    const sk = d.features.find((f) => f.id === sketchId);
+    const out = new Set<string>();
+    if (sk?.type === "sketch") {
+      for (const e of sk.entities) {
+        if (e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < MIN_SEGMENT) out.add(e.id);
+      }
+    }
+    return out;
   };
 
   /** claim → solve → publish, for edits that are always accepted. Returns the
@@ -4945,6 +4975,7 @@ export default function App() {
     const candidateSk = candidate.features.find((f) => f.id === sketchId);
     if (candidateSk?.type !== "sketch") return;
     const seq = beginSketchEdit(candidate);
+    const wasDegenerate = degenerateLineIds(previous, sketchId);
     const reject = (msg: string) => {
       abandonSketchEdit(seq, previous);
       flashSketchMsg(msg);
@@ -4961,11 +4992,9 @@ export default function App() {
     // vertical line parallel) often isn't flagged as a formal conflict —
     // planegcs "satisfies" it by collapsing a line to zero length. So reject on
     // a conflict, a failed/invalid solve, OR a degenerate (near-zero) entity.
-    const sk = solved.features.find((f) => f.id === sketchId);
-    const degenerate =
-      sk?.type === "sketch" &&
-      sk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
-    if (res.hasConflicts || res.status >= 2 || degenerate) {
+    // Only a line THIS constraint collapsed counts against it.
+    const collapsed = [...degenerateLineIds(solved, sketchId)].some((id) => !wasDegenerate.has(id));
+    if (res.hasConflicts || res.status >= 2 || collapsed) {
       const culprits = conflictNames(candidateSk.constraints, res, constraint.id);
       reject(
         culprits.length
@@ -5292,6 +5321,7 @@ export default function App() {
     // Claim the commit before solving so a concurrent edit stacks on this
     // dimension; a rejection below hands the claim back.
     const seq = beginSketchEdit(candidate);
+    const wasDegenerate = degenerateLineIds(previous, sketchId);
     const reject = (msg: string) => {
       abandonSketchEdit(seq, previous);
       flashSketchMsg(msg);
@@ -5310,11 +5340,9 @@ export default function App() {
       reject(`That ${kind} couldn't be solved — not applied.`);
       return;
     }
-    const sk = solved.features.find((f) => f.id === sketchId);
-    const degenerate =
-      sk?.type === "sketch" &&
-      sk.entities.some((e) => e.type === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < 1e-3);
-    if (res.hasConflicts || res.status >= 2 || degenerate) {
+    // Only a line THIS constraint collapsed counts against it.
+    const collapsed = [...degenerateLineIds(solved, sketchId)].some((id) => !wasDegenerate.has(id));
+    if (res.hasConflicts || res.status >= 2 || collapsed) {
       const culprits = conflictNames(candidateSk.constraints, res, added.id);
       reject(
         culprits.length
