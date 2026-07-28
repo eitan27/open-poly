@@ -1,7 +1,7 @@
 // Pure helpers for reading and updating the document. Every mutation returns a
 // new Document (immutable updates) so React state and undo/redo stay simple.
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "./featureDefs";
-import { randomSolidColor } from "./colors";
+import { newBodyColor, randomSolidColor } from "./colors";
 import { evaluateExpression, RESERVED_NAMES, type Scope } from "./expression";
 import {
   angledFrame,
@@ -66,6 +66,9 @@ export function migrateDocument(doc: Document): Document {
     // them — read through a loose view to test for that.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const f = feat as any;
+    // Backfills below stay on randomSolidColor, NOT the user's "new body
+    // colour" preference: opening an old document isn't creating a body, and
+    // repainting its whole history one flat colour would be a nasty surprise.
     // Transforms gained copy/color/opacity (copy = a body-producing duplicate).
     if (feat.type === "transform" && (f.copy === undefined || f.color === undefined || f.opacity === undefined)) {
       changed = true;
@@ -104,7 +107,7 @@ export function makeFeature(kind: FeatureKind, existing: Feature[]): Feature {
     name: `${def.label} ${ordinal}`,
     suppressed: false,
     params,
-    color: randomSolidColor(),
+    color: newBodyColor(),
     opacity: 1,
   };
 }
@@ -162,7 +165,7 @@ export function addExtrude(
     mode: opts.mode ?? "new",
     targetId: opts.targetId,
     upTo: opts.upTo,
-    color: randomSolidColor(),
+    color: newBodyColor(),
     opacity: 1,
   };
   return insertFeature(doc, feature);
@@ -175,7 +178,7 @@ function colorOfFeature(doc: Document, id: string): number {
   const f = doc.features.find((x) => x.id === id);
   return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "pattern" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import")
     ? f.color
-    : randomSolidColor();
+    : newBodyColor();
 }
 
 export function addBoolean(
@@ -246,6 +249,9 @@ export function addPlane(
     angleAxis: spec.angleAxis,
     angle: spec.angle,
     points: spec.points,
+    // Random even when the user has pinned a new-body colour: this tints the
+    // translucent plane WIDGET, and planes all sharing one colour would make
+    // them hard to tell apart in the viewport.
     color: randomSolidColor(),
   };
   return insertFeature(doc, feature);
@@ -271,7 +277,7 @@ export function addTransform(
     axis: opts.axis ?? "z",
     pivot,
     copy: opts.copy ?? false,
-    color: randomSolidColor(),
+    color: newBodyColor(),
     opacity: 1,
   };
   return insertFeature(doc, feature);
@@ -305,7 +311,7 @@ export function addRevolve(
     axis,
     angle,
     symmetric,
-    color: randomSolidColor(),
+    color: newBodyColor(),
     opacity: 1,
   };
   return insertFeature(doc, feature);
@@ -367,7 +373,7 @@ export function addSweep(
     suppressed: false,
     profile,
     path,
-    color: randomSolidColor(),
+    color: newBodyColor(),
     opacity: 1,
   };
   return insertFeature(doc, feature);
@@ -385,7 +391,7 @@ export function addLoft(
     name: `Loft ${ordinal}`,
     suppressed: false,
     profiles,
-    color: randomSolidColor(),
+    color: newBodyColor(),
     opacity: 1,
   };
   return insertFeature(doc, feature);
@@ -404,7 +410,7 @@ export function addImport(
     name: name && name.trim() ? name.trim() : `Import ${ordinal}`,
     suppressed: false,
     source,
-    color: randomSolidColor(),
+    color: newBodyColor(),
     opacity: 1,
   };
   return insertFeature(doc, feature);

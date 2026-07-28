@@ -23,7 +23,20 @@ export interface Settings {
   showViewCube: boolean;
   /** Ask before deleting a document (the one destructive, unundoable action). */
   confirmDelete: boolean;
+  /** Colour given to a newly created body: "random" (a fresh pick from the
+   *  pastel palette each time, so bodies stay easy to tell apart) or a
+   *  `#rrggbb` string to pin every new body to one colour. Either way it's only
+   *  the starting value — the Parts list can recolour any body afterwards. */
+  newBodyColor: "random" | string;
+  /** What dragging with the middle / right mouse button does in the viewport.
+   *  The LEFT button is not configurable: it carries selection, sketch drawing
+   *  and entity dragging as well as orbit, so rebinding it would break them. */
+  mouseMiddle: MouseDragAction;
+  mouseRight: MouseDragAction;
 }
+
+export type MouseDragAction = "pan" | "orbit" | "zoom";
+const MOUSE_ACTIONS: MouseDragAction[] = ["pan", "orbit", "zoom"];
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
@@ -32,6 +45,9 @@ export const DEFAULT_SETTINGS: Settings = {
   showAxes: true,
   showViewCube: true,
   confirmDelete: true,
+  newBodyColor: "random",
+  mouseMiddle: "pan",
+  mouseRight: "pan",
 };
 
 const KEY = "openpoly.settings";
@@ -46,6 +62,14 @@ function coerce(raw: unknown): Settings {
   if (o.theme === "dark" || o.theme === "light" || o.theme === "system") out.theme = o.theme;
   for (const k of ["showShortcuts", "showGrid", "showAxes", "showViewCube", "confirmDelete"] as const) {
     if (typeof o[k] === "boolean") out[k] = o[k] as boolean;
+  }
+  // Validated here rather than at the point of use: a bad value would otherwise
+  // reach a document as NaN, which survives a save.
+  if (o.newBodyColor === "random" || (typeof o.newBodyColor === "string" && /^#[0-9a-f]{6}$/i.test(o.newBodyColor))) {
+    out.newBodyColor = o.newBodyColor;
+  }
+  for (const k of ["mouseMiddle", "mouseRight"] as const) {
+    if (MOUSE_ACTIONS.includes(o[k] as MouseDragAction)) out[k] = o[k] as MouseDragAction;
   }
   return out;
 }

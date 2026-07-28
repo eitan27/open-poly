@@ -10,7 +10,7 @@ import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getEdgeId, getFaceId, syncGeometries } from "replicad-threejs-helper";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
-import type { ResolvedTheme } from "../settings/settings";
+import type { MouseDragAction, ResolvedTheme } from "../settings/settings";
 import { VIEWPORT_THEMES, type ViewCubePalette } from "../settings/viewportTheme";
 
 /** Build a body's three.js geometry from a meshed payload. Wraps replicad's
@@ -695,6 +695,25 @@ function viewCubeFaceTexture(label: string, hover: boolean, p: ViewCubePalette):
  *  direction (the corners → iso 3/4 views). */
 type CubeHit = { view: ViewName } | { dir: [number, number, number]; up: [number, number, number] };
 
+const MOUSE_ACTION_TO_THREE: Record<MouseDragAction, THREE.MOUSE> = {
+  pan: THREE.MOUSE.PAN,
+  orbit: THREE.MOUSE.ROTATE,
+  zoom: THREE.MOUSE.DOLLY,
+};
+
+/** Bind the middle/right drag actions from settings. LEFT is hard-wired to
+ *  ROTATE and deliberately not configurable — the left button also carries
+ *  selection, sketch drawing and entity dragging (which this file handles
+ *  itself, ahead of OrbitControls), so repurposing it would break all three.
+ *  Scroll-wheel zoom is likewise always on. */
+function applyMouseBindings(controls: OrbitControls, middle: MouseDragAction, right: MouseDragAction): void {
+  controls.mouseButtons = {
+    LEFT: THREE.MOUSE.ROTATE,
+    MIDDLE: MOUSE_ACTION_TO_THREE[middle],
+    RIGHT: MOUSE_ACTION_TO_THREE[right],
+  };
+}
+
 interface ViewCube {
   /** Overlay the cube into the top-right corner, oriented to mirror `mainCamera`. */
   render(renderer: THREE.WebGLRenderer, mainCamera: THREE.Camera): void;
@@ -913,6 +932,8 @@ export function Viewport({
   showGrid,
   showAxes,
   showViewCube,
+  mouseMiddle,
+  mouseRight,
   apiRef,
 }: {
   meshes: FeatureMesh[];
@@ -1005,6 +1026,9 @@ export function Viewport({
   showGrid: boolean;
   showAxes: boolean;
   showViewCube: boolean;
+  /** What a middle / right drag does — see applyMouseBindings. */
+  mouseMiddle: MouseDragAction;
+  mouseRight: MouseDragAction;
   apiRef: { current: ViewportApi | null };
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1152,13 +1176,7 @@ export function Viewport({
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    // Middle mouse pans (like right); zoom stays on the scroll wheel. (Left =
-    // rotate.) Middle/right will be differentiated later.
-    controls.mouseButtons = {
-      LEFT: THREE.MOUSE.ROTATE,
-      MIDDLE: THREE.MOUSE.PAN,
-      RIGHT: THREE.MOUSE.PAN,
-    };
+    applyMouseBindings(controls, mouseMiddle, mouseRight);
     controls.target.set(0, 0, 0);
     controls.update();
 
@@ -3191,10 +3209,11 @@ export function Viewport({
     };
   }, [apiRef]);
 
-  // Appearance: colour theme + which scene helpers are drawn. Applied in place
-  // on the live scene, so switching theme mid-model keeps the camera, the
-  // selection and every meshed body exactly where they were. The scene renders
-  // on rAF, so there is nothing to invalidate — the next frame picks these up.
+  // User settings that the scene reads: colour theme, which helpers are drawn,
+  // and the mouse bindings. Applied in place on the live scene, so changing a
+  // setting mid-model keeps the camera, the selection and every meshed body
+  // exactly where they were. The scene renders on rAF, so there is nothing to
+  // invalidate — the next frame picks these up.
   useEffect(() => {
     const state = stateRef.current;
     if (!state) return;
@@ -3215,7 +3234,8 @@ export function Viewport({
     state.axes.visible = showAxes;
     state.viewCubeVisible = showViewCube;
     state.viewCube.setTheme(theme);
-  }, [theme, showGrid, showAxes, showViewCube]);
+    applyMouseBindings(state.controls, mouseMiddle, mouseRight);
+  }, [theme, showGrid, showAxes, showViewCube, mouseMiddle, mouseRight]);
 
   // Rebuild the rendered bodies whenever the meshes or selection change.
   useEffect(() => {

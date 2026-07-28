@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type ReactNode } from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import { useUpdateAvailable } from "./useVersionCheck";
 import {
@@ -59,7 +59,7 @@ import {
   resolvePatternCount,
   sameProjectedEntities,
 } from "./document/derived";
-import { DEFAULT_SOLID_COLOR } from "./document/colors";
+import { DEFAULT_SOLID_COLOR, hexToColor, setNewBodyColorPreference } from "./document/colors";
 import type {
   DerivedOp,
   ProjectRef,
@@ -753,6 +753,16 @@ export default function App() {
   // by the topbar, the Viewport and the dialogs; persisted to localStorage, NOT
   // to the document — they follow the person, not the model.
   const { settings, update: updateSettings, resolvedTheme } = useSettings();
+  // The document builders pick a new body's colour deep in pure code that has no
+  // route to React state, so the preference is pushed down to them as module
+  // state. Layout effect, not a plain one: a feature can be created in the same
+  // commit that applies a settings change (the agent bridge, or an undo landing
+  // alongside), and this has to be in place first.
+  useLayoutEffect(() => {
+    setNewBodyColorPreference(
+      settings.newBodyColor === "random" ? null : hexToColor(settings.newBodyColor),
+    );
+  }, [settings.newBodyColor]);
   // Left panel visibility. Togglable at any width; on a phone it's an
   // off-canvas drawer over the viewport, so it starts hidden there to keep the
   // 3D view (the point of the app) front and centre.
@@ -6338,6 +6348,8 @@ export default function App() {
             showGrid={settings.showGrid}
             showAxes={settings.showAxes}
             showViewCube={settings.showViewCube}
+            mouseMiddle={settings.mouseMiddle}
+            mouseRight={settings.mouseRight}
             apiRef={viewApiRef}
           />
           <OverflowToolbar

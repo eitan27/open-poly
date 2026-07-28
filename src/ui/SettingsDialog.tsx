@@ -3,7 +3,8 @@
 // and applies the instant it's changed — there is no Save button, and nothing
 // here touches the document or the undo stack.
 import { useEffect } from "react";
-import type { Settings, ThemeChoice } from "../settings/settings";
+import type { MouseDragAction, Settings, ThemeChoice } from "../settings/settings";
+import { colorToHex, SOLID_COLORS } from "../document/colors";
 
 interface Props {
   settings: Settings;
@@ -44,6 +45,47 @@ const THEME_OPTIONS: {
   },
 ];
 
+/** The pinned colour as lowercase `#rrggbb`, or null for "random". Normalised
+ *  because a settings blob could hold an uppercase hex while everything we
+ *  write (colorToHex, `<input type="color">`) is lowercase. */
+const pinnedColor = (v: Settings["newBodyColor"]): string | null =>
+  v === "random" ? null : v.toLowerCase();
+
+const MOUSE_ACTIONS: { value: MouseDragAction; label: string }[] = [
+  { value: "pan", label: "Pan" },
+  { value: "orbit", label: "Orbit" },
+  { value: "zoom", label: "Zoom" },
+];
+
+/** One row: a label + description on the left, a `<select>` on the right. */
+function Choice<T extends string>({
+  label,
+  hint,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <label className="set-toggle">
+      <span className="set-toggle-text">
+        <span className="set-toggle-label">{label}</span>
+        <span className="set-toggle-hint">{hint}</span>
+      </span>
+      <select className="set-select" value={value} onChange={(e) => onChange(e.target.value as T)}>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 /** One row: a label + description on the left, a checkbox on the right. */
 function Toggle({
   label,
@@ -75,6 +117,11 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  const pinned = pinnedColor(settings.newBodyColor);
+  // A pinned colour outside the ten palette swatches — the custom picker owns
+  // the selected state in that case.
+  const custom = pinned !== null && !SOLID_COLORS.some((c) => colorToHex(c) === pinned);
 
   return (
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -138,6 +185,75 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
             checked={settings.showViewCube}
             onChange={(showViewCube) => onChange({ showViewCube })}
           />
+        </section>
+
+        <section className="set-section">
+          <h3>New body colour</h3>
+          <div className="set-swatches" role="radiogroup" aria-label="New body colour">
+            <button
+              role="radio"
+              aria-checked={pinned === null}
+              className={"set-swatch set-swatch-random" + (pinned === null ? " active" : "")}
+              title="A different colour for each new body"
+              onClick={() => onChange({ newBodyColor: "random" })}
+            >
+              <span aria-hidden>🎲</span>
+            </button>
+            {SOLID_COLORS.map((c) => {
+              const hex = colorToHex(c);
+              return (
+                <button
+                  key={hex}
+                  role="radio"
+                  aria-checked={pinned === hex}
+                  className={"set-swatch" + (pinned === hex ? " active" : "")}
+                  style={{ background: hex }}
+                  title={`Every new body starts ${hex}`}
+                  aria-label={hex}
+                  onClick={() => onChange({ newBodyColor: hex })}
+                />
+              );
+            })}
+            {/* Anything outside the ten. Sits last so the palette reads as the
+                common case and this as the escape hatch. */}
+            <label
+              className={"set-swatch set-swatch-custom" + (custom ? " active" : "")}
+              title="Pick any colour"
+              style={custom ? { background: pinned! } : undefined}
+            >
+              <span aria-hidden>⋯</span>
+              <input
+                type="color"
+                value={pinned ?? colorToHex(SOLID_COLORS[0])}
+                onChange={(e) => onChange({ newBodyColor: e.target.value })}
+              />
+            </label>
+          </div>
+          <p className="set-note">
+            Only the starting colour — any body can be recoloured from the Parts list afterwards.
+          </p>
+        </section>
+
+        <section className="set-section">
+          <h3>Mouse</h3>
+          <Choice
+            label="Middle button drag"
+            hint="Default: pan"
+            value={settings.mouseMiddle}
+            options={MOUSE_ACTIONS}
+            onChange={(mouseMiddle) => onChange({ mouseMiddle })}
+          />
+          <Choice
+            label="Right button drag"
+            hint="Default: pan — set to Orbit for SolidWorks / Onshape habits"
+            value={settings.mouseRight}
+            options={MOUSE_ACTIONS}
+            onChange={(mouseRight) => onChange({ mouseRight })}
+          />
+          <p className="set-note">
+            Left drag always orbits, and also does selecting and sketching, so it isn't rebindable. The scroll
+            wheel always zooms.
+          </p>
         </section>
 
         <section className="set-section">

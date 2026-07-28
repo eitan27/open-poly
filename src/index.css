@@ -130,6 +130,12 @@
   --keycap-border: rgba(255, 255, 255, 0.14);
   --tint-soft: rgba(255, 255, 255, 0.04);
 
+  /* Deliberately identical in both themes: these sit on a colour the USER
+     picked, not on a themed surface, so flipping them would make the glyph
+     vanish against half the palette. */
+  --on-user-color: #ffffff;
+  --on-user-color-shade: rgba(0, 0, 0, 0.7);
+
   /* --- frosted HUD panels over the viewport (alpha applied at use site) --- */
   --hud-rgb: 24, 26, 32;
   --hud-accent-rgb: 30, 42, 68;
@@ -252,6 +258,12 @@
   --keycap-bg: rgba(0, 0, 0, 0.06);
   --keycap-border: rgba(0, 0, 0, 0.14);
   --tint-soft: rgba(0, 0, 0, 0.04);
+
+  /* Deliberately identical in both themes: these sit on a colour the USER
+     picked, not on a themed surface, so flipping them would make the glyph
+     vanish against half the palette. */
+  --on-user-color: #ffffff;
+  --on-user-color-shade: rgba(0, 0, 0, 0.7);
 
   --hud-rgb: 252, 253, 255;
   --hud-accent-rgb: 226, 236, 253;

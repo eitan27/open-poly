@@ -1,4 +1,5 @@
 import type { BooleanFeature, Document, ExtrudeFeature, Feature, ImportFeature, LoftFeature, MirrorFeature, PatternFeature, PrimitiveFeature, RevolveFeature, SweepFeature, TransformFeature } from "../document/types";
+import { colorToHex } from "../document/colors";
 import { EyeIcon } from "./icons";
 
 interface Props {
@@ -19,8 +20,6 @@ interface Props {
   isolatedId: string | null;
   onIsolate: (id: string) => void;
 }
-
-const toHex = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
 
 /** A feature that owns a body's appearance (color/opacity). A copy-transform
  *  produces a body keyed by its own id; an in-place transform doesn't (its body
@@ -72,7 +71,7 @@ export function SolidsList({
           <input
             type="color"
             className="solid-color"
-            value={toHex(f.color)}
+            value={colorToHex(f.color)}
             title="Body color"
             onChange={(e) => onColorChange(f.id, parseInt(e.target.value.slice(1), 16))}
           />

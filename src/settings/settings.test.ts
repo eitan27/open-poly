@@ -48,6 +48,26 @@ describe("loadSettings", () => {
     expect(s.confirmDelete).toBe(false); // the one valid field still lands
   });
 
+  it("accepts 'random' or a #rrggbb new-body colour and rejects anything else", () => {
+    installStorage(JSON.stringify({ newBodyColor: "#66b5d6" }));
+    expect(loadSettings().newBodyColor).toBe("#66b5d6");
+    installStorage(JSON.stringify({ newBodyColor: "random" }));
+    expect(loadSettings().newBodyColor).toBe("random");
+    // A malformed value must not reach a document — it would land as NaN and
+    // then be saved.
+    for (const bad of ["66b5d6", "#66b5d", "#GGGGGG", "red", 42, null]) {
+      installStorage(JSON.stringify({ newBodyColor: bad }));
+      expect(loadSettings().newBodyColor).toBe(DEFAULT_SETTINGS.newBodyColor);
+    }
+  });
+
+  it("accepts only known mouse drag actions", () => {
+    installStorage(JSON.stringify({ mouseRight: "orbit", mouseMiddle: "zoom" }));
+    expect(loadSettings()).toMatchObject({ mouseRight: "orbit", mouseMiddle: "zoom" });
+    installStorage(JSON.stringify({ mouseRight: "teleport" }));
+    expect(loadSettings().mouseRight).toBe(DEFAULT_SETTINGS.mouseRight);
+  });
+
   it("falls back to the defaults on unparseable JSON", () => {
     installStorage("{not json");
     expect(loadSettings()).toEqual(DEFAULT_SETTINGS);

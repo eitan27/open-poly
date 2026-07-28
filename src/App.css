@@ -364,6 +364,93 @@
   cursor: pointer;
 }
 
+.set-select {
+  flex: 0 0 auto;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-3);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-control);
+  border-radius: 5px;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+
+.set-select:hover {
+  border-color: var(--accent);
+}
+
+/* A note under a section, explaining a limit rather than labelling a control. */
+.set-note {
+  margin: 6px 8px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-8);
+}
+
+.set-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.set-swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.set-swatch:hover {
+  border-color: var(--border-hover);
+}
+
+/* The selected swatch keeps its own fill, so the marker has to sit outside it:
+   a ring separated from the tile by a gap in the panel's own colour, which
+   reads on all ten fills (a plain glow gets lost on the pale ones). */
+.set-swatch.active {
+  border-color: var(--bg-panel);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.set-swatch-random,
+.set-swatch-custom {
+  background: var(--bg-control);
+  color: var(--text-5);
+}
+
+/* The native colour well is the whole tile — invisible, but it's what opens the
+   OS picker, so it has to cover the label it sits behind. */
+.set-swatch-custom {
+  position: relative;
+  overflow: hidden;
+}
+
+.set-swatch-custom input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Once a custom colour is showing, the ⋯ glyph sits on top of it — drop it to
+   a shadowed white so it stays legible on any fill the user picks. */
+.set-swatch-custom.active span {
+  color: var(--on-user-color);
+  text-shadow: 0 0 3px var(--on-user-color-shade);
+}
+
 .docs-header {
   display: flex;
   align-items: center;
