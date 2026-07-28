@@ -26,29 +26,29 @@ describe("loadSettings", () => {
 
   it("round-trips a saved settings object", () => {
     installStorage();
-    saveSettings({ ...DEFAULT_SETTINGS, theme: "light", showGrid: false });
-    expect(loadSettings()).toEqual({ ...DEFAULT_SETTINGS, theme: "light", showGrid: false });
+    saveSettings({ ...DEFAULT_SETTINGS, theme: "light", showShortcuts: true });
+    expect(loadSettings()).toEqual({ ...DEFAULT_SETTINGS, theme: "light", showShortcuts: true });
   });
 
   it("keeps known fields and drops unknown ones", () => {
-    installStorage(JSON.stringify({ theme: "system", showAxes: false, wat: 1 }));
+    installStorage(JSON.stringify({ theme: "system", showShortcuts: true, wat: 1 }));
     const s = loadSettings();
     expect(s.theme).toBe("system");
-    expect(s.showAxes).toBe(false);
+    expect(s.showShortcuts).toBe(true);
     expect(s).not.toHaveProperty("wat");
     // Untouched fields keep their defaults rather than becoming undefined.
-    expect(s.showViewCube).toBe(DEFAULT_SETTINGS.showViewCube);
+    expect(s.newBodyColor).toBe(DEFAULT_SETTINGS.newBodyColor);
   });
 
   it("falls back per-field on wrong types, rather than failing whole", () => {
-    installStorage(JSON.stringify({ theme: "chartreuse", showGrid: "yes", confirmDelete: false }));
+    installStorage(JSON.stringify({ theme: "chartreuse", mouseRight: 7, showShortcuts: true }));
     const s = loadSettings();
     expect(s.theme).toBe(DEFAULT_SETTINGS.theme);
-    expect(s.showGrid).toBe(DEFAULT_SETTINGS.showGrid);
-    expect(s.confirmDelete).toBe(false); // the one valid field still lands
+    expect(s.mouseRight).toBe(DEFAULT_SETTINGS.mouseRight);
+    expect(s.showShortcuts).toBe(true); // the one valid field still lands
   });
 
-  it("accepts 'random' or a #rrggbb new-body colour and rejects anything else", () => {
+  it("accepts 'random' or a #rrggbb new-body color and rejects anything else", () => {
     installStorage(JSON.stringify({ newBodyColor: "#66b5d6" }));
     expect(loadSettings().newBodyColor).toBe("#66b5d6");
     installStorage(JSON.stringify({ newBodyColor: "random" }));

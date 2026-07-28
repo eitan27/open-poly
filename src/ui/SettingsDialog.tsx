@@ -2,7 +2,7 @@
 // document. Everything here is stored in localStorage (see settings/settings.ts)
 // and applies the instant it's changed — there is no Save button, and nothing
 // here touches the document or the undo stack.
-import { useEffect } from "react";
+import { useEffect, type CSSProperties } from "react";
 import type { MouseDragAction, Settings, ThemeChoice } from "../settings/settings";
 import { colorToHex, SOLID_COLORS } from "../document/colors";
 
@@ -12,38 +12,61 @@ interface Props {
   onClose: () => void;
 }
 
-// The theme picker shows each option as a miniature of the app — two panes and a
-// toolbar — so the choice is made by eye rather than by reading a word. Colours
-// are literal (not tokens): a swatch has to show the theme it names, which is
-// the one theme the surrounding stylesheet is NOT currently painting.
+/** One theme's colours as the miniature paints them. Literal hexes, not tokens:
+ *  a swatch has to show the theme it names, which is the one theme the
+ *  surrounding stylesheet is NOT currently painting. They mirror index.css and
+ *  settings/viewportTheme.ts — `bg` is the 3D viewport, `panel` the side panels,
+ *  `chrome` the topbar, `line` the borders and grid. */
+interface SwatchPalette {
+  bg: string;
+  panel: string;
+  chrome: string;
+  accent: string;
+  line: string;
+}
+
+const DARK_SWATCH: SwatchPalette = { bg: "#1b1d23", panel: "#181a20", chrome: "#14161b", accent: "#4f8cff", line: "#3a3d48" };
+const LIGHT_SWATCH: SwatchPalette = { bg: "#e9edf3", panel: "#f8f9fc", chrome: "#ffffff", accent: "#2563eb", line: "#a9b4c6" };
+
+// The theme picker shows each option as a miniature of the app — topbar, side
+// panel, grid and a body on it — so the choice is made by eye rather than by
+// reading a word. The panels differ from the viewport by only a few units per
+// channel in either theme (that's the point: they're meant to sit quietly next
+// to each other), so at 50 px the regions are told apart by their separator
+// lines, and the body carries the colour. See .set-theme-* in App.css.
 const THEME_OPTIONS: {
   value: ThemeChoice;
   label: string;
   hint: string;
-  swatch: { bg: string; panel: string; chrome: string; accent: string; line: string }[];
+  swatch: SwatchPalette[];
 }[] = [
-  {
-    value: "dark",
-    label: "Dark",
-    hint: "The original look",
-    swatch: [{ bg: "#1b1d23", panel: "#181a20", chrome: "#14161b", accent: "#4f8cff", line: "#3a3d48" }],
-  },
-  {
-    value: "light",
-    label: "Light",
-    hint: "Bright rooms, printing",
-    swatch: [{ bg: "#e9edf3", panel: "#f8f9fc", chrome: "#ffffff", accent: "#2563eb", line: "#a9b4c6" }],
-  },
-  {
-    value: "system",
-    label: "System",
-    hint: "Follow the OS",
-    swatch: [
-      { bg: "#1b1d23", panel: "#181a20", chrome: "#14161b", accent: "#4f8cff", line: "#3a3d48" },
-      { bg: "#e9edf3", panel: "#f8f9fc", chrome: "#ffffff", accent: "#2563eb", line: "#a9b4c6" },
-    ],
-  },
+  { value: "dark", label: "Dark", hint: "The original look", swatch: [DARK_SWATCH] },
+  { value: "light", label: "Light", hint: "Like most CAD apps", swatch: [LIGHT_SWATCH] },
+  { value: "system", label: "System", hint: "Follow the OS", swatch: [DARK_SWATCH, LIGHT_SWATCH] },
 ];
+
+// The body sitting on the miniature's grid. NOT part of the theme — a real
+// body's colour comes from the document — so both swatches show the same peach
+// from the pastel palette, shaded for the three visible faces of an isometric
+// cube (top lit, left in shadow) the way the viewport's lighting shades one.
+const PEACH = SOLID_COLORS[1];
+const BODY_VARS = {
+  "--sw-body-top": "#e7a97f",
+  "--sw-body-right": colorToHex(PEACH),
+  "--sw-body-left": "#a6633f",
+};
+
+/** The palette handed to CSS as custom properties — the miniature's layout is
+ *  all in App.css, and only the colours vary per swatch. */
+const swatchVars = (s: SwatchPalette): CSSProperties =>
+  ({
+    ...BODY_VARS,
+    "--sw-bg": s.bg,
+    "--sw-panel": s.panel,
+    "--sw-chrome": s.chrome,
+    "--sw-accent": s.accent,
+    "--sw-line": s.line,
+  }) as CSSProperties;
 
 /** The pinned colour as lowercase `#rrggbb`, or null for "random". Normalised
  *  because a settings blob could hold an uppercase hex while everything we
@@ -86,29 +109,6 @@ function Choice<T extends string>({
   );
 }
 
-/** One row: a label + description on the left, a checkbox on the right. */
-function Toggle({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <label className="set-toggle">
-      <span className="set-toggle-text">
-        <span className="set-toggle-label">{label}</span>
-        <span className="set-toggle-hint">{hint}</span>
-      </span>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-    </label>
-  );
-}
-
 export function SettingsDialog({ settings, onChange, onClose }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -132,8 +132,8 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
         </div>
 
         <section className="set-section">
-          <h3>Colour theme</h3>
-          <div className="set-themes" role="radiogroup" aria-label="Colour theme">
+          <h3>Color Theme</h3>
+          <div className="set-themes" role="radiogroup" aria-label="Color theme">
             {THEME_OPTIONS.map((o) => (
               <button
                 key={o.value}
@@ -145,16 +145,21 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
                 <span className="set-theme-swatch">
                   {o.swatch.map((s, i) => (
                     // Each half of the System swatch is a full miniature, clipped
-                    // to its side — so "System" reads as literally both themes.
+                    // to its side of the diagonal — so "System" reads as literally
+                    // both themes, and the body straddling the split lines up
+                    // because both halves lay out identically.
                     <span
                       key={i}
                       className="set-theme-half"
-                      style={{ background: s.bg, clipPath: o.swatch.length > 1 ? (i === 0 ? "polygon(0 0, 100% 0, 0 100%)" : "polygon(100% 0, 100% 100%, 0 100%)") : undefined }}
+                      style={{
+                        ...swatchVars(s),
+                        clipPath: o.swatch.length > 1 ? (i === 0 ? "polygon(0 0, 100% 0, 0 100%)" : "polygon(100% 0, 100% 100%, 0 100%)") : undefined,
+                      }}
                     >
-                      <span className="set-theme-chrome" style={{ background: s.chrome }} />
-                      <span className="set-theme-panel" style={{ background: s.panel }} />
-                      <span className="set-theme-line" style={{ background: s.line }} />
-                      <span className="set-theme-accent" style={{ background: s.accent }} />
+                      <span className="set-theme-grid" />
+                      <span className="set-theme-body" />
+                      <span className="set-theme-panel" />
+                      <span className="set-theme-chrome" />
                     </span>
                   ))}
                 </span>
@@ -166,35 +171,13 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
         </section>
 
         <section className="set-section">
-          <h3>Viewport</h3>
-          <Toggle
-            label="Ground grid"
-            hint="The 240 mm reference grid on the XY plane"
-            checked={settings.showGrid}
-            onChange={(showGrid) => onChange({ showGrid })}
-          />
-          <Toggle
-            label="Origin axes"
-            hint="The red / green / blue triad at the world origin"
-            checked={settings.showAxes}
-            onChange={(showAxes) => onChange({ showAxes })}
-          />
-          <Toggle
-            label="Navigation cube"
-            hint="The orientation cube in the top-right corner"
-            checked={settings.showViewCube}
-            onChange={(showViewCube) => onChange({ showViewCube })}
-          />
-        </section>
-
-        <section className="set-section">
-          <h3>New body colour</h3>
-          <div className="set-swatches" role="radiogroup" aria-label="New body colour">
+          <h3>New Body Color</h3>
+          <div className="set-swatches" role="radiogroup" aria-label="New body color">
             <button
               role="radio"
               aria-checked={pinned === null}
               className={"set-swatch set-swatch-random" + (pinned === null ? " active" : "")}
-              title="A different colour for each new body"
+              title="A different color for each new body"
               onClick={() => onChange({ newBodyColor: "random" })}
             >
               <span aria-hidden>🎲</span>
@@ -218,7 +201,7 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
                 common case and this as the escape hatch. */}
             <label
               className={"set-swatch set-swatch-custom" + (custom ? " active" : "")}
-              title="Pick any colour"
+              title="Pick any color"
               style={custom ? { background: pinned! } : undefined}
             >
               <span aria-hidden>⋯</span>
@@ -230,7 +213,7 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
             </label>
           </div>
           <p className="set-note">
-            Only the starting colour — any body can be recoloured from the Parts list afterwards.
+            Only the starting color — any body can be recolored from the Parts list afterwards.
           </p>
         </section>
 
@@ -254,22 +237,6 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
             Left drag always orbits, and also does selecting and sketching, so it isn't rebindable. The scroll
             wheel always zooms.
           </p>
-        </section>
-
-        <section className="set-section">
-          <h3>Interface</h3>
-          <Toggle
-            label="Keyboard shortcuts on buttons"
-            hint="Show each tool's key as a cap in its label (?)"
-            checked={settings.showShortcuts}
-            onChange={(showShortcuts) => onChange({ showShortcuts })}
-          />
-          <Toggle
-            label="Confirm before deleting a document"
-            hint="Deleting a document cannot be undone"
-            checked={settings.confirmDelete}
-            onChange={(confirmDelete) => onChange({ confirmDelete })}
-          />
         </section>
 
         <p className="report-note">

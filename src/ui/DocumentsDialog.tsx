@@ -20,9 +20,6 @@ interface Props {
   /** Import a `.openpoly.json` file as a new document (opens it). Resolves an
    *  error message to display, or null on success. */
   onImport: (file: File) => Promise<string | null>;
-  /** Settings ▸ "Confirm before deleting a document". When false, Delete acts
-   *  on the first click instead of arming the "Really delete?" second step. */
-  requireConfirm: boolean;
 }
 
 export function DocumentsDialog({
@@ -34,7 +31,6 @@ export function DocumentsDialog({
   onRename,
   onExport,
   onImport,
-  requireConfirm,
 }: Props) {
   const [metas, setMetas] = useState<DocMeta[] | null>(null); // null = loading
   const [renaming, setRenaming] = useState<{ id: string; draft: string } | null>(null);
@@ -243,13 +239,7 @@ export function DocumentsDialog({
                         Really delete?
                       </button>
                     ) : (
-                      <button
-                        className="text-btn"
-                        disabled={busy}
-                        onClick={() =>
-                          requireConfirm ? setConfirmDelete(m.id) : void run(() => onDelete(m.id))
-                        }
-                      >
+                      <button className="text-btn" disabled={busy} onClick={() => setConfirmDelete(m.id)}>
                         Delete
                       </button>
                     )}

@@ -259,13 +259,17 @@
   border-color: var(--accent);
 }
 
-/* The miniature: a stack of absolutely-positioned bars standing in for the
-   topbar, the sidebar, the grid and one accent control. Fixed aspect so the two
-   halves of the System swatch stay symmetric about the diagonal. */
+/* The miniature: the app at 50 px — topbar, side panel, ground grid, and one
+   body sitting on it. Every colour comes from the --sw-* custom properties the
+   dialog sets per swatch (see SettingsDialog.tsx), EXCEPT the body, which is
+   the same pastel in both themes because a real body's colour comes from the
+   document, not the theme. Regions are separated by 1px --sw-line rules: the
+   panel and the viewport are within a few units of each other per channel in
+   both themes, so fill alone doesn't distinguish them at this size. */
 .set-theme-swatch {
   position: relative;
   display: block;
-  height: 46px;
+  height: 50px;
   border-radius: 5px;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -274,40 +278,105 @@
 .set-theme-half {
   position: absolute;
   inset: 0;
+  background: var(--sw-bg);
 }
 
+/* Topbar, with a pill for the accent-coloured control and one plain button. */
 .set-theme-chrome {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  height: 8px;
+  height: 10px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+  background: var(--sw-chrome);
+  border-bottom: 1px solid var(--sw-line);
 }
 
+.set-theme-chrome::before,
+.set-theme-chrome::after {
+  content: "";
+  height: 3px;
+  border-radius: 1.5px;
+}
+
+.set-theme-chrome::before {
+  width: 13px;
+  background: var(--sw-accent);
+}
+
+.set-theme-chrome::after {
+  width: 7px;
+  background: var(--sw-line);
+}
+
+/* Left panel (timeline + parts), with two list rows. */
 .set-theme-panel {
   position: absolute;
-  top: 8px;
+  top: 10px;
   bottom: 0;
   left: 0;
-  width: 26%;
+  width: 30%;
+  background: var(--sw-panel);
+  border-right: 1px solid var(--sw-line);
 }
 
-.set-theme-line {
+.set-theme-panel::before,
+.set-theme-panel::after {
+  content: "";
   position: absolute;
-  top: 60%;
-  left: 34%;
-  right: 12%;
+  left: 4px;
   height: 2px;
   border-radius: 1px;
+  background: var(--sw-line);
 }
 
-.set-theme-accent {
+.set-theme-panel::before {
+  top: 6px;
+  right: 5px;
+}
+
+.set-theme-panel::after {
+  top: 12px;
+  right: 10px;
+}
+
+/* Ground grid. Faded so it reads as a backdrop rather than as a table. */
+.set-theme-grid {
   position: absolute;
-  top: 34%;
-  left: 34%;
-  width: 26%;
-  height: 7px;
-  border-radius: 2px;
+  top: 10px;
+  right: 0;
+  bottom: 0;
+  left: 30%;
+  opacity: 0.45;
+  background-image:
+    repeating-linear-gradient(0deg, var(--sw-line) 0 1px, transparent 1px 8px),
+    repeating-linear-gradient(90deg, var(--sw-line) 0 1px, transparent 1px 8px);
+}
+
+/* One body on the grid: a hexagon clipped out of a three-wedge conic gradient,
+   which is an isometric cube's three visible faces. The wedge boundaries are
+   the cube's three internal edges seen from the centre — straight down (180°)
+   and up to the two upper corners (±63.4°, i.e. atan(w/2 ÷ h/4) for the 2:1
+   isometric diamond). Lit like the viewport is: top face brightest. */
+.set-theme-body {
+  position: absolute;
+  top: 50%;
+  left: 64%;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -46%);
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  background: conic-gradient(
+    from 0deg,
+    var(--sw-body-top) 0 63.4deg,
+    var(--sw-body-right) 63.4deg 180deg,
+    var(--sw-body-left) 180deg 296.6deg,
+    var(--sw-body-top) 296.6deg 360deg
+  );
 }
 
 .set-theme-label {
@@ -354,14 +423,6 @@
 .set-toggle-hint {
   font-size: 11px;
   color: var(--text-8);
-}
-
-.set-toggle input {
-  flex: 0 0 auto;
-  accent-color: var(--accent);
-  width: 15px;
-  height: 15px;
-  cursor: pointer;
 }
 
 .set-select {

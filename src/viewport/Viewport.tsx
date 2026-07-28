@@ -322,16 +322,10 @@ interface SceneState {
   // Constant-pixel-size drag handle (a cone) sitting on the plane's normal —
   // dragging it along the normal changes the offset (see onDown/onMove).
   sectionHandle: THREE.Mesh;
-  // Ground grid + world axis triad. Held so the appearance effect can recolour
-  // them for the theme and toggle them from settings without rebuilding the
-  // scene.
+  // Ground grid and navigation cube. Held so a theme change can recolour them
+  // in place rather than rebuilding the scene.
   grid: THREE.GridHelper;
-  axes: THREE.AxesHelper;
   viewCube: ViewCube;
-  // The navigation cube is drawn as a second viewport pass inside the animation
-  // loop rather than being a scene object, so hiding it is a flag the loop
-  // reads, not an `.visible`.
-  viewCubeVisible: boolean;
 }
 
 /** Build the world matrix for a transform feature's values, matching the kernel's
@@ -929,9 +923,6 @@ export function Viewport({
   sectionView,
   onSectionOffsetChange,
   theme,
-  showGrid,
-  showAxes,
-  showViewCube,
   mouseMiddle,
   mouseRight,
   apiRef,
@@ -1017,15 +1008,10 @@ export function Viewport({
   /** Fired on every drag frame of the plane handle with the new offset (along
    *  the frame's unflipped normal) — cheap, since this is plain view state. */
   onSectionOffsetChange: (offset: number) => void;
-  /** Resolved colour theme (user settings, "system" already folded in). Drives
+  /** Resolved color theme (user settings, "system" already folded in). Drives
    *  the scene background + grid; see settings/viewportTheme.ts for why the rest
    *  of the scene deliberately doesn't move. */
   theme: ResolvedTheme;
-  /** Scene helpers, all user settings: the ground grid, the world axis triad,
-   *  and the on-canvas navigation cube. */
-  showGrid: boolean;
-  showAxes: boolean;
-  showViewCube: boolean;
   /** What a middle / right drag does — see applyMouseBindings. */
   mouseMiddle: MouseDragAction;
   mouseRight: MouseDragAction;
@@ -1197,11 +1183,8 @@ export function Viewport({
 
     const grid = new THREE.GridHelper(240, 24, theme0.gridMajor, theme0.gridMinor);
     grid.rotation.x = Math.PI / 2;
-    grid.visible = showGrid;
     scene.add(grid);
-    const axes = new THREE.AxesHelper(45);
-    axes.visible = showAxes;
-    scene.add(axes);
+    scene.add(new THREE.AxesHelper(45));
 
     const datums = createDatums(scene);
 
@@ -1547,7 +1530,7 @@ export function Viewport({
       previewLine, snapMarker, snapEdgeLine, guideOverlay, anchorOverlay, guideBadge, tween: null,
       sectionPlane, sectionClipPlanes, sectionWidget, sectionCapGroup, sectionCapGeometry,
       sectionCapMaterial, sectionHandle,
-      grid, axes, viewCube, viewCubeVisible: showViewCube,
+      grid, viewCube,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
@@ -2589,7 +2572,7 @@ export function Viewport({
       }
       // ViewCube hover: pick() updates the cube's own highlight and reports the
       // target under the cursor (null when off the cube, which also clears it).
-      if (state.viewCubeVisible && viewCube.pick(renderer, e.clientX, e.clientY)) {
+      if (viewCube.pick(renderer, e.clientX, e.clientY)) {
         renderer.domElement.style.cursor = "pointer";
         return;
       }
@@ -2934,7 +2917,7 @@ export function Viewport({
     // is set before onUp runs.
     const onGizmoDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
-      cubeHit = state.viewCubeVisible ? viewCube.pick(renderer, e.clientX, e.clientY) : null;
+      cubeHit = viewCube.pick(renderer, e.clientX, e.clientY);
     };
     const onGizmoLeave = () => viewCube.clearHover();
     // Double-click on a sketch entity (Select tool only): grab its whole
@@ -3138,7 +3121,7 @@ export function Viewport({
       syncClipPlanes();
       syncSectionPlane();
       renderer.render(scene, camera);
-      if (state.viewCubeVisible) viewCube.render(renderer, state.camera);
+      viewCube.render(renderer, state.camera);
       frame = requestAnimationFrame(animate);
     };
     animate();
@@ -3209,11 +3192,11 @@ export function Viewport({
     };
   }, [apiRef]);
 
-  // User settings that the scene reads: colour theme, which helpers are drawn,
-  // and the mouse bindings. Applied in place on the live scene, so changing a
-  // setting mid-model keeps the camera, the selection and every meshed body
-  // exactly where they were. The scene renders on rAF, so there is nothing to
-  // invalidate — the next frame picks these up.
+  // User settings that the scene reads: the color theme and the mouse bindings.
+  // Applied in place on the live scene, so changing a setting mid-model keeps
+  // the camera, the selection and every meshed body exactly where they were.
+  // The scene renders on rAF, so there is nothing to invalidate — the next
+  // frame picks these up.
   useEffect(() => {
     const state = stateRef.current;
     if (!state) return;
@@ -3230,12 +3213,9 @@ export function Viewport({
       colors.setXYZ(i, c.r, c.g, c.b);
     }
     colors.needsUpdate = true;
-    state.grid.visible = showGrid;
-    state.axes.visible = showAxes;
-    state.viewCubeVisible = showViewCube;
     state.viewCube.setTheme(theme);
     applyMouseBindings(state.controls, mouseMiddle, mouseRight);
-  }, [theme, showGrid, showAxes, showViewCube, mouseMiddle, mouseRight]);
+  }, [theme, mouseMiddle, mouseRight]);
 
   // Rebuild the rendered bodies whenever the meshes or selection change.
   useEffect(() => {

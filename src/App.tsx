@@ -749,9 +749,9 @@ export default function App() {
   const [docsDialogOpen, setDocsDialogOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // User preferences (colour theme, viewport helpers, …). Owned here and read
-  // by the topbar, the Viewport and the dialogs; persisted to localStorage, NOT
-  // to the document — they follow the person, not the model.
+  // User preferences (color theme, new-body color, mouse bindings). Owned here
+  // and read by the topbar and the Viewport; persisted to localStorage, NOT to
+  // the document — they follow the person, not the model.
   const { settings, update: updateSettings, resolvedTheme } = useSettings();
   // The document builders pick a new body's colour deep in pure code that has no
   // route to React state, so the preference is pushed down to them as module
@@ -1369,9 +1369,9 @@ export default function App() {
   >(null);
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
-  // Toggle (via the "?" button in the topbar, the "?" key, or Settings) that
-  // appends each toolbar button's keyboard shortcut to its label, e.g.
-  // "⬆ Extrude (E)". Persisted, so it survives a reload like the other prefs.
+  // Toggle (via the "?" button in the topbar, or the "?" key) that appends each
+  // toolbar button's keyboard shortcut to its label, e.g. "⬆ Extrude (E)".
+  // Persisted with the other prefs, so it survives a reload.
   const showShortcuts = settings.showShortcuts;
   const toggleShortcuts = useCallback(
     () => updateSettings((s) => ({ showShortcuts: !s.showShortcuts })),
@@ -6158,7 +6158,6 @@ export default function App() {
           onRename={renameDocument}
           onExport={exportDocument}
           onImport={importDocumentFile}
-          requireConfirm={settings.confirmDelete}
         />
       )}
       {settingsOpen && (
@@ -6345,9 +6344,6 @@ export default function App() {
             sectionView={{ enabled: sectionView.enabled, frame: sectionFrame, offset: sectionView.offset, flip: sectionView.flip }}
             onSectionOffsetChange={(offset) => setSectionView((s) => ({ ...s, offset }))}
             theme={resolvedTheme}
-            showGrid={settings.showGrid}
-            showAxes={settings.showAxes}
-            showViewCube={settings.showViewCube}
             mouseMiddle={settings.mouseMiddle}
             mouseRight={settings.mouseRight}
             apiRef={viewApiRef}

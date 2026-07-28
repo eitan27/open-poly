@@ -13,12 +13,25 @@ const LIGHT_SELECTOR = ':root[data-theme="light"]';
 const [darkBlock, lightBlock] = INDEX_CSS.split(LIGHT_SELECTOR);
 
 const declared = (block: string) => new Set([...block.matchAll(/^\s{2}--([a-z0-9-]+):/gm)].map((m) => m[1]));
-const used = new Set([...APP_CSS.matchAll(/var\(--([a-z0-9-]+)\)/g)].map((m) => m[1]));
+const allUsed = [...APP_CSS.matchAll(/var\(--([a-z0-9-]+)\)/g)].map((m) => m[1]);
+// `--sw-*` are the theme-picker swatches' local colours, set inline per element
+// by SettingsDialog.tsx. They are deliberately NOT theme tokens: a swatch paints
+// the theme it *names*, which is generally the one the stylesheet is not
+// currently painting, so resolving them from :root would be exactly wrong.
+const isSwatchLocal = (t: string) => t.startsWith("sw-");
+const used = new Set(allUsed.filter((t) => !isSwatchLocal(t)));
 
 describe("colour tokens", () => {
   it("defines every token App.css uses", () => {
     const missing = [...used].filter((t) => !declared(darkBlock).has(t));
     expect(missing).toEqual([]);
+  });
+
+  it("keeps the swatch locals out of the theme", () => {
+    // The other half of the exemption above: if one of these ever gets declared
+    // in index.css it would silently start tracking the active theme.
+    const leaked = allUsed.filter((t) => isSwatchLocal(t) && declared(darkBlock).has(t));
+    expect(leaked).toEqual([]);
   });
 
   it("overrides every token in the light theme", () => {

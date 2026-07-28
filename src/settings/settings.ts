@@ -11,19 +11,13 @@ export type ThemeChoice = "dark" | "light" | "system";
 export type ResolvedTheme = "dark" | "light";
 
 export interface Settings {
-  /** Colour theme. Dark is the original (and still the default) look. */
+  /** Color theme. Dark is the original (and still the default) look. */
   theme: ThemeChoice;
-  /** Show keyboard-shortcut key caps inside toolbar button labels. */
+  /** Show keyboard-shortcut key caps inside toolbar button labels. Not in the
+   *  Settings dialog — it's the "?" button in the topbar (and the "?" key); it
+   *  lives here only so the choice survives a reload. */
   showShortcuts: boolean;
-  /** Draw the ground grid in the 3D viewport. */
-  showGrid: boolean;
-  /** Draw the world axes (the red/green/blue origin triad). */
-  showAxes: boolean;
-  /** Show the on-canvas navigation cube in the top-right of the viewport. */
-  showViewCube: boolean;
-  /** Ask before deleting a document (the one destructive, unundoable action). */
-  confirmDelete: boolean;
-  /** Colour given to a newly created body: "random" (a fresh pick from the
+  /** Color given to a newly created body: "random" (a fresh pick from the
    *  pastel palette each time, so bodies stay easy to tell apart) or a
    *  `#rrggbb` string to pin every new body to one colour. Either way it's only
    *  the starting value — the Parts list can recolour any body afterwards. */
@@ -41,10 +35,6 @@ const MOUSE_ACTIONS: MouseDragAction[] = ["pan", "orbit", "zoom"];
 export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
   showShortcuts: false,
-  showGrid: true,
-  showAxes: true,
-  showViewCube: true,
-  confirmDelete: true,
   newBodyColor: "random",
   mouseMiddle: "pan",
   mouseRight: "pan",
@@ -60,9 +50,7 @@ function coerce(raw: unknown): Settings {
   if (!raw || typeof raw !== "object") return out;
   const o = raw as Record<string, unknown>;
   if (o.theme === "dark" || o.theme === "light" || o.theme === "system") out.theme = o.theme;
-  for (const k of ["showShortcuts", "showGrid", "showAxes", "showViewCube", "confirmDelete"] as const) {
-    if (typeof o[k] === "boolean") out[k] = o[k] as boolean;
-  }
+  if (typeof o.showShortcuts === "boolean") out.showShortcuts = o.showShortcuts;
   // Validated here rather than at the point of use: a bad value would otherwise
   // reach a document as NaN, which survives a save.
   if (o.newBodyColor === "random" || (typeof o.newBodyColor === "string" && /^#[0-9a-f]{6}$/i.test(o.newBodyColor))) {
