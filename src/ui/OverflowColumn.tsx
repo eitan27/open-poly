@@ -83,18 +83,31 @@ export function OverflowColumn({
       // Slot elements only — the More button and its flyout are out of flow.
       const kids = (Array.from(bar.children) as HTMLElement[]).filter((el) => el.dataset.slot === "1");
       if (kids.length === 0) return;
-      const heights = kids.map((k) => k.getBoundingClientRect().height);
+      const barTop = bar.getBoundingClientRect().top;
+      // OUTER heights: a slot may carry margins (the separators do), and leaving
+      // them out made the column short by exactly that much — clipping the last
+      // button whenever everything "fit".
+      const boxes = kids.map((k) => {
+        const r = k.getBoundingClientRect();
+        const cs = getComputedStyle(k);
+        const marginBottom = parseFloat(cs.marginBottom);
+        return { outer: r.height + parseFloat(cs.marginTop) + marginBottom, bottom: r.bottom + marginBottom - barTop };
+      });
       // The column is anchored at the top; what's left is the window below it.
-      const top = bar.getBoundingClientRect().top;
-      const avail = window.innerHeight - top - bottomMargin - chrome;
-      const moreHeight = moreRef.current?.getBoundingClientRect().height ?? heights[0] ?? 0;
-      const count = fitCount(heights, gap, avail, moreHeight);
-      const shown = heights.slice(0, count);
+      const avail = window.innerHeight - barTop - bottomMargin - chrome;
+      const moreHeight = moreRef.current?.getBoundingClientRect().height ?? boxes[0].outer;
+      const count = fitCount(boxes.map((b) => b.outer), gap, avail, moreHeight);
+      // Height straight off the last visible slot's measured bottom, rather than
+      // re-adding the parts — whatever the layout actually did (margins, gaps,
+      // sub-pixel rounding) is already in that number.
+      const contentBottom = count > 0
+        ? boxes[count - 1].bottom
+        : parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop);
       const height =
-        chrome +
-        shown.reduce((a, b) => a + b, 0) +
-        gap * Math.max(0, shown.length - 1) +
-        (count < heights.length ? gap + moreHeight : 0);
+        contentBottom +
+        (count < boxes.length ? gap + moreHeight : 0) +
+        parseFloat(style.paddingBottom) +
+        parseFloat(style.borderBottomWidth);
       setFit((f) => (f && f.count === count && Math.abs(f.height - height) < 0.5 ? f : { count, height }));
     };
 

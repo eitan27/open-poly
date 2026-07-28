@@ -57,6 +57,20 @@ for (const height of [900, 700, 520, 420]) {
   console.log(`\n--- window ${height}px: column ${g.top}→${g.bottom}, More button: ${more ? "yes" : "no"}, ` +
     `${await visibleSlots()} slots visible`);
   check(`column stays inside the window at ${height}px`, g.bottom <= g.h - 6, `bottom ${g.bottom} of ${g.h}`);
+  // The column's height is derived from its slots; slots with margins (the
+  // separators) used to be measured without them, leaving the column short and
+  // clipping the last button whenever everything fit.
+  const fit = await page.evaluate(() => {
+    const bar = document.querySelector(".sketch-toolbar");
+    const slots = [...bar.querySelectorAll("[data-slot]")].filter((e) => getComputedStyle(e).visibility !== "hidden");
+    const last = slots[slots.length - 1];
+    const r = last.getBoundingClientRect();
+    const room = bar.getBoundingClientRect().bottom - r.bottom - parseFloat(getComputedStyle(last).marginBottom);
+    const pad = parseFloat(getComputedStyle(bar).paddingBottom);
+    return { room: Math.round(room * 10) / 10, pad, ok: room >= pad - 0.5 };
+  });
+  check(`the last visible button isn't clipped at ${height}px`, fit.ok,
+    `${fit.room}px below it (padding is ${fit.pad}px)`);
   if (height <= 520) check(`the More button appears at ${height}px`, more === 1);
   else check(`no More button when everything fits (${height}px)`, more === 0);
 }
