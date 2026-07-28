@@ -6074,6 +6074,9 @@ export default function App() {
             ⚠ Also open in another tab
           </span>
         )}
+        {/* Undo/redo belong to the document, so they stay on the left with it.
+            The app-level chrome (?, settings, report) sits at the far right —
+            see .topbar-chrome below the status chip. */}
         <div className="topbar-actions">
           <button className="tool-btn" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">
             ↶
@@ -6081,51 +6084,81 @@ export default function App() {
           <button className="tool-btn" onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)">
             ↷
           </button>
-          <button
-            className={"tool-btn" + (showShortcuts ? " active" : "")}
-            onClick={toggleShortcuts}
-            title="Show keyboard shortcuts in button labels (?)"
-            aria-pressed={showShortcuts}
-          >
-            ?
-          </button>
-          <button
-            className={"tool-btn" + (settingsOpen ? " active" : "")}
-            onClick={() => setSettingsOpen(true)}
-            title="Settings"
-            aria-label="Settings"
-          >
-            ⚙
-          </button>
-          <button className="text-btn" onClick={() => setReportOpen(true)} title="Report an issue">
-            Report an issue
-          </button>
         </div>
-        {agentStatus === "connected" && (
-          <span className="agent-badge" title="An LLM agent is connected to this tab">
-            ● Agent connected
-          </span>
-        )}
-        {/* The two everyday states are glanced at, not read, so they're glyphs:
-            a spinner while the kernel works, a tick once it's caught up. Errors
-            keep their words — those you do read. The sentence rides along
-            hidden for screen readers, and as the hover title, since a lone tick
-            doesn't say what it's the tick for. */}
-        <span className={`status ${statusClass}`} title={fatal ?? (errorDetail || status)}>
-          {statusClass === "err" ? (
-            status
-          ) : (
-            <>
-              {statusClass === "busy" ? (
-                <span className="status-spinner" aria-hidden />
-              ) : (
-                <span className="status-check" aria-hidden>✓</span>
-              )}
-              {meshPercent !== null && <span aria-hidden>{meshPercent}%</span>}
-              <span className="sr-only">{status}</span>
-            </>
+        {/* The right-hand cluster is one group, not three loose children: the
+            topbar's own 16px gap is meant to separate sections, and applied
+            between the badge, the chip and the buttons it left them adrift. */}
+        <div className="topbar-right">
+          {agentStatus === "connected" && (
+            <span className="agent-badge" title="An LLM agent is connected to this tab">
+              ● Agent connected
+            </span>
           )}
-        </span>
+          {/* The two everyday states are glanced at, not read, so they're
+              glyphs: a spinner while the kernel works, a tick once it's caught
+              up. Errors keep their words — those you do read. The sentence
+              rides along hidden for screen readers, and as the hover title,
+              since a lone tick doesn't say what it's the tick for. */}
+          <span className={`status ${statusClass}`} title={fatal ?? (errorDetail || status)}>
+            {statusClass === "err" ? (
+              status
+            ) : (
+              <>
+                {statusClass === "busy" ? (
+                  <span className="status-spinner" aria-hidden />
+                ) : (
+                  <span className="status-check" aria-hidden>✓</span>
+                )}
+                {meshPercent !== null && <span aria-hidden>{meshPercent}%</span>}
+                <span className="sr-only">{status}</span>
+              </>
+            )}
+          </span>
+          {/* App-level chrome, parked at the right edge past the status: none of
+              it belongs to the document, and mixed in with New/Open/undo on the
+              left it read as five unrelated things in a row. Icons only — these
+              are recognised, not read, and the labels live in their tooltips. */}
+          <div className="topbar-chrome">
+            <button
+              className={"tool-btn" + (showShortcuts ? " active" : "")}
+              onClick={toggleShortcuts}
+              title="Show keyboard shortcuts in button labels (?)"
+              aria-pressed={showShortcuts}
+            >
+              ?
+            </button>
+            <button
+              className={"tool-btn settings-btn" + (settingsOpen ? " active" : "")}
+              onClick={() => setSettingsOpen(true)}
+              title="Settings"
+              aria-label="Settings"
+            >
+              ⚙
+            </button>
+            <button
+              className="tool-btn report-btn"
+              onClick={() => setReportOpen(true)}
+              title="Report an issue"
+              aria-label="Report an issue"
+            >
+              {/* Drawn rather than an emoji: 🐞 came through in full colour, which
+                  made the least-used control the loudest thing in the bar. This
+                  is currentColor throughout, so it wears the same grey as the ?
+                  and the gear, and the same blue when the button is hovered.
+                  The body is filled and the legs kept short — an outlined body
+                  with long legs reads as a sunburst at 14px, not a bug. */}
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <g stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" fill="none">
+                  {/* Antennae off the head, then three legs a side. */}
+                  <path d="M6.8 3.3 5.8 2.2M9.2 3.3l1 -1.1" />
+                  <path d="M4.6 7.8 3 7.1M4.4 10.2H2.7M5 12.4 3.7 13.3M11.4 7.8 13 7.1M11.6 10.2h1.7M11 12.4l1.3.9" />
+                </g>
+                <circle cx="8" cy="4.5" r="1.6" fill="currentColor" />
+                <rect x="4.5" y="5.8" width="7" height="7.6" rx="3.5" fill="currentColor" />
+              </svg>
+            </button>
+          </div>
+        </div>
       </header>
       {updateAvailable && (
         <div className="update-banner">

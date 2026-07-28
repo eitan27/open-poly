@@ -704,6 +704,43 @@
   margin-left: 8px;
 }
 
+/* Everything at the right end — agent badge, status chip, chrome buttons — as
+   one group. It claims the flex auto-space, and sets its own spacing: the
+   topbar's 16px gap separates SECTIONS, and letting it apply between these
+   three left the chip stranded in the middle of a lot of air. */
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* App-level chrome at the right edge (shortcut hints, settings, report). Ruled
+   off from the status chip so it reads as its own group rather than as more
+   status. */
+.topbar-chrome {
+  display: flex;
+  gap: 4px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+/* The gear has far more internal detail than the ? beside it, so at a shared
+   font size it reads noticeably smaller. Sized up to match by eye. Compound
+   selector because .tool-btn sets font-size further down this file and would
+   otherwise win on source order at equal specificity. */
+.tool-btn.settings-btn {
+  font-size: 17px;
+}
+
+/* The report bug is an SVG, not a glyph — centre it in the fixed-size button
+   rather than letting it sit on the text baseline. */
+.report-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .tool-btn {
   background: var(--bg-control);
   border: 1px solid var(--border-control);
@@ -763,7 +800,6 @@ button:disabled .kbd-hint {
 
 .status {
   position: relative; /* containing block for the .sr-only sentence inside */
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -772,6 +808,7 @@ button:disabled .kbd-hint {
   padding: 5px 10px;
   border-radius: 999px;
 }
+
 
 /* Kernel at work. A ring with one quarter missing, so the rotation is legible
    at 11px; `currentColor` picks up whichever state colour .status is wearing. */
@@ -839,23 +876,16 @@ button:disabled .kbd-hint {
   color: var(--danger-text-3);
 }
 
-/* Live indicator that an LLM agent is driving this tab (Phase 9). Sits just
-   left of the status chip; claims the flex auto-space so the right cluster
-   stays together. */
+/* Live indicator that an LLM agent is driving this tab (Phase 9). Sits at the
+   head of the right-hand cluster, which owns the flex auto-space and the
+   spacing between the three. */
 .agent-badge {
-  margin-left: auto;
   font-size: 12px;
   padding: 3px 10px;
   border-radius: 999px;
   background: var(--accent-surface-2);
   color: var(--accent-bright);
   border: 1px solid var(--accent-border);
-}
-
-/* status keeps its own pill; when the badge is present it no longer needs the
-   auto margin, but harmless to leave. */
-.agent-badge + .status {
-  margin-left: 8px;
 }
 
 .body {
