@@ -5400,11 +5400,20 @@ export default function App() {
     ...Object.entries(resolved.variableErrors).map(([k, msg]) => `Variable ${k}: ${msg}`),
     ...Object.entries(resolved.variableNameErrors).map(([k, msg]) => `Variable name ${k}: ${msg}`),
   ].join("\n");
+  // How far a long rebuild has got, when the worker reports it. Kept beside the
+  // spinner: the glyph says "working", this says "and how far".
+  const meshPercent =
+    busy && meshProgress
+      ? Math.round((100 * meshProgress.done) / Math.max(1, meshProgress.total))
+      : null;
+  // The sentence. Only the error states still SHOW it (see the chip below), but
+  // it stays in the DOM either way — screen readers need it, and the E2E
+  // harnesses poll this chip's text to know the app has settled.
   const status = fatal
     ? "kernel error"
     : busy
-      ? meshProgress
-        ? `processing ${Math.round((100 * meshProgress.done) / Math.max(1, meshProgress.total))}%…`
+      ? meshPercent !== null
+        ? `processing ${meshPercent}%…`
         : "processing…"
       : errorCount > 0
         ? `${errorCount} error${errorCount > 1 ? "s" : ""}`
@@ -6097,8 +6106,25 @@ export default function App() {
             ● Agent connected
           </span>
         )}
-        <span className={`status ${statusClass}`} title={fatal ?? (errorDetail || undefined)}>
-          {status}
+        {/* The two everyday states are glanced at, not read, so they're glyphs:
+            a spinner while the kernel works, a tick once it's caught up. Errors
+            keep their words — those you do read. The sentence rides along
+            hidden for screen readers, and as the hover title, since a lone tick
+            doesn't say what it's the tick for. */}
+        <span className={`status ${statusClass}`} title={fatal ?? (errorDetail || status)}>
+          {statusClass === "err" ? (
+            status
+          ) : (
+            <>
+              {statusClass === "busy" ? (
+                <span className="status-spinner" aria-hidden />
+              ) : (
+                <span className="status-check" aria-hidden>✓</span>
+              )}
+              {meshPercent !== null && <span aria-hidden>{meshPercent}%</span>}
+              <span className="sr-only">{status}</span>
+            </>
+          )}
         </span>
       </header>
       {updateAvailable && (
