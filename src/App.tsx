@@ -1356,7 +1356,7 @@ export default function App() {
   // toolbar button's keyboard shortcut to its label, e.g. "⬆ Extrude (E)".
   const [showShortcuts, setShowShortcuts] = useState(false);
   const kbd = (sc: string): ReactNode =>
-    showShortcuts ? <span className="kbd-hint">&nbsp;({sc})</span> : null;
+    showShortcuts ? <span className="kbd-hint">{sc}</span> : null;
   // Collapsed circle/rectangle flyouts: which group (if any) is expanded, and the
   // last-used variant each collapses to. Selecting any tool (button OR shortcut)
   // updates the remembered variant and closes any open flyout.

@@ -163,7 +163,7 @@ export function OverflowColumn({
               {/* ▸ = "opens to the right", the same affordance the rectangle /
                   circle / pattern groups use for their variant flyouts. */}
               More<span className="tbc-more-arrow">▸</span>
-              {showShortcuts ? <span className="kbd-hint">(/)</span> : null}
+              {showShortcuts ? <span className="kbd-hint">/</span> : null}
             </button>
           </div>
         )}

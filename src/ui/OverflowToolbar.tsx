@@ -140,7 +140,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
       <>
         {item.icon} {item.label}
         {item.choices ? " ▾" : ""}
-        {showShortcuts && item.shortcut ? <span className="kbd-hint">&nbsp;({item.shortcut})</span> : null}
+        {showShortcuts && item.shortcut ? <span className="kbd-hint">{item.shortcut}</span> : null}
       </>
     );
     if (item.choices) {
@@ -207,7 +207,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
               disabled={allDisabled}
               onClick={() => (menuOpen ? closeMenu() : openMenu())}
             >
-              More ▾{showShortcuts ? <span className="kbd-hint">&nbsp;(/)</span> : null}
+              More ▾{showShortcuts ? <span className="kbd-hint">/</span> : null}
             </button>}
             {menuOpen && (
               // Keyed by the starting query so re-opening it pre-filtered (the
@@ -228,7 +228,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
         <div className="tb-mirror" ref={mirrorRef} aria-hidden>
           {items.map((item) => renderButton(item, true))}
           <button className="tb-more-btn" tabIndex={-1}>
-            More ▾{showShortcuts ? <span className="kbd-hint">&nbsp;(/)</span> : null}
+            More ▾{showShortcuts ? <span className="kbd-hint">/</span> : null}
           </button>
         </div>
       </div>
