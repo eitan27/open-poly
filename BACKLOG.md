@@ -1,205 +1,59 @@
 # Backlog
 
-## Adjustable cross-section view
+## Adjustable cross-section view — SHIPPED 2026-07
 
-**Status:** SHIPPED 2026-07. v1 scope as designed below: one section plane, any plane
-ref, live drag + numeric offset + flip, stencil capping in a flat neutral color,
-clip-aware picking, persisted across reload, plus the `setSectionView` MCP op.
+One section plane, any plane ref, live drag + numeric offset + flip, stencil
+capping, clip-aware picking, persisted across reload, plus the `set_section_view`
+MCP op (which is most of the point: `screenshot` only shows the exterior, so
+without it the agent can build a bore it can never actually inspect).
 
-**What:** a section view — pick a plane, drag it through the model, see the interior.
-Onshape's "Section view".
+**Calls that still bind:**
+- **It's view state, not a feature** — it changes no geometry, so it's out of the
+  timeline and out of undo. Lives beside `doc` (`document/sectionView.ts` +
+  `StoredDoc.sectionView`), not inside the document JSON.
+- **Picking must respect the clip.** Three.js clipping is a fragment-shader op;
+  the raycaster knows nothing about it, so the pick path needs its own half-space
+  test or clicking into the opening selects the invisible back face.
+- **Local (per-material) clipping, not global** — global also slices the grid,
+  datums, origin marker and view cube. Sketch entities + grid stay exempt.
+- **The clip plane never structurally empties**: "off" parks the single
+  `THREE.Plane` far away rather than emptying the array, so toggling can't
+  trigger a shader recompile.
+- **Kernel-exact section curves** (`BRepAlgoAPI_Common` vs a half-space) would
+  give snappable cut edges but are far too slow to drag. If ever wanted, layer
+  them as a settle pass after the drag ends.
 
-**Where it landed vs. the design sketch below** (small refinements, same intent):
-- **State lives beside `doc`, not inside it.** `Document` has no meta bucket, so
-  `SectionViewState` (`document/sectionView.ts`) is a sibling `useState` in `App.tsx` —
-  same bucket as `datumVisibility`/`selFilter` — and persists as `StoredDoc.sectionView`
-  in IndexedDB (`storage/db.ts`), not inside the document JSON.
-- **Toggle lives next to Home** (`.view-reset` sibling, top-right corner), not a generic
-  toolbar button — Home and section view are both one-click view state, not modeling ops.
-- **The clip plane never structurally empties.** `SceneState.sectionClipPlanes` always
-  holds exactly one `THREE.Plane`; "off" parks it far from the model (`FAR_PLANE_CONSTANT`)
-  instead of emptying the array. Toggling a material's clippingPlanes array length without
-  bumping `material.needsUpdate` doesn't recompile its shader (verified against the
-  installed three.js source) — parking the plane sidesteps that entirely, so toggling is a
-  pure per-frame uniform update, never a shader recompile.
-- **The drag handle** (a constant-pixel-size cone on the plane's normal) runs its own tiny
-  drag (skew-line-closest-point math on the existing raycaster), not `TransformControls` —
-  one axis, no rotate handles to fight, consistent with the codebase's other custom
-  pointer-drag flows (sketch entity dragging).
-- **Stencil caps are always neutral** (one shared material/geometry across bodies), per the
-  v1 scope call below.
+**v2 if asked:** multiple simultaneous planes (corner cuts), exact section
+curves. One plane covers the overwhelming majority of real use.
 
-### The core call: view state, NOT a feature
+## Sketch inference lines (alignment guides) — SHIPPED 2026-07
 
-### The core call: view state, NOT a feature
-It changes nothing about the geometry — not mass properties, not export, not what a
-downstream feature sees. So it must **not** go in the timeline (rollback/reorder would
-interact with it in ways nobody wants) and **not** in undo. It lives in document meta
-(so it survives reload) as a view mode, toggled from the toolbar.
+Arming a point/line while drawing shows dotted guides, the cursor snaps to them
+and to their intersections, and a guide that maps to a real relationship captures
+the constraint (H/V/parallel/perpendicular). Pure geometry core is unit-tested
+(`src/sketch/inference.ts` + `inference.test.ts`, 13 tests).
 
-### Interaction
-- Plane ref reuses the existing `add_sketch` plane union (`{datum}` / `{planeId}` /
-  `{bodyId, faceName}`) — the resolution code and agent schema already exist.
-- Default: Front datum through origin; if a face/plane is selected, use that.
-- Drag handle along the normal + numeric offset field + flip. **Live drag is the point** —
-  the real use is scrubbing through a part hunting for a too-thin wall.
+**Shipped visual language** (worth preserving — it's the thing that makes snaps
+readable, and it's easy to erode):
+- Solid blue fat line = real geometry; dashed blue = construction (same width and
+  colour, only the dash differs); thin amber dashed = inference guide (a helper,
+  not real geometry); purple = derived/associative.
+- Anchor square, snap dot and guide share the amber; the constraint badge
+  (—/|/⊥/∥) near the cursor is neutral. Snapping onto a construction edge
+  highlights it dashed. The opaque preview line renders above the guide so it
+  occludes a coincident one.
 
-### Rendering, two stages (ship both; stage 1 alone looks like a bug)
-1. **GPU clipping.** A `THREE.Plane` on the body materials with
-   `renderer.localClippingEnabled = true`. Use **local** (per-material) clipping, not
-   global `renderer.clippingPlanes` — global also slices the grid, datum planes, origin
-   marker and view cube. Materials are already centralized (`Viewport.tsx:247-265`), so
-   assigning the plane to just the body + edge materials is contained.
-2. **Capping.** Raw clipping makes solids look hollow (you see the inside of the far
-   wall, unlit, no material at the cut). Standard fix is the stencil-buffer trick: render
-   back faces to stencil, draw a cap quad through it. Real-time, no kernel work. Fiddly
-   with multiple bodies (needs a stencil pass per body to keep per-body colors).
+**Design calls that still bind:** arming is dwell-based, not instant (or you
+spray guides); cap ~3 armed refs with a TTL; a constraint only forms against an
+**active-sketch entity** — against a body edge it's snap-only, matching Onshape
+when there's nothing to constrain.
 
-**Kernel-exact alternative** (`BRepAlgoAPI_Common` vs a half-space, or OCCT section
-curves) gives true cut edges you could snap/dimension to, but is far too slow to drag and
-would re-run every regen. If wanted later, layer it as a "settle" pass: GPU-clip while
-dragging, exact curves once the drag ends. Not v1.
-
-### Gotchas
-- **Picking must respect the clip.** Three.js clipping is a fragment-shader op — the
-  raycaster knows nothing about it. Sectioned, clicking into the opening selects the
-  invisible back face. Needs a half-space test in the pick path. Not optional; this is
-  what would make the feature feel broken.
-- **Sketch mode:** keep the section (sketching on an interior face is a real use), but
-  exempt sketch entities + grid from the clip, same as datums.
-- **Fat lines:** outlines use `LineSegments2`/`LineMaterial` (`Viewport.tsx:5-6, 252`), a
-  custom shader. Clipping works but the plane must be assigned explicitly — easy to miss,
-  and you'd get edges floating in the cut-away void.
-
-### Why it matters for the agent (arguably the real prize)
-`screenshot` only shows the exterior, so the agent cannot verify interiors — it can build
-a bushing and confirm the sketch region area, but never *see* that the bore is right. A
-`set_section_view` MCP op (plane ref, offset, flip, on/off) with `screenshot` rendering
-through it turns the guide's read→plan→one-op→**verify** loop from "the outside looks
-plausible" into real inspection. Cheap once the view state exists — same state the UI
-toggle writes. Rare case where agent value and human value point the same way.
-
-### v1 scope
-One section plane, any plane ref, live drag + offset + flip, stencil capping in a flat
-neutral color, clip-aware picking, persisted in doc meta, plus the MCP op.
-**v2:** multiple simultaneous planes (corner cuts), exact section curves. Resist multiple
-planes until asked — one plane covers the overwhelming majority of real use.
-
-## Sketch inference lines (alignment guides) + snap-clarity fixes
-
-**Status:** SHIPPED 2026-07 (Part 0 + Part 1 MVP, deployed). Only **hysteresis** remains
-(deferred — snap stickiness so competing guides don't flicker; best judged by real use).
-Commits: `e7a1dae` (Part 0), `c9c24df` inference core + tests, `840df13` viewport wiring,
-`5855717` parallel/perp constraint capture, `741328f` badge, `ed214ae` bounded guide,
-`5ff2feb` anchor square + fat guide, `d9167bd` fat preview line, `6e087ae`/`6a8a275`/
-`ce78081`/`837791c` styling (construction fat-dashed, guide amber+thin, dashed construction
-snap highlight, neutral badge, preview occludes guide). Pure geometry core is unit-tested
-in `src/sketch/inference.ts` + `inference.test.ts` (13 tests); the rest is viewport
-rendering verified in-app.
-
-**Shipped visual language** (see also the line/vertex table below, kept in the code):
-- Solid blue fat line = real sketch geometry; dashed blue fat line = construction (same
-  width/colour, only the dash differs); thin amber dashed = inference guide (a helper, not
-  real); purple = derived/associative.
-- Anchor square + snap dot + guide line share the amber; the constraint badge (—/|/⊥/// near
-  the cursor) is neutral. Snapping onto a construction edge highlights it dashed.
-- The opaque preview line renders above the guide (renderOrder 10.5) so it occludes a
-  coincident guide.
-
-**Known follow-ups / rough edges (small):**
-- Guides can render while the **Select** tool is active (not only while drawing) — minor,
-  gate to draw-tools if it bothers.
-- The multi-click preview polyline doesn't show a marker at the in-progress vertex unless a
-  guide/snap is active (see the vertex table).
-- Hysteresis (the one deferred MVP item).
-
-<details><summary>Original design spec (for reference)</summary>
-
-**Status:** designed 2026-07 (this spec), not started. Two parts — a small visual-clarity
-fix that should land FIRST, then the inference system.
-
-### Part 0 — snap visual clarity (small, prerequisite)
-Sketch mode forces every body to 16% opacity (`sketchDimActive` → `opacity = 0.16`,
-`Viewport.tsx:2230`). Snapping is already **coplanar-only** (candidates pass an `onPlane`
-test, `Viewport.tsx:~2583`, 0.05mm tol) — you can NEVER snap to a parallel face's edge — but
-the see-through body makes it LOOK ambiguous. Purely cosmetic fixes:
-- **Tint the active sketch face** (faint fill on the exact face being sketched) so the plane
-  is unmistakable. Primary fix.
-- **Light up the whole coplanar edge on an edge-snap** (not just today's dot `snapMarker`),
-  so you see it's a real in-plane edge and its extent.
-Do this before inference — guides only feel good when you can see what you're snapping to.
-
-### Part 1 — inference lines
-While drawing, hovering a key point/line **arms** it as a reference; moving away shows dotted
-**guide lines**; the cursor snaps onto a guide; where two guides cross, that **intersection
-is snappable**; and a guide that maps to a real relationship captures the **constraint**.
-
-**Fits existing code.** `resolveSnap` (`Viewport.tsx:~1516`) already does a weak version:
-step 3 computes H/V of the draft segment relative to the last point (`ref`) and
-`handleSketchClick` (`App.tsx:3659`) captures it as a `horizontal`/`vertical` constraint.
-Inference generalizes both. Reuses `snapPointsRef`/`snapLinesRef` (coplanar candidates),
-`SNAP_PX=12`, `ANGLE_SNAP` (~3.4°), `snapMarker`, and the hv→constraint path.
-
-**Two mechanically-different snap kinds (don't conflate):**
-- **Positional guide** — a line THROUGH an armed point; snapping means the cursor lies on it.
-  From a bare point: horizontal + vertical. From a point-on-line: also perpendicular +
-  parallel/collinear through that point.
-- **Directional (angle) snap** — the segment being drawn matches a direction, pivoting on the
-  fixed draft start; the cursor sweeps a ray. This is today's H/V step generalized: check the
-  draft angle against {0°, 90°} PLUS {θ, θ+90°} of each **armed line** → parallel / perpendicular
-  to an existing line. (Arming = dwell-hover a line's body; highlight it.) This is the
-  "draw a wall parallel to another wall" case and is high value.
-
-**Arming model.** Dwell (~120–200ms) to arm a point or a line, Onshape-style (not instant, or
-you spray guides). The draft's last point is always an implicit anchor. Cap ~3 armed refs
-(LRU); age out after a few seconds; clear on tool change / Escape.
-
-**Guide-intersection snapping.** For each pair of active guides, snap to their intersection
-(skip near-parallel); also guide×coplanar-edge and guide×draft-segment intersections. An
-intersection carries BOTH meanings.
-
-**Precedence (highest first), with hysteresis so it doesn't flicker/jump:**
-1. exact vertex/key point → 2. guide∩guide and guide∩edge intersection → 3. on a coplanar
-edge → 4. single positional guide → 5. directional/angle snap (H/V/parallel/perp — same tier
-as today's H/V) → 6. free. Once snapped, require extra px past tolerance before releasing.
-
-**Constraint capture** (via existing `addSketchConstraints`): H→`horizontal`, V→`vertical`,
-perp-guide→`perpendicular`, parallel(guide or angle)→`parallel`; an intersection captures both.
-Confirmed available: horizontal/vertical/parallel/perpendicular/equal/tangent/coincident/
-pointOnLine/midpoint. **Two gaps to decide before MVP:** (a) **collinear** to an edge — no such
-constraint; express as `parallel`+`pointOnLine` or add one. (b) A constraint only forms when the
-reference is an **active-sketch entity** (we have its id, like today's `activeId ? e.id`);
-against a **body edge** (parallel-to-a-body-edge, point-alignment) it's **snap-only** (places the
-geometry, no persistent constraint) — matches Onshape when there's nothing to constrain. Option:
-auto-project the body edge into the sketch first, then constrain. Default MVP: snap-only.
-
-**Rendering.** Dotted guide (dashed `LineMaterial`, muted, distinct color per meaning),
-constant-pixel dashes; an inference **badge** near the cursor (`—`/`|`/`⊥`/`∥`) so captured
-constraints are predictable; intersection marker reuses `snapMarker` in a distinct color;
-fade in on arm, out on disarm.
-
-**Data / structure.** `inferenceAnchorsRef: { uv; lineDir?; sourceId?; armedAt }[]`. Pure,
-unit-testable helpers: `guidesForAnchor`, `snapToGuides`, `guideIntersections`, and an
-arbitration `resolveSnapV2` extending the current return with a `meanings` field.
-
-**MVP scope (agreed):** hovered-point positional guides (H/V + perp/parallel from a
-point-on-line); **armed line-direction references → parallel/perpendicular angle snap of the
-drawn segment**; guide∩guide + guide∩edge intersection; capture H/V/perp/parallel; dotted
-guides + badges; precedence + hysteresis.
-**v2:** tangent guides, arc/circle quadrant anchors, point-to-point alignment (+ optional
-auto construction line), symmetry inference, collinear constraint.
-
-**Tests.** Unit (pure): guide generation per anchor kind, cursor→guide projection + tol,
-guide/guide & guide/edge intersection, arbitration precedence + hysteresis, meaning→constraint
-mapping. e2e: draw a line, hover another line's endpoint, move perpendicular → assert dotted
-guide + a `perpendicular` constraint; arm a line, draw parallel → assert `parallel`; two
-anchors → assert intersection snaps.
-
-**Risks.** (1) FEEL — precedence + hysteresis tuning needs iteration in the real app, not just
-unit tests. (2) Clutter — the arm-dwell, ~3-ref cap, and TTL are what keep it from being a
-light show; err toward fewer, stickier guides. (3) The two constraint gaps above.
-
-</details>
+**Known rough edges (small):**
+- **Hysteresis** — the one deferred MVP item. Snap stickiness so competing guides
+  don't flicker; best judged by real use.
+- Guides can render while the **Select** tool is active, not only while drawing.
+- The multi-click preview polyline shows no marker at the in-progress vertex
+  unless a guide/snap is active.
 
 ## Kernel: booleans fail on ANALYTIC primitive curved surfaces (not all curves)
 

@@ -202,84 +202,74 @@ Each feature stores **references** (to sketches, faces, edges, axes, planes), it
 Ordered so each phase produces something runnable and demoable. Estimates are
 rough relative sizing, not calendar promises.
 
-> **Progress (2026-06-18):** Phases 0–4 are essentially complete on `main`.
-> Phase 2 (sketching + planegcs constraints + interactive length dimension +
-> full selection/measurement). Phase 3 (the **running-result model**: extrude
-> New/Add/Remove with an explicit target body, chamfer + fillet) plus **proper
-> topological naming** via OCCT construction history. Phase 4 (**STEP/STL
-> export** in mm). **Boolean** union/subtract/intersect between bodies is done
-> and ported onto the running-fold + naming model. Plus colour/Parts panel,
-> per-part opacity + hide toggle, a viewport modeling toolbar, delete-key, and
-> project renamed **Open Poly**. **IndexedDB autosave + restore is now in** (a
-> refresh keeps your work). **Reference planes (offset method) are in** — the
-> ⧉ Plane button creates a parametric offset plane you can sketch on. **Transform
-> (move + rotate bodies, Phase 5.5) is in** — a ✥ Transform gizmo + panel that
-> rigidly moves a body in place (keeps its id + names). **Transform copy** and
-> **STEP import** (⤓ Import STEP → a first-class named body) are also in. Likely
-> next high-value items remain below.
->
-> **Progress (2026-06-21):** a large feature + UX batch landed on `main` —
-> **Revolve** and **Mirror** (Phase 5/6); **multi-profile extrude** + **symmetric**
-> and **through-all** extents + a **live cyan tool-only ghost preview**;
-> **construction geometry**, a **constraints list + delete + over-constraint ⚠**,
-> and **double-click-to-edit** in the timeline (Phase 2); **isolate** + **selection
-> filters** (Phase 7); plus a sidebar polish pass (collapsible Variables, datums
-> folded into the timeline).
->
-> **Progress (2026-06-22):** **Sweep + Loft + a Spline sketch tool** shipped
-> (Phase 6 now complete) — sweep a region along a line/arc/spline path
-> (`BRepOffsetAPI_MakePipeShell`), loft through 2+ regions
-> (`BRepOffsetAPI_ThruSections`), both with **OCCT history-based face naming**
-> (side faces per profile/section edge + start/end caps), and a `∿` spline tool
-> for freeform sweep paths.
->
-> **Progress (2026-06-22, later):** the bulk of the **Phase 8.5 UI/UX batch**
-> landed on `main` — extrude **extent dropdown** + **up-to-face** extent,
-> **click-to-populate Boolean** dialog, **keyboard shortcuts** (mode-gated, full
-> coverage; construction = `Q`), tighter Variables heading — plus **extrude by
-> selecting a region's enclosing edges**, **reference-plane hover highlight**, a
-> **Boolean union fix for touching / shared-face bodies** (solid-count
-> validation), and a **Front-plane (left-handed) mirror fix** for
-> sweep/extrude/revolve/loft. Remaining high-value items: Phase 8.5 **#1**
-> (movable Constraints/Parameters panel) and **#5** (timeline formatting); more
-> plane methods; a **multi-document manager**. **LLM agent integration (Phase 9 —
-> fully specced below)** is underway on `feat/phase9-agent` (L0–L3 done).
->
-> **Progress (2026-06-24):** another **sketch-constraint batch** landed on `main`
-> — **tangent**, **coincident** (+ point-on-line + origin-anchoring), and auto
-> **point-on-line / midpoint** on snapped endpoints; the **origin is fixed
-> ground**; **arcs are now solver-aware** and **equal** extends to arcs; plus
-> **variable-name validation** + **dimension var-name autocomplete**, a **dashed
-> construction-line highlight** (`Q` syncs the toolbar toggle), and two fixes
-> (length-dimension side-flicker on symmetric sketches; loops that close at the
-> origin now enclose).
->
-> **Drag-to-move unconstrained sketch geometry — ✅ SHIPPED to `main`
-> (2026-07-02; branch `claude/sketch-unconstrained-dragging` merged + deleted).**
-> With the Select tool you can drag a vertex, an entity body, or an enclosed
-> region across the plane; each frame re-solves from a pre-drag snapshot so
-> constraints stay satisfied while free DOF follow the cursor (one undo step per
-> drag). The grabbed vertex is **pinned to the cursor** for the solve (via
-> `solveSketch`'s new `lockedPoints`) so free neighbours follow it — fixing the
-> reported axis-lock where e.g. a vertical line's free end could only drag
-> vertically; pinning falls back to an unpinned solve if it over-constrains.
-> **Grabbable vertices now show small dots** (line-coloured, blue↔green with the
-> constrained state) and the hover/selection marker is translucent so the dot
-> shows through and tracks a live drag. Line styling is a **blue
-> (under-constrained) → green (fully constrained)** shift.
->
-> **Progress (2026-07-06):** four batches merged to `main`. **Topological-naming
-> robustness** (N3): geometric fallback matching (`kernel/topoMatch.ts`) when a
-> persistent name churns, surfaced as timeline warnings + `OpResult.warnings`
-> for the agent (see Phase 3's naming write-up). **Regen-performance caching**
-> (`perf/regen-caching`): content-hash-keyed `builderCache`/`meshCache` so an
-> unchanged body skips re-solve/re-mesh, plus debounced regen, progressive
-> body streaming, and a tuned boolean fuzzy tolerance (~45% faster). **The
-> multi-document manager** (Phase 8.7, M1–M4): Documents dialog, editable
-> title, thumbnails, `.json` import/export, corrupt-record recovery, and
-> agent `list/open/new/rename/duplicate_document` tools. **Associative
-> face-sketches** dropped from the backlog entirely (tested against
-> Onshape — it doesn't follow the host body either; parity, not a gap).
+> **Where things stand (2026-07-28).** Phases 0–8.7 are shipped and on `main`;
+> the app is a working parametric modeler — constrained sketching, extrude /
+> revolve / sweep / loft / boolean / pattern / mirror / transform / chamfer /
+> fillet, reference planes, multi-body parts, STEP+STL export, STEP+DXF import,
+> multi-document storage, section view, sketch inference guides, and an MCP agent
+> bridge (Phase 9, L0–L3). The per-phase sections below are kept for their design
+> rationale and gotchas, not as a status ledger — **git is the record of what
+> shipped when.** What is NOT built is collected under *What's left*, next.
+
+### What's left — open items
+
+Gathered from the phase sections below so they're findable in one
+place. Roughly ordered by how often a user meets them.
+
+**Sketching (Phase 2 backlog)**
+- **Trim / extend** — not built. The most conspicuous missing sketch tool.
+- **Point identity is by coordinate key** (`solver.ts`) — coincident points merge
+  by rounded position, so a "coincidence" silently breaks once a solve moves them
+  apart. A real point-based sketch model is wanted before heavy constraint
+  editing; it also blocks robust coincident editing.
+- **Dimensions don't re-link to variables** — a dimension typed as an expression
+  is evaluated to a number at apply time; changing the variable later doesn't move
+  the geometry. Also missing: the **diameter** variant.
+- **Cancel a sketch edit** — edits to an existing sketch apply live; there's no
+  discard-on-Esc (snapshot-on-entry + restore).
+- **Constraints not mapped:** concentric, symmetric, collinear, fix/lock.
+- **Splines pass through the solver unconstrained** (only line / arc / circle map).
+- **Project:** vertex projection is best-effort (re-projects a stored world point,
+  doesn't track the source body); no agent/MCP op.
+
+**Kernel / geometry**
+- **Sphere booleans still fail** — `makeSphere` stays analytic, and this OCCT wasm
+  build can't boolean an analytic primitive against a plane (see BACKLOG). Every
+  other primitive is faceted around it; a sphere needs a UV-meshed solid.
+- **True round holes/bosses** — extrude/revolve facet curved profiles by
+  necessity. A B-spline wall (pipe-style rather than a prism of an analytic
+  circle) may give a smooth wall that also booleans. See BACKLOG for the spike
+  that confirmed faceting is currently required.
+- **Tessellation LOD** — no distance/zoom mesh simplification.
+
+**Rough edges that fail silently** (each small and localized)
+- Extrude `remove` that resolves to zero target bodies deletes the tool silently
+  (EXTRUDE_IMPROVEMENTS #6).
+- Extrude distance isn't validated as > 0; a degenerate value surfaces as a raw
+  OCCT exception (#7).
+- A failed autosave only `console.warn`s — no banner (Phase 8.7 open items).
+
+**Features with obvious next increments**
+- **Extrude:** taper/draft angle + thin/shell walls; a viewport drag handle for
+  distance (the Transform gizmo proved the pattern).
+- **Transform:** scale; rotation about a datum axis / body edge.
+- **Pattern:** per-instance skip, fuse-with-seed, multi-seed, body-edge directions.
+- **Planes:** hinge on a picked edge; line+point and two-parallel-edges methods.
+- **Sweep/loft:** twist, multiple profiles, guide rails, ruled option.
+- **STEP import:** drag-and-drop a file; one body per solid (assembly split is
+  shelved on `feat/step-assembly-split` — blocked on a wasm build with XCAF).
+
+**Agent (Phase 9)**
+- **L4 — robustness:** token auth, multi-tab handling, error taxonomy, queue
+  ordering, reconnection, timeouts. The tab currently dials the hub in prod too,
+  logging WS errors when no hub runs.
+
+**Housekeeping**
+- Phase 8.5 **#5** (timeline formatting) — the last item of that batch.
+- Landing-page auto-deploy is disabled (private repo on the Free plan).
+- Kernel builder/mesh caches evict on document switch (A→B→A re-solves A).
+- Sketch inference **hysteresis** (the one deferred MVP item) — snap stickiness.
+- Shelved perf work (viewport geometry reuse + lazy regen) — see BACKLOG.
 
 ### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
