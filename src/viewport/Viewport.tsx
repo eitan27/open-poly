@@ -68,6 +68,23 @@ export interface FeatureMesh {
  *  `meshes` themselves. */
 export interface GhostMesh {
   mesh: ShapeMeshPayload;
+  /** How the ghost reads:
+   *   • "add" (default) — the cyan "this will appear" solid of the extrude /
+   *     revolve / pattern previews. Depth-tested: it stands where a real body
+   *     would, so it must be occluded like one.
+   *   • "fill" / "cut" — the two halves of a dress-up delta: the material a
+   *     chamfer/fillet ADDS (a fillet bridging a concave corner) and the
+   *     material it CARVES OFF (a bevel, a rounded-off corner). Warm vs. cool
+   *     so "this goes away" never reads as "this arrives".
+   *
+   *  The delta pair is drawn WITHOUT depth testing, because a delta is flush
+   *  with the body it changes and would otherwise be invisible: before you
+   *  commit, a chamfer's wedge lies entirely inside the un-chamfered solid
+   *  (two of its faces exactly coplanar with the body's), and while editing —
+   *  where the change is already applied to the model — the added material
+   *  likewise lies inside the finished body. Drawn on top, the delta reads as a
+   *  translucent band hugging the edge in both cases. */
+  variant?: "add" | "fill" | "cut";
 }
 
 export interface RenderSketch {
@@ -271,6 +288,11 @@ interface SceneState {
   ghostGroup: THREE.Group;
   ghostMaterial: THREE.MeshStandardMaterial;
   ghostLineMaterial: THREE.LineBasicMaterial;
+  /** Dress-up delta ghosts: material the operation adds / carves off. */
+  ghostFillMaterial: THREE.MeshStandardMaterial;
+  ghostFillLineMaterial: THREE.LineBasicMaterial;
+  ghostCutMaterial: THREE.MeshStandardMaterial;
+  ghostCutLineMaterial: THREE.LineBasicMaterial;
   // The translate/rotate gizmo and the invisible proxy object it drives. The
   // proxy's position/rotation are read back as the Transform feature's values.
   transformControls: TransformControls;
@@ -477,6 +499,14 @@ export const SELECT_COLOR = 0xff9d3c;
 /** Translucent "not committed yet" accent — ghost previews and boolean
  *  tool/intersect operands. */
 export const GHOST_COLOR = 0x4fd1ff;
+/** The counterpart accent for material an operation will REMOVE (a chamfer's
+ *  bevel, a fillet's rounded-off corner). Warm/red against GHOST_COLOR's cool
+ *  cyan, so "this goes away" never reads as "this gets added". */
+export const GHOST_CUT_COLOR = 0xff6b5a;
+/** Material a dress-up ADDS. A green distinct from GHOST_COLOR's cyan: the
+ *  delta pair is read as a pair, and green/red carries "gained/lost" with no
+ *  legend, where cyan/red would just look like two unrelated previews. */
+export const GHOST_FILL_COLOR = 0x51e08a;
 const EDGE_SEL_COLOR = new THREE.Color(SELECT_COLOR);
 const EDGE_HOV_COLOR = new THREE.Color(0x36d6c3);
 // Small persistent dots drawn at every selectable/draggable vertex of the ACTIVE
@@ -1264,6 +1294,26 @@ export function Viewport({
     const ghostLineMaterial = new THREE.LineBasicMaterial({
       color: GHOST_COLOR, transparent: true, opacity: 0.7, clippingPlanes: sectionClipPlanes,
     });
+    // Dress-up delta ghosts (see GhostMesh.variant). `depthTest: false` is the
+    // point of these: the delta is flush with — or inside — the body it changes,
+    // so a depth-tested ghost would z-fight along its coplanar faces and vanish
+    // everywhere else. `renderOrder` keeps the pair above the model, and cut
+    // above fill where one feature does both. Slightly more opaque than the
+    // additive ghost: these wedges are thin, and read weakly at 0.35.
+    const deltaFaceMat = (color: number) =>
+      new THREE.MeshStandardMaterial({
+        color, metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide,
+        transparent: true, opacity: 0.5, depthWrite: false, depthTest: false,
+        clippingPlanes: sectionClipPlanes,
+      });
+    const deltaLineMat = (color: number) =>
+      new THREE.LineBasicMaterial({
+        color, transparent: true, opacity: 0.9, depthTest: false, clippingPlanes: sectionClipPlanes,
+      });
+    const ghostFillMaterial = deltaFaceMat(GHOST_FILL_COLOR);
+    const ghostFillLineMaterial = deltaLineMat(GHOST_FILL_COLOR);
+    const ghostCutMaterial = deltaFaceMat(GHOST_CUT_COLOR);
+    const ghostCutLineMaterial = deltaLineMat(GHOST_CUT_COLOR);
 
     // Section view: a translucent quad hinting the plane's extent (always shown
     // while enabled, everywhere — independent of the stencil cap below, which
@@ -1527,6 +1577,7 @@ export function Viewport({
       liveDrag: null,
       pendingCommit: null,
       ghostGroup, ghostMaterial, ghostLineMaterial,
+      ghostFillMaterial, ghostFillLineMaterial, ghostCutMaterial, ghostCutLineMaterial,
       previewLine, snapMarker, snapEdgeLine, guideOverlay, anchorOverlay, guideBadge, tween: null,
       sectionPlane, sectionClipPlanes, sectionWidget, sectionCapGroup, sectionCapGeometry,
       sectionCapMaterial, sectionHandle,
@@ -3153,6 +3204,10 @@ export function Viewport({
       }
       ghostMaterial.dispose();
       ghostLineMaterial.dispose();
+      ghostFillMaterial.dispose();
+      ghostFillLineMaterial.dispose();
+      ghostCutMaterial.dispose();
+      ghostCutLineMaterial.dispose();
       previewLine.geometry.dispose();
       (previewLine.material as THREE.Material).dispose();
       snapMarker.geometry.dispose();
@@ -3323,8 +3378,17 @@ export function Viewport({
     state.ghostGroup.clear();
     ghostMeshes.forEach((ghost, i) => {
       const geometry = syncBodyGeometry(`ghost${i}`, ghost.mesh.faces, ghost.mesh.edges);
-      const faceMesh = new THREE.Mesh(geometry.faces, state.ghostMaterial);
-      const edges = new THREE.LineSegments(geometry.lines, state.ghostLineMaterial);
+      // Depth-testless delta ghosts also need an explicit renderOrder — with the
+      // depth buffer out of the picture, draw order is all that separates them
+      // (fill below cut, both above the model).
+      const [faceMat, lineMat, order] =
+        ghost.variant === "cut" ? [state.ghostCutMaterial, state.ghostCutLineMaterial, 3]
+        : ghost.variant === "fill" ? [state.ghostFillMaterial, state.ghostFillLineMaterial, 2]
+        : [state.ghostMaterial, state.ghostLineMaterial, 0];
+      const faceMesh = new THREE.Mesh(geometry.faces, faceMat);
+      const edges = new THREE.LineSegments(geometry.lines, lineMat);
+      faceMesh.renderOrder = order;
+      edges.renderOrder = order;
       state.ghostGroup.add(faceMesh, edges);
     });
   }, [ghostMeshes]);

@@ -137,7 +137,11 @@ export type ResolvedFeature =
   // carry the geometric fingerprints used to re-match renamed edges.
   // `angle` (chamfer only, degrees from the reference face) is absent for a
   // plain symmetric chamfer, so its content key matches a pre-angle document's.
-  | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; edgeRefs?: ResolvedEdgeRef[]; size: number; angle?: number; flip?: boolean }
+  // `previewDelta`: additionally emit the material the dress-up takes away and
+  // the material it adds, as the extra preview bodies `<id>::removed` /
+  // `<id>::added` — see DRESSUP_DELTA_IDS. The target is still dressed normally,
+  // so downstream features (and this feature's own error) are unaffected.
+  | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; edgeRefs?: ResolvedEdgeRef[]; size: number; angle?: number; flip?: boolean; previewDelta?: boolean }
   // A boolean combines existing bodies (by id) from the running set.
   | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
   // A rigid transform moves a body (by id) — translate + rotate. `copy` keeps
@@ -168,6 +172,15 @@ export type ResolvedFeature =
   | { id: string; type: "loft"; profiles: ResolvedProfile[] }
   // A body imported from a CAD file (the raw STEP text).
   | { id: string; type: "import"; source: string };
+
+/** The body ids a `previewDelta` dress-up emits alongside the dressed target:
+ *  the solid it cuts away (before − after) and the solid it fills in
+ *  (after − before). A chamfer/fillet on a convex edge produces only `removed`,
+ *  on a concave edge only `added`; a feature spanning both produces both. */
+export const DRESSUP_DELTA_IDS = {
+  removed: (featureId: string) => `${featureId}::removed`,
+  added: (featureId: string) => `${featureId}::added`,
+} as const;
 
 export type RegenFeatureResult =
   | { id: string; ok: true; mesh: ShapeMeshPayload }

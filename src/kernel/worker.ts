@@ -27,6 +27,7 @@ import type {
   ResolvedFrame,
   ResolvedProfile,
 } from "./types";
+import { DRESSUP_DELTA_IDS } from "./types";
 import { matchEdges, matchFace, type EdgeCandidate, type FaceCandidate } from "./topoMatch";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -1739,8 +1740,13 @@ function buildCached(key: string, used: Set<string>, build: () => NamedShape): N
 function buildBodies(
   features: ResolvedFeature[],
   used: Set<string> = new Set(),
-): { bodies: Body[]; failures: RegenFeatureResult[]; timings: FeatureTiming[]; warnings: Record<string, string> } {
+): { bodies: Body[]; previews: Body[]; failures: RegenFeatureResult[]; timings: FeatureTiming[]; warnings: Record<string, string> } {
   const bodies: Body[] = [];
+  // Display-only bodies (currently just dress-up deltas). Deliberately kept OUT
+  // of `bodies` so nothing that scans the running set — an "up to next" extrude,
+  // a boolean's operand lookup — can ever see them; the caller meshes them
+  // alongside the real bodies and is responsible for deleting them.
+  const previews: Body[] = [];
   const failures: RegenFeatureResult[] = [];
   const timings: FeatureTiming[] = [];
   // Non-fatal notices per feature id (references re-matched / partially lost),
@@ -1919,7 +1925,28 @@ function buildBodies(
       } else if (feature.type === "dressup") {
         // Chamfer/fillet modifies the target body in place, keeping its id.
         const target = requireBody(bodies, feature.targetId);
+        const beforeKey = target.key;
         const res = dressUpNamed(feature.op, target, feature.edges, feature.edgeRefs, feature.size, feature.id, warn, feature.angle, feature.flip);
+        if (feature.previewDelta) {
+          // The two halves of the change, as solids the UI can ghost: what the
+          // bevel/round carves off (before − after) and what it fills in
+          // (after − before). Computed from the SAME pair the fold already has,
+          // so the preview can't disagree with the committed result. Each cut is
+          // keyed off the pre-dress body key so an unchanged dialog re-uses the
+          // cached tessellation instead of re-cutting on every keystroke.
+          const before: NamedShape = { shape: target.shape, names: target.names };
+          const deltas: [string, NamedShape, NamedShape][] = [
+            [DRESSUP_DELTA_IDS.removed(feature.id), before, res],
+            [DRESSUP_DELTA_IDS.added(feature.id), res, before],
+          ];
+          for (const [id, base, tool] of deltas) {
+            const delta = booleanNamed("cut", base, tool);
+            // A convex edge yields only "removed", a concave one only "added" —
+            // the other cut comes back empty and is dropped, not rendered.
+            if (delta.shape.faces.length > 0) previews.push({ id, key: contentKey(feature, [beforeKey, id]), ...delta });
+            else delta.shape.delete();
+          }
+        }
         target.shape.delete();
         target.shape = res.shape;
         target.names = res.names;
@@ -2030,7 +2057,7 @@ function buildBodies(
     }
     timings.push({ id: feature.id, type: feature.type, ms: performance.now() - t0 });
   }
-  return { bodies, failures, timings, warnings };
+  return { bodies, previews, failures, timings, warnings };
 }
 
 /** Bodies with more faces than this mesh per-face (see `meshFaceByFace`); below it,
@@ -2280,11 +2307,13 @@ function regenerate(
 ): { results: RegenFeatureResult[]; warnings: Record<string, string> } {
   const buildT0 = performance.now();
   const usedBuilders = new Set<string>();
-  const { bodies, failures, timings, warnings } = buildBodies(features, usedBuilders);
+  const { bodies, previews, failures, timings, warnings } = buildBodies(features, usedBuilders);
   const buildMs = performance.now() - buildT0;
   const meshTimings: { id: string; ms: number; hit: boolean }[] = [];
   const usedMeshes = new Set<string>();
-  const meshes: RegenFeatureResult[] = bodies.map((b) => {
+  // Preview bodies tessellate on exactly the same path as real ones (they're
+  // ordinary solids); they differ only in that no feature can reference them.
+  const meshes: RegenFeatureResult[] = [...bodies, ...previews].map((b) => {
     let result: RegenFeatureResult;
     const mt0 = performance.now();
     const meshHit = meshCache.has(b.key);
@@ -2390,7 +2419,7 @@ function regenerate(
 // and serialise it. (Exporting a single feature standalone would be wrong now —
 // extrude/add/remove only make sense within the running model.)
 function exportBody(features: ResolvedFeature[], bodyId: string, format: ExportFormat): Blob {
-  const { bodies } = buildBodies(features);
+  const { bodies, previews } = buildBodies(features);
   try {
     const target = bodies.find((b) => b.id === bodyId);
     if (!target) throw new Error("export: body not found");
@@ -2401,7 +2430,7 @@ function exportBody(features: ResolvedFeature[], bodyId: string, format: ExportF
       ? exportSTEP([{ shape: target.shape, name: bodyId }], { unit: "mm" })
       : target.shape.blobSTL(MESH_OPTS);
   } finally {
-    for (const b of bodies) b.shape.delete();
+    for (const b of [...bodies, ...previews]) b.shape.delete();
   }
 }
 

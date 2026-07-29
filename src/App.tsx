@@ -87,6 +87,7 @@ import { measureBetween, resolveSide } from "./sketch/distanceDim";
 import { planCoincident, coincidentEnabled as coincidentIsEnabled } from "./sketch/coincidentSelection";
 import { pinConstraints } from "./sketch/snapPins";
 import type { BooleanOp, MeshedEdges, MeshedFaces, ShapeMeshPayload } from "./kernel/types";
+import { DRESSUP_DELTA_IDS } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, worldToUv, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
@@ -1337,6 +1338,15 @@ export default function App() {
   // geometry), or null when it builds cleanly. Set live as the user types and
   // re-checked authoritatively before commit, so an invalid size can't close it.
   const [dressUpError, setDressUpError] = useState<string | null>(null);
+  // Live ghost of what the chamfer/fillet dialog's current size/angle will
+  // change: `removed` is the solid it carves off (a bevel, a rounded-off
+  // corner), `added` the solid it fills in (a fillet on a concave edge). Either
+  // may be absent — a feature whose edges are all convex only removes. Produced
+  // by the same debounced regen that validates the dialog, so previewing costs
+  // no extra kernel round trip.
+  const [dressUpPreview, setDressUpPreview] = useState<
+    { removed?: FeatureMesh["mesh"]; added?: FeatureMesh["mesh"] } | null
+  >(null);
   // Revolve dialog. The user arms a profile face and an axis (a sketch line or a
   // plane) by clicking in the viewport — like the Boolean dialog — then sets the
   // angle (Full 360° vs. a specified angle + optional symmetric sweep). `armed`
@@ -2357,8 +2367,12 @@ export default function App() {
       ...(extrudePreview ? extrudePreview.map((p) => ({ mesh: p.mesh })) : []),
       ...(revolvePreview ? [{ mesh: revolvePreview }] : []),
       ...patternGhosts,
+      // The chamfer/fillet delta: what the operation fills in and what it carves
+      // off, ghosted over the model (see GhostMesh.variant).
+      ...(dressUpPreview?.added ? [{ mesh: dressUpPreview.added, variant: "fill" as const }] : []),
+      ...(dressUpPreview?.removed ? [{ mesh: dressUpPreview.removed, variant: "cut" as const }] : []),
     ],
-    [extrudePreview, revolvePreview, patternGhosts],
+    [extrudePreview, revolvePreview, patternGhosts, dressUpPreview],
   );
 
   // Feature ids that produced an actual rendered body — what the Solids list
@@ -3098,23 +3112,31 @@ export default function App() {
     setDressUpError(null);
   };
 
-  // Live geometry validation of the chamfer/fillet dialog. The sync part of
-  // validation (empty / unparseable / ≤ 0) is done in render off the raw size —
-  // instant, and never touches the kernel. This effect covers only the case that
-  // NEEDS the kernel: a valid positive size that OCCT still can't build (e.g. a
-  // fillet radius too large for the edges). It regenerates a throwaway doc
+  // Live geometry validation AND ghost preview of the chamfer/fillet dialog. The
+  // sync part of validation (empty / unparseable / ≤ 0) is done in render off the
+  // raw size — instant, and never touches the kernel. This effect covers only the
+  // case that NEEDS the kernel: a valid positive size that OCCT still can't build
+  // (e.g. a fillet radius too large for the edges). It regenerates a throwaway doc
   // (mirrors createDressUp, minus setDoc), debounced so each keystroke on a heavy
   // body stays responsive. `dressUpError` holds only this async error.
+  //
+  // The same regen carries `previewDelta`, so the kernel hands back the material
+  // the dress-up removes and the material it adds as extra bodies — the ghosts
+  // below. Validation and preview therefore always agree, and a preview never
+  // costs a second round trip.
   useEffect(() => {
     if (!dressUpDialog || !dressUpDialogTarget) {
       setDressUpError(null);
+      setDressUpPreview(null);
       return;
     }
     const sv = validateDressUpDialog(dressUpDialog);
     if (sv.value === null) {
       // Empty/invalid/≤0 — surfaced synchronously in the dialog; clear any stale
-      // geometry error and don't build.
+      // geometry error and don't build. The stale ghost goes too: showing the
+      // last good size's wedge while the field reads something else is a lie.
       setDressUpError(null);
+      setDressUpPreview(null);
       return;
     }
     const kernel = kernelRef.current;
@@ -3125,18 +3147,39 @@ export default function App() {
       const resolvedNext = resolveDocument(next);
       const resolveErr = resolvedNext.errors[id];
       if (resolveErr) {
-        if (!cancelled) setDressUpError(mapDressUpKernelError(resolveErr, dressUpDialog.op));
+        if (!cancelled) {
+          setDressUpError(mapDressUpKernelError(resolveErr, dressUpDialog.op));
+          setDressUpPreview(null);
+        }
         return;
       }
+      const features = resolvedNext.features.map((rf) =>
+        rf.type === "dressup" && rf.id === id ? { ...rf, previewDelta: true } : rf,
+      );
       kernel
-        .regenerate(resolvedNext.features)
+        .regenerate(features)
         .then(({ results }) => {
           if (cancelled) return;
           const hit = results.find((r) => r.id === id);
-          setDressUpError(hit && !hit.ok ? mapDressUpKernelError(hit.error, dressUpDialog.op) : null);
+          const err = hit && !hit.ok ? mapDressUpKernelError(hit.error, dressUpDialog.op) : null;
+          setDressUpError(err);
+          if (err) {
+            setDressUpPreview(null);
+            return;
+          }
+          const delta = (deltaId: string) => {
+            const r = results.find((x) => x.id === deltaId);
+            return r?.ok ? r.mesh : undefined;
+          };
+          const removed = delta(DRESSUP_DELTA_IDS.removed(id));
+          const added = delta(DRESSUP_DELTA_IDS.added(id));
+          setDressUpPreview(removed || added ? { removed, added } : null);
         })
         .catch((err) => {
-          if (!cancelled) setDressUpError(mapDressUpKernelError(String(err?.message ?? err), dressUpDialog.op));
+          if (!cancelled) {
+            setDressUpError(mapDressUpKernelError(String(err?.message ?? err), dressUpDialog.op));
+            setDressUpPreview(null);
+          }
         });
     }, 250);
     return () => {
