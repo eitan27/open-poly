@@ -13,7 +13,7 @@
 // already does for circles).
 import type { SketchEntity, Vec2 } from "./types";
 import type { ProfileSegment } from "../kernel/types";
-import { sampleArc, sampleSpline } from "./sketchTools";
+import { sampleArc, sampleCircle, sampleSpline } from "./sketchTools";
 
 export interface SketchRegion {
   id: string;
@@ -150,19 +150,15 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
   // Construction geometry is reference-only — never a profile boundary.
   entities = entities.filter((e) => !e.construction);
 
-  // Flatten every boundary entity to a polyline. Circles join the pool too (as
-  // closed 48-gons) so a curve crossing a circle splits it into selectable
-  // sub-regions; an uncrossed circle falls out below as one disk region.
+  // Flatten every boundary entity to a polyline. Circles join the pool too so a
+  // curve crossing a circle splits it into selectable sub-regions; an uncrossed
+  // circle falls out below as one disk region. Sampled canonically, like every
+  // other circle — a region's outline becomes an extruded wall, and that wall has
+  // to coincide with any other wall built from the same circle.
   const polys: BoundaryPoly[] = [];
   for (const e of entities) {
     if (e.type === "circle") {
-      const SEG = 48;
-      const poly: Vec2[] = [];
-      for (let i = 0; i <= SEG; i++) {
-        const t = (2 * Math.PI * i) / SEG;
-        poly.push([e.c[0] + e.r * Math.cos(t), e.c[1] + e.r * Math.sin(t)]);
-      }
-      polys.push({ entityId: e.id, poly, closed: true, cuts: [] });
+      polys.push({ entityId: e.id, poly: sampleCircle(e.c, e.r), closed: true, cuts: [] });
       continue;
     }
     const bd = entityBoundary(e);

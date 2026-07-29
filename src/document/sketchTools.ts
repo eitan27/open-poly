@@ -2,6 +2,7 @@
 // circle / arc parameters; the caller turns them into SketchEntity objects (for
 // committing) or polylines (for preview rendering). Shared by App and Viewport.
 import type { SketchEntity, Vec2 } from "./types";
+import { arcStations, circleStations } from "../geom/circleFacets";
 
 const dist = (a: Vec2, b: Vec2) => Math.hypot(b[0] - a[0], b[1] - a[1]);
 
@@ -77,21 +78,33 @@ export function arcFrom3(
   return { center: cc.center, r: cc.r, start: e, end: e + norm(s - e) };
 }
 
-export function sampleCircle(center: Vec2, r: number, segs = 64): Vec2[] {
-  const pts: Vec2[] = [];
-  for (let i = 0; i <= segs; i++) {
-    const a = (TWO_PI * i) / segs;
-    pts.push([center[0] + r * Math.cos(a), center[1] + r * Math.sin(a)]);
+/** A circle as a closed polyline (the first point repeated at the end).
+ *
+ *  With no `segs`, the points are the canonical stations — see circleFacets: the
+ *  same circle always discretises the same way, whoever asks, so a profile built
+ *  here coincides exactly with a primitive cylinder's wall of the same radius
+ *  instead of slicing it into slivers. Pass `segs` only when a specific count is
+ *  wanted for its own sake (a display curve, a test); geometry that has to AGREE
+ *  with other geometry must use the default. */
+export function sampleCircle(center: Vec2, r: number, segs?: number): Vec2[] {
+  const at = (a: number): Vec2 => [center[0] + r * Math.cos(a), center[1] + r * Math.sin(a)];
+  if (segs === undefined) {
+    const pts = circleStations().map(at);
+    pts.push(pts[0]); // close the ring
+    return pts;
   }
+  const pts: Vec2[] = [];
+  for (let i = 0; i <= segs; i++) pts.push(at((TWO_PI * i) / segs));
   return pts;
 }
 
-export function sampleArc(center: Vec2, r: number, start: number, end: number, segs = 48): Vec2[] {
+/** An arc as a polyline from `start` to `end`. Canonical stations plus the two
+ *  endpoints unless `segs` is given — see sampleCircle. */
+export function sampleArc(center: Vec2, r: number, start: number, end: number, segs?: number): Vec2[] {
+  const at = (a: number): Vec2 => [center[0] + r * Math.cos(a), center[1] + r * Math.sin(a)];
+  if (segs === undefined) return arcStations(start, end).map(at);
   const pts: Vec2[] = [];
-  for (let i = 0; i <= segs; i++) {
-    const a = start + ((end - start) * i) / segs;
-    pts.push([center[0] + r * Math.cos(a), center[1] + r * Math.sin(a)]);
-  }
+  for (let i = 0; i <= segs; i++) pts.push(at(start + ((end - start) * i) / segs));
   return pts;
 }
 

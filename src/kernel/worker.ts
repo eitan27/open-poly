@@ -28,6 +28,7 @@ import type {
   ResolvedProfile,
 } from "./types";
 import { DRESSUP_DELTA_IDS } from "./types";
+import { CIRCLE_FACETS, circleStations } from "../geom/circleFacets";
 import { matchEdges, matchFace, type EdgeCandidate, type FaceCandidate } from "./topoMatch";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -156,10 +157,10 @@ function axisFaceName(f: Face): string | null {
   return (dom[1] >= 0 ? "+" : "-") + dom[0];
 }
 
-/** Number of facets a primitive cylinder's circle is approximated with. Higher =
- *  smoother wall (at more faces); 96 reads as visually round while still being a
- *  polygonal prism (so it booleans — see facetedCylinderShape). */
-const CIRCLE_FACETS = 96;
+// How many facets a round wall gets, and the station angles they sit at, live in
+// geom/circleFacets — shared with the sketch layer on purpose. A primitive
+// cylinder and a sketch arc of the same radius have to produce the SAME polygon,
+// or the boolean between them slices one into slivers.
 
 /** A cylinder built as a FACETED prism (a 48-gon extruded along +Z), not an
  *  analytic `gp_Cyl`. This OCCT/wasm build can't boolean an analytic cylinder
@@ -170,11 +171,7 @@ const CIRCLE_FACETS = 96;
  *  recovered for the readout by tracing the face back to this feature's radius
  *  (measure.ts `extrudedCircleRadius`). */
 function facetedCylinderShape(radius: number, height: number): Shape3D {
-  const outline: [number, number][] = [];
-  for (let i = 0; i < CIRCLE_FACETS; i++) {
-    const a = (2 * Math.PI * i) / CIRCLE_FACETS;
-    outline.push([radius * Math.cos(a), radius * Math.sin(a)]);
-  }
+  const outline: [number, number][] = circleStations().map((a) => [radius * Math.cos(a), radius * Math.sin(a)]);
   const frame: ResolvedFrame = { origin: [0, 0, 0], uAxis: [1, 0, 0], vAxis: [0, 1, 0], normal: [0, 0, 1] };
   const face = regionFace({ kind: "sketchRegion", outline, frame }, planeOf(frame));
   return prismFromFace(face, new Vector([0, 0, 1]), height, "cyl").shape;
