@@ -72,6 +72,26 @@ describe("in-place feature edits preserve identity + timeline position", () => {
     expect(f.edges).toEqual(["e1", "e2"]);
   });
 
+  it("updateDressUp sets the chamfer angle, and drops it when switched to a fillet", () => {
+    const { doc: d1, id } = addDressUp(createDocument(), "chamfer", "body", ["e1"], "2", undefined, "30", true);
+    expect(feat<DressUpFeature>(d1, id).angle).toBe("30");
+    expect(feat<DressUpFeature>(d1, id).flip).toBe(true);
+
+    const d2 = updateDressUp(d1, id, { op: "chamfer", targetId: "body", edges: ["e1"], size: "2", angle: "60" });
+    expect(feat<DressUpFeature>(d2, id).angle).toBe("60");
+    // `flip` isn't carried by the new spec, so it clears with it.
+    expect(feat<DressUpFeature>(d2, id).flip).toBeUndefined();
+
+    const d3 = updateDressUp(d2, id, { op: "fillet", targetId: "body", edges: ["e1"], size: "2", angle: "60" });
+    expect(feat<DressUpFeature>(d3, id).angle).toBeUndefined();
+  });
+
+  it("a fillet never stores an angle, even if one is passed", () => {
+    const { doc, id } = addDressUp(createDocument(), "fillet", "body", ["e1"], "2", undefined, "30", true);
+    expect(feat<DressUpFeature>(doc, id).angle).toBeUndefined();
+    expect(feat<DressUpFeature>(doc, id).flip).toBeUndefined();
+  });
+
   it("updatePattern changes count/spacing", () => {
     const { doc: d1, id } = addPattern(createDocument(), "body", { kind: "linear", dir1: { world: "x" }, count1: "3", spacing1: "25", flip1: false });
     const doc = updatePattern(d1, id, "body", { kind: "linear", dir1: { world: "y" }, count1: "6", spacing1: "10", flip1: true });

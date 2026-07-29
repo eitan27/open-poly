@@ -789,7 +789,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         // name-only ref — the kernel will report it properly.
         const mesh = ctx.getMeshes().find((m) => m.id === op.targetId);
         const edgeRefs = mesh ? op.edges.map((nm) => edgeFingerprintByName(mesh.mesh.edges, nm)) : undefined;
-        const r = addDressUp(doc, op.kind, op.targetId, op.edges, op.size, edgeRefs);
+        const r = addDressUp(doc, op.kind, op.targetId, op.edges, op.size, edgeRefs, op.angle, op.flip);
         next = r.doc;
         createdId = r.id;
         break;

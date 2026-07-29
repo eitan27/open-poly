@@ -175,7 +175,10 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
   is associative, but there's **no agent op for it yet** — reference the geometry
   you need directly (sketch the profile, or use a body face) instead.
 - **Round/bevel an edge:** `dress_up` (`fillet`/`chamfer`) referencing the edge by
-  its **name** from the scene summary.
+  its **name** from the scene summary. A chamfer defaults to a symmetric 45°
+  bevel; set `angle` (degrees, 0–90) for an asymmetric one — `size` runs along
+  the reference face and the bevel leaves it at `angle`, and `flip: true`
+  measures from the edge's other adjacent face.
 - **Combine two bodies:** `boolean` (union/subtract/intersect) by body ids.
 - **Place/duplicate a body:** `transform` (translate + single-axis rotate). Set
   `copy: true` to keep the original and emit a moved copy as a new part.

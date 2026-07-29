@@ -102,6 +102,28 @@ export function ParamEditor({
               onChange={(e) => onChangeParam(feature.id, "size", e.target.value)}
             />
           </label>
+          {/* Angle is chamfer-only; a fillet's round has no bevel to tilt.
+              Blank means the default symmetric 45°. */}
+          {feature.op === "chamfer" && (
+            <>
+              <label className="param-field">
+                <span className="param-label">Angle (°)</span>
+                <input
+                  className="param-input"
+                  value={feature.angle ?? "45"}
+                  onChange={(e) => onChangeParam(feature.id, "angle", e.target.value)}
+                />
+              </label>
+              <label className="param-field">
+                <span className="param-label">Flip angle</span>
+                <input
+                  type="checkbox"
+                  checked={feature.flip ?? false}
+                  onChange={(e) => onChangeParam(feature.id, "flip", e.target.checked ? "true" : "false")}
+                />
+              </label>
+            </>
+          )}
         </div>
       ) : feature.type === "sketch" ? (
         <div className="sketch-params">

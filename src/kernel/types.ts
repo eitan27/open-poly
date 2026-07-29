@@ -135,7 +135,9 @@ export type ResolvedFeature =
   | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; extent: ExtrudeExtent; mode: ExtrudeMode; targetId?: string; upTo?: ResolvedUpToFace; previewTool?: boolean }
   // `edges` are persistent names; `edgeRefs` (parallel, when the doc has them)
   // carry the geometric fingerprints used to re-match renamed edges.
-  | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; edgeRefs?: ResolvedEdgeRef[]; size: number }
+  // `angle` (chamfer only, degrees from the reference face) is absent for a
+  // plain symmetric chamfer, so its content key matches a pre-angle document's.
+  | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; edgeRefs?: ResolvedEdgeRef[]; size: number; angle?: number; flip?: boolean }
   // A boolean combines existing bodies (by id) from the running set.
   | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
   // A rigid transform moves a body (by id) — translate + rotate. `copy` keeps

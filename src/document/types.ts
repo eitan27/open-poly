@@ -304,6 +304,13 @@ export interface DressUpFeature extends FeatureBase {
   edgeRefs?: EdgeRef[];
   /** Chamfer distance / fillet radius, as an expression string. */
   size: string;
+  /** Chamfer only: the bevel angle in degrees, measured from the reference face
+   *  (the face `size` runs along). 45 is the symmetric chamfer; absent ⇒ 45,
+   *  which is what documents written before this field always produced. */
+  angle?: string;
+  /** Chamfer only: take the OTHER of the edge's two adjacent faces as the
+   *  reference for `size`/`angle`. No effect at 45° (the bevel is symmetric). */
+  flip?: boolean;
 }
 
 /** How a reference plane is placed. Older documents stored only offset planes and

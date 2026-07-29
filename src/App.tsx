@@ -92,7 +92,7 @@ import { measureSelection } from "./selection/measure";
 import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, worldToUv, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
 import { DEFAULT_SECTION_VIEW, type SectionViewState } from "./document/sectionView";
 import { evaluateExpression } from "./document/expression";
-import { validateDressUpSize, mapDressUpKernelError } from "./document/dressUpValidation";
+import { validateDressUpSize, validateDressUpAngle, mapDressUpKernelError } from "./document/dressUpValidation";
 import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS, featureTypeLabel } from "./document/featureDefs";
 import {
@@ -1328,7 +1328,9 @@ export default function App() {
   const [revolvePreview, setRevolvePreview] = useState<FeatureMesh["mesh"] | null>(null);
   const [revolvePreviewError, setRevolvePreviewError] = useState<string | null>(null);
   const [dressUpDialog, setDressUpDialog] = useState<
-    { op: "chamfer" | "fillet"; size: string; x: number; y: number; editId?: string } | null
+    // `angle`/`flip` are chamfer-only (degrees from the reference face, and
+    // which adjacent face that is); they're ignored when the op is a fillet.
+    { op: "chamfer" | "fillet"; size: string; angle: string; flip: boolean; x: number; y: number; editId?: string } | null
   >(null);
   // Validation for the chamfer/fillet dialog: a human-readable message when the
   // current size is unsatisfiable (e.g. a fillet radius larger than the
@@ -2982,18 +2984,19 @@ export default function App() {
     if (!dressUpTarget) return;
     const s = (dressUpTarget.anchor && viewApiRef.current?.worldToScreen(dressUpTarget.anchor)) || { x: 240, y: 160 };
     setDressUpError(null);
-    setDressUpDialog({ op, size: "2", x: s.x, y: s.y });
+    setDressUpDialog({ op, size: "2", angle: "45", flip: false, x: s.x, y: s.y });
   };
 
-  // Re-open the chamfer/fillet dialog to edit in place. Seeds op + size from the
-  // feature; its edges stay referenced (re-pick by clicking edges on the body).
+  // Re-open the chamfer/fillet dialog to edit in place. Seeds op + size + angle
+  // from the feature; its edges stay referenced (re-pick by clicking edges on
+  // the body). A feature with no stored angle is a symmetric 45° chamfer.
   const editDressUp = (id: string) => {
     const f = doc.features.find((x) => x.id === id);
     if (f?.type !== "dressup") return;
     beginEdit(f);
     selectFeature(id);
     setDressUpError(null);
-    setDressUpDialog({ op: f.op, size: f.size, x: 240, y: 160, editId: id });
+    setDressUpDialog({ op: f.op, size: f.size, angle: f.angle ?? "45", flip: f.flip ?? false, x: 240, y: 160, editId: id });
   };
   const closeDressUpDialog = () => {
     setDressUpDialog(null);
@@ -3012,33 +3015,55 @@ export default function App() {
       : null;
   }, [dressUpDialog, dressUpTarget, doc]);
 
+  // The document-level spec the dialog's current inputs describe. Angle/flip
+  // ride along for chamfers only — a fillet has no bevel to tilt.
+  const dressUpSpec = (t: NonNullable<typeof dressUpDialogTarget>, d: NonNullable<typeof dressUpDialog>) => ({
+    op: d.op,
+    targetId: t.targetId,
+    edges: t.edges,
+    size: d.size,
+    edgeRefs: t.edgeRefs,
+    ...(d.op === "chamfer" ? { angle: d.angle, flip: d.flip } : {}),
+  });
+
+  // Both size and (for a chamfer) angle must resolve before anything is built.
+  const validateDressUpDialog = (d: NonNullable<typeof dressUpDialog>) => {
+    const sv = validateDressUpSize(d.size, resolved.scope, d.op);
+    if (sv.value === null) return sv;
+    if (d.op !== "chamfer") return sv;
+    const av = validateDressUpAngle(d.angle, resolved.scope);
+    return av.value === null ? av : sv;
+  };
+
   // Add a new dress-up, or (editing) update the existing one in place — shared by
   // the commit and the live-validation effect so both build the same doc.
   const applyDressUp = (base: Document, t: NonNullable<typeof dressUpDialogTarget>, d: NonNullable<typeof dressUpDialog>) =>
     d.editId
-      ? { doc: updateDressUp(base, d.editId, { op: d.op, targetId: t.targetId, edges: t.edges, size: d.size, edgeRefs: t.edgeRefs }), id: d.editId }
-      : addDressUp(base, d.op, t.targetId, t.edges, d.size, t.edgeRefs);
+      ? { doc: updateDressUp(base, d.editId, dressUpSpec(t, d)), id: d.editId }
+      : addDressUp(base, d.op, t.targetId, t.edges, d.size, t.edgeRefs, d.op === "chamfer" ? d.angle : undefined, d.op === "chamfer" && d.flip);
 
-  // Live-preview a chamfer/fillet edit: apply the new size/edges to the real
-  // feature as they change (skipping empty/invalid sizes). The existing async
-  // validation effect still surfaces an unsatisfiable radius as `dressUpError`.
+  // Live-preview a chamfer/fillet edit: apply the new size/angle/edges to the
+  // real feature as they change (skipping empty/invalid inputs). The existing
+  // async validation effect still surfaces an unsatisfiable radius as
+  // `dressUpError`.
   useEffect(() => {
     const d = dressUpDialog;
     const t = dressUpDialogTarget;
     if (!d?.editId || !t) return;
-    if (validateDressUpSize(d.size, resolved.scope, d.op).value === null) return;
-    const spec = { op: d.op, targetId: t.targetId, edges: t.edges, size: d.size, edgeRefs: t.edgeRefs };
+    if (validateDressUpDialog(d).value === null) return;
+    const spec = dressUpSpec(t, d);
     if (!shouldLiveApply(JSON.stringify({ e: d.editId, spec }))) return;
     setDoc((prev) => updateDressUp(prev, d.editId!, spec), `edit:${d.editId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dressUpDialog?.editId, dressUpDialog?.size, dressUpDialog?.op, dressUpDialogTarget]);
+  }, [dressUpDialog?.editId, dressUpDialog?.size, dressUpDialog?.angle, dressUpDialog?.flip, dressUpDialog?.op, dressUpDialogTarget]);
 
   const createDressUp = async () => {
     if (!dressUpDialogTarget || !dressUpDialog) return;
-    // Synchronous gate first: an empty/garbage/≤0 size never reaches the kernel.
-    // Empty is silently ignored (no error, just a no-op); anything invalid keeps
-    // the dialog open with its message.
-    const sv = validateDressUpSize(dressUpDialog.size, resolved.scope, dressUpDialog.op);
+    // Synchronous gate first: an empty/garbage/≤0 size (or an out-of-range
+    // chamfer angle) never reaches the kernel. Empty is silently ignored (no
+    // error, just a no-op); anything invalid keeps the dialog open with its
+    // message.
+    const sv = validateDressUpDialog(dressUpDialog);
     if (sv.value === null) {
       setDressUpError(null);
       return;
@@ -3085,7 +3110,7 @@ export default function App() {
       setDressUpError(null);
       return;
     }
-    const sv = validateDressUpSize(dressUpDialog.size, resolved.scope, dressUpDialog.op);
+    const sv = validateDressUpDialog(dressUpDialog);
     if (sv.value === null) {
       // Empty/invalid/≤0 — surfaced synchronously in the dialog; clear any stale
       // geometry error and don't build.
@@ -7061,7 +7086,7 @@ export default function App() {
             // Synchronous validation (empty / unparseable / ≤ 0) is instant and
             // kernel-free; the async geometry error (size too big) lives in
             // `dressUpError`. Show whichever applies; empty stays silent.
-            const sv = validateDressUpSize(dressUpDialog.size, resolved.scope, dressUpDialog.op);
+            const sv = validateDressUpDialog(dressUpDialog);
             const message = sv.value === null ? sv.error : dressUpError;
             const disabled = sv.value === null || !!dressUpError;
             return (
@@ -7082,6 +7107,33 @@ export default function App() {
                     }}
                   />
                 </label>
+                {/* Chamfer only: the bevel angle off the reference face (45° is
+                    the symmetric cut), and which of the edge's two adjacent
+                    faces that reference is. Flip does nothing at 45°. */}
+                {dressUpDialog.op === "chamfer" && (
+                  <>
+                    <label className="ed-field">
+                      <span>Angle (°)</span>
+                      <input
+                        value={dressUpDialog.angle}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onChange={(e) => setDressUpDialog((d) => (d ? { ...d, angle: e.target.value } : d))}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") createDressUp();
+                          else if (e.key === "Escape") closeDressUpDialog();
+                        }}
+                      />
+                    </label>
+                    <label className="ed-field ed-flip" title="Measure the distance and angle from the edge's other face">
+                      <span>Flip angle</span>
+                      <input
+                        type="checkbox"
+                        checked={dressUpDialog.flip}
+                        onChange={(e) => setDressUpDialog((d) => (d ? { ...d, flip: e.target.checked } : d))}
+                      />
+                    </label>
+                  </>
+                )}
                 {message && <p className="ed-warning">{message}</p>}
                 <div className="ed-actions">
                   <button className="ed-primary" onClick={createDressUp} disabled={disabled}>{dressUpDialog.editId ? "Done" : "Create"}</button>

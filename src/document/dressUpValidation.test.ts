@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateDressUpSize, mapDressUpKernelError } from "./dressUpValidation";
+import { validateDressUpSize, validateDressUpAngle, mapDressUpKernelError } from "./dressUpValidation";
 
 const scope = { wall: 4, gap: 0 };
 
@@ -50,6 +50,38 @@ describe("validateDressUpSize — sync scenarios", () => {
     const r = validateDressUpSize("5$", scope, "fillet");
     expect(r.value).toBeNull();
     expect(r.error).toBe('Unexpected character "$"');
+  });
+});
+
+describe("validateDressUpAngle — chamfer bevel angle", () => {
+  it("empty field: no error, no value (button disabled, nothing sent to kernel)", () => {
+    expect(validateDressUpAngle("", scope)).toEqual({ error: null, value: null });
+    expect(validateDressUpAngle("   ", scope)).toEqual({ error: null, value: null });
+  });
+
+  it("the default 45 and other in-range angles resolve", () => {
+    expect(validateDressUpAngle("45", scope)).toEqual({ error: null, value: 45 });
+    expect(validateDressUpAngle("30", scope)).toEqual({ error: null, value: 30 });
+    expect(validateDressUpAngle("89.9", scope)).toEqual({ error: null, value: 89.9 });
+  });
+
+  it("resolves an expression against the document's variables", () => {
+    expect(validateDressUpAngle("wall*10", scope)).toEqual({ error: null, value: 40 });
+  });
+
+  it("rejects angles outside the open 0..90 range (a bevel must leave both faces)", () => {
+    for (const bad of ["0", "-10", "90", "120"]) {
+      expect(validateDressUpAngle(bad, scope)).toEqual({
+        error: "Angle must be between 0 and 90°.",
+        value: null,
+      });
+    }
+  });
+
+  it("keeps the parser's wording for an unparseable angle", () => {
+    const r = validateDressUpAngle("asdf", scope);
+    expect(r.value).toBeNull();
+    expect(r.error).toBe('Unknown variable "asdf"');
   });
 });
 

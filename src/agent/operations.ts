@@ -392,6 +392,12 @@ export const operationSchema = z.discriminatedUnion("op", [
     /** Persistent edge names from the scene summary. */
     edges: z.array(z.string()).min(1),
     size: expr.optional(),
+    /** Chamfer only: bevel angle in degrees (0 < angle < 90), measured from the
+     *  reference face that `size` runs along. Defaults to 45 (symmetric). */
+    angle: expr.optional(),
+    /** Chamfer only: measure `size`/`angle` from the edge's OTHER adjacent
+     *  face. No effect at 45°. */
+    flip: z.boolean().optional(),
   }),
   z.object({
     op: z.literal("setParam"),

@@ -1319,9 +1319,39 @@ function resolveDressUpEdges(
   return { hits, lost };
 }
 
+/** The reference face for an angled chamfer: one of the (≤2) faces meeting at
+ *  `edge`, picked deterministically so the bevel doesn't flip side between
+ *  regens. Faces are ordered by their PERSISTENT name (the same names the rest
+ *  of the document references), unnamed ones last and broken by hashCode;
+ *  `flip` takes the second one. Returns null when the edge has no adjacent face
+ *  in `adj` (so the caller can fall back to a symmetric chamfer). */
+function chamferRefFace(
+  adj: Map<number, Face[]>,
+  names: Map<number, string>,
+  edge: Edge,
+  flip: boolean,
+): Face | null {
+  const faces = adj.get(edge.hashCode);
+  if (!faces || faces.length === 0) return null;
+  const ordered = [...faces].sort((a, b) => {
+    const na = names.get(a.hashCode);
+    const nb = names.get(b.hashCode);
+    if (na !== nb) {
+      if (na === undefined) return 1;
+      if (nb === undefined) return -1;
+      return na < nb ? -1 : 1;
+    }
+    return a.hashCode - b.hashCode;
+  });
+  return ordered[flip && ordered.length > 1 ? 1 : 0];
+}
+
 /** Chamfer or fillet the named edges of a body, propagating face names through
  *  the operation's history (modified faces keep their names; the new bevel/round
- *  faces are named after the feature). Modifies geometry; returns a NamedShape. */
+ *  faces are named after the feature). Modifies geometry; returns a NamedShape.
+ *  `angle` (chamfer only, degrees) bevels asymmetrically: `size` is measured on
+ *  the reference face and the bevel leaves it at `angle`. Undefined — and 45,
+ *  which is the same cut — uses OCCT's plain symmetric chamfer instead. */
 function dressUpNamed(
   op: "chamfer" | "fillet",
   target: Body,
@@ -1330,6 +1360,8 @@ function dressUpNamed(
   size: number,
   id: string,
   warn?: Warn,
+  angle?: number,
+  flip?: boolean,
 ): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
@@ -1349,9 +1381,24 @@ function dressUpNamed(
       ? new oc.BRepFilletAPI_MakeFillet(target.shape.wrapped, oc.ChFi3d_FilletShape.ChFi3d_Rational)
       : new oc.BRepFilletAPI_MakeChamfer(target.shape.wrapped);
 
+  // An angled chamfer needs a reference face per edge; 45° is exactly the
+  // symmetric chamfer, so it keeps the simpler (and better-trodden) Add path.
+  const angled = op === "chamfer" && angle !== undefined && Math.abs(angle - 45) > 1e-9;
+  const adj = new Map<number, Face[]>();
+  if (angled) {
+    for (const f of target.shape.faces) {
+      for (const e of f.edges) {
+        const arr = adj.get(e.hashCode);
+        if (arr) arr.push(f); else adj.set(e.hashCode, [f]);
+      }
+    }
+  }
+
   const dressed: Topo[] = [];
   for (const e of hits) {
-    builder.Add_2(size, e.wrapped);
+    const ref = angled ? chamferRefFace(adj, target.names, e, flip ?? false) : null;
+    if (ref) builder.AddDA(size, (angle! * Math.PI) / 180, e.wrapped, ref.wrapped);
+    else builder.Add_2(size, e.wrapped);
     dressed.push(e.wrapped);
   }
   const progress = new oc.Message_ProgressRange_1();
@@ -1872,7 +1919,7 @@ function buildBodies(
       } else if (feature.type === "dressup") {
         // Chamfer/fillet modifies the target body in place, keeping its id.
         const target = requireBody(bodies, feature.targetId);
-        const res = dressUpNamed(feature.op, target, feature.edges, feature.edgeRefs, feature.size, feature.id, warn);
+        const res = dressUpNamed(feature.op, target, feature.edges, feature.edgeRefs, feature.size, feature.id, warn, feature.angle, feature.flip);
         target.shape.delete();
         target.shape = res.shape;
         target.names = res.names;

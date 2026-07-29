@@ -207,6 +207,8 @@ export function addDressUp(
   edges: string[],
   size = "2",
   edgeRefs?: EdgeRef[],
+  angle?: string,
+  flip?: boolean,
 ): { doc: Document; id: string } {
   const label = op === "chamfer" ? "Chamfer" : "Fillet";
   const ordinal = doc.features.filter((f) => f.type === "dressup" && f.op === op).length + 1;
@@ -220,6 +222,10 @@ export function addDressUp(
     edges,
     edgeRefs,
     size,
+    // Angle/flip are chamfer-only; a fillet never carries them, and `flip` is
+    // stored only when set so the common case stays field-free.
+    ...(op === "chamfer" && angle !== undefined ? { angle } : {}),
+    ...(op === "chamfer" && flip ? { flip: true } : {}),
   };
   return insertFeature(doc, feature);
 }
@@ -457,11 +463,30 @@ export function updateBoolean(doc: Document, id: string, op: BooleanOp, operands
 export function updateDressUp(
   doc: Document,
   id: string,
-  spec: { op: "chamfer" | "fillet"; targetId: string; edges: string[]; size: string; edgeRefs?: EdgeRef[] },
+  spec: {
+    op: "chamfer" | "fillet";
+    targetId: string;
+    edges: string[];
+    size: string;
+    edgeRefs?: EdgeRef[];
+    angle?: string;
+    flip?: boolean;
+  },
 ): Document {
   return mapFeature(doc, id, (f) =>
     f.type === "dressup"
-      ? { ...f, op: spec.op, targetId: spec.targetId, edges: spec.edges, edgeRefs: spec.edgeRefs, size: spec.size }
+      ? {
+          ...f,
+          op: spec.op,
+          targetId: spec.targetId,
+          edges: spec.edges,
+          edgeRefs: spec.edgeRefs,
+          size: spec.size,
+          // Switching to a fillet drops the chamfer-only angle rather than
+          // leaving a stale one to reappear if it's switched back.
+          angle: spec.op === "chamfer" ? spec.angle : undefined,
+          flip: spec.op === "chamfer" && spec.flip ? true : undefined,
+        }
       : f,
   );
 }
@@ -758,7 +783,12 @@ export function updateParam(
         return { ...f, mode: value, extent };
       }
     }
-    if (f.type === "dressup" && name === "size") return { ...f, size: value };
+    if (f.type === "dressup") {
+      if (name === "size") return { ...f, size: value };
+      // Angle/flip only mean anything on a chamfer; a fillet ignores them.
+      if (name === "angle" && f.op === "chamfer") return { ...f, angle: value };
+      if (name === "flip" && f.op === "chamfer") return { ...f, flip: value === "true" };
+    }
     if (f.type === "revolve" && name === "angle") return { ...f, angle: value };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
     if (f.type === "plane" && name === "angle") return { ...f, angle: value };
@@ -1005,6 +1035,15 @@ export function resolveDocument(doc: Document): ResolveResult {
             : undefined;
         features.push({ id: f.id, type: "extrude", profile, distance, flip: f.flip, extent: f.extent ?? "blind", mode: f.mode, targetId: f.targetId, upTo });
       } else if (f.type === "dressup") {
+        // A chamfer angle is optional (and fillets have none): leave it off the
+        // resolved feature entirely when unset, so an unangled chamfer keeps the
+        // same kernel content key it had before the field existed.
+        const angled = f.op === "chamfer" && f.angle !== undefined && f.angle.trim() !== "";
+        const angle = angled ? evaluateExpression(f.angle!, scope) : undefined;
+        // OCCT can only cut a bevel that leaves both adjacent faces.
+        if (angle !== undefined && (angle <= 0 || angle >= 90)) {
+          throw new Error("Chamfer angle must be between 0 and 90°.");
+        }
         features.push({
           id: f.id,
           type: "dressup",
@@ -1013,6 +1052,8 @@ export function resolveDocument(doc: Document): ResolveResult {
           edges: f.edges,
           edgeRefs: f.edgeRefs,
           size: evaluateExpression(f.size, scope),
+          ...(angle !== undefined ? { angle } : {}),
+          ...(angle !== undefined && f.flip ? { flip: true } : {}),
         });
       } else if (f.type === "boolean") {
         if (f.operands.length < 2) throw new Error("A boolean needs at least two operands.");

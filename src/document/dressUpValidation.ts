@@ -29,6 +29,24 @@ export function validateDressUpSize(
   return { error: null, value };
 }
 
+/** Synchronous, kernel-free validation of the chamfer angle field (degrees from
+ *  the reference face). Mirrors `validateDressUpSize`: an empty field is
+ *  errorless with a null value (the button is disabled, nothing is built), and a
+ *  parse failure keeps the parser's wording. OCCT can only build a bevel that
+ *  actually leaves both faces, so the angle must be strictly between 0 and 90. */
+export function validateDressUpAngle(angle: string, scope: Scope): { error: string | null; value: number | null } {
+  if (angle.trim() === "") return { error: null, value: null };
+  let value: number;
+  try {
+    value = evaluateExpression(angle, scope);
+  } catch (e) {
+    const msg = String((e as Error)?.message ?? e).replace(/^Unknown name /, "Unknown variable ");
+    return { error: msg, value: null };
+  }
+  if (value <= 0 || value >= 90) return { error: "Angle must be between 0 and 90°.", value: null };
+  return { error: null, value };
+}
+
 /** Translate a kernel/OCCT build failure for a *valid positive* chamfer/fillet
  *  size into actionable copy. A raw OCCT exception (a decoded type name + heap
  *  pointer) is meaningless to users; for a size that parsed fine, the failure is
