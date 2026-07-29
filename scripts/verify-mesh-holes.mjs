@@ -8,14 +8,22 @@
 // cylinder's top (its curved wall lies exactly on the cylinder's) and chamfer
 // the concave edge underneath.
 //
-// The assertion is face accounting, not pixels. Every face of the shape must end
-// up with triangles in the mesh, and that is exactly what "no holes" means —
-// where a pixel count has to be argued down past edge lines, grid lines and the
-// silhouette. The worker logs both outcomes with stable prefixes:
-//     "mesh: recovered N dropped face(s) on <id>"   — the patch fired
-//     "mesh: UNMESHED N face(s) on <id>"            — a hole survives
-// So the run proves BOTH halves: that the defect is real and reproduced here
-// (something had to be recovered), and that none of it is left over.
+// The same faces cause a second, subtler symptom. Whether a seam is drawn as a
+// crease or hidden as a smooth facet join is decided by comparing the normals of
+// the two faces meeting at it — and a face whose normal can't be evaluated drops
+// out of that walk entirely, so every seam around it is drawn. That is the black
+// line down an otherwise smooth cylinder wall.
+//
+// Both are asserted through counting, not pixels: "every face has triangles" and
+// "every face has a normal" ARE the properties, where a pixel count has to be
+// argued down past edge lines, grid lines and the silhouette. The worker logs
+// each outcome with a stable prefix:
+//     "mesh: recovered N dropped face(s) on <id>"        — the mesh patch fired
+//     "mesh: UNMESHED N face(s) on <id>"                 — a hole survives
+//     "mesh: N face normal(s) via boundary fallback"     — the normal patch fired
+//     "mesh: NORMALLESS N face(s) on <id>"               — a false crease survives
+// So the run proves BOTH halves of each: that the defect is real and reproduced
+// here (something had to be recovered), and that none of it is left over.
 import { chromium } from "playwright";
 
 const URL = process.env.URL ?? "http://localhost:5175/";
@@ -26,13 +34,25 @@ page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
 
 const recovered = [];
 const unmeshed = [];
+const fallbackNormals = [];
+const normalless = [];
 page.on("console", (m) => {
   const t = m.text();
   const rec = /mesh: recovered (\d+) dropped face/.exec(t);
   if (rec) recovered.push(Number(rec[1]));
   const bad = /mesh: UNMESHED (\d+) face/.exec(t);
   if (bad) unmeshed.push(Number(bad[1]));
+  const fb = /mesh: (\d+) face normal\(s\) via boundary fallback/.exec(t);
+  if (fb) fallbackNormals.push(Number(fb[1]));
+  const nn = /mesh: NORMALLESS (\d+) face/.exec(t);
+  if (nn) normalless.push(Number(nn[1]));
 });
+const resetCounters = () => {
+  recovered.length = 0;
+  unmeshed.length = 0;
+  fallbackNormals.length = 0;
+  normalless.length = 0;
+};
 
 await page.goto(URL, { waitUntil: "domcontentloaded" });
 await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
@@ -74,7 +94,7 @@ const body = scene.bodies.find((b) => b.id === solid.createdId) ?? scene.bodies[
 const concave = (body?.edges ?? []).filter((e) => e.includes(`${cyl.createdId}/+z`) && e.includes(`${blk.createdId}/-y`));
 check("the concave edge is named", concave.length === 1, `${concave.length} edges`);
 
-recovered.length = 0;
+resetCounters();
 const ch = await apply({ op: "dressUp", kind: "chamfer", targetId: body.id, edges: concave, size: "2" });
 check("chamfer created", ch.ok, JSON.stringify(ch).slice(0, 160));
 await waitIdle();
@@ -85,6 +105,16 @@ check(
   `${sum(recovered)} face(s) had to be re-meshed one at a time`,
 );
 check("…and every one of them was recovered", unmeshed.length === 0, `${sum(unmeshed)} left unmeshed`);
+// Not asserted: that the boundary fallback FIRES. It doesn't here — normalAt
+// copes with these faces even though the mesher won't touch them, so the
+// fallback is pure defence. What is asserted is the invariant it protects: a
+// face with no normal at all drops out of the crease walk, and every seam
+// around it is then drawn as a hard crease.
+check(
+  "every face ends up with a normal, so no seam draws as a false crease",
+  normalless.length === 0,
+  `${sum(normalless)} face(s) left normalless`,
+);
 await apply({ op: "select", refs: [] });
 await page.waitForTimeout(500);
 await page.screenshot({ path: "/tmp/openpoly-mesh-holes-chamfered.png" });
@@ -92,27 +122,26 @@ await page.screenshot({ path: "/tmp/openpoly-mesh-holes-chamfered.png" });
 // Which faces defeat the mesher depends on how the chamfer trims the slivers, so
 // one size proves little on its own.
 for (const size of ["1", "4", "6"]) {
-  unmeshed.length = 0;
-  recovered.length = 0;
+  resetCounters();
   await apply({ op: "setParam", featureId: ch.createdId, name: "size", value: size });
   await waitIdle();
   check(
-    `no holes at size ${size}`,
-    unmeshed.length === 0,
-    `${sum(unmeshed)} unmeshed, ${sum(recovered)} recovered`,
+    `no holes and no false seams at size ${size}`,
+    unmeshed.length === 0 && normalless.length === 0,
+    `${sum(unmeshed)} unmeshed, ${sum(recovered)} recovered, ${sum(normalless)} normalless`,
   );
 }
 
 // A plain body must be untouched by any of this: nothing to recover, nothing
 // lost. Catches the patch firing spuriously and bloating ordinary meshes.
-unmeshed.length = 0;
-recovered.length = 0;
+resetCounters();
 await apply({ op: "newDocument", name: "plain" });
 await waitIdle();
 await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: 20, height: 40 } });
 await waitIdle();
-check("an ordinary body needs no patching at all", recovered.length === 0 && unmeshed.length === 0,
-  `${sum(recovered)} recovered, ${sum(unmeshed)} unmeshed`);
+check("an ordinary body needs no patching at all",
+  recovered.length === 0 && unmeshed.length === 0 && fallbackNormals.length === 0 && normalless.length === 0,
+  `${sum(recovered)} recovered, ${sum(unmeshed)} unmeshed, ${sum(fallbackNormals)} fallback normals`);
 
 await page.screenshot({ path: "/tmp/openpoly-mesh-holes.png" });
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);

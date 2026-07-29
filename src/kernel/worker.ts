@@ -2256,6 +2256,52 @@ function meshFaceByFace(
   return { triangles, vertices: fillF(vChunks), normals: fillF(nChunks), faceGroups };
 }
 
+/** How faces fared in an adjacency walk: how many needed the boundary fallback
+ *  for their normal, and how many yielded none at all. A face with no normal is
+ *  invisible to the crease test, so its seams get drawn as hard creases — worth
+ *  reporting rather than swallowing. */
+type FaceNormalStats = { fallback: number; unknown: number };
+
+/** A face's outward normal. `normalAt(center)` is authoritative but throws on
+ *  exactly the faces a boolean over tangent surfaces leaves behind — the centre
+ *  of a trimmed face need not lie on it, and a face with inconsistent 2D curves
+ *  can't be evaluated at all. Those faces then vanish from every adjacency walk
+ *  that skips what it can't evaluate, and their seams get drawn as hard creases:
+ *  a black line down an otherwise smooth wall. So fall back to Newell's normal
+ *  over the boundary ring, which needs only the 3D edges. Null when even that is
+ *  degenerate. */
+function faceOutwardNormal(f: Face, stats?: FaceNormalStats): V3 | null {
+  try {
+    return vunit(f.normalAt(f.center).normalized().toTuple() as V3);
+  } catch { /* fall through to the boundary */ }
+  if (stats) stats.fallback++;
+  try {
+    const wires = f.wires;
+    if (wires.length === 0) return null;
+    const ring = chainWirePoints(wires[0].edges);
+    if (ring.length < 3) return null;
+    let nx = 0, ny = 0, nz = 0;
+    for (let i = 0; i < ring.length; i++) {
+      const p = ring[i], q = ring[(i + 1) % ring.length];
+      nx += (p[1] - q[1]) * (p[2] + q[2]);
+      ny += (p[2] - q[2]) * (p[0] + q[0]);
+      nz += (p[0] - q[0]) * (p[1] + q[1]);
+    }
+    const len = Math.hypot(nx, ny, nz);
+    if (len < 1e-12) return null;
+    // Newell follows the wire's winding, which is the face's natural normal; a
+    // REVERSED face points the other way.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const oc = getOC() as any;
+    const flip = f.wrapped.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
+    const s = (flip ? -1 : 1) / len;
+    return [nx * s, ny * s, nz * s];
+  } catch {
+    if (stats) { stats.fallback--; stats.unknown++; }
+    return null;
+  }
+}
+
 /** Ear-clip a simple 2D polygon into triangles (indices into `poly`). Assumes
  *  counter-clockwise winding and no holes — the caller arranges both. Skips ears
  *  that would be degenerate, and bails out rather than looping forever on input
@@ -2306,40 +2352,44 @@ function earClip(poly: [number, number][]): [number, number, number][] {
  *  The 3D edges are perfectly good, though, so the boundary is chained into a
  *  ring, fitted to its own best-fit plane, and ear-clipped in 2D.
  *
+ *  `snap` pulls each boundary point onto a vertex the rest of the mesh already
+ *  has there, when one is close enough. That matters for more than tidiness: our
+ *  own sampling of the boundary is finer than the mesher's, so an unsnapped patch
+ *  meets its neighbours along a slightly different polyline — which shows up as a
+ *  notch where the two disagree, and as a shading seam, because the pass that
+ *  averages normals across a smooth surface matches vertices by exact position
+ *  and so never blends the patch with the wall around it.
+ *
  *  Single-wire faces only: a planar face with holes would need the rings bridged,
  *  and every case seen in practice here is a sliver with one boundary. Returns
  *  null if the face isn't planar, has holes, or the ring doesn't close. */
 function triangulatePlanarFace(
   face: Face,
   nodeOffset: number,
+  snap: (p: V3) => V3 = (p) => p,
 ): { vertices: number[]; trianglesIndexes: number[]; verticesNormals: number[] } | null {
   if (face.geomType !== "PLANE") return null;
   let wires: { edges: Edge[] }[];
   try { wires = face.wires; } catch { return null; }
   if (wires.length !== 1) return null;
-  const ring = chainWirePoints(wires[0].edges);
+  const chained = chainWirePoints(wires[0].edges).map(snap);
+  // Snapping can land neighbouring samples on the same existing vertex; collapse
+  // the duplicates or ear clipping sees zero-length edges.
+  const ring: V3[] = [];
+  for (const p of chained) {
+    const last = ring[ring.length - 1];
+    if (last && Math.hypot(p[0] - last[0], p[1] - last[1], p[2] - last[2]) < 1e-9) continue;
+    ring.push(p);
+  }
+  while (ring.length > 1) {
+    const a = ring[0], b = ring[ring.length - 1];
+    if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) >= 1e-9) break;
+    ring.pop();
+  }
   if (ring.length < 3) return null;
 
-  // Newell's method: the area-weighted normal of the ring, which is exact for a
-  // planar loop and stable however the points are distributed around it.
-  let nx = 0, ny = 0, nz = 0;
-  for (let i = 0; i < ring.length; i++) {
-    const p = ring[i], q = ring[(i + 1) % ring.length];
-    nx += (p[1] - q[1]) * (p[2] + q[2]);
-    ny += (p[2] - q[2]) * (p[0] + q[0]);
-    nz += (p[0] - q[0]) * (p[1] + q[1]);
-  }
-  const len = Math.hypot(nx, ny, nz);
-  if (len < 1e-12) return null; // degenerate: no area to draw
-  let n: V3 = [nx / len, ny / len, nz / len];
-
-  // Orient outward, so shading matches the neighbouring faces. The face's own
-  // normal is authoritative when OCCT will give it; the ring's winding is only a
-  // fallback, and on a face this broken it can point either way.
-  try {
-    const own = vunit(face.normalAt(face.center).normalized().toTuple() as V3);
-    if (v3dot(own, n) < 0) n = [-n[0], -n[1], -n[2]];
-  } catch { /* keep Newell's orientation */ }
+  const n = faceOutwardNormal(face);
+  if (!n) return null; // degenerate: no area to draw
 
   // A 2D basis in the plane, u chosen against the world axis least aligned with
   // the normal so the cross product is well conditioned.
@@ -2446,10 +2496,10 @@ function faceTriangulation(
     } catch { /* keep the +Z fallback */ }
     // TopAbs_REVERSED === 1: the face's outward direction is the surface's
     // reversed, exactly as replicad's own mesh path treats it.
-    const flip = face.Orientation() === oc.TopAbs_Orientation.TopAbs_REVERSED;
+    const flip = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
     for (let i = 0; i < nbNodes; i++) verticesNormals.push(flip ? -nx : nx, flip ? -ny : ny, flip ? -nz : nz);
   }
-  const reversed = face.Orientation() === oc.TopAbs_Orientation.TopAbs_REVERSED;
+  const reversed = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
   const trianglesIndexes: number[] = [];
   for (let i = 1; i <= nbTris; i++) {
     const t = tri.Triangle(i);
@@ -2503,6 +2553,32 @@ function patchMissingFaces(shape: Shape3D, meshed: MeshedFaces): { recovered: nu
   const vertices = meshed.vertices;
   const triangles = meshed.triangles;
   const normals = Array.isArray(meshed.normals) ? meshed.normals : null;
+
+  // A hash grid over the vertices the mesher DID produce, so a hand-tessellated
+  // patch can land its boundary exactly on the points its neighbours already use
+  // (see triangulatePlanarFace). Built once from the pre-patch buffer; patches
+  // don't snap to each other, which keeps the result independent of face order.
+  const CELL = 0.2, SNAP = 0.05; // mm: grid pitch, and the radius to snap within
+  const grid = new Map<string, number[]>();
+  const cellKey = (x: number, y: number, z: number) =>
+    `${Math.floor(x / CELL)},${Math.floor(y / CELL)},${Math.floor(z / CELL)}`;
+  for (let i = 0; i < vertices.length; i += 3) {
+    const k = cellKey(vertices[i], vertices[i + 1], vertices[i + 2]);
+    const arr = grid.get(k);
+    if (arr) arr.push(i); else grid.set(k, [i]);
+  }
+  const snap = (p: V3): V3 => {
+    let best = -1, bestD = SNAP * SNAP;
+    const cx = Math.floor(p[0] / CELL), cy = Math.floor(p[1] / CELL), cz = Math.floor(p[2] / CELL);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+      for (const i of grid.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? []) {
+        const d = (vertices[i] - p[0]) ** 2 + (vertices[i + 1] - p[1]) ** 2 + (vertices[i + 2] - p[2]) ** 2;
+        if (d < bestD) { bestD = d; best = i; }
+      }
+    }
+    return best < 0 ? p : [vertices[best], vertices[best + 1], vertices[best + 2]];
+  };
+
   type Tri = { vertices: number[]; trianglesIndexes: number[]; verticesNormals: number[] };
   const append = (face: Face, tri: Tri) => {
     faceGroups.push({ start: triangles.length, count: tri.trianglesIndexes.length, faceId: face.hashCode });
@@ -2555,7 +2631,7 @@ function patchMissingFaces(shape: Shape3D, meshed: MeshedFaces): { recovered: nu
     // Tessellate it ourselves from the 3D boundary, bypassing BRepMesh entirely.
     if (!done) {
       try {
-        const tri = triangulatePlanarFace(face, vertices.length / 3);
+        const tri = triangulatePlanarFace(face, vertices.length / 3, snap);
         if (tri && tri.trianglesIndexes.length > 0) { append(face, tri); done = true; }
       } catch { /* nothing left to try; the caller reports it */ }
     }
@@ -2572,11 +2648,11 @@ const CREASE_DOT = Math.cos((22 * Math.PI) / 180);
 
 /** Edge hashCodes whose two adjacent faces meet below the crease angle (a facet
  *  seam / tangent blend). Same face-adjacency walk as edgeNamesFrom. */
-function smoothEdgeHashes(shape: Shape3D): Set<number> {
+function smoothEdgeHashes(shape: Shape3D, stats?: FaceNormalStats): Set<number> {
   const adj = new Map<number, V3[]>();
   for (const f of shape.faces) {
-    let n: V3;
-    try { n = vunit(f.normalAt(f.center).normalized().toTuple() as V3); } catch { continue; }
+    const n = faceOutwardNormal(f, stats);
+    if (!n) continue;
     for (const e of f.edges) {
       const arr = adj.get(e.hashCode);
       if (arr) arr.push(n); else adj.set(e.hashCode, [n]);
@@ -2608,8 +2684,8 @@ function faceClustersFrom(shape: Shape3D): Map<number, number> {
   // edge hash -> the (≤2) adjacent faces, each with its outward normal at centre.
   const adj = new Map<number, { h: number; n: V3 }[]>();
   for (const f of shape.faces) {
-    let n: V3;
-    try { n = vunit(f.normalAt(f.center).normalized().toTuple() as V3); } catch { continue; }
+    const n = faceOutwardNormal(f);
+    if (!n) continue;
     const fh = f.hashCode;
     if (!parent.has(fh)) parent.set(fh, fh);
     for (const e of f.edges) {
@@ -2788,7 +2864,14 @@ function regenerate(
           // and a translucent ghost gains nothing from smooth shading anyway.
           if (!b.preview) {
             smoothMeshNormals(faces);
-            edges = filterSmoothEdges(edges, smoothEdgeHashes(b.shape));
+            // A face the crease test can't get a normal for drops out of the
+            // adjacency walk, and every seam around it is then drawn as a hard
+            // crease — a black line down an otherwise smooth wall. Reported for
+            // the same reason as a hole: otherwise it's silent.
+            const nstats: FaceNormalStats = { fallback: 0, unknown: 0 };
+            edges = filterSmoothEdges(edges, smoothEdgeHashes(b.shape, nstats));
+            if (nstats.fallback) console.warn(`mesh: ${nstats.fallback} face normal(s) via boundary fallback on ${b.id}`);
+            if (nstats.unknown) console.warn(`mesh: NORMALLESS ${nstats.unknown} face(s) on ${b.id} — their seams draw as creases`);
           }
         }
         // Attach each face's / edge's persistent name (matched by build-local hash)
