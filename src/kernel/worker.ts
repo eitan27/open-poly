@@ -2256,6 +2256,314 @@ function meshFaceByFace(
   return { triangles, vertices: fillF(vChunks), normals: fillF(nChunks), faceGroups };
 }
 
+/** Ear-clip a simple 2D polygon into triangles (indices into `poly`). Assumes
+ *  counter-clockwise winding and no holes — the caller arranges both. Skips ears
+ *  that would be degenerate, and bails out rather than looping forever on input
+ *  it can't reduce, returning whatever it managed. */
+function earClip(poly: [number, number][]): [number, number, number][] {
+  const n = poly.length;
+  if (n < 3) return [];
+  const idx = poly.map((_, i) => i);
+  const cross = (o: number, a: number, b: number) =>
+    (poly[a][0] - poly[o][0]) * (poly[b][1] - poly[o][1]) - (poly[a][1] - poly[o][1]) * (poly[b][0] - poly[o][0]);
+  const inTriangle = (p: number, a: number, b: number, c: number) => {
+    const d1 = cross(a, b, p), d2 = cross(b, c, p), d3 = cross(c, a, p);
+    const neg = d1 < 0 || d2 < 0 || d3 < 0;
+    const pos = d1 > 0 || d2 > 0 || d3 > 0;
+    return !(neg && pos);
+  };
+  const out: [number, number, number][] = [];
+  let guard = n * n + 16;
+  while (idx.length > 3 && guard-- > 0) {
+    let clipped = false;
+    for (let i = 0; i < idx.length; i++) {
+      const a = idx[(i + idx.length - 1) % idx.length], b = idx[i], c = idx[(i + 1) % idx.length];
+      if (cross(a, b, c) <= 1e-12) continue; // reflex or collinear — not an ear
+      let empty = true;
+      for (const p of idx) {
+        if (p === a || p === b || p === c) continue;
+        if (inTriangle(p, a, b, c)) { empty = false; break; }
+      }
+      if (!empty) continue;
+      out.push([a, b, c]);
+      idx.splice(i, 1);
+      clipped = true;
+      break;
+    }
+    if (!clipped) break; // not a simple polygon; keep what we have
+  }
+  if (idx.length === 3) out.push([idx[0], idx[1], idx[2]]);
+  return out;
+}
+
+/** Tessellate a PLANAR face ourselves, from the 3D geometry of its boundary
+ *  edges. The last resort for a face OCCT's mesher won't touch.
+ *
+ *  BRepMesh works in a face's parametric space, so a planar face whose 2D curves
+ *  are inconsistent is unmeshable no matter the tolerance — and a boolean
+ *  between exactly tangent surfaces (a block as wide as the cylinder it sits on,
+ *  a semicircle extruded from a cylinder's own rim) produces precisely that.
+ *  The 3D edges are perfectly good, though, so the boundary is chained into a
+ *  ring, fitted to its own best-fit plane, and ear-clipped in 2D.
+ *
+ *  Single-wire faces only: a planar face with holes would need the rings bridged,
+ *  and every case seen in practice here is a sliver with one boundary. Returns
+ *  null if the face isn't planar, has holes, or the ring doesn't close. */
+function triangulatePlanarFace(
+  face: Face,
+  nodeOffset: number,
+): { vertices: number[]; trianglesIndexes: number[]; verticesNormals: number[] } | null {
+  if (face.geomType !== "PLANE") return null;
+  let wires: { edges: Edge[] }[];
+  try { wires = face.wires; } catch { return null; }
+  if (wires.length !== 1) return null;
+  const ring = chainWirePoints(wires[0].edges);
+  if (ring.length < 3) return null;
+
+  // Newell's method: the area-weighted normal of the ring, which is exact for a
+  // planar loop and stable however the points are distributed around it.
+  let nx = 0, ny = 0, nz = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const p = ring[i], q = ring[(i + 1) % ring.length];
+    nx += (p[1] - q[1]) * (p[2] + q[2]);
+    ny += (p[2] - q[2]) * (p[0] + q[0]);
+    nz += (p[0] - q[0]) * (p[1] + q[1]);
+  }
+  const len = Math.hypot(nx, ny, nz);
+  if (len < 1e-12) return null; // degenerate: no area to draw
+  let n: V3 = [nx / len, ny / len, nz / len];
+
+  // Orient outward, so shading matches the neighbouring faces. The face's own
+  // normal is authoritative when OCCT will give it; the ring's winding is only a
+  // fallback, and on a face this broken it can point either way.
+  try {
+    const own = vunit(face.normalAt(face.center).normalized().toTuple() as V3);
+    if (v3dot(own, n) < 0) n = [-n[0], -n[1], -n[2]];
+  } catch { /* keep Newell's orientation */ }
+
+  // A 2D basis in the plane, u chosen against the world axis least aligned with
+  // the normal so the cross product is well conditioned.
+  const ax: V3 = Math.abs(n[0]) < Math.abs(n[1]) && Math.abs(n[0]) < Math.abs(n[2]) ? [1, 0, 0]
+    : Math.abs(n[1]) < Math.abs(n[2]) ? [0, 1, 0] : [0, 0, 1];
+  const u = vunit(v3cross(ax, n));
+  const v = v3cross(n, u);
+  const o = ring[0];
+  const poly2d: [number, number][] = ring.map((p) => {
+    const d: V3 = [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
+    return [v3dot(d, u), v3dot(d, v)];
+  });
+  // Ear clipping wants counter-clockwise input; the projection's winding follows
+  // from the basis, so measure it rather than assume.
+  let area2 = 0;
+  for (let i = 0; i < poly2d.length; i++) {
+    const a = poly2d[i], b = poly2d[(i + 1) % poly2d.length];
+    area2 += a[0] * b[1] - b[0] * a[1];
+  }
+  const order = area2 >= 0 ? poly2d.map((_, i) => i) : poly2d.map((_, i) => poly2d.length - 1 - i);
+  const tris = earClip(order.map((i) => poly2d[i]));
+  if (tris.length === 0) return null;
+
+  const vertices: number[] = [];
+  const verticesNormals: number[] = [];
+  for (const i of order) {
+    vertices.push(ring[i][0], ring[i][1], ring[i][2]);
+    verticesNormals.push(n[0], n[1], n[2]);
+  }
+  const trianglesIndexes: number[] = [];
+  for (const [a, b, c] of tris) trianglesIndexes.push(a + nodeOffset, b + nodeOffset, c + nodeOffset);
+  return { vertices, trianglesIndexes, verticesNormals };
+}
+
+/** A repaired copy of a face — pcurves rebuilt from the 3D edges, wires
+ *  re-ordered and re-oriented — or null if the fix did nothing useful. OCCT's
+ *  mesher works in the face's parametric space, so a face whose 2D curves are
+ *  wrong (a boolean along coincident walls is the usual source) is unmeshable
+ *  however fine the tolerance, while the 3D geometry it renders from is fine. */
+function repairFace(face: Topo): Topo | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  try {
+    const fix = new oc.ShapeFix_Face_2(face);
+    fix.SetPrecision(1e-4);
+    fix.FixAddPCurveMode = true;
+    fix.FixOrientationMode = true;
+    fix.Perform();
+    const out = fix.Face();
+    fix.delete();
+    return out ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The triangulation stored on a face, in the same shape replicad's own
+ *  `Face.triangulation()` returns, read straight from OCCT so it can be called
+ *  on a bare TopoDS_Face (a repaired copy has no replicad wrapper). Vertices are
+ *  transformed by the face's location; indices are offset by `nodeOffset` so
+ *  they address a shared vertex buffer. Returns null when the face has none. */
+function faceTriangulation(
+  face: Topo,
+  nodeOffset: number,
+): { vertices: number[]; trianglesIndexes: number[]; verticesNormals: number[] } | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const loc = new oc.TopLoc_Location_1();
+  const handle = oc.BRep_Tool.Triangulation(face, loc, 0);
+  if (handle.IsNull()) { loc.delete(); handle.delete?.(); return null; }
+  const tri = handle.get();
+  const trsf = loc.Transformation();
+  const nbNodes = tri.NbNodes();
+  const nbTris = tri.NbTriangles();
+  const vertices: number[] = [];
+  const verticesNormals: number[] = [];
+  for (let i = 1; i <= nbNodes; i++) {
+    const p = tri.Node(i).Transformed(trsf);
+    vertices.push(p.X(), p.Y(), p.Z());
+  }
+  // Normals come from the surface where OCCT computed them; otherwise fall back
+  // to per-face flat shading, which smoothMeshNormals may refine later.
+  let haveNormals = false;
+  try {
+    if (tri.HasNormals()) {
+      for (let i = 1; i <= nbNodes; i++) {
+        const n = tri.Normal(i).Transformed(trsf);
+        verticesNormals.push(n.X(), n.Y(), n.Z());
+      }
+      haveNormals = true;
+    }
+  } catch { haveNormals = false; }
+  if (!haveNormals) {
+    // Planar faces are the case that lands here; a constant normal is exact.
+    const surf = oc.BRep_Tool.Surface_2(face);
+    let nx = 0, ny = 0, nz = 1;
+    try {
+      const props = new oc.GeomLProp_SLProps_1(surf, 0.5, 0.5, 1, 1e-7);
+      if (props.IsNormalDefined()) {
+        const n = props.Normal();
+        nx = n.X(); ny = n.Y(); nz = n.Z();
+      }
+      props.delete();
+    } catch { /* keep the +Z fallback */ }
+    // TopAbs_REVERSED === 1: the face's outward direction is the surface's
+    // reversed, exactly as replicad's own mesh path treats it.
+    const flip = face.Orientation() === oc.TopAbs_Orientation.TopAbs_REVERSED;
+    for (let i = 0; i < nbNodes; i++) verticesNormals.push(flip ? -nx : nx, flip ? -ny : ny, flip ? -nz : nz);
+  }
+  const reversed = face.Orientation() === oc.TopAbs_Orientation.TopAbs_REVERSED;
+  const trianglesIndexes: number[] = [];
+  for (let i = 1; i <= nbTris; i++) {
+    const t = tri.Triangle(i);
+    const a = t.Value(1) - 1 + nodeOffset;
+    const b = t.Value(2) - 1 + nodeOffset;
+    const c = t.Value(3) - 1 + nodeOffset;
+    // A reversed face's triangles wind the other way; emit them so the visible
+    // side faces out, or the patch renders as a hole again under backface culling.
+    if (reversed) trianglesIndexes.push(a, c, b);
+    else trianglesIndexes.push(a, b, c);
+  }
+  loc.delete();
+  return { vertices, trianglesIndexes, verticesNormals };
+}
+
+/** Re-mesh, one at a time, any face the whole-shape tessellation produced no
+ *  triangles for, appending them to `meshed` in place. Returns how many were
+ *  recovered.
+ *
+ *  OCCT's one-shot BRepMesh gives up on individual faces and says nothing about
+ *  it — the shape is valid, the mesher just emits no triangulation for them. The
+ *  renderer then draws a hole, and you can see through the solid. It shows up
+ *  where a boolean has left slivers along coincident walls (extrude a semicircle
+ *  from a cylinder's top and its curved wall lies exactly on the cylinder's) and
+ *  a later chamfer re-trims them into shapes the mesher won't take.
+ *
+ *  Three escalating attempts per face, cheapest first. Meshing it alone often
+ *  works, because the tolerances no longer have to suit every face at once, and
+ *  tightening them helps again after that — the tolerance only ever goes finer,
+ *  so a recovered face is never coarser than the rest of the body. Failing that,
+ *  ShapeFix rebuilds the face's 2D curves, which is what's actually broken when a
+ *  boolean ran along exactly tangent surfaces. And when even a repaired face is
+ *  refused, a planar one is tessellated directly from the 3D geometry of its
+ *  boundary, bypassing BRepMesh and its parametric space altogether.
+ *
+ *  Faces that survive all of that are left out, as before: a hole is bad, but it
+ *  beats failing the whole body over one sliver. The caller logs either way. */
+function patchMissingFaces(shape: Shape3D, meshed: MeshedFaces): { recovered: number; lost: number } {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  // Only the one-shot path is patchable: it yields growable number[]s, and it's
+  // the only one that hides a failure (meshFaceByFace already reports skips).
+  if (!meshed.faceGroups || !Array.isArray(meshed.vertices) || !Array.isArray(meshed.triangles)) {
+    return { recovered: 0, lost: 0 };
+  }
+  const faceGroups = meshed.faceGroups;
+  const drawn = new Set(faceGroups.map((g) => g.faceId));
+  const missing = shape.faces.filter((f) => !drawn.has(f.hashCode));
+  if (missing.length === 0) return { recovered: 0, lost: 0 };
+
+  const vertices = meshed.vertices;
+  const triangles = meshed.triangles;
+  const normals = Array.isArray(meshed.normals) ? meshed.normals : null;
+  type Tri = { vertices: number[]; trianglesIndexes: number[]; verticesNormals: number[] };
+  const append = (face: Face, tri: Tri) => {
+    faceGroups.push({ start: triangles.length, count: tri.trianglesIndexes.length, faceId: face.hashCode });
+    for (const t of tri.trianglesIndexes) triangles.push(t);
+    for (const v of tri.vertices) vertices.push(v);
+    // A body meshed without normals shades flat from geometry; don't invent a
+    // partial normal buffer for it, which would shade the patch differently.
+    if (normals) for (const n of tri.verticesNormals) normals.push(n);
+  };
+
+  let patched = 0;
+  for (const face of missing) {
+    // Each attempt is a (shape to mesh, tolerance scale) pair, cheapest first.
+    // Meshing the face alone often succeeds where the whole-body pass didn't,
+    // because the tolerances no longer have to suit every face at once; a finer
+    // tolerance helps again after that. Then ShapeFix, which rebuilds the 2D
+    // curves that are the actual defect after a boolean along tangent surfaces.
+    const attempts: { shape: Topo; scale: number }[] = [];
+    for (const scale of [1, 0.25, 0.05]) attempts.push({ shape: face.wrapped, scale });
+    const repaired = repairFace(face.wrapped);
+    if (repaired) for (const scale of [1, 0.25]) attempts.push({ shape: repaired, scale });
+
+    let done = false;
+    for (const { shape: target, scale } of attempts) {
+      let tri: Tri | null = null;
+      try {
+        // Drop whatever the failed whole-shape pass left on this face first, or
+        // IncrementalMesh considers it already meshed and does nothing.
+        oc.BRepTools.Clean(target, true);
+        const im = new oc.BRepMesh_IncrementalMesh_2(
+          target,
+          MESH_OPTS.tolerance * scale,
+          false,
+          MESH_OPTS.angularTolerance * scale,
+          false,
+        );
+        im.delete();
+        // Indices come back already offset by the node count we pass, so the
+        // face's triangles address our combined vertex buffer directly.
+        tri = faceTriangulation(target, vertices.length / 3);
+      } catch {
+        tri = null; // this attempt failed; try the next
+      }
+      if (!tri || tri.trianglesIndexes.length === 0) continue;
+      append(face, tri);
+      done = true;
+      break;
+    }
+    // Last resort: OCCT won't take this face at any tolerance, repaired or not.
+    // Tessellate it ourselves from the 3D boundary, bypassing BRepMesh entirely.
+    if (!done) {
+      try {
+        const tri = triangulatePlanarFace(face, vertices.length / 3);
+        if (tri && tri.trianglesIndexes.length > 0) { append(face, tri); done = true; }
+      } catch { /* nothing left to try; the caller reports it */ }
+    }
+    if (done) patched++;
+  }
+  return { recovered: patched, lost: missing.length - patched };
+}
+
 // Two faces meeting below this angle read as one smooth surface: their shared
 // edge is a facet seam (or a tangent fillet blend), not a real crease. Used to
 // smooth shading + hide seam edges so faceted curved bodies (cylinder/revolve/
@@ -2462,6 +2770,14 @@ function regenerate(
           // only add overhead with no transfer benefit.
           faces = b.shape.mesh(MESH_OPTS);
           edges = b.shape.meshEdges(MESH_OPTS);
+          // Recover any face the one-shot mesh silently dropped, before anything
+          // downstream reads the buffers. Runs after meshEdges, which wants the
+          // triangulation the whole-shape pass left on the shape. Both outcomes
+          // are logged with stable prefixes: a hole in a solid is invisible in
+          // any other telemetry, and the verification harness asserts on these.
+          const { recovered, lost } = patchMissingFaces(b.shape, faces);
+          if (recovered) console.warn(`mesh: recovered ${recovered} dropped face(s) on ${b.id}`);
+          if (lost) console.warn(`mesh: UNMESHED ${lost} face(s) on ${b.id} — the body will render with holes`);
           // Display-only smoothing: faceted curved bodies (cylinder/revolve/
           // extruded circle) are genuinely polygonal, so shade their walls smooth
           // and drop the facet seam edges — they READ as round while the kernel
