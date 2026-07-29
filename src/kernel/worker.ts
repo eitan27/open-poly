@@ -126,7 +126,10 @@ type NamedShape = { shape: Shape3D; names: Map<number, string> };
 // resolved params + the keys of the bodies it consumed). Two regens yield the
 // same key for a body iff its geometry is identical — so it drives the mesh
 // cache (skip re-tessellating unchanged bodies).
-type Body = NamedShape & { id: string; key: string };
+// `preview` marks a display-only body (a dress-up delta): nothing may reference
+// it, so it is meshed for pixels alone — see the mesh loop, which skips the
+// naming, surface-classification and clustering passes for it.
+type Body = NamedShape & { id: string; key: string; preview?: boolean };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Topo = any; // a raw OCCT TopoDS_Shape (opencascade.js binding)
@@ -255,6 +258,46 @@ function compoundOf(pieces: NamedShape[]): NamedShape {
     for (const [h, n] of p.names) names.set(h, n);
   }
   return { shape: cast(comp) as Shape3D, names };
+}
+
+/** The solid content of a shape that carries more than `minVolume` of material,
+ *  as a compound — loose faces, shells and wires dropped, and with them the
+ *  slivers a boolean between near-coincident solids leaves behind (a dress-up
+ *  delta's clip reliably produces a speck or two at the box corners). Returns
+ *  null when nothing survives — the usual case for the half of a delta that
+ *  doesn't apply, since a convex edge only removes and a concave one only adds.
+ *  The result is an independent COPY, so the caller can free the shape it came
+ *  from; the name map is dropped, since these bodies are display-only and
+ *  nothing may reference their faces. */
+function solidsOnly(named: NamedShape, minVolume: number): NamedShape | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const comp = new oc.TopoDS_Compound();
+  const builder = new oc.TopoDS_Builder();
+  builder.MakeCompound(comp);
+  const ex = new oc.TopExp_Explorer_2(
+    named.shape.wrapped,
+    oc.TopAbs_ShapeEnum.TopAbs_SOLID,
+    oc.TopAbs_ShapeEnum.TopAbs_SHAPE,
+  );
+  let n = 0;
+  for (; ex.More(); ex.Next()) {
+    const props = new oc.GProp_GProps_1();
+    oc.BRepGProp.VolumeProperties_1(ex.Current(), props, false, false, false);
+    const volume = Math.abs(props.Mass());
+    props.delete();
+    if (volume <= minVolume) continue;
+    builder.Add(comp, ex.Current());
+    n++;
+  }
+  ex.delete();
+  if (n === 0) return null;
+  // The compound holds references INTO `named`; copy so it owns its geometry and
+  // the caller's cleanup can't pull the ground out from under it.
+  const shared: NamedShape = { shape: cast(comp) as Shape3D, names: new Map() };
+  const owned = copyNamed(shared);
+  shared.shape.delete();
+  return owned;
 }
 
 /** Sample an edge into world-space points (a fine polyline), via OCCT's
@@ -1070,7 +1113,7 @@ function extrudeLengths(extent: ExtrudeExtent, distance: number, face: Face, tar
 /** Fuse, cut, or intersect (common) two named shapes, propagating face names
  *  through the boolean's history: a result face inherits its source face's name
  *  (Modified images, or the unchanged passthrough); collisions get a #n suffix. */
-function booleanNamed(op: "fuse" | "cut" | "common", base: NamedShape, tool: NamedShape): NamedShape {
+function booleanNamed(op: "fuse" | "cut" | "common", base: NamedShape, tool: NamedShape, fuzzy = BOOL_FUZZY): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   const progress = new oc.Message_ProgressRange_1();
@@ -1088,7 +1131,7 @@ function booleanNamed(op: "fuse" | "cut" | "common", base: NamedShape, tool: Nam
   tools.Append_1(tool.shape.wrapped);
   builder.SetArguments(args);
   builder.SetTools(tools);
-  if (BOOL_FUZZY > 0) builder.SetFuzzyValue(BOOL_FUZZY);
+  if (fuzzy > 0) builder.SetFuzzyValue(fuzzy);
   builder.Build(progress);
   const shape = cast(builder.Shape()) as Shape3D;
 
@@ -1352,7 +1395,10 @@ function chamferRefFace(
  *  faces are named after the feature). Modifies geometry; returns a NamedShape.
  *  `angle` (chamfer only, degrees) bevels asymmetrically: `size` is measured on
  *  the reference face and the bevel leaves it at `angle`. Undefined — and 45,
- *  which is the same cut — uses OCCT's plain symmetric chamfer instead. */
+ *  which is the same cut — uses OCCT's plain symmetric chamfer instead.
+ *  `changedBox` bounds the faces the operation GENERATED (the bevels/rounds) —
+ *  i.e. where the shape actually changed. Used to keep the delta preview honest;
+ *  see the `previewDelta` branch. */
 function dressUpNamed(
   op: "chamfer" | "fillet",
   target: Body,
@@ -1363,7 +1409,7 @@ function dressUpNamed(
   warn?: Warn,
   angle?: number,
   flip?: boolean,
-): NamedShape {
+): NamedShape & { changedBox?: [Vec3, Vec3] } {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   const { hits, lost } = resolveDressUpEdges(target, edgeNames, edgeRefs, warn);
@@ -1420,12 +1466,42 @@ function dressUpNamed(
     if (images.length === 0) names.set(f.hashCode, nm);
     else for (const img of images) assign(hashOf(img), nm);
   }
-  // The new bevel/round faces, generated from each dressed edge.
+  // The new bevel/round faces, generated from each dressed edge. Those faces
+  // plus the edges they replaced bound the whole change exactly: everything the
+  // operation added or removed lies between an original edge and the face that
+  // superseded it.
+  const bnd = new oc.Bnd_Box_1();
   for (const e of dressed) {
-    for (const g of drainList(builder.Generated(e))) assign(hashOf(g), `${id}/${op}`);
+    oc.BRepBndLib.Add(e, bnd, false);
+    for (const g of drainList(builder.Generated(e))) {
+      assign(hashOf(g), `${id}/${op}`);
+      oc.BRepBndLib.Add(g, bnd, false);
+    }
   }
+  let changedBox: [Vec3, Vec3] | undefined;
+  if (!bnd.IsVoid()) {
+    const lo = bnd.CornerMin();
+    const hi = bnd.CornerMax();
+    changedBox = [
+      [lo.X(), lo.Y(), lo.Z()],
+      [hi.X(), hi.Y(), hi.Z()],
+    ];
+  }
+  bnd.delete();
   builder.delete();
-  return { shape, names };
+  return { shape, names, changedBox };
+}
+
+/** An axis-aligned box solid spanning `[lo, hi]` grown by `margin` on every
+ *  side. */
+function boxFromBounds([lo, hi]: [Vec3, Vec3], margin: number): Shape3D {
+  // makeBaseBox is centred in x and y, with its base on the z=0 plane.
+  const box = makeBaseBox(
+    hi[0] - lo[0] + 2 * margin,
+    hi[1] - lo[1] + 2 * margin,
+    hi[2] - lo[2] + 2 * margin,
+  ) as Shape3D;
+  return box.translate((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2] - margin) as Shape3D;
 }
 
 const AXIS_DIR: Record<"x" | "y" | "z", [number, number, number]> = {
@@ -1934,18 +2010,61 @@ function buildBodies(
           // so the preview can't disagree with the committed result. Each cut is
           // keyed off the pre-dress body key so an unchanged dialog re-uses the
           // cached tessellation instead of re-cutting on every keystroke.
+          // Both bodies are first restricted to the region the operation
+          // actually changed (`changedBox`). This is not an optimisation.
+          // Differencing the FULL bodies differences two solids that share large
+          // coincident faces everywhere the dress-up didn't reach, and OCCT
+          // hangs a zero-thickness FLAP off the true result there: a
+          // back-to-back pair of faces spanning the whole shared face, enclosing
+          // no volume. It passes every volume and solid-count test (it belongs
+          // to the one real solid) but it tessellates — and a zero-thickness
+          // sheet drawn without depth testing paints that entire face.
+          //
+          // The clip has to come FIRST, on the operands. Trimming the finished
+          // difference instead does not work: the flap makes that solid invalid,
+          // and intersecting an invalid solid with a box just returns nothing.
+          //
+          // Clipping can't abolish the effect either, only confine it — wherever
+          // a box wall passes through material common to both bodies it makes a
+          // fresh coincident pair of its own. The margin is therefore
+          // deliberately tiny: the box already contains the delta exactly, so
+          // any flap the clip induces lies inside the delta's own footprint,
+          // where it is indistinguishable from the delta. Growing the box "to be
+          // safe" is precisely wrong — it drags the flap back out into open
+          // space where it shows.
+          const clipBox = res.changedBox
+            ? boxFromBounds(res.changedBox, Math.max(feature.size * 0.05, 1e-6))
+            : null;
+          const localize = (s: NamedShape) =>
+            clipBox ? booleanNamed("common", s, { shape: clipBox, names: new Map() }) : s;
           const before: NamedShape = { shape: target.shape, names: target.names };
+          const beforeLocal = localize(before);
+          const afterLocal = localize(res);
           const deltas: [string, NamedShape, NamedShape][] = [
-            [DRESSUP_DELTA_IDS.removed(feature.id), before, res],
-            [DRESSUP_DELTA_IDS.added(feature.id), res, before],
+            [DRESSUP_DELTA_IDS.removed(feature.id), beforeLocal, afterLocal],
+            [DRESSUP_DELTA_IDS.added(feature.id), afterLocal, beforeLocal],
           ];
           for (const [id, base, tool] of deltas) {
-            const delta = booleanNamed("cut", base, tool);
+            const cut = booleanNamed("cut", base, tool);
             // A convex edge yields only "removed", a concave one only "added" —
-            // the other cut comes back empty and is dropped, not rendered.
-            if (delta.shape.faces.length > 0) previews.push({ id, key: contentKey(feature, [beforeKey, id]), ...delta });
-            else delta.shape.delete();
+            // the other cut has no solid content and is dropped, not rendered.
+            // The floor is a hundredth of `size` cubed — orders of magnitude
+            // below any real bevel or round, and above the free-floating debris
+            // a near-coincident boolean leaves behind: specks at the clip box's
+            // corners, and the razor slivers thrown off when a dress-up blends a
+            // FACETED cylinder into a true one, so that before and after differ
+            // by a hair over the whole wall. (Those slivers only get dropped
+            // when they come back as separate solids. Fused into the real delta
+            // they survive, and can defeat the mesher outright — a dress-up that
+            // spans two rings far apart on one faceted boss can still lose its
+            // ghost that way. It degrades to no preview, never a wrong one.)
+            const delta = solidsOnly(cut, feature.size ** 3 * 1e-2);
+            cut.shape.delete();
+            if (delta) previews.push({ id, key: contentKey(feature, [beforeKey, id]), preview: true, ...delta });
           }
+          if (beforeLocal !== before) beforeLocal.shape.delete();
+          if (afterLocal !== res) afterLocal.shape.delete();
+          clipBox?.delete();
         }
         target.shape.delete();
         target.shape = res.shape;
@@ -2348,12 +2467,21 @@ function regenerate(
           // and drop the facet seam edges — they READ as round while the kernel
           // keeps booleaning the facets. Sharp features (creases above the
           // threshold) are preserved. Geometry the kernel sees is untouched.
-          smoothMeshNormals(faces);
-          edges = filterSmoothEdges(edges, smoothEdgeHashes(b.shape));
+          // Skipped for preview bodies: it walks each edge's adjacent faces with
+          // OCCT adaptors, which throws on the slivers a dress-up delta carries,
+          // and a translucent ghost gains nothing from smooth shading anyway.
+          if (!b.preview) {
+            smoothMeshNormals(faces);
+            edges = filterSmoothEdges(edges, smoothEdgeHashes(b.shape));
+          }
         }
         // Attach each face's / edge's persistent name (matched by build-local hash)
-        // so the app carries stable references across rebuilds.
-        if (faces.faceGroups) {
+        // so the app carries stable references across rebuilds. All of it is
+        // skipped for a preview body: nothing can reference or pick one, and
+        // these passes walk every face with OCCT adaptors — which a dress-up
+        // delta, full of slivers where two nearly-identical solids were
+        // differenced, is very good at making throw.
+        if (faces.faceGroups && !b.preview) {
           // Surface classification walks every face with an OCCT adaptor, so skip
           // it for huge reference bodies (the per-face mesh path) — they're
           // reference-only, and the pass would cost more than it's worth.
@@ -2368,7 +2496,7 @@ function regenerate(
             clusterId: clusters?.get(g.faceId),
           }));
         }
-        if (edges.edgeGroups) {
+        if (edges.edgeGroups && !b.preview) {
           const edgeNames = edgeNamesFrom(b.shape, b.names);
           // Chain tangent-continuous chords (whole-circle edge selection); skipped
           // for huge reference bodies alongside the surface/cluster passes.

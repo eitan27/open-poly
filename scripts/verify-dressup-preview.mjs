@@ -7,9 +7,18 @@
 //  4. the ghost tracks the size — a bigger chamfer ghosts a bigger wedge;
 //  5. an invalid size drops the ghost rather than leaving a stale one;
 //  6. the preview costs the document nothing: the delta bodies never leak into
-//     the model (Parts list / sceneSummary) or into a committed document.
+//     the model (Parts list / sceneSummary) or into a committed document;
+//  7. creating (not just editing) ghosts the wedge inside the untouched solid;
+//  8. the ghost stays CONFINED to the dressed edge — the regression that
+//     prompted all the clipping in the worker's previewDelta branch, where
+//     a chamfer on one concave edge painted the entire adjoining face.
 // Comparisons are pixel comparisons of a fixed view — the delta solids aren't
 // exposed to the bridge, so "did it draw" is the observable.
+// Known gap, deliberately not asserted here: one dress-up spanning two rings far
+// apart on a FACETED boss can lose its ghost. Blending the facets into a true
+// cylinder makes before and after differ by a hair over the whole wall between
+// the rings, and those slivers — fused to the real delta, so no volume floor
+// reaches them — defeat the mesher. The preview goes away; the model is fine.
 import { chromium } from "playwright";
 
 const URL = process.env.URL ?? "http://localhost:5175/";
@@ -223,7 +232,12 @@ await waitIdle();
 // that's what edgeGroups' chainId is for — but the bridge takes edges by name.)
 const fusedScene = await read({ read: "sceneSummary" });
 const jointBody = fusedScene.bodies.find((b) => b.id === fused.createdId) ?? fusedScene.bodies[0];
-const ring = (jointBody?.edges ?? []).filter((e) => e.includes(post.createdId) && e.includes("+z"));
+// Only the BASE joint — requiring the box's face name too excludes the boss's
+// own top rim, which shares the "+z" spelling. Dressing one ring is also what a
+// user does: a viewport click picks one tangent-continuous chain.
+const ring = (jointBody?.edges ?? []).filter(
+  (e) => e.includes(`${box.createdId}/+z`) && e.includes(post.createdId),
+);
 check("the boss/box joint ring is named", ring.length > 8, `${ring.length} chords`);
 
 if (ring.length > 8) {
@@ -291,6 +305,47 @@ if (picked) {
     !docNow.features.some((f) => f.type === "dressup"),
     JSON.stringify(docNow.features.map((f) => f.type)),
   );
+  await closeDialog();
+}
+
+// ---------------------------------------------------------------------------
+// 8. The ghost stays CONFINED to the edge it dresses. Regression: a block
+//    sitting on half a cylinder's top face. Chamfering the concave edge where
+//    the block's wall meets that top used to paint the ENTIRE exposed half-disc
+//    green — the cut of before against after hangs a zero-thickness flap across
+//    every face the two still share, and a flap drawn without depth testing
+//    covers its whole face. A 2mm bevel on a 60mm edge may cover a percent or so
+//    of frame; the whole half-disc covered an order of magnitude more.
+// ---------------------------------------------------------------------------
+const doc8 = await apply({ op: "newDocument", name: "confined" });
+check("regression document", doc8.ok, JSON.stringify(doc8).slice(0, 200));
+await waitIdle();
+const rc = await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: 30, height: 60 } });
+const rb = await apply({ op: "addPrimitive", kind: "box", params: { width: 60, depth: 30, height: 20, y: 15, z: 60 } });
+await waitIdle();
+const rsolid = await apply({ op: "boolean", kind: "union", operands: [rc.createdId, rb.createdId] });
+await waitIdle();
+const rscene = await read({ read: "sceneSummary" });
+const rbody = rscene.bodies.find((b) => b.id === rsolid.createdId) ?? rscene.bodies[0];
+const rEdge = (rbody?.edges ?? []).filter((e) => e.includes(`${rc.createdId}/+z`) && e.includes(`${rb.createdId}/-y`));
+check("the block/cylinder concave edge is named", rEdge.length === 1, `${rEdge.length} edges`);
+
+if (rEdge.length === 1) {
+  const rch = await apply({ op: "dressUp", kind: "chamfer", targetId: rbody.id, edges: rEdge, size: "2" });
+  check("concave chamfer created", rch.ok, JSON.stringify(rch).slice(0, 200));
+  await waitIdle();
+  const rPlain = await shot();
+  await openEdit("Chamfer");
+  const rGhost = await shotUntil(rPlain, "differs");
+  const area = await diffPct(rPlain, rGhost);
+  check("the concave chamfer ghosts something", area > DREW, `${area.toFixed(3)}% of frame`);
+  // The exposed half-disc is ~5% of this frame; the correct 2mm band is ~1%.
+  check(
+    "…confined to the edge, not spread over the adjoining face",
+    area < 2.5,
+    `${area.toFixed(3)}% of frame changed (whole-face regression measured ~5%)`,
+  );
+  await page.screenshot({ path: "/tmp/openpoly-dressup-confined.png" });
   await closeDialog();
 }
 
