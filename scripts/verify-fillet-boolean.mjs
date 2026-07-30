@@ -252,18 +252,24 @@ await waitIdle();
 await shoot("/tmp/openpoly-fillet-concave.png");
 
 // ---------------------------------------------------------------------------
-// C — a TANGENT CHAIN must go back to OCCT. A wedge is swept along one edge and
-// stops at its ends, so on a faceted rim, where the next dressed chord continues
-// smoothly, consecutive wedges meet at an angle and leave the corner between them
-// uncut — a castellated crown of leftover teeth. Blending across a chain is what
-// BRepFilletAPI is for.
+// C — a CLOSED FACETED CIRCLE is dressed with one tool swept all the way round.
 //
-// A blended rim is one bevel face per chord and nothing else: 98 + 96 = 194 faces,
-// 288 edges. The crown was 146 faces and 528 edges — FEWER faces (the teeth's
-// flanks are not bevels) and nearly twice the edges (each tooth brings its own).
-// Both counts held at r = 1, 2 and 3 alike, so the exact expected total is the
-// assertion; "it changed" would not have caught it. Chamfers took this path before
-// fillets did, so a cylinder's rim came out crowned for them too; both are checked.
+// A wedge swept along one chord stops at its ends, so on a rim consecutive wedges
+// meet at an angle and leave the corner between them uncut — a castellated crown
+// of 96 leftover teeth (measured at 146 faces / 528 edges, at every radius alike;
+// FEWER faces than a real bevel, since a tooth's flanks are not bevels, and nearly
+// twice the edges). Handing all 96 chords to BRepFilletAPI instead avoided the
+// crown but returned a top face whose boundary wire SELF-OVERLAPS: each inner edge
+// keeps its original chord length rather than being trimmed to the mitre, so the
+// ring's perimeter came out 188.46mm — the circumference of the r=30 rim it came
+// from — on a ring at r=26 where a mitred 96-gon measures 163.3. That renders
+// correctly and poisons whatever is built on the face: extruding it carried the
+// bad wire up, and dressing THAT rim was what produced the crown in the wild.
+//
+// Revolving one cross-section has neither problem, and the result is exact: ONE
+// analytic round, so 98 + 1 = 99 faces however finely the wall is cut. That is the
+// assertion — "it changed" would not have caught either failure, since both were
+// radius-independent. Chamfers take this path too, so both are checked.
 // ---------------------------------------------------------------------------
 const CROWN = { faces: 146, edges: 528 }; // measured, and radius-independent
 for (const kind of ["fillet", "chamfer"]) {
@@ -290,12 +296,22 @@ for (const kind of ["fillet", "chamfer"]) {
     rf.ok && counts.every((c) => !c.err),
     `${JSON.stringify(counts)} status="${rst}"`,
   );
-  const want = (c2b?.faces?.length ?? 0) + rim.length; // one bevel per chord
+  const want = (c2b?.faces?.length ?? 0) + 1; // ONE swept round, not one per chord
   check(
-    `${kind}: the rim is blended — one bevel face per chord, no crown of teeth`,
+    `${kind}: the rim is one swept round — no crown, no per-chord bevels`,
     counts.every((c) => c.faces === want && c.faces !== CROWN.faces && c.edges !== CROWN.edges),
     `${JSON.stringify(counts.map((c) => [c.r, c.faces, c.edges]))}, want ${want} faces — ` +
-    `the crown was ${CROWN.faces} faces / ${CROWN.edges} edges at every radius`,
+    `the crown was ${CROWN.faces} faces / ${CROWN.edges} edges at every radius, and ` +
+    `one bevel per chord (the old BRepFilletAPI answer) would be ${(c2b?.faces?.length ?? 0) + rim.length}`,
+  );
+  // The round is named, so downstream features can reference it. A nameless
+  // round is how the first attempt failed: unifySameDomain's coplanar-parallel
+  // matcher handed the new face's name to a flat neighbour.
+  const rb = await bodyOf(c2.createdId);
+  check(
+    `${kind}: the swept round is a single named face`,
+    (rb?.faces ?? []).filter((f) => f.includes(`/${kind}`)).length === 1,
+    (rb?.faces ?? []).filter((f) => f.includes(`/${kind}`)).join(", ") || "none",
   );
   check(`${kind}: the rim result meshes whole`, unmeshed.length === 0, `${sum(unmeshed)} unmeshed`);
   await apply({ op: "setParam", featureId: rf.createdId, name: "size", value: "2" });

@@ -152,8 +152,8 @@ await setView("7");
 // --- 5. The payoff: click the rim, then fillet it -----------------------------
 // The user's actual complaint is that the bad pick "basically prevents chamfers
 // or fillets on those edges", so drive the real flow: click → F → size → Enter.
-// A rim is a tangent chain, so this goes to BRepFilletAPI (the boolean fast path
-// is singletons only); r must stay under one facet chord (2πR/96 = 1.31mm).
+// A rim is a closed faceted circle, so it is dressed with one cross-section
+// swept all the way round — ONE new face, not one per chord (revolvedRingTool).
 {
   await apply({ op: "select", refs: [] });
   await clickWorld(ringPoint(R, 25, 30, 0.5));
@@ -180,11 +180,12 @@ await setView("7");
   const banner = await page.locator(".error-banner, .banner").first().textContent().catch(() => null);
   if (banner) console.log(`  banner: ${banner.trim()}`);
   const after = (await read({ read: "sceneSummary" })).bodies[0];
-  // 98 base faces (96 wall facets + 2 caps) + one fillet face per rim chord.
+  // 98 base faces (96 wall facets + 2 caps) + the one swept round.
   check("filleting the clicked rim succeeds", /up to date/i.test(st), st);
-  check("…and dresses the WHOLE circle: one fillet face per chord",
-    after.faces.length === 98 + FACETS,
-    `${before.faces.length} -> ${after.faces.length} faces (expected ${98 + FACETS})`);
+  check("…and dresses the WHOLE circle, as one swept round",
+    after.faces.length === 99,
+    `${before.faces.length} -> ${after.faces.length} faces (expected 99; ` +
+    `${98 + FACETS} would mean one bevel per chord, 98 that nothing was dressed)`);
 }
 
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);

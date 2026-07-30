@@ -55,9 +55,9 @@ await waitIdle();
 const FACETS = 96;
 
 // --- 1. A cylinder's flat top → the whole rim rounds -------------------------
-// 98 base faces (96 wall facets + 2 caps). The top cap has ONE boundary: its
-// rim, 96 chords → 96 new faces. Radius stays under one facet chord
-// (2π·20/96 = 1.31mm) so BRepFilletAPI can take the tangent chain.
+// 98 base faces (96 wall facets + 2 caps). The rim is a closed faceted circle,
+// so it is dressed with ONE cross-section swept all the way round: exactly one
+// new face, however finely the wall is cut. See revolvedRingTool.
 await apply({ op: "newDocument", name: "face-fillet-cyl-top" });
 await waitIdle();
 const cyl = await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: "20", height: "40" } });
@@ -71,9 +71,13 @@ await waitIdle();
   const st = await waitIdle();
   const after = await body();
   check("filleting the top FACE builds", /up to date/i.test(st), st);
-  check("…and rounds the whole rim: one face per chord",
-    after.faces.length === before + FACETS,
-    `${before} -> ${after.faces.length} faces (expected ${before + FACETS})`);
+  check("…and rounds the whole rim as ONE swept face",
+    after.faces.length === before + 1,
+    `${before} -> ${after.faces.length} faces (expected ${before + 1}; ` +
+    `+${FACETS} would mean one bevel per chord)`);
+  check("…named, so downstream features can reference it",
+    after.faces.filter((f) => /\/fillet/.test(f)).length === 1,
+    after.faces.filter((f) => /\/fillet/.test(f)).join(", ") || "none");
   await shoot("/tmp/openpoly-face-fillet-cyl-top.png");
 }
 
@@ -95,9 +99,10 @@ await waitIdle();
   const after = await body();
   check("filleting the WALL face builds", /up to date/i.test(st), st);
   check("…and rounds both rims, leaving the facet seams alone",
-    after.faces.length === before + 2 * FACETS,
-    `${before} -> ${after.faces.length} faces (expected ${before + 2 * FACETS}; ` +
-    `+${FACETS} would be one rim, +${3 * FACETS} would mean the seams got dressed too)`);
+    after.faces.length === before + 2,
+    `${before} -> ${after.faces.length} faces (expected ${before + 2}: one swept ` +
+    `round per rim; +1 would be a single rim, and any multiple of ${FACETS} would ` +
+    `mean it fell back to per-chord bevels)`);
   await shoot("/tmp/openpoly-face-fillet-cyl-wall.png");
 }
 
@@ -160,8 +165,8 @@ await waitIdle();
     }
     const st = await waitIdle();
     after = (await body()).faces.length;
-    check("…and committing it rounds the whole rim", /up to date/i.test(st) && after === before + FACETS,
-      `${before} -> ${after} faces (expected ${before + FACETS}), status ${st}`);
+    check("…and committing it rounds the whole rim", /up to date/i.test(st) && after === before + 1,
+      `${before} -> ${after} faces (expected ${before + 1}), status ${st}`);
   }
   await shoot("/tmp/openpoly-face-fillet-ui.png");
 }
@@ -176,8 +181,54 @@ await waitIdle();
   const st = await waitIdle();
   const after = (await body()).faces.length;
   check("…so changing its radius re-resolves the face and still dresses the whole rim",
-    /up to date/i.test(st) && after === 98 + FACETS,
-    `${after} faces (expected ${98 + FACETS}), status ${st}`);
+    /up to date/i.test(st) && after === 99,
+    `${after} faces (expected 99), status ${st}`);
+}
+
+// --- 6. The reported repro: dress a rim, build on it, dress THAT rim ----------
+// Round a cylinder's top face, extrude the circle it leaves, round that face
+// too. This used to come out with a castellated crown of teeth on the upper rim,
+// because the first fillet left the top face's boundary wire self-overlapping
+// (BRepFilletAPI keeps each inner edge at its full original chord length), the
+// extrude carried the damage up, and the second dress-up then saw 96 chords that
+// no longer shared vertices — so they looked like independent edges and each got
+// its own wedge.
+//
+// The crown's signature is unmistakable in the counts: faces stay PUT while edges
+// nearly double (measured 290 faces both before and after, 384 -> 720 edges),
+// because a tooth's flanks are not bevel faces but do bring edges. A real round
+// adds a face and does not add edges.
+await apply({ op: "newDocument", name: "face-fillet-stacked" });
+await waitIdle();
+const stack = await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: "30", height: "60" } });
+await waitIdle();
+{
+  const t0 = (await body()).faces.find((f) => /\+z$/.test(f));
+  await apply({ op: "dressUp", kind: "fillet", targetId: stack.createdId, edges: [], faces: [t0], size: "4" });
+  const s1 = await waitIdle();
+  const b1 = await body();
+  check("repro step 1: the cylinder's top face rounds", /up to date/i.test(s1) && b1.faces.length === 99,
+    `${b1.faces.length} faces (expected 99), status ${s1}`);
+
+  const t1 = b1.faces.find((f) => /\+z$/.test(f));
+  await apply({ op: "addExtrude", profile: { bodyId: stack.createdId, faceName: t1 }, distance: "25", mode: "add" });
+  const s2 = await waitIdle();
+  const b2 = await body();
+  check("repro step 2: the enclosed circle extrudes", /up to date/i.test(s2), s2);
+
+  const t2 = b2.faces.find((f) => /\/end$/.test(f));
+  await apply({ op: "dressUp", kind: "fillet", targetId: stack.createdId, edges: [], faces: [t2], size: "3" });
+  const s3 = await waitIdle();
+  const b3 = await body();
+  check("repro step 3: the extruded face rounds too", /up to date/i.test(s3), s3);
+  check("…with no crown: a round adds a face and adds no edges",
+    b3.faces.length > b2.faces.length && b3.edges.length <= b2.edges.length,
+    `faces ${b2.faces.length} -> ${b3.faces.length}, edges ${b2.edges.length} -> ${b3.edges.length} ` +
+    `(the crown held faces level and nearly doubled edges)`);
+  check("…and both rounds are present as named faces",
+    b3.faces.filter((f) => /\/fillet/.test(f)).length === 2,
+    b3.faces.filter((f) => /\/fillet/.test(f)).join(", ") || "none");
+  await shoot("/tmp/openpoly-face-fillet-stacked.png");
 }
 
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);

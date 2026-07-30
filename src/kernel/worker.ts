@@ -22,6 +22,7 @@ import type {
   MeshedEdges,
   MeshedFaces,
   RegenFeatureResult,
+  ProfileSegment,
   ResolvedEdgeRef,
   ResolvedFaceRef,
   ResolvedFeature,
@@ -31,9 +32,11 @@ import type {
 import { DRESSUP_DELTA_IDS } from "./types";
 import { CIRCLE_FACETS, circleStations } from "../geom/circleFacets";
 import { expandToChains, expansionCount } from "../geom/edgeChains";
+import { fitRing } from "../geom/ringFit";
 import {
   chamferLegs,
   chamferTriangle,
+  FILLET_ARC_MID_FRACTION,
   filletCrossSection,
   inFaceDirection,
   isConvexEdge,
@@ -1516,6 +1519,63 @@ function polygonFace(pts: V3[]): Face | null {
  *  by a TRUE arc of radius `r` tangent to both. Built from exact curve segments
  *  rather than a polyline, so the rounded surface really is round rather than a
  *  fan of chords. Null if the points are degenerate. */
+/**
+ * The cross-section of a revolved ring tool: the corner region to remove, but
+ * with its OUTER boundary pushed `margin` clear of both faces.
+ *
+ * The per-edge wedge can afford a sharp corner, because its two legs lie exactly
+ * IN the body's two faces and OCCT's fuzzy boolean copes with coincidence. A
+ * revolved tool cannot: its outer surface is a cylinder that would be exactly
+ * TANGENT to each of the 96 wall facets, touching at every vertex and nowhere
+ * else, and the cut fails outright (StdFail_NotDone). Padding outward turns
+ * every contact transversal.
+ *
+ * Local frame: u along the reference face, v along the other, so the material is
+ * the u ≥ 0, v ≥ 0 quadrant and the padding runs into negative u and v — outside
+ * the solid, where there is nothing to disturb.
+ */
+function ringSectionFace(
+  op: "chamfer" | "fillet",
+  corner: V3,
+  towardRef: V3,
+  towardOther: V3,
+  legs: { ref: number; other: number },
+  margin: number,
+): Face | null {
+  const u = vunit(towardRef);
+  const v = vunit(towardOther);
+  const n = v3cross(u, v);
+  if (Math.hypot(n[0], n[1], n[2]) < 1e-12) return null;
+  const frame: ResolvedFrame = { origin: corner, uAxis: u, vAxis: v, normal: vunit(n) };
+  const m = margin;
+  const onRef: [number, number] = [legs.ref, 0];
+  const onOther: [number, number] = [0, legs.other];
+  const pad: [number, number][] = [[legs.ref, -m], [-m, -m], [-m, legs.other]];
+  // Closed loop: leave the reference face, round the padded outside, come back
+  // at the other face, then the bevel/round closes it across the corner.
+  const outline: [number, number][] = [onRef, ...pad, onOther];
+  const segments: ProfileSegment[] = [
+    ...pad.map((p) => ({ kind: "line" as const, to: p })),
+    { kind: "line" as const, to: onOther },
+  ];
+  if (op === "fillet") {
+    const d = legs.ref * FILLET_ARC_MID_FRACTION;
+    const arcMid: [number, number] = [d, d];
+    outline.push(arcMid);
+    segments.push({ kind: "arc", mid: arcMid, to: onRef });
+  } else {
+    segments.push({ kind: "line", to: onRef });
+  }
+  try {
+    return regionFace(
+      { kind: "sketchRegion", outline, frame, segmentStart: onRef, segments },
+      planeOf(frame),
+    );
+  } catch {
+    return null;
+  }
+}
+
 function filletFace(onEdge: V3, towardRef: V3, towardOther: V3, r: number): Face | null {
   const cs = filletCrossSection(onEdge, towardRef, towardOther, r);
   if (!cs) return null;
@@ -1669,6 +1729,182 @@ function dressUpWedgeFor(
   }
 }
 
+/** Name whatever a boolean-built dress-up created and bound it. The faces the
+ *  booleans made carry no name (the tools were stripped), so they are the
+ *  bevels/rounds — named as the OCCT path names them. `changedBox` bounds just
+ *  those faces, which is what keeps the delta preview honest. */
+function nameBooleanDressUp(
+  acc: NamedShape,
+  op: "chamfer" | "fillet",
+  id: string,
+): NamedShape & { changedBox?: [Vec3, Vec3] } {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const names = new Map(acc.names);
+  const bnd = new oc.Bnd_Box_1();
+  let n = 0;
+  for (const f of acc.shape.faces) {
+    if (names.has(f.hashCode)) continue;
+    names.set(f.hashCode, n === 0 ? `${id}/${op}` : `${id}/${op}#${n}`);
+    n++;
+    oc.BRepBndLib.Add(f.wrapped, bnd, false);
+  }
+  let changedBox: [Vec3, Vec3] | undefined;
+  if (!bnd.IsVoid()) {
+    const lo = bnd.CornerMin(), hi = bnd.CornerMax();
+    changedBox = [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]];
+  }
+  bnd.delete();
+  return { shape: acc.shape, names, changedBox };
+}
+
+/**
+ * The dress-up tool for a whole faceted circle: the cross-section swept ONCE all
+ * the way round, instead of one prism per chord.
+ *
+ * A 96-chord rim has no good per-chord answer. Sweeping a wedge along each chord
+ * leaves the corners between them uncut — a castellated crown of 96 teeth. And
+ * `BRepFilletAPI`, handed the 96 edges, returns a top face whose boundary wire
+ * SELF-OVERLAPS: each inner edge keeps its full original chord length (measured:
+ * perimeter 188.46mm, the circumference of the r=30 rim it came from, on a ring
+ * at r=26 where a mitred 96-gon would be 163.3) so consecutive edges cross by
+ * 0.29°. That renders correctly and poisons everything built on that face —
+ * extruding it carries the bad wire up, and dressing THAT rim is what produced
+ * the crown in the wild.
+ *
+ * Revolving one cross-section has neither problem: the result is a single
+ * analytic round/bevel face bounded by true circles.
+ *
+ * The cross-section is placed at the ring's CIRCUMSCRIBED radius — a chord's
+ * midpoint is nearer than its endpoints by the sagitta, so a tool built at the
+ * midpoint radius would fall short at each vertex and leave 96 slivers, the
+ * crown again in miniature. At the vertex radius the tool covers the corner
+ * everywhere and merely cuts ~16µm deeper into the wall mid-chord (r=30, 96
+ * facets), far below the faceting error already present.
+ *
+ * CONVEX rings only. A concave ring is added material rather than removed, so
+ * which way the sagitta should err is the opposite question, and the existing
+ * paths already handle the concave joints this codebase cares about — see
+ * verify-fillet-boolean. Returns null for anything it can't do exactly.
+ */
+function revolvedRingTool(
+  op: "chamfer" | "fillet",
+  hits: Edge[],
+  adj: Map<number, Face[]>,
+  size: number,
+  angleDeg: number,
+  flip: boolean,
+): { tool: NamedShape; sagitta: number } | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+
+  // Every chord must be a straight edge between two planar faces, or this is not
+  // the faceted-circle shape we think it is.
+  const chords: [V3, V3][] = [];
+  for (const e of hits) {
+    if (e.geomType !== "LINE") return null;
+    const fs = adj.get(e.hashCode);
+    if (!fs || fs.length !== 2 || fs.some((f) => f.geomType !== "PLANE")) return null;
+    let pts: V3[];
+    try { pts = sampleEdgePoints(e); } catch { return null; }
+    if (pts.length < 2) return null;
+    chords.push([pts[0], pts[pts.length - 1]]);
+  }
+  const ring = fitRing(chords);
+  if (!ring) return null;
+
+  // Geometry at one representative chord — the ring is uniform, so any will do.
+  const rep = hits[0];
+  const adjacent = adj.get(rep.hashCode)!;
+  const [a, b] = chords[0];
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  if (!(len > 1e-9)) return null;
+  const along = vunit([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+  const n1 = faceOutwardNormal(adjacent[0]);
+  const n2 = faceOutwardNormal(adjacent[1]);
+  if (!n1 || !n2 || !isRightAngle(n1, n2)) return null;
+  const mid: V3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+  const t1 = inFaceDirection(along, n1, mid, adjacent[0].center.toTuple() as V3);
+  const t2 = inFaceDirection(along, n2, mid, adjacent[1].center.toTuple() as V3);
+  if (!t1 || !t2) return null;
+  if (!isConvexEdge(t1, n2)) return null; // concave: see the note above
+
+  const legs = op === "fillet"
+    ? (size > 1e-9 && Number.isFinite(size) ? { ref: size, other: size } : null)
+    : chamferLegs(size, angleDeg);
+  if (!legs) return null;
+  const [tRef, tOther] = flip ? [t2, t1] : [t1, t2];
+  const [fRef, fOther] = flip ? [adjacent[1], adjacent[0]] : [adjacent[0], adjacent[1]];
+
+  // Both legs must fit on their face, same test as the per-edge wedge.
+  const reach = (f: Face, t: V3): number => {
+    let far = 0;
+    for (const e of f.edges) {
+      let ps: V3[];
+      try { ps = sampleEdgePoints(e); } catch { continue; }
+      for (const p of ps) far = Math.max(far, v3dot([p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]], t));
+    }
+    return far;
+  };
+  if (!legFits(legs.ref, reach(fRef, tRef))) return null;
+  if (!legFits(legs.other, reach(fOther, tOther))) return null;
+
+  // Rebuild the cross-section in the AXIAL half-plane through this chord. The
+  // chord's own perpendicular plane is tilted off the axis by half a facet, and
+  // revolving a profile that isn't axial sweeps a skewed surface.
+  const spoke: V3 = [mid[0] - ring.center[0], mid[1] - ring.center[1], mid[2] - ring.center[2]];
+  const height = v3dot(spoke, ring.axis);
+  const radial = vunit([
+    spoke[0] - ring.axis[0] * height,
+    spoke[1] - ring.axis[1] * height,
+    spoke[2] - ring.axis[2] * height,
+  ]);
+  if (!(Math.hypot(radial[0], radial[1], radial[2]) > 0.5)) return null;
+  // The circumferential direction — the component to drop from each leg.
+  const around = vunit(v3cross(ring.axis, radial));
+  const axialize = (t: V3): V3 => {
+    const k = v3dot(t, around);
+    return vunit([t[0] - around[0] * k, t[1] - around[1] * k, t[2] - around[2] * k]);
+  };
+  const aRef = axialize(tRef);
+  const aOther = axialize(tOther);
+  if (!(Math.hypot(...aRef) > 0.5) || !(Math.hypot(...aOther) > 0.5)) return null;
+  // The corner, moved out to the vertex radius (see the sagitta note above).
+  const corner: V3 = [
+    ring.center[0] + radial[0] * ring.radius + ring.axis[0] * height,
+    ring.center[1] + radial[1] * ring.radius + ring.axis[1] * height,
+    ring.center[2] + radial[2] * ring.radius + ring.axis[2] * height,
+  ];
+
+  // Clear the wall by more than the sagitta (chord midpoints sit that far inside
+  // the vertex radius) and the cap by a hair, so no surface is tangent — but keep
+  // it small enough that the tool cannot reach a neighbouring feature.
+  //
+  // The floor is a comfortable multiple of the boolean's fuzzy value so the
+  // OUTER surface can never read as coincident either. A tenth of a millimetre
+  // is far too little to reach a neighbouring feature. (What actually decides
+  // whether the facets survive intact is the fuzz used for the cut, not this —
+  // see the sagitta note at the call site.)
+  const sagitta = ring.radius * (1 - Math.cos(Math.PI / ring.segments));
+  const margin = Math.max(sagitta * 4, size * 0.02, BOOL_FUZZY * 10);
+  const section = ringSectionFace(op, corner, aRef, aOther, legs, margin);
+  if (!section) return null;
+
+  try {
+    const pnt = new oc.gp_Pnt_3(ring.center[0], ring.center[1], ring.center[2]);
+    const dir = new oc.gp_Dir_4(ring.axis[0], ring.axis[1], ring.axis[2]);
+    const ax1 = new oc.gp_Ax1_2(pnt, dir);
+    const builder = new oc.BRepPrimAPI_MakeRevol_1(section.wrapped, ax1, 2 * Math.PI, false);
+    const shape = cast(builder.Shape()) as Shape3D;
+    builder.delete();
+    // Unnamed on purpose: the caller names whatever the boolean creates, exactly
+    // as it does for the per-edge wedges and the OCCT path.
+    return { tool: { shape, names: new Map() }, sagitta };
+  } catch {
+    return null;
+  }
+}
+
 /** Chamfer or fillet the named edges of a body, propagating face names through
  *  the operation's history (modified faces keep their names; the new bevel/round
  *  faces are named after the feature). Modifies geometry; returns a NamedShape.
@@ -1753,6 +1989,62 @@ function dressUpNamed(
     }
   }
 
+  // A closed faceted circle is dressed with ONE tool swept all the way round —
+  // see revolvedRingTool for why neither per-chord wedges nor BRepFilletAPI can
+  // do this rim justice. Tried first, since a ring is exactly the tangent chain
+  // the per-edge path below refuses.
+  //
+  // One tool per CHAIN, since a selection can hold several rings at once —
+  // picking a cylinder's wall means both of its rims. All-or-nothing, like the
+  // per-edge path: if any chain isn't a ring the whole selection falls through,
+  // so a mixed pick never gets dressed two different ways.
+  {
+    const byChain = new Map<number, Edge[]>();
+    for (const e of hits) {
+      const k = chainOf.get(e.hashCode) ?? e.hashCode;
+      const arr = byChain.get(k);
+      if (arr) arr.push(e); else byChain.set(k, [e]);
+    }
+    const rings: { tool: NamedShape; sagitta: number }[] = [];
+    for (const group of byChain.values()) {
+      const r = revolvedRingTool(op, group, adj, size, angle ?? 45, flip ?? false);
+      if (!r) break;
+      rings.push(r);
+    }
+    if (rings.length === byChain.size && rings.length > 0) {
+      const tools = rings.map((r) => r.tool);
+      try {
+        const tool = tools.length === 1 ? tools[0] : compoundOf(tools);
+        // The round is TANGENT to the ring's circumscribed cylinder, and the
+        // faceted wall touches that cylinder only at its vertices — pulling away
+        // by the sagitta in between. When the sagitta is under the boolean's
+        // fuzzy value the cut cannot tell the two apart and splits every facet in
+        // two (measured: r=20 and r=10, whose sagittas are 0.011 and 0.005 against
+        // a 0.01 fuzzy, came out at 194 names instead of 99; r=30 and r=50, at
+        // 0.016 and 0.027, were already clean). So the fuzz has to fit under the
+        // gap it is meant to resolve — the tightest one, with several rings.
+        const gap = Math.min(...rings.map((r) => r.sagitta));
+        const cut = booleanNamed(
+          "cut",
+          { shape: target.shape, names: target.names },
+          tool,
+          Math.min(BOOL_FUZZY, gap / 4),
+        );
+        if (tool !== tools[0]) tool.shape.delete();
+        for (const t of tools) t.shape.delete();
+        // No unifySameDomain here, unlike the per-edge path: these cuts leave no
+        // coplanar duplicates to merge, and its name transfer matches faces by
+        // parallel normals + nearest centre, which happily hands a new round's
+        // name to whichever flat face it points at — leaving the round nameless.
+        return nameBooleanDressUp(cut, op, id);
+      } catch {
+        for (const t of tools) { try { t.shape.delete(); } catch { /* already gone */ } }
+      }
+    } else {
+      for (const r of rings) r.tool.shape.delete();
+    }
+  }
+
   // Fast path: when EVERY edge is a straight edge between two perpendicular flat
   // faces, the chamfer or fillet is built as a boolean instead — exact there, and
   // unlike BRepFilletAPI indifferent to how the adjoining round walls are faceted
@@ -1803,24 +2095,7 @@ function dressUpNamed(
         // already do. Only when a boolean actually ran: otherwise `acc` still IS
         // the target body and unifyBody would delete it.
         if (owns) acc = unifyBody(acc);
-        // The faces the booleans created carry no name (the tools were stripped);
-        // they are the bevels, named as the OCCT path names them.
-        const names = new Map(acc.names);
-        const bnd = new oc.Bnd_Box_1();
-        let n = 0;
-        for (const f of acc.shape.faces) {
-          if (names.has(f.hashCode)) continue;
-          names.set(f.hashCode, n === 0 ? `${id}/${op}` : `${id}/${op}#${n}`);
-          n++;
-          oc.BRepBndLib.Add(f.wrapped, bnd, false);
-        }
-        let changedBox: [Vec3, Vec3] | undefined;
-        if (!bnd.IsVoid()) {
-          const lo = bnd.CornerMin(), hi = bnd.CornerMax();
-          changedBox = [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]];
-        }
-        bnd.delete();
-        return { shape: acc.shape, names, changedBox };
+        return nameBooleanDressUp(acc, op, id);
       } catch {
         // Fall through to OCCT below; the wedges are released either way.
         for (const w of wedges) { try { w.wedge.shape.delete(); } catch { /* already gone */ } }
