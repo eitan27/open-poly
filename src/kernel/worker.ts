@@ -1198,15 +1198,29 @@ function unifySameDomain(named: NamedShape): NamedShape | null {
   } catch {
     return null;
   }
+  // A face whose normal cannot be evaluated at its centre of mass is skipped
+  // rather than aborting the merge. A CONE band's centroid lies off its own
+  // surface and OCCT's projection fails there (StdFail_NotDone) — which used to
+  // take down the entire regeneration, not just this face: a chamfered rim is a
+  // conical band, so any later "add" extrude onto that body threw here AFTER the
+  // fuse had already freed the target's shape, and the mesh pass then freed it a
+  // second time ("This object has been deleted"). Such a face simply does not
+  // take part in name matching.
+  const centreNormal = (f: Face): Vec3 | null => {
+    try { return v3unit(f.normalAt(f.center).toTuple() as Vec3); } catch { return null; }
+  };
   const originals: { nm: string; c: Vec3; n: Vec3 }[] = [];
   for (const f of named.shape.faces) {
     const nm = named.names.get(f.hashCode);
-    if (nm) originals.push({ nm, c: f.center.toTuple() as Vec3, n: v3unit(f.normalAt(f.center).toTuple() as Vec3) });
+    if (!nm) continue;
+    const n = centreNormal(f);
+    if (n) originals.push({ nm, c: f.center.toTuple() as Vec3, n });
   }
   const names = new Map<number, string>();
   for (const uf of shape.faces) {
+    const n = centreNormal(uf);
+    if (!n) continue; // same reason as above — leave it unnamed rather than throw
     const c = uf.center.toTuple() as Vec3;
-    const n = v3unit(uf.normalAt(uf.center).toTuple() as Vec3);
     let best: string | undefined;
     let bestD = Infinity;
     for (const o of originals) {
@@ -3582,7 +3596,11 @@ function regenerate(
     } catch (err) {
       result = { id: b.id, ok: false, error: errorMessage(err) };
     } finally {
-      b.shape.delete();
+      // A feature that threw part-way may have freed a body's shape and left the
+      // dangling entry in `bodies` (its own error is already recorded). Freeing
+      // it again would throw out of the mesh pass and turn one bad feature into a
+      // dead regeneration, so the cleanup tolerates it.
+      try { b.shape.delete(); } catch { /* already released by a failed feature */ }
     }
     meshTimings.push({ id: b.id, ms: performance.now() - mt0, hit: meshHit });
     // Stream this body the instant it's ready so the main thread can paint it

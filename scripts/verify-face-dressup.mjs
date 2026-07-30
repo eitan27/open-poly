@@ -231,6 +231,33 @@ await waitIdle();
   await shoot("/tmp/openpoly-face-fillet-stacked.png");
 }
 
+// --- 7. CHAMFER, then build on the face it leaves ----------------------------
+// The chamfer's swept band is a CONE, and a cone's centre of mass lies off its
+// own surface — so unifySameDomain's name transfer, which reads a normal there,
+// threw StdFail_NotDone. That ran during the "add" extrude's fuse, AFTER the
+// target's shape had been freed, so the dangling body was freed a second time by
+// the mesh pass and the whole regeneration died with "This object has been
+// deleted". A fillet's band is a torus and survived, which is why only chamfers
+// showed it. Both the cone and the mode=add fuse are needed to reproduce.
+for (const kind of ["chamfer", "fillet"]) {
+  for (const mode of ["add", "new"]) {
+    await apply({ op: "newDocument", name: `${kind}-then-extrude-${mode}` });
+    await waitIdle();
+    const c = await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: "20", height: "40" } });
+    await waitIdle();
+    const top = (await body()).faces.find((f) => /\+z$/.test(f));
+    await apply({ op: "dressUp", kind, targetId: c.createdId, edges: [], faces: [top], size: "3" });
+    const sd = await waitIdle();
+    const b1 = await body();
+    const inner = b1.faces.find((f) => /\+z$/.test(f));
+    await apply({ op: "addExtrude", profile: { bodyId: c.createdId, faceName: inner }, distance: "15", mode });
+    const se = await waitIdle();
+    check(`${kind} → extrude the inner circle (mode ${mode})`,
+      /up to date/i.test(sd) && /up to date/i.test(se),
+      `dress=${sd}, extrude=${se}`);
+  }
+}
+
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);
 await browser.close();
 process.exit(failures === 0 ? 0 : 1);
