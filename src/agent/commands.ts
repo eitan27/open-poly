@@ -789,7 +789,18 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         // name-only ref — the kernel will report it properly.
         const mesh = ctx.getMeshes().find((m) => m.id === op.targetId);
         const edgeRefs = mesh ? op.edges.map((nm) => edgeFingerprintByName(mesh.mesh.edges, nm)) : undefined;
-        const r = addDressUp(doc, op.kind, op.targetId, op.edges, op.size, edgeRefs, op.angle, op.flip);
+        if (op.edges.length === 0 && !op.faces?.length) {
+          throw new Error("dressUp needs at least one edge or face.");
+        }
+        // Faces get the same treatment: a centroid/normal fingerprint beside the
+        // name, so a renamed face can still be re-matched geometrically.
+        const faceRefs = mesh && op.faces
+          ? op.faces.map((nm) => {
+              const g = faceGeomByName(mesh.mesh.faces, nm);
+              return g ? { name: nm, center: g.center, normal: g.normal } : { name: nm };
+            })
+          : undefined;
+        const r = addDressUp(doc, op.kind, op.targetId, op.edges, op.size, edgeRefs, op.angle, op.flip, op.faces, faceRefs);
         next = r.doc;
         createdId = r.id;
         break;
@@ -940,6 +951,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
     }
 
     ctx.setDoc(next);
+    if (createdId) ctx.setSelection([]);
     // Wait for the worker to regenerate, then report what actually happened —
     // resolve (expression/reference) AND kernel (build) errors, merged, plus
     // non-fatal warnings (topological references re-matched / partially lost
