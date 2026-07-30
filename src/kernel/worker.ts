@@ -29,6 +29,14 @@ import type {
 } from "./types";
 import { DRESSUP_DELTA_IDS } from "./types";
 import { CIRCLE_FACETS, circleStations } from "../geom/circleFacets";
+import {
+  chamferLegs,
+  chamferTriangle,
+  inFaceDirection,
+  isConvexEdge,
+  isRightAngle,
+  legFits,
+} from "../geom/chamferWedge";
 import { matchEdges, matchFace, type EdgeCandidate, type FaceCandidate } from "./topoMatch";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -1441,43 +1449,21 @@ function chamferWedgeFor(
   const n1 = faceOutwardNormal(adjacent[0]);
   const n2 = faceOutwardNormal(adjacent[1]);
   if (!n1 || !n2) return null;
-  // Right angles only: off 90° the cross-section's legs no longer follow from
-  // size and angle by simple trigonometry.
-  if (Math.abs(v3dot(n1, n2)) > 1e-6) return null;
+  if (!isRightAngle(n1, n2)) return null;
 
-  // In-face directions pointing away from the edge: `along × n` is tangent to the
-  // face and ⟂ the edge; the sign is fixed by which side the face's centre lies.
   const mid: V3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
-  const inFace = (f: Face, n: V3): V3 | null => {
-    const t = v3cross(along, n);
-    const L = Math.hypot(t[0], t[1], t[2]);
-    if (L < 1e-9) return null;
-    const u: V3 = [t[0] / L, t[1] / L, t[2] / L];
-    const c = f.center.toTuple() as V3;
-    const toCentre: V3 = [c[0] - mid[0], c[1] - mid[1], c[2] - mid[2]];
-    return v3dot(u, toCentre) >= 0 ? u : [-u[0], -u[1], -u[2]];
-  };
-  const t1 = inFace(adjacent[0], n1);
-  const t2 = inFace(adjacent[1], n2);
+  const t1 = inFaceDirection(along, n1, mid, adjacent[0].center.toTuple() as V3);
+  const t2 = inFaceDirection(along, n2, mid, adjacent[1].center.toTuple() as V3);
   if (!t1 || !t2) return null;
+  const convex = isConvexEdge(t1, n2);
 
-  // Convex when face 1 falls away BEHIND face 2's plane, concave when it rises in
-  // front of it. (A box's top/front edge: t1 = +y, n2 = −y, dot < 0 ⇒ convex. A
-  // wall standing on a top face: t1 = +z, n2 = +z, dot > 0 ⇒ concave.)
-  const convex = v3dot(t1, n2) < 0;
-
-  // `size` is measured on the reference face and the bevel leaves it at `angle`,
-  // so the other leg is size·tan(angle); 45° gives the symmetric chamfer.
+  const legs = chamferLegs(size, angleDeg);
+  if (!legs) return null;
   const [tRef, tOther] = flip ? [t2, t1] : [t1, t2];
   const [fRef, fOther] = flip ? [adjacent[1], adjacent[0]] : [adjacent[0], adjacent[1]];
-  const legOther = size * Math.tan((angleDeg * Math.PI) / 180);
-  if (!(size > 1e-9) || !(legOther > 1e-9) || !Number.isFinite(legOther)) return null;
 
-  // A leg must fit on the face it runs along. Unlike BRepFilletAPI, a boolean
-  // cannot tell that a chamfer is too big — it would cheerfully cut a 999mm wedge
-  // out of a 40mm box and report success. So an over-large chamfer is declined
-  // here and left to OCCT, which rejects it with a message the dialog can show.
-  const extentAlong = (f: Face, t: V3): number => {
+  // How far a face reaches from the edge in a direction — the room a leg has.
+  const reach = (f: Face, t: V3): number => {
     let far = 0;
     for (const e of f.edges) {
       let ps: V3[];
@@ -1486,18 +1472,14 @@ function chamferWedgeFor(
     }
     return far;
   };
-  if (size >= extentAlong(fRef, tRef) - 1e-9) return null;
-  if (legOther >= extentAlong(fOther, tOther) - 1e-9) return null;
+  if (!legFits(legs.ref, reach(fRef, tRef))) return null;
+  if (!legFits(legs.other, reach(fOther, tOther))) return null;
 
   // Sweep the cross-section triangle along the edge, a hair past both ends so the
   // booleans intersect transversally instead of exactly touching at the endpoints.
   const pad = Math.max(len * 1e-3, 1e-4);
   const o: V3 = [a[0] - along[0] * pad, a[1] - along[1] * pad, a[2] - along[2] * pad];
-  const tri = polygonFace([
-    o,
-    [o[0] + tRef[0] * size, o[1] + tRef[1] * size, o[2] + tRef[2] * size],
-    [o[0] + tOther[0] * legOther, o[1] + tOther[1] * legOther, o[2] + tOther[2] * legOther],
-  ]);
+  const tri = polygonFace(chamferTriangle(o, tRef, tOther, legs));
   if (!tri) return null;
 
   let wedge: NamedShape;
@@ -1518,7 +1500,7 @@ function chamferWedgeFor(
   try {
     let bounded = wedge;
     for (let i = 0; i < 2; i++) {
-      const sweep = prismFromFace(adjacent[i], new Vector(i === 0 ? n1 : n2), Math.max(size, legOther) * 4 + 1, `${id}/bound`);
+      const sweep = prismFromFace(adjacent[i], new Vector(i === 0 ? n1 : n2), Math.max(legs.ref, legs.other) * 4 + 1, `${id}/bound`);
       const next = booleanNamed("common", bounded, sweep);
       if (bounded !== wedge) bounded.shape.delete();
       sweep.shape.delete();
