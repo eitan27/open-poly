@@ -1387,6 +1387,155 @@ function chamferRefFace(
   return ordered[flip && ordered.length > 1 ? 1 : 0];
 }
 
+/** A planar face through 3+ coplanar world points, on their own plane. Used for a
+ *  chamfer's cross-section triangle; null if the points are collinear. */
+function polygonFace(pts: V3[]): Face | null {
+  if (pts.length < 3) return null;
+  const e1: V3 = [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]];
+  const e2: V3 = [pts[2][0] - pts[0][0], pts[2][1] - pts[0][1], pts[2][2] - pts[0][2]];
+  const nRaw = v3cross(e1, e2);
+  if (Math.hypot(nRaw[0], nRaw[1], nRaw[2]) < 1e-12) return null;
+  const n = vunit(nRaw);
+  const u = vunit(e1);
+  const frame: ResolvedFrame = { origin: pts[0], uAxis: u, vAxis: v3cross(n, u), normal: n };
+  const outline: [number, number][] = pts.map((p) => {
+    const d: V3 = [p[0] - pts[0][0], p[1] - pts[0][1], p[2] - pts[0][2]];
+    return [v3dot(d, u), v3dot(d, frame.vAxis as V3)];
+  });
+  return regionFace({ kind: "sketchRegion", outline, frame }, planeOf(frame));
+}
+
+/** The solid a chamfer removes (or adds), for the one configuration where it can
+ *  be built exactly by hand: a STRAIGHT edge between two PLANAR faces meeting at
+ *  a right angle. `convex` says whether the caller should CUT it away or FUSE it in.
+ *
+ *  Why this exists. BRepFilletAPI must propagate a chamfer's run-out onto whatever
+ *  adjoins the edge's ends. Our round walls are polygons, so the run-out reaches a
+ *  facet boundary as soon as the chamfer is wider than one facet chord, and OCCT
+ *  fails. Measured on a 96-gon at r = 18 (chord 1.178mm): builds at 1.17, fails at
+ *  1.18; halving the facet count to 48 (chord 2.356) moves the cutoff to between 2
+ *  and 3. So the biggest chamfer you could build WAS the facet chord — the rounder
+ *  the wall, the smaller the chamfer, which is backwards. A boolean has no run-out
+ *  to propagate, so faceting stops mattering.
+ *
+ *  Returns null for anything it can't do exactly, so the caller falls back. */
+function chamferWedgeFor(
+  edge: Edge,
+  adjacent: Face[],
+  size: number,
+  angleDeg: number,
+  flip: boolean,
+  id: string,
+): { wedge: NamedShape; convex: boolean } | null {
+  if (edge.geomType !== "LINE" || adjacent.length !== 2) return null;
+  if (adjacent.some((f) => f.geomType !== "PLANE")) return null;
+
+  let pts: V3[];
+  try { pts = sampleEdgePoints(edge); } catch { return null; }
+  if (pts.length < 2) return null;
+  const a = pts[0], b = pts[pts.length - 1];
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  if (!(len > 1e-9)) return null;
+  const along = vunit([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+
+  const n1 = faceOutwardNormal(adjacent[0]);
+  const n2 = faceOutwardNormal(adjacent[1]);
+  if (!n1 || !n2) return null;
+  // Right angles only: off 90° the cross-section's legs no longer follow from
+  // size and angle by simple trigonometry.
+  if (Math.abs(v3dot(n1, n2)) > 1e-6) return null;
+
+  // In-face directions pointing away from the edge: `along × n` is tangent to the
+  // face and ⟂ the edge; the sign is fixed by which side the face's centre lies.
+  const mid: V3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+  const inFace = (f: Face, n: V3): V3 | null => {
+    const t = v3cross(along, n);
+    const L = Math.hypot(t[0], t[1], t[2]);
+    if (L < 1e-9) return null;
+    const u: V3 = [t[0] / L, t[1] / L, t[2] / L];
+    const c = f.center.toTuple() as V3;
+    const toCentre: V3 = [c[0] - mid[0], c[1] - mid[1], c[2] - mid[2]];
+    return v3dot(u, toCentre) >= 0 ? u : [-u[0], -u[1], -u[2]];
+  };
+  const t1 = inFace(adjacent[0], n1);
+  const t2 = inFace(adjacent[1], n2);
+  if (!t1 || !t2) return null;
+
+  // Convex when face 1 falls away BEHIND face 2's plane, concave when it rises in
+  // front of it. (A box's top/front edge: t1 = +y, n2 = −y, dot < 0 ⇒ convex. A
+  // wall standing on a top face: t1 = +z, n2 = +z, dot > 0 ⇒ concave.)
+  const convex = v3dot(t1, n2) < 0;
+
+  // `size` is measured on the reference face and the bevel leaves it at `angle`,
+  // so the other leg is size·tan(angle); 45° gives the symmetric chamfer.
+  const [tRef, tOther] = flip ? [t2, t1] : [t1, t2];
+  const [fRef, fOther] = flip ? [adjacent[1], adjacent[0]] : [adjacent[0], adjacent[1]];
+  const legOther = size * Math.tan((angleDeg * Math.PI) / 180);
+  if (!(size > 1e-9) || !(legOther > 1e-9) || !Number.isFinite(legOther)) return null;
+
+  // A leg must fit on the face it runs along. Unlike BRepFilletAPI, a boolean
+  // cannot tell that a chamfer is too big — it would cheerfully cut a 999mm wedge
+  // out of a 40mm box and report success. So an over-large chamfer is declined
+  // here and left to OCCT, which rejects it with a message the dialog can show.
+  const extentAlong = (f: Face, t: V3): number => {
+    let far = 0;
+    for (const e of f.edges) {
+      let ps: V3[];
+      try { ps = sampleEdgePoints(e); } catch { continue; }
+      for (const p of ps) far = Math.max(far, v3dot([p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]], t));
+    }
+    return far;
+  };
+  if (size >= extentAlong(fRef, tRef) - 1e-9) return null;
+  if (legOther >= extentAlong(fOther, tOther) - 1e-9) return null;
+
+  // Sweep the cross-section triangle along the edge, a hair past both ends so the
+  // booleans intersect transversally instead of exactly touching at the endpoints.
+  const pad = Math.max(len * 1e-3, 1e-4);
+  const o: V3 = [a[0] - along[0] * pad, a[1] - along[1] * pad, a[2] - along[2] * pad];
+  const tri = polygonFace([
+    o,
+    [o[0] + tRef[0] * size, o[1] + tRef[1] * size, o[2] + tRef[2] * size],
+    [o[0] + tOther[0] * legOther, o[1] + tOther[1] * legOther, o[2] + tOther[2] * legOther],
+  ]);
+  if (!tri) return null;
+
+  let wedge: NamedShape;
+  try {
+    wedge = prismFromFace(tri, new Vector(along), len + 2 * pad, `${id}/wedge`);
+  } catch { return null; }
+
+  // A tool's names must not leak into the result: leaving the new faces unnamed
+  // lets the caller name them `${id}/chamfer`, as the OCCT path does.
+  const bare = (s: NamedShape): NamedShape => ({ shape: s.shape, names: new Map() });
+  if (convex) return { wedge: bare(wedge), convex };
+
+  // Concave: the notch lies OUTSIDE the body, so the body can't bound the wedge.
+  // Bound it by the two faces' own extents swept outwards — the notch exists
+  // exactly where both faces do. Without this the wedge protrudes past the edge's
+  // ends, since a chamfer along a diameter runs off the rim where its
+  // cross-section is already outside the cylinder.
+  try {
+    let bounded = wedge;
+    for (let i = 0; i < 2; i++) {
+      const sweep = prismFromFace(adjacent[i], new Vector(i === 0 ? n1 : n2), Math.max(size, legOther) * 4 + 1, `${id}/bound`);
+      const next = booleanNamed("common", bounded, sweep);
+      if (bounded !== wedge) bounded.shape.delete();
+      sweep.shape.delete();
+      bounded = next;
+    }
+    if (bounded.shape.faces.length === 0) {
+      bounded.shape.delete();
+      wedge.shape.delete();
+      return null;
+    }
+    if (bounded !== wedge) wedge.shape.delete();
+    return { wedge: bare(bounded), convex };
+  } catch {
+    return null;
+  }
+}
+
 /** Chamfer or fillet the named edges of a body, propagating face names through
  *  the operation's history (modified faces keep their names; the new bevel/round
  *  faces are named after the feature). Modifies geometry; returns a NamedShape.
@@ -1420,6 +1569,72 @@ function dressUpNamed(
       `${lost.length} of ${edgeNames.length} edges could not be re-found and were skipped: ${lost.join(", ")} — edit the feature to re-pick them`,
     );
   }
+  // Edge → its (≤2) adjacent faces. Wanted by the angled-chamfer reference pick
+  // and by the boolean fast path, so it's built either way.
+  const adj = new Map<number, Face[]>();
+  for (const f of target.shape.faces) {
+    for (const e of f.edges) {
+      const arr = adj.get(e.hashCode);
+      if (arr) arr.push(f); else adj.set(e.hashCode, [f]);
+    }
+  }
+
+  // Fast path: when EVERY edge is a straight edge between two perpendicular flat
+  // faces, the chamfer is built as a boolean instead — exact there, and unlike
+  // BRepFilletAPI indifferent to how the adjoining round walls are faceted (see
+  // chamferWedgeFor: the old ceiling was one facet chord). All-or-nothing, and
+  // every wedge is derived from the ORIGINAL shape, so no edge has to be re-found
+  // on a partially rebuilt body.
+  if (op === "chamfer") {
+    const wedges: { wedge: NamedShape; convex: boolean }[] = [];
+    let all = true;
+    for (const e of hits) {
+      const w = chamferWedgeFor(e, adj.get(e.hashCode) ?? [], size, angle ?? 45, flip ?? false, id);
+      if (!w) { all = false; break; }
+      wedges.push(w);
+    }
+    if (all && wedges.length === hits.length) {
+      try {
+        let acc: NamedShape = { shape: target.shape, names: target.names };
+        let owns = false;
+        for (const kind of ["cut", "fuse"] as const) {
+          const group = wedges.filter((w) => (kind === "cut") === w.convex).map((w) => w.wedge);
+          if (group.length === 0) continue;
+          const tool = group.length === 1 ? group[0] : compoundOf(group);
+          const next = booleanNamed(kind, acc, tool);
+          if (tool !== group[0]) tool.shape.delete();
+          if (owns) acc.shape.delete();
+          acc = next;
+          owns = true;
+        }
+        for (const w of wedges) w.wedge.shape.delete();
+        // The faces the booleans created carry no name (the tools were stripped);
+        // they are the bevels, named as the OCCT path names them.
+        const names = new Map(acc.names);
+        const bnd = new oc.Bnd_Box_1();
+        let n = 0;
+        for (const f of acc.shape.faces) {
+          if (names.has(f.hashCode)) continue;
+          names.set(f.hashCode, n === 0 ? `${id}/${op}` : `${id}/${op}#${n}`);
+          n++;
+          oc.BRepBndLib.Add(f.wrapped, bnd, false);
+        }
+        let changedBox: [Vec3, Vec3] | undefined;
+        if (!bnd.IsVoid()) {
+          const lo = bnd.CornerMin(), hi = bnd.CornerMax();
+          changedBox = [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]];
+        }
+        bnd.delete();
+        return { shape: acc.shape, names, changedBox };
+      } catch {
+        // Fall through to OCCT below; the wedges are released either way.
+        for (const w of wedges) { try { w.wedge.shape.delete(); } catch { /* already gone */ } }
+      }
+    } else {
+      for (const w of wedges) w.wedge.shape.delete();
+    }
+  }
+
   const builder =
     op === "fillet"
       ? new oc.BRepFilletAPI_MakeFillet(target.shape.wrapped, oc.ChFi3d_FilletShape.ChFi3d_Rational)
@@ -1428,15 +1643,6 @@ function dressUpNamed(
   // An angled chamfer needs a reference face per edge; 45° is exactly the
   // symmetric chamfer, so it keeps the simpler (and better-trodden) Add path.
   const angled = op === "chamfer" && angle !== undefined && Math.abs(angle - 45) > 1e-9;
-  const adj = new Map<number, Face[]>();
-  if (angled) {
-    for (const f of target.shape.faces) {
-      for (const e of f.edges) {
-        const arr = adj.get(e.hashCode);
-        if (arr) arr.push(f); else adj.set(e.hashCode, [f]);
-      }
-    }
-  }
 
   const dressed: Topo[] = [];
   for (const e of hits) {

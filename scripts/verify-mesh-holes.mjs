@@ -99,12 +99,16 @@ const ch = await apply({ op: "dressUp", kind: "chamfer", targetId: body.id, edge
 check("chamfer created", ch.ok, JSON.stringify(ch).slice(0, 160));
 await waitIdle();
 
-check(
-  "the chamfer really does defeat the one-shot mesher (the bug is reproduced)",
-  sum(recovered) > 0,
-  `${sum(recovered)} face(s) had to be re-meshed one at a time`,
-);
-check("…and every one of them was recovered", unmeshed.length === 0, `${sum(unmeshed)} left unmeshed`);
+// This fixture used to need 4 faces re-meshed one at a time, and before that
+// left holes you could see through. It needs none now: chamfers on a straight
+// edge between two perpendicular flat faces are computed as a boolean, which
+// doesn't produce the near-degenerate slivers the mesher chokes on. So the
+// recovery path is no longer exercised HERE — that is the fix working, not the
+// harness going soft. What is asserted is the property either way: nothing
+// unmeshed. Exercising the recovery path itself now needs a fixture whose
+// chamfer falls back to OCCT (a curved edge, or non-perpendicular faces).
+console.log(`  note: ${sum(recovered)} face(s) needed re-meshing (was 4 before the chamfer became a boolean)`);
+check("nothing is left unmeshed", unmeshed.length === 0, `${sum(unmeshed)} left unmeshed`);
 // Not asserted: that the boundary fallback FIRES. It doesn't here — normalAt
 // copes with these faces even though the mesher won't touch them, so the
 // fallback is pure defence. What is asserted is the invariant it protects: a

@@ -1,0 +1,166 @@
+{
+  "format": "openpoly-doc",
+  "version": 1,
+  "name": "BC",
+  "doc": {
+    "features": [
+      {
+        "id": "8f39aad2-f81f-437a-a0ca-a4ed6fec92f9",
+        "type": "primitive",
+        "kind": "cylinder",
+        "name": "Cylinder 1",
+        "suppressed": false,
+        "params": {
+          "radius": "18",
+          "height": "40",
+          "x": "0",
+          "y": "0",
+          "z": "0"
+        },
+        "color": 14050937,
+        "opacity": 1
+      },
+      {
+        "id": "f145ced8-ef49-42f5-8095-4d811cb0f584",
+        "type": "sketch",
+        "name": "Sketch 1",
+        "suppressed": true,
+        "plane": {
+          "kind": "face",
+          "featureId": "8f39aad2-f81f-437a-a0ca-a4ed6fec92f9",
+          "frame": {
+            "origin": [
+              0,
+              0,
+              40
+            ],
+            "uAxis": [
+              0,
+              -1,
+              0
+            ],
+            "vAxis": [
+              1,
+              0,
+              0
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ]
+          }
+        },
+        "entities": [
+          {
+            "type": "line",
+            "id": "fc13348d-bd95-433c-bf22-797ecf33ddba",
+            "a": [
+              -18.000000021738042,
+              0
+            ],
+            "b": [
+              18.000000021738042,
+              0
+            ]
+          },
+          {
+            "type": "arc",
+            "id": "44abc610-d836-45cd-a867-ee6fb24816ac",
+            "c": [
+              0,
+              0
+            ],
+            "r": 18.000000021738042,
+            "start": 3.141592653589793,
+            "end": 6.283185307179586
+          }
+        ],
+        "constraints": [
+          {
+            "id": "1ee75c1e-aec8-4e12-9ff7-6b338673b069",
+            "type": "coincident",
+            "a": {
+              "entity": "fc13348d-bd95-433c-bf22-797ecf33ddba",
+              "at": "a"
+            },
+            "b": {
+              "fixed": [
+                -18.000000021738042,
+                0
+              ]
+            }
+          },
+          {
+            "id": "6e50b49b-ea71-4ee6-b8c6-c4c61d8e05d4",
+            "type": "coincident",
+            "a": {
+              "entity": "fc13348d-bd95-433c-bf22-797ecf33ddba",
+              "at": "b"
+            },
+            "b": {
+              "fixed": [
+                18.000000021738042,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "bd1e50f2-6ecb-4fb5-9443-de823318f34e",
+        "type": "extrude",
+        "name": "Extrude 1",
+        "suppressed": false,
+        "profile": {
+          "kind": "sketchRegion",
+          "sketchId": "f145ced8-ef49-42f5-8095-4d811cb0f584",
+          "regionId": "region-loop-44abc610-d836-45cd-a867-ee6fb24816ac_fc13348d-bd95-433c-bf22-797ecf33ddba"
+        },
+        "distance": "15",
+        "flip": false,
+        "extent": "blind",
+        "mode": "add",
+        "targetId": "8f39aad2-f81f-437a-a0ca-a4ed6fec92f9",
+        "color": 9791190,
+        "opacity": 1
+      },
+      {
+        "id": "52071cea-63df-479d-9989-833197328b5a",
+        "type": "dressup",
+        "op": "chamfer",
+        "name": "Chamfer 1",
+        "suppressed": false,
+        "targetId": "8f39aad2-f81f-437a-a0ca-a4ed6fec92f9",
+        "edges": [
+          "bd1e50f2-6ecb-4fb5-9443-de823318f34e/end∩bd1e50f2-6ecb-4fb5-9443-de823318f34e/side0",
+          "8f39aad2-f81f-437a-a0ca-a4ed6fec92f9/+z∩bd1e50f2-6ecb-4fb5-9443-de823318f34e/side0"
+        ],
+        "edgeRefs": [
+          {
+            "name": "bd1e50f2-6ecb-4fb5-9443-de823318f34e/end∩bd1e50f2-6ecb-4fb5-9443-de823318f34e/side0",
+            "mid": [
+              1.1021821205636891e-15,
+              0,
+              55
+            ],
+            "length": 36.000000043476085
+          },
+          {
+            "name": "8f39aad2-f81f-437a-a0ca-a4ed6fec92f9/+z∩bd1e50f2-6ecb-4fb5-9443-de823318f34e/side0",
+            "mid": [
+              -2.0102237556272074e-18,
+              0,
+              40
+            ],
+            "length": 36.00000002173804
+          }
+        ],
+        "size": "1",
+        "angle": "45"
+      }
+    ],
+    "variables": [],
+    "rollbackIndex": 4
+  }
+}
