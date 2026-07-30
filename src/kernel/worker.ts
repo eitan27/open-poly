@@ -33,6 +33,7 @@ import { expandToChains, expansionCount } from "../geom/edgeChains";
 import {
   chamferLegs,
   chamferTriangle,
+  filletCrossSection,
   inFaceDirection,
   isConvexEdge,
   isRightAngle,
@@ -1414,11 +1415,57 @@ function polygonFace(pts: V3[]): Face | null {
   return regionFace({ kind: "sketchRegion", outline, frame }, planeOf(frame));
 }
 
-/** The solid a chamfer removes (or adds), for the one configuration where it can
- *  be built exactly by hand: a STRAIGHT edge between two PLANAR faces meeting at
- *  a right angle. `convex` says whether the caller should CUT it away or FUSE it in.
+/** A fillet's cross-section as a face: two segments out along the faces, closed
+ *  by a TRUE arc of radius `r` tangent to both. Built from exact curve segments
+ *  rather than a polyline, so the rounded surface really is round rather than a
+ *  fan of chords. Null if the points are degenerate. */
+function filletFace(onEdge: V3, towardRef: V3, towardOther: V3, r: number): Face | null {
+  const cs = filletCrossSection(onEdge, towardRef, towardOther, r);
+  if (!cs) return null;
+  // A 2D frame on the cross-section's own plane: u along the reference face, v
+  // along the other. Both legs are the radius, so the plane is well conditioned.
+  const u = vunit(towardRef);
+  const v = vunit(towardOther);
+  const n = v3cross(u, v);
+  if (Math.hypot(n[0], n[1], n[2]) < 1e-12) return null;
+  const frame: ResolvedFrame = { origin: onEdge, uAxis: u, vAxis: v, normal: vunit(n) };
+  const uv = (p: V3): [number, number] => {
+    const d: V3 = [p[0] - onEdge[0], p[1] - onEdge[1], p[2] - onEdge[2]];
+    return [v3dot(d, u), v3dot(d, v)];
+  };
+  // Loop: corner → along the reference face → arc (through arcMid) → back. The
+  // `outline` is the faceted fallback; `segments` is what the kernel prefers.
+  const corner = uv(cs.corner);
+  const endRef = uv(cs.endRef);
+  const endOther = uv(cs.endOther);
+  const arcMid = uv(cs.arcMid);
+  try {
+    return regionFace(
+      {
+        kind: "sketchRegion",
+        outline: [corner, endRef, arcMid, endOther],
+        frame,
+        segmentStart: corner,
+        segments: [
+          { kind: "line", to: endRef },
+          { kind: "arc", mid: arcMid, to: endOther },
+        ],
+      },
+      planeOf(frame),
+    );
+  } catch {
+    return null; // the caller falls back to OCCT
+  }
+}
+
+/** The solid a chamfer or fillet removes (or adds), for the one configuration
+ *  where it can be built exactly by hand: a STRAIGHT edge between two PLANAR faces
+ *  meeting at a right angle. `convex` says whether the caller should CUT it away or
+ *  FUSE it in. The two differ only in the cross-section — a straight bevel for a
+ *  chamfer, an arc tangent to both faces for a fillet; the sweep, the convexity
+ *  test, the fit checks and the concave bounding are shared.
  *
- *  Why this exists. BRepFilletAPI must propagate a chamfer's run-out onto whatever
+ *  Why this exists. BRepFilletAPI must propagate the run-out onto whatever
  *  adjoins the edge's ends. Our round walls are polygons, so the run-out reaches a
  *  facet boundary as soon as the chamfer is wider than one facet chord, and OCCT
  *  fails. Measured on a 96-gon at r = 18 (chord 1.178mm): builds at 1.17, fails at
@@ -1428,7 +1475,8 @@ function polygonFace(pts: V3[]): Face | null {
  *  to propagate, so faceting stops mattering.
  *
  *  Returns null for anything it can't do exactly, so the caller falls back. */
-function chamferWedgeFor(
+function dressUpWedgeFor(
+  op: "chamfer" | "fillet",
   edge: Edge,
   adjacent: Face[],
   size: number,
@@ -1458,7 +1506,10 @@ function chamferWedgeFor(
   if (!t1 || !t2) return null;
   const convex = isConvexEdge(t1, n2);
 
-  const legs = chamferLegs(size, angleDeg);
+  // A fillet has no angle: both legs are the radius.
+  const legs = op === "fillet"
+    ? (size > 1e-9 && Number.isFinite(size) ? { ref: size, other: size } : null)
+    : chamferLegs(size, angleDeg);
   if (!legs) return null;
   const [tRef, tOther] = flip ? [t2, t1] : [t1, t2];
   const [fRef, fOther] = flip ? [adjacent[1], adjacent[0]] : [adjacent[0], adjacent[1]];
@@ -1480,7 +1531,9 @@ function chamferWedgeFor(
   // booleans intersect transversally instead of exactly touching at the endpoints.
   const pad = Math.max(len * 1e-3, 1e-4);
   const o: V3 = [a[0] - along[0] * pad, a[1] - along[1] * pad, a[2] - along[2] * pad];
-  const tri = polygonFace(chamferTriangle(o, tRef, tOther, legs));
+  const tri = op === "fillet"
+    ? filletFace(o, tRef, tOther, legs.ref)
+    : polygonFace(chamferTriangle(o, tRef, tOther, legs));
   if (!tri) return null;
 
   let wedge: NamedShape;
@@ -1587,16 +1640,29 @@ function dressUpNamed(
   }
 
   // Fast path: when EVERY edge is a straight edge between two perpendicular flat
-  // faces, the chamfer is built as a boolean instead — exact there, and unlike
-  // BRepFilletAPI indifferent to how the adjoining round walls are faceted (see
-  // chamferWedgeFor: the old ceiling was one facet chord). All-or-nothing, and
-  // every wedge is derived from the ORIGINAL shape, so no edge has to be re-found
-  // on a partially rebuilt body.
-  if (op === "chamfer") {
+  // faces, the chamfer or fillet is built as a boolean instead — exact there, and
+  // unlike BRepFilletAPI indifferent to how the adjoining round walls are faceted
+  // (see dressUpWedgeFor: the old ceiling was one facet chord). All-or-nothing,
+  // and every wedge is derived from the ORIGINAL shape, so no edge has to be
+  // re-found on a partially rebuilt body.
+  //
+  // Only for edges that STAND ALONE, though. A wedge is swept along one edge and
+  // stops at its ends, so where the next dressed edge continues smoothly — the
+  // chords of a faceted rim — consecutive wedges meet at an angle and leave the
+  // corner between them uncut. Dressing a cylinder's whole rim that way came out
+  // as a castellated crown, 96 leftover teeth, at every size (measured: 146 faces
+  // and 528 edges regardless of radius, which is itself the tell — a real bevel's
+  // topology moves with its size). Blending across a chain is what BRepFilletAPI
+  // is for, so hand those back. The cases the boolean exists for — a diameter
+  // across a cylinder's top, a box edge, a step — are all singletons.
+  const chainSize = new Map<number, number>();
+  for (const rep of chainOf.values()) chainSize.set(rep, (chainSize.get(rep) ?? 0) + 1);
+  const standalone = hits.every((e) => (chainSize.get(chainOf.get(e.hashCode) ?? e.hashCode) ?? 1) === 1);
+  if (hits.length > 0 && standalone) {
     const wedges: { wedge: NamedShape; convex: boolean }[] = [];
     let all = true;
     for (const e of hits) {
-      const w = chamferWedgeFor(e, adj.get(e.hashCode) ?? [], size, angle ?? 45, flip ?? false, id);
+      const w = dressUpWedgeFor(op, e, adj.get(e.hashCode) ?? [], size, angle ?? 45, flip ?? false, id);
       if (!w) { all = false; break; }
       wedges.push(w);
     }
@@ -1615,6 +1681,14 @@ function dressUpNamed(
           owns = true;
         }
         for (const w of wedges) w.wedge.shape.delete();
+        // A concave wedge is bounded by the extents of the two faces it lies
+        // between, so its ends land exactly ON whatever the round runs out onto —
+        // and a fuse keeps coplanar faces separate, leaving a hairline seam drawn
+        // across each of them (measured: a filleted step came out 11 faces instead
+        // of 9, one extra per end). Merge them, as the extrude and boolean paths
+        // already do. Only when a boolean actually ran: otherwise `acc` still IS
+        // the target body and unifyBody would delete it.
+        if (owns) acc = unifyBody(acc);
         // The faces the booleans created carry no name (the tools were stripped);
         // they are the bevels, named as the OCCT path names them.
         const names = new Map(acc.names);

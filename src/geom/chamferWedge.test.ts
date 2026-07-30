@@ -3,6 +3,7 @@ import {
   chamferLegs,
   chamferTriangle,
   dot,
+  filletCrossSection,
   inFaceDirection,
   isConvexEdge,
   isRightAngle,
@@ -123,6 +124,57 @@ describe("legFits", () => {
   it("fails at or past the reach — a 999mm chamfer on a 40mm box", () => {
     expect(legFits(999, 20)).toBe(false);
     expect(legFits(20, 20)).toBe(false);
+  });
+});
+
+describe("filletCrossSection", () => {
+  const r = 4;
+  const cs = filletCrossSection([0, 0, 20], [0, 1, 0], [0, 0, -1], r)!;
+
+  it("runs one radius along each face — a fillet has no angle to vary", () => {
+    expect(cs.corner).toEqual([0, 0, 20]);
+    expect(cs.endRef).toEqual([0, r, 20]);
+    expect(cs.endOther).toEqual([0, 0, 20 - r]);
+  });
+
+  it("puts arcMid ON the arc, not on the chord", () => {
+    // The arc of radius r tangent to both faces is centred at (r, r) in the
+    // corner's frame, so its nearest point is r*sqrt(2) - r from the corner —
+    // measurably further out than the chord's midpoint at r/sqrt(2).
+    const d = Math.hypot(cs.arcMid[1] - 0, cs.arcMid[2] - 20);
+    expect(d).toBeCloseTo(r * Math.SQRT2 - r, 9);
+    const chordMid = r * Math.SQRT1_2;
+    expect(d).toBeLessThan(chordMid);
+  });
+
+  it("keeps arcMid equidistant from the arc's centre", () => {
+    // Centre is one radius along each face from the corner.
+    const centre: V3 = [0, r, 20 - r];
+    const dist = Math.hypot(cs.arcMid[1] - centre[1], cs.arcMid[2] - centre[2]);
+    expect(dist).toBeCloseTo(r, 9);
+    // And so are both ends, by construction — the arc really is tangent.
+    expect(Math.hypot(cs.endRef[1] - centre[1], cs.endRef[2] - centre[2])).toBeCloseTo(r, 9);
+    expect(Math.hypot(cs.endOther[1] - centre[1], cs.endOther[2] - centre[2])).toBeCloseTo(r, 9);
+  });
+
+  it("bulges toward the corner, so the region is the corner being rounded off", () => {
+    // arcMid must lie between the corner and the chord, on the diagonal.
+    expect(cs.arcMid[1]).toBeGreaterThan(0);
+    expect(cs.arcMid[1]).toBeLessThan(r * Math.SQRT1_2);
+    expect(cs.arcMid[1] - 0).toBeCloseTo(20 - cs.arcMid[2], 9); // symmetric on the diagonal
+  });
+
+  it("refuses a degenerate radius", () => {
+    expect(filletCrossSection([0, 0, 0], [1, 0, 0], [0, 1, 0], 0)).toBeNull();
+    expect(filletCrossSection([0, 0, 0], [1, 0, 0], [0, 1, 0], -2)).toBeNull();
+    expect(filletCrossSection([0, 0, 0], [1, 0, 0], [0, 1, 0], Number.NaN)).toBeNull();
+  });
+
+  it("removes less material than the equivalent chamfer, as a round should", () => {
+    // Chamfer area = r^2/2; fillet area = r^2 - pi r^2/4, which is smaller.
+    const chamferArea = (r * r) / 2;
+    const filletArea = r * r - (Math.PI * r * r) / 4;
+    expect(filletArea).toBeLessThan(chamferArea);
   });
 });
 

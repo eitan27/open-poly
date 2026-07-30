@@ -98,3 +98,34 @@ export function chamferTriangle(
 ): [V3, V3, V3] {
   return [onEdge, scaleAdd(onEdge, towardRef, legs.ref), scaleAdd(onEdge, towardOther, legs.other)];
 }
+
+/** Where a fillet's arc sits, relative to the corner, as a fraction of the
+ *  radius. The arc of radius r tangent to both faces is centred at (r, r) in the
+ *  corner's own frame, so its nearest point to the corner lies on the diagonal at
+ *  r(1 − 1/√2) ≈ 0.293r from it. */
+export const FILLET_ARC_MID_FRACTION = 1 - Math.SQRT1_2;
+
+/** The cross-section a fillet removes (convex) or adds (concave): the corner
+ *  region cut off by an arc of radius `r` tangent to both faces.
+ *
+ *  Bounded by a segment out along each face and the arc between their ends, so it
+ *  is the chamfer's triangle with the hypotenuse bowed toward the corner. Both
+ *  legs are the radius — a fillet has no angle to vary. `arcMid` lies ON the arc
+ *  (not on the chord), so the caller can build it as a true three-point arc rather
+ *  than approximating it. */
+export function filletCrossSection(
+  onEdge: V3,
+  towardRef: V3,
+  towardOther: V3,
+  r: number,
+): { corner: V3; endRef: V3; endOther: V3; arcMid: V3 } | null {
+  if (!(r > 1e-9) || !Number.isFinite(r)) return null;
+  const d = r * FILLET_ARC_MID_FRACTION;
+  return {
+    corner: onEdge,
+    endRef: scaleAdd(onEdge, towardRef, r),
+    endOther: scaleAdd(onEdge, towardOther, r),
+    // On the diagonal between the two faces, at the arc's closest approach.
+    arcMid: scaleAdd(scaleAdd(onEdge, towardRef, d), towardOther, d),
+  };
+}
