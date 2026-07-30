@@ -1,0 +1,185 @@
+{
+  "format": "openpoly-doc",
+  "version": 1,
+  "name": "Untitled 2",
+  "doc": {
+    "features": [
+      {
+        "id": "6f20edf9-32fb-40ef-9656-003093e73017",
+        "type": "sketch",
+        "name": "Sketch 1",
+        "suppressed": true,
+        "plane": {
+          "kind": "datum",
+          "id": "plane-top"
+        },
+        "entities": [
+          {
+            "type": "circle",
+            "id": "337981a3-979d-4721-a619-12bc68e57e52",
+            "c": [
+              -15.98200776560699,
+              -2.6200012730516393
+            ],
+            "r": 8.384004073761052
+          }
+        ],
+        "constraints": []
+      },
+      {
+        "id": "00d027f0-0397-4296-9710-52b52d666a49",
+        "type": "extrude",
+        "name": "Extrude 1",
+        "suppressed": false,
+        "profile": {
+          "kind": "sketchRegion",
+          "sketchId": "6f20edf9-32fb-40ef-9656-003093e73017",
+          "regionId": "region-337981a3-979d-4721-a619-12bc68e57e52"
+        },
+        "distance": "20",
+        "flip": false,
+        "extent": "blind",
+        "mode": "new",
+        "color": 14072422,
+        "opacity": 1
+      },
+      {
+        "id": "1ddede4c-73aa-4ac9-964b-f302db2d22a1",
+        "type": "sketch",
+        "name": "Sketch 2",
+        "suppressed": true,
+        "plane": {
+          "kind": "face",
+          "featureId": "00d027f0-0397-4296-9710-52b52d666a49",
+          "frame": {
+            "origin": [
+              0,
+              0,
+              20
+            ],
+            "uAxis": [
+              0,
+              -1,
+              0
+            ],
+            "vAxis": [
+              1,
+              0,
+              0
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ]
+          }
+        },
+        "entities": [
+          {
+            "type": "line",
+            "id": "4b2b3095-26fc-483e-8704-bcd81a1ffaa7",
+            "a": [
+              -5.764002841536717,
+              -15.982007816433907
+            ],
+            "b": [
+              11.004005439218895,
+              -15.982007816433907
+            ]
+          },
+          {
+            "type": "arc",
+            "id": "9bf426b5-ff56-48ac-bc56-be3cc7f13580",
+            "c": [
+              2.620001298841091,
+              -15.977515338962474
+            ],
+            "r": 8.384005344000327,
+            "start": -3.1410568145126354,
+            "end": -0.0005358390771577071
+          }
+        ],
+        "constraints": [
+          {
+            "id": "fdea4cf4-90a0-47db-b807-857b8eb2f38a",
+            "type": "horizontal",
+            "entity": "4b2b3095-26fc-483e-8704-bcd81a1ffaa7"
+          },
+          {
+            "id": "254b78d1-2aea-4935-8510-6a6872a6c497",
+            "type": "coincident",
+            "a": {
+              "entity": "4b2b3095-26fc-483e-8704-bcd81a1ffaa7",
+              "at": "a"
+            },
+            "b": {
+              "fixed": [
+                -5.764002841536717,
+                -15.982007816433907
+              ]
+            }
+          },
+          {
+            "id": "e6396fb5-5a34-4ad6-8c07-52d82379e462",
+            "type": "coincident",
+            "a": {
+              "entity": "4b2b3095-26fc-483e-8704-bcd81a1ffaa7",
+              "at": "b"
+            },
+            "b": {
+              "fixed": [
+                11.004005439218895,
+                -15.982007816433907
+              ]
+            }
+          }
+        ],
+        "derived": []
+      },
+      {
+        "id": "e0c67724-1b79-4458-8306-86fa9c055013",
+        "type": "extrude",
+        "name": "Extrude 2",
+        "suppressed": false,
+        "profile": {
+          "kind": "sketchRegion",
+          "sketchId": "1ddede4c-73aa-4ac9-964b-f302db2d22a1",
+          "regionId": "region-loop-4b2b3095-26fc-483e-8704-bcd81a1ffaa7_9bf426b5-ff56-48ac-bc56-be3cc7f13580"
+        },
+        "distance": "10",
+        "flip": false,
+        "extent": "blind",
+        "mode": "add",
+        "targetId": "00d027f0-0397-4296-9710-52b52d666a49",
+        "color": 14072422,
+        "opacity": 1
+      },
+      {
+        "id": "fe894b6f-d42d-4e07-809a-fd9738880906",
+        "type": "dressup",
+        "op": "chamfer",
+        "name": "Chamfer 1",
+        "suppressed": false,
+        "targetId": "00d027f0-0397-4296-9710-52b52d666a49",
+        "edges": [
+          "00d027f0-0397-4296-9710-52b52d666a49/end∩e0c67724-1b79-4458-8306-86fa9c055013/side0"
+        ],
+        "edgeRefs": [
+          {
+            "name": "00d027f0-0397-4296-9710-52b52d666a49/end∩e0c67724-1b79-4458-8306-86fa9c055013/side0",
+            "mid": [
+              -15.98200779102045,
+              -2.6200012859463646,
+              20
+            ],
+            "length": 16.76800821413886
+          }
+        ],
+        "size": "2",
+        "angle": "45"
+      }
+    ],
+    "variables": [],
+    "rollbackIndex": 5
+  }
+}

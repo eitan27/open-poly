@@ -143,6 +143,41 @@ for (const a0 of phases) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// KNOWN GAP, reported not asserted: canonical stations are anchored to the SKETCH
+// FRAME's u-axis, while a primitive's facets are baked in the primitive's OWN
+// frame at creation and then rigidly transformed. On an untransformed cylinder's
+// top face the two anchors differ by 90 degrees -- a whole 24 stations -- so they
+// coincide. Rotate the cylinder by a non-multiple of the pitch and they do not,
+// and the crescent ribbon returns in full (measured: 100 faces at 0 degrees, 148
+// at 1.875, 7 and 23.4). No frame-anchored convention can fix this: the primitive
+// was faceted before it was rotated. The durable fix is association -- sketch
+// geometry lying on an existing edge should USE that edge's geometry rather than
+// re-derive its own -- which also covers the unrelated case of an arc drawn a few
+// microns off-centre. Recorded here so the limit is not mistaken for a pass.
+// ---------------------------------------------------------------------------
+for (const rot of [1.875, 7]) {
+  await apply({ op: "newDocument", name: `rot-${rot}` });
+  await waitIdle();
+  const rc = await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: String(R), height: "60" } });
+  await waitIdle();
+  await apply({ op: "transform", targetId: rc.createdId, angle: String(rot), axis: "z", tx: "0", ty: "0", tz: "0" });
+  await waitIdle();
+  const rsk = await apply({
+    op: "addSketch",
+    plane: { bodyId: rc.createdId, faceName: `${rc.createdId}/+z` },
+    entities: [
+      { shape: "line", a: [0, R], b: [0, -R] },
+      { shape: "arc", c: [0, 0], r: R, start: 90, end: 270 },
+    ],
+  });
+  await waitIdle();
+  await apply({ op: "addExtrude", profile: { sketchId: rsk.createdId }, distance: "20", mode: "add", targetId: rc.createdId });
+  await waitIdle();
+  const rb = (await read({ read: "sceneSummary" })).bodies.find((b) => b.id === rc.createdId);
+  console.log(`  note: cylinder rotated ${rot}deg -> ${rb?.faces?.length} faces (clean ${CLEAN}) — the known gap above`);
+}
+
 // The count barely moves with phase now; before, it swung from 100 to 245.
 const spread = Math.max(...counts.map((c) => c.n)) - Math.min(...counts.map((c) => c.n));
 check(
