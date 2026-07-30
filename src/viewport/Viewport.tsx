@@ -646,6 +646,80 @@ function faceBoundaryEdges(
   }
   return ranges;
 }
+
+type PickEdgeGroup = { start: number; count: number; edgeId: number; chainId?: number };
+
+/**
+ * Positions where a tangent chain merely turns the corner between two of its own
+ * chords — the interior junctions of a faceted circle, keyed by rounded position.
+ *
+ * A round wall here is a 96-gon, so a rim is 96 *straight* edges and every chord
+ * junction is a genuine OCCT vertex about a millimetre from its neighbours. They
+ * are real topologically and meaningless to a user, so they must not be offered
+ * as pickable vertices. Cached on the geometry (invalidated when the mesh hands
+ * us new edgeGroups) because picking runs on every mouse move.
+ */
+function chainInteriorPositions(geom: THREE.BufferGeometry): Set<string> {
+  const eg = geom.userData.edgeGroups as PickEdgeGroup[] | undefined;
+  if (geom.userData.chainInteriorFor === eg) return geom.userData.chainInterior as Set<string>;
+  const pos = geom.getAttribute("position");
+  // Count each chain's endpoint positions: an endpoint shared by two chords of
+  // the SAME chain is interior to it; one that ends the chain appears once.
+  const seen = new Map<string, number>();
+  if (eg && pos) {
+    for (const g of eg) {
+      if (g.chainId === undefined || g.count < 2) continue;
+      for (const v of [g.start, g.start + g.count - 1]) {
+        const k = `${g.chainId}|${posKey(pos.getX(v), pos.getY(v), pos.getZ(v))}`;
+        seen.set(k, (seen.get(k) ?? 0) + 1);
+      }
+    }
+  }
+  const interior = new Set<string>();
+  for (const [k, n] of seen) if (n > 1) interior.add(k.slice(k.indexOf("|") + 1));
+  geom.userData.chainInterior = interior;
+  geom.userData.chainInteriorFor = eg;
+  return interior;
+}
+
+/**
+ * The genuine topological vertex nearest `at` on the edge that segment `hitIndex`
+ * belongs to, or null when that edge exposes none.
+ *
+ * Two things otherwise masquerade as vertices, and together they made circular
+ * edges practically unselectable — any click near a rim landed on a "vertex" a
+ * fraction of a millimetre away, and vertex outranks edge:
+ *   • a truly curved edge (a fillet's arc) is drawn as many chords, so every
+ *     interior chord junction looked like an endpoint. Only the ends of the
+ *     edge's whole polyline count — the buffer is consecutive pairs, so those
+ *     are the group's first and last positions.
+ *   • a faceted circle's chords meet tangentially at real vertices, filtered
+ *     out by chainInteriorPositions above. A closed rim is one chain with no
+ *     ends and therefore exposes no vertices at all, which is right: nothing
+ *     there is a corner. The vertical wall seams landing on those same junctions
+ *     drop out too, since the test is by position.
+ */
+function realVertexNear(
+  geom: THREE.BufferGeometry,
+  hitIndex: number,
+  at: THREE.Vector3,
+): THREE.Vector3 | null {
+  const eg = geom.userData.edgeGroups as PickEdgeGroup[] | undefined;
+  const pos = geom.getAttribute("position");
+  if (!eg || !pos) return null;
+  const grp = eg.find((g) => hitIndex >= g.start && hitIndex < g.start + g.count);
+  if (!grp) return null;
+  const interior = chainInteriorPositions(geom);
+  let best: THREE.Vector3 | null = null;
+  let bestD = Infinity;
+  for (const v of [grp.start, grp.start + grp.count - 1]) {
+    const p = new THREE.Vector3().fromBufferAttribute(pos, v);
+    if (interior.has(posKey(p.x, p.y, p.z))) continue;
+    const d = p.distanceTo(at);
+    if (d < bestD) { bestD = d; best = p; }
+  }
+  return best;
+}
 const ANGLE_SNAP = 0.06; // ~3.4° — horizontal/vertical inference window
 
 const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, number, number] }> = {
@@ -2366,7 +2440,7 @@ export function Viewport({
       const depth = faceHit ? faceHit.distance : camera.position.distanceTo(controls.target);
       const worldPerPx = worldPerPixel(depth, rect.height);
       raycaster.params.Line = { threshold: worldPerPx * PICK_DETECT_PX };
-      const edgeHit = raycaster.intersectObjects(bodyEdges, false).find((h) => sectionAllows(h.point));
+      const edgeHits = raycaster.intersectObjects(bodyEdges, false).filter((h) => sectionAllows(h.point));
       const sketchHits = raycaster.intersectObjects(sketchSegs, false);
 
       // Selection filters: which body-geometry kinds the picker may return.
@@ -2378,27 +2452,31 @@ export function Viewport({
       const faceDist = faceHit ? faceHit.distance : Infinity;
 
       // Resolve the nearest body edge into its pixel gaps: edgePx = distance to
-      // the edge polyline, vertexPx = distance to its nearer endpoint. Vertex and
-      // edge are then *independent* pixel gates (vertex ≥ edge), so a click by an
-      // endpoint reliably selects the vertex even when the edge body has already
-      // fallen outside EDGE_PICK_PX.
+      // the edge polyline, vertexPx = distance to the nearest REAL vertex on it
+      // (see realVertexNear — a faceted circle's chord junctions don't count).
+      // Vertex and edge are then *independent* pixel gates (vertex ≥ edge), so a
+      // click by an endpoint reliably selects the vertex even when the edge body
+      // has already fallen outside EDGE_PICK_PX.
+      //
+      // The edge is chosen by PIXEL distance, not intersect order, for the same
+      // reason as the sketch hit below: on a faceted rim seen down its axis every
+      // chord ties on depth, so `[0]` returned an arbitrary one — typically a
+      // whole chord away, which then failed the EDGE_PICK_PX gate.
+      const edgeNear = nearestHitInPixels(edgeHits, projectToPx, clientX, clientY, faceDist + PICK_DEPTH_TOL);
+      const edgeHit = edgeNear?.hit;
       let edgeInfo:
-        | { fid: string; edgeId: number | undefined; near: THREE.Vector3; edgePx: number; vertexPx: number }
+        | { fid: string; edgeId: number | undefined; near: THREE.Vector3 | null; edgePx: number; vertexPx: number }
         | null = null;
-      if (edgeHit && edgeHit.index != null && edgeHit.distance <= faceDist + PICK_DEPTH_TOL) {
+      if (edgeHit && edgeHit.index != null) {
         const mesh = edgeHit.object as THREE.LineSegments;
-        const pos = mesh.geometry.getAttribute("position");
-        const a = new THREE.Vector3().fromBufferAttribute(pos, edgeHit.index);
-        const bpt = new THREE.Vector3().fromBufferAttribute(pos, edgeHit.index + 1);
-        const near = a.distanceTo(edgeHit.point) <= bpt.distanceTo(edgeHit.point) ? a : bpt;
-        const ep = projectToPx(edgeHit.point);
-        const np = projectToPx(near);
+        const near = realVertexNear(mesh.geometry, edgeHit.index, edgeHit.point);
+        const np = near ? projectToPx(near) : null;
         edgeInfo = {
           fid: mesh.userData.featureId as string,
           edgeId: getEdgeId(edgeHit.index, mesh.geometry),
           near,
-          edgePx: Math.hypot(ep.x - clientX, ep.y - clientY),
-          vertexPx: Math.hypot(np.x - clientX, np.y - clientY),
+          edgePx: edgeNear!.px,
+          vertexPx: np ? Math.hypot(np.x - clientX, np.y - clientY) : Infinity,
         };
       }
       // Sketch line gated the same way (pixel gap to the line), so it doesn't
@@ -2413,7 +2491,7 @@ export function Viewport({
       const sketchOk = !!sketchHit && sketchPx <= EDGE_PICK_PX;
 
       // Vertex is the highest-priority element (a point beats any edge/face/line).
-      if (flt.vertex && edgeInfo && edgeInfo.vertexPx <= VERTEX_PICK_PX) {
+      if (flt.vertex && edgeInfo?.near && edgeInfo.vertexPx <= VERTEX_PICK_PX) {
         const n = edgeInfo.near;
         return { kind: "vertex", featureId: edgeInfo.fid, point: [n.x, n.y, n.z] };
       }

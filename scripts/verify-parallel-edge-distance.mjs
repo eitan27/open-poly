@@ -75,7 +75,8 @@ for (const x of [x0, x1]) for (const y of [y0, y1]) wanted.push({ axis: "z", fix
 
 // --- Discover real edge ids by clicking each midpoint ------------------------
 const canvasBox = await page.locator("canvas").first().boundingBox();
-const found = [];
+let found = [];
+const claims = new Map(); // edgeId → how many midpoints resolved to it
 for (const w of wanted) {
   await apply({ op: "select", refs: [] });
   const s = await page.evaluate((p) => window.__openpoly.worldToScreen(p), w.mid);
@@ -85,8 +86,21 @@ for (const w of wanted) {
   const sel = await read({ read: "selection" });
   // Only trust an unambiguous hit on a single edge of our box.
   if (sel.length === 1 && sel[0].kind === "edge" && sel[0].featureId === boxId) {
-    if (!found.some((f) => f.edgeId === sel[0].edgeId)) found.push({ ...w, edgeId: sel[0].edgeId });
+    claims.set(sel[0].edgeId, (claims.get(sel[0].edgeId) ?? 0) + 1);
+    found.push({ ...w, edgeId: sel[0].edgeId });
   }
+}
+// In an isometric view a box's hidden back edges project onto the same screen
+// lines as visible front ones, so two midpoints can resolve to the SAME edge —
+// the visible one under the cursor. That's a correct pick but a useless data
+// point: we can no longer say which geometry the id belongs to. Drop every id
+// claimed twice (keeping the first claim would silently mislabel it, and every
+// expected distance derived from it would be wrong).
+const ambiguous = [...claims].filter(([, n]) => n > 1).map(([id]) => id);
+if (ambiguous.length) {
+  const dropped = found.filter((f) => ambiguous.includes(f.edgeId));
+  console.log(`  (dropped ${dropped.length} ambiguous pick(s): ${dropped.map((f) => `${f.axis}@${f.fixed}`).join(", ")} — overlapping projections)`);
+  found = found.filter((f) => !ambiguous.includes(f.edgeId));
 }
 console.log(`  (discovered ${found.length} of 12 edges by clicking; back edges are occluded)`);
 check("discovered enough edges to test", found.length >= 6, `found ${found.length}`);
