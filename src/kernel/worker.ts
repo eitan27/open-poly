@@ -29,6 +29,7 @@ import type {
 } from "./types";
 import { DRESSUP_DELTA_IDS } from "./types";
 import { CIRCLE_FACETS, circleStations } from "../geom/circleFacets";
+import { expandToChains, expansionCount } from "../geom/edgeChains";
 import {
   chamferLegs,
   chamferTriangle,
@@ -1551,6 +1552,30 @@ function dressUpNamed(
       `${lost.length} of ${edgeNames.length} edges could not be re-found and were skipped: ${lost.join(", ")} — edit the feature to re-pick them`,
     );
   }
+
+  // A stored edge list is a set of REPRESENTATIVES, not an inventory. Clicking a
+  // faceted rim selects its whole tangent chain, but the feature saves the literal
+  // segment names it had at the time — so if the wall is later cut into more
+  // facets, the same list resolves to only PART of the rim and you get part of a
+  // chamfer, silently. Expanding each hit to its chain makes "this rim" mean the
+  // rim however finely it is cut. A straight edge is its own singleton and passes
+  // through untouched, which is the common case. See geom/edgeChains.
+  const chainOf = edgeChainsFrom(target.shape);
+  const wanted = expandToChains(hits.map((e) => e.hashCode), chainOf);
+  const added = expansionCount(hits.map((e) => e.hashCode), wanted);
+  if (added > 0) {
+    const byHash = new Map(target.shape.edges.map((e) => [e.hashCode, e]));
+    hits.length = 0;
+    for (const h of wanted) {
+      const e = byHash.get(h);
+      if (e) hits.push(e);
+    }
+    warn?.(
+      `the stored selection covered ${hits.length - added} of ${hits.length} segments of its edge chain, ` +
+      `so ${added} more were included to dress the whole curve — re-pick the edge to store it afresh`,
+    );
+  }
+
   // Edge → its (≤2) adjacent faces. Wanted by the angled-chamfer reference pick
   // and by the boolean fast path, so it's built either way.
   const adj = new Map<number, Face[]>();
