@@ -125,16 +125,18 @@ for (const a0 of phases) {
     `${joint.length} edge(s) (up to 49 before the fix)`,
   );
 
-  // Chamfering it is reported, not asserted: it fails with the same OCCT
-  // ConstructionError before this change as after, on every phase including the
-  // one that was already clean — so it is a pre-existing limit of chamfering
-  // this profile, not something the faceting fix causes or is expected to cure.
+  // Chamfering it is reported, not asserted. Faceting alignment was never what
+  // decided whether this chamfer built — every phase failed before, including the
+  // one that was already geometrically clean. Since chamfers on a straight edge
+  // between perpendicular flat faces became booleans some phases now succeed,
+  // which is that change showing through rather than anything faceting does. The
+  // remaining failures are OCCT declining this profile.
   unmeshed.length = 0;
   const ch = await apply({ op: "dressUp", kind: "chamfer", targetId: cyl.createdId, edges: joint, size: "2" });
   await waitIdle();
   console.log(
-    `  note: chamfer on the joint at phase ${a0}deg -> ${ch.ok ? "ok" : (ch.error ?? "failed").slice(0, 60)}` +
-    ` (identical before the change), ${unmeshed.reduce((a, b) => a + b, 0)} unmeshed`,
+    `  note: chamfer on the joint at phase ${a0}deg -> ${ch.ok ? "ok" : (ch.error ?? "failed").slice(0, 60)},` +
+    ` ${unmeshed.reduce((a, b) => a + b, 0)} unmeshed`,
   );
   if (a0 === phases[phases.length - 1]) {
     await apply({ op: "select", refs: [] });
