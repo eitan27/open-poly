@@ -2756,7 +2756,6 @@ export default function App() {
     // folded into a single undo step by threading `next` through every
     // addExtrude/setSuppressed call before the one setDoc at the end.
     let next = doc;
-    let lastId = "";
     for (const profile of extrudeDialogProfiles) {
       const res = addExtrude(next, profile, opts);
       // Hide the source sketch once it's been consumed by an extrude. It stays
@@ -2766,10 +2765,9 @@ export default function App() {
         profile.kind === "sketchRegion" || profile.kind === "sketchText"
           ? setSuppressed(res.doc, profile.sketchId, true)
           : res.doc;
-      lastId = res.id;
     }
     setDoc(next);
-    selectFeature(lastId);
+    selectFeature(null);
     closeExtrudeDialog();
   };
 
@@ -3106,7 +3104,7 @@ export default function App() {
       }
     }
     setDoc(next);
-    selectFeature(id);
+    selectFeature(null);
     commitEdit();
     setDressUpDialog(null);
     setDressUpError(null);
@@ -3293,11 +3291,11 @@ export default function App() {
       closeRevolveDialog();
       return;
     }
-    const { doc: created, id } = addRevolve(doc, revolveDialog.profile, revolveDialog.axis, angle, symmetric);
+    const { doc: created } = addRevolve(doc, revolveDialog.profile, revolveDialog.axis, angle, symmetric);
     // Hide the originating sketch once it's been consumed (like extrude does).
     const next = setSuppressed(created, revolveDialog.profile.sketchId, true);
     setDoc(next);
-    selectFeature(id);
+    selectFeature(null);
     closeRevolveDialog();
   };
 
@@ -3343,9 +3341,9 @@ export default function App() {
 
   const openSweep = () => {
     if (!sweepInputs) return;
-    const { doc: next, id } = addSweep(doc, sweepInputs.profile, sweepInputs.path);
+    const { doc: next } = addSweep(doc, sweepInputs.profile, sweepInputs.path);
     setDoc(next);
-    selectFeature(id);
+    selectFeature(null);
   };
 
   // Loft needs ≥2 selected regions (sketch faces). Ordered by their sketch's
@@ -3637,9 +3635,9 @@ export default function App() {
 
   const openLoft = () => {
     if (!loftInputs) return;
-    const { doc: next, id } = addLoft(doc, loftInputs);
+    const { doc: next } = addLoft(doc, loftInputs);
     setDoc(next);
-    selectFeature(id);
+    selectFeature(null);
   };
 
   const openMirror = () => {
@@ -3680,10 +3678,10 @@ export default function App() {
       closeMirror();
       return;
     }
-    const { doc: next, id } = addMirror(doc, mirrorDialog.targetId, ref);
+    const { doc: next } = addMirror(doc, mirrorDialog.targetId, ref);
     setDoc(next);
     closeMirror();
-    selectFeature(id);
+    selectFeature(null);
   };
 
   // Re-open the Mirror dialog to edit an existing mirror in place. The mirror
@@ -3767,10 +3765,10 @@ export default function App() {
       closePattern();
       return;
     }
-    const { doc: next, id } = addPattern(doc, d.targetId, fields);
+    const { doc: next } = addPattern(doc, d.targetId, fields);
     setDoc(next);
     closePattern();
-    selectFeature(id);
+    selectFeature(null);
   };
 
   // Re-open the Pattern dialog to edit an existing pattern in place. Seeds every
@@ -3810,7 +3808,7 @@ export default function App() {
     const pivot = m ? bodyCenter(m.mesh.faces) : ([0, 0, 0] as [number, number, number]);
     const { doc: next, id } = addTransform(doc, transformTarget, pivot);
     setDoc(next);
-    selectFeature(id);
+    selectFeature(null);
     setTransformMode("translate");
     setTransformEditId(id);
     setTransformOrigin({ created: true });
@@ -4205,9 +4203,9 @@ export default function App() {
       closePlaneDialog();
       return;
     }
-    const { doc: next, id } = addPlane(doc, spec);
+    const { doc: next } = addPlane(doc, spec);
     setDoc(next);
-    selectFeature(id);
+    selectFeature(null);
     closePlaneDialog();
   };
 
@@ -5556,9 +5554,9 @@ export default function App() {
       closeBooleanDialog();
       return;
     }
-    const { doc: next, id } = addBoolean(doc, d.op, operands);
+    const { doc: next } = addBoolean(doc, d.op, operands);
     setDoc(next);
-    selectFeature(id);
+    selectFeature(null);
     closeBooleanDialog();
   };
 
