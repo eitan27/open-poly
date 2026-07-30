@@ -65,6 +65,7 @@ import type {
   ProjectRef,
   Document,
   EdgeRef,
+  FaceRef,
   Feature,
   ExtrudeExtent,
   ExtrudeProfile,
@@ -2968,13 +2969,17 @@ export default function App() {
     };
   }, [revolveDialog, doc, ready]);
 
-  // One or more selected body edges, all on the same body — what a chamfer or
-  // fillet would dress. Resolves each edge to its persistent name.
+  // One or more selected body edges and/or FACES, all on the same body — what a
+  // chamfer or fillet would dress. Resolves each to its persistent name. A face
+  // stands for all its boundary edges (the kernel expands it, where the topology
+  // is); that is the practical way to round a circular rim, which is otherwise a
+  // 96-chord chain you have to hit exactly with the cursor.
   const dressUpTarget = useMemo(() => {
     const edges = selection.filter((s): s is Extract<Selection, { kind: "edge" }> => s.kind === "edge");
-    if (edges.length === 0 || edges.length !== selection.length) return null;
-    const targetId = edges[0].featureId;
-    if (!edges.every((e) => e.featureId === targetId)) return null;
+    const faces = selection.filter((s): s is Extract<Selection, { kind: "face" }> => s.kind === "face");
+    if (edges.length + faces.length === 0 || edges.length + faces.length !== selection.length) return null;
+    const targetId = (edges[0] ?? faces[0]).featureId;
+    if (!edges.every((e) => e.featureId === targetId) || !faces.every((f) => f.featureId === targetId)) return null;
     const m = meshes.find((x) => x.id === targetId);
     if (!m) return null;
     const names: string[] = [];
@@ -2988,8 +2993,23 @@ export default function App() {
       const fp = edgeFingerprint(m.mesh.edges, e.edgeId);
       edgeRefs.push(fp ? { name: nm, mid: fp.mid, length: fp.length } : { name: nm });
     }
-    const anchor = edgeMidpoint(m.mesh.edges, edges[0].edgeId);
-    return { targetId, edges: names, edgeRefs, anchor };
+    const faceNames: string[] = [];
+    const faceRefs: FaceRef[] = [];
+    for (const f of faces) {
+      const nm = faceNameOf(m.mesh.faces, f.faceId);
+      if (!nm) return null; // unnamed face — same rule as edges
+      faceNames.push(nm);
+      faceRefs.push({
+        name: nm,
+        center: faceCentroid(m.mesh.faces, f.faceId) ?? undefined,
+        normal: faceNormal(m.mesh.faces, f.faceId) ?? undefined,
+      });
+    }
+    // Where the dialog pops up: by the first picked edge, else the first face.
+    const anchor = edges.length
+      ? edgeMidpoint(m.mesh.edges, edges[0].edgeId)
+      : faceCentroid(m.mesh.faces, faces[0].faceId);
+    return { targetId, edges: names, edgeRefs, faces: faceNames, faceRefs, anchor };
   }, [selection, meshes]);
 
   const openDressUp = (op: "chamfer" | "fillet") => {
@@ -3023,7 +3043,14 @@ export default function App() {
     if (dressUpTarget) return dressUpTarget;
     const f = doc.features.find((x) => x.id === dressUpDialog.editId);
     return f?.type === "dressup"
-      ? { targetId: f.targetId, edges: f.edges, edgeRefs: f.edgeRefs ?? [], anchor: null as [number, number, number] | null }
+      ? {
+          targetId: f.targetId,
+          edges: f.edges,
+          edgeRefs: f.edgeRefs ?? [],
+          faces: f.faces ?? [],
+          faceRefs: f.faceRefs ?? [],
+          anchor: null as [number, number, number] | null,
+        }
       : null;
   }, [dressUpDialog, dressUpTarget, doc]);
 
@@ -3035,6 +3062,8 @@ export default function App() {
     edges: t.edges,
     size: d.size,
     edgeRefs: t.edgeRefs,
+    faces: t.faces,
+    faceRefs: t.faceRefs,
     ...(d.op === "chamfer" ? { angle: d.angle, flip: d.flip } : {}),
   });
 
@@ -3052,7 +3081,7 @@ export default function App() {
   const applyDressUp = (base: Document, t: NonNullable<typeof dressUpDialogTarget>, d: NonNullable<typeof dressUpDialog>) =>
     d.editId
       ? { doc: updateDressUp(base, d.editId, dressUpSpec(t, d)), id: d.editId }
-      : addDressUp(base, d.op, t.targetId, t.edges, d.size, t.edgeRefs, d.op === "chamfer" ? d.angle : undefined, d.op === "chamfer" && d.flip);
+      : addDressUp(base, d.op, t.targetId, t.edges, d.size, t.edgeRefs, d.op === "chamfer" ? d.angle : undefined, d.op === "chamfer" && d.flip, t.faces, t.faceRefs);
 
   // Live-preview a chamfer/fillet edit: apply the new size/angle/edges to the
   // real feature as they change (skipping empty/invalid inputs). The existing
@@ -6032,8 +6061,8 @@ export default function App() {
       icon: "◣",
       label: "Chamfer",
       shortcut: "C",
-      title: "Chamfer (C): chamfer the selected edge(s)",
-      keywords: ["bevel", "edge"],
+      title: "Chamfer (C): chamfer the selected edge(s) or face(s)",
+      keywords: ["bevel", "edge", "face"],
       disabled: !dressUpTarget || !!editingSketch || picking,
       onSelect: () => openDressUp("chamfer"),
     },
@@ -6042,8 +6071,8 @@ export default function App() {
       icon: "◖",
       label: "Fillet",
       shortcut: "F",
-      title: "Fillet (F): round the selected edge(s)",
-      keywords: ["round", "radius", "edge"],
+      title: "Fillet (F): round the selected edge(s) or face(s)",
+      keywords: ["round", "radius", "edge", "face"],
       disabled: !dressUpTarget || !!editingSketch || picking,
       onSelect: () => openDressUp("fillet"),
     },

@@ -124,6 +124,14 @@ export interface ResolvedEdgeRef {
   length?: number;
 }
 
+/** A face reference's geometric fingerprint, same role as ResolvedEdgeRef.
+ *  `center` is the face's centroid; `normal` is set for planar faces only. */
+export interface ResolvedFaceRef {
+  name: string;
+  center?: [number, number, number];
+  normal?: [number, number, number];
+}
+
 /** Features with all parameters already resolved to numbers/geometry
  *  (expressions are evaluated in the app layer before reaching the kernel). */
 export type ResolvedFeature =
@@ -141,7 +149,9 @@ export type ResolvedFeature =
   // the material it adds, as the extra preview bodies `<id>::removed` /
   // `<id>::added` — see DRESSUP_DELTA_IDS. The target is still dressed normally,
   // so downstream features (and this feature's own error) are unaffected.
-  | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; edgeRefs?: ResolvedEdgeRef[]; size: number; angle?: number; flip?: boolean; previewDelta?: boolean }
+  // `faces` dress every boundary edge of the named faces (see DressUpFeature) —
+  // they are expanded to edges by the worker, which has the topology to do it.
+  | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; edgeRefs?: ResolvedEdgeRef[]; faces?: string[]; faceRefs?: ResolvedFaceRef[]; size: number; angle?: number; flip?: boolean; previewDelta?: boolean }
   // A boolean combines existing bodies (by id) from the running set.
   | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
   // A rigid transform moves a body (by id) — translate + rotate. `copy` keeps

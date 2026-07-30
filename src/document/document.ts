@@ -22,6 +22,7 @@ import type {
   Document,
   DressUpFeature,
   EdgeRef,
+  FaceRef,
   ExtrudeFeature,
   ExtrudeProfile,
   Feature,
@@ -209,6 +210,8 @@ export function addDressUp(
   edgeRefs?: EdgeRef[],
   angle?: string,
   flip?: boolean,
+  faces?: string[],
+  faceRefs?: FaceRef[],
 ): { doc: Document; id: string } {
   const label = op === "chamfer" ? "Chamfer" : "Fillet";
   const ordinal = doc.features.filter((f) => f.type === "dressup" && f.op === op).length + 1;
@@ -221,6 +224,9 @@ export function addDressUp(
     targetId,
     edges,
     edgeRefs,
+    // Stored only when a face was actually picked, so an edge-only dress-up
+    // serialises exactly as it did before faces were selectable.
+    ...(faces?.length ? { faces, faceRefs } : {}),
     size,
     // Angle/flip are chamfer-only; a fillet never carries them, and `flip` is
     // stored only when set so the common case stays field-free.
@@ -471,6 +477,8 @@ export function updateDressUp(
     edgeRefs?: EdgeRef[];
     angle?: string;
     flip?: boolean;
+    faces?: string[];
+    faceRefs?: FaceRef[];
   },
 ): Document {
   return mapFeature(doc, id, (f) =>
@@ -481,6 +489,10 @@ export function updateDressUp(
           targetId: spec.targetId,
           edges: spec.edges,
           edgeRefs: spec.edgeRefs,
+          // Re-picking replaces the whole selection, so an empty face list must
+          // clear a stored one rather than leave the old faces dressed.
+          faces: spec.faces?.length ? spec.faces : undefined,
+          faceRefs: spec.faces?.length ? spec.faceRefs : undefined,
           size: spec.size,
           // Switching to a fillet drops the chamfer-only angle rather than
           // leaving a stale one to reappear if it's switched back.
@@ -1051,6 +1063,9 @@ export function resolveDocument(doc: Document): ResolveResult {
           targetId: f.targetId,
           edges: f.edges,
           edgeRefs: f.edgeRefs,
+          // Omitted entirely when unused, so an edge-only dress-up keeps the
+          // same kernel content key it had before faces were selectable.
+          ...(f.faces?.length ? { faces: f.faces, faceRefs: f.faceRefs } : {}),
           size: evaluateExpression(f.size, scope),
           ...(angle !== undefined ? { angle } : {}),
           ...(angle !== undefined && f.flip ? { flip: true } : {}),

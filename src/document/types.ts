@@ -241,6 +241,15 @@ export interface EdgeRef {
   length?: number;
 }
 
+/** Geometric fingerprint of a picked FACE, stored alongside its persistent name
+ *  so the kernel can re-match it when an upstream edit renamed it (`center` is
+ *  the face's centroid; `normal` is present for planar faces only). */
+export interface FaceRef {
+  name: string;
+  center?: [number, number, number];
+  normal?: [number, number, number];
+}
+
 /** What an extrude pulls: a closed region of a sketch, a planar face of an
  *  existing body (referenced by the feature that produced it + the face id), or a
  *  `text` sketch entity (baked to glyph wires with correct counters/holes by the
@@ -302,6 +311,16 @@ export interface DressUpFeature extends FeatureBase {
   /** Geometric fingerprints for `edges` (parallel array), used to re-match an
    *  edge whose name churned after an upstream edit. Absent on legacy docs. */
   edgeRefs?: EdgeRef[];
+  /** Persistent names of whole FACES to dress: every boundary edge of the face
+   *  is chamfered/filleted. Picking a face is how you dress a circular rim
+   *  without having to hit a millimetre-long chord with the cursor — select the
+   *  cylinder's flat top and its whole rim rounds. A face resolves to the smooth
+   *  SURFACE it belongs to (all 96 facets of a faceted wall are one surface), so
+   *  its boundary is the two rims rather than a facet's four sides. */
+  faces?: string[];
+  /** Geometric fingerprints for `faces` (parallel array), same role as
+   *  `edgeRefs`. Absent on legacy docs. */
+  faceRefs?: FaceRef[];
   /** Chamfer distance / fillet radius, as an expression string. */
   size: string;
   /** Chamfer only: the bevel angle in degrees, measured from the reference face

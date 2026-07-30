@@ -389,8 +389,14 @@ export const operationSchema = z.discriminatedUnion("op", [
     op: z.literal("dressUp"),
     kind: z.enum(["chamfer", "fillet"]),
     targetId: z.string(),
-    /** Persistent edge names from the scene summary. */
-    edges: z.array(z.string()).min(1),
+    /** Persistent edge names from the scene summary. May be empty when `faces`
+     *  is given. */
+    edges: z.array(z.string()),
+    /** Persistent FACE names from the scene summary. Each stands for all the
+     *  boundary edges of the smooth surface it belongs to — the practical way
+     *  to round a circular rim (name the cylinder's flat top instead of its 96
+     *  rim chords). Combines freely with `edges`. */
+    faces: z.array(z.string()).optional(),
     size: expr.optional(),
     /** Chamfer only: bevel angle in degrees (0 < angle < 90), measured from the
      *  reference face that `size` runs along. Defaults to 45 (symmetric). */

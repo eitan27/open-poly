@@ -23,6 +23,7 @@ import type {
   MeshedFaces,
   RegenFeatureResult,
   ResolvedEdgeRef,
+  ResolvedFaceRef,
   ResolvedFeature,
   ResolvedFrame,
   ResolvedProfile,
@@ -1370,6 +1371,102 @@ function resolveDressUpEdges(
   return { hits, lost };
 }
 
+/**
+ * The boundary edges of every named face — what a face selection means to a
+ * chamfer/fillet: dress everything around this face.
+ *
+ * A picked face is first widened to the smooth SURFACE it belongs to (the same
+ * clustering the display shades as one surface, and the same one the viewport
+ * highlights on a face pick). That is what makes this useful on round geometry:
+ * a faceted wall's 96 facets are one surface, so its boundary is the two rims,
+ * not one facet's four sides. Edges INTERNAL to the surface — the facet seams,
+ * each shared by two of its faces — are dropped for the same reason; they are
+ * artifacts of faceting and dressing them would shred the wall.
+ *
+ * Returns edges in shape order and deduplicated, so a face and one of its own
+ * edges can both be selected without dressing that edge twice.
+ */
+function faceBoundaryEdgesNamed(
+  target: Body,
+  faceNames: string[],
+  faceRefs: ResolvedFaceRef[] | undefined,
+  warn: Warn | undefined,
+): { hits: Edge[]; lost: string[] } {
+  const clusterOf = faceClustersFrom(target.shape);
+  const byHash = new Map(target.shape.faces.map((f) => [f.hashCode, f]));
+  const lost: string[] = [];
+  const wantedEdges = new Set<number>();
+
+  faceNames.forEach((nm, i) => {
+    let face: Face | undefined;
+    for (const f of target.shape.faces) {
+      if (target.names.get(f.hashCode) === nm) { face = f; break; }
+    }
+    if (!face) {
+      // Name gone — same geometric fallback as every other named reference.
+      const ref = faceRefs?.[i];
+      const candidates: FaceCandidate[] = target.shape.faces.map((f) => ({
+        center: f.center.toTuple() as [number, number, number],
+        normal: f.geomType === "PLANE" ? (f.normalAt().normalized().toTuple() as [number, number, number]) : undefined,
+      }));
+      const m = ref?.center
+        ? matchFace({ center: ref.center, normal: ref.normal }, candidates, bboxDiagonal(target.shape))
+        : null;
+      if (!m) { lost.push(nm); return; }
+      face = target.shape.faces[m.index];
+      warn?.(`face "${nm}" was renamed by an upstream edit; re-matched geometrically`);
+    }
+    // The whole smooth surface, then its boundary: an edge used by exactly one
+    // of the surface's faces. (Facet seams are used by two and drop out.)
+    const rep = clusterOf.get(face.hashCode) ?? face.hashCode;
+    const surface: Face[] = [];
+    for (const [h, r] of clusterOf) {
+      if (r !== rep) continue;
+      const f = byHash.get(h);
+      if (f) surface.push(f);
+    }
+    if (surface.length === 0) surface.push(face);
+    const useCount = new Map<number, number>();
+    for (const f of surface) {
+      for (const e of f.edges) useCount.set(e.hashCode, (useCount.get(e.hashCode) ?? 0) + 1);
+    }
+    for (const [h, n] of useCount) if (n === 1) wantedEdges.add(h);
+  });
+
+  const hits = target.shape.edges.filter((e) => wantedEdges.has(e.hashCode));
+  return { hits, lost };
+}
+
+/**
+ * True when any two of these edges meet at a shared vertex — i.e. they touch.
+ *
+ * The boolean fast path sweeps a wedge along each edge independently and stops
+ * it at the edge's ends. Where two dressed edges meet, their wedges overlap in
+ * the corner and the cut leaves it subdivided rather than mitred: chamfering two
+ * adjacent top edges of a box shredded the top face into a grid of slivers and
+ * cost it its `+z` name. Mitring a corner is what BRepFilletAPI does properly,
+ * so touching selections are handed back to it — the same reasoning as the
+ * tangent-chain gate, one step further along the same edge.
+ *
+ * A closed edge starts and ends at one vertex, so each edge's own endpoints are
+ * de-duplicated before looking for collisions with other edges.
+ */
+function edgesShareAVertex(hits: Edge[]): boolean {
+  const vkey = (p: V3) => `${Math.round(p[0] * 1e3)},${Math.round(p[1] * 1e3)},${Math.round(p[2] * 1e3)}`;
+  const seen = new Set<string>();
+  for (const e of hits) {
+    let pts: V3[];
+    try { pts = sampleEdgePoints(e); } catch { return true; } // unreadable — assume the worst
+    if (pts.length < 2) continue;
+    const ends = new Set([vkey(pts[0]), vkey(pts[pts.length - 1])]);
+    for (const k of ends) {
+      if (seen.has(k)) return true;
+      seen.add(k);
+    }
+  }
+  return false;
+}
+
 /** The reference face for an angled chamfer: one of the (≤2) faces meeting at
  *  `edge`, picked deterministically so the bevel doesn't flip side between
  *  regens. Faces are ordered by their PERSISTENT name (the same names the rest
@@ -1591,13 +1688,30 @@ function dressUpNamed(
   warn?: Warn,
   angle?: number,
   flip?: boolean,
+  faceNames?: string[],
+  faceRefs?: ResolvedFaceRef[],
 ): NamedShape & { changedBox?: [Vec3, Vec3] } {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   const { hits, lost } = resolveDressUpEdges(target, edgeNames, edgeRefs, warn);
+  // Selected faces contribute their boundary edges, merged into the same list —
+  // from here on a face selection IS an edge selection, so chain expansion, the
+  // boolean fast path and the OCCT fallback all behave identically.
+  if (faceNames?.length) {
+    const fromFaces = faceBoundaryEdgesNamed(target, faceNames, faceRefs, warn);
+    const have = new Set(hits.map((e) => e.hashCode));
+    for (const e of fromFaces.hits) if (!have.has(e.hashCode)) { have.add(e.hashCode); hits.push(e); }
+    if (fromFaces.lost.length > 0) {
+      warn?.(
+        `${fromFaces.lost.length} of ${faceNames.length} faces could not be re-found and were skipped: ` +
+        `${fromFaces.lost.join(", ")} — edit the feature to re-pick them`,
+      );
+    }
+  }
   if (hits.length === 0) {
+    const what = faceNames?.length && edgeNames.length === 0 ? "faces" : "edges";
     throw new Error(
-      `${op}: none of the edges could be re-found on the body (an upstream edit changed its shape) — edit the feature to re-pick them`,
+      `${op}: none of the ${what} could be re-found on the body (an upstream edit changed its shape) — edit the feature to re-pick them`,
     );
   }
   if (lost.length > 0) {
@@ -1658,7 +1772,7 @@ function dressUpNamed(
   const chainSize = new Map<number, number>();
   for (const rep of chainOf.values()) chainSize.set(rep, (chainSize.get(rep) ?? 0) + 1);
   const standalone = hits.every((e) => (chainSize.get(chainOf.get(e.hashCode) ?? e.hashCode) ?? 1) === 1);
-  if (hits.length > 0 && standalone) {
+  if (hits.length > 0 && standalone && !edgesShareAVertex(hits)) {
     const wedges: { wedge: NamedShape; convex: boolean }[] = [];
     let all = true;
     for (const e of hits) {
@@ -2286,7 +2400,7 @@ function buildBodies(
         // Chamfer/fillet modifies the target body in place, keeping its id.
         const target = requireBody(bodies, feature.targetId);
         const beforeKey = target.key;
-        const res = dressUpNamed(feature.op, target, feature.edges, feature.edgeRefs, feature.size, feature.id, warn, feature.angle, feature.flip);
+        const res = dressUpNamed(feature.op, target, feature.edges, feature.edgeRefs, feature.size, feature.id, warn, feature.angle, feature.flip, feature.faces, feature.faceRefs);
         if (feature.previewDelta) {
           // The two halves of the change, as solids the UI can ghost: what the
           // bevel/round carves off (before − after) and what it fills in
