@@ -188,6 +188,9 @@ await apply({ op: "newDocument", name: "fillet-concave-joint" });
 await waitIdle();
 const cyl = await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: String(R), height: "60" } });
 await waitIdle();
+// Read the wall's facet count off the body: it belongs to the kernel
+// (geom/circleFacets), and these checks are about the joint, not the faceting.
+const CYL_FACES = (await bodyOf(cyl.createdId))?.faces?.length ?? -1;
 const sk = await apply({
   op: "addSketch",
   plane: { bodyId: cyl.createdId, faceName: `${cyl.createdId}/+z` },
@@ -203,9 +206,14 @@ const ex = await apply({
 });
 await waitIdle();
 const fused = await bodyOf(cyl.createdId);
-// The cylinder's 98 (96 wall facets + 2 caps) plus the prism's flat side and top.
+// The cylinder's own faces (its wall chords + 2 caps) plus the prism's flat side
+// and top. The facet count is the kernel's business (geom/circleFacets), so it is
+// measured off the cylinder rather than written down — this check is about the
+// fuse being clean, not about how finely walls are cut.
+const CLEAN = CYL_FACES + 2; // + the prism's flat side and its top
 const BASE = fused?.faces?.length ?? -1;
-check("the fused body is clean", BASE >= 100 && BASE <= 106, `${BASE} faces (clean 100, up to 6 end residue)`);
+check("the fused body is clean", BASE >= CLEAN && BASE <= CLEAN + 6,
+  `${BASE} faces (clean ${CLEAN}, up to 6 end residue)`);
 
 const joint = (fused?.edges ?? []).filter((e) => /\/\+z/.test(e) && /\/side\d/.test(e));
 check("the concave joint is a single edge", joint.length === 1, `${joint.length} edge(s): ${JSON.stringify(joint)}`);

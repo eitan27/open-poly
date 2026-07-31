@@ -52,7 +52,11 @@ const shoot = async (path) => {
 };
 
 await waitIdle();
-const FACETS = 96;
+// How finely round walls are cut belongs to the kernel (geom/circleFacets), so
+// it is measured off the first cylinder rather than written down here: these
+// checks are about WHICH edges get dressed, and must not need rewriting because
+// the facet count moved.
+let FACETS = 0;
 
 // --- 1. A cylinder's flat top → the whole rim rounds -------------------------
 // 98 base faces (96 wall facets + 2 caps). The rim is a closed faceted circle,
@@ -64,8 +68,11 @@ const cyl = await apply({ op: "addPrimitive", kind: "cylinder", params: { radius
 await waitIdle();
 {
   const b = await body();
+  FACETS = b.edges.filter((e) => e.includes(`${cyl.createdId}/+z`)).length;
   const top = b.faces.find((f) => /\+z/.test(f));
   check("the cylinder's top face is named", !!top, top ?? b.faces.slice(0, 6).join(", "));
+  check("…and its wall is cut into chords (facet count read from the body)",
+    FACETS > 8 && b.faces.length === FACETS + 2, `${FACETS} chords, ${b.faces.length} faces`);
   const before = b.faces.length;
   await apply({ op: "dressUp", kind: "fillet", targetId: cyl.createdId, edges: [], faces: [top], size: "1" });
   const st = await waitIdle();
@@ -181,8 +188,8 @@ await waitIdle();
   const st = await waitIdle();
   const after = (await body()).faces.length;
   check("…so changing its radius re-resolves the face and still dresses the whole rim",
-    /up to date/i.test(st) && after === 99,
-    `${after} faces (expected 99), status ${st}`);
+    /up to date/i.test(st) && after === FACETS + 3, // walls + 2 caps + 1 swept round
+    `${after} faces (expected ${FACETS + 3}), status ${st}`);
 }
 
 // --- 6. The reported repro: dress a rim, build on it, dress THAT rim ----------
@@ -207,8 +214,9 @@ await waitIdle();
   await apply({ op: "dressUp", kind: "fillet", targetId: stack.createdId, edges: [], faces: [t0], size: "4" });
   const s1 = await waitIdle();
   const b1 = await body();
-  check("repro step 1: the cylinder's top face rounds", /up to date/i.test(s1) && b1.faces.length === 99,
-    `${b1.faces.length} faces (expected 99), status ${s1}`);
+  check("repro step 1: the cylinder's top face rounds",
+    /up to date/i.test(s1) && b1.faces.length === FACETS + 3,
+    `${b1.faces.length} faces (expected ${FACETS + 3}), status ${s1}`);
 
   const t1 = b1.faces.find((f) => /\+z$/.test(f));
   await apply({ op: "addExtrude", profile: { bodyId: stack.createdId, faceName: t1 }, distance: "25", mode: "add" });
@@ -285,8 +293,8 @@ await waitIdle();
   await waitIdle();
   await apply({ op: "dressUp", kind: "fillet", targetId: cc.createdId, edges: botRim, size: "4" });
   await waitIdle();
-  check("two stacked rim fillets build", (await body()).faces.length === 100,
-    `${(await body()).faces.length} faces (expected 100)`);
+  check("two stacked rim fillets build", (await body()).faces.length === FACETS + 4,
+    `${(await body()).faces.length} faces (expected ${FACETS + 4}: walls + 2 caps + 2 rounds)`);
 
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press("7");

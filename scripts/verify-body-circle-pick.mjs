@@ -66,10 +66,13 @@ const setView = async (digit) => {
   await page.waitForTimeout(500);
 };
 
-// The 96-gon's facet vertices are the WORST case for cause 1: they are the real
-// vertices that used to steal every pick. Mid-chord angles are the worst case
-// for cause 2 (furthest from any chord endpoint).
-const FACETS = 96;
+// The facet vertices are the WORST case for cause 1: they are the real vertices
+// that used to steal every pick. Mid-chord angles are the worst case for cause 2
+// (furthest from any chord endpoint). How finely walls are cut is the kernel's
+// business (geom/circleFacets), so it is MEASURED off the body below rather than
+// written down here — these checks are about picking, and must not have to be
+// rewritten because the facet count moved.
+let FACETS = 0;
 const ringPoint = (r, z, i, frac) => {
   const a = ((i + frac) * 2 * Math.PI) / FACETS;
   return [r * Math.cos(a), r * Math.sin(a), z];
@@ -82,6 +85,11 @@ const R = 20;
 const H = 40;
 const cyl = await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: String(R), height: String(H) } });
 await waitIdle();
+const cylBody = (await read({ read: "sceneSummary" })).bodies[0];
+FACETS = cylBody.edges.filter((e) => e.includes(`${cyl.createdId}/+z`)).length;
+const CYL_FACES = cylBody.faces.length; // FACETS walls + 2 caps
+check("the cylinder's rim is a chain of chords", FACETS > 8 && CYL_FACES === FACETS + 2,
+  `${FACETS} chords, ${CYL_FACES} faces`);
 
 for (const [viewName, digit] of [["iso", "7"], ["top (down the axis — the depth-tie case)", "1"]]) {
   await setView(digit);
@@ -192,9 +200,10 @@ await setView("7");
     (feat?.edges?.length ?? 0) === FACETS,
     `stored ${feat?.edges?.length} of ${FACETS} chords`);
   check("…and dresses the WHOLE circle, as one swept round",
-    after.faces.length === 99,
-    `${before.faces.length} -> ${after.faces.length} faces (expected 99; ` +
-    `${98 + FACETS} would mean one bevel per chord, 98 that nothing was dressed)`);
+    after.faces.length === before.faces.length + 1,
+    `${before.faces.length} -> ${after.faces.length} faces (expected ${before.faces.length + 1}; ` +
+    `${before.faces.length + FACETS} would mean one bevel per chord, ` +
+    `${before.faces.length} that nothing was dressed)`);
 }
 
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);

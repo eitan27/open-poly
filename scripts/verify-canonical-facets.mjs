@@ -70,9 +70,12 @@ const semiDxf = (a0) => {
   );
 };
 
-// The cylinder's 98 + the prism's flat side + its top. Reached exactly only when
-// the arc's endpoints happen to land on stations.
-const CLEAN = 100;
+// The cylinder's own faces + the prism's flat side + its top. Reached exactly
+// only when the arc's endpoints happen to land on stations. Derived from the
+// cylinder actually built, not written down: how finely walls are cut is the
+// kernel's business (geom/circleFacets), and this file is about whether the
+// walls COINCIDE, not about how many there are.
+let CLEAN = 0;
 // An arc's endpoints are where they were DRAWN, not on stations, so a partial
 // facet survives at each end however the sampling is aligned — a handful of
 // faces, and no way around it short of moving the user's geometry. What must NOT
@@ -92,6 +95,7 @@ for (const a0 of phases) {
   const cyl = await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: String(R), height: "60" } });
   await waitIdle();
   const cylFaces = (await read({ read: "sceneSummary" })).bodies.find((b) => b.id === cyl.createdId)?.faces?.length;
+  if (!CLEAN) CLEAN = cylFaces + 2;
 
   // Sketch onto the cylinder's TOP FACE, as reported, and fuse the extrusion in.
   const sk = await apply({
