@@ -221,13 +221,18 @@ await waitIdle();
   const s3 = await waitIdle();
   const b3 = await body();
   check("repro step 3: the extruded face rounds too", /up to date/i.test(s3), s3);
-  check("…with no crown: a round adds a face and adds no edges",
-    b3.faces.length > b2.faces.length && b3.edges.length <= b2.edges.length,
-    `faces ${b2.faces.length} -> ${b3.faces.length}, edges ${b2.edges.length} -> ${b3.edges.length} ` +
-    `(the crown held faces level and nearly doubled edges)`);
-  check("…and both rounds are present as named faces",
+  check("…adding material rather than leaving the shape put",
+    b3.faces.length > b2.faces.length,
+    `faces ${b2.faces.length} -> ${b3.faces.length} (the crown held faces level)`);
+  // THE crown test. A crown is one tooth per chord, so a crowned rim names 127
+  // fillet faces for this one feature; a swept round names exactly one. Edge
+  // counts are NOT a usable signal here: the round's lower boundary is genuinely
+  // split at every wall-facet seam, so edges rise steeply on a correct result
+  // too (223 -> 434 measured).
+  check("…and each dress-up produced exactly ONE round — no crown of teeth",
     b3.faces.filter((f) => /\/fillet/.test(f)).length === 2,
-    b3.faces.filter((f) => /\/fillet/.test(f)).join(", ") || "none");
+    `${b3.faces.filter((f) => /\/fillet/.test(f)).length} fillet-named faces, want 2 ` +
+    `(one per dress-up; a crown would name one per chord)`);
   await shoot("/tmp/openpoly-face-fillet-stacked.png");
 }
 

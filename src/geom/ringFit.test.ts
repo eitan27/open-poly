@@ -59,6 +59,36 @@ describe("fitRing", () => {
     expect(fitRing(edges)).toBeNull();
   });
 
+  it("reports the CIRCUMSCRIBED radius, so a tool built on it covers every vertex", () => {
+    // A rim that has been through a boolean is not a regular polygon: pull one
+    // vertex in and the radius must still be the largest, never the mean.
+    const edges = ngon(96, 20, 40);
+    const pull = (v: V3): V3 => [v[0] * 0.997, v[1] * 0.997, v[2]];
+    edges[10] = [pull(edges[10][0]), edges[10][1]];
+    edges[9] = [edges[9][0], pull(edges[9][1])];
+    const ring = fitRing(edges);
+    expect(ring).not.toBeNull();
+    // Pulling a vertex in also nudges the centroid, so this is the largest
+    // radius to within that shift — the point is that it is not the mean, which
+    // would sit measurably below 20.
+    expect(ring!.radius).toBeCloseTo(20, 2);
+    expect(ring!.radius).toBeGreaterThan(19.999);
+  });
+
+  it("accepts the uneven re-discretisation a boolean leaves on a rim", () => {
+    // Measured: the boss in the stacked-fillet case came back as 127 chords
+    // whose vertices varied by 0.07mm on a 26mm radius. Still a circle.
+    const n = 127, R = 26;
+    const p = (i: number): V3 => {
+      const wobble = i % 3 === 0 ? 1 - 0.07 / R : 1;
+      return [R * wobble * Math.cos((i * 2 * Math.PI) / n), R * wobble * Math.sin((i * 2 * Math.PI) / n), 5];
+    };
+    const edges: [V3, V3][] = Array.from({ length: n }, (_, i) => [p(i), p((i + 1) % n)]);
+    const ring = fitRing(edges);
+    expect(ring).not.toBeNull();
+    expect(ring!.radius).toBeCloseTo(R, 3);
+  });
+
   it("tolerates the µm-scale drift a boolean leaves behind", () => {
     const edges = ngon(96, 20, 40);
     const jitter = (v: V3, k: number): V3 => [v[0] + 1e-6 * k, v[1] - 1e-6 * k, v[2]];

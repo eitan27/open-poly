@@ -36,7 +36,6 @@ import { fitRing } from "../geom/ringFit";
 import {
   chamferLegs,
   chamferTriangle,
-  FILLET_ARC_MID_FRACTION,
   filletCrossSection,
   inFaceDirection,
   isConvexEdge,
@@ -1562,27 +1561,19 @@ function ringSectionFace(
   if (Math.hypot(n[0], n[1], n[2]) < 1e-12) return null;
   const frame: ResolvedFrame = { origin: corner, uAxis: u, vAxis: v, normal: vunit(n) };
   const m = margin;
-  const onRef: [number, number] = [legs.ref, 0];
-  const onOther: [number, number] = [0, legs.other];
-  const pad: [number, number][] = [[legs.ref, -m], [-m, -m], [-m, legs.other]];
-  // Closed loop: leave the reference face, round the padded outside, come back
-  // at the other face, then the bevel/round closes it across the corner.
-  const outline: [number, number][] = [onRef, ...pad, onOther];
-  const segments: ProfileSegment[] = [
-    ...pad.map((p) => ({ kind: "line" as const, to: p })),
-    { kind: "line" as const, to: onOther },
-  ];
-  if (op === "fillet") {
-    const d = legs.ref * FILLET_ARC_MID_FRACTION;
-    const arcMid: [number, number] = [d, d];
-    outline.push(arcMid);
-    segments.push({ kind: "arc", mid: arcMid, to: onRef });
-  } else {
-    segments.push({ kind: "line", to: onRef });
-  }
+  // A fillet takes the whole padded BOX; its round is carved out afterwards by
+  // subtracting an analytic torus (see revolvedRingTool). Revolving the arc
+  // directly is geometrically right but yields a generic REVOLUTION_SURFACE,
+  // which has no fast intersector. A chamfer's bevel closes the box across the
+  // corner instead, and a revolved line canonicalises to a CONE by itself.
+  const outline: [number, number][] = op === "fillet"
+    ? [[legs.ref, -m], [-m, -m], [-m, legs.other], [legs.ref, legs.other]]
+    : [[legs.ref, 0], [legs.ref, -m], [-m, -m], [-m, legs.other], [0, legs.other]];
+  const segments: ProfileSegment[] = outline.slice(1).map((to) => ({ kind: "line" as const, to }));
+  segments.push({ kind: "line", to: outline[0] });
   try {
     return regionFace(
-      { kind: "sketchRegion", outline, frame, segmentStart: onRef, segments },
+      { kind: "sketchRegion", outline, frame, segmentStart: outline[0], segments },
       planeOf(frame),
     );
   } catch {
@@ -1841,7 +1832,7 @@ function revolvedRingTool(
   const t1 = inFaceDirection(along, n1, mid, adjacent[0].center.toTuple() as V3);
   const t2 = inFaceDirection(along, n2, mid, adjacent[1].center.toTuple() as V3);
   if (!t1 || !t2) return null;
-  if (!isConvexEdge(t1, n2)) return null; // concave: see the note above
+  if (!isConvexEdge(t1, n2)) return null;
 
   const legs = op === "fillet"
     ? (size > 1e-9 && Number.isFinite(size) ? { ref: size, other: size } : null)
@@ -1905,12 +1896,50 @@ function revolvedRingTool(
   if (!section) return null;
 
   try {
+    // Analytic MakeRevol, NOT the faceted loft revolveFromFace prefers. The
+    // faceted tool carries 480 faces here and made the cut far worse: 1807ms for
+    // a fillet and 1223ms for a chamfer, against 1276 and 148 analytically.
     const pnt = new oc.gp_Pnt_3(ring.center[0], ring.center[1], ring.center[2]);
     const dir = new oc.gp_Dir_4(ring.axis[0], ring.axis[1], ring.axis[2]);
     const ax1 = new oc.gp_Ax1_2(pnt, dir);
     const builder = new oc.BRepPrimAPI_MakeRevol_1(section.wrapped, ax1, 2 * Math.PI, false);
-    const shape = cast(builder.Shape()) as Shape3D;
+    let shape = cast(builder.Shape()) as Shape3D;
     builder.delete();
+    if (op === "fillet") {
+      // Subtract the round as an ANALYTIC torus. OCCT canonicalises a revolved
+      // LINE into a cone or cylinder — which is why a chamfer's band comes out
+      // CONE and cuts in 148ms — but leaves a revolved arc as a generic
+      // REVOLUTION_SURFACE with no fast intersector, and that cut measured
+      // 1276ms against the same 96 facets. Built this way the band is a real
+      // TORUS, so the intersections stay analytic.
+      //
+      // The arc's centre sits one radius in along both faces from the corner;
+      // revolved, that is a torus of major radius |centre − axis| and minor
+      // radius `legs.ref`, coaxial with the ring.
+      const ctr: V3 = [
+        corner[0] + aRef[0] * legs.ref + aOther[0] * legs.ref,
+        corner[1] + aRef[1] * legs.ref + aOther[1] * legs.ref,
+        corner[2] + aRef[2] * legs.ref + aOther[2] * legs.ref,
+      ];
+      const spokeC: V3 = [ctr[0] - ring.center[0], ctr[1] - ring.center[1], ctr[2] - ring.center[2]];
+      const hC = v3dot(spokeC, ring.axis);
+      const major = Math.hypot(
+        spokeC[0] - ring.axis[0] * hC, spokeC[1] - ring.axis[1] * hC, spokeC[2] - ring.axis[2] * hC,
+      );
+      if (!(major > legs.ref)) { shape.delete(); return null; } // torus would self-intersect
+      const tp = new oc.gp_Pnt_3(
+        ring.center[0] + ring.axis[0] * hC, ring.center[1] + ring.axis[1] * hC, ring.center[2] + ring.axis[2] * hC,
+      );
+      const td = new oc.gp_Dir_4(ring.axis[0], ring.axis[1], ring.axis[2]);
+      const ax2 = new oc.gp_Ax2_3(tp, td);
+      const tb = new oc.BRepPrimAPI_MakeTorus_5(ax2, major, legs.ref);
+      const torus: NamedShape = { shape: cast(tb.Shape()) as Shape3D, names: new Map() };
+      tb.delete();
+      const carved = booleanNamed("cut", { shape, names: new Map() }, torus);
+      torus.shape.delete();
+      shape.delete();
+      shape = carved.shape;
+    }
     // Unnamed on purpose: the caller names whatever the boolean creates, exactly
     // as it does for the per-edge wedges and the OCCT path.
     return { tool: { shape, names: new Map() }, sagitta };

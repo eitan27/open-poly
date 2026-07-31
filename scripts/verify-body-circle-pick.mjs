@@ -182,6 +182,15 @@ await setView("7");
   const after = (await read({ read: "sceneSummary" })).bodies[0];
   // 98 base faces (96 wall facets + 2 caps) + the one swept round.
   check("filleting the clicked rim succeeds", /up to date/i.test(st), st);
+  // A picked rim stores its whole tangent chain, so the kernel has nothing to
+  // expand and stays quiet. It used to store the single clicked chord, and the
+  // kernel's "the stored selection covered 1 of 96 segments … re-pick the edge
+  // to store it afresh" notice — meant for a STORED selection gone stale after
+  // an upstream edit — fired on every freshly picked rim.
+  const feat = (await read({ read: "document" })).features.find((f) => f.type === "dressup");
+  check("a picked rim stores its whole chain, so no stale-selection notice fires",
+    (feat?.edges?.length ?? 0) === FACETS,
+    `stored ${feat?.edges?.length} of ${FACETS} chords`);
   check("…and dresses the WHOLE circle, as one swept round",
     after.faces.length === 99,
     `${before.faces.length} -> ${after.faces.length} faces (expected 99; ` +

@@ -2982,15 +2982,32 @@ export default function App() {
     if (!edges.every((e) => e.featureId === targetId) || !faces.every((f) => f.featureId === targetId)) return null;
     const m = meshes.find((x) => x.id === targetId);
     if (!m) return null;
+    // Clicking a rim selects ONE of its 96 chords, but dressing it means the
+    // whole curve — so store the picked edge's entire tangent chain. The kernel
+    // expands a partial chain anyway and warns that it did ("re-pick the edge to
+    // store it afresh"), which fired on every freshly-picked rim; that notice is
+    // meant for a STORED selection gone stale after an upstream edit, not for a
+    // pick made a moment ago. Storing the chain up front is exactly what it asks
+    // for. `chainId` comes from the same mesh data the viewport highlights with,
+    // so what gets dressed is what was lit up under the cursor.
+    const eg = m.mesh.edges.edgeGroups ?? [];
+    const wanted: number[] = [];
+    for (const e of edges) {
+      const chain = eg.find((g) => g.edgeId === e.edgeId)?.chainId;
+      const ids = chain === undefined
+        ? [e.edgeId]
+        : [...new Set(eg.filter((g) => g.chainId === chain).map((g) => g.edgeId))];
+      for (const id of ids) if (!wanted.includes(id)) wanted.push(id);
+    }
     const names: string[] = [];
     const edgeRefs: EdgeRef[] = [];
-    for (const e of edges) {
-      const nm = edgeNameOf(m.mesh.edges, e.edgeId);
+    for (const edgeId of wanted) {
+      const nm = edgeNameOf(m.mesh.edges, edgeId);
       if (!nm) return null; // unnamed edge — can't reference it stably
       names.push(nm);
       // Geometric fingerprint stored alongside the name, so the kernel can
       // re-match the edge if an upstream edit renames it.
-      const fp = edgeFingerprint(m.mesh.edges, e.edgeId);
+      const fp = edgeFingerprint(m.mesh.edges, edgeId);
       edgeRefs.push(fp ? { name: nm, mid: fp.mid, length: fp.length } : { name: nm });
     }
     const faceNames: string[] = [];
@@ -3005,7 +3022,8 @@ export default function App() {
         normal: faceNormal(m.mesh.faces, f.faceId) ?? undefined,
       });
     }
-    // Where the dialog pops up: by the first picked edge, else the first face.
+    // Where the dialog pops up: by the edge actually clicked (not the chain's
+    // first chord, which can be on the far side of the body), else the face.
     const anchor = edges.length
       ? edgeMidpoint(m.mesh.edges, edges[0].edgeId)
       : faceCentroid(m.mesh.faces, faces[0].faceId);

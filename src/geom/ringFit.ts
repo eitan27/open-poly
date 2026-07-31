@@ -52,11 +52,17 @@ export interface Ring {
  * off into a circle; `minSegments` is well above any polygon a user draws
  * deliberately, and the caller only reaches here with a tangent chain anyway.
  *
- * `tol` is relative to the radius.
+ * Tolerances are relative to the radius. `roundTol` is deliberately loose: a rim
+ * that has been through a boolean and re-discretised is not a regular polygon at
+ * all — the boss in the stacked-fillet case came back as 127 chords whose
+ * vertices varied by 0.07mm on a 26mm radius — and it is still unmistakably a
+ * circle. `planeTol` stays tight because flatness is a different question, and
+ * it is what keeps a cylinder's two rims from being read as one ring.
  */
 export function fitRing(
   edges: [V3, V3][],
-  { tol = 1e-4, minSegments = 12 }: { tol?: number; minSegments?: number } = {},
+  { roundTol = 2e-2, planeTol = 1e-3, minSegments = 12 }:
+    { roundTol?: number; planeTol?: number; minSegments?: number } = {},
 ): Ring | null {
   if (edges.length < minSegments) return null;
 
@@ -82,10 +88,12 @@ export function fitRing(
 
   const spokes = verts.map((v) => sub(v.p, c));
   const radii = spokes.map(norm);
-  const radius = radii.reduce((s, r) => s + r, 0) / radii.length;
+  // The CIRCUMSCRIBED radius is the largest, not the mean: a tool built at the
+  // mean falls short at every vertex beyond it and leaves slivers there, which
+  // is the crown all over again in miniature.
+  const radius = Math.max(...radii);
   if (!(radius > 1e-9)) return null;
-  const eps = Math.max(radius * tol, 1e-9);
-  if (radii.some((r) => Math.abs(r - radius) > eps)) return null;
+  if (Math.min(...radii) < radius * (1 - roundTol)) return null;
 
   // Plane normal from the two most independent spokes, then verify every vertex
   // lies in that plane (a cylinder's two rims together would fail here).
@@ -98,7 +106,8 @@ export function fitRing(
   }
   axis = unit(axis);
   if (norm(axis) < 0.5) return null;
-  if (spokes.some((s) => Math.abs(dot(s, axis)) > eps)) return null;
+  const flat = Math.max(radius * planeTol, 1e-9);
+  if (spokes.some((s) => Math.abs(dot(s, axis)) > flat)) return null;
 
   return { center: c, axis, radius, segments: edges.length };
 }
