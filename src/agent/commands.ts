@@ -41,6 +41,7 @@ import {
   updateVariable,
   validateVariableNames,
 } from "../document/document";
+import { expandPickToChains } from "../geom/edgeChains";
 import { detectSketchRegions } from "../document/regions";
 import { parseDxfToEntities } from "../document/dxfImport";
 import { applyDerived, applyDerivedToSketch } from "../document/derived";
@@ -783,15 +784,28 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       }
       case "dressUp": {
         requireFeature(doc, op.targetId);
-        // Bake geometric fingerprints for the named edges (from the target's
-        // tessellation) so the kernel can re-match them if a later upstream
-        // edit renames the edges. A name the mesh doesn't know stays a bare
-        // name-only ref — the kernel will report it properly.
-        const mesh = ctx.getMeshes().find((m) => m.id === op.targetId);
-        const edgeRefs = mesh ? op.edges.map((nm) => edgeFingerprintByName(mesh.mesh.edges, nm)) : undefined;
         if (op.edges.length === 0 && !op.faces?.length) {
           throw new Error("dressUp needs at least one edge or face.");
         }
+        const mesh = ctx.getMeshes().find((m) => m.id === op.targetId);
+        // Naming one chord of a faceted rim means the rim: the kernel expands a
+        // partial chain at build time anyway, and says so ("the stored selection
+        // covered 1 of 96 segments … re-pick the edge to store it afresh"). That
+        // notice exists for a selection gone stale after an upstream edit, so
+        // raising it on every agent dress-up was noise — and the stored list was
+        // a lossy record of what actually got dressed. Expanding here changes no
+        // geometry; it just writes down the whole curve, as UI picks now do.
+        const groups = mesh?.mesh.edges.edgeGroups ?? [];
+        const idOf = new Map(groups.filter((g) => g.name).map((g) => [g.name!, g.edgeId]));
+        const picked = op.edges.map((nm) => idOf.get(nm)).filter((id): id is number => id !== undefined);
+        const nameOf = new Map(groups.filter((g) => g.name).map((g) => [g.edgeId, g.name!]));
+        const expanded = picked.length === op.edges.length
+          ? expandPickToChains(groups, picked).map((id) => nameOf.get(id)!).filter(Boolean)
+          : op.edges; // a name the mesh doesn't know — pass the request through untouched
+        // Bake geometric fingerprints (from the target's tessellation) so the
+        // kernel can re-match each edge if a later upstream edit renames it. A
+        // name the mesh doesn't know stays a bare name-only ref.
+        const edgeRefs = mesh ? expanded.map((nm) => edgeFingerprintByName(mesh.mesh.edges, nm)) : undefined;
         // Faces get the same treatment: a centroid/normal fingerprint beside the
         // name, so a renamed face can still be re-matched geometrically.
         const faceRefs = mesh && op.faces
@@ -800,7 +814,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
               return g ? { name: nm, center: g.center, normal: g.normal } : { name: nm };
             })
           : undefined;
-        const r = addDressUp(doc, op.kind, op.targetId, op.edges, op.size, edgeRefs, op.angle, op.flip, op.faces, faceRefs);
+        const r = addDressUp(doc, op.kind, op.targetId, expanded, op.size, edgeRefs, op.angle, op.flip, op.faces, faceRefs);
         next = r.doc;
         createdId = r.id;
         break;

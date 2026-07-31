@@ -75,10 +75,22 @@ check("…and needs no expansion", whole.notice === null, String(whole.notice));
 const half = await build("half-ring", (r) => r.filter((_, i) => i % 2 === 0));
 console.log(`half ring:  ${half.chosen}/${half.ring} segments -> faces=${half.faces} edges=${half.edges} ok=${half.ok}`);
 check("dressing half the ring builds", half.ok && /up to date/.test(half.status), half.status);
+// This used to assert the kernel's repair NOTICE fired here. It no longer can:
+// naming part of a chain no longer STORES part of a chain, because the viewport
+// pick and the agent both expand to the whole curve as the selection is made —
+// so the two builds above are now literally the same feature, and there is
+// nothing left to repair. That was the point: the notice existed for a list gone
+// stale after an upstream edit, and it was firing on every fresh pick.
+//
+// The repair itself is unchanged and still needed, for a document SAVED when the
+// wall was cut into 48 facets and opened when it is cut into 96 — which no fresh
+// selection can now produce, so it can't be staged from here. Its logic is
+// covered directly in geom/edgeChains.test.ts ("a partial rim becomes the whole
+// rim", "reports how many edges were added").
 check(
-  "…and says so, rather than fixing it silently",
-  half.notice !== null,
-  String(half.notice),
+  "…and needs no repair either, because it was stored whole",
+  half.notice === null && half.chosen * 2 <= half.ring,
+  `asked for ${half.chosen} of ${half.ring} segments, notice=${String(half.notice)}`,
 );
 check(
   "half a stored ring produces the SAME body as the whole ring",

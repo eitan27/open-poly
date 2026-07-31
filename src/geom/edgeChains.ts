@@ -54,3 +54,43 @@ export function expansionCount(hits: Iterable<number>, expanded: ReadonlySet<num
   for (const _ of hits) n++;
   return Math.max(0, expanded.size - n);
 }
+
+/** One entry of a meshed body's `edgeGroups`, reduced to what chain expansion
+ *  needs. Structural on purpose, so this module stays kernel-free (see the note
+ *  at the top) while both the viewport picker and the agent can use it. */
+export interface ChainedEdgeGroup {
+  edgeId: number;
+  chainId?: number;
+}
+
+/**
+ * Expand a freshly-made selection to the whole chains it touches, using the
+ * MESH's chain grouping — the same `chainId` the viewport highlights with.
+ *
+ * `expandToChains` above is the kernel's safety net for a selection that was
+ * stored lossily and has to be repaired at build time, and it reports having
+ * done so. This is the other end of the same idea: record the whole curve when
+ * the pick is MADE, so there is nothing to repair and nothing to report. A rim
+ * click selects one of 96 chords, and storing just that chord raised "the stored
+ * selection covered 1 of 96 segments … re-pick the edge to store it afresh" on
+ * every single fresh pick — a notice meant for a stored selection gone stale
+ * after an upstream edit, not for one made a moment ago.
+ *
+ * Returns edge ids with the picked ones first, so a caller that anchors UI on
+ * "the edge you clicked" still can.
+ */
+export function expandPickToChains(
+  groups: readonly ChainedEdgeGroup[],
+  picked: readonly number[],
+): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>();
+  const add = (id: number) => { if (!seen.has(id)) { seen.add(id); out.push(id); } };
+  for (const id of picked) add(id);
+  for (const id of picked) {
+    const chain = groups.find((g) => g.edgeId === id)?.chainId;
+    if (chain === undefined) continue; // a singleton edge is its own chain
+    for (const g of groups) if (g.chainId === chain) add(g.edgeId);
+  }
+  return out;
+}

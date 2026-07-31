@@ -48,6 +48,7 @@ import {
   updateRevolve,
   updateVariable,
 } from "./document/document";
+import { expandPickToChains } from "./geom/edgeChains";
 import { parseDxfToEntities, sketchEntitiesBounds } from "./document/dxfImport";
 import {
   applyDerivedToSketch,
@@ -2990,15 +2991,7 @@ export default function App() {
     // pick made a moment ago. Storing the chain up front is exactly what it asks
     // for. `chainId` comes from the same mesh data the viewport highlights with,
     // so what gets dressed is what was lit up under the cursor.
-    const eg = m.mesh.edges.edgeGroups ?? [];
-    const wanted: number[] = [];
-    for (const e of edges) {
-      const chain = eg.find((g) => g.edgeId === e.edgeId)?.chainId;
-      const ids = chain === undefined
-        ? [e.edgeId]
-        : [...new Set(eg.filter((g) => g.chainId === chain).map((g) => g.edgeId))];
-      for (const id of ids) if (!wanted.includes(id)) wanted.push(id);
-    }
+    const wanted = expandPickToChains(m.mesh.edges.edgeGroups ?? [], edges.map((e) => e.edgeId));
     const names: string[] = [];
     const edgeRefs: EdgeRef[] = [];
     for (const edgeId of wanted) {

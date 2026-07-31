@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expandToChains, expansionCount } from "./edgeChains";
+import { expandPickToChains, expandToChains, expansionCount } from "./edgeChains";
 
 // A body with two rims and some plain edges. Chain representatives are arbitrary
 // but stable — here each rim's own first segment.
@@ -59,5 +59,45 @@ describe("expansionCount", () => {
     expect(expansionCount([30], expandToChains([30], chains))).toBe(0);
     const full = [10, 11, 12, 13];
     expect(expansionCount(full, expandToChains(full, chains))).toBe(0);
+  });
+});
+
+describe("expandPickToChains", () => {
+  // A faceted rim: 4 chords in one chain, plus two unrelated singleton edges.
+  const rim = [
+    { edgeId: 10, chainId: 7 },
+    { edgeId: 11, chainId: 7 },
+    { edgeId: 12, chainId: 7 },
+    { edgeId: 13, chainId: 7 },
+    { edgeId: 20 },
+    { edgeId: 21 },
+  ];
+
+  it("pulls in the whole chain from one picked chord", () => {
+    expect(expandPickToChains(rim, [11]).sort()).toEqual([10, 11, 12, 13]);
+  });
+
+  it("keeps the picked edge first, so callers can still anchor on it", () => {
+    expect(expandPickToChains(rim, [12])[0]).toBe(12);
+  });
+
+  it("leaves a singleton edge alone — a box edge is not a rim", () => {
+    expect(expandPickToChains(rim, [20])).toEqual([20]);
+  });
+
+  it("de-duplicates when several chords of the same chain are picked", () => {
+    expect(expandPickToChains(rim, [10, 12]).sort()).toEqual([10, 11, 12, 13]);
+  });
+
+  it("mixes a chain and a singleton without cross-contamination", () => {
+    expect(expandPickToChains(rim, [10, 21]).sort()).toEqual([10, 11, 12, 13, 21]);
+  });
+
+  it("passes through an edge the mesh has no group for", () => {
+    expect(expandPickToChains(rim, [99])).toEqual([99]);
+  });
+
+  it("is a no-op on an empty pick", () => {
+    expect(expandPickToChains(rim, [])).toEqual([]);
   });
 });

@@ -53,15 +53,29 @@ const fil = await apply({ op: "dressUp", kind: "fillet", targetId: cylId, edges:
 check("fillet on cylinder rim succeeds", fil.ok, JSON.stringify(fil).slice(0, 200));
 await waitIdle();
 
-// The agent path must bake a geometric fingerprint (mid + length) alongside
-// the name, so the kernel's geometric fallback has something to match on.
+// The agent path must bake a geometric fingerprint (mid + length) alongside each
+// name, so the kernel's geometric fallback has something to match on — and it
+// must store the WHOLE RIM, not the single chord it was handed. A faceted rim is
+// N tiny chords; naming one of them means the rim (the kernel expands a partial
+// chain at build time regardless), so recording just that chord made the stored
+// selection a lossy record of what actually got dressed and raised the
+// "covered 1 of N segments … re-pick the edge to store it afresh" notice on
+// every agent dress-up. This check originally expected ONE ref of ~63mm, back
+// when a rim was a single circular edge; the rim is still ~63mm, it is just
+// spread across the chain now.
 const docAfterFillet = await read({ read: "document" });
 const filFeature = docAfterFillet.features.find((f) => f.id === fil.createdId);
-const ref = filFeature?.edgeRefs?.[0];
+const refs = filFeature?.edgeRefs ?? [];
+const totalLen = refs.reduce((s, r) => s + (r.length ?? 0), 0);
 check(
-  "agent dress-up stored an edge fingerprint",
-  ref && ref.name === rim && Array.isArray(ref.mid) && ref.length > 50, // rim circumference ~63 mm
-  JSON.stringify(filFeature?.edgeRefs),
+  "agent dress-up expanded one named chord to the whole rim",
+  refs.length > 1 && refs.some((r) => r.name === rim),
+  `${refs.length} refs, picked chord ${refs.some((r) => r.name === rim) ? "included" : "MISSING"}`,
+);
+check(
+  "…each with a geometric fingerprint, together spanning the rim",
+  refs.every((r) => Array.isArray(r.mid) && r.length > 0) && totalLen > 50, // ~63 mm
+  `total length ${totalLen.toFixed(2)}mm across ${refs.length} refs`,
 );
 
 // --- 2. Base-name fallback: a stored name with a stale #n suffix still resolves ---
