@@ -2468,6 +2468,16 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): Nam
 // are disposed (bounded memory; nothing lingers for deleted/edited features).
 const builderCache = new Map<string, NamedShape>();
 const meshCache = new Map<string, { faces: MeshedFaces; edges: MeshedEdges }>();
+//  • dressUpCache — the result of each chamfer/fillet. Unlike a pure builder a
+//    dress-up READS another body, but its key folds in that body's own content
+//    key, so the key still names the result exactly: same feature over the same
+//    input is the same solid. Without this every dress-up in a document was
+//    rebuilt on every regeneration, so cost grew linearly with how many the
+//    document held — two rim fillets measured 726ms + 682ms on each edit, and
+//    only the last one had changed. The stored `warnings` ride along because a
+//    cache hit skips the build that would have raised them, and a reference
+//    re-matched or partly lost must not go quiet just because it was cached.
+const dressUpCache = new Map<string, { result: NamedShape & { changedBox?: [Vec3, Vec3] }; warning?: string }>();
 
 // --- Regen profiling (dev): per-feature build ms + per-body mesh ms, logged
 // once per regen. `hit` = the pure-builder canonical was already cached. Set
@@ -2532,6 +2542,7 @@ function buildCached(key: string, used: Set<string>, build: () => NamedShape): N
 function buildBodies(
   features: ResolvedFeature[],
   used: Set<string> = new Set(),
+  usedDressUps: Set<string> = new Set(),
 ): { bodies: Body[]; previews: Body[]; failures: RegenFeatureResult[]; timings: FeatureTiming[]; warnings: Record<string, string> } {
   const bodies: Body[] = [];
   // Display-only bodies (currently just dress-up deltas). Deliberately kept OUT
@@ -2718,7 +2729,24 @@ function buildBodies(
         // Chamfer/fillet modifies the target body in place, keeping its id.
         const target = requireBody(bodies, feature.targetId);
         const beforeKey = target.key;
-        const res = dressUpNamed(feature.op, target, feature.edges, feature.edgeRefs, feature.size, feature.id, warn, feature.angle, feature.flip, feature.faces, feature.faceRefs);
+        // Reuse the cached result when this feature over this input has already
+        // been solved. The canonical is cache-owned and never handed to the fold
+        // (which consumes and deletes what it is given), so the fold gets a copy
+        // — same discipline as buildCached.
+        const dressKey = contentKey(feature, [beforeKey]);
+        usedDressUps.add(dressKey);
+        let res: NamedShape & { changedBox?: [Vec3, Vec3] };
+        const hit = dressUpCache.get(dressKey);
+        if (hit) {
+          if (hit.warning) warn(hit.warning);
+          res = { ...copyNamed(hit.result), changedBox: hit.result.changedBox };
+        } else {
+          // Capture whatever this build reports, so a cache hit can replay it.
+          let raised: string | undefined;
+          const record: Warn = (msg) => { raised = raised ? `${raised}; ${msg}` : msg; warn(msg); };
+          res = dressUpNamed(feature.op, target, feature.edges, feature.edgeRefs, feature.size, feature.id, record, feature.angle, feature.flip, feature.faces, feature.faceRefs);
+          dressUpCache.set(dressKey, { result: { ...copyNamed(res), changedBox: res.changedBox }, warning: raised });
+        }
         if (feature.previewDelta) {
           // The two halves of the change, as solids the UI can ghost: what the
           // bevel/round carves off (before − after) and what it fills in
@@ -3526,7 +3554,8 @@ function regenerate(
 ): { results: RegenFeatureResult[]; warnings: Record<string, string> } {
   const buildT0 = performance.now();
   const usedBuilders = new Set<string>();
-  const { bodies, previews, failures, timings, warnings } = buildBodies(features, usedBuilders);
+  const usedDressUps = new Set<string>();
+  const { bodies, previews, failures, timings, warnings } = buildBodies(features, usedBuilders, usedDressUps);
   const buildMs = performance.now() - buildT0;
   const meshTimings: { id: string; ms: number; hit: boolean }[] = [];
   const usedMeshes = new Set<string>();
@@ -3642,6 +3671,14 @@ function regenerate(
   // features) so memory stays bounded and stale geometry never lingers.
   for (const k of builderCache.keys()) {
     if (!usedBuilders.has(k)) { builderCache.get(k)!.shape.delete(); builderCache.delete(k); }
+  }
+  // Same sweep for dress-ups, and it is what makes UNDO safe to cache through:
+  // undo replays an earlier document, so the entries belonging to the undone
+  // state go untouched this run and are disposed here. (Correctness never
+  // depended on it — a content key names its own result — but the geometry
+  // would otherwise sit in memory for a state no longer reachable.)
+  for (const k of dressUpCache.keys()) {
+    if (!usedDressUps.has(k)) { dressUpCache.get(k)!.result.shape.delete(); dressUpCache.delete(k); }
   }
   for (const k of meshCache.keys()) if (!usedMeshes.has(k)) meshCache.delete(k);
 

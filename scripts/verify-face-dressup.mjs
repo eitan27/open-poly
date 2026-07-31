@@ -263,6 +263,71 @@ for (const kind of ["chamfer", "fillet"]) {
   }
 }
 
+// --- 8. Dress-up results are cached — and the cache must be invisible --------
+// Every dress-up used to be rebuilt on every regeneration, so a document's cost
+// grew linearly with how many it held (two rim fillets: 726ms + 682ms on each
+// edit, though only one had changed). They are now cached by content key, which
+// folds in the target body's own key. The risk a cache brings is staleness, and
+// UNDO is where it would show: replaying an earlier document must produce
+// exactly what building that document directly produces.
+//
+// A rim fillet doesn't move the bounding box, so this reads the top cap's AREA
+// off the info pane — it tracks the radius directly.
+await apply({ op: "newDocument", name: "dressup-cache" });
+await waitIdle();
+const cc = await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: "20", height: "40" } });
+await waitIdle();
+{
+  const b = await body();
+  const topRim = b.edges.filter((e) => e.includes(`${cc.createdId}/+z`));
+  const botRim = b.edges.filter((e) => e.includes(`${cc.createdId}/-z`));
+  const up = await apply({ op: "dressUp", kind: "fillet", targetId: cc.createdId, edges: topRim, size: "3" });
+  await waitIdle();
+  await apply({ op: "dressUp", kind: "fillet", targetId: cc.createdId, edges: botRim, size: "4" });
+  await waitIdle();
+  check("two stacked rim fillets build", (await body()).faces.length === 100,
+    `${(await body()).faces.length} faces (expected 100)`);
+
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("7");
+  await page.waitForTimeout(400);
+  const canvas = await page.locator("canvas").first().boundingBox();
+  const topArea = async () => {
+    await apply({ op: "select", refs: [] });
+    const s = await page.evaluate((p) => window.__openpoly.worldToScreen(p), [2, 2, 40]);
+    await page.mouse.click(canvas.x + s.x, canvas.y + s.y);
+    await page.waitForTimeout(250);
+    const rows = {};
+    for (const r of await page.locator(".selection-info .si-row").all()) {
+      rows[(await r.locator(".si-label").textContent()).trim()] = (await r.locator(".si-value").textContent()).trim();
+    }
+    return rows["Area"] ?? JSON.stringify(rows);
+  };
+  const setSize = async (v) => {
+    await apply({ op: "setParam", featureId: up.createdId, name: "size", value: v });
+    await waitIdle();
+    return topArea();
+  };
+  const direct3 = await setSize("3");
+  const direct9 = await setSize("9");
+  check("the two radii give different geometry (so this test can see a difference)",
+    direct3 !== direct9, `r=3 -> ${direct3}, r=9 -> ${direct9}`);
+
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("Meta+z");
+  await waitIdle();
+  const undone = await topArea();
+  check("undo rebuilds the earlier state exactly, not a cached later one",
+    undone === direct3, `after undo ${undone}, direct build of that state ${direct3}`);
+
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("Meta+Shift+z");
+  await waitIdle();
+  const redone = await topArea();
+  check("…and redo comes back to exactly the later state",
+    redone === direct9, `after redo ${redone}, direct build of that state ${direct9}`);
+}
+
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);
 await browser.close();
 process.exit(failures === 0 ? 0 : 1);
