@@ -5,16 +5,12 @@ import { detectSketchRegions, type SketchRegion } from "../document/regions";
 import { evaluateExpression, type Scope } from "../document/expression";
 import type { MeshedEdges, MeshedFaces } from "../kernel/types";
 import type { FeatureMesh, Selection } from "../viewport/Viewport";
+import { formatNumber as fmt } from "../lib/format";
 
 export interface MeasureInfo {
   title: string;
   rows: { label: string; value: string }[];
 }
-
-const fmt = (n: number) => {
-  const r = Math.round(n * 1000) / 1000;
-  return Number.isInteger(r) ? String(r) : r.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
-};
 
 /** Sum of triangle areas belonging to one face group of a tessellated body. */
 function faceArea(faces: MeshedFaces, faceId: number): number {

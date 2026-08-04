@@ -11,6 +11,7 @@
 // tolerance is injected via a `uv -> screen px` projector, so callers keep the
 // tolerance in screen space while the math stays in uv.
 import type { Vec2 } from "../document/types";
+import { mag2 as norm } from "../lib/vec2";
 
 /** What relationship a guide expresses — drives which constraint a snap captures. */
 export type Meaning = "horizontal" | "vertical" | "parallel" | "perpendicular";
@@ -55,7 +56,6 @@ export interface GuideSnap {
 }
 
 const EPS = 1e-9;
-const norm = (v: Vec2): number => Math.hypot(v[0], v[1]);
 const unit = (v: Vec2): Vec2 => {
   const n = norm(v) || 1;
   return [v[0] / n, v[1] / n];

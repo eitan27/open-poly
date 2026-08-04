@@ -14,6 +14,8 @@
 import type { SketchEntity, Vec2 } from "./types";
 import type { ProfileSegment } from "../kernel/types";
 import { sampleArc, sampleCircle, sampleSpline } from "./sketchTools";
+import { clamp } from "../lib/clamp";
+import { dist2 } from "../lib/vec2";
 
 export interface SketchRegion {
   id: string;
@@ -122,8 +124,8 @@ function segIntersect(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): { point: Vec2; t:
   let t = (qpx * sy - qpy * sx) / denom;
   let u = (qpx * ry - qpy * rx) / denom;
   if (t < -EPS / lenR || t > 1 + EPS / lenR || u < -EPS / lenS || u > 1 + EPS / lenS) return null;
-  t = Math.min(1, Math.max(0, t));
-  u = Math.min(1, Math.max(0, u));
+  t = clamp(t, 0, 1);
+  u = clamp(u, 0, 1);
   return { point: [p1[0] + t * rx, p1[1] + t * ry], t, u };
 }
 
@@ -452,7 +454,7 @@ export function regionProfileSegments(
   }
 
   const eps = 1e-4;
-  const eq = (p: Vec2, q: Vec2) => Math.hypot(p[0] - q[0], p[1] - q[1]) < eps;
+  const eq = (p: Vec2, q: Vec2) => dist2(p, q) < eps;
   const used = new Array(edges.length).fill(false);
   used[0] = true;
   const start = edges[0].from;

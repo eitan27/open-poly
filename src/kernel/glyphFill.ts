@@ -18,6 +18,7 @@
 import * as polygonClippingNs from "polygon-clipping";
 import type { MultiPolygon, Ring } from "polygon-clipping";
 import type { PathCommand } from "opentype.js";
+import { clamp } from "../lib/clamp";
 
 export type { MultiPolygon, Ring };
 
@@ -51,7 +52,7 @@ function ringBBoxArea(ring: Ring): number {
 /** Subdivision count for a Bézier span, scaled by its control-polygon length so
  *  the chord error stays under ~`tol` regardless of glyph size. */
 function bezierSegments(ctrlLen: number, tol: number): number {
-  return Math.max(2, Math.min(16, Math.ceil(ctrlLen / Math.max(tol, 1e-6))));
+  return clamp(Math.ceil(ctrlLen / Math.max(tol, 1e-6)), 2, 16);
 }
 
 const dist = (ax: number, ay: number, bx: number, by: number) => Math.hypot(bx - ax, by - ay);

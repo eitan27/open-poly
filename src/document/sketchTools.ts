@@ -3,8 +3,10 @@
 // committing) or polylines (for preview rendering). Shared by App and Viewport.
 import type { SketchEntity, Vec2 } from "./types";
 import { arcStations, circleStations } from "../geom/circleFacets";
+import { dist2 as dist, approxEqual2, angleOf2 as angleOf } from "../lib/vec2";
 
-const dist = (a: Vec2, b: Vec2) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+const CHAIN_EPS = 1e-6;
+const veq = (a: Vec2, b: Vec2, eps = CHAIN_EPS) => approxEqual2(a, b, eps);
 
 /** Axis-aligned rectangle from two opposite corners. */
 export function rectangleCorners(a: Vec2, b: Vec2): Vec2[] {
@@ -177,10 +179,7 @@ export type OffsetPrimitive =
   | { type: "arc"; c: Vec2; r: number; start: number; end: number }
   | { type: "circle"; c: Vec2; r: number };
 
-const CHAIN_EPS = 1e-6;
-const veq = (a: Vec2, b: Vec2, eps = CHAIN_EPS) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= eps;
 const ptOnCircle = (c: Vec2, r: number, ang: number): Vec2 => [c[0] + r * Math.cos(ang), c[1] + r * Math.sin(ang)];
-const angleOf = (c: Vec2, p: Vec2) => Math.atan2(p[1] - c[1], p[0] - c[0]);
 
 /** The two free endpoints of an edge (lines and arcs); circles have none. */
 function edgeEnds(e: ChainEdge): [Vec2, Vec2] | null {

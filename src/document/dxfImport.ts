@@ -11,6 +11,7 @@
 import DxfParser from "dxf-parser";
 import type { SketchEntity, Vec2 } from "./types";
 import { genId } from "./document";
+import { clamp } from "../lib/clamp";
 
 export interface DxfImportResult {
   entities: SketchEntity[];
@@ -271,7 +272,7 @@ function splineSamplePoints(ent: Record<string, unknown>, warnings: string[]): P
   if (fit && fit.length >= 2) return fit;
   const ctrl = ent.controlPoints as Pt[] | undefined;
   if (!ctrl || ctrl.length < 2) return [];
-  const degree = Math.max(1, Math.min((ent.degreeOfSplineCurve as number) ?? 3, ctrl.length - 1));
+  const degree = clamp((ent.degreeOfSplineCurve as number) ?? 3, 1, ctrl.length - 1);
   let knots = ent.knotValues as number[] | undefined;
   if (!knots || knots.length !== ctrl.length + degree + 1) {
     if (knots && knots.length > 0)

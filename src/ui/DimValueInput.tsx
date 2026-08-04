@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatNumber } from "../lib/format";
 
 export interface VarOption {
   name: string;
@@ -14,10 +15,6 @@ interface Props {
   onCancel: () => void;
   /** Variables offered as autocomplete suggestions. */
   variables: VarOption[];
-}
-
-function fmt(v: number): string {
-  return Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/\.?0+$/, "");
 }
 
 /** The identifier being typed at the end of `value` (what we'd complete
@@ -112,7 +109,7 @@ export function DimValueInput({ value, onChange, onSubmit, onCancel, variables }
               }}
             >
               <span className="dim-suggest-name">{s.name}</span>
-              <span className="dim-suggest-val">{fmt(s.value)}</span>
+              <span className="dim-suggest-val">{formatNumber(s.value)}</span>
             </li>
           ))}
         </ul>

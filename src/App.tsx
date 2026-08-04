@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type ReactNode } from "react";
 import { KernelClient } from "./kernel/KernelClient";
+import { clamp } from "./lib/clamp";
 import { useUpdateAvailable } from "./useVersionCheck";
 import {
   addBoolean,
@@ -1449,7 +1450,7 @@ export default function App() {
     const startY = e.clientY;
     const startHeight = timelineHeight;
     const move = (ev: globalThis.PointerEvent) =>
-      setTimelineHeight(Math.min(600, Math.max(80, startHeight + ev.clientY - startY)));
+      setTimelineHeight(clamp(startHeight + ev.clientY - startY, 80, 600));
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
@@ -5047,7 +5048,7 @@ export default function App() {
       const vb = [away(lb)[0] - shared[0], away(lb)[1] - shared[1]];
       const dot = va[0] * vb[0] + va[1] * vb[1];
       const m = Math.hypot(va[0], va[1]) * Math.hypot(vb[0], vb[1]) || 1;
-      return (Math.acos(Math.max(-1, Math.min(1, dot / m))) * 180) / Math.PI;
+      return (Math.acos(clamp(dot / m, -1, 1)) * 180) / Math.PI;
     };
     const deg = prefill ?? interiorDeg();
     const ma = mid(la);

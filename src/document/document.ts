@@ -2,6 +2,7 @@
 // new Document (immutable updates) so React state and undo/redo stay simple.
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "./featureDefs";
 import { newBodyColor, randomSolidColor } from "./colors";
+import { clamp } from "../lib/clamp";
 import { evaluateExpression, RESERVED_NAMES, type Scope } from "./expression";
 import {
   angledFrame,
@@ -845,7 +846,7 @@ export function setFeatureColor(doc: Document, id: string, color: number): Docum
 export function setFeatureOpacity(doc: Document, id: string, opacity: number): Document {
   return mapFeature(doc, id, (f) =>
     f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "pattern" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import"
-      ? { ...f, opacity: Math.max(0, Math.min(1, opacity)) }
+      ? { ...f, opacity: clamp(opacity, 0, 1) }
       : f,
   );
 }
@@ -858,7 +859,7 @@ export function setFeatureHidden(doc: Document, id: string, hidden: boolean): Do
 }
 
 export function setRollbackIndex(doc: Document, index: number): Document {
-  return { ...doc, rollbackIndex: Math.max(0, Math.min(index, doc.features.length)) };
+  return { ...doc, rollbackIndex: clamp(index, 0, doc.features.length) };
 }
 
 // --- Variables ------------------------------------------------------------

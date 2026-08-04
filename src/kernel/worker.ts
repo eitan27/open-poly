@@ -43,6 +43,8 @@ import {
   legFits,
 } from "../geom/chamferWedge";
 import { matchEdges, matchFace, type EdgeCandidate, type FaceCandidate } from "./topoMatch";
+import { clamp } from "../lib/clamp";
+import { vunit, vcross, vdot as v3dot, vunit as v3unit, vcross as v3cross } from "../lib/vec3";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -590,9 +592,6 @@ function revolveSketchRegion(
 type RegionProfile = Extract<ResolvedProfile, { kind: "sketchRegion" }>;
 
 type V3 = [number, number, number];
-const vlen = (v: V3) => Math.hypot(v[0], v[1], v[2]) || 1;
-const vunit = (v: V3): V3 => { const L = vlen(v); return [v[0] / L, v[1] / L, v[2] / L]; };
-const vcross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 /** Map a frame-local (u,v) point to world. */
 function frameToWorld(f: ResolvedFrame, p: [number, number]): [number, number, number] {
   return [
@@ -989,9 +988,6 @@ function upToFaceLength(profileFace: Face, dir: Vector, targetFace: Face, target
 }
 
 type Vec3 = [number, number, number];
-const v3cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const v3dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const v3unit = (a: Vec3): Vec3 => { const L = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / L, a[1] / L, a[2] / L]; };
 
 /** [min,max] of an axis-aligned box's 8 corners projected onto `axis`. */
 function projectBounds(bounds: [[number, number, number], [number, number, number]], axis: [number, number, number]): [number, number] {
@@ -1026,7 +1022,7 @@ function halfSpaceBox(q: Vec3, m: Vec3, size: number): Shape3D {
   // makeBaseBox(2s,2s,s): x,y ∈ [-s,s], z ∈ [0,s] — a slab whose base is the
   // z=0 plane, extending +z. Rotate local +z onto m, then move its base to q.
   let box = makeBaseBox(2 * size, 2 * size, size) as Shape3D;
-  const d = Math.max(-1, Math.min(1, m[2])); // cos angle between +z and m
+  const d = clamp(m[2], -1, 1); // cos angle between +z and m
   if (d < 0.999999) {
     let ax: Vec3 = [-m[1], m[0], 0]; // (0,0,1) × m
     const al = Math.hypot(ax[0], ax[1], ax[2]);
@@ -2941,7 +2937,7 @@ function referenceMeshOpts(shape: Shape3D): { tolerance: number; angularToleranc
   // reference body (you model an enclosure AROUND it, not on it), so it's tuned
   // coarse to keep the triangle count — and thus GPU load and per-regen transfer
   // — low. Raise the factor for lighter/faster, lower it for crisper curves.
-  return { tolerance: Math.min(5, Math.max(0.4, diag * 0.005)), angularTolerance: 0.6 };
+  return { tolerance: clamp(diag * 0.005, 0.4, 5), angularTolerance: 0.6 };
 }
 
 /** Mesh a shape ONE FACE AT A TIME. replicad's `Shape.mesh()` runs `BRepMesh` over

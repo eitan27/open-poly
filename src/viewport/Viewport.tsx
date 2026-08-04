@@ -12,6 +12,7 @@ import { getEdgeId, getFaceId, syncGeometries } from "replicad-threejs-helper";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 import type { MouseDragAction, ResolvedTheme } from "../settings/settings";
 import { VIEWPORT_THEMES, type ViewCubePalette } from "../settings/viewportTheme";
+import { clamp } from "../lib/clamp";
 
 /** Build a body's three.js geometry from a meshed payload. Wraps replicad's
  *  `syncGeometries`, then re-sets the index: our mesh indices are `Uint32Array`
@@ -4023,7 +4024,7 @@ function nearestOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
   const aby = b[1] - a[1];
   const len2 = abx * abx + aby * aby || 1;
   const t = ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / len2;
-  const tc = Math.max(0, Math.min(1, t));
+  const tc = clamp(t, 0, 1);
   return [a[0] + abx * tc, a[1] + aby * tc];
 }
 
