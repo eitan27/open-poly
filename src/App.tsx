@@ -615,7 +615,7 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 /** Strips characters that are awkward in filenames across platforms. */
-const safeFilename = (name: string) => name.replace(/[^a-z0-9_\-]+/gi, "_");
+const safeFilename = (name: string) => name.replace(/[^a-z0-9_-]+/gi, "_");
 
 const DATUM_ROWS: { id: DatumId; kind: string; label: string }[] = [
   { id: "origin", kind: "Point", label: "Origin" },

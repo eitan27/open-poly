@@ -4,7 +4,7 @@ A local **stdio MCP server** that lets an LLM agent (Claude Desktop, Cursor,
 Cline, Zed, …) **drive a live Open Poly browser tab** — sketch, extrude,
 transform, combine — while you watch it happen, and **read** state (document,
 scene summary, screenshot) so it can plan and self-correct. Part of Phase 9; see
-`PLAN.md` and `src/agent/modeling-guide.md`.
+[`../docs/PLAN.md`](../docs/PLAN.md) and `src/agent/modeling-guide.md`.
 
 ## Try it (manual test, with Claude Desktop)
 

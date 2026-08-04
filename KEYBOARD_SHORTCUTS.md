@@ -129,7 +129,7 @@ both at the same time):
 - `H`: Toggle suppress/hide on selected feature (Timeline, modeling mode only) / Horizontal constraint (sketch)
 - `V`: (unused in modeling) / Vertical constraint (sketch)
 
-## Future conflicts to watch (from `PLAN.md`'s roadmap)
+## Future conflicts to watch (from [`docs/PLAN.md`](docs/PLAN.md)'s roadmap)
 
 - **Pattern (linear/circular)** — Phase 5, still TODO. Its natural letter `P`
   is already double-claimed (Plane in modeling, Polygon in sketch), so it

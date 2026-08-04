@@ -3439,9 +3439,8 @@ export function Viewport({
     // stencil-cap group (which must be absent, not just hidden, when off — see
     // the SceneState field comment). This re-syncs body geometries too, which is
     // a bit of wasted work on toggle, but keeping the rebuild logic in ONE place
-    // is worth it — see BACKLOG.md's account of a "clever reuse" perf attempt
+    // is worth it — see docs/BACKLOG.md's account of a "clever reuse" perf attempt
     // that made real use feel worse despite winning on paper.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meshes, sectionView.enabled]);
 
   // Rebuild the ghost-preview bodies independently of the real bodies — their

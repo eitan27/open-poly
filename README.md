@@ -74,3 +74,14 @@ Notes:
 | `npm run preview`    | Serve the production build locally to preview it.  |
 | `npm test`           | Run the unit tests once (Vitest).                  |
 | `npm run test:watch` | Run the unit tests in watch mode (Vitest).         |
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the codebase layout, dev
+workflow, and PR process. Design/architecture notes and the feature
+backlog live in [`docs/`](docs/).
+
+## License
+
+GPL-3.0-or-later — see [`LICENSE`](LICENSE). Third-party license notes
+(including an LGPL dependency) are in [`NOTICE.md`](NOTICE.md).

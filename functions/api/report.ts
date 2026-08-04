@@ -45,7 +45,6 @@ const CATEGORY_LABEL: Record<string, string> = {
 const json = (status: number, data: unknown) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const onRequestPost = async (context: { request: Request; env: Env }): Promise<Response> => {
   const { request, env } = context;
   if (!env.GITHUB_ISSUES_TOKEN) return json(500, { error: "reporting not configured" });

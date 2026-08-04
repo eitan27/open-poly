@@ -2666,7 +2666,7 @@ function buildBodies(
           }
           if (glyph) glyphSolids.push(glyph);
         }
-        let built: NamedShape | null =
+        const built: NamedShape | null =
           glyphSolids.length === 0 ? null
           : glyphSolids.length === 1 ? glyphSolids[0]
           : compoundOf(glyphSolids);
