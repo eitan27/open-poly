@@ -346,7 +346,7 @@ interface SceneState {
   sectionHandle: THREE.Mesh;
   // Ground grid and navigation cube. Held so a theme change can recolour them
   // in place rather than rebuilding the scene.
-  grid: THREE.GridHelper;
+  grid: THREE.LineSegments;
   viewCube: ViewCube;
 }
 
@@ -1285,10 +1285,10 @@ export function Viewport({
     fill.position.set(-80, -40, -60);
     scene.add(fill);
 
-    const grid = new THREE.GridHelper(240, 24, theme0.gridMajor, theme0.gridMinor);
-    grid.rotation.x = Math.PI / 2;
+    const grid = createGroundGrid(theme0.gridMajor, theme0.gridMinor);
     scene.add(grid);
-    scene.add(new THREE.AxesHelper(45));
+    const axes = new THREE.AxesHelper(AXES_LENGTH);
+    scene.add(axes);
 
     const datums = createDatums(scene);
 
@@ -3318,6 +3318,9 @@ export function Viewport({
       }
       sectionCapGeometry.dispose();
       sectionCapMaterial.dispose();
+      grid.geometry.dispose();
+      (grid.material as THREE.Material).dispose();
+      axes.dispose();
       renderer.dispose();
       container.removeChild(renderer.domElement);
       apiRef.current = null;
@@ -3335,17 +3338,8 @@ export function Viewport({
     if (!state) return;
     const t = VIEWPORT_THEMES[theme];
     (state.scene.background as THREE.Color).set(t.background);
-    // GridHelper bakes its two colours into per-vertex colours at construction:
-    // the first half of the vertices are the centre lines, the rest the cells.
-    const colors = state.grid.geometry.getAttribute("color") as THREE.BufferAttribute;
-    const major = new THREE.Color(t.gridMajor);
-    const minor = new THREE.Color(t.gridMinor);
-    // Two centre lines × 2 endpoints = 4 vertices, always laid down first.
-    for (let i = 0; i < colors.count; i++) {
-      const c = i < 4 ? major : minor;
-      colors.setXYZ(i, c.r, c.g, c.b);
-    }
-    colors.needsUpdate = true;
+    // The grid bakes its two colours into per-vertex colours at construction.
+    paintGroundGrid(state.grid, t.gridMajor, t.gridMinor);
     state.viewCube.setTheme(theme);
     applyMouseBindings(state.controls, mouseMiddle, mouseRight);
   }, [theme, mouseMiddle, mouseRight]);
@@ -4115,6 +4109,64 @@ function softenGizmo(helper: THREE.Object3D): void {
       m._opacity = m.opacity;
     }
   });
+}
+
+// --- Ground grid ----------------------------------------------------------
+
+/** Ground grid: half-width, and the pitch of one cell. */
+const GRID_HALF = 120;
+const GRID_STEP = 10;
+/** How far the world axes reach out of the origin. */
+const AXES_LENGTH = 45;
+/** Vertices the two centre lines occupy — laid down first, so a theme change can
+ *  recolour them as a block. Four segments (each centre line is split in two by
+ *  the gap the axes fill), two vertices each. */
+const GRID_CENTRE_VERTS = 8;
+
+/** The ground grid: a flat XY line grid centred on the origin.
+ *
+ *  Built by hand rather than with `THREE.GridHelper` for one reason. The
+ *  helper's two centre lines run the full width straight along world X and Y —
+ *  exactly where the axes helper draws its own. Coincident depth-writing lines
+ *  z-fight: which one survives is settled per pixel by the last bit of the
+ *  interpolated depth, so the axes came out stippled, the pattern reshuffling
+ *  every frame the camera moved and then freezing wherever the orbit stopped.
+ *  Here the centre lines just stop short of the stretch the axes cover, so
+ *  nothing overlaps and both can keep ordinary depth testing — which is what
+ *  makes the axes read as solid geometry, hidden by a body only where the body
+ *  is really in front of them. */
+function createGroundGrid(major: number, minor: number): THREE.LineSegments {
+  // The two centre lines, minus the gap the axes fill on +X and +Y.
+  const positions: number[] = [
+    -GRID_HALF, 0, 0, 0, 0, 0, AXES_LENGTH, 0, 0, GRID_HALF, 0, 0,
+    0, -GRID_HALF, 0, 0, 0, 0, 0, AXES_LENGTH, 0, 0, GRID_HALF, 0,
+  ];
+  for (let k = -GRID_HALF; k <= GRID_HALF; k += GRID_STEP) {
+    if (k === 0) continue; // owned by the centre lines above
+    positions.push(-GRID_HALF, k, 0, GRID_HALF, k, 0);
+    positions.push(k, -GRID_HALF, 0, k, GRID_HALF, 0);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(positions.length, 3));
+  const grid = new THREE.LineSegments(
+    geometry,
+    new THREE.LineBasicMaterial({ vertexColors: true, toneMapped: false }),
+  );
+  paintGroundGrid(grid, major, minor);
+  return grid;
+}
+
+/** Recolour the grid in place: centre lines in `major`, cells in `minor`. */
+function paintGroundGrid(grid: THREE.LineSegments, major: number, minor: number): void {
+  const colors = grid.geometry.getAttribute("color") as THREE.BufferAttribute;
+  const hot = new THREE.Color(major);
+  const cold = new THREE.Color(minor);
+  for (let i = 0; i < colors.count; i++) {
+    const c = i < GRID_CENTRE_VERTS ? hot : cold;
+    colors.setXYZ(i, c.r, c.g, c.b);
+  }
+  colors.needsUpdate = true;
 }
 
 // --- Datum geometry -------------------------------------------------------
