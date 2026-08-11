@@ -135,6 +135,15 @@ const MESH_OPTS = { tolerance: 0.05, angularTolerance: 30 };
 // without re-checking every boolean result.
 const BOOL_FUZZY = 0.01;
 
+// Fallback tolerances tried, in order, when a boolean comes back DEGENERATE (no
+// solid at all). Two near-tangent B-spline surfaces — e.g. an inner offset loft
+// held a uniform ~2.4mm inside its outer, the standard way to hollow an organic
+// shell — make BRepAlgoAPI return an EMPTY shape at one tolerance and the right
+// answer at another. Only ever step DOWN from BOOL_FUZZY: per the note above, a
+// fuzzy value larger than the thinnest wall collapses the cut, so raising it
+// would trade one silent failure for another.
+const BOOL_FUZZY_FALLBACKS = [BOOL_FUZZY, 1e-3, 1e-4, 0] as const;
+
 // --- Topological naming (N2: OCCT construction history) ---
 // A body carries a name map (face hashCode -> persistent name) built at creation
 // and PROPAGATED through every operation via OCCT history (Generated/Modified/
@@ -1175,6 +1184,26 @@ function booleanNamed(op: "fuse" | "cut" | "common", base: NamedShape, tool: Nam
   tools.delete();
   progress.delete();
   return { shape, names };
+}
+
+/** `booleanNamed`, retried down BOOL_FUZZY_FALLBACKS while OCCT hands back a
+ *  DEGENERATE (solid-less) shape. BRepAlgoAPI is not robust on near-tangent
+ *  B-spline pairs: the same cut can yield an empty shape at one fuzzy value and
+ *  the correct solid at the next, so one attempt isn't enough. Returns the first
+ *  result with a solid in it; if every tolerance degenerates, returns the last
+ *  one and lets the caller report the failure. */
+function booleanRetrying(op: "fuse" | "cut" | "common", base: NamedShape, tool: NamedShape): NamedShape {
+  let last: NamedShape | null = null;
+  for (const fuzzy of BOOL_FUZZY_FALLBACKS) {
+    const next = booleanNamed(op, base, tool, fuzzy);
+    if (countSolids(next.shape) > 0) {
+      if (last) last.shape.delete();
+      return next;
+    }
+    if (last) last.shape.delete();
+    last = next;
+  }
+  return last!;
 }
 
 function requireBody(bodies: Body[], id: string): Body {
@@ -2330,6 +2359,21 @@ function shellNamed(
     progress,
   );
   const shape = cast(builder.Shape()) as Shape3D;
+  // MakeThickSolidByJoin can "succeed" and hand back a shape with no solid in it
+  // (or the untouched input) on geometry it can't offset — freeform lofts with
+  // many small spline patches are the usual case. Both look like success to the
+  // caller, so check the result really is a hollowed solid rather than emitting a
+  // zero-face body downstream.
+  if (countSolids(shape) === 0 || shape.faces.length <= target.shape.faces.length) {
+    shape.delete();
+    facesToRemove.delete();
+    builder.delete();
+    progress.delete();
+    throw new Error(
+      "Shell failed on this geometry — the offset could not be built. This is common on " +
+        "freeform lofted surfaces; try a thinner wall, or hollow it by subtracting an inner body.",
+    );
+  }
 
   const names = new Map<number, string>();
   const used = new Map<string, number>();
@@ -2565,7 +2609,20 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): Nam
   let accVol = op === "union" ? 0 : measureVolume(acc.shape);
   let accIsIntermediate = false;
   for (let i = 1; i < ops.length; i++) {
-    const next = booleanNamed(BOOL_OCC[op], acc, ops[i]);
+    const next = booleanRetrying(BOOL_OCC[op], acc, ops[i]);
+    // A DEGENERATE result (no solids) has to be caught here, before the
+    // op-specific tests below: an empty cut has volume 0, so `nextVol >= accVol`
+    // is false and it would sail through the "nothing to subtract" guard as if
+    // it were a successful large cut — consuming both operands and leaving a
+    // zero-face body. Report it instead of silently producing nothing.
+    if (countSolids(next.shape) === 0) {
+      next.shape.delete();
+      if (accIsIntermediate) acc.shape.delete();
+      throw new Error(
+        "The boolean produced an empty result — the operands are probably tangent or " +
+          "near-coincident over some region. Try nudging one operand so the surfaces aren't parallel.",
+      );
+    }
     // A union is valid when it actually joins the bodies into fewer solids —
     // true for overlapping AND merely-touching (shared-face) bodies, which have
     // no shared volume and so can't be told apart from disjoint by volume alone.
