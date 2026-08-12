@@ -31,7 +31,10 @@ const waitIdle = async () => {
   // harnesses (2 min) and reports what it was stuck on if it times out.
   for (let i = 0; i < 240; i++) {
     const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    if (s !== last) { console.log(`   [status] ${s}`); last = s; }
+    if (s !== last) {
+      console.log(`   [status] ${s}`);
+      last = s;
+    }
     // "N error(s)" is a SETTLED state too, not a stall: this harness exercises
     // shells that are expected to be refused, and waiting only for "up to date"
     // would spin out the timeout on exactly the cases under test.
@@ -58,9 +61,36 @@ const check = (label, ok, detail = "") => {
 // this is a Shell test, not a loft stress test, and a 147-face loft turns each
 // shell attempt into minutes of OCCT work.
 const STATIONS = [
-  [0.0, [[10, 0], [11, 6], [4, 12], [-6, 9], [-10, 0]]],
-  [18.0, [[16, 0], [18, 10], [6, 20], [-10, 15], [-16, 0]]],
-  [36.0, [[9, 0], [10, 5], [3, 11], [-7, 8], [-9, 0]]],
+  [
+    0.0,
+    [
+      [10, 0],
+      [11, 6],
+      [4, 12],
+      [-6, 9],
+      [-10, 0],
+    ],
+  ],
+  [
+    18.0,
+    [
+      [16, 0],
+      [18, 10],
+      [6, 20],
+      [-10, 15],
+      [-16, 0],
+    ],
+  ],
+  [
+    36.0,
+    [
+      [9, 0],
+      [10, 5],
+      [3, 11],
+      [-7, 8],
+      [-9, 0],
+    ],
+  ],
 ];
 const WALL = 1.5;
 
@@ -74,7 +104,9 @@ async function buildLoft(name, rings) {
     const plane =
       y === 0
         ? { datum: "front" }
-        : { planeId: (await apply({ op: "addPlane", method: "offset", base: { datum: "front" }, offset: y })).createdId };
+        : {
+            planeId: (await apply({ op: "addPlane", method: "offset", base: { datum: "front" }, offset: y })).createdId,
+          };
     const xR = ring[0][0];
     const xL = ring[ring.length - 1][0];
     const entities = [
@@ -97,7 +129,11 @@ const loftId = await buildLoft("Hull", STATIONS);
 let scene = await read({ read: "sceneSummary" });
 const loft = scene.bodies.find((b) => b.id === loftId);
 check("irregular loft built", Boolean(loft), `faces=${loft?.faces.length}`);
-check("…and it really is freeform (spline patches, not a handful of analytic faces)", (loft?.faces.length ?? 0) > 6, `faces=${loft?.faces.length}`);
+check(
+  "…and it really is freeform (spline patches, not a handful of analytic faces)",
+  (loft?.faces.length ?? 0) > 6,
+  `faces=${loft?.faces.length}`,
+);
 const loftBBox = loft.bbox;
 const loftFaceCount = loft.faces.length;
 
@@ -136,7 +172,11 @@ if (sealed.kind === "refused") {
     sealed.error.slice(0, 200),
   );
 } else {
-  gap("a sealed loft shell names its inner faces '<face>/in'", (sealed.after?.faces ?? []).some((f) => f.endsWith("/in")), JSON.stringify(sealed.after?.faces?.slice(0, 4)));
+  gap(
+    "a sealed loft shell names its inner faces '<face>/in'",
+    (sealed.after?.faces ?? []).some((f) => f.endsWith("/in")),
+    JSON.stringify(sealed.after?.faces?.slice(0, 4)),
+  );
   check(
     "…leaving the outer size untouched (the wall grows inward)",
     Math.abs(sealed.after.bbox.max[2] - loftBBox.max[2]) < 1e-6 &&
@@ -145,7 +185,11 @@ if (sealed.kind === "refused") {
     `before=${JSON.stringify(loftBBox)} after=${JSON.stringify(sealed.after.bbox)}`,
   );
 }
-check("the body survives either way — a failed shell must not consume it", Boolean(sealed.after), JSON.stringify(sealed.after?.id));
+check(
+  "the body survives either way — a failed shell must not consume it",
+  Boolean(sealed.after),
+  JSON.stringify(sealed.after?.id),
+);
 
 // --- 2. Open a face of the loft (the MakeThickSolidByJoin path) ------------
 // Fresh loft, so this is judged independently of whatever case 1 did.
@@ -165,15 +209,28 @@ if (opened.kind === "refused") {
     opened.error.slice(0, 200),
   );
 } else {
-  check("…and when it succeeds the opening is gone from the name list", !opened.after.faces.includes(baseFace), `${opened.after.faces.length} faces remain`);
-  check("…and every surviving outer face kept its identity", opened.after.faces.every((f) => f.startsWith(loft2Id)), JSON.stringify(opened.after.faces.slice(0, 3)));
+  check(
+    "…and when it succeeds the opening is gone from the name list",
+    !opened.after.faces.includes(baseFace),
+    `${opened.after.faces.length} faces remain`,
+  );
+  check(
+    "…and every surviving outer face kept its identity",
+    opened.after.faces.every((f) => f.startsWith(loft2Id)),
+    JSON.stringify(opened.after.faces.slice(0, 3)),
+  );
   // OCCT reports no Generated image for a spline face here, so the inner wall
   // exists geometrically but has no history to inherit a name from. On a box
   // (verify-shell.mjs) the same code path names them correctly.
-  gap("an opened-face loft shell names its inner faces '<face>/in'", opened.after.faces.some((f) => f.endsWith("/in")), `${opened.after.faces.length} named faces, none inner`);
+  gap(
+    "an opened-face loft shell names its inner faces '<face>/in'",
+    opened.after.faces.some((f) => f.endsWith("/in")),
+    `${opened.after.faces.length} named faces, none inner`,
+  );
   check(
     "…and the outer size is untouched",
-    Math.abs(opened.after.bbox.max[2] - loftBBox.max[2]) < 1e-6 && Math.abs(opened.after.bbox.min[0] - loftBBox.min[0]) < 1e-6,
+    Math.abs(opened.after.bbox.max[2] - loftBBox.max[2]) < 1e-6 &&
+      Math.abs(opened.after.bbox.min[0] - loftBBox.min[0]) < 1e-6,
     `before=${JSON.stringify(loftBBox)} after=${JSON.stringify(opened.after.bbox)}`,
   );
 }
@@ -189,12 +246,12 @@ check(
   errs.every((e) => /thinner wall|subtracting an inner body|re-pick/.test(String(e))),
   JSON.stringify(scene.errors),
 );
+check("a refused shell doesn't take other features down with it", errs.length <= 1, `${errs.length} features in error`);
 check(
-  "a refused shell doesn't take other features down with it",
-  errs.length <= 1,
-  `${errs.length} features in error`,
+  "no body came back with zero faces",
+  scene.bodies.every((b) => b.faces.length > 0),
+  JSON.stringify(scene.bodies.map((b) => [b.name, b.faces.length])),
 );
-check("no body came back with zero faces", scene.bodies.every((b) => b.faces.length > 0), JSON.stringify(scene.bodies.map((b) => [b.name, b.faces.length])));
 
 await page.screenshot({ path: "/tmp/openpoly-shell-loft.png" });
 if (gaps) console.log(`\n${gaps} known gap(s) reported above — shell behaved correctly, naming did not.`);

@@ -73,8 +73,16 @@ await dialog.waitFor({ state: "visible", timeout: 5000 });
 const text = await dialog.textContent();
 check("Shell dialog opened from a face pick", await dialog.isVisible());
 check("dialog has a Body section", text.includes("Body"), text.slice(0, 160));
-check("the armed body is named", (await rows().first().textContent()).trim().length > 0, await rows().first().textContent());
-check("NO faces are armed — a plain Shell is sealed by default", (await faceRowCount()) === 0, `faceRows=${await faceRowCount()}`);
+check(
+  "the armed body is named",
+  (await rows().first().textContent()).trim().length > 0,
+  await rows().first().textContent(),
+);
+check(
+  "NO faces are armed — a plain Shell is sealed by default",
+  (await faceRowCount()) === 0,
+  `faceRows=${await faceRowCount()}`,
+);
 check("the optional faces section is offered", text.includes("Faces to open (optional)"), text.slice(0, 200));
 
 // The selection is promoted to the whole body, so what's highlighted matches
@@ -97,7 +105,11 @@ check("arming shows the active prompt", (await dialog.textContent()).includes("C
 
 await page.mouse.click(...centre);
 await page.waitForTimeout(300);
-check("clicking a face while armed adds it to the list", (await faceRowCount()) === 1, `faceRows=${await faceRowCount()}`);
+check(
+  "clicking a face while armed adds it to the list",
+  (await faceRowCount()) === 1,
+  `faceRows=${await faceRowCount()}`,
+);
 
 await page.mouse.click(...centre);
 await page.waitForTimeout(300);
@@ -115,7 +127,11 @@ await waitIdle();
 let shells = await shellFeatures();
 check("a shell feature was created", shells.length === 1, JSON.stringify(shells.map((f) => f.id)));
 check("it targets the clicked body", shells[0]?.targetId === boxId, String(shells[0]?.targetId));
-check("it opens exactly the one face armed in the dialog", (shells[0]?.faces ?? []).length === 1, JSON.stringify(shells[0]?.faces));
+check(
+  "it opens exactly the one face armed in the dialog",
+  (shells[0]?.faces ?? []).length === 1,
+  JSON.stringify(shells[0]?.faces),
+);
 
 // --- 3. The default path: arm and commit without touching faces ------------
 const box2 = await apply({ op: "addPrimitive", kind: "box", params: { width: 24, depth: 24, height: 24 } });
@@ -127,7 +143,11 @@ await apply({ op: "select", refs: [{ kind: "feature", id: box2.createdId }] });
 await page.waitForTimeout(200);
 await page.keyboard.press("g");
 await dialog.waitFor({ state: "visible", timeout: 5000 });
-check("dialog re-opens with the new body armed and no faces", (await faceRowCount()) === 0, `faceRows=${await faceRowCount()}`);
+check(
+  "dialog re-opens with the new body armed and no faces",
+  (await faceRowCount()) === 0,
+  `faceRows=${await faceRowCount()}`,
+);
 await dialog.getByRole("button", { name: "Create" }).click();
 await waitIdle();
 
@@ -137,7 +157,11 @@ check("the second shell was created", Boolean(sealed), JSON.stringify(shells.map
 check("it opens NO faces — a sealed hollow shell", (sealed?.faces ?? []).length === 0, JSON.stringify(sealed?.faces));
 
 const scene = await read({ read: "sceneSummary" });
-check("neither shell errored in the kernel", !scene.errors || Object.keys(scene.errors).length === 0, JSON.stringify(scene.errors));
+check(
+  "neither shell errored in the kernel",
+  !scene.errors || Object.keys(scene.errors).length === 0,
+  JSON.stringify(scene.errors),
+);
 
 await page.screenshot({ path: "/tmp/openpoly-shell-arming.png" });
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);

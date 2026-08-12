@@ -23,22 +23,22 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 
 ## Modeling toolbar (available whenever you're not editing a sketch)
 
-| Action    | Key | Notes                                                                                                                                                                              |
-| --------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Sketch    | `S` | Pick a plane/face to start a sketch.                                                                                                                                               |
-| New Body  | `N` | Opens the Box/Cylinder/Sphere menu (item itself stays mouse-only — 3-item pick isn't worth 3 more bindings). Ignores `picking`, same as the button.                                |
-| Plane     | `P` | Reuses `P` from Polygon (sketch mode) — mutually exclusive, safe.                                                                                                                  |
-| Extrude   | `E` |                                                                                                                                                                                    |
-| Revolve   | `R` | Reuses `R` from Rectangle (sketch mode) — mutually exclusive, safe.                                                                                                                |
-| Sweep     | `W` | `S` was already taken by Sketch, so this uses the next distinctive letter in "s**w**eep" — weakest mnemonic in this table.                                                         |
-| Loft      | `L` | Reuses `L` from Line (sketch mode) — mutually exclusive, safe.                                                                                                                     |
-| Chamfer   | `C` | Reuses `C` from Circle-center (sketch mode) — mutually exclusive, safe.                                                                                                            |
-| Fillet    | `F` |                                                                                                                                                                                    |
+| Action    | Key | Notes                                                                                                                                                                                                                                        |
+| --------- | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sketch    | `S` | Pick a plane/face to start a sketch.                                                                                                                                                                                                         |
+| New Body  | `N` | Opens the Box/Cylinder/Sphere menu (item itself stays mouse-only — 3-item pick isn't worth 3 more bindings). Ignores `picking`, same as the button.                                                                                          |
+| Plane     | `P` | Reuses `P` from Polygon (sketch mode) — mutually exclusive, safe.                                                                                                                                                                            |
+| Extrude   | `E` |                                                                                                                                                                                                                                              |
+| Revolve   | `R` | Reuses `R` from Rectangle (sketch mode) — mutually exclusive, safe.                                                                                                                                                                          |
+| Sweep     | `W` | `S` was already taken by Sketch, so this uses the next distinctive letter in "s**w**eep" — weakest mnemonic in this table.                                                                                                                   |
+| Loft      | `L` | Reuses `L` from Line (sketch mode) — mutually exclusive, safe.                                                                                                                                                                               |
+| Chamfer   | `C` | Reuses `C` from Circle-center (sketch mode) — mutually exclusive, safe.                                                                                                                                                                      |
+| Fillet    | `F` |                                                                                                                                                                                                                                              |
 | Shell     | `G` | Hollow the selected body — a click anywhere on it (body or face) arms the body, giving a sealed shell; faces to open are picked from the dialog. No strong mnemonic available (S/H/O all taken) — picked arbitrarily, like construction `Q`. |
-| Boolean   | `B` | Resolves conflict #1 (below).                                                                                                                                                      |
-| Transform | `T` |                                                                                                                                                                                    |
-| Mirror    | `M` |                                                                                                                                                                                    |
-| Pattern   | `X` | Repeat the selected body — linear run/grid or circular ring. Same letter as the sketch pattern tools (mutually exclusive contexts, safe).                                          |
+| Boolean   | `B` | Resolves conflict #1 (below).                                                                                                                                                                                                                |
+| Transform | `T` |                                                                                                                                                                                                                                              |
+| Mirror    | `M` |                                                                                                                                                                                                                                              |
+| Pattern   | `X` | Repeat the selected body — linear run/grid or circular ring. Same letter as the sketch pattern tools (mutually exclusive contexts, safe).                                                                                                    |
 
 ## Sketch toolbar (only available while editing a sketch)
 
