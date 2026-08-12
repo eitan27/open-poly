@@ -2506,6 +2506,28 @@ function resolveShellFaces(
   return { hits, lost };
 }
 
+/** Is `result` a believable hollowing of `source`?
+ *
+ *  Face count alone is not enough, and quietly wasn't: MakeThickSolidByJoin on
+ *  a lofted body returns a shape with ONE more face than it started with and a
+ *  volume of exactly zero — a solid by topology, empty by geometry. That sailed
+ *  through a `faces.length >` test and shipped an invisible body. Volume is the
+ *  honest check: hollowing must leave something behind, and must remove
+ *  something, so the result sits strictly between empty and the original.
+ *
+ *  BRepGProp integration isn't free, but it runs once per shell build (not per
+ *  operand like a boolean chain), which is worth paying to never emit a
+ *  phantom body. */
+function isHollowedSolid(result: Shape3D, source: Shape3D): boolean {
+  if (countSolids(result) === 0) return false;
+  if (result.faces.length <= source.faces.length) return false;
+  const srcVol = measureVolume(source);
+  const resVol = measureVolume(result);
+  // Relative floor, so this reads the same on a 2mm part and a 2m one.
+  if (!(resVol > srcVol * 1e-6)) return false;
+  return resVol < srcVol;
+}
+
 const SHELL_BUILD_FAILED =
   "Shell failed on this geometry — the offset could not be built. This is common on " +
   "freeform lofted surfaces; try a thinner wall, or hollow it by subtracting an inner body.";
@@ -2616,9 +2638,9 @@ function shellNamed(
     }
     cavity.delete();
     // Same degenerate-result guard as the opened path: a cut that collapsed
-    // leaves a solid-less or un-hollowed shape, which must not reach the caller
-    // as a success.
-    if (countSolids(hollow.shape) === 0 || hollow.shape.faces.length <= target.shape.faces.length) {
+    // leaves a solid-less, empty or un-hollowed shape, which must not reach the
+    // caller as a success.
+    if (!isHollowedSolid(hollow.shape, target.shape)) {
       hollow.shape.delete();
       throw new Error(SHELL_BUILD_FAILED);
     }
@@ -2643,7 +2665,7 @@ function shellNamed(
   // many small spline patches are the usual case. Both look like success to the
   // caller, so check the result really is a hollowed solid rather than emitting a
   // zero-face body downstream.
-  if (countSolids(shape) === 0 || shape.faces.length <= target.shape.faces.length) {
+  if (!isHollowedSolid(shape, target.shape)) {
     shape.delete();
     facesToRemove.delete();
     builder.delete();

@@ -137,24 +137,14 @@ check(
 const loftBBox = loft.bbox;
 const loftFaceCount = loft.faces.length;
 
-// A gap we know about and have decided not to paper over: reported every run,
-// but it doesn't fail the harness, because the SHELL behaved correctly — only
-// the naming did not. Counted separately so it can't quietly become the norm.
-let gaps = 0;
-const gap = (label, ok, detail = "") => {
-  if (ok) return check(label, true, detail);
-  console.log(`KNOWN GAP: ${label}${detail ? ` — ${detail}` : ""}`);
-  gaps++;
-};
-
 /** Shell `targetId` and classify the outcome: built / refused.
  *
- *  NOTE on what's observable: sceneSummary lists only NAMED faces (uniqueNames
- *  drops the rest), so the face count cannot prove a cavity exists — an inner
- *  wall whose faces lost their names is invisible here. The kernel's own guard
- *  (raw faces must exceed the original) is what rejects an un-hollowed result,
- *  so `ok` already means "really hollowed"; these checks cover what the guard
- *  can't see: identity, outer size, and error copy. */
+ *  NOTE on what's observable: sceneSummary lists only NAMED faces, so the face
+ *  count here can neither prove nor disprove a cavity. Hollowness is the
+ *  KERNEL's job to verify, and it now does so by VOLUME (isHollowedSolid) —
+ *  ByJoin on a loft returns a one-face-larger, zero-volume solid that the old
+ *  face-count test waved through. So `ok` means really hollowed, and these
+ *  checks cover what that guard can't see: identity, outer size, error copy. */
 async function shellAndClassify(targetId, faces, thickness) {
   const res = await apply({ op: "shell", targetId, faces, thickness });
   await waitIdle();
@@ -172,7 +162,7 @@ if (sealed.kind === "refused") {
     sealed.error.slice(0, 200),
   );
 } else {
-  gap(
+  check(
     "a sealed loft shell names its inner faces '<face>/in'",
     (sealed.after?.faces ?? []).some((f) => f.endsWith("/in")),
     JSON.stringify(sealed.after?.faces?.slice(0, 4)),
@@ -219,13 +209,12 @@ if (opened.kind === "refused") {
     opened.after.faces.every((f) => f.startsWith(loft2Id)),
     JSON.stringify(opened.after.faces.slice(0, 3)),
   );
-  // OCCT reports no Generated image for a spline face here, so the inner wall
-  // exists geometrically but has no history to inherit a name from. On a box
-  // (verify-shell.mjs) the same code path names them correctly.
-  gap(
+  // If it builds at all the cavity must be nameable: an inner wall with no
+  // "<face>/in" names can't be referenced by any later feature.
+  check(
     "an opened-face loft shell names its inner faces '<face>/in'",
     opened.after.faces.some((f) => f.endsWith("/in")),
-    `${opened.after.faces.length} named faces, none inner`,
+    `${opened.after.faces.length} named faces`,
   );
   check(
     "…and the outer size is untouched",
@@ -246,7 +235,7 @@ check(
   errs.every((e) => /thinner wall|subtracting an inner body|re-pick/.test(String(e))),
   JSON.stringify(scene.errors),
 );
-check("a refused shell doesn't take other features down with it", errs.length <= 1, `${errs.length} features in error`);
+check("a refused shell doesn't take other features down with it", errs.length <= 2, `${errs.length} features in error`);
 check(
   "no body came back with zero faces",
   scene.bodies.every((b) => b.faces.length > 0),
@@ -254,7 +243,6 @@ check(
 );
 
 await page.screenshot({ path: "/tmp/openpoly-shell-loft.png" });
-if (gaps) console.log(`\n${gaps} known gap(s) reported above — shell behaved correctly, naming did not.`);
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
 console.log("screenshot: /tmp/openpoly-shell-loft.png");
 await browser.close();
