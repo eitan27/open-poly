@@ -24,4 +24,13 @@ describe("formatNumber", () => {
   it("formats negative fractional values", () => {
     expect(formatNumber(-1.5)).toBe("-1.5");
   });
+
+  // A negative that rounds away must not surface as "-0" — it reads as a bug in
+  // a measurement readout, and the implementations this consolidated all showed
+  // "0" here (they rounded via Math.round(v * 1000) / 1000, and String(-0) is "0").
+  it("renders a negative that rounds away as 0, not -0", () => {
+    expect(formatNumber(-0.0004)).toBe("0");
+    expect(formatNumber(-1e-7)).toBe("0");
+    expect(formatNumber(-0)).toBe("0");
+  });
 });
