@@ -84,4 +84,5 @@ backlog live in [`docs/`](docs/).
 ## License
 
 GPL-3.0-or-later — see [`LICENSE`](LICENSE). Third-party license notes
-(including an LGPL dependency) are in [`NOTICE.md`](NOTICE.md).
+(including the LGPL constraint solver and the OCCT geometry kernel) are in
+[`NOTICE.md`](NOTICE.md).
