@@ -7,7 +7,6 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getEdgeId, getFaceId, syncGeometries } from "replicad-threejs-helper";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 import type { MouseDragAction, ResolvedTheme } from "../settings/settings";
@@ -129,6 +128,23 @@ export interface TransformDelta {
   ty: number;
   tz: number;
   angle: number;
+}
+
+/** The live state of the extrude-distance gizmo: a single arrow at the
+ *  extrusion's tip, dragged along the extrude axis. Numbers, not expressions —
+ *  like TransformEdit, the gizmo is a numeric input device; the dialog owns
+ *  text. Null when no extrude is being created/edited (or its extent ignores
+ *  the distance — through-all / up-to-face / up-to-next). */
+export interface ExtrudeGizmo {
+  /** World anchor on the profile (region centroid / picked face's centroid). */
+  origin: [number, number, number];
+  /** Unit world direction the extrusion currently travels (the profile plane's
+   *  normal with the mode/flip sign already folded in). */
+  dir: [number, number, number];
+  /** Resolved numeric distance (mm). The TOTAL span for symmetric. */
+  distance: number;
+  /** Symmetric extent: the arrow sits at distance/2 and a drag sets the total. */
+  symmetric: boolean;
 }
 
 /** What is currently selected in the viewport: a whole feature (sketch or body),
@@ -339,9 +355,6 @@ interface SceneState {
   sectionCapGroup: THREE.Group;
   sectionCapGeometry: THREE.PlaneGeometry;
   sectionCapMaterial: THREE.MeshStandardMaterial;
-  // Constant-pixel-size drag handle (a cone) sitting on the plane's normal —
-  // dragging it along the normal changes the offset (see onDown/onMove).
-  sectionHandle: THREE.Mesh;
   // Ground grid and navigation cube. Held so a theme change can recolour them
   // in place rather than rebuilding the scene.
   grid: THREE.LineSegments;
@@ -402,28 +415,6 @@ const SECTION_CAP_MARGIN = 1.1;
 // each body claims a strictly increasing 3-slot range (back, front, cap) so the
 // per-body stencil clear (cap.onAfterRender) never bleeds into the next body.
 const SECTION_CAP_RENDER_ORDER_BASE = 1000;
-
-/** Closest point on the infinite line (lineOrigin, lineDir — unit) to the
- *  infinite ray (rayOrigin, rayDir — unit); returns the line parameter s. Used
- *  to convert a mouse ray into a position along the section plane's normal
- *  while dragging its handle. Standard skew-line closest-point formula; returns
- *  0 (no movement) if the ray is parallel to the line (degenerate). */
-function closestLineParamToRay(
-  lineOrigin: THREE.Vector3,
-  lineDir: THREE.Vector3,
-  rayOrigin: THREE.Vector3,
-  rayDir: THREE.Vector3,
-): number {
-  const r = new THREE.Vector3().subVectors(rayOrigin, lineOrigin);
-  const a = rayDir.dot(rayDir);
-  const b = rayDir.dot(lineDir);
-  const c = lineDir.dot(lineDir);
-  const d = rayDir.dot(r);
-  const e = lineDir.dot(r);
-  const denom = a * c - b * b;
-  if (Math.abs(denom) < 1e-9) return 0;
-  return (a * e - b * d) / denom;
-}
 
 /** Build the invisible stencil-writer pair + visible neutral cap quad for one
  *  body's section-view cross-section, per the standard clipping-stencil
@@ -1057,6 +1048,8 @@ export function Viewport({
   transformMode,
   onTransformInput,
   onTransformPreview,
+  extrudeGizmo,
+  onExtrudeDistanceChange,
   picking,
   onPick,
   axisPick,
@@ -1117,6 +1110,14 @@ export function Viewport({
   /** Per-frame numeric values during a drag, for display only (the floating
    *  panel's live readout). Must not trigger a regenerate. */
   onTransformPreview: (delta: TransformDelta) => void;
+  /** The active extrude-distance gizmo (null = hidden). */
+  extrudeGizmo: ExtrudeGizmo | null;
+  /** Fired while the gizmo arrow is dragged (throttled — each change costs a
+   *  kernel regen) and once more on release: the new distance, 1 mm-snapped,
+   *  SIGNED along the gizmo's current `dir`. Negative means the drag crossed
+   *  the profile plane — the caller flips the feature's direction and keeps
+   *  the magnitude. Never 0. */
+  onExtrudeDistanceChange: (distance: number) => void;
   picking: boolean;
   /** `aim` is the clicked world point (face picks only) so the sketch view can
    *  orient onto the face the user actually clicked, not the plane origin. */
@@ -1156,7 +1157,7 @@ export function Viewport({
    *  resolution, same as activeSketchFace) plus a signed offset along the
    *  frame's own normal and a flip (which half is kept). `enabled` false still
    *  carries a valid frame — it's just not applied. Pure view state: no undo,
-   *  no timeline (see BACKLOG.md). */
+   *  no timeline (see docs/BACKLOG.md). */
   sectionView: { enabled: boolean; frame: PlaneFrameData; offset: number; flip: boolean };
   /** Fired on every drag frame of the plane handle with the new offset (along
    *  the frame's unflipped normal) — cheap, since this is plain view state. */
@@ -1193,6 +1194,10 @@ export function Viewport({
   onTransformInputRef.current = onTransformInput;
   const onTransformPreviewRef = useRef(onTransformPreview);
   onTransformPreviewRef.current = onTransformPreview;
+  const extrudeGizmoRef = useRef(extrudeGizmo);
+  extrudeGizmoRef.current = extrudeGizmo;
+  const onExtrudeDistanceChangeRef = useRef(onExtrudeDistanceChange);
+  onExtrudeDistanceChangeRef.current = onExtrudeDistanceChange;
   const meshesRef = useRef(meshes);
   meshesRef.current = meshes;
   // Resolved (per current build) faceIds of the body face the active sketch sits
@@ -1502,49 +1507,99 @@ export function Viewport({
     sectionWidget.add(sectionWidgetBorder);
     scene.add(sectionWidget);
 
-    // Drag handle: an arrow (cone head + cylinder tail) pointing along the plane's
-    // normal, so it reads as a 3D grab handle with an obvious pointing direction —
-    // not a flat 2D triangle. Built +Y-up then rotated so +Y → +Z (the normal).
-    const sectionHandleHead = new THREE.ConeGeometry(1, 1.7, 20).translate(0, 0.85, 0);
-    const sectionHandleTail = new THREE.CylinderGeometry(0.34, 0.34, 1.9, 16).translate(0, -0.95, 0);
-    const sectionHandleGeom = mergeGeometries([sectionHandleHead, sectionHandleTail])!;
-    sectionHandleGeom.rotateX(Math.PI / 2); // +Y (apex forward) → local +Z (the normal)
-    sectionHandleHead.dispose();
-    sectionHandleTail.dispose();
-    // Lit (not MeshBasic) so the cone/shaft shade into a 3D form; drawn on top
-    // (depthTest off) like the old handle. color/emissive swap on hover/drag —
-    // see setSectionHandleHot.
-    const SECTION_HANDLE_COLD = new THREE.Color(0x4f90e0);
-    const SECTION_HANDLE_HOT = new THREE.Color(0xe6f4ff);
-    const SECTION_HANDLE_EMISSIVE_COLD = new THREE.Color(0x12304f);
-    const SECTION_HANDLE_EMISSIVE_HOT = new THREE.Color(0x59a6e6);
-    const sectionHandleMat = new THREE.MeshStandardMaterial({
-      color: SECTION_HANDLE_COLD,
-      emissive: SECTION_HANDLE_EMISSIVE_COLD,
-      metalness: 0.1,
-      roughness: 0.5,
-      depthTest: false,
-      transparent: true,
-      opacity: 0.95,
-    });
-    const sectionHandle = new THREE.Mesh(sectionHandleGeom, sectionHandleMat);
-    sectionHandle.renderOrder = 14;
-    sectionHandle.visible = false;
-    // Base pixel size; bumped ~18% while hot so the handle also grows a touch on
-    // hover/drag. keepConstantPixelRadius reads this live each frame.
-    const sectionHandlePx = { base: 22.5, hot: false };
-    keepConstantPixelRadius(sectionHandle, 1, () => sectionHandlePx.base * (sectionHandlePx.hot ? 1.18 : 1));
-    scene.add(sectionHandle);
-    let sectionHandleHot = false;
-    // Toggle the handle's hover/drag highlight (brighter fill + stronger glow + a
-    // small size bump — see sectionHandlePx).
-    const setSectionHandleHot = (hot: boolean) => {
-      if (hot === sectionHandleHot) return;
-      sectionHandleHot = hot;
-      sectionHandlePx.hot = hot;
-      sectionHandleMat.color.copy(hot ? SECTION_HANDLE_HOT : SECTION_HANDLE_COLD);
-      sectionHandleMat.emissive.copy(hot ? SECTION_HANDLE_EMISSIVE_HOT : SECTION_HANDLE_EMISSIVE_COLD);
+    // Drag handles for the section plane's offset and the extrude dialog's
+    // distance: single-axis translate gizmos built on TransformControls, so
+    // every draggable arrow in the app looks and behaves like the Transform
+    // gizmo (same arrows, same softened palette, same 1 mm snap). Each drives
+    // an invisible proxy whose local +Z is the handle's axis — space "local"
+    // with only the Z arrow shown — and the proxy's position is read back as
+    // the value, exactly like the Transform gizmo's proxy.
+    const makeAxisGizmo = () => {
+      const proxy = new THREE.Object3D();
+      scene.add(proxy);
+      const tc = new TransformControls(camera, renderer.domElement);
+      tc.setMode("translate");
+      tc.setSpace("local");
+      tc.setTranslationSnap(1); // 1 mm grid, like the Transform gizmo
+      tc.setSize(0.85);
+      tc.showX = false;
+      tc.showY = false;
+      tc.enabled = false;
+      const helper = tc.getHelper();
+      helper.visible = false;
+      softenGizmo(helper); // mute the default pure-RGB arrow to fit the UI
+      scene.add(helper);
+      return { proxy, tc, helper };
     };
+    const { proxy: sectionProxy, tc: sectionControls, helper: sectionHelper } = makeAxisGizmo();
+    const { proxy: extrudeProxy, tc: extrudeControls, helper: extrudeHelper } = makeAxisGizmo();
+
+    // Section-offset gizmo: each drag frame projects the proxy back onto the
+    // frame's (unflipped) normal. Plain view state — safe to fire every frame;
+    // syncSectionPlane also reads the proxy directly mid-drag, so the plane
+    // tracks with zero latency ahead of the prop round trip.
+    const sectionDragN = new THREE.Vector3();
+    sectionControls.addEventListener("dragging-changed", (e) => {
+      controls.enabled = !(e as unknown as { value: boolean }).value;
+    });
+    sectionControls.addEventListener("objectChange", () => {
+      if (!sectionControls.dragging) return;
+      const f = sectionViewRef.current.frame;
+      sectionDragN.set(f.normal[0], f.normal[1], f.normal[2]).normalize();
+      const offset =
+        sectionProxy.position.dot(sectionDragN) -
+        (f.origin[0] * sectionDragN.x + f.origin[1] * sectionDragN.y + f.origin[2] * sectionDragN.z);
+      onSectionOffsetChangeRef.current(offset);
+    });
+
+    // Extrude-distance gizmo. The drag axis is captured at drag start (the
+    // prop's `dir` can flip mid-drag once a plane crossing is committed — see
+    // emitExtrudeDistance), and emissions are throttled: unlike the section
+    // offset, every emitted distance triggers a kernel regen (the dialog's
+    // ghost preview, or a live in-place edit), so they're deduped and
+    // rate-limited, with the final value always emitted on release.
+    const EXTRUDE_EMIT_MS = 50;
+    let extrudeDrag: { origin: THREE.Vector3; axis: THREE.Vector3; emitted: number | null; emittedAt: number } | null =
+      null;
+    const extrudeDragVec = new THREE.Vector3();
+    // Project the proxy back onto the drag axis, sign the result against the
+    // gizmo's CURRENT direction (so "negative = the other side of the profile"
+    // stays true across a mid-drag flip), snap to whole mm and emit.
+    const emitExtrudeDistance = (final: boolean) => {
+      const ed = extrudeDrag;
+      const eg = extrudeGizmoRef.current;
+      if (!ed || !eg) return;
+      const s = extrudeDragVec.copy(extrudeProxy.position).sub(ed.origin).dot(ed.axis);
+      const dirSign = ed.axis.x * eg.dir[0] + ed.axis.y * eg.dir[1] + ed.axis.z * eg.dir[2] < 0 ? -1 : 1;
+      const along = s * dirSign;
+      const total = Math.round(eg.symmetric ? along * 2 : along);
+      if (total === 0 || total === ed.emitted) return;
+      const now = performance.now();
+      if (!final && now - ed.emittedAt < EXTRUDE_EMIT_MS) return;
+      ed.emitted = total;
+      ed.emittedAt = now;
+      onExtrudeDistanceChangeRef.current(total);
+    };
+    extrudeControls.addEventListener("dragging-changed", (e) => {
+      const dragging = (e as unknown as { value: boolean }).value;
+      controls.enabled = !dragging;
+      if (dragging) {
+        const eg = extrudeGizmoRef.current;
+        if (!eg) return;
+        extrudeDrag = {
+          origin: new THREE.Vector3(eg.origin[0], eg.origin[1], eg.origin[2]),
+          axis: new THREE.Vector3(eg.dir[0], eg.dir[1], eg.dir[2]).normalize(),
+          emitted: null,
+          emittedAt: 0,
+        };
+      } else {
+        emitExtrudeDistance(true); // a change the throttle may still be holding
+        extrudeDrag = null;
+      }
+    });
+    extrudeControls.addEventListener("objectChange", () => {
+      if (extrudeControls.dragging) emitExtrudeDistance(false);
+    });
 
     // Per-body stencil-cap triples (see createSectionCapTriple), rebuilt in the
     // mesh-rebuild effect below. The cap quad geometry/material are shared across
@@ -1812,7 +1867,6 @@ export function Viewport({
       sectionCapGroup,
       sectionCapGeometry,
       sectionCapMaterial,
-      sectionHandle,
       grid,
       viewCube,
     };
@@ -2207,7 +2261,9 @@ export function Viewport({
         next.updateProjectionMatrix();
         camera = next;
         controls.object = next;
-        (transformControls as unknown as { camera: THREE.Camera }).camera = next;
+        transformControls.camera = next;
+        sectionControls.camera = next;
+        extrudeControls.camera = next;
         state.camera = next;
         controls.update();
         // The ViewCube reads `state.camera` each frame (see the animate loop),
@@ -2338,18 +2394,6 @@ export function Viewport({
       single: boolean;
       moved: boolean;
     } | null = null;
-    // An in-progress drag of the section-plane handle. `axisOrigin`/`axisDir` are
-    // the frame's own origin/normal (unflipped, world space) at drag start;
-    // `grabDelta` is fixed at press time (committed offset − the ray/axis
-    // param under the cursor at that instant) so the plane doesn't jump to
-    // wherever the ray projects on the very first move — it stays pinned to
-    // the point actually grabbed. `offset` is the live value driving the
-    // plane/cap/widget each frame — see syncSectionPlane, which prefers this
-    // over the (one-render-behind) prop while dragging, for zero-latency
-    // feedback.
-    let sectionDrag: { axisOrigin: THREE.Vector3; axisDir: THREE.Vector3; grabDelta: number; offset: number } | null =
-      null;
-
     const projectToPx = (world: THREE.Vector3) => {
       const v = world.clone().project(camera);
       const rect = renderer.domElement.getBoundingClientRect();
@@ -2879,28 +2923,11 @@ export function Viewport({
     };
 
     const onMove = (e: PointerEvent) => {
-      // An active section-plane drag owns the pointer: project the new mouse ray
-      // onto the plane's normal axis (closest point between two skew lines) and
-      // push the live offset straight into the scene objects for zero-latency
-      // feedback — syncSectionPlane picks it up next frame via `sectionDrag`,
-      // ahead of the (one-render-behind) prop round trip. The callback still
-      // fires every frame so the offset field / persistence stay in sync.
-      if (sectionDrag) {
-        const rect = renderer.domElement.getBoundingClientRect();
-        pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-        pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-        raycaster.setFromCamera(pointer, camera);
-        const s = closestLineParamToRay(
-          sectionDrag.axisOrigin,
-          sectionDrag.axisDir,
-          raycaster.ray.origin,
-          raycaster.ray.direction,
-        );
-        const next = s + sectionDrag.grabDelta;
-        sectionDrag.offset = next;
-        onSectionOffsetChangeRef.current(next);
-        return;
-      }
+      // A drag owned by one of the TransformControls gizmos (transform /
+      // section / extrude): the controls run their own pointermove (their
+      // listeners registered first); skip hover picking underneath so
+      // highlights don't churn behind the gizmo.
+      if (transformControls.dragging || sectionControls.dragging || extrudeControls.dragging) return;
       // An active sketch drag owns the pointer: move the grabbed geometry and let
       // App re-solve. Wait for a few px of travel before the first solve so a tap
       // still reads as a click (handled in onUp).
@@ -2933,28 +2960,6 @@ export function Viewport({
         renderer.domElement.style.cursor = "pointer";
         return;
       }
-      // Section drag-handle hover: brighten the arrow + show a grab cursor when the
-      // pointer is over it (mirrors the drag-start hit test in onDown; skipped in
-      // picking mode, which the handle opts out of there too).
-      if (!pickingRef.current && sectionViewRef.current.enabled) {
-        const rect = renderer.domElement.getBoundingClientRect();
-        pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-        pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-        raycaster.setFromCamera(pointer, camera);
-        if (raycaster.intersectObject(sectionHandle, false).length > 0) {
-          // Drop any body/face/plane hover so it doesn't stay stuck behind the
-          // handle highlight when the pointer slides from a body onto the arrow.
-          clearHover();
-          if (hoverSelRef.current) {
-            hoverSelRef.current = null;
-            applyHighlights();
-          }
-          setSectionHandleHot(true);
-          renderer.domElement.style.cursor = "grab";
-          return;
-        }
-      }
-      setSectionHandleHot(false);
       // Selection (hover) is active when idle OR editing a sketch with the Select
       // tool. Drop a stale hover when neither applies.
       const selecting = !pickingRef.current && (activeFrameRef.current === null || isPickTool(sketchToolRef.current));
@@ -3145,29 +3150,13 @@ export function Viewport({
       }
     };
     const onDown = (e: PointerEvent) => {
+      // A press claimed by one of the TransformControls gizmos (transform /
+      // section / extrude): their pointerdown listeners ran first (registered
+      // earlier) and set `dragging`. Leave `down` unset so onUp doesn't turn
+      // the release into a selection click, and don't arm a sketch drag
+      // underneath.
+      if (transformControls.dragging || sectionControls.dragging || extrudeControls.dragging) return;
       down = { x: e.clientX, y: e.clientY };
-      // A press on the section-plane handle arms its drag — takes priority over
-      // everything below (it's a dedicated 3D object; only picking mode, which
-      // has its own click meaning, opts out).
-      if (!pickingRef.current && sectionViewRef.current.enabled) {
-        const rect = renderer.domElement.getBoundingClientRect();
-        pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-        pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-        raycaster.setFromCamera(pointer, camera);
-        if (raycaster.intersectObject(sectionHandle, false).length > 0) {
-          const f = sectionViewRef.current.frame;
-          const axisOrigin = new THREE.Vector3(f.origin[0], f.origin[1], f.origin[2]);
-          const axisDir = new THREE.Vector3(f.normal[0], f.normal[1], f.normal[2]).normalize();
-          const s0 = closestLineParamToRay(axisOrigin, axisDir, raycaster.ray.origin, raycaster.ray.direction);
-          const committed = sectionViewRef.current.offset;
-          sectionDrag = { axisOrigin, axisDir, grabDelta: committed - s0, offset: committed };
-          controls.enabled = false;
-          setSectionHandleHot(true);
-          renderer.domElement.setPointerCapture(e.pointerId);
-          renderer.domElement.style.cursor = "grabbing";
-          return;
-        }
-      }
       // Inside a sketch with the Select tool, a press on grabbable geometry arms a
       // drag. Suspend orbiting and capture the pointer until release; whether it
       // actually moves (drag) or not (click) is decided in onUp.
@@ -3190,18 +3179,6 @@ export function Viewport({
       return raw ? snap(raw, x, y).uv : undefined;
     };
     const onUp = (e: PointerEvent) => {
-      // Release the section-plane handle. No click-vs-drag ambiguity to resolve
-      // (unlike sketchDrag below) — a bare tap just leaves the offset unchanged.
-      if (sectionDrag) {
-        sectionDrag = null;
-        controls.enabled = true;
-        if (renderer.domElement.hasPointerCapture(e.pointerId)) {
-          renderer.domElement.releasePointerCapture(e.pointerId);
-        }
-        renderer.domElement.style.cursor = "";
-        down = null;
-        return;
-      }
       // Finish (or cancel) a sketch drag. A press that never travelled far enough
       // to become a drag falls through to a normal selection click.
       if (sketchDrag) {
@@ -3413,11 +3390,12 @@ export function Viewport({
       }
     };
 
-    // Re-resolve the section plane, widget, cap group and handle every frame
-    // from the current frame/offset/flip (or, mid-drag, from `sectionDrag`'s
-    // live offset — see the field comment). Cheap: transform-only, no geometry
-    // rebuild. Sized off `partBox`/`partSphere` (just refreshed by syncClipPlanes,
-    // which always runs first in animate()) so the cap/widget hug the actual bodies.
+    // Re-resolve the section plane, widget, cap group and offset gizmo every
+    // frame from the current frame/offset/flip (or, mid-drag, from the gizmo
+    // proxy's live position — the prop round trip is one render behind). Cheap:
+    // transform-only, no geometry rebuild. Sized off `partBox`/`partSphere`
+    // (just refreshed by syncClipPlanes, which always runs first in animate())
+    // so the cap/widget hug the actual bodies.
     const sectionOrigin = new THREE.Vector3();
     const sectionEffNormal = new THREE.Vector3();
     const sectionU = new THREE.Vector3();
@@ -3440,14 +3418,25 @@ export function Viewport({
       const sv = sectionViewRef.current;
       sectionWidget.visible = sv.enabled;
       sectionCapGroup.visible = sv.enabled;
-      sectionHandle.visible = sv.enabled;
+      sectionHelper.visible = sv.enabled;
+      // Picking mode has its own click meaning — the gizmo stays visible but
+      // inert there, same opt-out the old cone handle had.
+      sectionControls.enabled = sv.enabled && !pickingRef.current;
       if (!sv.enabled) {
+        if (sectionControls.object) sectionControls.detach();
         sectionPlane.set(sectionUpZ, FAR_PLANE_CONSTANT);
-        setSectionHandleHot(false);
         return;
       }
       const f = sv.frame;
-      const offset = sectionDrag ? sectionDrag.offset : sv.offset;
+      // Mid-drag, read the live offset straight off the gizmo proxy for
+      // zero-latency feedback (same projection objectChange emits).
+      let offset = sv.offset;
+      if (sectionControls.dragging) {
+        sectionEffNormal.set(f.normal[0], f.normal[1], f.normal[2]).normalize();
+        offset =
+          sectionProxy.position.dot(sectionEffNormal) -
+          (f.origin[0] * sectionEffNormal.x + f.origin[1] * sectionEffNormal.y + f.origin[2] * sectionEffNormal.z);
+      }
       const resolved = resolveSectionPlane(f, offset, sv.flip);
       sectionOrigin.set(resolved.origin[0], resolved.origin[1], resolved.origin[2]);
       sectionEffNormal.set(resolved.normal[0], resolved.normal[1], resolved.normal[2]);
@@ -3493,9 +3482,38 @@ export function Viewport({
           (child as THREE.Mesh).scale.set(size, size, 1);
         }
       }
-      // Push the handle out from center so it doesn't sit buried in the cap.
-      sectionHandle.position.copy(sectionOrigin).addScaledVector(sectionEffNormal, size * 0.35);
-      sectionHandle.quaternion.setFromUnitVectors(sectionUpZ, sectionEffNormal);
+      // The offset gizmo rides the plane's centre, its arrow along the
+      // effective normal. Mid-drag the proxy is TransformControls' to move —
+      // re-posing it would fight the drag; the offset round-trips back here.
+      if (!sectionControls.dragging) {
+        sectionProxy.position.copy(sectionOrigin);
+        sectionProxy.quaternion.setFromUnitVectors(sectionUpZ, sectionEffNormal);
+      }
+      if (sectionControls.object !== sectionProxy) sectionControls.attach(sectionProxy);
+    };
+
+    // Drive the extrude-distance gizmo from the prop: proxy at the extrusion's
+    // live tip, local +Z along the extrude direction. Mid-drag the proxy is
+    // TransformControls' to move — re-posing it would fight the drag (and the
+    // `dir` prop can flip under it when a plane crossing is committed); the
+    // committed values round-trip back here on release.
+    const extrudeArrowDir = new THREE.Vector3();
+    const syncExtrudeGizmo = () => {
+      const eg = extrudeGizmoRef.current;
+      extrudeHelper.visible = !!eg;
+      extrudeControls.enabled = !!eg && !pickingRef.current;
+      if (!eg) {
+        if (extrudeControls.object) extrudeControls.detach();
+        return;
+      }
+      if (!extrudeControls.dragging) {
+        extrudeArrowDir.set(eg.dir[0], eg.dir[1], eg.dir[2]).normalize();
+        extrudeProxy.position
+          .set(eg.origin[0], eg.origin[1], eg.origin[2])
+          .addScaledVector(extrudeArrowDir, eg.symmetric ? eg.distance / 2 : eg.distance);
+        extrudeProxy.quaternion.setFromUnitVectors(sectionUpZ, extrudeArrowDir);
+      }
+      if (extrudeControls.object !== extrudeProxy) extrudeControls.attach(extrudeProxy);
     };
 
     let frame = 0;
@@ -3511,6 +3529,7 @@ export function Viewport({
       controls.update();
       syncClipPlanes();
       syncSectionPlane();
+      syncExtrudeGizmo();
       renderer.render(scene, camera);
       viewCube.render(renderer, state.camera);
       frame = requestAnimationFrame(animate);
@@ -3571,8 +3590,11 @@ export function Viewport({
       sectionWidgetMat.dispose();
       sectionWidgetBorder.geometry.dispose();
       (sectionWidgetBorder.material as THREE.Material).dispose();
-      sectionHandleGeom.dispose();
-      sectionHandleMat.dispose();
+      sectionControls.detach();
+      sectionControls.dispose();
+      extrudeControls.detach();
+      extrudeControls.dispose();
+      scene.remove(sectionHelper, sectionProxy, extrudeHelper, extrudeProxy);
       for (const child of sectionCapGroup.children) {
         if (child instanceof THREE.Mesh && child.material !== sectionCapMaterial) {
           (child.material as THREE.Material).dispose();

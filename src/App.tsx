@@ -178,6 +178,7 @@ import {
   Viewport,
   sameSelection,
   type DatumId,
+  type ExtrudeGizmo,
   type FeatureMesh,
   type GhostMesh,
   type RevolveAxisPick,
@@ -2885,11 +2886,11 @@ export default function App() {
     return f?.type === "extrude" ? [f.profile] : [];
   }, [extrudeDialog, extrudeProfiles, doc]);
 
-  // World-space anchor for the extrude dialog: a body face's centroid, or a
-  // sketch region's centroid mapped to 3D. Anchored on the first profile when
-  // several are selected.
-  const profileAnchorWorld = (): [number, number, number] | null => {
-    const p = extrudeProfiles[0];
+  // World-space anchor for the extrude dialog + gizmo: a body face's centroid,
+  // or a sketch region's centroid mapped to 3D. Defaults to the first selected
+  // profile; the gizmo passes the dialog's own profile (which falls back to the
+  // edited feature's when nothing is selected).
+  const profileAnchorWorld = (p: ExtrudeProfile | undefined = extrudeProfiles[0]): [number, number, number] | null => {
     if (!p) return null;
     if (p.kind === "bodyFace") return p.center;
     const sk = doc.features.find((f) => f.id === p.sketchId);
@@ -2909,6 +2910,63 @@ export default function App() {
     }
     const n = region.outline.length;
     return uvToWorld(frameOf(sk.plane, resolved.planeFrames), u / n, v / n);
+  };
+
+  // World unit normal of an extrude profile's plane — the direction a positive,
+  // unflipped extrude travels: the profile sketch's plane normal, or the picked
+  // body face's own (meshed) normal.
+  const profileNormalWorld = (p: ExtrudeProfile | undefined): [number, number, number] | null => {
+    if (!p) return null;
+    if (p.kind === "bodyFace") return p.normal ?? null;
+    const sk = doc.features.find((f) => f.id === p.sketchId);
+    if (sk?.type !== "sketch") return null;
+    return frameOf(sk.plane, resolved.planeFrames).normal;
+  };
+
+  // The extrude dialog's distance gizmo: an arrow at the extrusion's tip, along
+  // the direction the extrude currently travels — the profile normal signed the
+  // way the kernel signs it (a Remove cuts INTO the plane by default). Hidden
+  // for extents where the distance is ignored (through-all / up-to-face /
+  // up-to-next).
+  const extrudeGizmo = useMemo((): ExtrudeGizmo | null => {
+    const d = extrudeDialog;
+    if (!d || (d.extent !== "blind" && d.extent !== "symmetric")) return null;
+    const p = extrudeDialogProfiles[0];
+    const origin = profileAnchorWorld(p);
+    const n = profileNormalWorld(p);
+    if (!origin || !n) return null;
+    const sign = (d.mode === "remove" ? !d.flip : d.flip) ? -1 : 1;
+    let dist = 0;
+    try {
+      const v = evaluateExpression(d.distance, resolved.scope);
+      if (Number.isFinite(v)) dist = v;
+    } catch {
+      // Unparseable while typing — the arrow just sits at the profile.
+    }
+    return {
+      origin,
+      dir: [n[0] * sign, n[1] * sign, n[2] * sign],
+      distance: dist,
+      symmetric: d.extent === "symmetric",
+    };
+    // profileAnchorWorld/profileNormalWorld are plain closures over doc/resolved,
+    // both listed below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extrudeDialog, extrudeDialogProfiles, doc, resolved.planeFrames, resolved.scope]);
+
+  // The gizmo's drag stream: a 1 mm-snapped distance, signed along the arrow's
+  // current direction. Negative = the drag crossed the profile plane, so flip
+  // the feature's direction and keep the magnitude (symmetric spans both sides
+  // — there is nothing to flip, only a total). Writing into the dialog state is
+  // all it takes: the ghost-preview / live-edit effects react to it exactly as
+  // they do to typing in the Distance field.
+  const handleExtrudeGizmoDistance = (v: number) => {
+    setExtrudeDialog((d) => {
+      if (!d) return d;
+      if (d.extent === "symmetric") return { ...d, distance: fmt(Math.abs(v)) };
+      if (v < 0) return { ...d, flip: !d.flip, distance: fmt(-v) };
+      return { ...d, distance: fmt(v) };
+    });
   };
 
   // The solid a sketch-region profile sits on (drawn on its face, or coplanar +
@@ -7166,6 +7224,8 @@ export default function App() {
             transformMode={transformMode}
             onTransformInput={handleTransformInput}
             onTransformPreview={handleTransformPreview}
+            extrudeGizmo={extrudeGizmo}
+            onExtrudeDistanceChange={handleExtrudeGizmoDistance}
             picking={picking}
             onPick={handlePickRef}
             axisPick={
