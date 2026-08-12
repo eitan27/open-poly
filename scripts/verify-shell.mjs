@@ -3,7 +3,9 @@
 import { chromium } from "playwright";
 
 const URL = process.env.URL ?? "http://localhost:5174/";
-const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
+// CHROMIUM_PATH overrides the browser binary (the cloud agent image keeps one
+// at /opt/pw-browsers/chromium); unset, Playwright finds its own download.
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
 const context = await browser.newContext({
   viewport: { width: 1660, height: 920 },
   deviceScaleFactor: 2,
@@ -79,6 +81,21 @@ check("cylinder created", cyl.ok, JSON.stringify(cyl).slice(0, 200));
 const sealed = await apply({ op: "shell", targetId: cyl.createdId, thickness: 1.5 });
 check("sealed shell (no faces removed) succeeds", sealed.ok, JSON.stringify(sealed).slice(0, 300));
 await waitIdle();
+// `ok` alone used to pass here while the body came back completely
+// un-hollowed: MakeThickSolidByJoin does nothing when handed an empty
+// closing-face list, so assert the cavity is really there.
+scene = await read({ read: "sceneSummary" });
+const cylBody = scene.bodies.find((b) => b.id === cyl.createdId);
+check(
+  "sealed shell actually hollowed the body (inner '/in' faces exist)",
+  (cylBody?.faces ?? []).some((f) => f.endsWith("/in")),
+  JSON.stringify(cylBody?.faces),
+);
+check(
+  "sealed shell left the outer size alone",
+  cylBody && Math.abs(cylBody.bbox.max[2] - cylBody.bbox.min[2] - 20) < 1e-6,
+  JSON.stringify(cylBody?.bbox),
+);
 
 // --- 3. Edit in place: re-open with a different thickness via updateShell path ---
 const doc1 = await read({ read: "document" });

@@ -2506,6 +2506,10 @@ function resolveShellFaces(
   return { hits, lost };
 }
 
+const SHELL_BUILD_FAILED =
+  "Shell failed on this geometry — the offset could not be built. This is common on " +
+  "freeform lofted surfaces; try a thinner wall, or hollow it by subtracting an inner body.";
+
 /** Hollow out a body: remove the named faces (they become openings) and offset
  *  the remaining wall inward by `thickness`, propagating face names through
  *  the operation's history (kept faces keep their names; each kept face's new
@@ -2540,6 +2544,71 @@ function shellNamed(
 
   const builder = new oc.BRepOffsetAPI_MakeThickSolid();
   const progress = new oc.Message_ProgressRange_1();
+
+  // A SEALED shell (no openings) cannot go through MakeThickSolidByJoin: that
+  // op exists to open a solid along its closing faces, and handed an empty list
+  // it does no work and returns the input untouched. Sealed shells therefore
+  // produced a silently un-hollowed body until the result guard below started
+  // rejecting them outright — and MakeThickSolidBySimple, the obvious
+  // replacement, reports not-done for even a plain box in this OCCT build.
+  // So build it the way the failure message tells users to: offset the solid
+  // inward and subtract that. It's an ordinary boolean, so it also inherits
+  // booleanRetrying's tolerance ladder for near-tangent walls.
+  if (hits.length === 0) {
+    const off = new oc.BRepOffsetAPI_MakeOffsetShape();
+    off.PerformByJoin(
+      target.shape.wrapped,
+      -thickness,
+      1e-3,
+      oc.BRepOffset_Mode.BRepOffset_Skin,
+      false,
+      false,
+      oc.GeomAbs_JoinType.GeomAbs_Arc,
+      false,
+      progress,
+    );
+    if (!off.IsDone()) {
+      off.delete();
+      builder.delete();
+      progress.delete();
+      facesToRemove.delete();
+      throw new Error(SHELL_BUILD_FAILED);
+    }
+    const cavity = cast(off.Shape()) as Shape3D;
+    // The cavity's walls inherit the identity of the faces they were offset
+    // from, so a sealed shell names its inner faces "<face>/in" exactly like
+    // the opened-face path does.
+    const cavityNames = new Map<number, string>();
+    for (const f of target.shape.faces) {
+      const nm = target.names.get(f.hashCode);
+      if (!nm) continue;
+      // MakeOffsetShape reports the offset image under Generated for some
+      // faces and Modified for others depending on whether the surface had to
+      // be rebuilt, so take both rather than betting on one.
+      const images = [...drainList(off.Generated(f.wrapped)), ...drainList(off.Modified(f.wrapped))];
+      for (const img of images) cavityNames.set(hashOf(img), `${nm}/in`);
+    }
+    off.delete();
+    builder.delete();
+    progress.delete();
+    facesToRemove.delete();
+
+    const hollow = booleanRetrying(
+      "cut",
+      { shape: target.shape, names: target.names },
+      { shape: cavity, names: cavityNames },
+    );
+    cavity.delete();
+    // Same degenerate-result guard as the opened path: a cut that collapsed
+    // leaves a solid-less or un-hollowed shape, which must not reach the caller
+    // as a success.
+    if (countSolids(hollow.shape) === 0 || hollow.shape.faces.length <= target.shape.faces.length) {
+      hollow.shape.delete();
+      throw new Error(SHELL_BUILD_FAILED);
+    }
+    return hollow;
+  }
+
   builder.MakeThickSolidByJoin(
     target.shape.wrapped,
     facesToRemove,
@@ -2563,10 +2632,7 @@ function shellNamed(
     facesToRemove.delete();
     builder.delete();
     progress.delete();
-    throw new Error(
-      "Shell failed on this geometry — the offset could not be built. This is common on " +
-        "freeform lofted surfaces; try a thinner wall, or hollow it by subtracting an inner body.",
-    );
+    throw new Error(SHELL_BUILD_FAILED);
   }
 
   const names = new Map<number, string>();

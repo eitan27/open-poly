@@ -34,7 +34,7 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 | Loft      | `L` | Reuses `L` from Line (sketch mode) — mutually exclusive, safe.                                                                                                                     |
 | Chamfer   | `C` | Reuses `C` from Circle-center (sketch mode) — mutually exclusive, safe.                                                                                                            |
 | Fillet    | `F` |                                                                                                                                                                                    |
-| Shell     | `G` | Hollow the selected body (select faces to open, or the whole body for a sealed shell). No strong mnemonic available (S/H/O all taken) — picked arbitrarily, like construction `Q`. |
+| Shell     | `G` | Hollow the selected body — a click anywhere on it (body or face) arms the body, giving a sealed shell; faces to open are picked from the dialog. No strong mnemonic available (S/H/O all taken) — picked arbitrarily, like construction `Q`. |
 | Boolean   | `B` | Resolves conflict #1 (below).                                                                                                                                                      |
 | Transform | `T` |                                                                                                                                                                                    |
 | Mirror    | `M` |                                                                                                                                                                                    |
