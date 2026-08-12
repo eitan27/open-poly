@@ -40,8 +40,8 @@ host. The public build is served from **Cloudflare Pages** at
 <https://open-poly.pages.dev>.
 
 Deploys use Wrangler's **direct upload** — only the built `dist/` folder is
-uploaded, so the source repository stays private and is never connected to
-Cloudflare.
+uploaded, so no git integration is configured and Cloudflare never needs
+access to the repository.
 
 One-time setup:
 
@@ -70,7 +70,22 @@ Notes:
 
 | Command              | Description                                       |
 | -------------------- | ------------------------------------------------- |
-| `npm run build`      | Type-check and build a production bundle.          |
-| `npm run preview`    | Serve the production build locally to preview it.  |
-| `npm test`           | Run the unit tests once (Vitest).                  |
-| `npm run test:watch` | Run the unit tests in watch mode (Vitest).         |
+| `npm run build`      | Type-check and build a production bundle.         |
+| `npm run preview`    | Serve the production build locally to preview it. |
+| `npm test`           | Run the unit tests once (Vitest).                 |
+| `npm run test:watch` | Run the unit tests in watch mode (Vitest).        |
+| `npm run typecheck`  | Type-check the app and the MCP server.            |
+| `npm run lint`       | Lint with ESLint.                                 |
+| `npm run format`     | Format the tree with Prettier (`:check` to test). |
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the codebase layout, dev
+workflow, and PR process. Design/architecture notes and the feature
+backlog live in [`docs/`](docs/).
+
+## License
+
+GPL-3.0-or-later — see [`LICENSE`](LICENSE). Third-party license notes
+(including the LGPL constraint solver and the OCCT geometry kernel) are in
+[`NOTICE.md`](NOTICE.md).

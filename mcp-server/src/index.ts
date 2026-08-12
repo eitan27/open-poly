@@ -37,19 +37,25 @@ registerBridgeTools(server, hub);
 server.registerResource(
   "modeling-guide",
   "openpoly://modeling-guide",
-  { title: "Open Poly modeling guide", description: "How to model in Open Poly via these tools.", mimeType: "text/markdown" },
+  {
+    title: "Open Poly modeling guide",
+    description: "How to model in Open Poly via these tools.",
+    mimeType: "text/markdown",
+  },
   async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: readGuide() }] }),
 );
 server.registerTool(
   "get_modeling_guide",
-  { description: "Return the Open Poly modeling guide: mental model, conventions (mm, Z-up, reference-by-name), the read→plan→one-op→verify loop, recipes, and best practices. Read this first.", inputSchema: {} },
+  {
+    description:
+      "Return the Open Poly modeling guide: mental model, conventions (mm, Z-up, reference-by-name), the read→plan→one-op→verify loop, recipes, and best practices. Read this first.",
+    inputSchema: {},
+  },
   async () => ({ content: [{ type: "text", text: readGuide() }] }),
 );
-server.registerPrompt(
-  "modeling_guide",
-  { description: "Load the Open Poly modeling playbook as context." },
-  () => ({ messages: [{ role: "user", content: { type: "text", text: readGuide() } }] }),
-);
+server.registerPrompt("modeling_guide", { description: "Load the Open Poly modeling playbook as context." }, () => ({
+  messages: [{ role: "user", content: { type: "text", text: readGuide() } }],
+}));
 
 // First-class feedback loop: the agent reports gaps/bugs instead of faking
 // geometry. Appended to a reviewable JSONL log for the developer.
@@ -75,7 +81,14 @@ server.registerTool(
       console.error("[mcp] failed to write issue log:", (e as Error).message);
     }
     console.error("[mcp] issue reported:", entry.kind, "-", entry.goal);
-    return { content: [{ type: "text", text: `Logged a "${args.kind}" report. Thank you — surfacing a gap/bug is a successful outcome, not a failure.` }] };
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Logged a "${args.kind}" report. Thank you — surfacing a gap/bug is a successful outcome, not a failure.`,
+        },
+      ],
+    };
   },
 );
 

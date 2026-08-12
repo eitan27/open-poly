@@ -5,9 +5,24 @@
 import opencascade from "replicad-opencascadejs/src/replicad_single.js";
 import opencascadeWasm from "replicad-opencascadejs/src/replicad_single.wasm?url";
 import {
-  setOC, makeBaseBox, makeSphere, makeSolid, draw, drawPointsInterpolation, Plane,
-  cast, getOC, localGC, Vector, HASH_CODE_MAX, exportSTEP, measureVolume, loadFont,
-  Blueprint, BlueprintSketcher, CompoundBlueprint,
+  setOC,
+  makeBaseBox,
+  makeSphere,
+  makeSolid,
+  draw,
+  drawPointsInterpolation,
+  Plane,
+  cast,
+  getOC,
+  localGC,
+  Vector,
+  HASH_CODE_MAX,
+  exportSTEP,
+  measureVolume,
+  loadFont,
+  Blueprint,
+  BlueprintSketcher,
+  CompoundBlueprint,
 } from "replicad";
 import type { Shape3D, Face, Edge, Sketch } from "replicad";
 import type { Font as OpentypeFont } from "opentype.js";
@@ -42,7 +57,17 @@ import {
   isRightAngle,
   legFits,
 } from "../geom/chamferWedge";
-import { matchEdges, matchFace, type EdgeCandidate, type FaceCandidate } from "./topoMatch";
+import {
+  matchEdges,
+  matchFace,
+  matchFaces,
+  type EdgeCandidate,
+  type FaceCandidate,
+  type NamedFaceCandidate,
+  type NamedFaceRefFingerprint,
+} from "./topoMatch";
+import { clamp } from "../lib/clamp";
+import { vunit, vcross, vdot } from "../lib/vec3";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -50,9 +75,7 @@ let ocReady: Promise<void> | null = null;
 function ensureOC(): Promise<void> {
   if (!ocReady) {
     // The emscripten factory accepts a `locateFile` override (not in its .d.ts).
-    const init = opencascade as unknown as (opts: {
-      locateFile: () => string;
-    }) => Promise<unknown>;
+    const init = opencascade as unknown as (opts: { locateFile: () => string }) => Promise<unknown>;
     ocReady = init({ locateFile: () => opencascadeWasm }).then((OC) => {
       setOC(OC as Parameters<typeof setOC>[0]);
     });
@@ -127,6 +150,15 @@ const MESH_OPTS = { tolerance: 0.05, angularTolerance: 30 };
 // without re-checking every boolean result.
 const BOOL_FUZZY = 0.01;
 
+// Fallback tolerances tried, in order, when a boolean comes back DEGENERATE (no
+// solid at all). Two near-tangent B-spline surfaces — e.g. an inner offset loft
+// held a uniform ~2.4mm inside its outer, the standard way to hollow an organic
+// shell — make BRepAlgoAPI return an EMPTY shape at one tolerance and the right
+// answer at another. Only ever step DOWN from BOOL_FUZZY: per the note above, a
+// fuzzy value larger than the thinnest wall collapses the cut, so raising it
+// would trade one silent failure for another.
+const BOOL_FUZZY_FALLBACKS = [BOOL_FUZZY, 1e-3, 1e-4, 0] as const;
+
 // --- Topological naming (N2: OCCT construction history) ---
 // A body carries a name map (face hashCode -> persistent name) built at creation
 // and PROPAGATED through every operation via OCCT history (Generated/Modified/
@@ -164,7 +196,11 @@ function drainList(list: Topo): Topo[] {
 function axisFaceName(f: Face): string | null {
   if (f.geomType !== "PLANE") return null;
   const [x, y, z] = f.normalAt().normalized().toTuple();
-  const axes: [string, number][] = [["x", x], ["y", y], ["z", z]];
+  const axes: [string, number][] = [
+    ["x", x],
+    ["y", y],
+    ["z", z],
+  ];
   const dom = axes.reduce((a, b) => (Math.abs(b[1]) > Math.abs(a[1]) ? b : a));
   if (Math.abs(dom[1]) < 0.999) return null;
   return (dom[1] >= 0 ? "+" : "-") + dom[0];
@@ -195,10 +231,17 @@ function buildPrimitive(feature: Extract<ResolvedFeature, { type: "primitive" }>
   const p = feature.params;
   let shape: Shape3D;
   switch (feature.kind) {
-    case "box": shape = makeBaseBox(p.width, p.depth, p.height); break;
-    case "cylinder": shape = facetedCylinderShape(p.radius, p.height); break;
-    case "sphere": shape = makeSphere(p.radius); break;
-    default: throw new Error(`Unknown feature kind: ${(feature as { kind: string }).kind}`);
+    case "box":
+      shape = makeBaseBox(p.width, p.depth, p.height);
+      break;
+    case "cylinder":
+      shape = facetedCylinderShape(p.radius, p.height);
+      break;
+    case "sphere":
+      shape = makeSphere(p.radius);
+      break;
+    default:
+      throw new Error(`Unknown feature kind: ${(feature as { kind: string }).kind}`);
   }
   // NB: replicad's 3D translate() deletes the original and returns a new shape.
   shape = shape.translate(p.x ?? 0, p.y ?? 0, p.z ?? 0) as Shape3D;
@@ -344,8 +387,18 @@ function chainWirePoints(edges: Edge[]): V3[] {
     for (let i = 0; i < segs.length; i++) {
       if (used[i]) continue;
       const s = segs[i];
-      if (near(s[0], tail)) { ring.push(...s.slice(1)); used[i] = true; found = true; break; }
-      if (near(s[s.length - 1], tail)) { ring.push(...s.slice(0, -1).reverse()); used[i] = true; found = true; break; }
+      if (near(s[0], tail)) {
+        ring.push(...s.slice(1));
+        used[i] = true;
+        found = true;
+        break;
+      }
+      if (near(s[s.length - 1], tail)) {
+        ring.push(...s.slice(0, -1).reverse());
+        used[i] = true;
+        found = true;
+        break;
+      }
     }
     if (!found) break;
   }
@@ -368,8 +421,11 @@ function facetedProfileFace(face: Face, normal: Vector): { face: Face; normal: V
   // A u axis perpendicular to the normal (cross with the world axis least aligned
   // with n, so the cross product is well-conditioned).
   const ax: V3 =
-    Math.abs(n[0]) <= Math.abs(n[1]) && Math.abs(n[0]) <= Math.abs(n[2]) ? [1, 0, 0]
-    : Math.abs(n[1]) <= Math.abs(n[2]) ? [0, 1, 0] : [0, 0, 1];
+    Math.abs(n[0]) <= Math.abs(n[1]) && Math.abs(n[0]) <= Math.abs(n[2])
+      ? [1, 0, 0]
+      : Math.abs(n[1]) <= Math.abs(n[2])
+        ? [0, 1, 0]
+        : [0, 0, 1];
   const uAxis = vunit(vcross(n, ax));
   const vAxis = vcross(n, uAxis);
   const toUv = (p: V3): [number, number] => {
@@ -378,7 +434,8 @@ function facetedProfileFace(face: Face, normal: Vector): { face: Face; normal: V
   };
   const outer = chainWirePoints(face.clone().outerWire().edges).map(toUv);
   if (outer.length < 3) return { face, normal }; // couldn't facet — keep the exact face
-  const holes = face.innerWires()
+  const holes = face
+    .innerWires()
     .map((w) => chainWirePoints(w.edges).map(toUv))
     .filter((r) => r.length >= 3);
   const frame: ResolvedFrame = { origin, uAxis, vAxis, normal: n };
@@ -441,7 +498,11 @@ function facetedRevolveFromFace(
     return Math.hypot(perp[0], perp[1], perp[2]);
   };
   for (const e of outer.edges) {
-    for (const p of sampleEdgePoints(e)) if (distToAxis(p) < 1e-4) { outer.delete(); return null; }
+    for (const p of sampleEdgePoints(e))
+      if (distToAxis(p) < 1e-4) {
+        outer.delete();
+        return null;
+      }
   }
 
   const full = angleRad >= 2 * Math.PI - 1e-6;
@@ -487,12 +548,22 @@ function facetedRevolveFromFace(
         unifier.Build();
         shape = cast(unifier.Shape()) as Shape3D;
         unifier.delete();
-      } catch { /* keep the un-unified shape if the pass isn't available */ }
+      } catch {
+        /* keep the un-unified shape if the pass isn't available */
+      }
       if (shape.faces.length > 0) {
         const caps = new Map<number, string>();
         if (!full) {
-          try { caps.set(hashOf(builder.FirstShape()), `${id}/start`); } catch { /* none */ }
-          try { caps.set(hashOf(builder.LastShape()), `${id}/end`); } catch { /* none */ }
+          try {
+            caps.set(hashOf(builder.FirstShape()), `${id}/start`);
+          } catch {
+            /* none */
+          }
+          try {
+            caps.set(hashOf(builder.LastShape()), `${id}/end`);
+          } catch {
+            /* none */
+          }
         }
         result = namesFromHistory(shape, id, caps, new Map());
       }
@@ -550,8 +621,16 @@ function revolveFromFace(
   const shape = cast(builder.Shape()) as Shape3D;
 
   const capHashes = new Map<number, string>();
-  try { capHashes.set(hashOf(builder.FirstShape_1()), `${id}/start`); } catch { /* full revolve: no caps */ }
-  try { capHashes.set(hashOf(builder.LastShape_1()), `${id}/end`); } catch { /* full revolve: no caps */ }
+  try {
+    capHashes.set(hashOf(builder.FirstShape_1()), `${id}/start`);
+  } catch {
+    /* full revolve: no caps */
+  }
+  try {
+    capHashes.set(hashOf(builder.LastShape_1()), `${id}/end`);
+  } catch {
+    /* full revolve: no caps */
+  }
   const sideByHash = new Map<number, string>();
   face.edges.forEach((e, i) => {
     for (const g of drainList(builder.Generated(e.wrapped))) sideByHash.set(hashOf(g), `${id}/side${i}`);
@@ -590,9 +669,6 @@ function revolveSketchRegion(
 type RegionProfile = Extract<ResolvedProfile, { kind: "sketchRegion" }>;
 
 type V3 = [number, number, number];
-const vlen = (v: V3) => Math.hypot(v[0], v[1], v[2]) || 1;
-const vunit = (v: V3): V3 => { const L = vlen(v); return [v[0] / L, v[1] / L, v[2] / L]; };
-const vcross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 /** Map a frame-local (u,v) point to world. */
 function frameToWorld(f: ResolvedFrame, p: [number, number]): [number, number, number] {
   return [
@@ -632,8 +708,7 @@ function profileDrawing(profile: RegionProfile) {
 
 /** A closed polyline ring (uv) as a Drawing — used to subtract region holes. */
 function ringDrawing(ring: [number, number][]) {
-  const closed =
-    ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1];
+  const closed = ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1];
   const pts = closed ? ring.slice(0, -1) : ring;
   let pen = draw().movePointerTo(pts[0]);
   for (let i = 1; i < pts.length; i++) pen = pen.lineTo(pts[i]);
@@ -656,8 +731,10 @@ function regionDrawing(profile: RegionProfile) {
  *  cut, `sketchOnPlane` yields a `Sketches` collection whose lone member is the
  *  face-with-holes — unwrap it. */
 function regionFace(profile: RegionProfile, plane: Plane): Face {
-  const sk = regionDrawing(profile).sketchOnPlane(plane) as unknown as
-    | { face?: () => Face; sketches?: Array<{ face?: () => Face }> };
+  const sk = regionDrawing(profile).sketchOnPlane(plane) as unknown as {
+    face?: () => Face;
+    sketches?: Array<{ face?: () => Face }>;
+  };
   if (typeof sk.face === "function") return sk.face();
   const parts = (sk.sketches ?? []).filter((s) => typeof s.face === "function");
   if (parts.length === 1) return parts[0].face!();
@@ -666,7 +743,12 @@ function regionFace(profile: RegionProfile, plane: Plane): Face {
 
 /** Resolve `shape`'s faces to a name map, given hash→name maps for the swept
  *  side faces and the start/end caps; anything unmapped gets a stable `f{n}`. */
-function namesFromHistory(shape: Shape3D, id: string, caps: Map<number, string>, sides: Map<number, string>): NamedShape {
+function namesFromHistory(
+  shape: Shape3D,
+  id: string,
+  caps: Map<number, string>,
+  sides: Map<number, string>,
+): NamedShape {
   const names = new Map<number, string>();
   let extra = 0;
   for (const f of shape.faces) {
@@ -682,7 +764,11 @@ function namesFromHistory(shape: Shape3D, id: string, caps: Map<number, string>,
  *  B-spline when `smooth`, else a polyline). Built on raw OCCT
  *  `BRepOffsetAPI_MakePipeShell` so the result's faces are named from history:
  *  one side face per profile edge (`Generated`) + the two caps. */
-function sweepBody(profile: RegionProfile, path: Extract<ResolvedFeature, { type: "sweep" }>["path"], id: string): NamedShape {
+function sweepBody(
+  profile: RegionProfile,
+  path: Extract<ResolvedFeature, { type: "sweep" }>["path"],
+  id: string,
+): NamedShape {
   if (path.points.length < 2) throw new Error("sweep: path needs at least 2 points");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
@@ -714,7 +800,8 @@ function sweepBody(profile: RegionProfile, path: Extract<ResolvedFeature, { type
   const ref: V3 = Math.abs(tangent[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
   const uAxis = vunit(vcross(ref, tangent));
   // MakePipeShell sweeps a profile WIRE (then MakeSolid caps it).
-  const profileWire = (profileDrawing(profile).sketchOnPlane(new Plane(start, uAxis, tangent)) as unknown as Sketch).wire;
+  const profileWire = (profileDrawing(profile).sketchOnPlane(new Plane(start, uAxis, tangent)) as unknown as Sketch)
+    .wire;
 
   const builder = new oc.BRepOffsetAPI_MakePipeShell(spineWire.wrapped);
   builder.Add_1(profileWire.wrapped, false, true);
@@ -728,8 +815,16 @@ function sweepBody(profile: RegionProfile, path: Extract<ResolvedFeature, { type
     for (const g of drainList(builder.Generated(e.wrapped))) sides.set(hashOf(g), `${id}/side${i}`);
   });
   const caps = new Map<number, string>();
-  try { caps.set(hashOf(builder.FirstShape()), `${id}/start`); } catch { /* no start cap */ }
-  try { caps.set(hashOf(builder.LastShape()), `${id}/end`); } catch { /* no end cap */ }
+  try {
+    caps.set(hashOf(builder.FirstShape()), `${id}/start`);
+  } catch {
+    /* no start cap */
+  }
+  try {
+    caps.set(hashOf(builder.LastShape()), `${id}/end`);
+  } catch {
+    /* no end cap */
+  }
 
   const res = namesFromHistory(shape, id, caps, sides);
   progress.delete();
@@ -743,9 +838,7 @@ function sweepBody(profile: RegionProfile, path: Extract<ResolvedFeature, { type
 function loftBody(profiles: RegionProfile[], id: string): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
-  const wires = profiles.map(
-    (p) => (profileDrawing(p).sketchOnPlane(planeOf(p.frame)) as unknown as Sketch).wire,
-  );
+  const wires = profiles.map((p) => (profileDrawing(p).sketchOnPlane(planeOf(p.frame)) as unknown as Sketch).wire);
   const builder = new oc.BRepOffsetAPI_ThruSections(true, false, 1e-6); // solid, smooth
   for (const w of wires) builder.AddWire(w.wrapped);
   const progress = new oc.Message_ProgressRange_1();
@@ -759,8 +852,16 @@ function loftBody(profiles: RegionProfile[], id: string): NamedShape {
     if (gf && !gf.IsNull()) sides.set(hashOf(gf), `${id}/side${i}`);
   });
   const caps = new Map<number, string>();
-  try { caps.set(hashOf(builder.FirstShape()), `${id}/start`); } catch { /* no start cap */ }
-  try { caps.set(hashOf(builder.LastShape()), `${id}/end`); } catch { /* no end cap */ }
+  try {
+    caps.set(hashOf(builder.FirstShape()), `${id}/start`);
+  } catch {
+    /* no start cap */
+  }
+  try {
+    caps.set(hashOf(builder.LastShape()), `${id}/end`);
+  } catch {
+    /* no end cap */
+  }
 
   const res = namesFromHistory(shape, id, caps, sides);
   progress.delete();
@@ -782,10 +883,7 @@ function sketchRegionFace(
 /** Build a closed 2D blueprint from a flattened polygon ring (already in the
  *  sketch's u,v convention), dropping the clipper's duplicated closing point. */
 function ringToBlueprint(ring: [number, number][]): Blueprint {
-  const closed =
-    ring.length > 1 &&
-    ring[0][0] === ring[ring.length - 1][0] &&
-    ring[0][1] === ring[ring.length - 1][1];
+  const closed = ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1];
   const pts = closed ? ring.slice(0, -1) : ring;
   const sk = new BlueprintSketcher();
   sk.movePointerTo(pts[0]);
@@ -802,9 +900,10 @@ function ringToBlueprint(ring: [number, number][]): Blueprint {
  *  Each polygon is built at the origin baseline-left, then rotated (CCW about
  *  the anchor) and translated to the entity's u,v anchor — matching the
  *  on-screen preview. Requires `ensureFont()` to have resolved first. */
-function sketchTextFaces(
-  profile: Extract<ResolvedFeature, { type: "extrude" }>["profile"] & { kind: "sketchText" },
-): { faces: Face[]; normal: Vector } {
+function sketchTextFaces(profile: Extract<ResolvedFeature, { type: "extrude" }>["profile"] & { kind: "sketchText" }): {
+  faces: Face[];
+  normal: Vector;
+} {
   const { value, height, rotation, anchor, frame } = profile;
   if (!sketchFont) throw new Error("extrude: text font not loaded");
   const path = sketchFont.getPath(value, 0, 0, height);
@@ -820,9 +919,7 @@ function sketchTextFaces(
     let bps = rings.map(ringToBlueprint);
     if (rotation) bps = bps.map((b) => b.rotate(rotationDeg, [0, 0]));
     bps = bps.map((b) => b.translate(anchor[0], anchor[1]));
-    const sketch = bps.length > 1
-      ? new CompoundBlueprint(bps).sketchOnPlane(plane)
-      : bps[0].sketchOnPlane(plane);
+    const sketch = bps.length > 1 ? new CompoundBlueprint(bps).sketchOnPlane(plane) : bps[0].sketchOnPlane(plane);
     faces.push(sketch.face());
   }
   if (faces.length === 0) throw new Error("extrude: text produced no glyphs");
@@ -887,7 +984,10 @@ function bodyProfileFace(
   for (const f of faces) {
     const c = f.center.toTuple();
     const d = (c[0] - center[0]) ** 2 + (c[1] - center[1]) ** 2 + (c[2] - center[2]) ** 2;
-    if (d < bestDist) { bestDist = d; best = f; }
+    if (d < bestDist) {
+      bestDist = d;
+      best = f;
+    }
   }
   return { face: best, normal: best.normalAt() };
 }
@@ -895,16 +995,16 @@ function bodyProfileFace(
 /** The line two planes (each `origin` + `normal`) share, or null if parallel —
  *  same math as `planeIntersectionLine` in document/planes.ts. `origin` is the
  *  foot of the perpendicular from the world origin onto that line. */
-function intersectPlanes(
-  o1: V3, n1: V3, o2: V3, n2: V3,
-): { origin: V3; dir: V3 } | null {
+function intersectPlanes(o1: V3, n1: V3, o2: V3, n2: V3): { origin: V3; dir: V3 } | null {
   const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
   const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   const dir = cross(n1, n2);
   const denom = dot(dir, dir);
   if (denom < 1e-12) return null;
-  const d1 = dot(n1, o1), d2 = dot(n2, o2);
-  const t1 = cross(n2, dir), t2 = cross(dir, n1);
+  const d1 = dot(n1, o1),
+    d2 = dot(n2, o2);
+  const t1 = cross(n2, dir),
+    t2 = cross(dir, n1);
   const origin: V3 = [
     (d1 * t1[0] + d2 * t2[0]) / denom,
     (d1 * t1[1] + d2 * t2[1]) / denom,
@@ -939,8 +1039,10 @@ function faceRevolveAxis(
   }
   // Planar (or any other) face: intersect its plane with the profile plane.
   const line = intersectPlanes(
-    face.center.toTuple(), face.normalAt().toTuple(),
-    profileFrame.origin, profileFrame.normal,
+    face.center.toTuple(),
+    face.normalAt().toTuple(),
+    profileFrame.origin,
+    profileFrame.normal,
   );
   if (!line) throw new Error("revolve: axis face is parallel to the profile plane (no intersection line)");
   return line;
@@ -959,11 +1061,7 @@ function throughAllLength(face: Face, target: Shape3D): number {
   };
   const fb = face.boundingBox;
   const tb = target.boundingBox;
-  const centerDist = Math.hypot(
-    fb.center[0] - tb.center[0],
-    fb.center[1] - tb.center[1],
-    fb.center[2] - tb.center[2],
-  );
+  const centerDist = Math.hypot(fb.center[0] - tb.center[0], fb.center[1] - tb.center[1], fb.center[2] - tb.center[2]);
   return centerDist + halfDiagonal(fb.bounds) + halfDiagonal(tb.bounds) + 1;
 }
 
@@ -989,14 +1087,15 @@ function upToFaceLength(profileFace: Face, dir: Vector, targetFace: Face, target
 }
 
 type Vec3 = [number, number, number];
-const v3cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const v3dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const v3unit = (a: Vec3): Vec3 => { const L = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / L, a[1] / L, a[2] / L]; };
 
 /** [min,max] of an axis-aligned box's 8 corners projected onto `axis`. */
-function projectBounds(bounds: [[number, number, number], [number, number, number]], axis: [number, number, number]): [number, number] {
+function projectBounds(
+  bounds: [[number, number, number], [number, number, number]],
+  axis: [number, number, number],
+): [number, number] {
   const [mn, mx] = bounds;
-  let lo = Infinity, hi = -Infinity;
+  let lo = Infinity,
+    hi = -Infinity;
   for (let i = 0; i < 8; i++) {
     const x = i & 1 ? mx[0] : mn[0];
     const y = i & 2 ? mx[1] : mn[1];
@@ -1012,7 +1111,8 @@ function projectBounds(bounds: [[number, number, number], [number, number, numbe
  *  scene — the profile plus every scanned body's bbox diagonal, plus a margin.
  *  Used to size the "up to" prism/clip box so they surely span the region. */
 function bigReach(profileFace: Face, scan: Body[]): number {
-  const diag = (b: [[number, number, number], [number, number, number]]) => Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]);
+  const diag = (b: [[number, number, number], [number, number, number]]) =>
+    Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]);
   let s = diag(profileFace.boundingBox.bounds);
   for (const t of scan) s += diag(t.shape.boundingBox.bounds);
   return s + 100;
@@ -1026,11 +1126,12 @@ function halfSpaceBox(q: Vec3, m: Vec3, size: number): Shape3D {
   // makeBaseBox(2s,2s,s): x,y ∈ [-s,s], z ∈ [0,s] — a slab whose base is the
   // z=0 plane, extending +z. Rotate local +z onto m, then move its base to q.
   let box = makeBaseBox(2 * size, 2 * size, size) as Shape3D;
-  const d = Math.max(-1, Math.min(1, m[2])); // cos angle between +z and m
+  const d = clamp(m[2], -1, 1); // cos angle between +z and m
   if (d < 0.999999) {
     let ax: Vec3 = [-m[1], m[0], 0]; // (0,0,1) × m
     const al = Math.hypot(ax[0], ax[1], ax[2]);
-    if (al < 1e-9) ax = [1, 0, 0]; // m == -z → rotate 180° about x
+    if (al < 1e-9)
+      ax = [1, 0, 0]; // m == -z → rotate 180° about x
     else ax = [ax[0] / al, ax[1] / al, ax[2] / al];
     box = box.rotate((Math.acos(d) * 180) / Math.PI, [0, 0, 0], ax) as Shape3D;
   }
@@ -1040,12 +1141,22 @@ function halfSpaceBox(q: Vec3, m: Vec3, size: number): Shape3D {
 /** A clip plane for an "up to" extrude: the target face's plane, with a normal
  *  oriented to point AWAY from the profile (along the travel direction), so a
  *  half-space box on the +normal side cuts the prism flush with the face. */
-interface ClipPlane { point: Vec3; normal: Vec3; boxSize: number }
-function makeClipPlane(facePoint: Vec3, faceNormal: Vec3, extrudeNormal: Vector, dirSign: number, reach: number): ClipPlane {
+interface ClipPlane {
+  point: Vec3;
+  normal: Vec3;
+  boxSize: number;
+}
+function makeClipPlane(
+  facePoint: Vec3,
+  faceNormal: Vec3,
+  extrudeNormal: Vector,
+  dirSign: number,
+  reach: number,
+): ClipPlane {
   const en = extrudeNormal.normalized().toTuple();
   const dir: Vec3 = [en[0] * dirSign, en[1] * dirSign, en[2] * dirSign];
-  const fn = v3unit(faceNormal);
-  const normal: Vec3 = v3dot(fn, dir) >= 0 ? fn : [-fn[0], -fn[1], -fn[2]];
+  const fn = vunit(faceNormal);
+  const normal: Vec3 = vdot(fn, dir) >= 0 ? fn : [-fn[0], -fn[1], -fn[2]];
   return { point: facePoint, normal, boxSize: reach * 2 };
 }
 
@@ -1069,8 +1180,8 @@ function upToNextFace(profileFace: Face, normal: Vector, sign: number, scan: Bod
   const EPS = 1e-4; // ignore the profile's own (coincident) start face
   const TOL = 1e-3;
   // Two axes spanning the plane perpendicular to n, for the cross-section test.
-  const u = v3unit(v3cross(n, Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]));
-  const v = v3unit(v3cross(n, u));
+  const u = vunit(vcross(n, Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]));
+  const v = vunit(vcross(n, u));
   const pB = profileFace.boundingBox.bounds;
   const [pu0, pu1] = projectBounds(pB, u);
   const [pv0, pv1] = projectBounds(pB, v);
@@ -1082,7 +1193,7 @@ function upToNextFace(profileFace: Face, normal: Vector, sign: number, scan: Bod
   for (const t of scan) {
     for (const f of t.shape.faces) {
       const m = f.normalAt(f.center).normalized().toTuple() as Vec3;
-      const denom = v3dot(n, m);
+      const denom = vdot(n, m);
       if (Math.abs(denom) < 1e-7) continue; // axis parallel to this face's plane
       const q = f.center.toTuple() as Vec3;
       const len = ((q[0] - p[0]) * m[0] + (q[1] - p[1]) * m[1] + (q[2] - p[2]) * m[2]) / denom;
@@ -1101,7 +1212,7 @@ function upToNextFace(profileFace: Face, normal: Vector, sign: number, scan: Bod
   }
   if (!bestCovers) {
     throw new Error(
-      "up to next: the next face only partially covers the profile — it doesn't fully block the extrude. Use a smaller profile, extent \"up to face\", or a blind distance.",
+      'up to next: the next face only partially covers the profile — it doesn\'t fully block the extrude. Use a smaller profile, extent "up to face", or a blind distance.',
     );
   }
   return bestFace;
@@ -1123,7 +1234,12 @@ function extrudeLengths(extent: ExtrudeExtent, distance: number, face: Face, tar
 /** Fuse, cut, or intersect (common) two named shapes, propagating face names
  *  through the boolean's history: a result face inherits its source face's name
  *  (Modified images, or the unchanged passthrough); collisions get a #n suffix. */
-function booleanNamed(op: "fuse" | "cut" | "common", base: NamedShape, tool: NamedShape, fuzzy = BOOL_FUZZY): NamedShape {
+function booleanNamed(
+  op: "fuse" | "cut" | "common",
+  base: NamedShape,
+  tool: NamedShape,
+  fuzzy = BOOL_FUZZY,
+): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   const progress = new oc.Message_ProgressRange_1();
@@ -1132,9 +1248,11 @@ function booleanNamed(op: "fuse" | "cut" | "common", base: NamedShape, tool: Nam
   // leaving no window to configure it. args = base, tools = tool (for cut this
   // is base − tool).
   const builder =
-    op === "fuse" ? new oc.BRepAlgoAPI_Fuse_1()
-    : op === "cut" ? new oc.BRepAlgoAPI_Cut_1()
-    : new oc.BRepAlgoAPI_Common_1();
+    op === "fuse"
+      ? new oc.BRepAlgoAPI_Fuse_1()
+      : op === "cut"
+        ? new oc.BRepAlgoAPI_Cut_1()
+        : new oc.BRepAlgoAPI_Common_1();
   const args = new oc.TopTools_ListOfShape_1();
   args.Append_1(base.shape.wrapped);
   const tools = new oc.TopTools_ListOfShape_1();
@@ -1158,7 +1276,8 @@ function booleanNamed(op: "fuse" | "cut" | "common", base: NamedShape, tool: Nam
       if (!nm) continue;
       if (builder.IsDeleted(f.wrapped)) continue;
       const images = drainList(builder.Modified(f.wrapped));
-      if (images.length === 0) names.set(f.hashCode, nm); // unchanged passthrough
+      if (images.length === 0)
+        names.set(f.hashCode, nm); // unchanged passthrough
       else for (const img of images) assign(hashOf(img), nm);
     }
   }
@@ -1167,6 +1286,26 @@ function booleanNamed(op: "fuse" | "cut" | "common", base: NamedShape, tool: Nam
   tools.delete();
   progress.delete();
   return { shape, names };
+}
+
+/** `booleanNamed`, retried down BOOL_FUZZY_FALLBACKS while OCCT hands back a
+ *  DEGENERATE (solid-less) shape. BRepAlgoAPI is not robust on near-tangent
+ *  B-spline pairs: the same cut can yield an empty shape at one fuzzy value and
+ *  the correct solid at the next, so one attempt isn't enough. Returns the first
+ *  result with a solid in it; if every tolerance degenerates, returns the last
+ *  one and lets the caller report the failure. */
+function booleanRetrying(op: "fuse" | "cut" | "common", base: NamedShape, tool: NamedShape): NamedShape {
+  let last: NamedShape | null = null;
+  for (const fuzzy of BOOL_FUZZY_FALLBACKS) {
+    const next = booleanNamed(op, base, tool, fuzzy);
+    if (countSolids(next.shape) > 0) {
+      if (last) last.shape.delete();
+      return next;
+    }
+    if (last) last.shape.delete();
+    last = next;
+  }
+  return last!;
 }
 
 function requireBody(bodies: Body[], id: string): Body {
@@ -1206,7 +1345,11 @@ function unifySameDomain(named: NamedShape): NamedShape | null {
   // second time ("This object has been deleted"). Such a face simply does not
   // take part in name matching.
   const centreNormal = (f: Face): Vec3 | null => {
-    try { return v3unit(f.normalAt(f.center).toTuple() as Vec3); } catch { return null; }
+    try {
+      return vunit(f.normalAt(f.center).toTuple() as Vec3);
+    } catch {
+      return null;
+    }
   };
   const originals: { nm: string; c: Vec3; n: Vec3 }[] = [];
   for (const f of named.shape.faces) {
@@ -1223,9 +1366,12 @@ function unifySameDomain(named: NamedShape): NamedShape | null {
     let best: string | undefined;
     let bestD = Infinity;
     for (const o of originals) {
-      if (Math.abs(v3dot(o.n, n)) < 0.999) continue; // not coplanar-parallel
+      if (Math.abs(vdot(o.n, n)) < 0.999) continue; // not coplanar-parallel
       const dd = (o.c[0] - c[0]) ** 2 + (o.c[1] - c[1]) ** 2 + (o.c[2] - c[2]) ** 2;
-      if (dd < bestD) { bestD = dd; best = o.nm; }
+      if (dd < bestD) {
+        bestD = dd;
+        best = o.nm;
+      }
     }
     if (best) names.set(uf.hashCode, best);
   }
@@ -1354,7 +1500,11 @@ function resolveDressUpEdges(
   // Slow path: build geometric candidates and match all refs one-to-one.
   const candidates: EdgeCandidate[] = edges.map((e) => {
     let length = 0;
-    try { length = e.length; } catch { /* degenerate edge — mid still matches */ }
+    try {
+      length = e.length;
+    } catch {
+      /* degenerate edge — mid still matches */
+    }
     return {
       name: targetEdgeNames.get(e.hashCode),
       mid: e.boundingBox.center as [number, number, number],
@@ -1416,7 +1566,10 @@ function faceBoundaryEdgesNamed(
   faceNames.forEach((nm, i) => {
     let face: Face | undefined;
     for (const f of target.shape.faces) {
-      if (target.names.get(f.hashCode) === nm) { face = f; break; }
+      if (target.names.get(f.hashCode) === nm) {
+        face = f;
+        break;
+      }
     }
     if (!face) {
       // Name gone — same geometric fallback as every other named reference.
@@ -1428,7 +1581,10 @@ function faceBoundaryEdgesNamed(
       const m = ref?.center
         ? matchFace({ center: ref.center, normal: ref.normal }, candidates, bboxDiagonal(target.shape))
         : null;
-      if (!m) { lost.push(nm); return; }
+      if (!m) {
+        lost.push(nm);
+        return;
+      }
       face = target.shape.faces[m.index];
       warn?.(`face "${nm}" was renamed by an upstream edit; re-matched geometrically`);
     }
@@ -1472,7 +1628,11 @@ function edgesShareAVertex(hits: Edge[]): boolean {
   const seen = new Set<string>();
   for (const e of hits) {
     let pts: V3[];
-    try { pts = sampleEdgePoints(e); } catch { return true; } // unreadable — assume the worst
+    try {
+      pts = sampleEdgePoints(e);
+    } catch {
+      return true;
+    } // unreadable — assume the worst
     if (pts.length < 2) continue;
     const ends = new Set([vkey(pts[0]), vkey(pts[pts.length - 1])]);
     for (const k of ends) {
@@ -1489,12 +1649,7 @@ function edgesShareAVertex(hits: Edge[]): boolean {
  *  of the document references), unnamed ones last and broken by hashCode;
  *  `flip` takes the second one. Returns null when the edge has no adjacent face
  *  in `adj` (so the caller can fall back to a symmetric chamfer). */
-function chamferRefFace(
-  adj: Map<number, Face[]>,
-  names: Map<number, string>,
-  edge: Edge,
-  flip: boolean,
-): Face | null {
+function chamferRefFace(adj: Map<number, Face[]>, names: Map<number, string>, edge: Edge, flip: boolean): Face | null {
   const faces = adj.get(edge.hashCode);
   if (!faces || faces.length === 0) return null;
   const ordered = [...faces].sort((a, b) => {
@@ -1516,14 +1671,14 @@ function polygonFace(pts: V3[]): Face | null {
   if (pts.length < 3) return null;
   const e1: V3 = [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]];
   const e2: V3 = [pts[2][0] - pts[0][0], pts[2][1] - pts[0][1], pts[2][2] - pts[0][2]];
-  const nRaw = v3cross(e1, e2);
+  const nRaw = vcross(e1, e2);
   if (Math.hypot(nRaw[0], nRaw[1], nRaw[2]) < 1e-12) return null;
   const n = vunit(nRaw);
   const u = vunit(e1);
-  const frame: ResolvedFrame = { origin: pts[0], uAxis: u, vAxis: v3cross(n, u), normal: n };
+  const frame: ResolvedFrame = { origin: pts[0], uAxis: u, vAxis: vcross(n, u), normal: n };
   const outline: [number, number][] = pts.map((p) => {
     const d: V3 = [p[0] - pts[0][0], p[1] - pts[0][1], p[2] - pts[0][2]];
-    return [v3dot(d, u), v3dot(d, frame.vAxis as V3)];
+    return [vdot(d, u), vdot(d, frame.vAxis as V3)];
   });
   return regionFace({ kind: "sketchRegion", outline, frame }, planeOf(frame));
 }
@@ -1557,7 +1712,7 @@ function ringSectionFace(
 ): Face | null {
   const u = vunit(towardRef);
   const v = vunit(towardOther);
-  const n = v3cross(u, v);
+  const n = vcross(u, v);
   if (Math.hypot(n[0], n[1], n[2]) < 1e-12) return null;
   const frame: ResolvedFrame = { origin: corner, uAxis: u, vAxis: v, normal: vunit(n) };
   const m = margin;
@@ -1566,16 +1721,25 @@ function ringSectionFace(
   // directly is geometrically right but yields a generic REVOLUTION_SURFACE,
   // which has no fast intersector. A chamfer's bevel closes the box across the
   // corner instead, and a revolved line canonicalises to a CONE by itself.
-  const outline: [number, number][] = op === "fillet"
-    ? [[legs.ref, -m], [-m, -m], [-m, legs.other], [legs.ref, legs.other]]
-    : [[legs.ref, 0], [legs.ref, -m], [-m, -m], [-m, legs.other], [0, legs.other]];
+  const outline: [number, number][] =
+    op === "fillet"
+      ? [
+          [legs.ref, -m],
+          [-m, -m],
+          [-m, legs.other],
+          [legs.ref, legs.other],
+        ]
+      : [
+          [legs.ref, 0],
+          [legs.ref, -m],
+          [-m, -m],
+          [-m, legs.other],
+          [0, legs.other],
+        ];
   const segments: ProfileSegment[] = outline.slice(1).map((to) => ({ kind: "line" as const, to }));
   segments.push({ kind: "line", to: outline[0] });
   try {
-    return regionFace(
-      { kind: "sketchRegion", outline, frame, segmentStart: outline[0], segments },
-      planeOf(frame),
-    );
+    return regionFace({ kind: "sketchRegion", outline, frame, segmentStart: outline[0], segments }, planeOf(frame));
   } catch {
     return null;
   }
@@ -1588,12 +1752,12 @@ function filletFace(onEdge: V3, towardRef: V3, towardOther: V3, r: number): Face
   // along the other. Both legs are the radius, so the plane is well conditioned.
   const u = vunit(towardRef);
   const v = vunit(towardOther);
-  const n = v3cross(u, v);
+  const n = vcross(u, v);
   if (Math.hypot(n[0], n[1], n[2]) < 1e-12) return null;
   const frame: ResolvedFrame = { origin: onEdge, uAxis: u, vAxis: v, normal: vunit(n) };
   const uv = (p: V3): [number, number] => {
     const d: V3 = [p[0] - onEdge[0], p[1] - onEdge[1], p[2] - onEdge[2]];
-    return [v3dot(d, u), v3dot(d, v)];
+    return [vdot(d, u), vdot(d, v)];
   };
   // Loop: corner → along the reference face → arc (through arcMid) → back. The
   // `outline` is the faceted fallback; `segments` is what the kernel prefers.
@@ -1650,9 +1814,14 @@ function dressUpWedgeFor(
   if (adjacent.some((f) => f.geomType !== "PLANE")) return null;
 
   let pts: V3[];
-  try { pts = sampleEdgePoints(edge); } catch { return null; }
+  try {
+    pts = sampleEdgePoints(edge);
+  } catch {
+    return null;
+  }
   if (pts.length < 2) return null;
-  const a = pts[0], b = pts[pts.length - 1];
+  const a = pts[0],
+    b = pts[pts.length - 1];
   const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
   if (!(len > 1e-9)) return null;
   const along = vunit([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
@@ -1669,9 +1838,12 @@ function dressUpWedgeFor(
   const convex = isConvexEdge(t1, n2);
 
   // A fillet has no angle: both legs are the radius.
-  const legs = op === "fillet"
-    ? (size > 1e-9 && Number.isFinite(size) ? { ref: size, other: size } : null)
-    : chamferLegs(size, angleDeg);
+  const legs =
+    op === "fillet"
+      ? size > 1e-9 && Number.isFinite(size)
+        ? { ref: size, other: size }
+        : null
+      : chamferLegs(size, angleDeg);
   if (!legs) return null;
   const [tRef, tOther] = flip ? [t2, t1] : [t1, t2];
   const [fRef, fOther] = flip ? [adjacent[1], adjacent[0]] : [adjacent[0], adjacent[1]];
@@ -1681,8 +1853,12 @@ function dressUpWedgeFor(
     let far = 0;
     for (const e of f.edges) {
       let ps: V3[];
-      try { ps = sampleEdgePoints(e); } catch { continue; }
-      for (const p of ps) far = Math.max(far, v3dot([p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]], t));
+      try {
+        ps = sampleEdgePoints(e);
+      } catch {
+        continue;
+      }
+      for (const p of ps) far = Math.max(far, vdot([p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]], t));
     }
     return far;
   };
@@ -1693,15 +1869,16 @@ function dressUpWedgeFor(
   // booleans intersect transversally instead of exactly touching at the endpoints.
   const pad = Math.max(len * 1e-3, 1e-4);
   const o: V3 = [a[0] - along[0] * pad, a[1] - along[1] * pad, a[2] - along[2] * pad];
-  const tri = op === "fillet"
-    ? filletFace(o, tRef, tOther, legs.ref)
-    : polygonFace(chamferTriangle(o, tRef, tOther, legs));
+  const tri =
+    op === "fillet" ? filletFace(o, tRef, tOther, legs.ref) : polygonFace(chamferTriangle(o, tRef, tOther, legs));
   if (!tri) return null;
 
   let wedge: NamedShape;
   try {
     wedge = prismFromFace(tri, new Vector(along), len + 2 * pad, `${id}/wedge`);
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 
   // A tool's names must not leak into the result: leaving the new faces unnamed
   // lets the caller name them `${id}/chamfer`, as the OCCT path does.
@@ -1716,7 +1893,12 @@ function dressUpWedgeFor(
   try {
     let bounded = wedge;
     for (let i = 0; i < 2; i++) {
-      const sweep = prismFromFace(adjacent[i], new Vector(i === 0 ? n1 : n2), Math.max(legs.ref, legs.other) * 4 + 1, `${id}/bound`);
+      const sweep = prismFromFace(
+        adjacent[i],
+        new Vector(i === 0 ? n1 : n2),
+        Math.max(legs.ref, legs.other) * 4 + 1,
+        `${id}/bound`,
+      );
       const next = booleanNamed("common", bounded, sweep);
       if (bounded !== wedge) bounded.shape.delete();
       sweep.shape.delete();
@@ -1756,8 +1938,12 @@ function nameBooleanDressUp(
   }
   let changedBox: [Vec3, Vec3] | undefined;
   if (!bnd.IsVoid()) {
-    const lo = bnd.CornerMin(), hi = bnd.CornerMax();
-    changedBox = [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]];
+    const lo = bnd.CornerMin(),
+      hi = bnd.CornerMax();
+    changedBox = [
+      [lo.X(), lo.Y(), lo.Z()],
+      [hi.X(), hi.Y(), hi.Z()],
+    ];
   }
   bnd.delete();
   return { shape: acc.shape, names, changedBox };
@@ -1811,7 +1997,11 @@ function revolvedRingTool(
     const fs = adj.get(e.hashCode);
     if (!fs || fs.length !== 2 || fs.some((f) => f.geomType !== "PLANE")) return null;
     let pts: V3[];
-    try { pts = sampleEdgePoints(e); } catch { return null; }
+    try {
+      pts = sampleEdgePoints(e);
+    } catch {
+      return null;
+    }
     if (pts.length < 2) return null;
     chords.push([pts[0], pts[pts.length - 1]]);
   }
@@ -1834,9 +2024,12 @@ function revolvedRingTool(
   if (!t1 || !t2) return null;
   if (!isConvexEdge(t1, n2)) return null;
 
-  const legs = op === "fillet"
-    ? (size > 1e-9 && Number.isFinite(size) ? { ref: size, other: size } : null)
-    : chamferLegs(size, angleDeg);
+  const legs =
+    op === "fillet"
+      ? size > 1e-9 && Number.isFinite(size)
+        ? { ref: size, other: size }
+        : null
+      : chamferLegs(size, angleDeg);
   if (!legs) return null;
   const [tRef, tOther] = flip ? [t2, t1] : [t1, t2];
   const [fRef, fOther] = flip ? [adjacent[1], adjacent[0]] : [adjacent[0], adjacent[1]];
@@ -1846,8 +2039,12 @@ function revolvedRingTool(
     let far = 0;
     for (const e of f.edges) {
       let ps: V3[];
-      try { ps = sampleEdgePoints(e); } catch { continue; }
-      for (const p of ps) far = Math.max(far, v3dot([p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]], t));
+      try {
+        ps = sampleEdgePoints(e);
+      } catch {
+        continue;
+      }
+      for (const p of ps) far = Math.max(far, vdot([p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]], t));
     }
     return far;
   };
@@ -1858,7 +2055,7 @@ function revolvedRingTool(
   // chord's own perpendicular plane is tilted off the axis by half a facet, and
   // revolving a profile that isn't axial sweeps a skewed surface.
   const spoke: V3 = [mid[0] - ring.center[0], mid[1] - ring.center[1], mid[2] - ring.center[2]];
-  const height = v3dot(spoke, ring.axis);
+  const height = vdot(spoke, ring.axis);
   const radial = vunit([
     spoke[0] - ring.axis[0] * height,
     spoke[1] - ring.axis[1] * height,
@@ -1866,9 +2063,9 @@ function revolvedRingTool(
   ]);
   if (!(Math.hypot(radial[0], radial[1], radial[2]) > 0.5)) return null;
   // The circumferential direction — the component to drop from each leg.
-  const around = vunit(v3cross(ring.axis, radial));
+  const around = vunit(vcross(ring.axis, radial));
   const axialize = (t: V3): V3 => {
-    const k = v3dot(t, around);
+    const k = vdot(t, around);
     return vunit([t[0] - around[0] * k, t[1] - around[1] * k, t[2] - around[2] * k]);
   };
   const aRef = axialize(tRef);
@@ -1922,13 +2119,20 @@ function revolvedRingTool(
         corner[2] + aRef[2] * legs.ref + aOther[2] * legs.ref,
       ];
       const spokeC: V3 = [ctr[0] - ring.center[0], ctr[1] - ring.center[1], ctr[2] - ring.center[2]];
-      const hC = v3dot(spokeC, ring.axis);
+      const hC = vdot(spokeC, ring.axis);
       const major = Math.hypot(
-        spokeC[0] - ring.axis[0] * hC, spokeC[1] - ring.axis[1] * hC, spokeC[2] - ring.axis[2] * hC,
+        spokeC[0] - ring.axis[0] * hC,
+        spokeC[1] - ring.axis[1] * hC,
+        spokeC[2] - ring.axis[2] * hC,
       );
-      if (!(major > legs.ref)) { shape.delete(); return null; } // torus would self-intersect
+      if (!(major > legs.ref)) {
+        shape.delete();
+        return null;
+      } // torus would self-intersect
       const tp = new oc.gp_Pnt_3(
-        ring.center[0] + ring.axis[0] * hC, ring.center[1] + ring.axis[1] * hC, ring.center[2] + ring.axis[2] * hC,
+        ring.center[0] + ring.axis[0] * hC,
+        ring.center[1] + ring.axis[1] * hC,
+        ring.center[2] + ring.axis[2] * hC,
       );
       const td = new oc.gp_Dir_4(ring.axis[0], ring.axis[1], ring.axis[2]);
       const ax2 = new oc.gp_Ax2_3(tp, td);
@@ -1979,11 +2183,15 @@ function dressUpNamed(
   if (faceNames?.length) {
     const fromFaces = faceBoundaryEdgesNamed(target, faceNames, faceRefs, warn);
     const have = new Set(hits.map((e) => e.hashCode));
-    for (const e of fromFaces.hits) if (!have.has(e.hashCode)) { have.add(e.hashCode); hits.push(e); }
+    for (const e of fromFaces.hits)
+      if (!have.has(e.hashCode)) {
+        have.add(e.hashCode);
+        hits.push(e);
+      }
     if (fromFaces.lost.length > 0) {
       warn?.(
         `${fromFaces.lost.length} of ${faceNames.length} faces could not be re-found and were skipped: ` +
-        `${fromFaces.lost.join(", ")} — edit the feature to re-pick them`,
+          `${fromFaces.lost.join(", ")} — edit the feature to re-pick them`,
       );
     }
   }
@@ -2007,8 +2215,14 @@ function dressUpNamed(
   // rim however finely it is cut. A straight edge is its own singleton and passes
   // through untouched, which is the common case. See geom/edgeChains.
   const chainOf = edgeChainsFrom(target.shape);
-  const wanted = expandToChains(hits.map((e) => e.hashCode), chainOf);
-  const added = expansionCount(hits.map((e) => e.hashCode), wanted);
+  const wanted = expandToChains(
+    hits.map((e) => e.hashCode),
+    chainOf,
+  );
+  const added = expansionCount(
+    hits.map((e) => e.hashCode),
+    wanted,
+  );
   if (added > 0) {
     const byHash = new Map(target.shape.edges.map((e) => [e.hashCode, e]));
     hits.length = 0;
@@ -2018,7 +2232,7 @@ function dressUpNamed(
     }
     warn?.(
       `the stored selection covered ${hits.length - added} of ${hits.length} segments of its edge chain, ` +
-      `so ${added} more were included to dress the whole curve — re-pick the edge to store it afresh`,
+        `so ${added} more were included to dress the whole curve — re-pick the edge to store it afresh`,
     );
   }
 
@@ -2028,7 +2242,8 @@ function dressUpNamed(
   for (const f of target.shape.faces) {
     for (const e of f.edges) {
       const arr = adj.get(e.hashCode);
-      if (arr) arr.push(f); else adj.set(e.hashCode, [f]);
+      if (arr) arr.push(f);
+      else adj.set(e.hashCode, [f]);
     }
   }
 
@@ -2046,7 +2261,8 @@ function dressUpNamed(
     for (const e of hits) {
       const k = chainOf.get(e.hashCode) ?? e.hashCode;
       const arr = byChain.get(k);
-      if (arr) arr.push(e); else byChain.set(k, [e]);
+      if (arr) arr.push(e);
+      else byChain.set(k, [e]);
     }
     const rings: { tool: NamedShape; sagitta: number }[] = [];
     for (const group of byChain.values()) {
@@ -2081,7 +2297,13 @@ function dressUpNamed(
         // name to whichever flat face it points at — leaving the round nameless.
         return nameBooleanDressUp(cut, op, id);
       } catch {
-        for (const t of tools) { try { t.shape.delete(); } catch { /* already gone */ } }
+        for (const t of tools) {
+          try {
+            t.shape.delete();
+          } catch {
+            /* already gone */
+          }
+        }
       }
     } else {
       for (const r of rings) r.tool.shape.delete();
@@ -2112,7 +2334,10 @@ function dressUpNamed(
     let all = true;
     for (const e of hits) {
       const w = dressUpWedgeFor(op, e, adj.get(e.hashCode) ?? [], size, angle ?? 45, flip ?? false, id);
-      if (!w) { all = false; break; }
+      if (!w) {
+        all = false;
+        break;
+      }
       wedges.push(w);
     }
     if (all && wedges.length === hits.length) {
@@ -2141,7 +2366,13 @@ function dressUpNamed(
         return nameBooleanDressUp(acc, op, id);
       } catch {
         // Fall through to OCCT below; the wedges are released either way.
-        for (const w of wedges) { try { w.wedge.shape.delete(); } catch { /* already gone */ } }
+        for (const w of wedges) {
+          try {
+            w.wedge.shape.delete();
+          } catch {
+            /* already gone */
+          }
+        }
       }
     } else {
       for (const w of wedges) w.wedge.shape.delete();
@@ -2220,6 +2451,156 @@ function boxFromBounds([lo, hi]: [Vec3, Vec3], margin: number): Shape3D {
   return box.translate((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2] - margin) as Shape3D;
 }
 
+/** Re-resolve a Shell's stored face references (the faces to remove) against
+ *  the body's current faces — mirrors `resolveDressUpEdges`: exact persistent
+ *  name first, then a suffix-insensitive base-name match, then a geometric
+ *  match on the stored fingerprint (centroid + normal). Emits a warning for
+ *  every re-matched or lost face; only outright-lost faces are dropped. */
+function resolveShellFaces(
+  target: Body,
+  faceNames: string[],
+  faceRefs: ResolvedFaceRef[] | undefined,
+  warn: Warn | undefined,
+): { hits: Face[]; lost: string[] } {
+  const faces = target.shape.faces;
+
+  // Fast path: every requested name still exists — no fingerprinting needed.
+  const byName = new Map<string, number>();
+  faces.forEach((f, i) => {
+    const nm = target.names.get(f.hashCode);
+    if (nm !== undefined && !byName.has(nm)) byName.set(nm, i);
+  });
+  if (faceNames.every((nm) => byName.has(nm))) {
+    return { hits: faceNames.map((nm) => faces[byName.get(nm)!]), lost: [] };
+  }
+
+  // Slow path: build geometric candidates and match all refs one-to-one.
+  const candidates: NamedFaceCandidate[] = faces.map((f) => ({
+    name: target.names.get(f.hashCode),
+    center: f.center.toTuple() as [number, number, number],
+    normal: f.geomType === "PLANE" ? (f.normalAt().normalized().toTuple() as [number, number, number]) : undefined,
+  }));
+  const refs: NamedFaceRefFingerprint[] = faceNames.map((nm, i) => ({
+    name: nm,
+    center: faceRefs?.[i]?.center,
+    normal: faceRefs?.[i]?.normal,
+  }));
+  const matches = matchFaces(refs, candidates, bboxDiagonal(target.shape));
+
+  const hits: Face[] = [];
+  const lost: string[] = [];
+  matches.forEach((m, i) => {
+    if (m.kind === "lost") {
+      lost.push(faceNames[i]);
+      return;
+    }
+    hits.push(faces[m.index]);
+    if (m.kind !== "name") {
+      const nowName = candidates[m.index].name;
+      warn?.(
+        `face "${faceNames[i]}" was renamed by an upstream edit; re-matched ` +
+          `${m.kind === "base" ? "by base name" : "geometrically"}${nowName ? ` (now "${nowName}")` : ""}`,
+      );
+    }
+  });
+  return { hits, lost };
+}
+
+/** Hollow out a body: remove the named faces (they become openings) and offset
+ *  the remaining wall inward by `thickness`, propagating face names through
+ *  the operation's history (kept faces keep their names; each kept face's new
+ *  inner-offset face is named `"<name>/in"`). Zero faces makes a fully sealed
+ *  hollow shell. Uses OCCT's `BRepOffsetAPI_MakeThickSolid` (the same op
+ *  replicad's `.shell()` wraps) directly, since the running-fold model needs
+ *  the target's `NamedShape` history, which replicad's high-level API doesn't
+ *  expose. Modifies geometry; returns a NamedShape. */
+function shellNamed(
+  target: Body,
+  faceNames: string[],
+  faceRefs: ResolvedFaceRef[] | undefined,
+  thickness: number,
+  warn?: Warn,
+): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const { hits, lost } = resolveShellFaces(target, faceNames, faceRefs, warn);
+  if (faceNames.length > 0 && hits.length === 0) {
+    throw new Error(
+      "shell: none of the picked faces could be re-found on the body (an upstream edit changed its shape) — edit the feature to re-pick them",
+    );
+  }
+  if (lost.length > 0) {
+    warn?.(
+      `${lost.length} of ${faceNames.length} faces could not be re-found and were skipped: ${lost.join(", ")} — edit the feature to re-pick them`,
+    );
+  }
+  const removedHashes = new Set(hits.map((f) => f.hashCode));
+  const facesToRemove = new oc.TopTools_ListOfShape_1();
+  for (const f of hits) facesToRemove.Append_1(f.wrapped);
+
+  const builder = new oc.BRepOffsetAPI_MakeThickSolid();
+  const progress = new oc.Message_ProgressRange_1();
+  builder.MakeThickSolidByJoin(
+    target.shape.wrapped,
+    facesToRemove,
+    -thickness,
+    1e-3,
+    oc.BRepOffset_Mode.BRepOffset_Skin,
+    false,
+    false,
+    oc.GeomAbs_JoinType.GeomAbs_Arc,
+    false,
+    progress,
+  );
+  const shape = cast(builder.Shape()) as Shape3D;
+  // MakeThickSolidByJoin can "succeed" and hand back a shape with no solid in it
+  // (or the untouched input) on geometry it can't offset — freeform lofts with
+  // many small spline patches are the usual case. Both look like success to the
+  // caller, so check the result really is a hollowed solid rather than emitting a
+  // zero-face body downstream.
+  if (countSolids(shape) === 0 || shape.faces.length <= target.shape.faces.length) {
+    shape.delete();
+    facesToRemove.delete();
+    builder.delete();
+    progress.delete();
+    throw new Error(
+      "Shell failed on this geometry — the offset could not be built. This is common on " +
+        "freeform lofted surfaces; try a thinner wall, or hollow it by subtracting an inner body.",
+    );
+  }
+
+  const names = new Map<number, string>();
+  const used = new Map<string, number>();
+  const assign = (h: number, name: string) => {
+    const c = used.get(name) ?? 0;
+    used.set(name, c + 1);
+    names.set(h, c === 0 ? name : `${name}#${c}`);
+  };
+  for (const f of target.shape.faces) {
+    // A removed face is skipped unconditionally: MakeThickSolidByJoin doesn't
+    // reliably flag its "closing" faces IsDeleted (unlike a boolean/fillet),
+    // so trusting IsDeleted here can leak the old name onto a stray hash that
+    // happens to collide with an unrelated face in the result.
+    if (removedHashes.has(f.hashCode)) continue;
+    const nm = target.names.get(f.hashCode);
+    if (!nm || builder.IsDeleted(f.wrapped)) continue;
+    const images = drainList(builder.Modified(f.wrapped));
+    if (images.length === 0) names.set(f.hashCode, nm);
+    else for (const img of images) assign(hashOf(img), nm);
+  }
+  // The new inner-wall faces, generated as the offset image of each face that
+  // was kept (an opening has no offset image of its own).
+  for (const f of target.shape.faces) {
+    if (removedHashes.has(f.hashCode)) continue;
+    const nm = target.names.get(f.hashCode);
+    if (!nm) continue;
+    for (const g of drainList(builder.Generated(f.wrapped))) assign(hashOf(g), `${nm}/in`);
+  }
+  facesToRemove.delete();
+  builder.delete();
+  return { shape, names };
+}
+
 const AXIS_DIR: Record<"x" | "y" | "z", [number, number, number]> = {
   x: [1, 0, 0],
   y: [0, 1, 0],
@@ -2247,10 +2628,7 @@ function applyTrsf(target: NamedShape, trsf: Topo): NamedShape {
 /** Translate + rotate a body in place (rotation about pivot/axis first, then
  *  translation). Returns a FRESH NamedShape distinct from `target` (the caller
  *  disposes the original); names pass through unchanged since topology doesn't. */
-function transformNamed(
-  target: Body,
-  t: Extract<ResolvedFeature, { type: "transform" }>,
-): NamedShape {
+function transformNamed(target: Body, t: Extract<ResolvedFeature, { type: "transform" }>): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   let cur: NamedShape = target;
@@ -2404,7 +2782,10 @@ function countSolids(shape: Shape3D): number {
     oc.TopAbs_ShapeEnum.TopAbs_SHAPE,
   );
   let n = 0;
-  while (exp.More()) { n++; exp.Next(); }
+  while (exp.More()) {
+    n++;
+    exp.Next();
+  }
   exp.delete();
   return n;
 }
@@ -2422,7 +2803,20 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): Nam
   let accVol = op === "union" ? 0 : measureVolume(acc.shape);
   let accIsIntermediate = false;
   for (let i = 1; i < ops.length; i++) {
-    const next = booleanNamed(BOOL_OCC[op], acc, ops[i]);
+    const next = booleanRetrying(BOOL_OCC[op], acc, ops[i]);
+    // A DEGENERATE result (no solids) has to be caught here, before the
+    // op-specific tests below: an empty cut has volume 0, so `nextVol >= accVol`
+    // is false and it would sail through the "nothing to subtract" guard as if
+    // it were a successful large cut — consuming both operands and leaving a
+    // zero-face body. Report it instead of silently producing nothing.
+    if (countSolids(next.shape) === 0) {
+      next.shape.delete();
+      if (accIsIntermediate) acc.shape.delete();
+      throw new Error(
+        "The boolean produced an empty result — the operands are probably tangent or " +
+          "near-coincident over some region. Try nudging one operand so the surfaces aren't parallel.",
+      );
+    }
     // A union is valid when it actually joins the bodies into fewer solids —
     // true for overlapping AND merely-touching (shared-face) bodies, which have
     // no shared volume and so can't be told apart from disjoint by volume alone.
@@ -2489,7 +2883,8 @@ type FeatureTiming = { id: string; type: string; ms: number };
  *  keys short and bounded (combining keys down a long feature chain would grow
  *  without a hash). Collisions are astronomically unlikely at our scale. */
 function hashKey(str: string): string {
-  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  let h1 = 0xdeadbeef,
+    h2 = 0x41c6ce57;
   for (let i = 0; i < str.length; i++) {
     const ch = str.charCodeAt(i);
     h1 = Math.imul(h1 ^ ch, 2654435761);
@@ -2543,7 +2938,13 @@ function buildBodies(
   features: ResolvedFeature[],
   used: Set<string> = new Set(),
   usedDressUps: Set<string> = new Set(),
-): { bodies: Body[]; previews: Body[]; failures: RegenFeatureResult[]; timings: FeatureTiming[]; warnings: Record<string, string> } {
+): {
+  bodies: Body[];
+  previews: Body[];
+  failures: RegenFeatureResult[];
+  timings: FeatureTiming[];
+  warnings: Record<string, string>;
+} {
   const bodies: Body[] = [];
   // Display-only bodies (currently just dress-up deltas). Deliberately kept OUT
   // of `bodies` so nothing that scans the running set — an "up to next" extrude,
@@ -2569,7 +2970,11 @@ function buildBodies(
         bodies.push({ id: feature.id, key, ...buildCached(key, used, () => buildPrimitive(feature)) });
       } else if (feature.type === "import") {
         const key = builderKey(feature);
-        bodies.push({ id: feature.id, key, ...buildCached(key, used, () => importStepNamed(feature.source, feature.id)) });
+        bodies.push({
+          id: feature.id,
+          key,
+          ...buildCached(key, used, () => importStepNamed(feature.source, feature.id)),
+        });
       } else if (feature.type === "extrude") {
         const { profile, flip, distance, extent, mode } = feature;
         // A "remove" cuts *into* the body, so its natural direction is opposite
@@ -2582,7 +2987,9 @@ function buildBodies(
         // up front (rather than after building the tool, as before) because
         // extent "throughAll" needs the target's geometry to size the tool.
         const targetId =
-          mode !== "new" ? feature.targetId ?? (profile.kind === "bodyFace" ? profile.sourceId : undefined) : undefined;
+          mode !== "new"
+            ? (feature.targetId ?? (profile.kind === "bodyFace" ? profile.sourceId : undefined))
+            : undefined;
         const targets = targetId ? bodies.filter((b) => b.id === targetId) : [];
 
         // One profile face for region/body-face; many (one per glyph) for text.
@@ -2590,19 +2997,27 @@ function buildBodies(
         let normal: Vector;
         if (profile.kind === "sketchRegion") {
           const r = sketchRegionFace(profile);
-          faces = [r.face]; normal = r.normal;
+          faces = [r.face];
+          normal = r.normal;
         } else if (profile.kind === "sketchText") {
           const r = sketchTextFaces(profile);
-          faces = r.faces; normal = r.normal;
+          faces = r.faces;
+          normal = r.normal;
         } else {
           const r = bodyProfileFace(
-            requireBody(bodies, profile.sourceId), profile.faceName, profile.center, profile.normal, warn, "profile face",
+            requireBody(bodies, profile.sourceId),
+            profile.faceName,
+            profile.center,
+            profile.normal,
+            warn,
+            "profile face",
           );
           // Facet a curved profile face (cylinder cap, fillet…) so its extruded
           // wall is planar and can be cut/fused — an analytic cylinder wall can't
           // (StdFail_NotDone). No-op for straight-edged faces.
           const ff = facetedProfileFace(r.face, r.normal);
-          faces = [ff.face]; normal = ff.normal;
+          faces = [ff.face];
+          normal = ff.normal;
         }
         const face = faces[0]; // representative for through-all / up-to-face sizing
 
@@ -2618,12 +3033,23 @@ function buildBodies(
         if (extent === "upToFace" && feature.upTo) {
           const upBody = requireBody(bodies, feature.upTo.sourceId);
           const up = bodyProfileFace(
-            upBody, feature.upTo.faceName, feature.upTo.center, feature.upTo.normal, warn, "up-to face",
+            upBody,
+            feature.upTo.faceName,
+            feature.upTo.center,
+            feature.upTo.normal,
+            warn,
+            "up-to face",
           );
           const t = upToFaceLength(face, normal, up.face, up.normal); // signed, validates reachability
           const reach = bigReach(face, bodies);
           lengths = [(t >= 0 ? 1 : -1) * reach];
-          clip = makeClipPlane(up.face.center.toTuple() as Vec3, up.normal.normalized().toTuple() as Vec3, normal, t >= 0 ? 1 : -1, reach);
+          clip = makeClipPlane(
+            up.face.center.toTuple() as Vec3,
+            up.normal.normalized().toTuple() as Vec3,
+            normal,
+            t >= 0 ? 1 : -1,
+            reach,
+          );
         } else if (extent === "upToNext") {
           // Scan every existing body (the model so far), not just the boolean
           // target, so a boss can stop at a separate wall ahead of it.
@@ -2666,10 +3092,8 @@ function buildBodies(
           }
           if (glyph) glyphSolids.push(glyph);
         }
-        let built: NamedShape | null =
-          glyphSolids.length === 0 ? null
-          : glyphSolids.length === 1 ? glyphSolids[0]
-          : compoundOf(glyphSolids);
+        const built: NamedShape | null =
+          glyphSolids.length === 0 ? null : glyphSolids.length === 1 ? glyphSolids[0] : compoundOf(glyphSolids);
         if (built === null) throw new Error("extrude: profile produced no geometry");
 
         // Content key of the swept tool: the feature plus the keys of any bodies
@@ -2743,8 +3167,23 @@ function buildBodies(
         } else {
           // Capture whatever this build reports, so a cache hit can replay it.
           let raised: string | undefined;
-          const record: Warn = (msg) => { raised = raised ? `${raised}; ${msg}` : msg; warn(msg); };
-          res = dressUpNamed(feature.op, target, feature.edges, feature.edgeRefs, feature.size, feature.id, record, feature.angle, feature.flip, feature.faces, feature.faceRefs);
+          const record: Warn = (msg) => {
+            raised = raised ? `${raised}; ${msg}` : msg;
+            warn(msg);
+          };
+          res = dressUpNamed(
+            feature.op,
+            target,
+            feature.edges,
+            feature.edgeRefs,
+            feature.size,
+            feature.id,
+            record,
+            feature.angle,
+            feature.flip,
+            feature.faces,
+            feature.faceRefs,
+          );
           dressUpCache.set(dressKey, { result: { ...copyNamed(res), changedBox: res.changedBox }, warning: raised });
         }
         if (feature.previewDelta) {
@@ -2776,9 +3215,7 @@ function buildBodies(
           // where it is indistinguishable from the delta. Growing the box "to be
           // safe" is precisely wrong — it drags the flap back out into open
           // space where it shows.
-          const clipBox = res.changedBox
-            ? boxFromBounds(res.changedBox, Math.max(feature.size * 0.05, 1e-6))
-            : null;
+          const clipBox = res.changedBox ? boxFromBounds(res.changedBox, Math.max(feature.size * 0.05, 1e-6)) : null;
           const localize = (s: NamedShape) =>
             clipBox ? booleanNamed("common", s, { shape: clipBox, names: new Map() }) : s;
           const before: NamedShape = { shape: target.shape, names: target.names };
@@ -2814,6 +3251,14 @@ function buildBodies(
         target.shape = res.shape;
         target.names = res.names;
         target.key = contentKey(feature, [target.key]);
+      } else if (feature.type === "shell") {
+        // Hollow out the target body in place, keeping its id.
+        const target = requireBody(bodies, feature.targetId);
+        const res = shellNamed(target, feature.faces, feature.faceRefs, feature.thickness, warn);
+        target.shape.delete();
+        target.shape = res.shape;
+        target.names = res.names;
+        target.key = contentKey(feature, [target.key]);
       } else if (feature.type === "boolean") {
         // Combine 2+ existing bodies into one, consuming the operands and
         // keeping the result keyed by this feature's id. Names propagate through
@@ -2830,7 +3275,8 @@ function buildBodies(
         const operandSet = new Set(feature.operands);
         const remaining: Body[] = [];
         for (const b of bodies) {
-          if (operandSet.has(b.id)) b.shape.delete(); // operand consumed
+          if (operandSet.has(b.id))
+            b.shape.delete(); // operand consumed
           else remaining.push(b);
         }
         bodies.length = 0;
@@ -2869,7 +3315,11 @@ function buildBodies(
           const axBody = requireBody(bodies, feature.axisFace.sourceId);
           depKeys.push(axBody.key);
           const line = facePatternAxis(
-            axBody, feature.axisFace.faceName, feature.axisFace.center, feature.axisFace.normal, warn,
+            axBody,
+            feature.axisFace.faceName,
+            feature.axisFace.center,
+            feature.axisFace.normal,
+            warn,
           );
           axisOrigin = line.origin;
           axisDir = line.dir;
@@ -2887,18 +3337,22 @@ function buildBodies(
         if (feature.axisFace) {
           const axBody = requireBody(bodies, feature.axisFace.sourceId);
           const line = faceRevolveAxis(
-            axBody, feature.axisFace.faceName, feature.axisFace.center, feature.profile.frame, feature.axisFace.normal, warn,
+            axBody,
+            feature.axisFace.faceName,
+            feature.axisFace.center,
+            feature.profile.frame,
+            feature.axisFace.normal,
+            warn,
           );
           axisOrigin = line.origin;
           axisDir = line.dir;
         }
         if (!axisOrigin || !axisDir) throw new Error("revolve: missing axis");
-        const ao = axisOrigin, ad = axisDir;
+        const ao = axisOrigin,
+          ad = axisDir;
         // A body-face axis makes the result depend on that body's geometry, so
         // fold its key in; a baked line axis is fully captured by the feature.
-        const key = feature.axisFace
-          ? contentKey(feature, [keyOf(feature.axisFace.sourceId)])
-          : builderKey(feature);
+        const key = feature.axisFace ? contentKey(feature, [keyOf(feature.axisFace.sourceId)]) : builderKey(feature);
         const built = buildCached(key, used, () =>
           revolveSketchRegion(revProfile, ao, ad, (feature.angle * Math.PI) / 180, feature.symmetric, feature.id),
         );
@@ -2913,7 +3367,13 @@ function buildBodies(
         const regions = feature.profiles.filter((p) => p.kind === "sketchRegion");
         if (regions.length < 2) throw new Error("loft: needs at least 2 sketch-region sections");
         const key = builderKey(feature);
-        bodies.push({ id: feature.id, key, ...buildCached(key, used, () => loftBody(regions as Extract<ResolvedProfile, { kind: "sketchRegion" }>[], feature.id)) });
+        bodies.push({
+          id: feature.id,
+          key,
+          ...buildCached(key, used, () =>
+            loftBody(regions as Extract<ResolvedProfile, { kind: "sketchRegion" }>[], feature.id),
+          ),
+        });
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: errorMessage(err) });
@@ -2936,12 +3396,14 @@ function referenceMeshOpts(shape: Shape3D): { tolerance: number; angularToleranc
     const bb = shape.boundingBox;
     diag = Math.hypot(bb.width, bb.height, bb.depth) || diag;
     bb.delete();
-  } catch { /* fall back to the default diagonal */ }
+  } catch {
+    /* fall back to the default diagonal */
+  }
   // ~0.5% of the diagonal, clamped to a sane band. An imported assembly is a
   // reference body (you model an enclosure AROUND it, not on it), so it's tuned
   // coarse to keep the triangle count — and thus GPU load and per-regen transfer
   // — low. Raise the factor for lighter/faster, lower it for crisper curves.
-  return { tolerance: Math.min(5, Math.max(0.4, diag * 0.005)), angularTolerance: 0.6 };
+  return { tolerance: clamp(diag * 0.005, 0.4, 5), angularTolerance: 0.6 };
 }
 
 /** Mesh a shape ONE FACE AT A TIME. replicad's `Shape.mesh()` runs `BRepMesh` over
@@ -2958,9 +3420,13 @@ function meshFaceByFace(
 ): MeshedFaces {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
-  const vChunks: number[][] = [], nChunks: number[][] = [], tChunks: number[][] = [];
+  const vChunks: number[][] = [],
+    nChunks: number[][] = [],
+    tChunks: number[][] = [];
   const faceGroups: { start: number; count: number; faceId: number }[] = [];
-  let nodeOffset = 0, triLen = 0, skipped = 0;
+  let nodeOffset = 0,
+    triLen = 0,
+    skipped = 0;
   const faces = shape.faces;
   const total = faces.length;
   faces.forEach((face, i) => {
@@ -2971,11 +3437,17 @@ function meshFaceByFace(
       const im = new oc.BRepMesh_IncrementalMesh_2(face.wrapped, opts.tolerance, false, opts.angularTolerance, false);
       im.delete();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tri = (face as any).triangulation(nodeOffset) as { vertices: number[]; trianglesIndexes: number[]; verticesNormals: number[] } | null;
+      const tri = (face as any).triangulation(nodeOffset) as {
+        vertices: number[];
+        trianglesIndexes: number[];
+        verticesNormals: number[];
+      } | null;
       if (tri) {
         faceGroups.push({ start: triLen, count: tri.trianglesIndexes.length, faceId: face.hashCode });
-        tChunks.push(tri.trianglesIndexes); triLen += tri.trianglesIndexes.length;
-        vChunks.push(tri.vertices); nodeOffset += tri.vertices.length / 3;
+        tChunks.push(tri.trianglesIndexes);
+        triLen += tri.trianglesIndexes.length;
+        vChunks.push(tri.vertices);
+        nodeOffset += tri.vertices.length / 3;
         nChunks.push(tri.verticesNormals);
       }
       oc.BRepTools.Clean(face.wrapped, true); // free THIS face's triangulation
@@ -2992,11 +3464,21 @@ function meshFaceByFace(
   // raw ArrayBuffer copy instead of a per-element structured clone).
   const fillF = (chunks: number[][]): Float32Array => {
     const out = new Float32Array(chunks.reduce((s, c) => s + c.length, 0));
-    let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+    let o = 0;
+    for (const c of chunks) {
+      out.set(c, o);
+      o += c.length;
+    }
     return out;
   };
   const triangles = new Uint32Array(triLen);
-  { let o = 0; for (const c of tChunks) { triangles.set(c, o); o += c.length; } }
+  {
+    let o = 0;
+    for (const c of tChunks) {
+      triangles.set(c, o);
+      o += c.length;
+    }
+  }
   return { triangles, vertices: fillF(vChunks), normals: fillF(nChunks), faceGroups };
 }
 
@@ -3017,16 +3499,21 @@ type FaceNormalStats = { fallback: number; unknown: number };
 function faceOutwardNormal(f: Face, stats?: FaceNormalStats): V3 | null {
   try {
     return vunit(f.normalAt(f.center).normalized().toTuple() as V3);
-  } catch { /* fall through to the boundary */ }
+  } catch {
+    /* fall through to the boundary */
+  }
   if (stats) stats.fallback++;
   try {
     const wires = f.wires;
     if (wires.length === 0) return null;
     const ring = chainWirePoints(wires[0].edges);
     if (ring.length < 3) return null;
-    let nx = 0, ny = 0, nz = 0;
+    let nx = 0,
+      ny = 0,
+      nz = 0;
     for (let i = 0; i < ring.length; i++) {
-      const p = ring[i], q = ring[(i + 1) % ring.length];
+      const p = ring[i],
+        q = ring[(i + 1) % ring.length];
       nx += (p[1] - q[1]) * (p[2] + q[2]);
       ny += (p[2] - q[2]) * (p[0] + q[0]);
       nz += (p[0] - q[0]) * (p[1] + q[1]);
@@ -3041,7 +3528,10 @@ function faceOutwardNormal(f: Face, stats?: FaceNormalStats): V3 | null {
     const s = (flip ? -1 : 1) / len;
     return [nx * s, ny * s, nz * s];
   } catch {
-    if (stats) { stats.fallback--; stats.unknown++; }
+    if (stats) {
+      stats.fallback--;
+      stats.unknown++;
+    }
     return null;
   }
 }
@@ -3057,7 +3547,9 @@ function earClip(poly: [number, number][]): [number, number, number][] {
   const cross = (o: number, a: number, b: number) =>
     (poly[a][0] - poly[o][0]) * (poly[b][1] - poly[o][1]) - (poly[a][1] - poly[o][1]) * (poly[b][0] - poly[o][0]);
   const inTriangle = (p: number, a: number, b: number, c: number) => {
-    const d1 = cross(a, b, p), d2 = cross(b, c, p), d3 = cross(c, a, p);
+    const d1 = cross(a, b, p),
+      d2 = cross(b, c, p),
+      d3 = cross(c, a, p);
     const neg = d1 < 0 || d2 < 0 || d3 < 0;
     const pos = d1 > 0 || d2 > 0 || d3 > 0;
     return !(neg && pos);
@@ -3067,12 +3559,17 @@ function earClip(poly: [number, number][]): [number, number, number][] {
   while (idx.length > 3 && guard-- > 0) {
     let clipped = false;
     for (let i = 0; i < idx.length; i++) {
-      const a = idx[(i + idx.length - 1) % idx.length], b = idx[i], c = idx[(i + 1) % idx.length];
+      const a = idx[(i + idx.length - 1) % idx.length],
+        b = idx[i],
+        c = idx[(i + 1) % idx.length];
       if (cross(a, b, c) <= 1e-12) continue; // reflex or collinear — not an ear
       let empty = true;
       for (const p of idx) {
         if (p === a || p === b || p === c) continue;
-        if (inTriangle(p, a, b, c)) { empty = false; break; }
+        if (inTriangle(p, a, b, c)) {
+          empty = false;
+          break;
+        }
       }
       if (!empty) continue;
       out.push([a, b, c]);
@@ -3114,7 +3611,11 @@ function triangulatePlanarFace(
 ): { vertices: number[]; trianglesIndexes: number[]; verticesNormals: number[] } | null {
   if (face.geomType !== "PLANE") return null;
   let wires: { edges: Edge[] }[];
-  try { wires = face.wires; } catch { return null; }
+  try {
+    wires = face.wires;
+  } catch {
+    return null;
+  }
   if (wires.length !== 1) return null;
   const chained = chainWirePoints(wires[0].edges).map(snap);
   // Snapping can land neighbouring samples on the same existing vertex; collapse
@@ -3126,7 +3627,8 @@ function triangulatePlanarFace(
     ring.push(p);
   }
   while (ring.length > 1) {
-    const a = ring[0], b = ring[ring.length - 1];
+    const a = ring[0],
+      b = ring[ring.length - 1];
     if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) >= 1e-9) break;
     ring.pop();
   }
@@ -3137,20 +3639,25 @@ function triangulatePlanarFace(
 
   // A 2D basis in the plane, u chosen against the world axis least aligned with
   // the normal so the cross product is well conditioned.
-  const ax: V3 = Math.abs(n[0]) < Math.abs(n[1]) && Math.abs(n[0]) < Math.abs(n[2]) ? [1, 0, 0]
-    : Math.abs(n[1]) < Math.abs(n[2]) ? [0, 1, 0] : [0, 0, 1];
-  const u = vunit(v3cross(ax, n));
-  const v = v3cross(n, u);
+  const ax: V3 =
+    Math.abs(n[0]) < Math.abs(n[1]) && Math.abs(n[0]) < Math.abs(n[2])
+      ? [1, 0, 0]
+      : Math.abs(n[1]) < Math.abs(n[2])
+        ? [0, 1, 0]
+        : [0, 0, 1];
+  const u = vunit(vcross(ax, n));
+  const v = vcross(n, u);
   const o = ring[0];
   const poly2d: [number, number][] = ring.map((p) => {
     const d: V3 = [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
-    return [v3dot(d, u), v3dot(d, v)];
+    return [vdot(d, u), vdot(d, v)];
   });
   // Ear clipping wants counter-clockwise input; the projection's winding follows
   // from the basis, so measure it rather than assume.
   let area2 = 0;
   for (let i = 0; i < poly2d.length; i++) {
-    const a = poly2d[i], b = poly2d[(i + 1) % poly2d.length];
+    const a = poly2d[i],
+      b = poly2d[(i + 1) % poly2d.length];
     area2 += a[0] * b[1] - b[0] * a[1];
   }
   const order = area2 >= 0 ? poly2d.map((_, i) => i) : poly2d.map((_, i) => poly2d.length - 1 - i);
@@ -3203,7 +3710,11 @@ function faceTriangulation(
   const oc = getOC() as any;
   const loc = new oc.TopLoc_Location_1();
   const handle = oc.BRep_Tool.Triangulation(face, loc, 0);
-  if (handle.IsNull()) { loc.delete(); handle.delete?.(); return null; }
+  if (handle.IsNull()) {
+    loc.delete();
+    handle.delete?.();
+    return null;
+  }
   const tri = handle.get();
   const trsf = loc.Transformation();
   const nbNodes = tri.NbNodes();
@@ -3225,19 +3736,27 @@ function faceTriangulation(
       }
       haveNormals = true;
     }
-  } catch { haveNormals = false; }
+  } catch {
+    haveNormals = false;
+  }
   if (!haveNormals) {
     // Planar faces are the case that lands here; a constant normal is exact.
     const surf = oc.BRep_Tool.Surface_2(face);
-    let nx = 0, ny = 0, nz = 1;
+    let nx = 0,
+      ny = 0,
+      nz = 1;
     try {
       const props = new oc.GeomLProp_SLProps_1(surf, 0.5, 0.5, 1, 1e-7);
       if (props.IsNormalDefined()) {
         const n = props.Normal();
-        nx = n.X(); ny = n.Y(); nz = n.Z();
+        nx = n.X();
+        ny = n.Y();
+        nz = n.Z();
       }
       props.delete();
-    } catch { /* keep the +Z fallback */ }
+    } catch {
+      /* keep the +Z fallback */
+    }
     // TopAbs_REVERSED === 1: the face's outward direction is the surface's
     // reversed, exactly as replicad's own mesh path treats it.
     const flip = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
@@ -3302,24 +3821,34 @@ function patchMissingFaces(shape: Shape3D, meshed: MeshedFaces): { recovered: nu
   // patch can land its boundary exactly on the points its neighbours already use
   // (see triangulatePlanarFace). Built once from the pre-patch buffer; patches
   // don't snap to each other, which keeps the result independent of face order.
-  const CELL = 0.2, SNAP = 0.05; // mm: grid pitch, and the radius to snap within
+  const CELL = 0.2,
+    SNAP = 0.05; // mm: grid pitch, and the radius to snap within
   const grid = new Map<string, number[]>();
   const cellKey = (x: number, y: number, z: number) =>
     `${Math.floor(x / CELL)},${Math.floor(y / CELL)},${Math.floor(z / CELL)}`;
   for (let i = 0; i < vertices.length; i += 3) {
     const k = cellKey(vertices[i], vertices[i + 1], vertices[i + 2]);
     const arr = grid.get(k);
-    if (arr) arr.push(i); else grid.set(k, [i]);
+    if (arr) arr.push(i);
+    else grid.set(k, [i]);
   }
   const snap = (p: V3): V3 => {
-    let best = -1, bestD = SNAP * SNAP;
-    const cx = Math.floor(p[0] / CELL), cy = Math.floor(p[1] / CELL), cz = Math.floor(p[2] / CELL);
-    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
-      for (const i of grid.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? []) {
-        const d = (vertices[i] - p[0]) ** 2 + (vertices[i + 1] - p[1]) ** 2 + (vertices[i + 2] - p[2]) ** 2;
-        if (d < bestD) { bestD = d; best = i; }
-      }
-    }
+    let best = -1,
+      bestD = SNAP * SNAP;
+    const cx = Math.floor(p[0] / CELL),
+      cy = Math.floor(p[1] / CELL),
+      cz = Math.floor(p[2] / CELL);
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dz = -1; dz <= 1; dz++) {
+          for (const i of grid.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? []) {
+            const d = (vertices[i] - p[0]) ** 2 + (vertices[i + 1] - p[1]) ** 2 + (vertices[i + 2] - p[2]) ** 2;
+            if (d < bestD) {
+              bestD = d;
+              best = i;
+            }
+          }
+        }
     return best < 0 ? p : [vertices[best], vertices[best + 1], vertices[best + 2]];
   };
 
@@ -3376,8 +3905,13 @@ function patchMissingFaces(shape: Shape3D, meshed: MeshedFaces): { recovered: nu
     if (!done) {
       try {
         const tri = triangulatePlanarFace(face, vertices.length / 3, snap);
-        if (tri && tri.trianglesIndexes.length > 0) { append(face, tri); done = true; }
-      } catch { /* nothing left to try; the caller reports it */ }
+        if (tri && tri.trianglesIndexes.length > 0) {
+          append(face, tri);
+          done = true;
+        }
+      } catch {
+        /* nothing left to try; the caller reports it */
+      }
     }
     if (done) patched++;
   }
@@ -3399,12 +3933,13 @@ function smoothEdgeHashes(shape: Shape3D, stats?: FaceNormalStats): Set<number> 
     if (!n) continue;
     for (const e of f.edges) {
       const arr = adj.get(e.hashCode);
-      if (arr) arr.push(n); else adj.set(e.hashCode, [n]);
+      if (arr) arr.push(n);
+      else adj.set(e.hashCode, [n]);
     }
   }
   const smooth = new Set<number>();
   for (const [h, ns] of adj) {
-    if (ns.length === 2 && v3dot(ns[0], ns[1]) > CREASE_DOT) smooth.add(h);
+    if (ns.length === 2 && vdot(ns[0], ns[1]) > CREASE_DOT) smooth.add(h);
   }
   return smooth;
 }
@@ -3421,10 +3956,18 @@ function faceClustersFrom(shape: Shape3D): Map<number, number> {
   const find = (x: number): number => {
     let r = x;
     while (parent.get(r) !== r) r = parent.get(r)!;
-    while (parent.get(x) !== r) { const nx = parent.get(x)!; parent.set(x, r); x = nx; }
+    while (parent.get(x) !== r) {
+      const nx = parent.get(x)!;
+      parent.set(x, r);
+      x = nx;
+    }
     return r;
   };
-  const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+  const union = (a: number, b: number) => {
+    const ra = find(a),
+      rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
   // edge hash -> the (≤2) adjacent faces, each with its outward normal at centre.
   const adj = new Map<number, { h: number; n: V3 }[]>();
   for (const f of shape.faces) {
@@ -3434,11 +3977,12 @@ function faceClustersFrom(shape: Shape3D): Map<number, number> {
     if (!parent.has(fh)) parent.set(fh, fh);
     for (const e of f.edges) {
       const arr = adj.get(e.hashCode);
-      if (arr) arr.push({ h: fh, n }); else adj.set(e.hashCode, [{ h: fh, n }]);
+      if (arr) arr.push({ h: fh, n });
+      else adj.set(e.hashCode, [{ h: fh, n }]);
     }
   }
   for (const fs of adj.values()) {
-    if (fs.length === 2 && v3dot(fs[0].n, fs[1].n) > CREASE_DOT) union(fs[0].h, fs[1].h);
+    if (fs.length === 2 && vdot(fs[0].n, fs[1].n) > CREASE_DOT) union(fs[0].h, fs[1].h);
   }
   const out = new Map<number, number>();
   for (const h of parent.keys()) out.set(h, find(h));
@@ -3463,10 +4007,18 @@ function edgeChainsFrom(shape: Shape3D): Map<number, number> {
   const find = (x: number): number => {
     let r = x;
     while (parent.get(r) !== r) r = parent.get(r)!;
-    while (parent.get(x) !== r) { const nx = parent.get(x)!; parent.set(x, r); x = nx; }
+    while (parent.get(x) !== r) {
+      const nx = parent.get(x)!;
+      parent.set(x, r);
+      x = nx;
+    }
     return r;
   };
-  const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+  const union = (a: number, b: number) => {
+    const ra = find(a),
+      rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
   const vkey = (p: V3) => `${Math.round(p[0] * 1e3)},${Math.round(p[1] * 1e3)},${Math.round(p[2] * 1e3)}`;
   // vertex -> the edge-ends there, each with the unit tangent pointing INTO the edge.
   const atVertex = new Map<string, { h: number; tan: V3 }[]>();
@@ -3474,21 +4026,32 @@ function edgeChainsFrom(shape: Shape3D): Map<number, number> {
     const h = e.hashCode;
     if (!parent.has(h)) parent.set(h, h);
     let pts: V3[];
-    try { pts = sampleEdgePoints(e); } catch { continue; }
+    try {
+      pts = sampleEdgePoints(e);
+    } catch {
+      continue;
+    }
     if (pts.length < 2) continue;
-    const a = pts[0], a2 = pts[1], b = pts[pts.length - 1], b2 = pts[pts.length - 2];
+    const a = pts[0],
+      a2 = pts[1],
+      b = pts[pts.length - 1],
+      b2 = pts[pts.length - 2];
     const tanA = vunit([a2[0] - a[0], a2[1] - a[1], a2[2] - a[2]]);
     const tanB = vunit([b2[0] - b[0], b2[1] - b[1], b2[2] - b[2]]);
-    for (const [p, tan] of [[a, tanA], [b, tanB]] as [V3, V3][]) {
+    for (const [p, tan] of [
+      [a, tanA],
+      [b, tanB],
+    ] as [V3, V3][]) {
       const k = vkey(p);
       const arr = atVertex.get(k);
-      if (arr) arr.push({ h, tan }); else atVertex.set(k, [{ h, tan }]);
+      if (arr) arr.push({ h, tan });
+      else atVertex.set(k, [{ h, tan }]);
     }
   }
   for (const arr of atVertex.values()) {
     for (let i = 0; i < arr.length; i++)
       for (let j = i + 1; j < arr.length; j++)
-        if (arr[i].h !== arr[j].h && v3dot(arr[i].tan, arr[j].tan) < -CHAIN_DOT) union(arr[i].h, arr[j].h);
+        if (arr[i].h !== arr[j].h && vdot(arr[i].tan, arr[j].tan) < -CHAIN_DOT) union(arr[i].h, arr[j].h);
   }
   const out = new Map<number, number>();
   for (const h of parent.keys()) out.set(h, find(h));
@@ -3519,30 +4082,41 @@ function filterSmoothEdges(edges: MeshedEdges, smooth: Set<number>): MeshedEdges
  *  never touches vertices/triangles/faceGroups, so picking + measurement are
  *  unaffected. */
 function smoothMeshNormals(faces: MeshedFaces): void {
-  const V = faces.vertices, N = faces.normals;
+  const V = faces.vertices,
+    N = faces.normals;
   if (!V || !N) return;
   const nv = V.length / 3;
   const groups = new Map<string, number[]>();
   for (let vi = 0; vi < nv; vi++) {
     const k = `${Math.round(V[vi * 3] * 1e4)},${Math.round(V[vi * 3 + 1] * 1e4)},${Math.round(V[vi * 3 + 2] * 1e4)}`;
     const arr = groups.get(k);
-    if (arr) arr.push(vi); else groups.set(k, [vi]);
+    if (arr) arr.push(vi);
+    else groups.set(k, [vi]);
   }
   for (const arr of groups.values()) {
     if (arr.length < 2) continue;
     const clusters: { sum: V3; rep: V3; members: number[] }[] = [];
     for (const vi of arr) {
       const n: V3 = [N[vi * 3], N[vi * 3 + 1], N[vi * 3 + 2]];
-      let c = clusters.find((cl) => v3dot(cl.rep, n) > CREASE_DOT);
-      if (!c) { c = { sum: [0, 0, 0], rep: n, members: [] }; clusters.push(c); }
-      c.sum[0] += n[0]; c.sum[1] += n[1]; c.sum[2] += n[2];
+      let c = clusters.find((cl) => vdot(cl.rep, n) > CREASE_DOT);
+      if (!c) {
+        c = { sum: [0, 0, 0], rep: n, members: [] };
+        clusters.push(c);
+      }
+      c.sum[0] += n[0];
+      c.sum[1] += n[1];
+      c.sum[2] += n[2];
       c.members.push(vi);
     }
     if (clusters.length < 2 && arr.length < 3) continue;
     for (const c of clusters) {
       const L = Math.hypot(c.sum[0], c.sum[1], c.sum[2]) || 1;
       const a: V3 = [c.sum[0] / L, c.sum[1] / L, c.sum[2] / L];
-      for (const vi of c.members) { N[vi * 3] = a[0]; N[vi * 3 + 1] = a[1]; N[vi * 3 + 2] = a[2]; }
+      for (const vi of c.members) {
+        N[vi * 3] = a[0];
+        N[vi * 3 + 1] = a[1];
+        N[vi * 3 + 2] = a[2];
+      }
     }
   }
 }
@@ -3583,7 +4157,9 @@ function regenerate(
           // exhausts the heap). Produce typed arrays — this mesh is millions of
           // triangles and re-transfers to the main thread every regen, so the
           // ArrayBuffer copy (vs per-number structured clone) is a big win here.
-          faces = meshFaceByFace(b.shape, referenceMeshOpts(b.shape), (done, total) => onMeshProgress?.(b.id, done, total));
+          faces = meshFaceByFace(b.shape, referenceMeshOpts(b.shape), (done, total) =>
+            onMeshProgress?.(b.id, done, total),
+          );
           edges = { lines: [], edgeGroups: [] }; // edges omitted for a reference body
         } else {
           // Normal body: replicad's one-shot mesh (number[]). Small meshes clone
@@ -3615,8 +4191,10 @@ function regenerate(
             // the same reason as a hole: otherwise it's silent.
             const nstats: FaceNormalStats = { fallback: 0, unknown: 0 };
             edges = filterSmoothEdges(edges, smoothEdgeHashes(b.shape, nstats));
-            if (nstats.fallback) console.warn(`mesh: ${nstats.fallback} face normal(s) via boundary fallback on ${b.id}`);
-            if (nstats.unknown) console.warn(`mesh: NORMALLESS ${nstats.unknown} face(s) on ${b.id} — their seams draw as creases`);
+            if (nstats.fallback)
+              console.warn(`mesh: ${nstats.fallback} face normal(s) via boundary fallback on ${b.id}`);
+            if (nstats.unknown)
+              console.warn(`mesh: NORMALLESS ${nstats.unknown} face(s) on ${b.id} — their seams draw as creases`);
           }
         }
         // Attach each face's / edge's persistent name (matched by build-local hash)
@@ -3645,7 +4223,11 @@ function regenerate(
           // Chain tangent-continuous chords (whole-circle edge selection); skipped
           // for huge reference bodies alongside the surface/cluster passes.
           const chains = b.names.size > PER_FACE_MESH_THRESHOLD ? null : edgeChainsFrom(b.shape);
-          edges.edgeGroups = edges.edgeGroups.map((g) => ({ ...g, name: edgeNames.get(g.edgeId), chainId: chains?.get(g.edgeId) }));
+          edges.edgeGroups = edges.edgeGroups.map((g) => ({
+            ...g,
+            name: edgeNames.get(g.edgeId),
+            chainId: chains?.get(g.edgeId),
+          }));
         }
         cached = { faces, edges };
         meshCache.set(b.key, cached);
@@ -3658,7 +4240,11 @@ function regenerate(
       // dangling entry in `bodies` (its own error is already recorded). Freeing
       // it again would throw out of the mesh pass and turn one bad feature into a
       // dead regeneration, so the cleanup tolerates it.
-      try { b.shape.delete(); } catch { /* already released by a failed feature */ }
+      try {
+        b.shape.delete();
+      } catch {
+        /* already released by a failed feature */
+      }
     }
     meshTimings.push({ id: b.id, ms: performance.now() - mt0, hit: meshHit });
     // Stream this body the instant it's ready so the main thread can paint it
@@ -3670,7 +4256,10 @@ function regenerate(
   // Sweep both caches: drop entries not touched this run (edited/removed
   // features) so memory stays bounded and stale geometry never lingers.
   for (const k of builderCache.keys()) {
-    if (!usedBuilders.has(k)) { builderCache.get(k)!.shape.delete(); builderCache.delete(k); }
+    if (!usedBuilders.has(k)) {
+      builderCache.get(k)!.shape.delete();
+      builderCache.delete(k);
+    }
   }
   // Same sweep for dress-ups, and it is what makes UNDO safe to cache through:
   // undo replays an earlier document, so the entries belonging to the undone
@@ -3678,21 +4267,28 @@ function regenerate(
   // depended on it — a content key names its own result — but the geometry
   // would otherwise sit in memory for a state no longer reachable.)
   for (const k of dressUpCache.keys()) {
-    if (!usedDressUps.has(k)) { dressUpCache.get(k)!.result.shape.delete(); dressUpCache.delete(k); }
+    if (!usedDressUps.has(k)) {
+      dressUpCache.get(k)!.result.shape.delete();
+      dressUpCache.delete(k);
+    }
   }
   for (const k of meshCache.keys()) if (!usedMeshes.has(k)) meshCache.delete(k);
 
   if (REGEN_PROFILE) {
     const meshMs = meshTimings.reduce((s, m) => s + m.ms, 0);
     const short = (s: string) => s.slice(0, 8);
-    const topBuild = timings.filter((t) => t.ms >= 1).sort((a, b) => b.ms - a.ms)
+    const topBuild = timings
+      .filter((t) => t.ms >= 1)
+      .sort((a, b) => b.ms - a.ms)
       .map((t) => `${short(t.id)}:${t.type}=${t.ms.toFixed(0)}`);
-    const topMesh = meshTimings.filter((m) => m.ms >= 1).sort((a, b) => b.ms - a.ms)
+    const topMesh = meshTimings
+      .filter((m) => m.ms >= 1)
+      .sort((a, b) => b.ms - a.ms)
       .map((m) => `${short(m.id)}${m.hit ? "*" : ""}=${m.ms.toFixed(0)}`);
     console.log(
       `[regen] total=${(buildMs + meshMs).toFixed(0)}ms build=${buildMs.toFixed(0)} mesh=${meshMs.toFixed(0)} ` +
-      `(bodies=${bodies.length}) | build: ${topBuild.join(" ")} | mesh: ${topMesh.join(" ")} ` +
-      `(build ms<10 = cache reuse; mesh * = cache hit)`,
+        `(bodies=${bodies.length}) | build: ${topBuild.join(" ")} | mesh: ${topMesh.join(" ")} ` +
+        `(build ms<10 = cache reuse; mesh * = cache hit)`,
     );
   }
 
@@ -3724,10 +4320,7 @@ ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
     await ensureOC();
     // Load the text font only when a feature actually bakes text (keeps the
     // 340 KB asset off the critical path for text-free documents).
-    if (
-      "features" in req &&
-      req.features.some((f) => f.type === "extrude" && f.profile.kind === "sketchText")
-    ) {
+    if ("features" in req && req.features.some((f) => f.type === "extrude" && f.profile.kind === "sketchText")) {
       await ensureFont();
     }
     let res: KernelResponse;
@@ -3736,7 +4329,8 @@ ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
         const { results, warnings } = regenerate(
           req.features,
           (result) => ctx.postMessage({ id: req.id, ok: true, op: "regenerate-progress", result }),
-          (featureId, done, total) => ctx.postMessage({ id: req.id, ok: true, op: "mesh-progress", featureId, done, total }),
+          (featureId, done, total) =>
+            ctx.postMessage({ id: req.id, ok: true, op: "mesh-progress", featureId, done, total }),
         );
         res = { id: req.id, ok: true, op: "regenerate", results, warnings };
         break;

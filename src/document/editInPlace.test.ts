@@ -6,6 +6,7 @@ import {
   addPattern,
   addPlane,
   addRevolve,
+  addShell,
   addSketch,
   createDocument,
   updateBoolean,
@@ -14,19 +15,37 @@ import {
   updatePattern,
   updatePlane,
   updateRevolve,
+  updateShell,
 } from "./document";
-import type { BooleanFeature, DressUpFeature, ExtrudeFeature, PatternFeature, PlaneFeature, RevolveFeature } from "./types";
+import type {
+  BooleanFeature,
+  DressUpFeature,
+  ExtrudeFeature,
+  PatternFeature,
+  PlaneFeature,
+  RevolveFeature,
+  ShellFeature,
+} from "./types";
 
-const feat = <T,>(doc: ReturnType<typeof createDocument>, id: string) =>
+const feat = <T>(doc: ReturnType<typeof createDocument>, id: string) =>
   doc.features.find((f) => f.id === id) as unknown as T;
 
 describe("in-place feature edits preserve identity + timeline position", () => {
   it("updateExtrude swaps profile/params, keeps id/name/color", () => {
     let doc = createDocument();
     const { doc: d1, id: sk } = addSketch(doc, { kind: "datum", id: "plane-front" });
-    const { doc: d2, id } = addExtrude(d1, { kind: "sketchRegion", sketchId: sk, regionId: "r1" }, { distance: "10", mode: "new" });
+    const { doc: d2, id } = addExtrude(
+      d1,
+      { kind: "sketchRegion", sketchId: sk, regionId: "r1" },
+      { distance: "10", mode: "new" },
+    );
     const before = feat<ExtrudeFeature>(d2, id);
-    doc = updateExtrude(d2, id, { kind: "sketchRegion", sketchId: sk, regionId: "r2" }, { distance: "25", flip: true, extent: "symmetric", mode: "new" });
+    doc = updateExtrude(
+      d2,
+      id,
+      { kind: "sketchRegion", sketchId: sk, regionId: "r2" },
+      { distance: "25", flip: true, extent: "symmetric", mode: "new" },
+    );
     const after = feat<ExtrudeFeature>(doc, id);
     expect(after.id).toBe(id);
     expect(after.name).toBe(before.name);
@@ -41,7 +60,11 @@ describe("in-place feature edits preserve identity + timeline position", () => {
 
   it("updatePlane changes method/offset in place", () => {
     let doc = createDocument();
-    const { doc: d1, id } = addPlane(createDocument(), { method: "offset", base: { kind: "datum", id: "plane-top" }, offset: "20" });
+    const { doc: d1, id } = addPlane(createDocument(), {
+      method: "offset",
+      base: { kind: "datum", id: "plane-top" },
+      offset: "20",
+    });
     doc = updatePlane(d1, id, { method: "offset", base: { kind: "datum", id: "plane-front" }, offset: "50" });
     const p = feat<PlaneFeature>(doc, id);
     expect(p.offset).toBe("50");
@@ -49,7 +72,13 @@ describe("in-place feature edits preserve identity + timeline position", () => {
   });
 
   it("updateRevolve changes angle/symmetric", () => {
-    const { doc: d1, id } = addRevolve(createDocument(), { sketchId: "s", regionId: "r" }, { sketchId: "s", entityId: "e" }, "360", false);
+    const { doc: d1, id } = addRevolve(
+      createDocument(),
+      { sketchId: "s", regionId: "r" },
+      { sketchId: "s", entityId: "e" },
+      "360",
+      false,
+    );
     const doc = updateRevolve(d1, id, { sketchId: "s", regionId: "r" }, { sketchId: "s", entityId: "e" }, "90", true);
     const r = feat<RevolveFeature>(doc, id);
     expect(r.angle).toBe("90");
@@ -92,9 +121,40 @@ describe("in-place feature edits preserve identity + timeline position", () => {
     expect(feat<DressUpFeature>(doc, id).flip).toBeUndefined();
   });
 
+  it("updateShell changes thickness + faces, keeps id/name", () => {
+    const { doc: d1, id } = addShell(createDocument(), "body", ["+z"], "2");
+    const before = feat<ShellFeature>(d1, id);
+    const doc = updateShell(d1, id, { targetId: "body", faces: ["+z", "+x"], thickness: "4" });
+    const after = feat<ShellFeature>(doc, id);
+    expect(after.id).toBe(id);
+    expect(after.name).toBe(before.name);
+    expect(after.thickness).toBe("4");
+    expect(after.faces).toEqual(["+z", "+x"]);
+  });
+
+  it("addShell allows zero faces (a fully sealed hollow shell)", () => {
+    const { doc, id } = addShell(createDocument(), "body", [], "3");
+    const s = feat<ShellFeature>(doc, id);
+    expect(s.faces).toEqual([]);
+    expect(s.thickness).toBe("3");
+    expect(s.targetId).toBe("body");
+  });
+
   it("updatePattern changes count/spacing", () => {
-    const { doc: d1, id } = addPattern(createDocument(), "body", { kind: "linear", dir1: { world: "x" }, count1: "3", spacing1: "25", flip1: false });
-    const doc = updatePattern(d1, id, "body", { kind: "linear", dir1: { world: "y" }, count1: "6", spacing1: "10", flip1: true });
+    const { doc: d1, id } = addPattern(createDocument(), "body", {
+      kind: "linear",
+      dir1: { world: "x" },
+      count1: "3",
+      spacing1: "25",
+      flip1: false,
+    });
+    const doc = updatePattern(d1, id, "body", {
+      kind: "linear",
+      dir1: { world: "y" },
+      count1: "6",
+      spacing1: "10",
+      flip1: true,
+    });
     const p = feat<PatternFeature>(doc, id);
     expect(p.count1).toBe("6");
     expect(p.spacing1).toBe("10");

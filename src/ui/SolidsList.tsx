@@ -1,4 +1,17 @@
-import type { BooleanFeature, Document, ExtrudeFeature, Feature, ImportFeature, LoftFeature, MirrorFeature, PatternFeature, PrimitiveFeature, RevolveFeature, SweepFeature, TransformFeature } from "../document/types";
+import type {
+  BooleanFeature,
+  Document,
+  ExtrudeFeature,
+  Feature,
+  ImportFeature,
+  LoftFeature,
+  MirrorFeature,
+  PatternFeature,
+  PrimitiveFeature,
+  RevolveFeature,
+  SweepFeature,
+  TransformFeature,
+} from "../document/types";
 import { colorToHex } from "../document/colors";
 import { EyeIcon } from "./icons";
 
@@ -24,12 +37,29 @@ interface Props {
 /** A feature that owns a body's appearance (color/opacity). A copy-transform
  *  produces a body keyed by its own id; an in-place transform doesn't (its body
  *  keeps the target's id), so the bodyIds filter naturally excludes it. */
-type SolidFeature = PrimitiveFeature | ExtrudeFeature | BooleanFeature | TransformFeature | MirrorFeature | PatternFeature | RevolveFeature | SweepFeature | LoftFeature | ImportFeature;
+type SolidFeature =
+  | PrimitiveFeature
+  | ExtrudeFeature
+  | BooleanFeature
+  | TransformFeature
+  | MirrorFeature
+  | PatternFeature
+  | RevolveFeature
+  | SweepFeature
+  | LoftFeature
+  | ImportFeature;
 function isSolidFeature(f: Feature): f is SolidFeature {
   return (
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" ||
-    f.type === "transform" || f.type === "mirror" || f.type === "pattern" ||
-    f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import"
+    f.type === "primitive" ||
+    f.type === "extrude" ||
+    f.type === "boolean" ||
+    f.type === "transform" ||
+    f.type === "mirror" ||
+    f.type === "pattern" ||
+    f.type === "revolve" ||
+    f.type === "sweep" ||
+    f.type === "loft" ||
+    f.type === "import"
   );
 }
 
@@ -62,9 +92,7 @@ export function SolidsList({
         <div
           key={f.id}
           className={
-            "solid-row" +
-            (selectedIds.has(f.id) ? " selected" : "") +
-            (f.suppressed || f.hidden ? " dim" : "")
+            "solid-row" + (selectedIds.has(f.id) ? " selected" : "") + (f.suppressed || f.hidden ? " dim" : "")
           }
           onClick={() => onSelect(f.id)}
         >

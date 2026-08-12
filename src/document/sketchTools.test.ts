@@ -27,10 +27,20 @@ function catmullRom(points: Vec2[], segsPerSpan = 16): Vec2[] {
     const p2 = points[i + 1];
     const p3 = points[i + 2] ?? points[i + 1];
     for (let s = 1; s <= segsPerSpan; s++) {
-      const t = s / segsPerSpan, t2 = t * t, t3 = t2 * t;
+      const t = s / segsPerSpan,
+        t2 = t * t,
+        t3 = t2 * t;
       out.push([
-        0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
-        0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3),
+        0.5 *
+          (2 * p1[0] +
+            (-p0[0] + p2[0]) * t +
+            (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 +
+            (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
+        0.5 *
+          (2 * p1[1] +
+            (-p0[1] + p2[1]) * t +
+            (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 +
+            (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3),
       ]);
     }
   }
@@ -38,7 +48,13 @@ function catmullRom(points: Vec2[], segsPerSpan = 16): Vec2[] {
 }
 
 describe("splineBeziers / sampleSpline", () => {
-  const pts: Vec2[] = [[38, 72], [66, 66], [76, 47], [66, 28], [38, 22]];
+  const pts: Vec2[] = [
+    [38, 72],
+    [66, 66],
+    [76, 47],
+    [66, 28],
+    [38, 22],
+  ];
 
   it("Bézier spans reproduce the original Catmull-Rom curve exactly", () => {
     const sampled = sampleSpline(pts);
@@ -111,7 +127,15 @@ describe("detectSingleChain", () => {
   });
 
   it("rejects a non-offsettable entity (spline) in the selection", () => {
-    const spline: SketchEntity = { type: "spline", id: "sp", points: [[0, 0], [1, 1], [2, 0]] };
+    const spline: SketchEntity = {
+      type: "spline",
+      id: "sp",
+      points: [
+        [0, 0],
+        [1, 1],
+        [2, 0],
+      ],
+    };
     expect(detectSingleChain([spline])).toBeNull();
   });
 });
@@ -248,7 +272,8 @@ describe("reflectPointAcrossLine / mirrorEntity", () => {
   });
 
   it("mirrors an arc so it still passes through the reflection of its midpoint", () => {
-    const axisA: Vec2 = [0, 0], axisB: Vec2 = [0, 1]; // mirror across x = 0
+    const axisA: Vec2 = [0, 0],
+      axisB: Vec2 = [0, 1]; // mirror across x = 0
     const e: SketchEntity = { type: "arc", id: "a", c: [3, 0], r: 2, start: 0.3, end: 2.1 };
     const m = mirrorEntity(e, axisA, axisB, "a2");
     expect(m.type).toBe("arc");
@@ -297,7 +322,10 @@ describe("worldToUv (Project/Convert projection)", () => {
 
 describe("fitProjectedPolyline", () => {
   it("fits a straight (2-point) edge to a line", () => {
-    const fit = fitProjectedPolyline([[1, 2], [5, 9]]);
+    const fit = fitProjectedPolyline([
+      [1, 2],
+      [5, 9],
+    ]);
     expect(fit?.type).toBe("line");
     if (fit?.type === "line") {
       expect(fit.a).toEqual([1, 2]);

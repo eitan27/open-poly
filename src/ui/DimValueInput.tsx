@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatNumber } from "../lib/format";
 
 export interface VarOption {
   name: string;
@@ -16,10 +17,6 @@ interface Props {
   variables: VarOption[];
 }
 
-function fmt(v: number): string {
-  return Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/\.?0+$/, "");
-}
-
 /** The identifier being typed at the end of `value` (what we'd complete
  *  against). Empty for a bare number or a trailing operator/space. */
 export function trailingToken(value: string): string {
@@ -32,9 +29,7 @@ export function matchVariables(value: string, variables: VarOption[]): VarOption
   const token = trailingToken(value);
   if (!token) return [];
   const lower = token.toLowerCase();
-  return variables
-    .filter((v) => v.name.toLowerCase().startsWith(lower) && v.name !== token)
-    .slice(0, 6);
+  return variables.filter((v) => v.name.toLowerCase().startsWith(lower) && v.name !== token).slice(0, 6);
 }
 
 /** Replace the trailing identifier in `value` with `name`. */
@@ -112,7 +107,7 @@ export function DimValueInput({ value, onChange, onSubmit, onCancel, variables }
               }}
             >
               <span className="dim-suggest-name">{s.name}</span>
-              <span className="dim-suggest-val">{fmt(s.value)}</span>
+              <span className="dim-suggest-val">{formatNumber(s.value)}</span>
             </li>
           ))}
         </ul>

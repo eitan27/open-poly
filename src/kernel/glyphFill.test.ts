@@ -8,8 +8,9 @@ import { glyphFillPolygons, glyphRings, resolveGlyphFill, ringArea, type Ring } 
 function pointInRing(p: [number, number], ring: Ring): boolean {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i], [xj, yj] = ring[j];
-    if ((yi > p[1]) !== (yj > p[1]) && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
+    const [xi, yi] = ring[i],
+      [xj, yj] = ring[j];
+    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
   }
   return inside;
 }
@@ -21,7 +22,10 @@ function pointInPolygon(p: [number, number], poly: Ring[]): boolean {
 }
 function segCross(a1: number[], a2: number[], b1: number[], b2: number[]): boolean {
   const d = (a: number[], b: number[], c: number[]) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-  const d1 = d(b1, b2, a1), d2 = d(b1, b2, a2), d3 = d(a1, a2, b1), d4 = d(a1, a2, b2);
+  const d1 = d(b1, b2, a1),
+    d2 = d(b1, b2, a2),
+    d3 = d(a1, a2, b1),
+    d4 = d(a1, a2, b2);
   return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
 }
 function ringSelfIntersects(ring: Ring): boolean {
@@ -35,7 +39,13 @@ function ringSelfIntersects(ring: Ring): boolean {
   return false;
 }
 const square = (x0: number, y0: number, x1: number, y1: number, ccw: boolean): Ring => {
-  const r: Ring = [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]];
+  const r: Ring = [
+    [x0, y0],
+    [x1, y0],
+    [x1, y1],
+    [x0, y1],
+    [x0, y0],
+  ];
   return ccw ? r : (r.reverse() as Ring);
 };
 
@@ -72,8 +82,11 @@ describe("resolveGlyphFill", () => {
 describe("glyphRings", () => {
   it("flattens a square path, flipping y to u,v", () => {
     const rings = glyphRings([
-      { type: "M", x: 0, y: 0 }, { type: "L", x: 10, y: 0 },
-      { type: "L", x: 10, y: 10 }, { type: "L", x: 0, y: 10 }, { type: "Z" },
+      { type: "M", x: 0, y: 0 },
+      { type: "L", x: 10, y: 0 },
+      { type: "L", x: 10, y: 10 },
+      { type: "L", x: 0, y: 10 },
+      { type: "Z" },
     ] as never);
     expect(rings).toHaveLength(1);
     // y is negated: input y=10 -> u,v y=-10.
@@ -93,9 +106,10 @@ describe("glyphFillPolygons (Inter)", () => {
     for (const ch of ["e", "h", "v", "w", "x", "y", "m", "n"]) {
       const polys = fill(ch);
       expect(polys.length, `${ch} produced no fill`).toBeGreaterThan(0);
-      for (const poly of polys) for (const ring of poly) {
-        expect(ringSelfIntersects(ring), `${ch} still has a self-intersecting ring`).toBe(false);
-      }
+      for (const poly of polys)
+        for (const ring of poly) {
+          expect(ringSelfIntersects(ring), `${ch} still has a self-intersecting ring`).toBe(false);
+        }
     }
   });
 

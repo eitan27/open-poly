@@ -118,8 +118,12 @@ function circleExtrudeDoc(entity: SketchEntity, vars: { name: string; value: num
   } as unknown as Document;
 }
 const traceDiameter = (d: Document, faceName: string, scope = {}) =>
-  measureSelection([{ kind: "face", featureId: "body", faceId: 7 } as unknown as Selection], d, [namedFaceBody("body", faceName)], scope)
-    ?.rows.find((r) => r.label === "Diameter")?.value;
+  measureSelection(
+    [{ kind: "face", featureId: "body", faceId: 7 } as unknown as Selection],
+    d,
+    [namedFaceBody("body", faceName)],
+    scope,
+  )?.rows.find((r) => r.label === "Diameter")?.value;
 
 describe("faceted extruded-circle diameter (traced to the sketch)", () => {
   const d = circleExtrudeDoc({ type: "circle", id: "c", c: [0, 0], r: 5 });
@@ -146,7 +150,11 @@ describe("faceted extruded-circle diameter (traced to the sketch)", () => {
     const rd = {
       features: [
         { id: "sk", type: "sketch", plane: { datum: "top" }, entities: rect },
-        { id: "ext", type: "extrude", profile: { kind: "sketchRegion", sketchId: "sk", regionId: detectSketchRegions(rect)[0].id } },
+        {
+          id: "ext",
+          type: "extrude",
+          profile: { kind: "sketchRegion", sketchId: "sk", regionId: detectSketchRegions(rect)[0].id },
+        },
       ],
     } as unknown as Document;
     expect(traceDiameter(rd, "ext/start")).toBeUndefined();
@@ -190,8 +198,14 @@ describe("distance between two parallel edges", () => {
   it("measures two parallel edges of a box", () => {
     // Two bottom edges of a 10-wide box, 10 apart in Y.
     const b = body("b", [
-      [[0, 0, 0], [10, 0, 0]],
-      [[0, 10, 0], [10, 10, 0]],
+      [
+        [0, 0, 0],
+        [10, 0, 0],
+      ],
+      [
+        [0, 10, 0],
+        [10, 10, 0],
+      ],
     ]);
     expect(distanceOf([b], [pick("b", 0), pick("b", 1)])).toBe("10");
   });
@@ -199,8 +213,14 @@ describe("distance between two parallel edges", () => {
   it("measures parallel edges that do not overlap along their direction", () => {
     // Offset along X too — the perpendicular distance is unaffected.
     const b = body("b", [
-      [[0, 0, 0], [10, 0, 0]],
-      [[50, 3, 4], [60, 3, 4]],
+      [
+        [0, 0, 0],
+        [10, 0, 0],
+      ],
+      [
+        [50, 3, 4],
+        [60, 3, 4],
+      ],
     ]);
     expect(distanceOf([b], [pick("b", 0), pick("b", 1)])).toBe("5"); // hypot(3,4)
   });
@@ -208,38 +228,72 @@ describe("distance between two parallel edges", () => {
   it("measures anti-parallel edges (opposite direction, same axis)", () => {
     // Edge loops wind consistently, so facing edges of a face often oppose.
     const b = body("b", [
-      [[0, 0, 0], [10, 0, 0]],
-      [[10, 7, 0], [0, 7, 0]],
+      [
+        [0, 0, 0],
+        [10, 0, 0],
+      ],
+      [
+        [10, 7, 0],
+        [0, 7, 0],
+      ],
     ]);
     expect(distanceOf([b], [pick("b", 0), pick("b", 1)])).toBe("7");
   });
 
   it("measures across two different bodies", () => {
-    const a = body("a", [[[0, 0, 0], [10, 0, 0]]]);
-    const c = body("c", [[[0, 0, 6], [10, 0, 6]]]);
+    const a = body("a", [
+      [
+        [0, 0, 0],
+        [10, 0, 0],
+      ],
+    ]);
+    const c = body("c", [
+      [
+        [0, 0, 6],
+        [10, 0, 6],
+      ],
+    ]);
     expect(distanceOf([a, c], [pick("a", 0), pick("c", 0)])).toBe("6");
   });
 
   it("reports 0 for collinear edges", () => {
     const b = body("b", [
-      [[0, 0, 0], [10, 0, 0]],
-      [[20, 0, 0], [30, 0, 0]],
+      [
+        [0, 0, 0],
+        [10, 0, 0],
+      ],
+      [
+        [20, 0, 0],
+        [30, 0, 0],
+      ],
     ]);
     expect(distanceOf([b], [pick("b", 0), pick("b", 1)])).toBe("0");
   });
 
   it("omits the distance for non-parallel edges", () => {
     const b = body("b", [
-      [[0, 0, 0], [10, 0, 0]],
-      [[0, 0, 0], [0, 10, 0]],
+      [
+        [0, 0, 0],
+        [10, 0, 0],
+      ],
+      [
+        [0, 0, 0],
+        [0, 10, 0],
+      ],
     ]);
     expect(distanceOf([b], [pick("b", 0), pick("b", 1)])).toBeUndefined();
   });
 
   it("omits the distance for skew (non-parallel, non-intersecting) edges", () => {
     const b = body("b", [
-      [[0, 0, 0], [10, 0, 0]],
-      [[0, 0, 5], [0, 10, 5]],
+      [
+        [0, 0, 0],
+        [10, 0, 0],
+      ],
+      [
+        [0, 0, 5],
+        [0, 10, 5],
+      ],
     ]);
     expect(distanceOf([b], [pick("b", 0), pick("b", 1)])).toBeUndefined();
   });
@@ -251,32 +305,60 @@ describe("distance between two parallel edges", () => {
       const t = (i / 8) * (Math.PI / 2);
       arc.push([10 * Math.cos(t), 10 * Math.sin(t), 0]);
     }
-    const b = body("b", [[[0, -5, 0], [10, -5, 0]], arc]);
+    const b = body("b", [
+      [
+        [0, -5, 0],
+        [10, -5, 0],
+      ],
+      arc,
+    ]);
     expect(distanceOf([b], [pick("b", 0), pick("b", 1)])).toBeUndefined();
   });
 
   it("treats a multi-segment straight edge as straight", () => {
     // A straight edge may tessellate into several collinear segments.
     const b = body("b", [
-      [[0, 0, 0], [5, 0, 0], [10, 0, 0]],
-      [[0, 4, 0], [10, 4, 0]],
+      [
+        [0, 0, 0],
+        [5, 0, 0],
+        [10, 0, 0],
+      ],
+      [
+        [0, 4, 0],
+        [10, 4, 0],
+      ],
     ]);
     expect(distanceOf([b], [pick("b", 0), pick("b", 1)])).toBe("4");
   });
 
   it("omits the distance unless exactly two edges are selected", () => {
     const b = body("b", [
-      [[0, 0, 0], [10, 0, 0]],
-      [[0, 4, 0], [10, 4, 0]],
-      [[0, 8, 0], [10, 8, 0]],
+      [
+        [0, 0, 0],
+        [10, 0, 0],
+      ],
+      [
+        [0, 4, 0],
+        [10, 4, 0],
+      ],
+      [
+        [0, 8, 0],
+        [10, 8, 0],
+      ],
     ]);
     expect(distanceOf([b], [pick("b", 0), pick("b", 1), pick("b", 2)])).toBeUndefined();
   });
 
   it("reports just the count and the distance, nothing else", () => {
     const b = body("b", [
-      [[0, 0, 0], [10, 0, 0]],
-      [[0, 4, 0], [10, 4, 0]],
+      [
+        [0, 0, 0],
+        [10, 0, 0],
+      ],
+      [
+        [0, 4, 0],
+        [10, 4, 0],
+      ],
     ]);
     const rows = measureSelection([pick("b", 0), pick("b", 1)], doc, [b])!.rows;
     expect(rows).toEqual([
@@ -313,12 +395,16 @@ function twoFacetBody(clusterId?: number): FeatureMesh {
 
 describe("cluster-summed face area", () => {
   it("sums the area over every facet in the cluster", () => {
-    const rows = measureSelection([{ kind: "face", featureId: "c", faceId: 10 } as unknown as Selection], doc, [twoFacetBody(10)])?.rows;
+    const rows = measureSelection([{ kind: "face", featureId: "c", faceId: 10 } as unknown as Selection], doc, [
+      twoFacetBody(10),
+    ])?.rows;
     expect(rows).toContainEqual({ label: "Area", value: "1" }); // 0.5 + 0.5
   });
 
   it("measures only the picked facet when there's no cluster", () => {
-    const rows = measureSelection([{ kind: "face", featureId: "c", faceId: 10 } as unknown as Selection], doc, [twoFacetBody(undefined)])?.rows;
+    const rows = measureSelection([{ kind: "face", featureId: "c", faceId: 10 } as unknown as Selection], doc, [
+      twoFacetBody(undefined),
+    ])?.rows;
     expect(rows).toContainEqual({ label: "Area", value: "0.5" });
   });
 });
@@ -329,12 +415,18 @@ function ringBody(id: string, r: number, n: number, chainId = 999): FeatureMesh 
   const lines: number[] = [];
   const edgeGroups: { start: number; count: number; edgeId: number; chainId: number }[] = [];
   for (let i = 0; i < n; i++) {
-    const a = (2 * Math.PI * i) / n, b = (2 * Math.PI * (i + 1)) / n;
+    const a = (2 * Math.PI * i) / n,
+      b = (2 * Math.PI * (i + 1)) / n;
     const start = lines.length / 3;
     lines.push(r * Math.cos(a), r * Math.sin(a), 0, r * Math.cos(b), r * Math.sin(b), 0);
     edgeGroups.push({ start, count: 2, edgeId: i, chainId });
   }
-  return { id, mesh: { name: id, faces: { vertices: [], triangles: [] }, edges: { lines, edgeGroups } }, color: 0, opacity: 1 } as unknown as FeatureMesh;
+  return {
+    id,
+    mesh: { name: id, faces: { vertices: [], triangles: [] }, edges: { lines, edgeGroups } },
+    color: 0,
+    opacity: 1,
+  } as unknown as FeatureMesh;
 }
 
 describe("logical circular-edge measurement", () => {
@@ -347,7 +439,14 @@ describe("logical circular-edge measurement", () => {
   });
 
   it("falls back to Length for a single straight edge (no chain)", () => {
-    const info = measureSelection([pick("b", 0)], doc, [body("b", [[[0, 0, 0], [10, 0, 0]]])]);
+    const info = measureSelection([pick("b", 0)], doc, [
+      body("b", [
+        [
+          [0, 0, 0],
+          [10, 0, 0],
+        ],
+      ]),
+    ]);
     expect(info?.title).toBe("Edge");
     expect(info?.rows).toContainEqual({ label: "Length", value: "10" });
   });
@@ -356,8 +455,16 @@ describe("logical circular-edge measurement", () => {
     // 8 collinear unit segments sharing a chain → total length 8, not a ring.
     const lines: number[] = [];
     const edgeGroups: { start: number; count: number; edgeId: number; chainId: number }[] = [];
-    for (let i = 0; i < 8; i++) { lines.push(i, 0, 0, i + 1, 0, 0); edgeGroups.push({ start: i * 2, count: 2, edgeId: i, chainId: 1 }); }
-    const b = { id: "s", mesh: { name: "s", faces: { vertices: [], triangles: [] }, edges: { lines, edgeGroups } }, color: 0, opacity: 1 } as unknown as FeatureMesh;
+    for (let i = 0; i < 8; i++) {
+      lines.push(i, 0, 0, i + 1, 0, 0);
+      edgeGroups.push({ start: i * 2, count: 2, edgeId: i, chainId: 1 });
+    }
+    const b = {
+      id: "s",
+      mesh: { name: "s", faces: { vertices: [], triangles: [] }, edges: { lines, edgeGroups } },
+      color: 0,
+      opacity: 1,
+    } as unknown as FeatureMesh;
     const info = measureSelection([pick("s", 3)], doc, [b]);
     expect(info?.title).toBe("Edge");
     expect(info?.rows).toContainEqual({ label: "Length", value: "8" });

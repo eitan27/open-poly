@@ -11,6 +11,7 @@
 // tolerance is injected via a `uv -> screen px` projector, so callers keep the
 // tolerance in screen space while the math stays in uv.
 import type { Vec2 } from "../document/types";
+import { mag2 as norm } from "../lib/vec2";
 
 /** What relationship a guide expresses — drives which constraint a snap captures. */
 export type Meaning = "horizontal" | "vertical" | "parallel" | "perpendicular";
@@ -55,7 +56,6 @@ export interface GuideSnap {
 }
 
 const EPS = 1e-9;
-const norm = (v: Vec2): number => Math.hypot(v[0], v[1]);
 const unit = (v: Vec2): Vec2 => {
   const n = norm(v) || 1;
   return [v[0] / n, v[1] / n];
@@ -125,12 +125,7 @@ export function guideIntersection(a: Guide, b: Guide): Vec2 | null {
  *  range. Extra guides on the same line as a chosen snap fold their meanings in
  *  (so an intersection that also lies on a third parallel guide still reports it
  *  once). */
-export function snapToGuides(
-  cursor: Vec2,
-  guides: Guide[],
-  pxOf: (uv: Vec2) => Vec2,
-  tolPx: number,
-): GuideSnap | null {
+export function snapToGuides(cursor: Vec2, guides: Guide[], pxOf: (uv: Vec2) => Vec2, tolPx: number): GuideSnap | null {
   const pxBetween = (a: Vec2, b: Vec2): number => {
     const pa = pxOf(a);
     const pb = pxOf(b);

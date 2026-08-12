@@ -20,6 +20,7 @@ import {
   addPattern,
   addPlane,
   addRevolve,
+  addShell,
   addSketch,
   addSketchConstraints,
   addSweep,
@@ -47,13 +48,25 @@ import { parseDxfToEntities } from "../document/dxfImport";
 import { applyDerived, applyDerivedToSketch } from "../document/derived";
 import { evaluateExpression } from "../document/expression";
 import { solveSketch } from "../sketch/solver";
-import {
-  deriveFaceFrame,
-  planeRefLabel,
-  type SketchPlaneId,
-  type SketchPlaneRef,
-} from "../document/planes";
-import type { DistanceRef, Document, EdgeRef, ExtrudeProfile, Feature, PatternAxisRef, PatternDirRef, PointRef, PrimitiveFeature, RevolveAxis, SketchConstraint, SketchEntity, SketchFeature, Variable, Vec2 } from "../document/types";
+import { deriveFaceFrame, planeRefLabel, type SketchPlaneId, type SketchPlaneRef } from "../document/planes";
+import type {
+  DistanceRef,
+  Document,
+  EdgeRef,
+  ExtrudeProfile,
+  FaceRef,
+  Feature,
+  PatternAxisRef,
+  PatternDirRef,
+  PointRef,
+  PrimitiveFeature,
+  RevolveAxis,
+  SketchConstraint,
+  SketchEntity,
+  SketchFeature,
+  Variable,
+  Vec2,
+} from "../document/types";
 import { listMeta } from "../storage/db";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 import type { SectionViewState } from "../document/sectionView";
@@ -130,7 +143,10 @@ export interface AgentContext {
 }
 
 class OpError extends Error {
-  constructor(public kind: OpResult["errorKind"], message: string) {
+  constructor(
+    public kind: OpResult["errorKind"],
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -154,11 +170,23 @@ function faceGeomByName(faces: MeshedFaces, name: string): FaceGeom | null {
   const g = faces.faceGroups?.find((fg) => fg.name === name);
   if (!g) return null;
   const { triangles, vertices, normals } = faces;
-  let cx = 0, cy = 0, cz = 0, nx = 0, ny = 0, nz = 0, n = 0;
+  let cx = 0,
+    cy = 0,
+    cz = 0,
+    nx = 0,
+    ny = 0,
+    nz = 0,
+    n = 0;
   for (let k = g.start; k < g.start + g.count; k++) {
     const vi = triangles[k] * 3;
-    cx += vertices[vi]; cy += vertices[vi + 1]; cz += vertices[vi + 2];
-    if (normals) { nx += normals[vi]; ny += normals[vi + 1]; nz += normals[vi + 2]; }
+    cx += vertices[vi];
+    cy += vertices[vi + 1];
+    cz += vertices[vi + 2];
+    if (normals) {
+      nx += normals[vi];
+      ny += normals[vi + 1];
+      nz += normals[vi + 2];
+    }
     n++;
   }
   if (!n) return null;
@@ -177,13 +205,23 @@ function edgeFingerprintByName(edges: MeshedEdges, name: string): EdgeRef {
   const g = edges.edgeGroups?.find((eg) => eg.name === name);
   if (!g || g.count === 0) return { name };
   const { lines } = edges;
-  let minX = Infinity, minY = Infinity, minZ = Infinity;
-  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let minX = Infinity,
+    minY = Infinity,
+    minZ = Infinity;
+  let maxX = -Infinity,
+    maxY = -Infinity,
+    maxZ = -Infinity;
   let length = 0;
   for (let v = g.start; v < g.start + g.count; v++) {
-    const x = lines[v * 3], y = lines[v * 3 + 1], z = lines[v * 3 + 2];
-    minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
-    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+    const x = lines[v * 3],
+      y = lines[v * 3 + 1],
+      z = lines[v * 3 + 2];
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    minZ = Math.min(minZ, z);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+    maxZ = Math.max(maxZ, z);
     if (v > g.start) {
       length += Math.hypot(x - lines[(v - 1) * 3], y - lines[(v - 1) * 3 + 1], z - lines[(v - 1) * 3 + 2]);
     }
@@ -191,14 +229,30 @@ function edgeFingerprintByName(edges: MeshedEdges, name: string): EdgeRef {
   return { name, mid: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2], length };
 }
 
+/** Geometric fingerprint of a named face (centroid + averaged normal), stored
+ *  with a Shell alongside the persistent name so the kernel can re-match the
+ *  face if an upstream edit renames it — mirrors `edgeFingerprintByName`. */
+function faceFingerprintByName(faces: MeshedFaces, name: string): FaceRef {
+  const g = faceGeomByName(faces, name);
+  return g ? { name, center: g.center, normal: g.normal } : { name };
+}
+
 function bbox(faces: MeshedFaces): { min: [number, number, number]; max: [number, number, number] } | undefined {
   const v = faces.vertices;
   if (v.length === 0) return undefined;
-  let m0 = Infinity, m1 = Infinity, m2 = Infinity, x0 = -Infinity, x1 = -Infinity, x2 = -Infinity;
+  let m0 = Infinity,
+    m1 = Infinity,
+    m2 = Infinity,
+    x0 = -Infinity,
+    x1 = -Infinity,
+    x2 = -Infinity;
   for (let i = 0; i < v.length; i += 3) {
-    if (v[i] < m0) m0 = v[i]; if (v[i] > x0) x0 = v[i];
-    if (v[i + 1] < m1) m1 = v[i + 1]; if (v[i + 1] > x1) x1 = v[i + 1];
-    if (v[i + 2] < m2) m2 = v[i + 2]; if (v[i + 2] > x2) x2 = v[i + 2];
+    if (v[i] < m0) m0 = v[i];
+    if (v[i] > x0) x0 = v[i];
+    if (v[i + 1] < m1) m1 = v[i + 1];
+    if (v[i + 1] > x1) x1 = v[i + 1];
+    if (v[i + 2] < m2) m2 = v[i + 2];
+    if (v[i + 2] > x2) x2 = v[i + 2];
   }
   return { min: [m0, m1, m2], max: [x0, x1, x2] };
 }
@@ -240,11 +294,15 @@ function resolveProfile(ctx: AgentContext, spec: ProfileSpec): ExtrudeProfile {
     // resolveDocument bakes profiles from, so a region the summary lists is
     // always accepted here.
     const regions = detectSketchRegions(applyDerived(sketch, resolveDocument(doc).scope).entities);
-    if (regions.length === 0) throw new OpError("invalid_op", `Sketch "${spec.sketchId}" has no closed region to extrude.`);
+    if (regions.length === 0)
+      throw new OpError("invalid_op", `Sketch "${spec.sketchId}" has no closed region to extrude.`);
     let regionId = spec.regionId;
     if (regionId === undefined) {
       if (regions.length > 1) {
-        throw new OpError("invalid_op", `Sketch "${spec.sketchId}" has ${regions.length} regions; specify regionId (${regions.map((r) => r.id).join(", ")}).`);
+        throw new OpError(
+          "invalid_op",
+          `Sketch "${spec.sketchId}" has ${regions.length} regions; specify regionId (${regions.map((r) => r.id).join(", ")}).`,
+        );
       }
       regionId = regions[0].id;
     } else if (!regions.some((r) => r.id === regionId)) {
@@ -258,7 +316,14 @@ function resolveProfile(ctx: AgentContext, spec: ProfileSpec): ExtrudeProfile {
   if (!fg) throw new OpError("not_found", `Face "${spec.faceName}" not found on body "${spec.bodyId}".`);
   // center + normal are the geometric fingerprint the kernel falls back to if
   // an upstream edit renames the face.
-  return { kind: "bodyFace", featureId: spec.bodyId, faceId: fg.faceId, faceName: spec.faceName, center: fg.center, normal: fg.normal };
+  return {
+    kind: "bodyFace",
+    featureId: spec.bodyId,
+    faceId: fg.faceId,
+    faceName: spec.faceName,
+    center: fg.center,
+    normal: fg.normal,
+  };
 }
 
 /** Resolve an "up to face" target (body id + persistent face name) to the
@@ -375,7 +440,8 @@ function buildGeoConstraint(sk: SketchFeature, spec: ConstraintSpec): SketchCons
       const a = requireEntity(sk, spec.a);
       const b = requireEntity(sk, spec.b);
       const circLike = (e: SketchEntity) => e.type === "circle" || e.type === "arc";
-      const ok = (circLike(a) && circLike(b)) || (a.type === "line" && circLike(b)) || (circLike(a) && b.type === "line");
+      const ok =
+        (circLike(a) && circLike(b)) || (a.type === "line" && circLike(b)) || (circLike(a) && b.type === "line");
       if (!ok) throw new OpError("invalid_op", "tangent needs a line + circle/arc, or two circles/arcs.");
       return { id, type: "tangent", a: spec.a, b: spec.b };
     }
@@ -420,7 +486,8 @@ function buildDimension(sk: SketchFeature, spec: DimensionSpec, scope: Record<st
     case "angle":
       requireLine(sk, spec.a, "a");
       requireLine(sk, spec.b, "b");
-      if (value < 0 || value >= 180) throw new OpError("invalid_op", `angle must be in [0, 180) degrees (got ${value}).`);
+      if (value < 0 || value >= 180)
+        throw new OpError("invalid_op", `angle must be in [0, 180) degrees (got ${value}).`);
       return { id, type: "angle", a: spec.a, b: spec.b, value };
     case "distance": {
       const a = resolveDistanceRef(sk, spec.a);
@@ -584,7 +651,15 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           if (!mesh) throw new OpError("not_found", `No body "${ax.bodyId}" for the revolve axis.`);
           const fg = faceGeomByName(mesh.mesh.faces, ax.faceName);
           if (!fg) throw new OpError("not_found", `Face "${ax.faceName}" not found on body "${ax.bodyId}".`);
-          axis = { face: { featureId: ax.bodyId, faceName: ax.faceName, faceId: fg.faceId, center: fg.center, normal: fg.normal } };
+          axis = {
+            face: {
+              featureId: ax.bodyId,
+              faceName: ax.faceName,
+              faceId: fg.faceId,
+              center: fg.center,
+              normal: fg.normal,
+            },
+          };
         }
         const r = addRevolve(doc, { sketchId: prof.sketchId, regionId: prof.regionId }, axis, op.angle, op.symmetric);
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
@@ -605,7 +680,8 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         const pathSketch = requireFeature(doc, op.path.sketchId);
         if (pathSketch.type !== "sketch") throw new OpError("not_found", `Path "${op.path.sketchId}" is not a sketch.`);
         const pathEnt = pathSketch.entities.find((e) => e.id === op.path.entityId);
-        if (!pathEnt) throw new OpError("not_found", `No entity "${op.path.entityId}" in sketch "${op.path.sketchId}".`);
+        if (!pathEnt)
+          throw new OpError("not_found", `No entity "${op.path.entityId}" in sketch "${op.path.sketchId}".`);
         if (pathEnt.type !== "line" && pathEnt.type !== "arc" && pathEnt.type !== "spline") {
           throw new OpError("invalid_op", "sweep path must be a line, arc, or spline entity.");
         }
@@ -636,7 +712,13 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           }
         }
         const opId = genId();
-        next = addDerivedOp(doc, op.sketchId, { id: opId, kind: "offset", sourceIds: op.sourceIds, distance: op.distance, ...(op.construction ? { construction: true } : {}) });
+        next = addDerivedOp(doc, op.sketchId, {
+          id: opId,
+          kind: "offset",
+          sourceIds: op.sourceIds,
+          distance: op.distance,
+          ...(op.construction ? { construction: true } : {}),
+        });
         createdId = opId;
         break;
       }
@@ -647,7 +729,8 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         if (!axis) throw new OpError("not_found", `No entity "${op.axisId}" in sketch "${op.sketchId}".`);
         if (axis.type !== "line") throw new OpError("invalid_op", "the mirror axis must be a line entity.");
         for (const id of op.sourceIds) {
-          if (!sketch.entities.some((x) => x.id === id)) throw new OpError("not_found", `No entity "${id}" in sketch "${op.sketchId}".`);
+          if (!sketch.entities.some((x) => x.id === id))
+            throw new OpError("not_found", `No entity "${id}" in sketch "${op.sketchId}".`);
         }
         const opId = genId();
         next = addDerivedOp(doc, op.sketchId, { id: opId, kind: "mirror", axisId: op.axisId, sourceIds: op.sourceIds });
@@ -660,7 +743,8 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         for (const id of op.sourceIds) {
           const e = sketch.entities.find((x) => x.id === id);
           if (!e) throw new OpError("not_found", `No entity "${id}" in sketch "${op.sketchId}".`);
-          if (e.derivedFrom) throw new OpError("invalid_op", `"${id}" is derived geometry — pattern its source instead.`);
+          if (e.derivedFrom)
+            throw new OpError("invalid_op", `"${id}" is derived geometry — pattern its source instead.`);
         }
         const opId = genId();
         if (op.kind === "linear") {
@@ -668,8 +752,12 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
             throw new OpError("invalid_op", "a linear sketch pattern needs a step (dx and/or dy).");
           }
           next = addDerivedOp(doc, op.sketchId, {
-            id: opId, kind: "linearPattern", sourceIds: op.sourceIds,
-            count: String(op.count), dx: String(op.dx ?? 0), dy: String(op.dy ?? 0),
+            id: opId,
+            kind: "linearPattern",
+            sourceIds: op.sourceIds,
+            count: String(op.count),
+            dx: String(op.dx ?? 0),
+            dy: String(op.dy ?? 0),
           });
         } else {
           if (!op.center) throw new OpError("invalid_op", "a circular sketch pattern needs a center.");
@@ -678,13 +766,22 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
             center = { at: op.center };
           } else {
             const ce = sketch.entities.find((x) => x.id === (op.center as { entityId: string }).entityId);
-            if (!ce) throw new OpError("not_found", `No entity "${(op.center as { entityId: string }).entityId}" in sketch "${op.sketchId}".`);
+            if (!ce)
+              throw new OpError(
+                "not_found",
+                `No entity "${(op.center as { entityId: string }).entityId}" in sketch "${op.sketchId}".`,
+              );
             if (ce.derivedFrom) throw new OpError("invalid_op", "the center can't be derived geometry.");
             center = { entity: ce.id, at: (op.center as { at?: "a" | "b" | "c" }).at ?? "c" };
           }
           next = addDerivedOp(doc, op.sketchId, {
-            id: opId, kind: "circularPattern", sourceIds: op.sourceIds, center,
-            count: String(op.count), angle: String(op.angle ?? 360), symmetric: op.symmetric ?? false,
+            id: opId,
+            kind: "circularPattern",
+            sourceIds: op.sourceIds,
+            center,
+            count: String(op.count),
+            angle: String(op.angle ?? 360),
+            symmetric: op.symmetric ?? false,
           });
         }
         createdId = opId;
@@ -712,9 +809,17 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           }
           r = addPattern(doc, op.targetId, {
             kind: "linear",
-            dir1: dirRef(op.dir1), count1: String(op.count1), spacing1: String(op.spacing1), flip1: op.flip1 ?? false,
+            dir1: dirRef(op.dir1),
+            count1: String(op.count1),
+            spacing1: String(op.spacing1),
+            flip1: op.flip1 ?? false,
             ...(op.dir2
-              ? { dir2: dirRef(op.dir2), count2: String(op.count2), spacing2: String(op.spacing2), flip2: op.flip2 ?? false }
+              ? {
+                  dir2: dirRef(op.dir2),
+                  count2: String(op.count2),
+                  spacing2: String(op.spacing2),
+                  flip2: op.flip2 ?? false,
+                }
               : {}),
           });
         } else {
@@ -723,16 +828,35 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           let axis: PatternAxisRef;
           if ("bodyId" in op.axis) {
             const mesh = ctx.getMeshes().find((m) => m.id === (op.axis as { bodyId: string }).bodyId);
-            if (!mesh) throw new OpError("not_found", `No body "${(op.axis as { bodyId: string }).bodyId}" for the pattern axis.`);
+            if (!mesh)
+              throw new OpError(
+                "not_found",
+                `No body "${(op.axis as { bodyId: string }).bodyId}" for the pattern axis.`,
+              );
             const fg = faceGeomByName(mesh.mesh.faces, (op.axis as { faceName: string }).faceName);
-            if (!fg) throw new OpError("not_found", `Face "${(op.axis as { faceName: string }).faceName}" not found on body "${(op.axis as { bodyId: string }).bodyId}".`);
-            axis = { face: { featureId: (op.axis as { bodyId: string }).bodyId, faceName: (op.axis as { faceName: string }).faceName, faceId: fg.faceId, center: fg.center, normal: fg.normal } };
+            if (!fg)
+              throw new OpError(
+                "not_found",
+                `Face "${(op.axis as { faceName: string }).faceName}" not found on body "${(op.axis as { bodyId: string }).bodyId}".`,
+              );
+            axis = {
+              face: {
+                featureId: (op.axis as { bodyId: string }).bodyId,
+                faceName: (op.axis as { faceName: string }).faceName,
+                faceId: fg.faceId,
+                center: fg.center,
+                normal: fg.normal,
+              },
+            };
           } else {
             axis = dirRef(op.axis);
           }
           r = addPattern(doc, op.targetId, {
             kind: "circular",
-            axis, count: String(op.count), angle: String(op.angle ?? 360), symmetric: op.symmetric ?? false,
+            axis,
+            count: String(op.count),
+            angle: String(op.angle ?? 360),
+            symmetric: op.symmetric ?? false,
           });
         }
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
@@ -769,7 +893,12 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         const mesh = ctx.getMeshes().find((m) => m.id === op.targetId);
         const pivot = mesh ? bboxCenter(mesh.mesh.faces) : ([0, 0, 0] as [number, number, number]);
         const r = addTransform(doc, op.targetId, pivot, {
-          tx: op.tx, ty: op.ty, tz: op.tz, angle: op.angle, axis: op.axis, copy: op.copy,
+          tx: op.tx,
+          ty: op.ty,
+          tz: op.tz,
+          angle: op.angle,
+          axis: op.axis,
+          copy: op.copy,
         });
         next = r.doc;
         createdId = r.id;
@@ -799,22 +928,51 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         const idOf = new Map(groups.filter((g) => g.name).map((g) => [g.name!, g.edgeId]));
         const picked = op.edges.map((nm) => idOf.get(nm)).filter((id): id is number => id !== undefined);
         const nameOf = new Map(groups.filter((g) => g.name).map((g) => [g.edgeId, g.name!]));
-        const expanded = picked.length === op.edges.length
-          ? expandPickToChains(groups, picked).map((id) => nameOf.get(id)!).filter(Boolean)
-          : op.edges; // a name the mesh doesn't know — pass the request through untouched
+        const expanded =
+          picked.length === op.edges.length
+            ? expandPickToChains(groups, picked)
+                .map((id) => nameOf.get(id)!)
+                .filter(Boolean)
+            : op.edges; // a name the mesh doesn't know — pass the request through untouched
         // Bake geometric fingerprints (from the target's tessellation) so the
         // kernel can re-match each edge if a later upstream edit renames it. A
         // name the mesh doesn't know stays a bare name-only ref.
         const edgeRefs = mesh ? expanded.map((nm) => edgeFingerprintByName(mesh.mesh.edges, nm)) : undefined;
         // Faces get the same treatment: a centroid/normal fingerprint beside the
         // name, so a renamed face can still be re-matched geometrically.
-        const faceRefs = mesh && op.faces
-          ? op.faces.map((nm) => {
-              const g = faceGeomByName(mesh.mesh.faces, nm);
-              return g ? { name: nm, center: g.center, normal: g.normal } : { name: nm };
-            })
-          : undefined;
-        const r = addDressUp(doc, op.kind, op.targetId, expanded, op.size, edgeRefs, op.angle, op.flip, op.faces, faceRefs);
+        const faceRefs =
+          mesh && op.faces
+            ? op.faces.map((nm) => {
+                const g = faceGeomByName(mesh.mesh.faces, nm);
+                return g ? { name: nm, center: g.center, normal: g.normal } : { name: nm };
+              })
+            : undefined;
+        const r = addDressUp(
+          doc,
+          op.kind,
+          op.targetId,
+          expanded,
+          op.size,
+          edgeRefs,
+          op.angle,
+          op.flip,
+          op.faces,
+          faceRefs,
+        );
+        next = r.doc;
+        createdId = r.id;
+        break;
+      }
+      case "shell": {
+        requireFeature(doc, op.targetId);
+        // Bake geometric fingerprints for the named faces (from the target's
+        // tessellation) so the kernel can re-match them if a later upstream
+        // edit renames the faces. A name the mesh doesn't know stays a
+        // bare name-only ref — the kernel will report it properly.
+        const faces = op.faces ?? [];
+        const mesh = ctx.getMeshes().find((m) => m.id === op.targetId);
+        const faceRefs = mesh ? faces.map((nm) => faceFingerprintByName(mesh.mesh.faces, nm)) : undefined;
+        const r = addShell(doc, op.targetId, faces, op.thickness, faceRefs);
         next = r.doc;
         createdId = r.id;
         break;
@@ -833,7 +991,10 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           // Validate the new name up front (letters-only, non-reserved, unique)
           // so the agent gets a clear error rather than a variable that's
           // silently dropped from scope at regen.
-          const candidate: Variable[] = [...doc.variables, { id: "__candidate__", name: op.name, expression: op.expression }];
+          const candidate: Variable[] = [
+            ...doc.variables,
+            { id: "__candidate__", name: op.name, expression: op.expression },
+          ];
           const nameError = validateVariableNames(candidate)["__candidate__"];
           if (nameError) {
             throw new OpError(
@@ -899,7 +1060,10 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           throw new OpError("invalid_op", `Couldn't parse the DXF: ${(e as Error).message}`);
         }
         if (parsed.entities.length === 0) {
-          throw new OpError("invalid_op", "No importable geometry found in the DXF (LINE/CIRCLE/ARC/POLYLINE/SPLINE/TEXT).");
+          throw new OpError(
+            "invalid_op",
+            "No importable geometry found in the DXF (LINE/CIRCLE/ARC/POLYLINE/SPLINE/TEXT).",
+          );
         }
         const r = addSketch(doc, plane);
         let d = addSketchEntities(r.doc, r.id, parsed.entities);
@@ -977,7 +1141,14 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
     // If the feature this op created failed to build, surface it as the op's
     // own failure so the agent self-corrects instead of building on nothing.
     if (createdId && errors[createdId]) {
-      return { ok: false, createdId, error: errors[createdId], errorKind: "kernel_error", featureErrors: errors, warnings };
+      return {
+        ok: false,
+        createdId,
+        error: errors[createdId],
+        errorKind: "kernel_error",
+        featureErrors: errors,
+        warnings,
+      };
     }
     const featureErrors = Object.keys(errors).length ? errors : undefined;
     return { ok: true, createdId, featureErrors, warnings };
@@ -1047,7 +1218,17 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
   const featureById = new Map(doc.features.map((f) => [f.id, f]));
   // Bodies that own appearance carry a color; in-place modifiers inherit it.
   const hasColor = (f: Feature | undefined): f is Extract<Feature, { color: number }> =>
-    !!f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "pattern" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import");
+    !!f &&
+    (f.type === "primitive" ||
+      f.type === "extrude" ||
+      f.type === "boolean" ||
+      f.type === "transform" ||
+      f.type === "mirror" ||
+      f.type === "pattern" ||
+      f.type === "revolve" ||
+      f.type === "sweep" ||
+      f.type === "loft" ||
+      f.type === "import");
   const bodies: SceneSummary["bodies"] = meshes.map((m) => {
     const f = featureById.get(m.id);
     const mesh: ShapeMeshPayload = m.mesh;

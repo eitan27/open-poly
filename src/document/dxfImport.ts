@@ -11,6 +11,7 @@
 import DxfParser from "dxf-parser";
 import type { SketchEntity, Vec2 } from "./types";
 import { genId } from "./document";
+import { clamp } from "../lib/clamp";
 
 export interface DxfImportResult {
   entities: SketchEntity[];
@@ -22,8 +23,13 @@ export interface DxfImportResult {
   warnings: string[];
 }
 
-interface Pt { x: number; y: number }
-interface DxfVertex extends Pt { bulge?: number }
+interface Pt {
+  x: number;
+  y: number;
+}
+interface DxfVertex extends Pt {
+  bulge?: number;
+}
 
 /** How finely a DXF SPLINE / interpolated curve is sampled into points. */
 const SPLINE_SAMPLES_PER_SEG = 8;
@@ -32,10 +38,7 @@ const SPLINE_MIN_SAMPLES = 24;
 /** Parse DXF text and convert its entities to sketch entities. `scale` multiplies
  *  every coordinate and length (default 1 — DXF units assumed to be mm). Throws
  *  only if the DXF itself is unparseable; unsupported entities are skipped. */
-export function parseDxfToEntities(
-  text: string,
-  opts: { scale?: number } = {},
-): DxfImportResult {
+export function parseDxfToEntities(text: string, opts: { scale?: number } = {}): DxfImportResult {
   const scale = opts.scale ?? 1;
   // dxf-parser's scanner chokes on a trailing blank line (reads an unpaired
   // group). Normalise line endings and drop a lone trailing empty line.
@@ -48,8 +51,13 @@ export function parseDxfToEntities(
 
   const s = (n: number) => n * scale;
   const p = (pt: Pt): Vec2 => [s(pt.x), s(pt.y)];
-  const bump = (rec: Record<string, number>, k: string) => { rec[k] = (rec[k] ?? 0) + 1; };
-  const push = (e: SketchEntity) => { entities.push(e); bump(counts, e.type); };
+  const bump = (rec: Record<string, number>, k: string) => {
+    rec[k] = (rec[k] ?? 0) + 1;
+  };
+  const push = (e: SketchEntity) => {
+    entities.push(e);
+    bump(counts, e.type);
+  };
 
   const dxfEntities = (parsed?.entities ?? []) as unknown as Array<Record<string, unknown> & { type: string }>;
   for (const ent of dxfEntities) {
@@ -60,15 +68,18 @@ export function parseDxfToEntities(
         break;
       }
       case "CIRCLE": {
-        const c = ent.center as Pt, r = ent.radius as number;
+        const c = ent.center as Pt,
+          r = ent.radius as number;
         if (c && r > 0) push({ type: "circle", id: genId(), c: p(c), r: s(r) });
         break;
       }
       case "ARC": {
-        const c = ent.center as Pt, r = ent.radius as number;
+        const c = ent.center as Pt,
+          r = ent.radius as number;
         // dxf-parser already converts ARC angles to radians; our arc is CCW from
         // start to end, exactly matching the DXF convention.
-        const start = ent.startAngle as number, end = ent.endAngle as number;
+        const start = ent.startAngle as number,
+          end = ent.endAngle as number;
         if (c && r > 0) push({ type: "arc", id: genId(), c: p(c), r: s(r), start, end });
         break;
       }
@@ -89,7 +100,14 @@ export function parseDxfToEntities(
         const value = String(ent.text ?? "").trim();
         const h = ent.textHeight as number;
         if (at && value && h > 0)
-          push({ type: "text", id: genId(), p: p(at), value, height: s(h), rotation: deg((ent.rotation as number) ?? 0) });
+          push({
+            type: "text",
+            id: genId(),
+            p: p(at),
+            value,
+            height: s(h),
+            rotation: deg((ent.rotation as number) ?? 0),
+          });
         break;
       }
       case "MTEXT": {
@@ -97,7 +115,14 @@ export function parseDxfToEntities(
         const value = stripMtext(String(ent.text ?? ""));
         const h = ent.height as number;
         if (at && value && h > 0)
-          push({ type: "text", id: genId(), p: p(at), value, height: s(h), rotation: deg((ent.rotation as number) ?? 0) });
+          push({
+            type: "text",
+            id: genId(),
+            p: p(at),
+            value,
+            height: s(h),
+            rotation: deg((ent.rotation as number) ?? 0),
+          });
         break;
       }
       default:
@@ -113,21 +138,29 @@ export function parseDxfToEntities(
  *  their four cardinal points, so a DXF that lands far from the origin (its own
  *  coordinates often start at hundreds of mm) can be framed by the viewport
  *  instead of leaving the camera pointed at an empty origin. */
-export function sketchEntitiesBounds(
-  entities: SketchEntity[],
-): { min: Vec2; max: Vec2 } | null {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+export function sketchEntitiesBounds(entities: SketchEntity[]): { min: Vec2; max: Vec2 } | null {
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
   const see = (x: number, y: number) => {
-    if (x < minX) minX = x; if (x > maxX) maxX = x;
-    if (y < minY) minY = y; if (y > maxY) maxY = y;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
   };
   const ARC_SAMPLES = 24;
   for (const e of entities) {
     switch (e.type) {
-      case "line": see(e.a[0], e.a[1]); see(e.b[0], e.b[1]); break;
+      case "line":
+        see(e.a[0], e.a[1]);
+        see(e.b[0], e.b[1]);
+        break;
       case "circle":
-        see(e.c[0] - e.r, e.c[1]); see(e.c[0] + e.r, e.c[1]);
-        see(e.c[0], e.c[1] - e.r); see(e.c[0], e.c[1] + e.r);
+        see(e.c[0] - e.r, e.c[1]);
+        see(e.c[0] + e.r, e.c[1]);
+        see(e.c[0], e.c[1] - e.r);
+        see(e.c[0], e.c[1] + e.r);
         break;
       case "arc":
         for (let i = 0; i <= ARC_SAMPLES; i++) {
@@ -135,9 +168,16 @@ export function sketchEntitiesBounds(
           see(e.c[0] + e.r * Math.cos(a), e.c[1] + e.r * Math.sin(a));
         }
         break;
-      case "spline": for (const p of e.points) see(p[0], p[1]); break;
-      case "point": see(e.p[0], e.p[1]); break;
-      case "text": see(e.p[0], e.p[1]); see(e.p[0], e.p[1] + e.height); break;
+      case "spline":
+        for (const p of e.points) see(p[0], p[1]);
+        break;
+      case "point":
+        see(e.p[0], e.p[1]);
+        break;
+      case "text":
+        see(e.p[0], e.p[1]);
+        see(e.p[0], e.p[1] + e.height);
+        break;
     }
   }
   if (!Number.isFinite(minX)) return null;
@@ -155,14 +195,24 @@ export function sketchEntitiesBounds(
 export function healEndpoints(entities: SketchEntity[]): SketchEntity[] {
   // Weld tolerance from the geometry's extent: large enough to close export
   // noise, far smaller than the tiniest meaningful feature.
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
   const see = (p: Vec2) => {
-    if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
-    if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+    if (p[0] < minX) minX = p[0];
+    if (p[0] > maxX) maxX = p[0];
+    if (p[1] < minY) minY = p[1];
+    if (p[1] > maxY) maxY = p[1];
   };
   for (const e of entities) {
-    if (e.type === "line") { see(e.a); see(e.b); }
-    else if (e.type === "spline" && e.points.length) { see(e.points[0]); see(e.points[e.points.length - 1]); }
+    if (e.type === "line") {
+      see(e.a);
+      see(e.b);
+    } else if (e.type === "spline" && e.points.length) {
+      see(e.points[0]);
+      see(e.points[e.points.length - 1]);
+    }
   }
   if (!Number.isFinite(minX)) return entities; // nothing weldable
   const diag = Math.hypot(maxX - minX, maxY - minY);
@@ -173,7 +223,8 @@ export function healEndpoints(entities: SketchEntity[]): SketchEntity[] {
   // merge). Reps are the first point seen in each cluster.
   const cells = new Map<string, Vec2[]>();
   const snap = (p: Vec2): Vec2 => {
-    const cx = Math.round(p[0] / tol), cy = Math.round(p[1] / tol);
+    const cx = Math.round(p[0] / tol),
+      cy = Math.round(p[1] / tol);
     for (let dx = -1; dx <= 1; dx++)
       for (let dy = -1; dy <= 1; dy++) {
         const reps = cells.get(`${cx + dx},${cy + dy}`);
@@ -183,19 +234,22 @@ export function healEndpoints(entities: SketchEntity[]): SketchEntity[] {
     const rep: Vec2 = [p[0], p[1]];
     const k = `${cx},${cy}`;
     const arr = cells.get(k);
-    if (arr) arr.push(rep); else cells.set(k, [rep]);
+    if (arr) arr.push(rep);
+    else cells.set(k, [rep]);
     return rep;
   };
 
   const out: SketchEntity[] = [];
   for (const e of entities) {
     if (e.type === "line") {
-      const a = snap(e.a), b = snap(e.b);
+      const a = snap(e.a),
+        b = snap(e.b);
       if (Math.hypot(b[0] - a[0], b[1] - a[1]) < tol) continue; // collapsed → drop
       out.push({ ...e, a: [a[0], a[1]], b: [b[0], b[1]] });
     } else if (e.type === "spline" && e.points.length >= 2) {
       const pts = e.points.map((p) => [p[0], p[1]] as Vec2);
-      const a = snap(pts[0]), b = snap(pts[pts.length - 1]);
+      const a = snap(pts[0]),
+        b = snap(pts[pts.length - 1]);
       pts[0] = [a[0], a[1]];
       pts[pts.length - 1] = [b[0], b[1]];
       out.push({ ...e, points: pts });
@@ -208,16 +262,13 @@ export function healEndpoints(entities: SketchEntity[]): SketchEntity[] {
 
 /** Degrees → radians (DXF TEXT/MTEXT rotation is in degrees; our text stores
  *  radians). */
-function deg(d: number): number { return (d * Math.PI) / 180; }
+function deg(d: number): number {
+  return (d * Math.PI) / 180;
+}
 
 /** Expand a polyline's vertices into line/arc entities, honouring per-vertex
  *  `bulge` (an arc from that vertex to the next). Closes the loop when `closed`. */
-function polylineToEntities(
-  vs: DxfVertex[],
-  closed: boolean,
-  scale: number,
-  push: (e: SketchEntity) => void,
-): void {
+function polylineToEntities(vs: DxfVertex[], closed: boolean, scale: number, push: (e: SketchEntity) => void): void {
   if (vs.length < 2) return;
   const n = vs.length;
   const last = closed ? n : n - 1;
@@ -245,9 +296,12 @@ export function arcFromBulge(
   const theta = 4 * Math.atan(bulge); // signed swept angle
   if (chord < 1e-9 || Math.abs(theta) < 1e-9) return null;
   const rs = chord / (2 * Math.sin(theta / 2)); // signed radius
-  const mx = (p0[0] + p1[0]) / 2, my = (p0[1] + p1[1]) / 2;
-  const ux = (p1[0] - p0[0]) / chord, uy = (p1[1] - p0[1]) / chord;
-  const lx = -uy, ly = ux; // left normal of the chord direction
+  const mx = (p0[0] + p1[0]) / 2,
+    my = (p0[1] + p1[1]) / 2;
+  const ux = (p1[0] - p0[0]) / chord,
+    uy = (p1[1] - p0[1]) / chord;
+  const lx = -uy,
+    ly = ux; // left normal of the chord direction
   // For a CCW (positive) bulge the center sits to the LEFT of p0→p1 by the signed
   // apothem; the signs of rs and cos(θ/2) make major arcs (θ>π) fall out too.
   const d = rs * Math.cos(theta / 2);
@@ -271,7 +325,7 @@ function splineSamplePoints(ent: Record<string, unknown>, warnings: string[]): P
   if (fit && fit.length >= 2) return fit;
   const ctrl = ent.controlPoints as Pt[] | undefined;
   if (!ctrl || ctrl.length < 2) return [];
-  const degree = Math.max(1, Math.min((ent.degreeOfSplineCurve as number) ?? 3, ctrl.length - 1));
+  const degree = clamp((ent.degreeOfSplineCurve as number) ?? 3, 1, ctrl.length - 1);
   let knots = ent.knotValues as number[] | undefined;
   if (!knots || knots.length !== ctrl.length + degree + 1) {
     if (knots && knots.length > 0)
@@ -279,7 +333,8 @@ function splineSamplePoints(ent: Record<string, unknown>, warnings: string[]): P
     knots = clampedUniformKnots(ctrl.length, degree);
   }
   const nSamples = Math.max(SPLINE_MIN_SAMPLES, ctrl.length * SPLINE_SAMPLES_PER_SEG);
-  const u0 = knots[degree], u1 = knots[ctrl.length];
+  const u0 = knots[degree],
+    u1 = knots[ctrl.length];
   const out: Pt[] = [];
   for (let i = 0; i <= nSamples; i++) {
     const u = u0 + ((u1 - u0) * i) / nSamples;
@@ -304,8 +359,12 @@ function deBoor(u: number, degree: number, ctrl: Pt[], knots: number[]): Pt {
   // Find the knot span k with knots[k] <= u < knots[k+1].
   let k = degree;
   while (k < ctrl.length - 1 && u >= knots[k + 1]) k++;
-  const dx: number[] = [], dy: number[] = [];
-  for (let j = 0; j <= degree; j++) { dx[j] = ctrl[k - degree + j].x; dy[j] = ctrl[k - degree + j].y; }
+  const dx: number[] = [],
+    dy: number[] = [];
+  for (let j = 0; j <= degree; j++) {
+    dx[j] = ctrl[k - degree + j].x;
+    dy[j] = ctrl[k - degree + j].y;
+  }
   for (let r = 1; r <= degree; r++) {
     for (let j = degree; j >= r; j--) {
       const i = k - degree + j;

@@ -26,7 +26,8 @@ describe("fitRing", () => {
 
   it("finds the axis regardless of the ring's orientation", () => {
     // A ring in the x = 5 plane: axis must come out along ±x.
-    const n = 48, r = 7;
+    const n = 48,
+      r = 7;
     const edges: [V3, V3][] = [];
     const p = (i: number): V3 => [5, r * Math.cos((i * 2 * Math.PI) / n), r * Math.sin((i * 2 * Math.PI) / n)];
     for (let i = 0; i < n; i++) edges.push([p(i), p(i + 1)]);
@@ -78,7 +79,8 @@ describe("fitRing", () => {
   it("accepts the uneven re-discretisation a boolean leaves on a rim", () => {
     // Measured: the boss in the stacked-fillet case came back as 127 chords
     // whose vertices varied by 0.07mm on a 26mm radius. Still a circle.
-    const n = 127, R = 26;
+    const n = 127,
+      R = 26;
     const p = (i: number): V3 => {
       const wobble = i % 3 === 0 ? 1 - 0.07 / R : 1;
       return [R * wobble * Math.cos((i * 2 * Math.PI) / n), R * wobble * Math.sin((i * 2 * Math.PI) / n), 5];

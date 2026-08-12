@@ -7,15 +7,13 @@
 // follow from the pair; this module owns that geometry so it can be unit-tested
 // without the React/solver layers. See DistanceRef in document/types.ts.
 import type { DistanceRef, PointRef, SketchEntity, Vec2 } from "../document/types";
+import { mag2 as len } from "../lib/vec2";
 
 /** A DistanceRef resolved to live sketch geometry (uv). */
 export type ResolvedSide =
-  | { kind: "point"; p: Vec2 }
-  | { kind: "line"; a: Vec2; b: Vec2 }
-  | { kind: "rim"; c: Vec2; r: number };
+  { kind: "point"; p: Vec2 } | { kind: "line"; a: Vec2; b: Vec2 } | { kind: "rim"; c: Vec2; r: number };
 
 const sub = (a: Vec2, b: Vec2): Vec2 => [a[0] - b[0], a[1] - b[1]];
-const len = (a: Vec2) => Math.hypot(a[0], a[1]);
 const unit = (a: Vec2): Vec2 => {
   const l = len(a) || 1;
   return [a[0] / l, a[1] / l];

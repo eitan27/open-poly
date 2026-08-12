@@ -2,6 +2,7 @@
 // new Document (immutable updates) so React state and undo/redo stay simple.
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "./featureDefs";
 import { newBodyColor, randomSolidColor } from "./colors";
+import { clamp } from "../lib/clamp";
 import { evaluateExpression, RESERVED_NAMES, type Scope } from "./expression";
 import {
   angledFrame,
@@ -36,6 +37,7 @@ import type {
   PlaneMethod,
   RevolveAxis,
   RevolveFeature,
+  ShellFeature,
   SketchConstraint,
   SketchEntity,
   SketchFeature,
@@ -97,8 +99,7 @@ export function migrateDocument(doc: Document): Document {
 
 export function makeFeature(kind: FeatureKind, existing: Feature[]): Feature {
   const def = FEATURE_DEFS[kind];
-  const ordinal =
-    existing.filter((f) => f.type === "primitive" && f.kind === kind).length + 1;
+  const ordinal = existing.filter((f) => f.type === "primitive" && f.kind === kind).length + 1;
   const params: Record<string, string> = {};
   for (const p of def.params) params[p.name] = String(p.default);
   return {
@@ -177,16 +178,22 @@ export function addExtrude(
  *  from — true for all three ops, not just union. */
 function colorOfFeature(doc: Document, id: string): number {
   const f = doc.features.find((x) => x.id === id);
-  return f && (f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "pattern" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import")
+  return f &&
+    (f.type === "primitive" ||
+      f.type === "extrude" ||
+      f.type === "boolean" ||
+      f.type === "transform" ||
+      f.type === "mirror" ||
+      f.type === "pattern" ||
+      f.type === "revolve" ||
+      f.type === "sweep" ||
+      f.type === "loft" ||
+      f.type === "import")
     ? f.color
     : newBodyColor();
 }
 
-export function addBoolean(
-  doc: Document,
-  op: BooleanOp,
-  operands: string[],
-): { doc: Document; id: string } {
+export function addBoolean(doc: Document, op: BooleanOp, operands: string[]): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "boolean").length + 1;
   const feature: BooleanFeature = {
     id: uid(),
@@ -232,6 +239,27 @@ export function addDressUp(
     // stored only when set so the common case stays field-free.
     ...(op === "chamfer" && angle !== undefined ? { angle } : {}),
     ...(op === "chamfer" && flip ? { flip: true } : {}),
+  };
+  return insertFeature(doc, feature);
+}
+
+export function addShell(
+  doc: Document,
+  targetId: string,
+  faces: string[],
+  thickness = "2",
+  faceRefs?: FaceRef[],
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "shell").length + 1;
+  const feature: ShellFeature = {
+    id: uid(),
+    type: "shell",
+    name: `Shell ${ordinal}`,
+    suppressed: false,
+    targetId,
+    faces,
+    faceRefs,
+    thickness,
   };
   return insertFeature(doc, feature);
 }
@@ -330,11 +358,7 @@ export function addRevolve(
 }
 
 /** Mirror a body across a plane, producing a new reflected body (original kept). */
-export function addMirror(
-  doc: Document,
-  targetId: string,
-  plane: SketchPlaneRef,
-): { doc: Document; id: string } {
+export function addMirror(doc: Document, targetId: string, plane: SketchPlaneRef): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "mirror").length + 1;
   const feature: MirrorFeature = {
     id: uid(),
@@ -409,11 +433,7 @@ export function addLoft(
   return insertFeature(doc, feature);
 }
 
-export function addImport(
-  doc: Document,
-  source: string,
-  name?: string,
-): { doc: Document; id: string } {
+export function addImport(doc: Document, source: string, name?: string): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "import").length + 1;
   const feature: ImportFeature = {
     id: uid(),
@@ -503,6 +523,18 @@ export function updateDressUp(
   );
 }
 
+export function updateShell(
+  doc: Document,
+  id: string,
+  spec: { targetId: string; faces: string[]; thickness: string; faceRefs?: FaceRef[] },
+): Document {
+  return mapFeature(doc, id, (f) =>
+    f.type === "shell"
+      ? { ...f, targetId: spec.targetId, faces: spec.faces, faceRefs: spec.faceRefs, thickness: spec.thickness }
+      : f,
+  );
+}
+
 export function updatePlane(
   doc: Document,
   id: string,
@@ -540,9 +572,7 @@ export function updateRevolve(
   angle: string,
   symmetric: boolean,
 ): Document {
-  return mapFeature(doc, id, (f) =>
-    f.type === "revolve" ? { ...f, profile, axis, angle, symmetric } : f,
-  );
+  return mapFeature(doc, id, (f) => (f.type === "revolve" ? { ...f, profile, axis, angle, symmetric } : f));
 }
 
 export function updateMirror(doc: Document, id: string, targetId: string, plane: SketchPlaneRef): Document {
@@ -570,7 +600,10 @@ export function resolvePlanes(doc: Document, scope: Scope): Map<string, PlaneFra
       if (method === "midplane" && f.refB) {
         planes.set(f.id, midplaneFrame(frameOf(f.base, planes), frameOf(f.refB, planes)));
       } else if (method === "angle") {
-        planes.set(f.id, angledFrame(frameOf(f.base, planes), f.angleAxis ?? "u", evaluateExpression(f.angle ?? "0", scope)));
+        planes.set(
+          f.id,
+          angledFrame(frameOf(f.base, planes), f.angleAxis ?? "u", evaluateExpression(f.angle ?? "0", scope)),
+        );
       } else if (method === "through" && f.points?.length === 3) {
         const fr = planeThrough3Points(f.points[0], f.points[1], f.points[2]);
         if (fr) planes.set(f.id, fr);
@@ -585,46 +618,26 @@ export function resolvePlanes(doc: Document, scope: Scope): Map<string, PlaneFra
   return planes;
 }
 
-function mapSketch(
-  doc: Document,
-  id: string,
-  fn: (s: SketchFeature) => SketchFeature,
-): Document {
+function mapSketch(doc: Document, id: string, fn: (s: SketchFeature) => SketchFeature): Document {
   return {
     ...doc,
     features: doc.features.map((f) => (f.id === id && f.type === "sketch" ? fn(f) : f)),
   };
 }
 
-export function addSketchEntity(
-  doc: Document,
-  sketchId: string,
-  entity: SketchEntity,
-): Document {
+export function addSketchEntity(doc: Document, sketchId: string, entity: SketchEntity): Document {
   return mapSketch(doc, sketchId, (s) => ({ ...s, entities: [...s.entities, entity] }));
 }
 
-export function addSketchEntities(
-  doc: Document,
-  sketchId: string,
-  entities: SketchEntity[],
-): Document {
+export function addSketchEntities(doc: Document, sketchId: string, entities: SketchEntity[]): Document {
   return mapSketch(doc, sketchId, (s) => ({ ...s, entities: [...s.entities, ...entities] }));
 }
 
-export function setSketchEntities(
-  doc: Document,
-  sketchId: string,
-  entities: SketchEntity[],
-): Document {
+export function setSketchEntities(doc: Document, sketchId: string, entities: SketchEntity[]): Document {
   return mapSketch(doc, sketchId, (s) => ({ ...s, entities }));
 }
 
-export function addSketchConstraints(
-  doc: Document,
-  sketchId: string,
-  constraints: SketchConstraint[],
-): Document {
+export function addSketchConstraints(doc: Document, sketchId: string, constraints: SketchConstraint[]): Document {
   if (constraints.length === 0) return doc;
   return mapSketch(doc, sketchId, (s) => ({
     ...s,
@@ -632,19 +645,11 @@ export function addSketchConstraints(
   }));
 }
 
-export function setSketchConstraints(
-  doc: Document,
-  sketchId: string,
-  constraints: SketchConstraint[],
-): Document {
+export function setSketchConstraints(doc: Document, sketchId: string, constraints: SketchConstraint[]): Document {
   return mapSketch(doc, sketchId, (s) => ({ ...s, constraints }));
 }
 
-export function removeSketchConstraint(
-  doc: Document,
-  sketchId: string,
-  constraintId: string,
-): Document {
+export function removeSketchConstraint(doc: Document, sketchId: string, constraintId: string): Document {
   return mapSketch(doc, sketchId, (s) => ({
     ...s,
     constraints: s.constraints.filter((c) => c.id !== constraintId),
@@ -670,7 +675,8 @@ function constraintRefsEntity(c: SketchConstraint, entityId: string): boolean {
     case "midpoint":
       return c.target === entityId || ("entity" in c.point && c.point.entity === entityId);
     case "distanceBetween": {
-      const refs = (r: typeof c.a) => (r.on === "point" ? "entity" in r.ref && r.ref.entity === entityId : r.entity === entityId);
+      const refs = (r: typeof c.a) =>
+        r.on === "point" ? "entity" in r.ref && r.ref.entity === entityId : r.entity === entityId;
       return refs(c.a) || refs(c.b);
     }
     case "horizontal":
@@ -689,25 +695,14 @@ export function addDerivedOp(doc: Document, sketchId: string, op: DerivedOp): Do
 
 /** Edit an offset op's distance expression after the fact (re-evaluated by the
  *  next `applyDerived`, so the offset edges shift to the new distance). */
-export function setDerivedOffsetDistance(
-  doc: Document,
-  sketchId: string,
-  opId: string,
-  distance: string,
-): Document {
+export function setDerivedOffsetDistance(doc: Document, sketchId: string, opId: string, distance: string): Document {
   return mapSketch(doc, sketchId, (s) => ({
     ...s,
-    derived: (s.derived ?? []).map((o) =>
-      o.id === opId && o.kind === "offset" ? { ...o, distance } : o,
-    ),
+    derived: (s.derived ?? []).map((o) => (o.id === opId && o.kind === "offset" ? { ...o, distance } : o)),
   }));
 }
 
-export function removeSketchEntity(
-  doc: Document,
-  sketchId: string,
-  entityId: string,
-): Document {
+export function removeSketchEntity(doc: Document, sketchId: string, entityId: string): Document {
   return mapSketch(doc, sketchId, (s) => {
     const ent = s.entities.find((e) => e.id === entityId);
     // Deleting a generated (derived) entity removes its whole op — and with it
@@ -725,26 +720,24 @@ export function removeSketchEntity(
     // constraints.
     const deadOpIds = new Set(
       (s.derived ?? [])
-        .filter((o) =>
-          o.kind === "offset"
-            ? o.sourceIds.includes(entityId)
-            : o.kind === "mirror"
-              ? o.axisId === entityId || o.sourceIds.includes(entityId)
-              : o.kind === "linearPattern"
-                ? o.sourceIds.includes(entityId)
-                : o.kind === "circularPattern"
-                  ? o.sourceIds.includes(entityId) ||
-                    ("entity" in o.center && o.center.entity === entityId)
-                  : false, // project ops reference body edges, not sketch entities
+        .filter(
+          (o) =>
+            o.kind === "offset"
+              ? o.sourceIds.includes(entityId)
+              : o.kind === "mirror"
+                ? o.axisId === entityId || o.sourceIds.includes(entityId)
+                : o.kind === "linearPattern"
+                  ? o.sourceIds.includes(entityId)
+                  : o.kind === "circularPattern"
+                    ? o.sourceIds.includes(entityId) || ("entity" in o.center && o.center.entity === entityId)
+                    : false, // project ops reference body edges, not sketch entities
         )
         .map((o) => o.id),
     );
     return {
       ...s,
       derived: (s.derived ?? []).filter((o) => !deadOpIds.has(o.id)),
-      entities: s.entities.filter(
-        (e) => e.id !== entityId && !(e.derivedFrom && deadOpIds.has(e.derivedFrom)),
-      ),
+      entities: s.entities.filter((e) => e.id !== entityId && !(e.derivedFrom && deadOpIds.has(e.derivedFrom))),
       constraints: s.constraints.filter((c) => !constraintRefsEntity(c, entityId)),
     };
   });
@@ -754,10 +747,7 @@ export function removeFeature(doc: Document, id: string): Document {
   const idx = doc.features.findIndex((f) => f.id === id);
   if (idx === -1) return doc;
   const features = doc.features.filter((f) => f.id !== id);
-  const rollbackIndex =
-    idx < doc.rollbackIndex
-      ? doc.rollbackIndex - 1
-      : Math.min(doc.rollbackIndex, features.length);
+  const rollbackIndex = idx < doc.rollbackIndex ? doc.rollbackIndex - 1 : Math.min(doc.rollbackIndex, features.length);
   return { ...doc, features, rollbackIndex };
 }
 
@@ -775,18 +765,20 @@ function mapFeature(doc: Document, id: string, fn: (f: Feature) => Feature): Doc
   return { ...doc, features: doc.features.map((f) => (f.id === id ? fn(f) : f)) };
 }
 
-export function updateParam(
-  doc: Document,
-  id: string,
-  name: string,
-  value: string,
-): Document {
+export function updateParam(doc: Document, id: string, name: string, value: string): Document {
   return mapFeature(doc, id, (f) => {
     if (f.type === "primitive") return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "extrude") {
       if (name === "distance") return { ...f, distance: value };
       if (name === "flip") return { ...f, flip: value === "true" };
-      if (name === "extent" && (value === "blind" || value === "symmetric" || value === "throughAll" || value === "upToFace" || value === "upToNext")) {
+      if (
+        name === "extent" &&
+        (value === "blind" ||
+          value === "symmetric" ||
+          value === "throughAll" ||
+          value === "upToFace" ||
+          value === "upToNext")
+      ) {
         return { ...f, extent: value };
       }
       if (name === "mode" && (value === "new" || value === "add" || value === "remove")) {
@@ -801,6 +793,7 @@ export function updateParam(
       if (name === "angle" && f.op === "chamfer") return { ...f, angle: value };
       if (name === "flip" && f.op === "chamfer") return { ...f, flip: value === "true" };
     }
+    if (f.type === "shell" && name === "thickness") return { ...f, thickness: value };
     if (f.type === "revolve" && name === "angle") return { ...f, angle: value };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
     if (f.type === "plane" && name === "angle") return { ...f, angle: value };
@@ -815,8 +808,12 @@ export function updateParam(
     }
     if (f.type === "pattern") {
       if (
-        name === "count1" || name === "spacing1" || name === "count2" ||
-        name === "spacing2" || name === "count" || name === "angle"
+        name === "count1" ||
+        name === "spacing1" ||
+        name === "count2" ||
+        name === "spacing2" ||
+        name === "count" ||
+        name === "angle"
       ) {
         return { ...f, [name]: value };
       }
@@ -838,14 +835,34 @@ export function renameFeature(doc: Document, id: string, name: string): Document
 
 export function setFeatureColor(doc: Document, id: string, color: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "pattern" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import" ? { ...f, color } : f,
+    f.type === "primitive" ||
+    f.type === "extrude" ||
+    f.type === "boolean" ||
+    f.type === "transform" ||
+    f.type === "mirror" ||
+    f.type === "pattern" ||
+    f.type === "revolve" ||
+    f.type === "sweep" ||
+    f.type === "loft" ||
+    f.type === "import"
+      ? { ...f, color }
+      : f,
   );
 }
 
 export function setFeatureOpacity(doc: Document, id: string, opacity: number): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "pattern" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import"
-      ? { ...f, opacity: Math.max(0, Math.min(1, opacity)) }
+    f.type === "primitive" ||
+    f.type === "extrude" ||
+    f.type === "boolean" ||
+    f.type === "transform" ||
+    f.type === "mirror" ||
+    f.type === "pattern" ||
+    f.type === "revolve" ||
+    f.type === "sweep" ||
+    f.type === "loft" ||
+    f.type === "import"
+      ? { ...f, opacity: clamp(opacity, 0, 1) }
       : f,
   );
 }
@@ -853,12 +870,23 @@ export function setFeatureOpacity(doc: Document, id: string, opacity: number): D
 /** Hide/show a part — a view toggle (skips rendering), distinct from suppress. */
 export function setFeatureHidden(doc: Document, id: string, hidden: boolean): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "primitive" || f.type === "extrude" || f.type === "boolean" || f.type === "transform" || f.type === "mirror" || f.type === "pattern" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "import" ? { ...f, hidden } : f,
+    f.type === "primitive" ||
+    f.type === "extrude" ||
+    f.type === "boolean" ||
+    f.type === "transform" ||
+    f.type === "mirror" ||
+    f.type === "pattern" ||
+    f.type === "revolve" ||
+    f.type === "sweep" ||
+    f.type === "loft" ||
+    f.type === "import"
+      ? { ...f, hidden }
+      : f,
   );
 }
 
 export function setRollbackIndex(doc: Document, index: number): Document {
-  return { ...doc, rollbackIndex: Math.max(0, Math.min(index, doc.features.length)) };
+  return { ...doc, rollbackIndex: clamp(index, 0, doc.features.length) };
 }
 
 // --- Variables ------------------------------------------------------------
@@ -905,12 +933,7 @@ export function validateVariableNames(variables: Variable[]): Record<string, str
   return errors;
 }
 
-export function updateVariable(
-  doc: Document,
-  id: string,
-  field: "name" | "expression",
-  value: string,
-): Document {
+export function updateVariable(doc: Document, id: string, field: "name" | "expression", value: string): Document {
   return {
     ...doc,
     variables: doc.variables.map((v) => (v.id === id ? { ...v, [field]: value } : v)),
@@ -990,9 +1013,7 @@ export function resolveDocument(doc: Document): ResolveResult {
     features: doc.features.map((f) => (f.type === "sketch" ? applyDerived(f, scope) : f)),
   };
 
-  const active = doc.features
-    .slice(0, doc.rollbackIndex)
-    .filter((f) => !f.suppressed);
+  const active = doc.features.slice(0, doc.rollbackIndex).filter((f) => !f.suppressed);
 
   const features: ResolvedFeature[] = [];
   const errors: Record<string, string> = {};
@@ -1016,7 +1037,12 @@ export function resolveDocument(doc: Document): ResolveResult {
           if (sketch?.type !== "sketch") throw new Error("extrude: profile sketch not found");
           const region = detectSketchRegions(sketch.entities).find((r) => r.id === prof.regionId);
           if (!region) throw new Error("extrude: profile region not found");
-          profile = { kind: "sketchRegion" as const, outline: region.outline, holes: region.holes, frame: frameOf(sketch.plane, planeFrames) };
+          profile = {
+            kind: "sketchRegion" as const,
+            outline: region.outline,
+            holes: region.holes,
+            frame: frameOf(sketch.plane, planeFrames),
+          };
         } else if (prof.kind === "sketchText") {
           // Bake the text entity's value/height/rotation/anchor + plane frame; the
           // worker re-builds the glyph wires (with counters/holes) and extrudes.
@@ -1036,7 +1062,13 @@ export function resolveDocument(doc: Document): ResolveResult {
         } else {
           // A body face: pass the source + persistent name (+ geometric
           // fingerprint); the worker re-finds the face against the running set.
-          profile = { kind: "bodyFace" as const, sourceId: prof.featureId, faceName: prof.faceName, center: prof.center, normal: prof.normal };
+          profile = {
+            kind: "bodyFace" as const,
+            sourceId: prof.featureId,
+            faceName: prof.faceName,
+            center: prof.center,
+            normal: prof.normal,
+          };
         }
         // `?? "blind"` guards documents persisted before this field existed.
         // For "up to face", pass the target face reference (source body id +
@@ -1045,7 +1077,17 @@ export function resolveDocument(doc: Document): ResolveResult {
           f.extent === "upToFace" && f.upTo
             ? { sourceId: f.upTo.featureId, faceName: f.upTo.faceName, center: f.upTo.center, normal: f.upTo.normal }
             : undefined;
-        features.push({ id: f.id, type: "extrude", profile, distance, flip: f.flip, extent: f.extent ?? "blind", mode: f.mode, targetId: f.targetId, upTo });
+        features.push({
+          id: f.id,
+          type: "extrude",
+          profile,
+          distance,
+          flip: f.flip,
+          extent: f.extent ?? "blind",
+          mode: f.mode,
+          targetId: f.targetId,
+          upTo,
+        });
       } else if (f.type === "dressup") {
         // A chamfer angle is optional (and fillets have none): leave it off the
         // resolved feature entirely when unset, so an unangled chamfer keeps the
@@ -1069,6 +1111,15 @@ export function resolveDocument(doc: Document): ResolveResult {
           size: evaluateExpression(f.size, scope),
           ...(angle !== undefined ? { angle } : {}),
           ...(angle !== undefined && f.flip ? { flip: true } : {}),
+        });
+      } else if (f.type === "shell") {
+        features.push({
+          id: f.id,
+          type: "shell",
+          targetId: f.targetId,
+          faces: f.faces,
+          faceRefs: f.faceRefs,
+          thickness: evaluateExpression(f.thickness, scope),
         });
       } else if (f.type === "boolean") {
         if (f.operands.length < 2) throw new Error("A boolean needs at least two operands.");
@@ -1125,7 +1176,8 @@ export function resolveDocument(doc: Document): ResolveResult {
             const c2 = resolvePatternCount(f.count2 ?? "", scope);
             if (c2 === null) throw new Error("pattern: second count must be 2 or more");
             s2 = evaluateExpression(f.spacing2 ?? "0", scope) * (f.flip2 ? -1 : 1);
-            if (!Number.isFinite(s2) || Math.abs(s2) < 1e-9) throw new Error("pattern: second spacing must be non-zero");
+            if (!Number.isFinite(s2) || Math.abs(s2) < 1e-9)
+              throw new Error("pattern: second spacing must be non-zero");
             count2 = c2;
             d2 = worldDir(f.dir2);
           }
@@ -1146,18 +1198,31 @@ export function resolveDocument(doc: Document): ResolveResult {
           const count = resolvePatternCount(f.count ?? "", scope);
           if (count === null) throw new Error("pattern: count must be 2 or more");
           const totalDeg = evaluateExpression(f.angle ?? "360", scope);
-          if (!Number.isFinite(totalDeg) || Math.abs(totalDeg) < 1e-9) throw new Error("pattern: angle must be non-zero");
+          if (!Number.isFinite(totalDeg) || Math.abs(totalDeg) < 1e-9)
+            throw new Error("pattern: angle must be non-zero");
           const angles = circularPatternAngles(count, totalDeg, f.symmetric);
           const axis = f.axis;
           if ("face" in axis) {
             features.push({
-              id: f.id, type: "pattern", targetId: f.targetId, angles,
-              axisFace: { sourceId: axis.face.featureId, faceName: axis.face.faceName, center: axis.face.center, normal: axis.face.normal },
+              id: f.id,
+              type: "pattern",
+              targetId: f.targetId,
+              angles,
+              axisFace: {
+                sourceId: axis.face.featureId,
+                faceName: axis.face.faceName,
+                center: axis.face.center,
+                normal: axis.face.normal,
+              },
             });
           } else if ("world" in axis) {
             features.push({
-              id: f.id, type: "pattern", targetId: f.targetId, angles,
-              axisOrigin: [0, 0, 0], axisDir: worldDir({ world: axis.world }),
+              id: f.id,
+              type: "pattern",
+              targetId: f.targetId,
+              angles,
+              axisOrigin: [0, 0, 0],
+              axisDir: worldDir({ world: axis.world }),
             });
           } else {
             const axisSketch = dDoc.features.find((x) => x.id === axis.sketchId);
@@ -1168,8 +1233,12 @@ export function resolveDocument(doc: Document): ResolveResult {
             const a = uvToWorld(axisFrame, axisEnt.a[0], axisEnt.a[1]);
             const b = uvToWorld(axisFrame, axisEnt.b[0], axisEnt.b[1]);
             features.push({
-              id: f.id, type: "pattern", targetId: f.targetId, angles,
-              axisOrigin: a, axisDir: [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+              id: f.id,
+              type: "pattern",
+              targetId: f.targetId,
+              angles,
+              axisOrigin: a,
+              axisDir: [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
             });
           }
         }
@@ -1187,9 +1256,23 @@ export function resolveDocument(doc: Document): ResolveResult {
         const axis = f.axis;
         let axisPart:
           | { axisOrigin: [number, number, number]; axisDir: [number, number, number] }
-          | { axisFace: { sourceId: string; faceName?: string; center: [number, number, number]; normal?: [number, number, number] } };
+          | {
+              axisFace: {
+                sourceId: string;
+                faceName?: string;
+                center: [number, number, number];
+                normal?: [number, number, number];
+              };
+            };
         if ("face" in axis) {
-          axisPart = { axisFace: { sourceId: axis.face.featureId, faceName: axis.face.faceName, center: axis.face.center, normal: axis.face.normal } };
+          axisPart = {
+            axisFace: {
+              sourceId: axis.face.featureId,
+              faceName: axis.face.faceName,
+              center: axis.face.center,
+              normal: axis.face.normal,
+            },
+          };
         } else if ("plane" in axis) {
           const axisFrame = frameOf(axis.plane, planeFrames);
           const line = planeIntersectionLine(axisFrame, frame);
@@ -1232,14 +1315,15 @@ export function resolveDocument(doc: Document): ResolveResult {
         // is a plain polyline.
         let beziers: { c1: [number, number]; c2: [number, number]; end: [number, number] }[] | undefined;
         if (pe.type === "line") points = [pe.a, pe.b];
-        else if (pe.type === "arc") { points = sampleArc(pe.c, pe.r, pe.start, pe.end, 32); smooth = true; }
-        else if (pe.type === "spline") {
+        else if (pe.type === "arc") {
+          points = sampleArc(pe.c, pe.r, pe.start, pe.end, 32);
+          smooth = true;
+        } else if (pe.type === "spline") {
           const { start, spans } = splineBeziers(pe.points);
           points = [start, ...spans.map((s) => s.end)];
           beziers = spans;
           smooth = true;
-        }
-        else throw new Error("sweep: path must be a line, arc, or spline");
+        } else throw new Error("sweep: path must be a line, arc, or spline");
         if (points.length < 2) throw new Error("sweep: path needs at least 2 points");
         // Prefer exact boundary curves so a circular/arc cross-section sweeps as
         // a smooth tube, not a faceted polygon; fall back to the polyline outline.
@@ -1247,7 +1331,12 @@ export function resolveDocument(doc: Document): ResolveResult {
         features.push({
           id: f.id,
           type: "sweep",
-          profile: { kind: "sketchRegion", outline: region.outline, frame, ...(curves && { segmentStart: curves.start, segments: curves.segments }) },
+          profile: {
+            kind: "sketchRegion",
+            outline: region.outline,
+            frame,
+            ...(curves && { segmentStart: curves.start, segments: curves.segments }),
+          },
           path: { points, smooth, beziers, frame: frameOf(pathSketch.plane, planeFrames) },
         });
       } else if (f.type === "loft") {

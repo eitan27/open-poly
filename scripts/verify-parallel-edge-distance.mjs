@@ -69,9 +69,12 @@ console.log(`  (box ${x1 - x0} x ${y1 - y0} x ${z1 - z0})`);
 
 // The box's 12 edges, from its bbox: axis + the two fixed coords + midpoint.
 const wanted = [];
-for (const y of [y0, y1]) for (const z of [z0, z1]) wanted.push({ axis: "x", fixed: [y, z], mid: [(x0 + x1) / 2, y, z] });
-for (const x of [x0, x1]) for (const z of [z0, z1]) wanted.push({ axis: "y", fixed: [x, z], mid: [x, (y0 + y1) / 2, z] });
-for (const x of [x0, x1]) for (const y of [y0, y1]) wanted.push({ axis: "z", fixed: [x, y], mid: [x, y, (z0 + z1) / 2] });
+for (const y of [y0, y1])
+  for (const z of [z0, z1]) wanted.push({ axis: "x", fixed: [y, z], mid: [(x0 + x1) / 2, y, z] });
+for (const x of [x0, x1])
+  for (const z of [z0, z1]) wanted.push({ axis: "y", fixed: [x, z], mid: [x, (y0 + y1) / 2, z] });
+for (const x of [x0, x1])
+  for (const y of [y0, y1]) wanted.push({ axis: "z", fixed: [x, y], mid: [x, y, (z0 + z1) / 2] });
 
 // --- Discover real edge ids by clicking each midpoint ------------------------
 const canvasBox = await page.locator("canvas").first().boundingBox();
@@ -99,7 +102,9 @@ for (const w of wanted) {
 const ambiguous = [...claims].filter(([, n]) => n > 1).map(([id]) => id);
 if (ambiguous.length) {
   const dropped = found.filter((f) => ambiguous.includes(f.edgeId));
-  console.log(`  (dropped ${dropped.length} ambiguous pick(s): ${dropped.map((f) => `${f.axis}@${f.fixed}`).join(", ")} — overlapping projections)`);
+  console.log(
+    `  (dropped ${dropped.length} ambiguous pick(s): ${dropped.map((f) => `${f.axis}@${f.fixed}`).join(", ")} — overlapping projections)`,
+  );
   found = found.filter((f) => !ambiguous.includes(f.edgeId));
 }
 console.log(`  (discovered ${found.length} of 12 edges by clicking; back edges are occluded)`);
@@ -144,12 +149,19 @@ check("exercised both parallel and non-parallel pairs", parallelChecked > 0 && n
 await apply({ op: "select", refs: [{ kind: "edge", featureId: boxId, edgeId: found[0].edgeId }] });
 await page.waitForTimeout(80);
 const one = await paneRows();
-check("single edge still shows just its Length", one?.Length !== undefined && one?.["Parallel distance"] === undefined, JSON.stringify(one));
+check(
+  "single edge still shows just its Length",
+  one?.Length !== undefined && one?.["Parallel distance"] === undefined,
+  JSON.stringify(one),
+);
 
 // A screenshot of the pane showing a real distance, for the record.
 const pair = found.find((f) => f.axis === found[0].axis && f !== found[0]);
 if (pair) {
-  await apply({ op: "select", refs: [found[0], pair].map((e) => ({ kind: "edge", featureId: boxId, edgeId: e.edgeId })) });
+  await apply({
+    op: "select",
+    refs: [found[0], pair].map((e) => ({ kind: "edge", featureId: boxId, edgeId: e.edgeId })),
+  });
   await page.waitForTimeout(80);
   await page.locator(".selection-info").screenshot({ path: "/tmp/parallel-edge-distance-pane.png" });
   console.log("  (pane screenshot → /tmp/parallel-edge-distance-pane.png)");

@@ -1,11 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  colorToHex,
-  hexToColor,
-  newBodyColor,
-  setNewBodyColorPreference,
-  SOLID_COLORS,
-} from "./colors";
+import { colorToHex, hexToColor, newBodyColor, setNewBodyColorPreference, SOLID_COLORS } from "./colors";
 import { addPlane, makeFeature, migrateDocument } from "./document";
 import type { Document, PlaneFeature, TransformFeature } from "./types";
 
@@ -56,8 +50,9 @@ describe("which colours the preference reaches", () => {
   it("does NOT colour a reference plane — planes need to stay distinguishable", () => {
     setNewBodyColorPreference(0x123456);
     const doc: Document = { features: [], rollbackIndex: 0, variables: [] };
-    const plane = addPlane(doc, { method: "offset", base: { kind: "datum", id: "plane-top" } })
-      .doc.features.at(-1) as PlaneFeature;
+    const plane = addPlane(doc, { method: "offset", base: { kind: "datum", id: "plane-top" } }).doc.features.at(
+      -1,
+    ) as PlaneFeature;
     expect(plane.color).not.toBe(0x123456);
     expect(SOLID_COLORS).toContain(plane.color);
   });
@@ -66,8 +61,21 @@ describe("which colours the preference reaches", () => {
     setNewBodyColorPreference(0x123456);
     // A pre-colour transform, as an old persisted document would hold it.
     const legacy = {
-      features: [{ id: "t1", type: "transform", name: "Move 1", suppressed: false, targetId: "b1",
-        tx: "0", ty: "0", tz: "0", angle: "0", axis: "z", pivot: [0, 0, 0] }],
+      features: [
+        {
+          id: "t1",
+          type: "transform",
+          name: "Move 1",
+          suppressed: false,
+          targetId: "b1",
+          tx: "0",
+          ty: "0",
+          tz: "0",
+          angle: "0",
+          axis: "z",
+          pivot: [0, 0, 0],
+        },
+      ],
       rollbackIndex: 1,
       variables: [],
     } as unknown as Document;

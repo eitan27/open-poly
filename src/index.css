@@ -144,7 +144,12 @@
   --hud-warn-rgb: 40, 33, 20;
   --hud-hot-rgb: 60, 38, 18;
 
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
   color-scheme: dark;
 }
 

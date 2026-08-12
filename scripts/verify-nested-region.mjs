@@ -51,7 +51,11 @@ await waitIdle();
 
 const scene = await read({ read: "sceneSummary" });
 const regions = scene.sketches.find((s) => s.id === sk.createdId)?.regions ?? [];
-check("two regions detected", regions.length === 2, `regions: ${JSON.stringify(regions.map((r) => Math.round(r.area)))}`);
+check(
+  "two regions detected",
+  regions.length === 2,
+  `regions: ${JSON.stringify(regions.map((r) => Math.round(r.area)))}`,
+);
 const outer = regions.find((r) => r.area > 1000);
 const inner = regions.find((r) => r.area < 1000);
 check("outer is the annulus (1600−256=1344)", outer && Math.abs(outer.area - 1344) < 2, `${outer?.area}`);
@@ -69,16 +73,20 @@ const clickWorld = async (w) => {
 // by re-clicking the same world point (deselects) before the next check.
 await clickWorld([0, 0, 0]); // dead center → inside the inner box
 let sel = await read({ read: "selection" });
-check("clicking inside the inner box selects the inner region",
+check(
+  "clicking inside the inner box selects the inner region",
   sel.length === 1 && sel[0].kind === "sketchFace" && sel[0].regionId === inner.id,
-  JSON.stringify(sel));
+  JSON.stringify(sel),
+);
 await clickWorld([0, 0, 0]); // toggle the inner region back off
 
 await clickWorld([15, 15, 0]); // in the frame near a corner (annulus only)
 sel = await read({ read: "selection" });
-check("clicking the frame selects the OUTER region",
+check(
+  "clicking the frame selects the OUTER region",
   sel.length === 1 && sel[0].kind === "sketchFace" && sel[0].regionId === outer.id,
-  JSON.stringify(sel));
+  JSON.stringify(sel),
+);
 
 // --- Extrude the frame → a hollow solid -------------------------------------
 // The outer region is already selected; extrude it. A solid slab would span the
@@ -88,7 +96,11 @@ await page.keyboard.press("e");
 await page.waitForTimeout(300);
 check("extrude dialog opened", (await page.locator(".extrude-dialog").count()) === 1);
 await page.keyboard.press("Enter");
-try { await waitIdle(); } catch { /* capture status below instead of failing hard */ }
+try {
+  await waitIdle();
+} catch {
+  /* capture status below instead of failing hard */
+}
 const status = (await page.locator(".status").textContent())?.trim();
 console.log(`INFO: status after extrude = "${status}"`);
 
@@ -97,14 +109,18 @@ const bodies = scene2.bodies ?? [];
 check("one body from the frame extrude", bodies.length === 1, `bodies: ${bodies.length}`);
 const b = bodies[0];
 // Frame bbox should still span the full 40×40 outer extent.
-check("frame body spans the full 40×40 outer extent",
+check(
+  "frame body spans the full 40×40 outer extent",
   b?.bbox && Math.abs(b.bbox.max[0] - b.bbox.min[0] - 40) < 0.5 && Math.abs(b.bbox.max[1] - b.bbox.min[1] - 40) < 0.5,
-  JSON.stringify(b?.bbox));
+  JSON.stringify(b?.bbox),
+);
 // A hollow rectangular frame has 4 outer + 4 inner walls + 2 annular caps = 10
 // faces; a solid slab (hole lost) would have just 6. Face count proves the cut.
-check("frame body has an inner wall (hole preserved, not a solid slab)",
+check(
+  "frame body has an inner wall (hole preserved, not a solid slab)",
   Array.isArray(b?.faces) && b.faces.length >= 10,
-  `faces: ${b?.faces?.length}`);
+  `faces: ${b?.faces?.length}`,
+);
 
 await page.screenshot({ path: "/tmp/openshape-nested-region.png" });
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);

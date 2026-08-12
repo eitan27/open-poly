@@ -43,7 +43,11 @@ const normalize = (v: Vec3): Vec3 => {
 
 export function resolveSectionPlane(frame: PlaneFrameData, offset: number, flip: boolean): ResolvedSectionPlane {
   const n = normalize(frame.normal);
-  const origin: Vec3 = [frame.origin[0] + n[0] * offset, frame.origin[1] + n[1] * offset, frame.origin[2] + n[2] * offset];
+  const origin: Vec3 = [
+    frame.origin[0] + n[0] * offset,
+    frame.origin[1] + n[1] * offset,
+    frame.origin[2] + n[2] * offset,
+  ];
   const normal: Vec3 = flip ? [-n[0], -n[1], -n[2]] : n;
   return { origin, normal };
 }
@@ -51,7 +55,7 @@ export function resolveSectionPlane(frame: PlaneFrameData, offset: number, flip:
 /** Half-space test: is `point` on the KEPT side of a resolved section plane
  *  (or is there no plane at all — section view off)? This is the exact rule
  *  clip-aware picking uses to reject a click that lands on geometry the GPU
- *  clip has visually discarded (BACKLOG.md: "picking must respect the clip"
+ *  clip has visually discarded (docs/BACKLOG.md: "picking must respect the clip"
  *  — otherwise clicking into the opening selects the invisible far face). A
  *  point exactly on the plane counts as kept (a small tolerance, not a
  *  strict >0), matching the GPU clip shader's own boundary. */

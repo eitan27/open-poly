@@ -63,9 +63,10 @@ quoted in the warning).
   `add_offset` / `add_sketch_mirror` (associative DRIVEN sketch geometry —
   offset a chain, or mirror entities across a sketch line), `add_mirror`
   (3D body + plane), `add_plane`, `transform` (translate/rotate, optional
-  `copy`), `boolean`, `dress_up` (chamfer/fillet), `set_param`, `set_appearance`,
-  `rename`, `delete`, `select`, `import_step`, `import_dxf` (a DXF drawing →
-  editable sketch on a chosen plane).
+  `copy`), `boolean`, `dress_up` (chamfer/fillet), `shell` (hollow a body —
+  remove faces by name to open it, or none for a sealed shell), `set_param`,
+  `set_appearance`, `rename`, `delete`, `select`, `import_step`, `import_dxf`
+  (a DXF drawing → editable sketch on a chosen plane).
 - **Feedback:** `report_issue` — see below.
 - **Documents (the workspace):** `list_documents` (all stored docs, active one
   flagged), `open_document`, `new_document`, `rename_document`,
@@ -126,7 +127,7 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
   `axis` and an `angle` (360 for a full solid of revolution, less for a partial;
   add `symmetric:true` to grow the partial evenly both ways of the profile
   plane). The **axis** is whichever is handy: a sketch line `{sketchId,
-  entityId}` (get the id from `get_scene_summary`); a plane `{plane: …}` (the axis
+entityId}` (get the id from `get_scene_summary`); a plane `{plane: …}` (the axis
   is where it meets the profile plane); or a body face `{bodyId, faceName}`
   (planar face → that intersection; a cylinder/cone face → its own axis, e.g. to
   revolve around an existing shaft). The profile must **not cross** the axis.
@@ -144,7 +145,7 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
   different heights), then `add_loft` with `profiles: [{sketchId, regionId}, …]`
   in order. Sections on the **same** plane won't loft — give them distinct planes.
 - **Embossed / engraved text:** `add_sketch` with a `text` entity (`{shape:
-  "text", p: <baseline-left>, value: "ACME", height: 8, rotation?}`), then
+"text", p: <baseline-left>, value: "ACME", height: 8, rotation?}`), then
   `add_extrude` with profile `{sketchId, textId}` — `mode:"new"` for standalone
   letters, `add` to emboss onto a face, `remove` to engrave into one. The kernel
   bakes the glyph outlines with their counters/holes (the inside of an "O" stays
@@ -179,6 +180,13 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
   bevel; set `angle` (degrees, 0–90) for an asymmetric one — `size` runs along
   the reference face and the bevel leaves it at `angle`, and `flip: true`
   measures from the edge's other adjacent face.
+- **Hollow out a body (a box, a printed enclosure, a bottle):** `shell`
+  (`targetId` + `faces` + `thickness`) — pick the face(s) to remove (they
+  become openings) by **name** from the scene summary; the wall grows
+  **inward** from the kept faces, so the body's outer dimensions don't change.
+  Omit `faces` (or pass `[]`) for a fully **sealed** hollow shell with no
+  opening. The new inner-wall faces are named `"<kept-face-name>/in"` for
+  later reference (e.g. filleting an inside corner).
 - **Combine two bodies:** `boolean` (union/subtract/intersect) by body ids.
 - **Place/duplicate a body:** `transform` (translate + single-axis rotate). Set
   `copy: true` to keep the original and emit a moved copy as a new part.
@@ -200,24 +208,24 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
   `wallThickness` / `holeDia` / `outerR`, **not** `wall_thickness`, `r1`, or
   `hole2`; an invalid name is rejected.
 - **Predictable sketches, then constrain what matters.** Agent-drawn entities
-  carry no constraints, so a sketch *is* exactly the coordinates you give — place
+  carry no constraints, so a sketch _is_ exactly the coordinates you give — place
   points precisely (axis-aligned where you mean it, shared coords where things
-  should meet). For a *parametric* profile, add explicit constraints/dimensions:
+  should meet). For a _parametric_ profile, add explicit constraints/dimensions:
   - `add_constraint` — `horizontal`/`vertical` (a line), `parallel`/
     `perpendicular` (two lines), `equal` (two lines or two circles/arcs),
     `tangent`, `coincident`, `pointOnLine`, `midpoint`. Points are `{entityId,
-    at}` (`at` 'a'/'b' = line/arc ends, 'c' = circle/arc/point center) or
+at}` (`at` 'a'/'b' = line/arc ends, 'c' = circle/arc/point center) or
     `{origin:true}`.
   - `add_dimension` — `length`/`radius`/`angle`/`distance`; its `value` takes a
     number or a **variable expression** (`"width/2"`), so define the variable
     first and the dimension drives the geometry from it.
-  Both re-solve immediately and are **rejected (with a message)** if they
-  conflict with, or are already implied by, the existing constraints — the sketch
-  is left unchanged. Constraint ids appear in `get_scene_summary`; clear one with
-  `remove_constraint`. Note the *value* is captured as a number at apply time (a
-  live re-link on later variable changes is still a gap — `report_issue` if that
-  blocks you). Derived (offset/mirror/project) and `text` entities aren't
-  constrainable.
+    Both re-solve immediately and are **rejected (with a message)** if they
+    conflict with, or are already implied by, the existing constraints — the sketch
+    is left unchanged. Constraint ids appear in `get_scene_summary`; clear one with
+    `remove_constraint`. Note the _value_ is captured as a number at apply time (a
+    live re-link on later variable changes is still a gap — `report_issue` if that
+    blocks you). Derived (offset/mirror/project) and `text` entities aren't
+    constrainable.
 - **Parameterize sketch coordinates too.** Any sketch coordinate, radius or
   angle in `add_sketch` accepts a **variable expression string** in place of a
   number (`{shape:"circle", c:[0,0], r:"innerRad"}`,
@@ -245,13 +253,13 @@ You are also the project's feedback loop. When something blocks or surprises you
 
 - `kind: "missing_feature"` — the operation you need isn't expressible with the
   available tools (e.g. variable-radius fillet, trim/extend, projecting model
-  edges into a sketch, a live dimension→variable re-link). *(Revolve — incl.
+  edges into a sketch, a live dimension→variable re-link). _(Revolve — incl.
   symmetric + plane/face axes, 3D mirror, sweep, loft, the spline tool, **text** +
   text-extrude, **offset** and **sketch-mirror** (driven), linear/circular
   **pattern**, **sketch constraints + dimensions** (`add_constraint` /
   `add_dimension`), symmetric / through-all / up-to-face / up-to-next extrude, and
   all `add_plane` methods — offset / midplane / angle / through-3-points — exist
-  now; use those tools.)* Include the goal, what you tried, and a suggested API.
+  now; use those tools.)_ Include the goal, what you tried, and a suggested API.
 - `kind: "bug"` — a tool did the wrong thing or errored unexpectedly (e.g. a
   remove that didn't cut, a name that didn't resolve, a regen error). Include what
   you did, what you **expected**, what you **observed**, and a minimal repro.

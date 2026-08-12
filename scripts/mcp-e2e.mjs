@@ -34,7 +34,15 @@ const textOf = (r) => r.content.find((c) => c.type === "text")?.text ?? "";
 const tools = (await client.listTools()).tools.map((t) => t.name);
 check(
   "tools advertised (ops + reads + guide + report_issue)",
-  ["add_primitive", "add_sketch", "add_extrude", "get_scene_summary", "screenshot", "get_modeling_guide", "report_issue"].every((n) => tools.includes(n)),
+  [
+    "add_primitive",
+    "add_sketch",
+    "add_extrude",
+    "get_scene_summary",
+    "screenshot",
+    "get_modeling_guide",
+    "report_issue",
+  ].every((n) => tools.includes(n)),
   `${tools.length} tools`,
 );
 
@@ -53,18 +61,32 @@ check("get_scene_summary sees McpBox on first read (regen awaited)", names.inclu
 // screenshot returns image content
 const rs = await client.callTool({ name: "screenshot", arguments: { view: "iso" } });
 const img = rs.content.find((c) => c.type === "image");
-check("screenshot -> PNG image content", !rs.isError && !!img && img.mimeType === "image/png" && img.data.length > 1000);
+check(
+  "screenshot -> PNG image content",
+  !rs.isError && !!img && img.mimeType === "image/png" && img.data.length > 1000,
+);
 
 // invalid op surfaces a structured, isError result (model can self-correct)
 const re = await client.callTool({ name: "set_param", arguments: { featureId: "missing", name: "width", value: 1 } });
 const op2 = JSON.parse(textOf(re));
-check("set_param missing -> isError + not_found", re.isError === true && op2.ok === false && op2.errorKind === "not_found", textOf(re));
+check(
+  "set_param missing -> isError + not_found",
+  re.isError === true && op2.ok === false && op2.errorKind === "not_found",
+  textOf(re),
+);
 
 // a KERNEL build failure (bogus edge) surfaces only because we await regen —
 // this is what lets an agent see a bad op and self-correct.
-const rk = await client.callTool({ name: "dress_up", arguments: { kind: "fillet", targetId: boxId, edges: ["does-not-exist"], size: 1 } });
+const rk = await client.callTool({
+  name: "dress_up",
+  arguments: { kind: "fillet", targetId: boxId, edges: ["does-not-exist"], size: 1 },
+});
 const op3 = JSON.parse(textOf(rk));
-check("dress_up bad edge -> isError + kernel_error (regen-await)", rk.isError === true && op3.ok === false && op3.errorKind === "kernel_error", textOf(rk));
+check(
+  "dress_up bad edge -> isError + kernel_error (regen-await)",
+  rk.isError === true && op3.ok === false && op3.errorKind === "kernel_error",
+  textOf(rk),
+);
 
 // modeling guide + report_issue (don't go through the hub)
 const rg = await client.callTool({ name: "get_modeling_guide", arguments: {} });

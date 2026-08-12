@@ -59,7 +59,9 @@ await page.waitForTimeout(200);
 
 // --- 1. Draw a triangle; closing on the start vertex ends the chain --------
 // Vertices of a triangle on the Top plane (z=0).
-const P0 = [-20, -10, 0], P1 = [20, -10, 0], P2 = [0, 20, 0];
+const P0 = [-20, -10, 0],
+  P1 = [20, -10, 0],
+  P2 = [0, 20, 0];
 await clickWorld(P0); // start
 await clickWorld(P1); // seg 1
 await clickWorld(P2); // seg 2
@@ -75,7 +77,9 @@ const lineCount = (sketch?.entities ?? []).filter((e) => e.type === "line").leng
 check("closing on the start vertex yields exactly 3 lines (chain ended)", lineCount === 3, `lines: ${lineCount}`);
 
 // Ending the chain must switch back to the Select tool (not stay on Line).
-const selectActive = await page.locator(".sketch-toolbar button[title^='Select']").evaluate((el) => el.classList.contains("active"));
+const selectActive = await page
+  .locator(".sketch-toolbar button[title^='Select']")
+  .evaluate((el) => el.classList.contains("active"));
 check("ending the chain switches to the Select tool", selectActive);
 
 // And Select is active, so a click on empty space clears selection rather than
@@ -93,38 +97,70 @@ const groupCount = await page.locator(".sketch-group").count();
 check("sketch-tool groups render with the new group UX", groupCount === 3, `groups: ${groupCount}`);
 const primaryCount = await page.locator(".sketch-group .sketch-group-primary").count();
 const arrowCount = await page.locator(".sketch-group .sketch-group-arrow").count();
-check("each group has a primary + an arrow", primaryCount === 3 && arrowCount === 3, `primary:${primaryCount} arrow:${arrowCount}`);
+check(
+  "each group has a primary + an arrow",
+  primaryCount === 3 && arrowCount === 3,
+  `primary:${primaryCount} arrow:${arrowCount}`,
+);
 // Open the RECTANGLE group's flyout (first group) and confirm it's vertical,
 // to the right, and lists the two rect variants by name.
 const rectArrow = page.locator(".sketch-group").nth(0).locator(".sketch-group-arrow");
 await rectArrow.click();
 await page.waitForTimeout(200);
 const rectNames = await page.locator(".sketch-group").nth(0).locator(".sketch-flyout .cf-name").allInnerTexts();
-check("rectangle flyout lists both variants", rectNames.some((n) => /2 corners/.test(n)) && rectNames.some((n) => /Center/.test(n)), rectNames.join(", "));
-const rectBoxes = await page.locator(".sketch-group").nth(0).locator(".sketch-flyout button").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ x: Math.round(r.x), y: Math.round(r.y) })));
-const rectVertical = rectBoxes.every((b, i) => i === 0 || (b.y > rectBoxes[i - 1].y && Math.abs(b.x - rectBoxes[0].x) < 2));
+check(
+  "rectangle flyout lists both variants",
+  rectNames.some((n) => /2 corners/.test(n)) && rectNames.some((n) => /Center/.test(n)),
+  rectNames.join(", "),
+);
+const rectBoxes = await page
+  .locator(".sketch-group")
+  .nth(0)
+  .locator(".sketch-flyout button")
+  .evaluateAll((els) =>
+    els.map((e) => e.getBoundingClientRect()).map((r) => ({ x: Math.round(r.x), y: Math.round(r.y) })),
+  );
+const rectVertical = rectBoxes.every(
+  (b, i) => i === 0 || (b.y > rectBoxes[i - 1].y && Math.abs(b.x - rectBoxes[0].x) < 2),
+);
 check("rectangle flyout is vertical", rectVertical, JSON.stringify(rectBoxes.map((b) => b.y)));
 const rtoolbar = await page.locator(".sketch-toolbar").boundingBox();
 const rfly = await page.locator(".sketch-group").nth(0).locator(".sketch-flyout").boundingBox();
-check("rectangle flyout sits to the right of the toolbar", rfly.x >= rtoolbar.x + rtoolbar.width - 2, `fly.x=${Math.round(rfly.x)} toolbar.right=${Math.round(rtoolbar.x + rtoolbar.width)}`);
+check(
+  "rectangle flyout sits to the right of the toolbar",
+  rfly.x >= rtoolbar.x + rtoolbar.width - 2,
+  `fly.x=${Math.round(rfly.x)} toolbar.right=${Math.round(rtoolbar.x + rtoolbar.width)}`,
+);
 // Picking a variant from the flyout selects that tool AND closes the flyout.
 await page.locator(".sketch-group").nth(0).locator(".sketch-flyout button", { hasText: "Center" }).click();
 await page.waitForTimeout(200);
 const rectFlyGone = await page.locator(".sketch-group").nth(0).locator(".sketch-flyout").count();
 check("picking a variant closes the flyout", rectFlyGone === 0);
-const rectPrimaryActive = await page.locator(".sketch-group").nth(0).locator(".sketch-group-primary").evaluate((el) => el.classList.contains("active"));
+const rectPrimaryActive = await page
+  .locator(".sketch-group")
+  .nth(0)
+  .locator(".sketch-group-primary")
+  .evaluate((el) => el.classList.contains("active"));
 check("the rect primary is now active (rect-center selected)", rectPrimaryActive);
 // Clicking the primary directly re-selects the (now rect-center) tool: still active.
 await page.locator(".sketch-group").nth(0).locator(".sketch-group-primary").click();
 await page.waitForTimeout(150);
-const stillActive = await page.locator(".sketch-group").nth(0).locator(".sketch-group-primary").evaluate((el) => el.classList.contains("active"));
+const stillActive = await page
+  .locator(".sketch-group")
+  .nth(0)
+  .locator(".sketch-group-primary")
+  .evaluate((el) => el.classList.contains("active"));
 check("clicking the primary selects its variant tool", stillActive);
 // Circle group's arrow opens its own flyout with the circle variants.
 const circleArrow = page.locator(".sketch-group").nth(1).locator(".sketch-group-arrow");
 await circleArrow.click();
 await page.waitForTimeout(200);
 const circNames = await page.locator(".sketch-group").nth(1).locator(".sketch-flyout .cf-name").allInnerTexts();
-check("circle flyout lists both variants", circNames.some((n) => /Center \+ radius/.test(n)) && circNames.some((n) => /3 points/.test(n)), circNames.join(", "));
+check(
+  "circle flyout lists both variants",
+  circNames.some((n) => /Center \+ radius/.test(n)) && circNames.some((n) => /3 points/.test(n)),
+  circNames.join(", "),
+);
 await circleArrow.click(); // close it before moving on
 await page.waitForTimeout(150);
 
@@ -145,17 +181,27 @@ check("▸ opens a flyout listing all 7 geometric constraints", flyoutBtns === 7
 const names = await page.locator(".constraint-flyout .cf-name").allInnerTexts();
 check(
   "flyout names cover Horizontal…Tangent",
-  ["Horizontal", "Vertical", "Parallel", "Perpendicular", "Equal", "Coincident", "Tangent"].every((n) => names.includes(n)),
+  ["Horizontal", "Vertical", "Parallel", "Perpendicular", "Equal", "Coincident", "Tangent"].every((n) =>
+    names.includes(n),
+  ),
   names.join(", "),
 );
 // Flyout is vertical: its buttons stack (each below the previous).
-const boxes = await page.locator(".constraint-flyout button").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ x: Math.round(r.x), y: Math.round(r.y) })));
+const boxes = await page
+  .locator(".constraint-flyout button")
+  .evaluateAll((els) =>
+    els.map((e) => e.getBoundingClientRect()).map((r) => ({ x: Math.round(r.x), y: Math.round(r.y) })),
+  );
 const vertical = boxes.every((b, i) => i === 0 || (b.y > boxes[i - 1].y && Math.abs(b.x - boxes[0].x) < 2));
 check("flyout is laid out vertically", vertical, JSON.stringify(boxes.map((b) => b.y)));
 // And it sits to the RIGHT of the toolbar column.
 const toolbarBox = await page.locator(".sketch-toolbar").boundingBox();
 const flyoutBox = await page.locator(".constraint-flyout").boundingBox();
-check("flyout sits to the right of the sketch tools", flyoutBox.x >= toolbarBox.x + toolbarBox.width - 2, `flyout.x=${Math.round(flyoutBox.x)} toolbar.right=${Math.round(toolbarBox.x + toolbarBox.width)}`);
+check(
+  "flyout sits to the right of the sketch tools",
+  flyoutBox.x >= toolbarBox.x + toolbarBox.width - 2,
+  `flyout.x=${Math.round(flyoutBox.x)} toolbar.right=${Math.round(toolbarBox.x + toolbarBox.width)}`,
+);
 
 // --- Pick a constraint from the flyout and confirm it applies --------------
 // Close the flyout (toggle the arrow — Escape would exit the sketch), then
@@ -171,7 +217,11 @@ const base = lines.find((e) => Math.abs(e.a[1] - e.b[1]) < 0.01 && Math.abs(e.a[
 await apply({ op: "select", refs: [{ kind: "sketchEntity", sketchId: sk.createdId, entityId: base.id }] });
 await page.waitForTimeout(150);
 const sel0 = await read({ read: "selection" });
-check("selected a base line via the bridge", sel0.some((s) => s.kind === "sketchEntity" && s.entityId === base.id), JSON.stringify(sel0));
+check(
+  "selected a base line via the bridge",
+  sel0.some((s) => s.kind === "sketchEntity" && s.entityId === base.id),
+  JSON.stringify(sel0),
+);
 
 // Open flyout — Horizontal must now be ENABLED (one line selected) — and click it.
 await page.locator(".constraint-group .constraint-arrow").click();
@@ -183,10 +233,18 @@ await waitIdle();
 doc = await read({ read: "document" });
 sketch = doc.features.find((f) => f.id === sk.createdId);
 const hasHoriz = (sketch?.constraints ?? []).some((c) => c.type === "horizontal");
-check("applying Horizontal from the flyout adds the constraint", hasHoriz, JSON.stringify((sketch?.constraints ?? []).map((c) => c.type)));
+check(
+  "applying Horizontal from the flyout adds the constraint",
+  hasHoriz,
+  JSON.stringify((sketch?.constraints ?? []).map((c) => c.type)),
+);
 // The primary button now shows the last-used choice (Horizontal) — its title.
 const primaryTitle = await page.locator(".constraint-primary").getAttribute("title");
-check("primary now reflects the last-used constraint (Horizontal)", /Horizontal/.test(primaryTitle ?? ""), primaryTitle ?? "");
+check(
+  "primary now reflects the last-used constraint (Horizontal)",
+  /Horizontal/.test(primaryTitle ?? ""),
+  primaryTitle ?? "",
+);
 
 // --- 2. Delete a selected edge while editing removes only the edge ---------
 // Reproduce the real accumulated state: entering edit selects the whole-sketch

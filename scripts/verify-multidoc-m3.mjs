@@ -64,7 +64,11 @@ const thumbInfo = await page.evaluate(
   activeId,
 );
 check("thumbnail captured on regen settle", Boolean(thumbInfo), JSON.stringify(thumbInfo));
-check("thumbnail is a small jpeg", thumbInfo && thumbInfo.type === "image/jpeg" && thumbInfo.size < 60_000, JSON.stringify(thumbInfo));
+check(
+  "thumbnail is a small jpeg",
+  thumbInfo && thumbInfo.type === "image/jpeg" && thumbInfo.size < 60_000,
+  JSON.stringify(thumbInfo),
+);
 
 // 2. Dialog renders the real thumbnail (an <img>, not the dashed placeholder).
 await page.locator(".docs-btn").click();
@@ -81,7 +85,10 @@ const envelope = JSON.parse(await readFile(exportPath, "utf8"));
 check("export filename", download.suggestedFilename() === "ThumbDoc.openpoly.json", download.suggestedFilename());
 check(
   "export envelope shape",
-  envelope.format === "openpoly-doc" && envelope.version === 1 && envelope.name === "ThumbDoc" && Array.isArray(envelope.doc.features),
+  envelope.format === "openpoly-doc" &&
+    envelope.version === 1 &&
+    envelope.name === "ThumbDoc" &&
+    Array.isArray(envelope.doc.features),
   Object.keys(envelope).join(","),
 );
 check("export excludes meshes", !("meshes" in envelope) && !("meshes" in envelope.doc));

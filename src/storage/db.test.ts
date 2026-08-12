@@ -4,16 +4,7 @@
 // __resetDBForTests hook drops it).
 import { beforeEach, describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
-import {
-  __resetDBForTests,
-  deleteDoc,
-  duplicateDoc,
-  listMeta,
-  loadDoc,
-  putDoc,
-  renameDoc,
-  type StoredDoc,
-} from "./db";
+import { __resetDBForTests, deleteDoc, duplicateDoc, listMeta, loadDoc, putDoc, renameDoc, type StoredDoc } from "./db";
 import { createDocument } from "../document/document";
 
 function record(id: string, name: string, overrides: Partial<StoredDoc> = {}): StoredDoc {

@@ -7,8 +7,13 @@ import { expandPickToChains, expandToChains, expansionCount } from "./edgeChains
 //   rim B: 20,21,22      (chain 20)
 //   singletons: 30, 31   (a box's straight edges — absent from the map)
 const chains = new Map<number, number>([
-  [10, 10], [11, 10], [12, 10], [13, 10],
-  [20, 20], [21, 20], [22, 20],
+  [10, 10],
+  [11, 10],
+  [12, 10],
+  [13, 10],
+  [20, 20],
+  [21, 20],
+  [22, 20],
 ]);
 
 describe("expandToChains", () => {

@@ -52,9 +52,24 @@ describe("arcFromBulge", () => {
 describe("parseDxfToEntities", () => {
   it("converts LINE, CIRCLE, ARC with scaling", () => {
     const src = dxf(
-      [0, "LINE"], [8, 0], [10, 0], [20, 0], [11, 10], [21, 5],
-      [0, "CIRCLE"], [8, 0], [10, 20], [20, 20], [40, 4],
-      [0, "ARC"], [8, 0], [10, 0], [20, 30], [40, 5], [50, 0], [51, 90],
+      [0, "LINE"],
+      [8, 0],
+      [10, 0],
+      [20, 0],
+      [11, 10],
+      [21, 5],
+      [0, "CIRCLE"],
+      [8, 0],
+      [10, 20],
+      [20, 20],
+      [40, 4],
+      [0, "ARC"],
+      [8, 0],
+      [10, 0],
+      [20, 30],
+      [40, 5],
+      [50, 0],
+      [51, 90],
     );
     const { entities, counts } = parseDxfToEntities(src, { scale: 2 });
     const line = entities.find((e) => e.type === "line") as Extract<SketchEntity, { type: "line" }>;
@@ -72,10 +87,17 @@ describe("parseDxfToEntities", () => {
 
   it("expands a closed LWPOLYLINE (with a bulge) into lines + an arc that closes the loop", () => {
     const src = dxf(
-      [0, "LWPOLYLINE"], [8, 0], [90, 3], [70, 1],
-      [10, 0], [20, 0], [42, 0.5],
-      [10, 10], [20, 0],
-      [10, 10], [20, 10],
+      [0, "LWPOLYLINE"],
+      [8, 0],
+      [90, 3],
+      [70, 1],
+      [10, 0],
+      [20, 0],
+      [42, 0.5],
+      [10, 10],
+      [20, 0],
+      [10, 10],
+      [20, 10],
     );
     const { entities } = parseDxfToEntities(src);
     // 3 vertices, closed → 3 segments; first carries a bulge (arc).
@@ -86,8 +108,20 @@ describe("parseDxfToEntities", () => {
 
   it("maps TEXT and MTEXT to text entities with radians rotation", () => {
     const src = dxf(
-      [0, "TEXT"], [8, 0], [10, 1], [20, 1], [40, 2.5], [1, "HELLO"], [50, 90],
-      [0, "MTEXT"], [8, 0], [10, 5], [20, 6], [40, 3], [1, "{\\fArial;World}\\Pline2"], [50, 0],
+      [0, "TEXT"],
+      [8, 0],
+      [10, 1],
+      [20, 1],
+      [40, 2.5],
+      [1, "HELLO"],
+      [50, 90],
+      [0, "MTEXT"],
+      [8, 0],
+      [10, 5],
+      [20, 6],
+      [40, 3],
+      [1, "{\\fArial;World}\\Pline2"],
+      [50, 0],
     );
     const { entities } = parseDxfToEntities(src);
     const texts = entities.filter((e) => e.type === "text") as Extract<SketchEntity, { type: "text" }>[];
@@ -101,11 +135,19 @@ describe("parseDxfToEntities", () => {
 
   it("samples a SPLINE onto its curve, passing through its endpoints", () => {
     const src = dxf(
-      [0, "SPLINE"], [8, 0], [70, 8], [71, 3], [74, 0],
-      [10, 0], [20, 0],
-      [10, 1], [20, 2],
-      [10, 3], [20, 2],
-      [10, 4], [20, 0],
+      [0, "SPLINE"],
+      [8, 0],
+      [70, 8],
+      [71, 3],
+      [74, 0],
+      [10, 0],
+      [20, 0],
+      [10, 1],
+      [20, 2],
+      [10, 3],
+      [20, 2],
+      [10, 4],
+      [20, 0],
     );
     const { entities } = parseDxfToEntities(src);
     const spline = entities.find((e) => e.type === "spline") as Extract<SketchEntity, { type: "spline" }>;
@@ -121,12 +163,37 @@ describe("parseDxfToEntities", () => {
     // ~5e-4 (typical DXF export noise) — larger than region detection's 1e-4
     // vertex merge, so without healing the loop stays open.
     const src = dxf(
-      [0, "LINE"], [8, 0], [10, 0], [20, 0], [11, 100.0005], [21, 0],
-      [0, "LINE"], [8, 0], [10, 100], [20, 0.0004], [11, 100], [21, 100],
-      [0, "LINE"], [8, 0], [10, 100.0003], [20, 100], [11, 0], [21, 100.0006],
-      [0, "LINE"], [8, 0], [10, 0.0005], [20, 100], [11, 0.0002], [21, 0.0003],
+      [0, "LINE"],
+      [8, 0],
+      [10, 0],
+      [20, 0],
+      [11, 100.0005],
+      [21, 0],
+      [0, "LINE"],
+      [8, 0],
+      [10, 100],
+      [20, 0.0004],
+      [11, 100],
+      [21, 100],
+      [0, "LINE"],
+      [8, 0],
+      [10, 100.0003],
+      [20, 100],
+      [11, 0],
+      [21, 100.0006],
+      [0, "LINE"],
+      [8, 0],
+      [10, 0.0005],
+      [20, 100],
+      [11, 0.0002],
+      [21, 0.0003],
       // A degenerate near-zero-length segment that should be dropped.
-      [0, "LINE"], [8, 0], [10, 50], [20, 50], [11, 50.00001], [21, 50],
+      [0, "LINE"],
+      [8, 0],
+      [10, 50],
+      [20, 50],
+      [11, 50.00001],
+      [21, 50],
     );
     const { entities } = parseDxfToEntities(src);
     expect(entities.filter((e) => e.type === "line")).toHaveLength(4); // degenerate dropped
@@ -178,7 +245,8 @@ describe("sketchEntitiesBounds", () => {
     const b = sketchEntitiesBounds(entities)!;
     expect(b.min).toEqual([70, 471]);
     expect(b.max).toEqual([200, 559]);
-    const cx = (b.min[0] + b.max[0]) / 2, cy = (b.min[1] + b.max[1]) / 2;
+    const cx = (b.min[0] + b.max[0]) / 2,
+      cy = (b.min[1] + b.max[1]) / 2;
     expect(cx).toBeCloseTo(135);
     expect(cy).toBeCloseTo(515);
   });

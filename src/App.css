@@ -162,7 +162,9 @@
   font-family: inherit;
   resize: vertical;
 }
-.report-field textarea { line-height: 1.4; }
+.report-field textarea {
+  line-height: 1.4;
+}
 .report-attach {
   display: flex;
   flex-direction: column;
@@ -170,11 +172,31 @@
   font-size: 12px;
   margin: 6px 0 4px;
 }
-.report-attach label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
-.report-note { font-size: 11px; color: var(--text-8); margin: 6px 0 12px; }
-.report-note code, .report-done code { color: var(--accent-pale-2); }
-.report-error { font-size: 12px; color: var(--danger-text); margin: 4px 0 8px; }
-.report-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.report-attach label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+.report-note {
+  font-size: 11px;
+  color: var(--text-8);
+  margin: 6px 0 12px;
+}
+.report-note code,
+.report-done code {
+  color: var(--accent-pale-2);
+}
+.report-error {
+  font-size: 12px;
+  color: var(--danger-text);
+  margin: 4px 0 8px;
+}
+.report-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 /* Primary — matches the app's blue action buttons (.sketch-banner button). */
 .report-submit {
   background: var(--accent);
@@ -186,8 +208,13 @@
   font-family: inherit;
   cursor: pointer;
 }
-.report-submit:hover:not(:disabled) { background: var(--accent-hover); }
-.report-submit:disabled { opacity: 0.4; cursor: default; }
+.report-submit:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.report-submit:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 /* Secondary — matches .text-btn. */
 .report-cancel {
   background: var(--bg-control);
@@ -199,9 +226,19 @@
   font-family: inherit;
   cursor: pointer;
 }
-.report-cancel:hover:not(:disabled) { border-color: var(--accent); }
-.report-done { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; font-size: 13px; }
-.report-done a { color: var(--accent-pale-2); }
+.report-cancel:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.report-done {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 13px;
+}
+.report-done a {
+  color: var(--accent-pale-2);
+}
 
 /* --- Settings dialog --- */
 /* Sibling of .report-dialog (same shell), a little wider so the three theme
@@ -809,7 +846,6 @@ button:disabled .kbd-hint {
   border-radius: 999px;
 }
 
-
 /* Kernel at work. A ring with one quarter missing, so the rotation is legible
    at 11px; `currentColor` picks up whichever state colour .status is wearing. */
 .status-spinner {
@@ -938,7 +974,10 @@ button:disabled .kbd-hint {
   border-radius: 0 8px 8px 0;
   cursor: pointer;
   box-shadow: 2px 0 7px var(--shadow-xs);
-  transition: left 0.14s ease, color 0.12s ease, border-color 0.12s ease;
+  transition:
+    left 0.14s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .panel-toggle:hover {
@@ -1711,7 +1750,10 @@ button:disabled .kbd-hint {
   border-radius: 4px;
   background: rgba(var(--hud-rgb), 0.92);
   color: var(--text-4);
-  font: 600 13px/1.3 ui-sans-serif, system-ui, sans-serif;
+  font:
+    600 13px/1.3 ui-sans-serif,
+    system-ui,
+    sans-serif;
 }
 
 .model-toolbar > button {
@@ -2347,8 +2389,12 @@ button:disabled .kbd-hint {
   stroke-width: 0.75;
   stroke-linejoin: round;
 }
-.offset-arrow:hover .offset-arrow-shaft { stroke: var(--text-1); }
-.offset-arrow:hover .offset-arrow-head { fill: var(--text-1); }
+.offset-arrow:hover .offset-arrow-shaft {
+  stroke: var(--text-1);
+}
+.offset-arrow:hover .offset-arrow-head {
+  fill: var(--text-1);
+}
 .offset-arrow:active {
   cursor: grabbing;
 }

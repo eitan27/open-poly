@@ -50,13 +50,21 @@ export function BooleanDialog({
   const row = (id: string, onRemove: () => void) => (
     <div key={id} className="bool-operand-row">
       <span className="bool-operand-name">{nameOf(id)}</span>
-      <button className="bool-operand-x" title="Remove" onClick={onRemove}>✕</button>
+      <button className="bool-operand-x" title="Remove" onClick={onRemove}>
+        ✕
+      </button>
     </div>
   );
 
   return (
-    <DraggableDialog className="extrude-dialog boolean-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
-      <div className="ed-title" data-drag-handle>{editing ? "Edit boolean" : "Boolean operation"}</div>
+    <DraggableDialog
+      className="extrude-dialog boolean-dialog"
+      style={{ left: "50%", top: 70 }}
+      baseTransform="translateX(-50%)"
+    >
+      <div className="ed-title" data-drag-handle>
+        {editing ? "Edit boolean" : "Boolean operation"}
+      </div>
       <div className="ed-modes">
         {BOOLEAN_OPS.map((o) => (
           <button key={o} className={op === o ? "active" : ""} onClick={() => onOpChange(o)}>
@@ -72,13 +80,12 @@ export function BooleanDialog({
           {base ? (
             <div className="bool-operand-row">
               <span className="bool-operand-name">{nameOf(base)}</span>
-              <button className="bool-operand-x" title="Clear" onClick={onClearBase}>✕</button>
+              <button className="bool-operand-x" title="Clear" onClick={onClearBase}>
+                ✕
+              </button>
             </div>
           ) : (
-            <button
-              className={"ed-pick-btn" + (armed === "base" ? " active" : "")}
-              onClick={() => onArm("base")}
-            >
+            <button className={"ed-pick-btn" + (armed === "base" ? " active" : "")} onClick={() => onArm("base")}>
               {armed === "base" ? "Click a part…" : "Select base part"}
             </button>
           )}
@@ -86,14 +93,13 @@ export function BooleanDialog({
           {/* The arm button is only needed until the first tool lands; after that
               the slot stays armed, so more parts add on click without it. */}
           {tools.length === 0 && (
-            <button
-              className={"ed-pick-btn" + (armed === "tools" ? " active" : "")}
-              onClick={() => onArm("tools")}
-            >
+            <button className={"ed-pick-btn" + (armed === "tools" ? " active" : "")} onClick={() => onArm("tools")}>
               {armed === "tools" ? "Click parts…" : "Select tool parts"}
             </button>
           )}
-          {tools.length > 0 && <div className="bool-operands">{tools.map((id) => row(id, () => onRemoveTool(id)))}</div>}
+          {tools.length > 0 && (
+            <div className="bool-operands">{tools.map((id) => row(id, () => onRemoveTool(id)))}</div>
+          )}
         </>
       ) : (
         <>
@@ -107,7 +113,9 @@ export function BooleanDialog({
       )}
 
       <div className="ed-actions">
-        <button className="ed-primary" disabled={!canConfirm} onClick={onConfirm}>{editing ? "Done" : "Confirm"}</button>
+        <button className="ed-primary" disabled={!canConfirm} onClick={onConfirm}>
+          {editing ? "Done" : "Confirm"}
+        </button>
         <button onClick={onCancel}>Cancel</button>
       </div>
     </DraggableDialog>

@@ -40,8 +40,10 @@ await page.waitForTimeout(500);
 
 const moreBtn = ".sketch-toolbar > .tbc-more > .tbc-more-btn";
 const visibleSlots = () =>
-  page.$$eval(".sketch-toolbar > [data-slot]", (els) =>
-    els.filter((e) => getComputedStyle(e).visibility !== "hidden").length);
+  page.$$eval(
+    ".sketch-toolbar > [data-slot]",
+    (els) => els.filter((e) => getComputedStyle(e).visibility !== "hidden").length,
+  );
 const geometry = async () =>
   page.evaluate(() => {
     const bar = document.querySelector(".sketch-toolbar").getBoundingClientRect();
@@ -54,8 +56,10 @@ for (const height of [900, 700, 520, 420]) {
   await page.waitForTimeout(350);
   const g = await geometry();
   const more = await page.locator(moreBtn).count();
-  console.log(`\n--- window ${height}px: column ${g.top}→${g.bottom}, More button: ${more ? "yes" : "no"}, ` +
-    `${await visibleSlots()} slots visible`);
+  console.log(
+    `\n--- window ${height}px: column ${g.top}→${g.bottom}, More button: ${more ? "yes" : "no"}, ` +
+      `${await visibleSlots()} slots visible`,
+  );
   check(`column stays inside the window at ${height}px`, g.bottom <= g.h - 6, `bottom ${g.bottom} of ${g.h}`);
   // The column's height is derived from its slots; slots with margins (the
   // separators) used to be measured without them, leaving the column short and
@@ -69,8 +73,11 @@ for (const height of [900, 700, 520, 420]) {
     const pad = parseFloat(getComputedStyle(bar).paddingBottom);
     return { room: Math.round(room * 10) / 10, pad, ok: room >= pad - 0.5 };
   });
-  check(`the last visible button isn't clipped at ${height}px`, fit.ok,
-    `${fit.room}px below it (padding is ${fit.pad}px)`);
+  check(
+    `the last visible button isn't clipped at ${height}px`,
+    fit.ok,
+    `${fit.room}px below it (padding is ${fit.pad}px)`,
+  );
   if (height <= 520) check(`the More button appears at ${height}px`, more === 1);
   else check(`no More button when everything fits (${height}px)`, more === 0);
 }
@@ -83,8 +90,13 @@ await page.click(moreBtn);
 await page.waitForTimeout(200);
 const rowLabels = () =>
   page.$$eval(".tbc-more-menu .tb-more-list button", (bs) =>
-    bs.map((b) => (b.classList.contains("active") ? "> " : "  ") + b.querySelector(".tb-row-label").textContent +
-      (b.disabled ? " [disabled]" : "")));
+    bs.map(
+      (b) =>
+        (b.classList.contains("active") ? "> " : "  ") +
+        b.querySelector(".tb-row-label").textContent +
+        (b.disabled ? " [disabled]" : ""),
+    ),
+  );
 const defaults = await rowLabels();
 console.log("\n=== flyout default (the tools below the fold)");
 console.log(defaults.join("\n"));
@@ -94,13 +106,28 @@ check("the flyout lists the hidden tools", defaults.length > 0, `${defaults.leng
 // clipped by the column's overflow — it is a sibling of the column for exactly
 // this reason.
 const boxes = await page.evaluate(() => {
-  const r = (s) => { const e = document.querySelector(s); const b = e.getBoundingClientRect(); return { l: Math.round(b.left), r: Math.round(b.right), w: Math.round(b.width) }; };
-  return { col: r(".sketch-toolbar"), menu: r(".tbc-more-menu"), row: r(".tbc-more-menu .tb-more-list button"), win: window.innerWidth };
+  const r = (s) => {
+    const e = document.querySelector(s);
+    const b = e.getBoundingClientRect();
+    return { l: Math.round(b.left), r: Math.round(b.right), w: Math.round(b.width) };
+  };
+  return {
+    col: r(".sketch-toolbar"),
+    menu: r(".tbc-more-menu"),
+    row: r(".tbc-more-menu .tb-more-list button"),
+    win: window.innerWidth,
+  };
 });
-check("the flyout opens beside the column, not over it", boxes.menu.l >= boxes.col.r,
-  `column right ${boxes.col.r}, flyout left ${boxes.menu.l}`);
-check("the flyout is not clipped to the column's width", boxes.menu.w > boxes.col.w * 2 && boxes.row.w > 150,
-  `flyout ${boxes.menu.w}px, rows ${boxes.row.w}px, column ${boxes.col.w}px`);
+check(
+  "the flyout opens beside the column, not over it",
+  boxes.menu.l >= boxes.col.r,
+  `column right ${boxes.col.r}, flyout left ${boxes.menu.l}`,
+);
+check(
+  "the flyout is not clipped to the column's width",
+  boxes.menu.w > boxes.col.w * 2 && boxes.row.w > 150,
+  `flyout ${boxes.menu.w}px, rows ${boxes.row.w}px, column ${boxes.col.w}px`,
+);
 check("the flyout stays inside the window", boxes.menu.r <= boxes.win, `right ${boxes.menu.r} of ${boxes.win}`);
 
 // The button says "More": every "and the rest" glyph is already a tool icon
@@ -110,23 +137,37 @@ check("the overflow button is labelled in words, not a glyph", moreLabel === "Mo
 // The column is only ~50px wide, so the label + arrow have to fit one line.
 const fitsOneLine = await page.locator(moreBtn).evaluate((el) => {
   const line = parseFloat(getComputedStyle(el).fontSize) * 2; // generous single-line bound
-  return { overflow: el.scrollWidth - el.clientWidth, textH: el.getBoundingClientRect().height, lineMax: line, ok: el.scrollWidth <= el.clientWidth + 0.5 };
+  return {
+    overflow: el.scrollWidth - el.clientWidth,
+    textH: el.getBoundingClientRect().height,
+    lineMax: line,
+    ok: el.scrollWidth <= el.clientWidth + 0.5,
+  };
 });
-check("the label and its arrow sit on one line, unclipped", fitsOneLine.ok,
-  `overflow ${fitsOneLine.overflow.toFixed(1)}px`);
-check("…and carries the same ▸ 'opens to the right' arrow as the tool groups",
+check(
+  "the label and its arrow sit on one line, unclipped",
+  fitsOneLine.ok,
+  `overflow ${fitsOneLine.overflow.toFixed(1)}px`,
+);
+check(
+  "…and carries the same ▸ 'opens to the right' arrow as the tool groups",
   moreLabel.endsWith("▸") &&
-  (await page.locator(".sketch-group .sketch-group-arrow").first().textContent())?.trim() === "▸");
-check("the More button shows its open state like the group arrows",
-  await page.locator(moreBtn).evaluate((el) => el.classList.contains("expanded")));
+    (await page.locator(".sketch-group .sketch-group-arrow").first().textContent())?.trim() === "▸",
+);
+check(
+  "the More button shows its open state like the group arrows",
+  await page.locator(moreBtn).evaluate((el) => el.classList.contains("expanded")),
+);
 
 // Clicking into the search box must not count as clicking outside the popup.
 await page.click(".tb-more-search");
 await page.waitForTimeout(150);
 check("clicking the search box keeps the flyout open", (await page.locator(".tbc-more-menu").count()) === 1);
-check("the search box names this bar's tools",
+check(
+  "the search box names this bar's tools",
   (await page.locator(".tbc-more-menu .tb-more-search").getAttribute("placeholder")) === "Search sketch tools…",
-  await page.locator(".tbc-more-menu .tb-more-search").getAttribute("placeholder"));
+  await page.locator(".tbc-more-menu .tb-more-search").getAttribute("placeholder"),
+);
 
 // The whole modeling toolbar greys out while a sketch is open — its More button
 // has to grey out with it. (Narrow the window so that bar overflows at all.)
@@ -147,8 +188,10 @@ check("'/' opens the SKETCH flyout while editing a sketch", (await page.locator(
 check("…and not the modeling one", (await page.locator(".model-toolbar .tb-more-menu").count()) === 0);
 await page.keyboard.press("/"); // typed into the focused search box, not a toggle
 await page.waitForTimeout(150);
-check("'/' typed in the search box is text, not a second toggle",
-  (await page.locator(".tb-more-search").inputValue()) === "/" && (await page.locator(".tbc-more-menu").count()) === 1);
+check(
+  "'/' typed in the search box is text, not a second toggle",
+  (await page.locator(".tb-more-search").inputValue()) === "/" && (await page.locator(".tbc-more-menu").count()) === 1,
+);
 await page.keyboard.press("Escape");
 await page.waitForTimeout(200);
 await page.evaluate(() => document.activeElement?.blur());
@@ -160,12 +203,20 @@ await page.waitForTimeout(150);
 const variants = await rowLabels();
 console.log("\n=== search '3 poi' (grouped variants are searchable)");
 console.log(variants.join("\n"));
-check("a grouped variant is reachable by name", variants.some((l) => /Circle ▸ 3 points/.test(l)), variants.join(" | "));
+check(
+  "a grouped variant is reachable by name",
+  variants.some((l) => /Circle ▸ 3 points/.test(l)),
+  variants.join(" | "),
+);
 
 await page.fill(".tb-more-search", "perp");
 await page.waitForTimeout(150);
 const cons = await rowLabels();
-check("constraints are searchable from the sketch flyout", cons.some((l) => /Perpendicular/.test(l)), cons.join(" | "));
+check(
+  "constraints are searchable from the sketch flyout",
+  cons.some((l) => /Perpendicular/.test(l)),
+  cons.join(" | "),
+);
 
 // Enter runs the highlighted tool and closes the flyout.
 await page.fill(".tb-more-search", "polygon");
@@ -174,12 +225,19 @@ await page.keyboard.press("Enter");
 await page.waitForTimeout(250);
 check("Enter picks the tool and closes the flyout", (await page.locator(".tbc-more-menu").count()) === 0);
 const active = await page.$$eval(".sketch-toolbar button.active", (bs) => bs.map((b) => b.title));
-check("…and that tool is now active", active.some((t) => /polygon/i.test(t)), active.join(" | "));
+check(
+  "…and that tool is now active",
+  active.some((t) => /polygon/i.test(t)),
+  active.join(" | "),
+);
 
 // A tool chosen from the flyout that was hidden stays reachable: the column is
 // unchanged in size (it doesn't grow to show the newly active tool).
-check("the column did not resize when a hidden tool was picked", (await visibleSlots()) === shown,
-  `${shown} → ${await visibleSlots()}`);
+check(
+  "the column did not resize when a hidden tool was picked",
+  (await visibleSlots()) === shown,
+  `${shown} → ${await visibleSlots()}`,
+);
 
 await page.screenshot({ path: "/tmp/sketch-toolbar-overflow.png" });
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);

@@ -16,7 +16,9 @@ const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
 const page = await context.newPage();
 page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-page.on("console", (m) => { if (m.type() === "error" || /error|fail/i.test(m.text())) console.log(`[console] ${m.text().slice(0, 300)}`); });
+page.on("console", (m) => {
+  if (m.type() === "error" || /error|fail/i.test(m.text())) console.log(`[console] ${m.text().slice(0, 300)}`);
+});
 await page.goto(URL, { waitUntil: "domcontentloaded" });
 await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
 const waitIdle = async () => {
@@ -130,7 +132,11 @@ await page.waitForTimeout(300);
 const ring = await clickFace([4.5 / Math.SQRT2, 4.5 / Math.SQRT2, 10]);
 check("annular top face → Outer diameter 12", ring?.["Outer diameter"] === "12", JSON.stringify(ring));
 check("annular top face → Inner diameter 6", ring?.["Inner diameter"] === "6", JSON.stringify(ring));
-check("annular top face has no plain 'Diameter' row", ring !== null && ring.Diameter === undefined, JSON.stringify(ring));
+check(
+  "annular top face has no plain 'Diameter' row",
+  ring !== null && ring.Diameter === undefined,
+  JSON.stringify(ring),
+);
 check(
   "annular top face area is the ring, not the disc (π(36−9) ≈ 84.8)",
   Math.abs(Number(ring?.Area) - Math.PI * 27) < 1.5,

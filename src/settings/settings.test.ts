@@ -75,8 +75,12 @@ describe("loadSettings", () => {
 
   it("falls back to the defaults when storage throws (private browsing)", () => {
     vi.stubGlobal("localStorage", {
-      getItem() { throw new Error("blocked"); },
-      setItem() { throw new Error("blocked"); },
+      getItem() {
+        throw new Error("blocked");
+      },
+      setItem() {
+        throw new Error("blocked");
+      },
     });
     expect(loadSettings()).toEqual(DEFAULT_SETTINGS);
     expect(() => saveSettings(DEFAULT_SETTINGS)).not.toThrow();
@@ -101,7 +105,11 @@ describe("theme resolution", () => {
   it("defaults 'system' to dark when the browser can't say", () => {
     vi.stubGlobal("window", {});
     expect(systemTheme()).toBe("dark");
-    vi.stubGlobal("window", { matchMedia: () => { throw new Error("nope"); } });
+    vi.stubGlobal("window", {
+      matchMedia: () => {
+        throw new Error("nope");
+      },
+    });
     expect(systemTheme()).toBe("dark");
   });
 });

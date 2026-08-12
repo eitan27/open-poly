@@ -116,7 +116,10 @@ check("the corrupt record survived untouched (no silent overwrite)", survivedRaw
 await page.locator(".recovery-banner .banner-link", { hasText: "Documents" }).click();
 await page.waitForTimeout(300);
 check("banner is gone after clicking through", (await page.locator(".recovery-banner").count()) === 0);
-check("corrupt doc still shows up in the list", (await page.locator(".docs-row", { hasText: "VictimDoc" }).count()) === 1);
+check(
+  "corrupt doc still shows up in the list",
+  (await page.locator(".docs-row", { hasText: "VictimDoc" }).count()) === 1,
+);
 
 // --- 3. Clicking Open on it surfaces an error banner INSIDE the dialog
 // (not a silent no-op, not an unhandled rejection) and stays open.
@@ -125,7 +128,11 @@ await victimRow.locator(".text-btn", { hasText: "Open" }).click();
 await page.waitForTimeout(400);
 check("dialog stayed open after a failed Open", (await page.locator(".docs-dialog").count()) === 1);
 const dialogErr = (await page.locator(".docs-error").last().textContent())?.trim();
-check("dialog shows a descriptive error, not a stack trace", /corrupted/.test(dialogErr) && /Export as JSON/.test(dialogErr), dialogErr);
+check(
+  "dialog shows a descriptive error, not a stack trace",
+  /corrupted/.test(dialogErr) && /Export as JSON/.test(dialogErr),
+  dialogErr,
+);
 check(
   '"Export as JSON" is bolded in the dialog error too',
   (await page.locator(".docs-error").last().locator("strong", { hasText: "Export as JSON" }).count()) === 1,
@@ -138,7 +145,11 @@ const [download] = await Promise.all([
   page.waitForEvent("download"),
   page.locator(".docs-row", { hasText: "VictimDoc" }).locator(".text-btn", { hasText: "Export as JSON" }).click(),
 ]);
-check("Export as JSON succeeds on the corrupt document", download.suggestedFilename() === "VictimDoc.openpoly.json", download.suggestedFilename());
+check(
+  "Export as JSON succeeds on the corrupt document",
+  download.suggestedFilename() === "VictimDoc.openpoly.json",
+  download.suggestedFilename(),
+);
 
 // --- 5. Delete removes it cleanly.
 const row = page.locator(".docs-row", { hasText: "VictimDoc" });

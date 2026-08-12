@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   matchFace,
   matchEdges,
+  matchFaces,
   stripNameSuffixes,
   type FaceCandidate,
   type EdgeCandidate,
+  type NamedFaceCandidate,
 } from "./topoMatch";
 
 describe("stripNameSuffixes", () => {
@@ -70,29 +72,17 @@ describe("matchEdges", () => {
   });
 
   it("matches geometrically when the name is gone entirely", () => {
-    const [m] = matchEdges(
-      [{ name: "a/+z∩a/side9", mid: [0, 5, 10.5], length: 10 }],
-      cands,
-      scale,
-    );
+    const [m] = matchEdges([{ name: "a/+z∩a/side9", mid: [0, 5, 10.5], length: 10 }], cands, scale);
     expect(m).toEqual({ kind: "geom", index: 3 });
   });
 
   it("reports lost when nothing is plausibly the same edge", () => {
-    const [m] = matchEdges(
-      [{ name: "a/+z∩a/side9", mid: [300, 300, 300], length: 10 }],
-      cands,
-      scale,
-    );
+    const [m] = matchEdges([{ name: "a/+z∩a/side9", mid: [300, 300, 300], length: 10 }], cands, scale);
     expect(m).toEqual({ kind: "lost" });
   });
 
   it("rejects a geometric match whose length changed too much", () => {
-    const [m] = matchEdges(
-      [{ name: "gone", mid: [0, 5, 10], length: 100 }],
-      cands,
-      scale,
-    );
+    const [m] = matchEdges([{ name: "gone", mid: [0, 5, 10], length: 100 }], cands, scale);
     expect(m).toEqual({ kind: "lost" });
   });
 
@@ -111,5 +101,52 @@ describe("matchEdges", () => {
     // (candidate 3 is nearest of the rest at dist ~ sqrt(25+16+0) ≈ 6.4 / 17.3 ≈ 0.37 > reject)
     expect(ms[0]).toEqual({ kind: "geom", index: 0 });
     expect(ms[1]).toEqual({ kind: "lost" });
+  });
+});
+
+describe("matchFaces", () => {
+  // A 10×10×10 box's six named faces (diagonal scale ≈ 17.3).
+  const scale = Math.hypot(10, 10, 10);
+  const cands: NamedFaceCandidate[] = [
+    { name: "a/+z", center: [5, 5, 10], normal: [0, 0, 1] },
+    { name: "a/-z", center: [5, 5, 0], normal: [0, 0, -1] },
+    { name: "a/+x#1", center: [10, 5, 5], normal: [1, 0, 0] },
+    { center: [0, 5, 5], normal: [-1, 0, 0] }, // unnamed (lost its name)
+  ];
+
+  it("prefers exact names", () => {
+    const [m] = matchFaces([{ name: "a/-z" }], cands, scale);
+    expect(m).toEqual({ kind: "name", index: 1 });
+  });
+
+  it("falls back to a unique base-name match when suffixes churned", () => {
+    const [m] = matchFaces([{ name: "a/+x" }], cands, scale);
+    expect(m).toEqual({ kind: "base", index: 2 });
+  });
+
+  it("matches geometrically when the name is gone entirely", () => {
+    const [m] = matchFaces([{ name: "a/-x", center: [0.2, 5.1, 5], normal: [-1, 0, 0] }], cands, scale);
+    expect(m).toEqual({ kind: "geom", index: 3 });
+  });
+
+  it("reports lost when nothing is plausibly the same face", () => {
+    const [m] = matchFaces([{ name: "a/-x", center: [500, 500, 500], normal: [-1, 0, 0] }], cands, scale);
+    expect(m).toEqual({ kind: "lost" });
+  });
+
+  it("is lost for a legacy ref with no fingerprint and no name hit", () => {
+    const [m] = matchFaces([{ name: "nope" }], cands, scale);
+    expect(m).toEqual({ kind: "lost" });
+  });
+
+  it("assigns one-to-one, best pairing first", () => {
+    const refs = [
+      { name: "p", center: [5, 5, 10] as [number, number, number], normal: [0, 0, 1] as [number, number, number] },
+      { name: "q", center: [5, 5.5, 10] as [number, number, number], normal: [0, 0, 1] as [number, number, number] },
+    ];
+    const ms = matchFaces(refs, cands, scale);
+    // Both want candidate 0 (the top face); the closer ref gets it.
+    expect(ms[0]).toEqual({ kind: "geom", index: 0 });
+    expect(ms[1].kind).not.toBe("name");
   });
 });

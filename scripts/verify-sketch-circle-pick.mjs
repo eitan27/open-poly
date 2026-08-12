@@ -61,10 +61,14 @@ for (const deg of [0, 45, 90, 135, 180, 225, 270, 315]) {
   await apply({ op: "select", refs: [] });
   await clickWorld(rim(deg));
   const sel = await read({ read: "selection" });
-  const one = (Array.isArray(sel) ? sel : sel?.selection ?? [])[0];
+  const one = (Array.isArray(sel) ? sel : (sel?.selection ?? []))[0];
   picked.push(one?.kind === "sketchEntity" ? "•" : `✗${deg}`);
 }
-check("the rim is clickable all the way round", picked.every((p) => p === "•"), picked.join(" "));
+check(
+  "the rim is clickable all the way round",
+  picked.every((p) => p === "•"),
+  picked.join(" "),
+);
 
 // --- 2. Dimension the circle (needs the rim selected) ---------------------------
 await apply({ op: "select", refs: [] });
@@ -72,8 +76,11 @@ await clickWorld(rim(30));
 await page.keyboard.press("d");
 await page.waitForTimeout(300);
 const dimOpen = (await page.locator(".dim-input input").count()) === 1;
-check("D on a selected circle opens the radius dimension", dimOpen,
-  dimOpen ? (await page.locator(".dim-input label").textContent()) ?? "" : "no dim box");
+check(
+  "D on a selected circle opens the radius dimension",
+  dimOpen,
+  dimOpen ? ((await page.locator(".dim-input label").textContent()) ?? "") : "no dim box",
+);
 if (dimOpen) {
   await page.locator(".dim-input input").fill("12");
   await page.keyboard.press("Enter");
@@ -113,8 +120,11 @@ if (line) {
   // The rim snap is parametric, not just positional: it records a
   // point-on-circle so the endpoint rides the rim afterwards.
   const onCircle = s2.constraints.filter((c) => c.type === "pointOnCircle");
-  check("the rim snap is recorded as a point-on-circle constraint", onCircle.length === 1,
-    s2.constraints.map((c) => c.type).join(", ") || "none");
+  check(
+    "the rim snap is recorded as a point-on-circle constraint",
+    onCircle.length === 1,
+    s2.constraints.map((c) => c.type).join(", ") || "none",
+  );
 
   // …so growing the circle must grow the line with it.
   // Back to the Select tool first — the Line tool is still armed from drawing,
@@ -134,13 +144,17 @@ if (line) {
   const l3 = s3.entities.find((e) => e.type === "line");
   const endR = Math.hypot(l3.b[0] - c3.c[0], l3.b[1] - c3.c[1]);
   const startOff = Math.hypot(l3.a[0] - c3.c[0], l3.a[1] - c3.c[1]);
-  check("re-dimensioning the circle keeps the line's end on the rim",
+  check(
+    "re-dimensioning the circle keeps the line's end on the rim",
     Math.abs(c3.r - 35) < 0.01 && Math.abs(endR - 35) < 0.05,
-    `r=${c3.r?.toFixed(2)} end at ${endR.toFixed(2)} from centre`);
+    `r=${c3.r?.toFixed(2)} end at ${endR.toFixed(2)} from centre`,
+  );
   check("…and its start still at the centre", startOff < 0.05, `off by ${startOff.toFixed(3)}mm`);
-  check("…so the line now spans the new radius",
+  check(
+    "…so the line now spans the new radius",
     Math.abs(Math.hypot(l3.b[0] - l3.a[0], l3.b[1] - l3.a[1]) - 35) < 0.05,
-    `length ${Math.hypot(l3.b[0] - l3.a[0], l3.b[1] - l3.a[1]).toFixed(2)}`);
+    `length ${Math.hypot(l3.b[0] - l3.a[0], l3.b[1] - l3.a[1]).toFixed(2)}`,
+  );
 }
 
 // --- 4. A SMALL circle is selectable without zooming in --------------------------
@@ -150,7 +164,11 @@ await apply({ op: "newDocument" });
 await waitIdle();
 const smallC = [10, 0];
 const smallR = 1.5;
-const sk3 = await apply({ op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "circle", c: smallC, r: smallR }] });
+const sk3 = await apply({
+  op: "addSketch",
+  plane: { datum: "top" },
+  entities: [{ shape: "circle", c: smallC, r: smallR }],
+});
 await waitIdle();
 await page.locator(".tree-row", { hasText: "Sketch" }).first().dblclick();
 await page.waitForTimeout(600);
@@ -161,22 +179,32 @@ await page.waitForTimeout(600);
       const q = window.__openpoly.worldToScreen(b);
       return Math.hypot(p.x - q.x, p.y - q.y);
     },
-    [[smallC[0], smallC[1], 0], [smallC[0] + smallR, smallC[1], 0]],
+    [
+      [smallC[0], smallC[1], 0],
+      [smallC[0] + smallR, smallC[1], 0],
+    ],
   );
   console.log(`\n  small circle: r=${smallR}mm ≈ ${px.toFixed(1)}px on screen (snap radius is 12px)`);
   const hits = [];
   for (const deg of [0, 90, 180, 270]) {
     await apply({ op: "select", refs: [] });
-    const w = [smallC[0] + smallR * Math.cos((deg * Math.PI) / 180), smallC[1] + smallR * Math.sin((deg * Math.PI) / 180), 0];
+    const w = [
+      smallC[0] + smallR * Math.cos((deg * Math.PI) / 180),
+      smallC[1] + smallR * Math.sin((deg * Math.PI) / 180),
+      0,
+    ];
     const s = await page.evaluate((p) => window.__openpoly.worldToScreen(p), w);
     await page.mouse.click(canvas.x + s.x, canvas.y + s.y);
     await page.waitForTimeout(220);
     const sel = await read({ read: "selection" });
-    const one = (Array.isArray(sel) ? sel : sel?.selection ?? [])[0];
+    const one = (Array.isArray(sel) ? sel : (sel?.selection ?? []))[0];
     hits.push(one?.kind === "sketchEntity" ? "•" : `✗${deg}(${one?.kind ?? "none"})`);
   }
-  check("a circle smaller than the snap radius is still selectable by its rim",
-    hits.every((h) => h === "•"), hits.join(" "));
+  check(
+    "a circle smaller than the snap radius is still selectable by its rim",
+    hits.every((h) => h === "•"),
+    hits.join(" "),
+  );
   await apply({ op: "select", refs: [] });
   // NOT a check — a known gap, unchanged by this fix: the sketch-POINT branch of
   // the picker sits inside the "a sketch line is within EDGE_PICK_PX" gate, so a
@@ -186,8 +214,10 @@ await page.waitForTimeout(600);
   await page.mouse.click(canvas.x + sc.x, canvas.y + sc.y);
   await page.waitForTimeout(220);
   const sel = await read({ read: "selection" });
-  const one = (Array.isArray(sel) ? sel : sel?.selection ?? [])[0];
-  console.log(`  note: clicking the circle's centre selects ${one?.kind ?? "nothing"} (point picking needs the rim in range too)`);
+  const one = (Array.isArray(sel) ? sel : (sel?.selection ?? []))[0];
+  console.log(
+    `  note: clicking the circle's centre selects ${one?.kind ?? "nothing"} (point picking needs the rim in range too)`,
+  );
 }
 
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);

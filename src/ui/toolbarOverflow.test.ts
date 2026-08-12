@@ -28,7 +28,15 @@ function items(): ToolbarItem[] {
       ],
     },
     { id: "extrude", icon: "⬆", label: "Extrude", shortcut: "E", title: "Extrude", disabled: true, onSelect: noop },
-    { id: "chamfer", icon: "◣", label: "Chamfer", shortcut: "C", title: "Chamfer", keywords: ["bevel"], onSelect: noop },
+    {
+      id: "chamfer",
+      icon: "◣",
+      label: "Chamfer",
+      shortcut: "C",
+      title: "Chamfer",
+      keywords: ["bevel"],
+      onSelect: noop,
+    },
   ];
 }
 
@@ -66,13 +74,7 @@ describe("fitCount", () => {
 describe("toRows", () => {
   it("flattens dropdown choices into one searchable row each", () => {
     const rows = toRows(items());
-    expect(rows.map((r) => r.label)).toEqual([
-      "Sketch",
-      "Body ▸ Box",
-      "Body ▸ Cylinder",
-      "Extrude",
-      "Chamfer",
-    ]);
+    expect(rows.map((r) => r.label)).toEqual(["Sketch", "Body ▸ Box", "Body ▸ Cylinder", "Extrude", "Chamfer"]);
     // Choice rows keep the parent item's identity so the flyout knows whether
     // the button they came from is currently hidden.
     expect(rows[1].itemId).toBe("body");
@@ -82,7 +84,12 @@ describe("toRows", () => {
   it("propagates the parent's disabled state to its choices", () => {
     const disabledParent: ToolbarItem[] = [
       {
-        id: "body", icon: "◧", label: "Body", title: "New body", disabled: true, onSelect: noop,
+        id: "body",
+        icon: "◧",
+        label: "Body",
+        title: "New body",
+        disabled: true,
+        onSelect: noop,
         choices: [{ id: "box", label: "Box", onSelect: noop }],
       },
     ];

@@ -26,7 +26,10 @@ wss.on("connection", (ws) => {
       helloResolve(msg);
     } else if (msg.type === "result") {
       const resolve = pending.get(msg.id);
-      if (resolve) { pending.delete(msg.id); resolve(msg); }
+      if (resolve) {
+        pending.delete(msg.id);
+        resolve(msg);
+      }
     }
   });
 });
@@ -37,7 +40,9 @@ const request = (kind, payload) =>
     const id = String(nextId++);
     pending.set(id, resolve);
     sock.send(JSON.stringify({ type: "request", id, kind, payload }));
-    setTimeout(() => { if (pending.delete(id)) reject(new Error(`request ${id} timed out`)); }, 10000);
+    setTimeout(() => {
+      if (pending.delete(id)) reject(new Error(`request ${id} timed out`));
+    }, 10000);
   });
 
 const browser = await chromium.launch();
@@ -72,7 +77,11 @@ for (let i = 0; i < 12; i++) {
   if (names.length) break;
   await new Promise((r) => setTimeout(r, 300));
 }
-check("read sceneSummary sees the box (after regen)", names.includes("Renamed") || names.includes("BridgeBox"), JSON.stringify(names));
+check(
+  "read sceneSummary sees the box (after regen)",
+  names.includes("Renamed") || names.includes("BridgeBox"),
+  JSON.stringify(names),
+);
 
 // 3) apply: rename, then confirm via document read (serial ordering)
 const r3 = await request("apply", { op: "rename", featureId: boxId, name: "Renamed" });
@@ -83,7 +92,11 @@ check("document read shows rename (serial order held)", renamed === "Renamed", S
 
 // 4) invalid op surfaces a structured error, not a crash
 const r5 = await request("apply", { op: "setParam", featureId: "missing", name: "width", value: "1" });
-check("invalid op -> ok:false not_found", r5.ok && r5.payload?.ok === false && r5.payload?.errorKind === "not_found", JSON.stringify(r5.payload));
+check(
+  "invalid op -> ok:false not_found",
+  r5.ok && r5.payload?.ok === false && r5.payload?.errorKind === "not_found",
+  JSON.stringify(r5.payload),
+);
 
 // 5) badge shows connected
 const badge = await page.locator(".agent-badge").count();

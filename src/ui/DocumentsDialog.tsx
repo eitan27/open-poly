@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listMeta, type DocMeta } from "../storage/db";
 import { timeAgo } from "../storage/docNames";
 import { CorruptDocError } from "../storage/docErrors";
+import { Modal } from "./Modal";
 
 interface Props {
   /** The document currently open in this tab (highlighted; can't be Opened). */
@@ -44,9 +45,9 @@ export function DocumentsDialog({
   // banner instead of a silent no-op / unhandled rejection. "corrupted" gets
   // its own shape so the message can bold "Export as JSON" (still works on a
   // corrupt record); anything else renders as plain text.
-  const [actionError, setActionError] = useState<{ kind: "corrupted"; name: string } | { kind: "plain"; message: string } | null>(
-    null,
-  );
+  const [actionError, setActionError] = useState<
+    { kind: "corrupted"; name: string } | { kind: "plain"; message: string } | null
+  >(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(() => {
@@ -55,19 +56,6 @@ export function DocumentsDialog({
       .catch(() => setMetas([]));
   }, []);
   useEffect(reload, [reload]);
-
-  // Esc closes. Capture phase + stopPropagation so the app's global Escape
-  // handling (cancel sketch drafts etc.) doesn't also fire underneath a modal.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
 
   // Run an action with the list disarmed + refreshed afterwards. Actions that
   // switch the active document also close the dialog (via `closeAfter`). A
@@ -119,138 +107,137 @@ export function DocumentsDialog({
   };
 
   return (
-    <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div
-        className="docs-dialog"
-        role="dialog"
-        aria-label="Documents"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          const file = e.dataTransfer.files?.[0];
-          if (file) void importFile(file);
-        }}
-      >
-        <div className="docs-header">
-          <h2>Documents</h2>
-          <button
-            className="text-btn"
-            disabled={busy}
-            title="Import a document from an Open Poly .json file"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            Import from JSON
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json,application/json"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = ""; // re-picking the same file fires again
-              if (file) void importFile(file);
-            }}
-          />
-          <button className="row-icon docs-close" title="Close (Esc)" onClick={onClose}>
-            ✕
-          </button>
-        </div>
-        {importError && <p className="docs-error">{importError}</p>}
-        {actionError && (
-          <p className="docs-error">
-            {actionError.kind === "corrupted" ? (
-              <>
-                "{actionError.name}" is corrupted and can't be opened. Use <strong>Export as JSON</strong> to save its
-                data, then Delete it.
-              </>
-            ) : (
-              actionError.message
-            )}
-          </p>
-        )}
-
-        {metas === null ? (
-          <p className="hint">Loading…</p>
-        ) : metas.length === 0 ? (
-          <p className="hint">No documents yet.</p>
-        ) : (
-          <ul className="docs-list">
-            {metas.map((m) => {
-              const active = m.id === activeId;
-              return (
-                <li key={m.id} className={"docs-row" + (active ? " active" : "")}>
-                  <Thumb thumb={m.thumb} />
-                  <div className="docs-row-main">
-                    {renaming?.id === m.id ? (
-                      <input
-                        className="docs-name-input"
-                        autoFocus
-                        value={renaming.draft}
-                        onChange={(e) => setRenaming({ id: m.id, draft: e.target.value })}
-                        onFocus={(e) => e.target.select()}
-                        onBlur={commitRename}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                          else if (e.key === "Escape") {
-                            e.stopPropagation(); // keep the dialog open
-                            setRenaming(null);
-                          }
-                        }}
-                      />
-                    ) : (
-                      <button
-                        className="docs-name"
-                        title="Rename"
-                        onClick={() => setRenaming({ id: m.id, draft: m.name })}
-                      >
-                        {m.name}
-                        {active && <span className="docs-current"> · current</span>}
-                      </button>
-                    )}
-                    <span className="docs-sub">
-                      edited {timeAgo(m.updatedAt)} · {m.featureCount} feature{m.featureCount === 1 ? "" : "s"} ·{" "}
-                      {m.partCount} part{m.partCount === 1 ? "" : "s"}
-                    </span>
-                  </div>
-                  <div className="docs-row-actions">
-                    {!active && (
-                      <button className="text-btn" disabled={busy} onClick={() => void run(() => onOpen(m.id), true)}>
-                        Open
-                      </button>
-                    )}
-                    <button className="text-btn" disabled={busy} onClick={() => void run(() => onDuplicate(m.id), true)}>
-                      Duplicate
-                    </button>
-                    <button
-                      className="text-btn"
-                      disabled={busy}
-                      title="Save this document as an Open Poly .json file"
-                      onClick={() => void run(() => onExport(m.id))}
-                    >
-                      Export as JSON
-                    </button>
-                    {confirmDelete === m.id ? (
-                      <button
-                        className="text-btn docs-delete-confirm"
-                        disabled={busy}
-                        onClick={() => void run(() => onDelete(m.id))}
-                      >
-                        Really delete?
-                      </button>
-                    ) : (
-                      <button className="text-btn" disabled={busy} onClick={() => setConfirmDelete(m.id)}>
-                        Delete
-                      </button>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+    <Modal
+      onClose={onClose}
+      ariaLabel="Documents"
+      className="docs-dialog"
+      escapeCapture
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        const file = e.dataTransfer.files?.[0];
+        if (file) void importFile(file);
+      }}
+    >
+      <div className="docs-header">
+        <h2>Documents</h2>
+        <button
+          className="text-btn"
+          disabled={busy}
+          title="Import a document from an Open Poly .json file"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          Import from JSON
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = ""; // re-picking the same file fires again
+            if (file) void importFile(file);
+          }}
+        />
+        <button className="row-icon docs-close" title="Close (Esc)" onClick={onClose}>
+          ✕
+        </button>
       </div>
-    </div>
+      {importError && <p className="docs-error">{importError}</p>}
+      {actionError && (
+        <p className="docs-error">
+          {actionError.kind === "corrupted" ? (
+            <>
+              "{actionError.name}" is corrupted and can't be opened. Use <strong>Export as JSON</strong> to save its
+              data, then Delete it.
+            </>
+          ) : (
+            actionError.message
+          )}
+        </p>
+      )}
+
+      {metas === null ? (
+        <p className="hint">Loading…</p>
+      ) : metas.length === 0 ? (
+        <p className="hint">No documents yet.</p>
+      ) : (
+        <ul className="docs-list">
+          {metas.map((m) => {
+            const active = m.id === activeId;
+            return (
+              <li key={m.id} className={"docs-row" + (active ? " active" : "")}>
+                <Thumb thumb={m.thumb} />
+                <div className="docs-row-main">
+                  {renaming?.id === m.id ? (
+                    <input
+                      className="docs-name-input"
+                      autoFocus
+                      value={renaming.draft}
+                      onChange={(e) => setRenaming({ id: m.id, draft: e.target.value })}
+                      onFocus={(e) => e.target.select()}
+                      onBlur={commitRename}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                        else if (e.key === "Escape") {
+                          e.stopPropagation(); // keep the dialog open
+                          setRenaming(null);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <button
+                      className="docs-name"
+                      title="Rename"
+                      onClick={() => setRenaming({ id: m.id, draft: m.name })}
+                    >
+                      {m.name}
+                      {active && <span className="docs-current"> · current</span>}
+                    </button>
+                  )}
+                  <span className="docs-sub">
+                    edited {timeAgo(m.updatedAt)} · {m.featureCount} feature{m.featureCount === 1 ? "" : "s"} ·{" "}
+                    {m.partCount} part{m.partCount === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <div className="docs-row-actions">
+                  {!active && (
+                    <button className="text-btn" disabled={busy} onClick={() => void run(() => onOpen(m.id), true)}>
+                      Open
+                    </button>
+                  )}
+                  <button className="text-btn" disabled={busy} onClick={() => void run(() => onDuplicate(m.id), true)}>
+                    Duplicate
+                  </button>
+                  <button
+                    className="text-btn"
+                    disabled={busy}
+                    title="Save this document as an Open Poly .json file"
+                    onClick={() => void run(() => onExport(m.id))}
+                  >
+                    Export as JSON
+                  </button>
+                  {confirmDelete === m.id ? (
+                    <button
+                      className="text-btn docs-delete-confirm"
+                      disabled={busy}
+                      onClick={() => void run(() => onDelete(m.id))}
+                    >
+                      Really delete?
+                    </button>
+                  ) : (
+                    <button className="text-btn" disabled={busy} onClick={() => setConfirmDelete(m.id)}>
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Modal>
   );
 }
 

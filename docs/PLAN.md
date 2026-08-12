@@ -17,24 +17,24 @@ is "click this face, fillet that edge," which mesh/CSG engines can't give.
 **`opencascade.js`**, so it runs entirely in the browser. It gives you,
 directly:
 
-| Your feature        | OCCT API |
-|---------------------|----------|
-| Sketch → face       | `BRepBuilderAPI_MakeEdge/MakeWire/MakeFace` |
-| Extrude             | `BRepPrimAPI_MakePrism` |
-| Revolve             | `BRepPrimAPI_MakeRevol` |
-| Sweep               | `BRepOffsetAPI_MakePipe` / `MakePipeShell` |
-| Loft                | `BRepOffsetAPI_ThruSections` |
-| Fillet              | `BRepFilletAPI_MakeFillet` |
-| Chamfer             | `BRepFilletAPI_MakeChamfer` |
-| Boolean (union/cut/intersect) | `BRepAlgoAPI_Fuse/Cut/Common` |
-| Mirror / pattern transforms   | `gp_Trsf` + `BRepBuilderAPI_Transform` |
-| Selection (faces/edges) | `TopExp_Explorer`, `TopoDS` topology |
-| Tessellation for rendering | `BRepMesh_IncrementalMesh` → triangles |
-| Export                | `STEPControl_Writer`, `StlAPI_Writer`, IGES |
+| Your feature                  | OCCT API                                    |
+| ----------------------------- | ------------------------------------------- |
+| Sketch → face                 | `BRepBuilderAPI_MakeEdge/MakeWire/MakeFace` |
+| Extrude                       | `BRepPrimAPI_MakePrism`                     |
+| Revolve                       | `BRepPrimAPI_MakeRevol`                     |
+| Sweep                         | `BRepOffsetAPI_MakePipe` / `MakePipeShell`  |
+| Loft                          | `BRepOffsetAPI_ThruSections`                |
+| Fillet                        | `BRepFilletAPI_MakeFillet`                  |
+| Chamfer                       | `BRepFilletAPI_MakeChamfer`                 |
+| Boolean (union/cut/intersect) | `BRepAlgoAPI_Fuse/Cut/Common`               |
+| Mirror / pattern transforms   | `gp_Trsf` + `BRepBuilderAPI_Transform`      |
+| Selection (faces/edges)       | `TopExp_Explorer`, `TopoDS` topology        |
+| Tessellation for rendering    | `BRepMesh_IncrementalMesh` → triangles      |
+| Export                        | `STEPControl_Writer`, `StlAPI_Writer`, IGES |
 
 **Rendering** is then just **three.js** (WebGL): you tessellate OCCT shapes into
-triangle buffers and hand them to three.js. OCCT is the *kernel*; three.js is the
-*viewport*. These are two different layers — don't conflate them.
+triangle buffers and hand them to three.js. OCCT is the _kernel_; three.js is the
+_viewport_. These are two different layers — don't conflate them.
 
 **Accelerator (recommended):** **`replicad`** is a small MIT-licensed TypeScript
 wrapper over `opencascade.js` with an ergonomic fluent API
@@ -43,12 +43,13 @@ STEP/STL export. (`CascadeStudio` is an older reference project showing
 `opencascade.js` + three.js wired together.)
 
 ### Kernel strategy for the long term: own a thin facade
+
 Decision: **define our own `Kernel` interface that the whole app talks to, back it
 with `opencascade.js` directly, and use `replicad` as an accelerator + reference —
 never as the load-bearing core.** Rationale:
 
-- replicad is tuned for **code-CAD** (programmatic models), which is a *different
-  problem* from an **interactive feature-tree modeler with topological selection**.
+- replicad is tuned for **code-CAD** (programmatic models), which is a _different
+  problem_ from an **interactive feature-tree modeler with topological selection**.
   The mismatch bites exactly at our hardest requirement — **topological naming**,
   which needs OCCT history maps (`BRepAlgoAPI::Modified/Generated/IsDeleted`,
   `TopExp_Explorer`, sub-shape indexing) that replicad mostly doesn't surface.
@@ -62,6 +63,7 @@ never as the load-bearing core.** Rationale:
   what we'd otherwise spend weeks rediscovering.
 
 **The hybrid plan:**
+
 1. Define a `Kernel` interface (`extrude`, `revolve`, `fillet`, `boolean`,
    `tessellate → {positions, faceGroups}`, `exportStep`, …). The app, worker
    messages, and document model talk **only** to this — replicad/OCCT never leak
@@ -76,12 +78,14 @@ never as the load-bearing core.** Rationale:
    boundary, this is an incremental swap, not a rewrite.
 
 ### 2D sketch constraint solver
+
 Constraints (coincident, parallel, perpendicular, horizontal/vertical, equal,
 distance, angle, radius, tangent, symmetric) need a **geometric constraint solver
 (GCS)**, separate from the 3D kernel.
+
 - **`planegcs`** — a WASM/TypeScript port of FreeCAD's GCS, purpose-built for
-  exactly this. Recommended. *(Check its license — FreeCAD's GCS lineage is
-  LGPL; confirm it's compatible with your project's license before committing.)*
+  exactly this. Recommended. _(Check its license — FreeCAD's GCS lineage is
+  LGPL; confirm it's compatible with your project's license before committing.)_
 - Fallback for MVP: a hand-rolled Newton–Raphson solver over constraint residual
   equations. Fine for a few constraint types; you'll outgrow it fast.
 
@@ -116,6 +120,7 @@ distance, angle, radius, tangent, symmetric) need a **geometric constraint solve
 This is the heart of a parametric CAD and what makes it feel like a real modeler.
 
 ### Document = an ordered timeline of features
+
 A document is an **ordered list of features** (the timeline / feature tree).
 Each feature is conceptually a **pure function**:
 
@@ -124,10 +129,11 @@ feature(inputParams, references, variableScope) -> Shape(s)
 ```
 
 **Regeneration** = replay the list top to bottom, threading the resulting bodies
-forward. Editing feature *N*'s parameters re-runs *N* and everything after it.
-A **rollback bar** regenerates only up to feature *k*.
+forward. Editing feature _N_'s parameters re-runs _N_ and everything after it.
+A **rollback bar** regenerates only up to feature _k_.
 
 ### Variables / expressions
+
 A document-level **symbol table** of named variables with expressions
 (`width = 40`, `slot = width / 2 - 3mm`). Evaluated (topologically, to catch
 cycles) before features run. Any numeric feature parameter or sketch dimension
@@ -135,12 +141,14 @@ can be an expression referencing variables. Keep a small, safe expression
 evaluator with units support.
 
 ### The hard part: topological naming (call this out early)
+
 When a downstream feature says "fillet edge X," and you edit an upstream feature,
 the edges get re-created — does "edge X" still mean the same edge? This is the
 **topological naming problem**, the genuine hard problem of parametric CAD
 (FreeCAD fought it for years).
 
 Pragmatic approach for this project:
+
 - Use OCCT's **history tracking** — boolean ops (`BRepAlgoAPI`), fillets, prisms
   expose `Modified()/Generated()/IsDeleted()` mappings between input and output
   topology. Thread these through regeneration to remap references.
@@ -157,7 +165,9 @@ Pragmatic approach for this project:
 > amber ⚠ timeline badges, descriptive lost-reference errors).
 
 ### Selection round-trip
+
 Picking in the viewport must map back to kernel topology:
+
 1. When tessellating an OCCT shape, **tag each triangle group with the face ID**
    and each rendered edge polyline with the edge ID.
 2. three.js raycaster hit → look up the tagged ID → that's the topological
@@ -209,7 +219,7 @@ rough relative sizing, not calendar promises.
 > multi-document storage, section view, sketch inference guides, and an MCP agent
 > bridge (Phase 9, L0–L3). The per-phase sections below are kept for their design
 > rationale and gotchas, not as a status ledger — **git is the record of what
-> shipped when.** What is NOT built is collected under *What's left*, next.
+> shipped when.** What is NOT built is collected under _What's left_, next.
 
 ### What's left — open items
 
@@ -217,6 +227,7 @@ Gathered from the phase sections below so they're findable in one
 place. Roughly ordered by how often a user meets them.
 
 **Sketching (Phase 2 backlog)**
+
 - **Trim / extend** — not built. The most conspicuous missing sketch tool.
 - **Point identity is by coordinate key** (`solver.ts`) — coincident points merge
   by rounded position, so a "coincidence" silently breaks once a solve moves them
@@ -233,6 +244,7 @@ place. Roughly ordered by how often a user meets them.
   doesn't track the source body); no agent/MCP op.
 
 **Kernel / geometry**
+
 - **Sphere booleans still fail** — `makeSphere` stays analytic, and this OCCT wasm
   build can't boolean an analytic primitive against a plane (see BACKLOG). Every
   other primitive is faceted around it; a sphere needs a UV-meshed solid.
@@ -243,6 +255,7 @@ place. Roughly ordered by how often a user meets them.
 - **Tessellation LOD** — no distance/zoom mesh simplification.
 
 **Rough edges that fail silently** (each small and localized)
+
 - Extrude `remove` that resolves to zero target bodies deletes the tool silently
   (EXTRUDE_IMPROVEMENTS #6).
 - Extrude distance isn't validated as > 0; a degenerate value surfaces as a raw
@@ -250,6 +263,7 @@ place. Roughly ordered by how often a user meets them.
 - A failed autosave only `console.warn`s — no banner (Phase 8.7 open items).
 
 **Features with obvious next increments**
+
 - **Extrude:** taper/draft angle + thin/shell walls; a viewport drag handle for
   distance (the Transform gizmo proved the pattern).
 - **Transform:** scale; rotation about a datum axis / body edge.
@@ -260,41 +274,47 @@ place. Roughly ordered by how often a user meets them.
   shelved on `feat/step-assembly-split` — blocked on a wasm build with XCAF).
 
 **Agent (Phase 9)**
+
 - **L4 — robustness:** token auth, multi-tab handling, error taxonomy, queue
   ordering, reconnection, timeouts. The tab currently dials the hub in prod too,
   logging WS errors when no hub runs.
 
 **Housekeeping**
+
 - Phase 8.5 **#5** (timeline formatting) — the last item of that batch.
 - Landing-page auto-deploy is disabled (private repo on the Free plan).
 - Kernel builder/mesh caches evict on document switch (A→B→A re-solves A).
 - Sketch inference **hysteresis** (the one deferred MVP item) — snap stickiness.
 - Shelved perf work (viewport geometry reuse + lazy regen) — see BACKLOG.
 
-### Phase 0 — Foundation spike *(prove the stack)* — ✅ DONE
+### Phase 0 — Foundation spike _(prove the stack)_ — ✅ DONE
+
 - Vite + TS + React shell: top bar, left feature-tree panel, central viewport,
   bottom-right context panel.
 - `opencascade.js`/`replicad` running **in a Web Worker**.
 - Render a hard-coded box: tessellate in worker → transfer buffers → three.js.
-- Camera (orbit/pan/zoom), grid, origin triad. *(Selectable base planes moved to
-  Phase 2.0 prep.)*
+- Camera (orbit/pan/zoom), grid, origin triad. _(Selectable base planes moved to
+  Phase 2.0 prep.)_
 - **Exit criteria:** edit a number in the UI, see the box regenerate. ✅
 
 ### Phase 1 — Timeline + variables engine — ✅ DONE
+
 - Document model, ordered feature list, regeneration pipeline, rollback bar.
-- Variable table + expression evaluator. *(Units deferred.)*
+- Variable table + expression evaluator. _(Units deferred.)_
 - Undo/redo via history with **edit coalescing** (typing in a field = one step).
 - Feature-tree UI: reorder, rename, suppress, edit, delete, error badges.
 - Stand-in features: box/cylinder/sphere **primitives** (independent bodies) until
   sketch-based features arrive.
 
 ### Phase 1.5 — Running-result regeneration model — ✅ DONE (folded into Phase 3)
+
 The kernel now **folds operations over a running set of bodies** (`worker.ts`
 `buildBodies`): a sketch/face profile becomes a solid, extrude New adds a body,
 extrude Add/Remove fuse/cut in place, boolean combines operands, chamfer/fillet
 modify a body. A body is keyed by the id of the feature that **created** it
 (primitive / New extrude / boolean); **in-place modifiers preserve the target's
 id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
+
 - **Body identity:** kept pragmatically as "body id = creating-feature id"
   rather than a separate body-record with its own ids — a full decoupling would
   actually worsen Parts naming (a union should read "Union 1", not "Box 1"), so
@@ -304,12 +324,14 @@ id**, so the body keeps its identity (name, colour) through chamfer/Add/Remove.
   showing the modifier feature.
 
 ### Phase 2 — Sketching (geometry + constraints) — ✅ core DONE
+
 Pick a datum plane or planar face → sketch mode (camera normal-to); draw a
 profile, constrain it, and it becomes a region that extrude/revolve/sweep/loft
 consume. Exit criterion — a fully-constrained closed profile that updates when a
 driving variable changes — is **met**.
 
 **Done — navigation & entry**
+
 - Clickable/snappable **origin point**; the three datum **planes** (Top/Front/
   Right) rendered faintly, hover/click-selectable (selecting one starts a sketch);
   **standard view navigation** (digits `1`–`7`) plus an **on-canvas interactive
@@ -323,6 +345,7 @@ driving variable changes — is **met**.
   edit its feature.
 
 **Done — drawing tools**
+
 - **line, rectangle** (2-corner + center), **circle** (center + 3-pt), **arc**
   (3-pt), regular **polygon**, **spline** (smooth through-point curve; the `∿`
   tool, **Esc** to finish).
@@ -350,6 +373,7 @@ driving variable changes — is **met**.
   `KEYBOARD_SHORTCUTS.md`).
 
 **Done — constraints & dimensions** (`planegcs`, `src/sketch/solver.ts`)
+
 - **Auto H/V capture** on draw (including a line-rect's closing edge + all four
   rectangle edges); **drawing auto-solves** on every commit (chained lines
   continue from the solved endpoint); **fully-constrained → green**; the manual
@@ -376,10 +400,11 @@ driving variable changes — is **met**.
   conflict badge.
 
 **Backlog (deferred)**
+
 - **Trim / extend.**
 - **Cancel a sketch edit (discard changes)** — re-editing applies live via
-  `setDoc`, and only a brand-new *empty* sketch cancels on exit; backing out of
-  edits to an *existing* sketch needs snapshot-on-entry + restore on Esc (Finish
+  `setDoc`, and only a brand-new _empty_ sketch cancels on exit; backing out of
+  edits to an _existing_ sketch needs snapshot-on-entry + restore on Esc (Finish
   keeps changes).
 - **Dimensions:** point-to-point / point-to-line distance, the **diameter**
   variant, and **live expression-linked** values (a value is stored as a resolved
@@ -403,6 +428,7 @@ driving variable changes — is **met**.
   relocating them into a movable panel is **UI/UX backlog #1** (Phase 8.5).
 
 ### Phase 3 — First solids: Extrude + Chamfer/Fillet — ✅ DONE
+
 This phase built the **running-result model** (Phase 1.5): the kernel folds
 operations over a running set of bodies, and **proper topological naming** went
 in — face names seeded on primitives and propagated through extrude (MakePrism)
@@ -445,8 +471,30 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     translucent cyan ghost (`previewTool` in the kernel) while existing bodies
     keep their own colour; one ghost per profile, updates live with the params.
 - **Chamfer + Fillet** — ✅ DONE: edge dress-up via `BRepFilletAPI`, edges
-  referenced by **persistent name**. *(Chamfer two-distance/angle variants:
-  TODO; currently single distance / single radius.)*
+  referenced by **persistent name**. _(Chamfer two-distance/angle variants:
+  TODO; currently single distance / single radius.)_
+- **Shell (2026-07-24) — ✅ DONE.** A `ShellFeature` hollows a body: pick the
+  face(s) to remove (they become openings, referenced by **persistent name** +
+  a `FaceRef` geometric fingerprint for the same topo-naming fallback as
+  dress-up's `edgeRefs`) and a `thickness` that grows the wall **inward**
+  (outer dimensions unchanged); zero faces makes a fully **sealed** hollow
+  shell. Kernel: `shellNamed` in `worker.ts` calls OCCT's
+  `BRepOffsetAPI_MakeThickSolid.MakeThickSolidByJoin` directly (the same op
+  replicad's `.shell()` wraps, used raw here since the running-fold model
+  needs the target's `NamedShape` history) — kept faces keep their names, each
+  kept face's new inner-offset face is named `"<name>/in"`. Face-reference
+  re-matching after an upstream edit renames a face uses a new batch
+  `matchFaces` in `topoMatch.ts` (mirrors `matchEdges`: exact name → base name
+  → geometric centroid+normal, one-to-one best-pairing). UI: a **▢ Shell**
+  modeling-toolbar button (`G`) — select faces to open (or the whole body via
+  the Body selection filter for a sealed shell) — opens a small anchored
+  dialog (thickness field, live preview, kernel-error validation), same
+  pattern as Chamfer/Fillet's dialog; double-click the timeline row to edit in
+  place. Agent: `shell` op (`add_shell` tool) with a `targetId` + optional
+  `faces` + `thickness`, auto-registered from the shared zod schema like every
+  other operation. Verified end-to-end against the real OCCT wasm kernel by
+  `scripts/verify-shell.mjs` (open/sealed shells, outer-bbox preserved,
+  inner-face naming, edit-in-place, bogus-face and too-thick error paths).
 - **Topological naming** — ✅ DONE (the real version, via OCCT history; see the
   phase intro above). **Robustness layer (N3, 2026-07-06) — ✅ DONE:** when a
   name is gone (an upstream edit split/merged topology, churning `#n` suffixes),
@@ -466,7 +514,7 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   churned `#1` edge name re-matched + ⚠; bogus name → descriptive error) and
   `scripts/verify-naming-face.mjs` (boolean-split `+z#1` profile face un-split
   by an upstream edit → pad re-attaches geometrically + ⚠).
-  *Residual follow-ups (agent path, Phase 9):* (a) ✅ DONE — `commands.ts`'s
+  _Residual follow-ups (agent path, Phase 9):_ (a) ✅ DONE — `commands.ts`'s
   `dressUp` case now bakes `edgeRefs` fingerprints (mid+length) from the mesh
   `edgeGroups` (`edgeFingerprintByName`, mirroring `App.tsx`'s
   `edgeFingerprint`; unknown names stay name-only), so agent-created dress-ups
@@ -479,12 +527,13 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   meshed body back) — ✅ exercised end to end.
 
 ### Phase 4 — Export (validate end-to-end) — ✅ DONE
+
 - **Export STL** (mesh) and **STEP** (B-rep, declared in mm) per part, from the
   Parts panel. `Kernel.exportBody` replays the fold and serialises the chosen
   result body. Image snapshot still TODO.
 - **Import STEP — ✅ DONE.** An **⤓ Import STEP** button by the Parts heading
   loads a `.step`/`.stp` file as a body.
-  - **Feature:** `ImportFeature` (a body *producer*, like a primitive) stores the
+  - **Feature:** `ImportFeature` (a body _producer_, like a primitive) stores the
     STEP **text** on the feature — JSON-serializable, so it round-trips through
     IndexedDB / `.json`. UI: `<input type=file>` → `file.text()` → `addImport`.
   - **Kernel:** `importStepNamed` reads it via OCCT `STEPControl_Reader` (sync —
@@ -506,7 +555,8 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     onto the viewport; one-body-per-solid (multi-solid STEP still comes in as
     one compound).
 
-### Phase 5 — Boolean + Reference planes + Pattern + Mirror *(Boolean + offset planes ✅; rest TODO)*
+### Phase 5 — Boolean + Reference planes + Pattern + Mirror _(Boolean + offset planes ✅; rest TODO)_
+
 - Boolean between separate bodies: union / subtract / intersect — **done**
   (`BooleanFeature`, name propagation). The dialog is **click-to-populate** —
   operands fill in as bodies are clicked in the viewport (click to add in order,
@@ -529,19 +579,19 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     pointing at each other still give a sensible between-plane). `midplaneFrame`.
   - **At an angle — ✅ DONE.** The base hinged on its own u- or v-axis (through
     the base origin) by an angle in degrees (expression-backed, re-derives on
-    change). `angledFrame` (Rodrigues rotation). *(Hinging on an arbitrary picked
-    edge/axis rather than the base's own axis is a future refinement.)*
+    change). `angledFrame` (Rodrigues rotation). _(Hinging on an arbitrary picked
+    edge/axis rather than the base's own axis is a future refinement.)_
   - **Through geometry — ✅ DONE (3 points).** Plane through three picked points
     (body vertices or sketch points); origin = first point, normal =
-    (p1-p0)×(p2-p0), collinear points rejected. `planeThrough3Points`. *(Other
-    inputs — line+point, two parallel edges — are future.)*
+    (p1-p0)×(p2-p0), collinear points rejected. `planeThrough3Points`. _(Other
+    inputs — line+point, two parallel edges — are future.)_
   - The **⧉ Plane dialog is now method-first**: a Method dropdown (Offset /
     Midplane / At angle / Through 3 points) with per-method pick buttons (base /
     second reference / 3 points) + inputs; `ParamEditor` shows the right fields per
     method. `PlaneFeature` gained `method` + `refB`/`angleAxis`/`angle`/`points`
     (legacy planes with no `method` resolve as offset).
-  (Showing planes in a separate datums list is **not planned** — appearing in the
-  timeline + viewport is enough.)
+    (Showing planes in a separate datums list is **not planned** — appearing in the
+    timeline + viewport is enough.)
 - Linear pattern (1- and 2-direction), circular pattern (axis + count + angle).
   **✅ DONE — at BOTH levels** (see PATTERNS_PLAN.md for the full design):
   - **Sketch patterns** — `linearPattern` / `circularPattern` `DerivedOp`s
@@ -560,21 +610,22 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     compounded into ONE body keyed by the feature (seed kept, like Mirror).
     Live ghost preview clones the seed's tessellated mesh — no kernel round
     trip. Agent parity: `add_sketch_pattern` + `add_pattern` MCP tools.
-  - *Still open:* per-instance skip, fuse-with-seed option, multi-seed, and
+  - _Still open:_ per-instance skip, fuse-with-seed option, multi-seed, and
     body-edge direction references.
 - **Mirror across a plane/planar face — ✅ DONE.** A `MirrorFeature` reflects a
   body across a datum / reference plane into a **new** body (original kept) via
   `gp_Trsf.SetMirror` (reuses `applyTrsf`; names re-key 1:1). `⇋ Mirror` button
-  + plane-pick dialog. **Mirror about a planar body face ✅ DONE:** the dialog's
-  plane dropdown has a **"Body face…"** option that arms a face pick (`Select a
-  face` button, like up-to-face); the picked face's plane is derived via
-  `deriveFaceFrame` (centroid + `faceNormal`) and stored as a `kind:"face"` ref
-  (a frozen frame snapshot — won't follow the source body if it later changes).
-  **Non-planar faces are rejected** (`faceNormal` returns null when the face
-  verts aren't coplanar within 0.05mm, so a cylinder side can't be picked).
+  - plane-pick dialog. **Mirror about a planar body face ✅ DONE:** the dialog's
+    plane dropdown has a **"Body face…"** option that arms a face pick (`Select a
+face` button, like up-to-face); the picked face's plane is derived via
+    `deriveFaceFrame` (centroid + `faceNormal`) and stored as a `kind:"face"` ref
+    (a frozen frame snapshot — won't follow the source body if it later changes).
+    **Non-planar faces are rejected** (`faceNormal` returns null when the face
+    verts aren't coplanar within 0.05mm, so a cylinder side can't be picked).
 - Patterns/booleans multiply topology — re-stress naming/selection here.
 
 ### Phase 5.5 — Transform (move + rotate bodies) — ✅ DONE
+
 - A **Transform** feature that translates (X/Y/Z, expression-backed) and rotates
   (angle about a world X/Y/Z axis through a pivot baked from the body's bbox
   centre) a selected body. It's an **in-place modifier** — keeps the target
@@ -617,6 +668,7 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   rework" cost, not "how much geometry to draw."
 
 ### Phase 6 — Sweep + Loft + Revolve — ✅ DONE
+
 - **Sweep — ✅ DONE.** A `SweepFeature` sweeps a **sketch region** along a **path
   entity** (line / arc / **spline**, possibly in a different sketch) — `⊃ Sweep`
   enables when a region + a path entity are selected. Kernel `sweepBody` uses raw
@@ -627,12 +679,12 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   (`splineBeziers`; an arc path fits one interpolating B-spline) — so the solid
   follows the drawn curve exactly. **History-based naming** (one side face per
   profile edge via `Generated`, + `start`/`end` caps).
-  *(Twist / multiple profiles along the path: future.)*
+  _(Twist / multiple profiles along the path: future.)_
 - **Loft — ✅ DONE.** A `LoftFeature` lofts through **2+ sketch regions** (ordered
   by timeline position) — `⌧ Loft` enables when ≥2 regions are selected. Kernel
   `loftBody` uses raw OCCT `BRepOffsetAPI_ThruSections` (solid) with
   **history-based naming** (lateral faces via `GeneratedFace` per section edge, +
-  caps). *(Ruled option / guide rails / point-capped ends: future.)*
+  caps). _(Ruled option / guide rails / point-capped ends: future.)_
 - **Spline sketch tool — ✅ DONE** (was UI/UX backlog #8). A `spline`
   `SketchEntity` (smooth Catmull-Rom through control points): the `∿` sketch tool
   (click points, **Esc** to finish), rendered/snapped/measured; an open curve
@@ -657,6 +709,7 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   edge + start/end caps for a partial revolve).
 
 ### Phase 7 — Multi-body, parts, selection UX — ✅ DONE
+
 - Multiple bodies/parts in one document — ✅. A **Parts** panel
   (`ui/SolidsList.tsx`) lists every rendered body (primitive / extrude / boolean)
   with select, rename, delete, colour, opacity slider, a **per-part show/hide
@@ -673,10 +726,11 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 - **Selection filters — ✅ DONE.** **Body / Face / Edge / Vertex** chips
   (bottom-left of the viewport, under a "Selection filters" heading) gate what a
   click can pick (`SelectionFilter` in `Viewport.pickSelection`).
-  *(Opacity slider note: the Parts-row opacity control is currently hidden —
-  reinstate via a better home, UI/UX backlog #1.)*
+  _(Opacity slider note: the Parts-row opacity control is currently hidden —
+  reinstate via a better home, UI/UX backlog #1.)_
 
 ### Phase 8 — Polish & persistence
+
 - **IndexedDB autosave + restore — ✅ DONE.** `src/storage/db.ts` wraps
   IndexedDB (object store keyed by document id, structured-clone of the plain
   `Document`); the app restores the most-recent doc on load and debounced-
@@ -686,9 +740,9 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   manager"** below: documents dialog, editable title, thumbnails, `.json`
   import/export, corrupt-record recovery, and the agent's
   `list/open/new/rename/duplicate_document` tools.
-- Measurement tools, section view — still TODO. *(Appearance — ✅ DONE, Phase 7:
+- Measurement tools, section view — still TODO. _(Appearance — ✅ DONE, Phase 7:
   color/opacity/hide per part. Keyboard shortcuts — ✅ DONE, see
-  `KEYBOARD_SHORTCUTS.md`.)*
+  `KEYBOARD_SHORTCUTS.md`.)_
 - **Performance — incremental regen ✅ DONE** (worker-side `builderCache`/
   `meshCache`, content-hash-keyed — see Phase 5.5's perf follow-up above).
   **Tessellation LOD — still TODO** (no distance/zoom-based mesh
@@ -729,7 +783,7 @@ folders/tags, collaborative editing, per-document settings profiles.
   with saved meshes riding along, opening the Documents dialog (or booting)
   would deserialize every document's tessellation. DB v2 adds a second object
   store **`meta`**: `DocMeta { id, name, updatedAt, createdAt, featureCount,
-  partCount, thumb?: Blob }`. The dialog and boot path read ONLY `meta`
+partCount, thumb?: Blob }`. The dialog and boot path read ONLY `meta`
   (cheap); the full `documents` record loads on open.
 - `StoredDoc` gains `createdAt` (and keeps `meshes` — see Performance). Writes
   update both stores in **one transaction** so they can't drift; `db.ts` grows
@@ -778,19 +832,19 @@ folders/tags, collaborative editing, per-document settings profiles.
   `activeDocId` + tab title. Selection, dialogs, rollback drag state, and the
   agent's pending waiters all reset with the doc.
 - **`.json` export/import.** Export: `{ format: "openpoly-doc", version: N,
-  name, doc }` (no meshes — they're a cache; files stay small and diffable).
+name, doc }` (no meshes — they're a cache; files stay small and diffable).
   Import: parse → `migrateDocument` → new id (NEVER reuse the file's id —
   imports must not silently overwrite) → name from file (deduped) → open.
   Corrupt/unknown-version files surface a readable error in the dialog.
 
 #### Performance — what loads when
 
-| Moment | Loads | Cost |
-| --- | --- | --- |
-| **Boot** | `meta` for the active-id lookup + the ONE active `StoredDoc` (doc + meshes) | one small getAll + one record; meshes paint instantly, OCCT regen runs behind |
-| **Documents dialog open** | `meta` only (names, dates, counts, thumb Blobs) | no `Document` JSON, no meshes deserialized |
-| **Switch/open** | that one `StoredDoc` | same as boot's second half |
-| **Autosave (600 ms debounce)** | writes active `StoredDoc` + its `meta` row | unchanged from today + one small row |
+| Moment                         | Loads                                                                       | Cost                                                                          |
+| ------------------------------ | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **Boot**                       | `meta` for the active-id lookup + the ONE active `StoredDoc` (doc + meshes) | one small getAll + one record; meshes paint instantly, OCCT regen runs behind |
+| **Documents dialog open**      | `meta` only (names, dates, counts, thumb Blobs)                             | no `Document` JSON, no meshes deserialized                                    |
+| **Switch/open**                | that one `StoredDoc`                                                        | same as boot's second half                                                    |
+| **Autosave (600 ms debounce)** | writes active `StoredDoc` + its `meta` row                                  | unchanged from today + one small row                                          |
 
 - **Thumbnails**: `capturePNG()` downscaled to ~256 px and stored as a Blob on
   `meta.thumb`. Generated **on regen settle, throttled** (e.g. at most once per
@@ -823,7 +877,7 @@ docs in different tabs works naturally and becomes the recommended pattern.
 
 - **New operations** (zod, `operations.ts` → `commands.ts` → MCP tools):
   - `listDocuments` (read) → `[{id, name, updatedAt, featureCount, partCount,
-    active}]` from `meta`.
+active}]` from `meta`.
   - `openDocument {id}` → runs the same switch flow (flush → load → reset);
     resolves after the first regen settles so the next read sees real geometry.
   - `newDocument {name?}` → seed + open.
@@ -853,7 +907,7 @@ docs in different tabs works naturally and becomes the recommended pattern.
 - **Undo across switches** — ✅ cleared by design (document boundary); this was
   the spec'd v1 behavior, not a gap.
 - **Corrupt/missing record recovery — ✅ DONE (2026-07-06, `feat/corrupt-doc-
-  recovery`).** Fixed an atomicity bug (`adoptRecord`/boot-restore validated
+recovery`).** Fixed an atomicity bug (`adoptRecord`/boot-restore validated
   `record.doc` via `migrateDocument` AFTER already mutating `docIdRef`/state,
   so a throw left the app pointing at a broken doc while rendering the old
   one — the next autosave would silently overwrite the corrupt record).
@@ -876,7 +930,7 @@ docs in different tabs works naturally and becomes the recommended pattern.
 - **Kernel builder/mesh caches evict on doc switch** (documented+accepted in
   Performance above, repeated here so it isn't lost track of): switching
   A→B→A re-solves A's sweeps/lofts/booleans from scratch on the way back
-  (the saved-mesh instant-paint hides the *visual* gap, not the recompute
+  (the saved-mesh instant-paint hides the _visual_ gap, not the recompute
   cost). Follow-up: per-doc used-sets or a "used in the last K regens" sweep
   policy instead of "used this run."
 
@@ -889,8 +943,8 @@ docs in different tabs works naturally and becomes the recommended pattern.
    topbar click-to-edit title + browser tab title, autosave dual-writes and
    preserves createdAt/thumb. 9 vitest against `fake-indexeddb` (new devDep) +
    `scripts/verify-multidoc-m1.mjs` (9 headless checks incl. live v1→v2
-   migration). *(The docIdRef-clobber regression test moves to M2 with the
-   switch flow it guards.)*
+   migration). _(The docIdRef-clobber regression test moves to M2 with the
+   switch flow it guards.)_
 2. **M2 — Documents dialog. ✅ DONE (2026-07-06).** `DocumentsDialog` (modal on
    `.modal-overlay`, lists from `meta` only; inline rename, two-step delete,
    duplicate-opens-copy; Esc/overlay-click closes), topbar split into
@@ -901,9 +955,9 @@ docs in different tabs works naturally and becomes the recommended pattern.
    delete-active falls back to next-recent-else-seed, BroadcastChannel
    `openpoly-docs` open/present/leave handshake → amber "Also open in another
    tab" badge. New `.text-btn` CSS class (auto-width sibling of the fixed
-   28×26 icon `.tool-btn`). *(The planned ⌘O shortcut was tried and removed —
+   28×26 icon `.tool-btn`). _(The planned ⌘O shortcut was tried and removed —
    browsers reserve Cmd/Ctrl+O for their own Open-File dialog, so it never
-   fired; no shortcut for now.)* 4 vitest (`docNames.test.ts`) +
+   fired; no shortcut for now.)_ 4 vitest (`docNames.test.ts`) +
    `scripts/verify-multidoc-m2.mjs` (13 headless checks: isolation, flush
    inside the debounce window, duplicate, delete-active fallback, two-tab
    warn + clear).
@@ -944,7 +998,7 @@ feel rough (extrude extents, boolean operand picking), plus shortcuts and the
 spline tool. Captured 2026-06-21.
 
 1. **Relocate the Constraints list + Parameters so they're discoverable. ✅ DONE.**
-   Both used to sit in the left sidebar *below* the Parts list, easy to miss.
+   Both used to sit in the left sidebar _below_ the Parts list, easy to miss.
    Now a **movable `EditPanel`** (`ui/EditPanel.tsx`) floats over the viewport,
    anchored below the model toolbar / right of the sketch toolbar (`left:66 top:58`,
    draggable by its title bar via `DraggableDialog`). It mounts **only** when
@@ -977,13 +1031,13 @@ spline tool. Captured 2026-06-21.
      open their `ParamEditor` in the floating `EditPanel` (`editParamsId`), which now
      also hosts the sketch Constraints list. Live edits via `updateParam`; ✕ / Esc /
      select-away close it.
-   Doc setters unit-tested (`document/editInPlace.test.ts`, 6). E2E:
-   `scripts/verify-edit-dialogs.mjs` (single-click no panel; primitive params;
-   extrude edit updates in place, no duplicate) + `scripts/verify-edit-transform-plane.mjs`
-   (transform de-dup; plane edit in place).
+     Doc setters unit-tested (`document/editInPlace.test.ts`, 6). E2E:
+     `scripts/verify-edit-dialogs.mjs` (single-click no panel; primitive params;
+     extrude edit updates in place, no duplicate) + `scripts/verify-edit-transform-plane.mjs`
+     (transform de-dup; plane edit in place).
 
    **Edit-mode polish (2026-07):**
-   - *Live preview on every edit.* Editing a dialog feature applies changes to the
+   - _Live preview on every edit._ Editing a dialog feature applies changes to the
      doc **live** (a per-dialog "live-sync" effect → `update*` under one coalesced
      `edit:<id>` undo step), so the real regen previews each change; **Cancel**
      reverts to a snapshot taken on open (`beginEdit`/`commitEdit`/`cancelEdit`).
@@ -991,12 +1045,12 @@ spline tool. Captured 2026-06-21.
      breaks the doc→effect feedback loop that would otherwise re-apply on the
      Cancel restore. No-dialog params (box/cylinder/sweep/loft) already previewed
      live via `updateParam`. Verified by `scripts/verify-edit-preview.mjs`.
-   - *Reference planes are clickable in the viewport.* `pickSelection` raycasts the
+   - _Reference planes are clickable in the viewport._ `pickSelection` raycasts the
      user-plane quads (lowest priority) → a `feature` selection, so a plane
      highlights in the viewport AND its timeline row lights up (and vice-versa);
      `applyHighlights` brightens a selected/hovered plane (folded in the old
      `applyUserPlaneAppearance`).
-   - *Params box styled like the dialogs.* `.edit-panel` param rows use the
+   - _Params box styled like the dialogs._ `.edit-panel` param rows use the
      creation-dialog `.ed-field` flex look (label left / control right), and the
      panel now shares the creation-dialog **blue border** + lighter section labels
      (dropped the bold sidebar heading + redundant "Parameters" label), so a
@@ -1016,7 +1070,7 @@ spline tool. Captured 2026-06-21.
    works. Falls back to analytic `MakeRevol` for holed / axis-touching profiles.
 
    **Smooth DISPLAY of faceted bodies (2026-07).** Faceted curved bodies now
-   *render* round while staying faceted for the kernel: `smoothMeshNormals`
+   _render_ round while staying faceted for the kernel: `smoothMeshNormals`
    averages per-vertex normals within a crease-angle smooth group (walls shade
    smooth; real corners stay sharp), and `smoothEdgeHashes` + `filterSmoothEdges`
    drop the near-tangent facet-seam edges. Full revolves additionally run
@@ -1044,7 +1098,7 @@ spline tool. Captured 2026-06-21.
 3. **Add an "Up to face" extrude extent — ✅ DONE.** New `extent="upToFace"`
    option; choosing it shows a **"Select a face"** button that arms a viewport
    face pick (the next clicked body face fills `upTo` = `{featureId, faceName,
-   center}`; re-clickable to re-pick). The kernel computes the signed prism
+center}`; re-clickable to re-pick). The kernel computes the signed prism
    length from the profile plane to the **plane of the target face** along the
    extrude direction (so flip/distance are ignored — the face drives both
    distance and direction), and **rejects faces parallel to the extrude
@@ -1053,7 +1107,7 @@ spline tool. Captured 2026-06-21.
    pillar top lands exactly on the target face's plane. (`ExtrudeExtent` +
    `UpToFaceRef` in `document/types.ts`; resolve in `document.ts`; `upToFaceLength`
    in `kernel/worker.ts`; dialog + `pickingUpFace` arming in `App.tsx`.)
-   *Remaining:* trim to the actual (possibly non-planar) face surface rather than
+   _Remaining:_ trim to the actual (possibly non-planar) face surface rather than
    its plane; up-front client validation of face eligibility.
 
 4. **Replace the Boolean checkbox dialog with click-to-populate — ✅ DONE.** The
@@ -1068,7 +1122,7 @@ spline tool. Captured 2026-06-21.
    — is it needed for the drag-resize affordance, or can the splitter work
    without the frame? Tighten **spacing to be consistent with the datums** now
    that datums live inside the timeline. (`FeatureTree` `.tree`/`.panel-splitter`
-   + `.tree-row`/`.datum-row` spacing in `App.css`.)
+   - `.tree-row`/`.datum-row` spacing in `App.css`.)
 
 6. **Less space above the Variables title — ✅ DONE.** Tightened the
    `.params-heading.collapsible` top margin from 22px to 10px.
@@ -1098,42 +1152,44 @@ client** (Claude Code + Claude Desktop): the agent reads the scene, sketches,
 extrudes, dresses up, and screenshots a live tab end to end — "runs extremely
 well" in manual testing. The command + read layer (L0), the browser WebSocket
 bridge (L1), the **Node stdio MCP server** (`mcp-server/`, L2), and **regen-await
-+ read/screenshot polish** (L3) flow client → server → hub → tab → kernel → back.
-After L3 a mutating op **awaits the kernel regen** before returning, so a single
-follow-up read/screenshot sees the result (no polling) and a failed build
-surfaces as `kernel_error` for the agent to self-correct. Wired for Claude Code
-via a committed root `.mcp.json`; setup in `mcp-server/README.md`. See the L0–L3
-entries under *Delivery steps*. **Phase 9 work was merged to `main` on
-2026-06-29** (branch `feat/phase9-agent` deleted). Beyond the core ops, the
-command/MCP layer exposes **up-to-face extrude**, **revolve** (symmetric +
-edge/plane/face axis), **extrudable text**, and the **`add_offset` /
-`add_sketch_mirror`** derived-geometry ops (`get_scene_summary` applies derived
-geometry, so generated edges are referenceable/extrudable). **Project/Convert has
-no agent op yet** — it's UI-only because its persistent-edge-name capture +
-post-rebuild reprojection loop doesn't map onto a one-shot document op; the guide
-tells the agent to reference faces/edges directly instead. **Explicit sketch
-constraints + dimensions — ✅ DONE (agent ops).** `add_constraint`
-(horizontal/vertical/parallel/perpendicular/equal/tangent/**coincident/
-pointOnLine/midpoint** — points addressed as `{entityId, at:"a"|"b"|"c"}` or
-`{origin:true}`), `add_dimension` (length/radius/angle/**distance** between two
-point/line/rim refs; `value` takes a number or a **variable expression**,
-evaluated to a number at apply time — a live re-link on later variable changes is
-the residual gap), and `remove_constraint`. Each re-solves and is **rejected**
-(with a culprit-naming message) on conflict / already-implied / collapse, mirroring
-the UI's commitConstraint/applyDimension guardrails; `get_scene_summary` now lists
-each sketch's constraints (id + type + touched entity ids + value). Derived and
-text entities aren't constrainable. **L4 (robustness: token auth, multi-tab, error
-taxonomy, list/open/new_document) is next.**
+
+- read/screenshot polish** (L3) flow client → server → hub → tab → kernel → back.
+  After L3 a mutating op **awaits the kernel regen** before returning, so a single
+  follow-up read/screenshot sees the result (no polling) and a failed build
+  surfaces as `kernel_error` for the agent to self-correct. Wired for Claude Code
+  via a committed root `.mcp.json`; setup in `mcp-server/README.md`. See the L0–L3
+  entries under _Delivery steps_. **Phase 9 work was merged to `main` on
+  2026-06-29** (branch `feat/phase9-agent` deleted). Beyond the core ops, the
+  command/MCP layer exposes **up-to-face extrude**, **revolve** (symmetric +
+  edge/plane/face axis), **extrudable text**, and the **`add_offset` /
+  `add_sketch_mirror`** derived-geometry ops (`get_scene_summary` applies derived
+  geometry, so generated edges are referenceable/extrudable). **Project/Convert has
+  no agent op yet** — it's UI-only because its persistent-edge-name capture +
+  post-rebuild reprojection loop doesn't map onto a one-shot document op; the guide
+  tells the agent to reference faces/edges directly instead. **Explicit sketch
+  constraints + dimensions — ✅ DONE (agent ops).** `add_constraint`
+  (horizontal/vertical/parallel/perpendicular/equal/tangent/**coincident/
+  pointOnLine/midpoint** — points addressed as `{entityId, at:"a"|"b"|"c"}` or
+  `{origin:true}`), `add_dimension` (length/radius/angle/**distance** between two
+  point/line/rim refs; `value` takes a number or a **variable expression**,
+  evaluated to a number at apply time — a live re-link on later variable changes is
+  the residual gap), and `remove_constraint`. Each re-solves and is **rejected**
+  (with a culprit-naming message) on conflict / already-implied / collapse, mirroring
+  the UI's commitConstraint/applyDimension guardrails; `get_scene_summary` now lists
+  each sketch's constraints (id + type + touched entity ids + value). Derived and
+  text entities aren't constrainable. **L4 (robustness: token auth, multi-tab, error
+  taxonomy, list/open/new_document) is next.**
 
 **Goal.** Let a local LLM agent (Claude Desktop, Claude Code, Cursor, Cline, Zed,
 …) **drive the live Open Poly browser tab** — sketch, extrude, transform, arrange
-— while the user *watches it happen in their browser*, and let the agent **read
+— while the user _watches it happen in their browser_, and let the agent **read
 state** (document, a scene summary, a viewport screenshot) so it can plan and
 self-correct, including resuming a prior session's document. **Scope: local,
 single-user, stdio MCP.** Remote/hosted MCP and an in-app chat agent are explicit
 **stretch goals** (below).
 
 ### Design principle — two layers (don't build an "MCP app")
+
 1. A **vendor-neutral command + read API** over the document (apply a typed
    `Operation`; read document / scene-summary / screenshot). Knows nothing about
    any LLM or transport.
@@ -1142,10 +1198,12 @@ single-user, stdio MCP.** Remote/hosted MCP and an in-app chat agent are explici
    rework. **Build layer 1 first and well.**
 
 ### Architecture (data flow)
+
 ```
 LLM client ⟷ (stdio MCP) ⟷  bridge/MCP server (Node)  ⟷ (WebSocket) ⟷  browser tab
                               one process, two faces                    (command layer)
 ```
+
 - The **browser tab holds the state and renders**, so it must **connect out** (a
   tab can't be listened to). The tab opens a WebSocket to a `localhost` hub.
 - The **MCP server and the WebSocket hub are one Node process**: stdio to the LLM
@@ -1154,37 +1212,39 @@ LLM client ⟷ (stdio MCP) ⟷  bridge/MCP server (Node)  ⟷ (WebSocket) ⟷  b
   result/ids/errors (and, for `screenshot`, a PNG) → back to the LLM.
 
 ### Component 1 — Command layer (browser, vendor-neutral core)
+
 New dir `src/agent/`.
+
 - `operations.ts` — the typed **`Operation`** discriminated union + **`OpResult`**
-  + read-query types + **zod schemas** (validation reused by the server). Each
-  `Operation` maps onto an existing pure document fn in `src/document/document.ts`:
-  - `addPrimitive {kind:"box"|"cylinder"|"sphere", params?, name?}` → `addFeature`
-    + `updateParam`/`setParam`.
-  - `addSketch {plane: PlaneRefSpec, entities: EntitySpec[], constraints?}` →
+  - read-query types + **zod schemas** (validation reused by the server). Each
+    `Operation` maps onto an existing pure document fn in `src/document/document.ts`:
+  * `addPrimitive {kind:"box"|"cylinder"|"sphere", params?, name?}` → `addFeature`
+    - `updateParam`/`setParam`.
+  * `addSketch {plane: PlaneRefSpec, entities: EntitySpec[], constraints?}` →
     `addSketch` + `addSketchEntities` (+ `setSketchConstraints`). Non-interactive:
     the agent supplies entities in plane **(u,v)** coords in one call. Provide
     sugar specs (`rect{center|corner,w,h}`, `circle{c,r}`, `polygon{c,r,n}`) that
     expand to entities so the model doesn't hand-place every line. Any entity may
     set `construction:true` (reference-only — e.g. a revolve **axis** line).
-  - `addExtrude {profile: ProfileSpec, distance, flip?, extent?, mode?,
-    targetId?}` → `addExtrude`. `ProfileSpec` = `{sketchId, regionId}` **or**
+  * `addExtrude {profile: ProfileSpec, distance, flip?, extent?, mode?,
+targetId?}` → `addExtrude`. `ProfileSpec` = `{sketchId, regionId}` **or**
     `{bodyId, faceName}`. `extent` = `blind` | `symmetric` | `throughAll`
-    (throughAll needs a `targetId`). *(Multi-profile: the agent issues one
-    addExtrude per region.)*
-  - `addRevolve {profile:{sketchId,regionId?}, axis:{sketchId,entityId}, angle?}`
+    (throughAll needs a `targetId`). _(Multi-profile: the agent issues one
+    addExtrude per region.)_
+  * `addRevolve {profile:{sketchId,regionId?}, axis:{sketchId,entityId}, angle?}`
     → `addRevolve`. The axis is a **line** entity (id from the scene summary's
     sketch `entities`); the region must not cross it. `angle` defaults to 360.
-  - `addMirror {targetId, plane: PlaneRefSpec}` → `addMirror`. Reflects a body
+  * `addMirror {targetId, plane: PlaneRefSpec}` → `addMirror`. Reflects a body
     into a new body (original kept).
-  - `addPlane {base: PlaneRefSpec, offset}` → `addPlane`.
-  - `transform {targetId, tx?,ty?,tz?, angle?, axis?, copy?}` → `addTransform`.
-  - `boolean {op, operands[]}` → `addBoolean`.
-  - `dressUp {kind:"chamfer"|"fillet", targetId, edges:string[]/*names*/, size}` →
+  * `addPlane {base: PlaneRefSpec, offset}` → `addPlane`.
+  * `transform {targetId, tx?,ty?,tz?, angle?, axis?, copy?}` → `addTransform`.
+  * `boolean {op, operands[]}` → `addBoolean`.
+  * `dressUp {kind:"chamfer"|"fillet", targetId, edges:string[]/*names*/, size}` →
     `addDressUp`.
-  - `setParam {featureId, name, value}` / `setAppearance {featureId, color?,
-    opacity?, hidden?}` / `rename` / `delete` / `setRollback {index}` /
+  * `setParam {featureId, name, value}` / `setAppearance {featureId, color?,
+opacity?, hidden?}` / `rename` / `delete` / `setRollback {index}` /
     `select {refs}` (so a screenshot shows what's highlighted).
-  - **Reference handles must be stable ids the agent got from a read**: feature
+  * **Reference handles must be stable ids the agent got from a read**: feature
     ids; **persistent face/edge names** (we already emit `mesh.faceGroups[].name`
     / `edgeGroups[].name`); plane refs (`{datum}`/`{planeId}`/`{bodyId,faceName}`);
     sketch `regionId` (deterministic from `detectSketchRegions`). **Conventions:
@@ -1209,23 +1269,26 @@ New dir `src/agent/`.
   `{apply, read}` in dev for manual console testing before any networking.
 
 ### Component 2 — WebSocket bridge client (browser)
+
 - `src/agent/bridgeClient.ts`: connect to `ws://127.0.0.1:<port>`, send `hello`
   (session id + optional token + a `conventions`/capabilities blob), then service
   `request` messages by calling the command layer and replying with `result`.
 - **Serial request queue**: process one request at a time and **await each op's
-  commit + regen** before the next — React state updates are async, so op *N+1*
-  must observe op *N*. No concurrency on a single tab.
+  commit + regen** before the next — React state updates are async, so op _N+1_
+  must observe op _N_. No concurrency on a single tab.
 - **Reconnect** with backoff on drop/reload. Show an **"Agent connected"**
   indicator (a small badge in the top bar) so the user knows a session is live.
 
 ### Component 3 — Bridge + MCP server (Node, `mcp-server/` — its own package)
+
 Separate runtime (Node, not the browser bundle); own `package.json`. Use the
 official **`@modelcontextprotocol/sdk`**.
+
 - `wsHub.ts` — a `ws` server on a fixed localhost port; tracks the connected
   tab session(s); request/response correlation by `id`; timeouts; "no tab
   connected → clear error telling the user to open Open Poly."
 - `protocol.ts` — **shared** WS message types (`hello`, `request{id,kind:"apply"
-  |"read",payload}`, `result{id,ok,payload|error}`, optional `event`). Keep a
+|"read",payload}`, `result{id,ok,payload|error}`, optional `event`). Keep a
   single source of truth importable by both browser and server (a small shared
   `.ts` both tsconfigs include).
 - `tools.ts` / `index.ts` — register one MCP **tool per Operation** + read tools
@@ -1237,6 +1300,7 @@ official **`@modelcontextprotocol/sdk`**.
   `args` stdio entry) and a one-line `npx`/`node` launch.
 
 ### Read API detail
+
 - `get_document` → the full JSON `Document` (+ schemaVersion) — ground truth.
 - `get_scene_summary` → compact, LLM-first digest: **bodies** (id, name, kind,
   bbox, volume, color, **named faces + edges**), **sketches** (id, plane,
@@ -1247,18 +1311,20 @@ official **`@modelcontextprotocol/sdk`**.
 - `screenshot {view?, fit?}` → set the camera (reuse `ViewportApi.setView`),
   render, `renderer.domElement.toDataURL("image/png")`. **Add a `capturePNG()`
   method to `ViewportApi`** (`src/viewport/Viewport.tsx`) — it owns the renderer.
-  Visual feedback is the big unlock: the agent can *see* what it built.
+  Visual feedback is the big unlock: the agent can _see_ what it built.
 
 ### Cross-session state
+
 - Ground truth is **IndexedDB** in the tab (`src/storage/db.ts`); the agent reads
   the current doc/summary on connect. The hub may cache the last snapshot per
   session for quick re-reads.
 - Lean on the **multi-document manager** (Phase 8): expose `list_documents` /
   `open_document` / `new_document` tools so "continue yesterday's bracket" = open
-  that doc + `get_scene_summary`. *(Full design: "Phase 8.7 — Multi-document
-  manager (spec)" → Agent integration.)*
+  that doc + `get_scene_summary`. _(Full design: "Phase 8.7 — Multi-document
+  manager (spec)" → Agent integration.)_
 
 ### Agent modeling guide + issue reporting
+
 - **The "skill"** — a concise modeling playbook lives at
   `src/agent/modeling-guide.md` (drafted): mental model, conventions (mm, Z-up,
   reference-by-name), the read→plan→one-op→verify loop, recipes, and best
@@ -1280,6 +1346,7 @@ official **`@modelcontextprotocol/sdk`**.
   **`screenshot`** tool (verify loop), and references are by **stable name/id**.
 
 ### Engineering concerns / guardrails
+
 - **Undo-routed** mutations (above) = the human stays in control.
 - **Human-in-the-loop on destructive ops** (delete / boolean consuming bodies /
   setRollback): allowed + undoable for v1; leave a `confirm` hook for later.
@@ -1290,6 +1357,7 @@ official **`@modelcontextprotocol/sdk`**.
   `no_session`, `timeout`) with human-readable messages the model can act on.
 
 ### Delivery steps
+
 - **L0 — Command layer, no networking. ✅ DONE (2026-06-19).** Built in
   `src/agent/`: `operations.ts` (zod `Operation` union + `OpResult`/`ReadQuery`/
   `SceneSummary` + `expandEntities` sugar shapes; added **zod v4**), `commands.ts`
@@ -1300,7 +1368,7 @@ official **`@modelcontextprotocol/sdk`**.
   Added `capturePNG()` to `ViewportApi`; mounted the hook in `App.tsx`. Unit
   tests in `commands.test.ts` (14 pass); tsc + build clean. **Verified** end-to-
   end via Playwright driving `window.__openpoly` (box → sketch-on-named-face →
-  extrude-remove → screenshot; named faces + bbox resolve). *Deferred:* regen-
+  extrude-remove → screenshot; named faces + bbox resolve). _Deferred:_ regen-
   await (L3) — only synchronous resolve errors surface today; the modeling-guide
   lists snake_case MCP tool names while Operation discriminators are camelCase
   (reconcile the mapping in L2).
@@ -1312,7 +1380,7 @@ official **`@modelcontextprotocol/sdk`**.
   into `useAgentBridge` (handlers validate via the shared zod schemas) with an
   "Agent connected" badge in the topbar. Throwaway hub `scripts/bridge-e2e.mjs`
   (added `ws` devDep) + Playwright **validated** round-trips: apply/read, serial
-  ordering, structured errors, badge. *Note:* the tab auto-connects in prod too,
+  ordering, structured errors, badge. _Note:_ the tab auto-connects in prod too,
   so it logs WS connect errors (~every ≤10s) when no hub runs — add an
   enable/token gate in L4.
 - **L2 — MCP server (stdio). ✅ DONE (2026-06-20).** `mcp-server/` (own package,
@@ -1325,18 +1393,18 @@ official **`@modelcontextprotocol/sdk`**.
   `issues.log.jsonl`). All logging on **stderr** (stdout is the JSON-RPC channel).
   Config snippets in `mcp-server/README.md`. **Validated** by `scripts/mcp-e2e.mjs`
   (SDK client spawns the server, Playwright tab dials the hub, 21 tools, full
-  round-trip incl. image content + structured errors). *Note:* tool names are
+  round-trip incl. image content + structured errors). _Note:_ tool names are
   snake_case ↔ camelCase Operation discriminators (mapped in `tools.ts`).
 - **L3 — Reads + screenshots + regen-await polish. ✅ DONE (2026-06-20).**
   `applyOperation` is now async and **awaits the kernel regen** before resolving:
   App's regen effect feeds `agentMeshesRef`/`agentErrorsRef` synchronously on
   settle and flushes one-shot `waitForRegen` promises, gated by a regen
-  start-sequence so a waiter only resolves on a regen that began *after* the op
+  start-sequence so a waiter only resolves on a regen that began _after_ the op
   (otherwise the slow initial-load regen resolves it early). A created feature
   that fails to build is returned as `ok:false` `kernel_error` (with
   `featureErrors`). `get_scene_summary` reads the fresh meshes (bbox + named
   faces/edges; color derived from the feature) and `screenshot` returns image
-  content. **Validated** by `scripts/mcp-e2e.mjs`: a *single* read right after an
+  content. **Validated** by `scripts/mcp-e2e.mjs`: a _single_ read right after an
   awaited apply sees the new body (no polling), and `dress_up` on a bogus edge
   surfaces `kernel_error` ("fillet: no matching edges"). 8/8 checks, stable across
   repeats. **Exit met** (mechanics): build → single-read verify → error-driven
@@ -1344,9 +1412,10 @@ official **`@modelcontextprotocol/sdk`**.
 - **L4 — Robustness.** token auth, multi-tab handling (concurrent agent
   sessions on the bridge — distinct from Phase 8.7's document-level
   BroadcastChannel guard), error taxonomy, queue ordering, reconnection,
-  timeouts. *(`list/open/new_document` tools — ✅ DONE, Phase 8.7 M4.)*
+  timeouts. _(`list/open/new_document` tools — ✅ DONE, Phase 8.7 M4.)_
 
 ### Existing touchpoints (where a new session hooks in)
+
 - `src/document/document.ts` — every mutating `Operation` maps to a fn here.
 - `src/App.tsx` — `doc`/`setDoc` (undo), `selection`/`setSelection`,
   `viewApiRef`, `meshes`/`rawMeshes`, `resolved` (`scope`, `errors`,
@@ -1358,6 +1427,7 @@ official **`@modelcontextprotocol/sdk`**.
 - `src/storage/db.ts` — current/saved documents for cross-session continuity.
 
 ### Stretch goals (future)
+
 - **Remote (Streamable-HTTP) MCP server + session pairing** so hosted/web chat
   UIs (ChatGPT/Gemini connectors, claude.ai) can drive it — adds hosting, auth,
   and a pairing code; softens local-first (server in the loop).
@@ -1385,14 +1455,14 @@ official **`@modelcontextprotocol/sdk`**.
 
 ## 6. Top risks (and the plan for each)
 
-| Risk | Mitigation |
-|------|-----------|
-| **Topological naming** breaks references on edits | ✅ Mitigated: OCCT history maps + scored geometric fallback (`topoMatch.ts`) + fixable-error/warning surfacing all shipped (2026-07-06). Residual: fingerprints go stale if geometry moves far AND names churn simultaneously. |
-| OCCT WASM **bundle size / load time** | Lazy-load the worker; tree-shake via replicad; show a splash; cache the WASM. |
-| **Regen performance** | ✅ Worker thread, debounced regen, and content-hash-keyed incremental caching (unchanged bodies skip re-solve + re-mesh) all shipped. LOD (distance/zoom mesh simplification) not built — not yet a bottleneck. |
-| **Constraint solver** robustness | Lean on planegcs rather than rolling your own; constrain the supported constraint set early. |
-| Selource **license** mix (LGPL GCS, OCCT LGPL-with-exception) | Audit each dependency's license before committing to a project license. |
-| Scope creep (this is a *lot*) | Ship Phases 0–3 as a real milestone before going wide. |
+| Risk                                                          | Mitigation                                                                                                                                                                                                                     |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Topological naming** breaks references on edits             | ✅ Mitigated: OCCT history maps + scored geometric fallback (`topoMatch.ts`) + fixable-error/warning surfacing all shipped (2026-07-06). Residual: fingerprints go stale if geometry moves far AND names churn simultaneously. |
+| OCCT WASM **bundle size / load time**                         | Lazy-load the worker; tree-shake via replicad; show a splash; cache the WASM.                                                                                                                                                  |
+| **Regen performance**                                         | ✅ Worker thread, debounced regen, and content-hash-keyed incremental caching (unchanged bodies skip re-solve + re-mesh) all shipped. LOD (distance/zoom mesh simplification) not built — not yet a bottleneck.                |
+| **Constraint solver** robustness                              | Lean on planegcs rather than rolling your own; constrain the supported constraint set early.                                                                                                                                   |
+| Selource **license** mix (LGPL GCS, OCCT LGPL-with-exception) | Audit each dependency's license before committing to a project license.                                                                                                                                                        |
+| Scope creep (this is a _lot_)                                 | Ship Phases 0–3 as a real milestone before going wide.                                                                                                                                                                         |
 
 ---
 

@@ -8,8 +8,13 @@ const line = (a: Vec2, b: Vec2): SketchEntity => ({ type: "line", id: `l${n++}`,
 // Shared geometry: two 4-sided polygons sharing edge B-C, plus a 3-sided polygon
 // sharing edge C-D with the first square.
 //   A(0,0) B(2,0) C(2,2) D(0,2)   E(4,0) F(4,2)   G(1,4)
-const A: Vec2 = [0, 0], B: Vec2 = [2, 0], C: Vec2 = [2, 2], D: Vec2 = [0, 2];
-const E: Vec2 = [4, 0], F: Vec2 = [4, 2], G: Vec2 = [1, 4];
+const A: Vec2 = [0, 0],
+  B: Vec2 = [2, 0],
+  C: Vec2 = [2, 2],
+  D: Vec2 = [0, 2];
+const E: Vec2 = [4, 0],
+  F: Vec2 = [4, 2],
+  G: Vec2 = [1, 4];
 
 const areas = (ents: SketchEntity[]) =>
   detectSketchRegions(ents)
@@ -20,18 +25,31 @@ describe("detectSketchRegions", () => {
   it("finds two squares bridged into a middle region", () => {
     // Left square, right square, and two bridge lines forming a middle rect.
     const ents = [
-      line([0, 0], [2, 0]), line([2, 0], [2, 2]), line([2, 2], [0, 2]), line([0, 2], [0, 0]),
-      line([4, 0], [6, 0]), line([6, 0], [6, 2]), line([6, 2], [4, 2]), line([4, 2], [4, 0]),
-      line([2, 0], [4, 0]), line([4, 2], [2, 2]),
+      line([0, 0], [2, 0]),
+      line([2, 0], [2, 2]),
+      line([2, 2], [0, 2]),
+      line([0, 2], [0, 0]),
+      line([4, 0], [6, 0]),
+      line([6, 0], [6, 2]),
+      line([6, 2], [4, 2]),
+      line([4, 2], [4, 0]),
+      line([2, 0], [4, 0]),
+      line([4, 2], [2, 2]),
     ];
     expect(areas(ents)).toEqual([4, 4, 4]);
   });
 
   it("finds all three faces when shared edges appear once (single stroke)", () => {
     const ents = [
-      line(A, B), line(B, C), line(C, D), line(D, A), // square 1
-      line(B, E), line(E, F), line(F, C), // square 2 (shares B-C)
-      line(C, G), line(G, D), // triangle (shares C-D)
+      line(A, B),
+      line(B, C),
+      line(C, D),
+      line(D, A), // square 1
+      line(B, E),
+      line(E, F),
+      line(F, C), // square 2 (shares B-C)
+      line(C, G),
+      line(G, D), // triangle (shares C-D)
     ];
     expect(areas(ents)).toEqual([2, 4, 4]);
   });
@@ -41,9 +59,17 @@ describe("detectSketchRegions", () => {
     // (B-C and C-D each twice). The duplicates must not collapse the inner
     // faces into a single outer region. (Previously this returned 1 region.)
     const ents = [
-      line(A, B), line(B, C), line(C, D), line(D, A), // square 1
-      line(B, E), line(E, F), line(F, C), line(C, B), // square 2 (+ dup C-B)
-      line(D, C), line(C, G), line(G, D), // triangle (+ dup D-C)
+      line(A, B),
+      line(B, C),
+      line(C, D),
+      line(D, A), // square 1
+      line(B, E),
+      line(E, F),
+      line(F, C),
+      line(C, B), // square 2 (+ dup C-B)
+      line(D, C),
+      line(C, G),
+      line(G, D), // triangle (+ dup D-C)
     ];
     expect(areas(ents)).toEqual([2, 4, 4]);
   });
@@ -59,9 +85,7 @@ describe("detectSketchRegions", () => {
 describe("detectSketchRegions — subregions at T-junctions and crossings", () => {
   // A 4×2 box whose corners are shared vertices; interior lines below land
   // mid-edge (T-junctions) or cross each other (X), not on those corners.
-  const box = () => [
-    line([0, 0], [4, 0]), line([4, 0], [4, 2]), line([4, 2], [0, 2]), line([0, 2], [0, 0]),
-  ];
+  const box = () => [line([0, 0], [4, 0]), line([4, 0], [4, 2]), line([4, 2], [0, 2]), line([0, 2], [0, 0])];
 
   it("splits a box at a T-to-T chord into two cells", () => {
     // Vertical chord from mid-bottom (2,0) to mid-top (2,2): both endpoints are
@@ -131,7 +155,9 @@ describe("detectSketchRegions — subregions at T-junctions and crossings", () =
     const ids1 = regions.map((r) => r.id).sort();
     expect(new Set(ids1).size).toBe(4);
     // Re-detection yields the same ids (features persist them).
-    const ids2 = detectSketchRegions([circle, h, v]).map((r) => r.id).sort();
+    const ids2 = detectSketchRegions([circle, h, v])
+      .map((r) => r.id)
+      .sort();
     expect(ids2).toEqual(ids1);
   });
 
@@ -161,12 +187,8 @@ describe("detectSketchRegions — nested island loops (holes)", () => {
   // A big box with a smaller, free-floating box entirely inside it (the inner
   // box touches nothing). The outer region should read as the frame (big minus
   // small), the inner box as its own face — each independently selectable.
-  const big = () => [
-    line([0, 0], [10, 0]), line([10, 0], [10, 10]), line([10, 10], [0, 10]), line([0, 10], [0, 0]),
-  ];
-  const small = () => [
-    line([3, 3], [6, 3]), line([6, 3], [6, 6]), line([6, 6], [3, 6]), line([3, 6], [3, 3]),
-  ];
+  const big = () => [line([0, 0], [10, 0]), line([10, 0], [10, 10]), line([10, 10], [0, 10]), line([0, 10], [0, 0])];
+  const small = () => [line([3, 3], [6, 3]), line([6, 3], [6, 6]), line([6, 6], [3, 6]), line([3, 6], [3, 3])];
 
   it("makes the outer region an annulus and the inner box its own region", () => {
     const regions = detectSketchRegions([...big(), ...small()]);
@@ -180,12 +202,8 @@ describe("detectSketchRegions — nested island loops (holes)", () => {
   });
 
   it("keeps three concentric boxes as three rings/faces with subtracted areas", () => {
-    const mid = [
-      line([2, 2], [8, 2]), line([8, 2], [8, 8]), line([8, 8], [2, 8]), line([2, 8], [2, 2]),
-    ]; // 6×6 = 36
-    const tiny = [
-      line([4, 4], [6, 4]), line([6, 4], [6, 6]), line([6, 6], [4, 6]), line([4, 6], [4, 4]),
-    ]; // 2×2 = 4
+    const mid = [line([2, 2], [8, 2]), line([8, 2], [8, 8]), line([8, 8], [2, 8]), line([2, 8], [2, 2])]; // 6×6 = 36
+    const tiny = [line([4, 4], [6, 4]), line([6, 4], [6, 6]), line([6, 6], [4, 6]), line([4, 6], [4, 4])]; // 2×2 = 4
     const regions = detectSketchRegions([...big(), ...mid, ...tiny]);
     expect(regions).toHaveLength(3);
     expect(areas([...big(), ...mid, ...tiny])).toEqual([4, 32, 64]); // 4, 36−4, 100−36
@@ -210,7 +228,14 @@ describe("detectSketchRegions — nested island loops (holes)", () => {
   });
 });
 
-const arc = (c: Vec2, r: number, start: number, end: number): SketchEntity => ({ type: "arc", id: `a${n++}`, c, r, start, end });
+const arc = (c: Vec2, r: number, start: number, end: number): SketchEntity => ({
+  type: "arc",
+  id: `a${n++}`,
+  c,
+  r,
+  start,
+  end,
+});
 const spline = (points: Vec2[]): SketchEntity => ({ type: "spline", id: `s${n++}`, points });
 
 describe("detectSketchRegions — arcs & splines as boundaries", () => {
@@ -225,7 +250,11 @@ describe("detectSketchRegions — arcs & splines as boundaries", () => {
   });
 
   it("closes a region bounded by a spline + a line", () => {
-    const sp = spline([[0, 0], [1, 1.5], [2, 0]]);
+    const sp = spline([
+      [0, 0],
+      [1, 1.5],
+      [2, 0],
+    ]);
     const ln = line([2, 0], [0, 0]);
     const regions = detectSketchRegions([sp, ln]);
     expect(regions).toHaveLength(1);
@@ -234,7 +263,15 @@ describe("detectSketchRegions — arcs & splines as boundaries", () => {
   });
 
   it("ignores an open spline that closes nothing (a sweep path)", () => {
-    expect(detectSketchRegions([spline([[0, 0], [2, 1], [4, 0]])])).toHaveLength(0);
+    expect(
+      detectSketchRegions([
+        spline([
+          [0, 0],
+          [2, 1],
+          [4, 0],
+        ]),
+      ]),
+    ).toHaveLength(0);
   });
 
   it("regionsEnclosedBy works from a curve's edge selection", () => {
@@ -280,9 +317,16 @@ describe("regionsEnclosedBy", () => {
 
   it("finds both bridged regions when all their boundary lines are selected", () => {
     const ents = [
-      line([0, 0], [2, 0]), line([2, 0], [2, 2]), line([2, 2], [0, 2]), line([0, 2], [0, 0]),
-      line([4, 0], [6, 0]), line([6, 0], [6, 2]), line([6, 2], [4, 2]), line([4, 2], [4, 0]),
-      line([2, 0], [4, 0]), line([4, 2], [2, 2]),
+      line([0, 0], [2, 0]),
+      line([2, 0], [2, 2]),
+      line([2, 2], [0, 2]),
+      line([0, 2], [0, 0]),
+      line([4, 0], [6, 0]),
+      line([6, 0], [6, 2]),
+      line([6, 2], [4, 2]),
+      line([4, 2], [4, 0]),
+      line([2, 0], [4, 0]),
+      line([4, 2], [2, 2]),
     ];
     const ids = new Set(ents.map((l) => l.id));
     const found = regionsEnclosedBy(ents, ids);
@@ -335,7 +379,17 @@ describe("regionProfileSegments", () => {
 
   it("falls back (undefined) when the boundary contains a spline", () => {
     const ents: SketchEntity[] = [
-      { type: "spline", id: "s", points: [[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]] },
+      {
+        type: "spline",
+        id: "s",
+        points: [
+          [0, 0],
+          [2, 0],
+          [2, 2],
+          [0, 2],
+          [0, 0],
+        ],
+      },
     ];
     const r = detectSketchRegions(ents)[0];
     expect(r ? regionProfileSegments(r, ents) : undefined).toBeUndefined();

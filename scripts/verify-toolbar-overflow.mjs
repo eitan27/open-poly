@@ -8,7 +8,9 @@ const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
 const page = await context.newPage();
 page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-page.on("console", (m) => { if (m.type() === "error") console.log(`[console.error] ${m.text()}`); });
+page.on("console", (m) => {
+  if (m.type() === "error") console.log(`[console.error] ${m.text()}`);
+});
 
 await page.goto(URL, { waitUntil: "domcontentloaded" });
 for (let i = 0; i < 60; i++) {
@@ -19,11 +21,17 @@ for (let i = 0; i < 60; i++) {
 
 const barLabels = () =>
   page.$$eval(".model-toolbar > button, .model-toolbar > .mt-dropdown > button", (bs) =>
-    bs.map((b) => b.textContent.trim()));
+    bs.map((b) => b.textContent.trim()),
+  );
 const rowLabels = () =>
   page.$$eval(".tb-more-list button", (bs) =>
-    bs.map((b) => (b.classList.contains("active") ? "> " : "  ") + b.querySelector(".tb-row-label").textContent +
-      (b.disabled ? " [disabled]" : "")));
+    bs.map(
+      (b) =>
+        (b.classList.contains("active") ? "> " : "  ") +
+        b.querySelector(".tb-row-label").textContent +
+        (b.disabled ? " [disabled]" : ""),
+    ),
+  );
 const overflows = async () => {
   const bar = await page.locator(".model-toolbar").boundingBox();
   const wrap = await page.locator(".model-toolbar-wrap").boundingBox();
@@ -49,16 +57,21 @@ await page.click(".model-toolbar > .tb-more > .tb-more-btn");
 // no stacking context. Anything that does (backdrop-filter, filter, transform,
 // opacity < 1, isolation, a z-index on the positioned bar) would confine the
 // flyout's z-index to the bar and let those buttons paint over the menu.
-console.log("\n=== stacking", await page.evaluate(() => {
-  const cs = getComputedStyle(document.querySelector(".model-toolbar"));
-  const traps = ["backdropFilter", "filter", "transform", "isolation", "mixBlendMode", "contain", "willChange"]
-    .filter((p) => !["none", "auto", "normal"].includes(cs[p]))
-    .concat(cs.zIndex !== "auto" ? ["zIndex"] : [], cs.opacity !== "1" ? ["opacity"] : []);
-  const menuZ = Number(getComputedStyle(document.querySelector(".tb-more-menu")).zIndex);
-  const cornerZ = getComputedStyle(document.querySelector(".view-reset")).zIndex;
-  return `.model-toolbar stacking-context triggers: ${traps.length ? traps.join(",") + "  <== BUG" : "none"}` +
-    ` | flyout z=${menuZ} vs corner controls z=${cornerZ} (auto ⇒ flyout wins)`;
-}));
+console.log(
+  "\n=== stacking",
+  await page.evaluate(() => {
+    const cs = getComputedStyle(document.querySelector(".model-toolbar"));
+    const traps = ["backdropFilter", "filter", "transform", "isolation", "mixBlendMode", "contain", "willChange"]
+      .filter((p) => !["none", "auto", "normal"].includes(cs[p]))
+      .concat(cs.zIndex !== "auto" ? ["zIndex"] : [], cs.opacity !== "1" ? ["opacity"] : []);
+    const menuZ = Number(getComputedStyle(document.querySelector(".tb-more-menu")).zIndex);
+    const cornerZ = getComputedStyle(document.querySelector(".view-reset")).zIndex;
+    return (
+      `.model-toolbar stacking-context triggers: ${traps.length ? traps.join(",") + "  <== BUG" : "none"}` +
+      ` | flyout z=${menuZ} vs corner controls z=${cornerZ} (auto ⇒ flyout wins)`
+    );
+  }),
+);
 console.log("\n=== flyout default (should be exactly the hidden buttons)");
 console.log((await rowLabels()).join("\n"));
 
@@ -81,7 +94,7 @@ console.log((await rowLabels()).join("\n"));
 
 await page.fill(".tb-more-search", "zzz");
 await page.waitForTimeout(120);
-console.log("\n=== search 'zzz' →", (await page.locator(".tb-more-empty").textContent()));
+console.log("\n=== search 'zzz' →", await page.locator(".tb-more-empty").textContent());
 
 // Enter on "Cylinder" must create a body (feature count grows) and close the flyout.
 const before = await page.locator(".tree-list .tree-row .row-name").count();
@@ -104,8 +117,12 @@ await page.evaluate(() => document.activeElement?.blur());
 await page.keyboard.press("/");
 await page.waitForTimeout(250);
 console.log("\n=== '/' at 900px (buttons hidden)");
-console.log("   flyout open:", (await page.locator(".model-toolbar .tb-more-menu").count()) === 1,
-  "| rows:", (await rowLabels()).length);
+console.log(
+  "   flyout open:",
+  (await page.locator(".model-toolbar .tb-more-menu").count()) === 1,
+  "| rows:",
+  (await rowLabels()).length,
+);
 await page.keyboard.press("Escape");
 await page.waitForTimeout(150);
 console.log("   Esc closed it:", (await page.locator(".model-toolbar .tb-more-menu").count()) === 0);
@@ -118,9 +135,14 @@ await page.evaluate(() => document.activeElement?.blur());
 await page.keyboard.press("/");
 await page.waitForTimeout(250);
 console.log("\n=== '/' at 1660px (nothing hidden — no More button)");
-console.log("   More button:", await page.locator(".model-toolbar > .tb-more > .tb-more-btn").count(),
-  "| flyout open:", (await page.locator(".model-toolbar .tb-more-menu").count()) === 1,
-  "| rows:", (await rowLabels()).length);
+console.log(
+  "   More button:",
+  await page.locator(".model-toolbar > .tb-more > .tb-more-btn").count(),
+  "| flyout open:",
+  (await page.locator(".model-toolbar .tb-more-menu").count()) === 1,
+  "| rows:",
+  (await rowLabels()).length,
+);
 await page.keyboard.press("Escape");
 await page.waitForTimeout(150);
 await page.setViewportSize({ width: 900, height: 900 });
@@ -132,8 +154,12 @@ console.log("\n=== in-bar Body ▾ dropdown");
 console.log("   menu:", (await page.$$eval(".mt-menu button", (b) => b.map((x) => x.textContent))).join(" | "));
 await page.click(".model-toolbar .mt-menu button:nth-child(1)");
 await page.waitForTimeout(1200);
-console.log("   after clicking Box — menu open:", (await page.locator(".mt-menu").count()) > 0,
-  "| tree rows:", await page.locator(".tree-list .tree-row .row-name").count());
+console.log(
+  "   after clicking Box — menu open:",
+  (await page.locator(".mt-menu").count()) > 0,
+  "| tree rows:",
+  await page.locator(".tree-list .tree-row .row-name").count(),
+);
 
 // A hidden dropdown reached by its keyboard shortcut (N) should open the flyout
 // pre-filtered to it.
@@ -144,8 +170,17 @@ console.log("   bar:", (await barLabels()).join(" | ") || "(all collapsed)");
 await page.evaluate(() => document.activeElement?.blur());
 await page.keyboard.press("n");
 await page.waitForTimeout(250);
-console.log("   'N' with Body hidden → flyout open:", (await page.locator(".tb-more-menu").count()) > 0,
-  "| query:", JSON.stringify(await page.locator(".tb-more-search").inputValue().catch(() => null)));
+console.log(
+  "   'N' with Body hidden → flyout open:",
+  (await page.locator(".tb-more-menu").count()) > 0,
+  "| query:",
+  JSON.stringify(
+    await page
+      .locator(".tb-more-search")
+      .inputValue()
+      .catch(() => null),
+  ),
+);
 console.log((await rowLabels().catch(() => [])).join("\n"));
 
 await page.screenshot({ path: "/tmp/openshape-toolbar.png" });

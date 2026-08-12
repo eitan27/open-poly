@@ -81,11 +81,7 @@ const clickWorld = async (w) => {
 // Cell centers on the top plane (z=0): the four quadrant midpoints.
 await clickWorld([-10, 5, 0]); // top-left cell
 let sel = await read({ read: "selection" });
-check(
-  "clicking a cell selects one sketchFace",
-  sel.length === 1 && sel[0].kind === "sketchFace",
-  JSON.stringify(sel),
-);
+check("clicking a cell selects one sketchFace", sel.length === 1 && sel[0].kind === "sketchFace", JSON.stringify(sel));
 const firstRegion = sel[0]?.regionId;
 
 await clickWorld([10, -5, 0]); // bottom-right cell

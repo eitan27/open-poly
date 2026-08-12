@@ -71,20 +71,26 @@ await waitIdle();
   FACETS = b.edges.filter((e) => e.includes(`${cyl.createdId}/+z`)).length;
   const top = b.faces.find((f) => /\+z/.test(f));
   check("the cylinder's top face is named", !!top, top ?? b.faces.slice(0, 6).join(", "));
-  check("…and its wall is cut into chords (facet count read from the body)",
-    FACETS > 8 && b.faces.length === FACETS + 2, `${FACETS} chords, ${b.faces.length} faces`);
+  check(
+    "…and its wall is cut into chords (facet count read from the body)",
+    FACETS > 8 && b.faces.length === FACETS + 2,
+    `${FACETS} chords, ${b.faces.length} faces`,
+  );
   const before = b.faces.length;
   await apply({ op: "dressUp", kind: "fillet", targetId: cyl.createdId, edges: [], faces: [top], size: "1" });
   const st = await waitIdle();
   const after = await body();
   check("filleting the top FACE builds", /up to date/i.test(st), st);
-  check("…and rounds the whole rim as ONE swept face",
+  check(
+    "…and rounds the whole rim as ONE swept face",
     after.faces.length === before + 1,
-    `${before} -> ${after.faces.length} faces (expected ${before + 1}; ` +
-    `+${FACETS} would mean one bevel per chord)`);
-  check("…named, so downstream features can reference it",
+    `${before} -> ${after.faces.length} faces (expected ${before + 1}; ` + `+${FACETS} would mean one bevel per chord)`,
+  );
+  check(
+    "…named, so downstream features can reference it",
     after.faces.filter((f) => /\/fillet/.test(f)).length === 1,
-    after.faces.filter((f) => /\/fillet/.test(f)).join(", ") || "none");
+    after.faces.filter((f) => /\/fillet/.test(f)).join(", ") || "none",
+  );
   await shoot("/tmp/openpoly-face-fillet-cyl-top.png");
 }
 
@@ -105,11 +111,13 @@ await waitIdle();
   const st = await waitIdle();
   const after = await body();
   check("filleting the WALL face builds", /up to date/i.test(st), st);
-  check("…and rounds both rims, leaving the facet seams alone",
+  check(
+    "…and rounds both rims, leaving the facet seams alone",
     after.faces.length === before + 2,
     `${before} -> ${after.faces.length} faces (expected ${before + 2}: one swept ` +
-    `round per rim; +1 would be a single rim, and any multiple of ${FACETS} would ` +
-    `mean it fell back to per-chord bevels)`);
+      `round per rim; +1 would be a single rim, and any multiple of ${FACETS} would ` +
+      `mean it fell back to per-chord bevels)`,
+  );
   await shoot("/tmp/openpoly-face-fillet-cyl-wall.png");
 }
 
@@ -127,9 +135,11 @@ await waitIdle();
   const st = await waitIdle();
   const after = await body();
   check("chamfering a box's top FACE builds", /up to date/i.test(st), st);
-  check("…and bevels exactly its 4 edges",
+  check(
+    "…and bevels exactly its 4 edges",
     after.faces.length === before + 4,
-    `${before} -> ${after.faces.length} faces (expected ${before + 4})`);
+    `${before} -> ${after.faces.length} faces (expected ${before + 4})`,
+  );
   await shoot("/tmp/openpoly-face-chamfer-box.png");
 }
 
@@ -156,7 +166,11 @@ await waitIdle();
   const before = (await body()).faces.length;
   await page.keyboard.press("f");
   await page.waitForTimeout(400);
-  const title = (await page.locator(".extrude-dialog .ed-title").textContent().catch(() => null)) ?? "";
+  const title =
+    (await page
+      .locator(".extrude-dialog .ed-title")
+      .textContent()
+      .catch(() => null)) ?? "";
   check("F opens the Fillet dialog on a face selection", /Fillet/.test(title), title || "no dialog");
   if (/Fillet/.test(title)) {
     await page.locator(".extrude-dialog .ed-field input").first().fill("1");
@@ -172,8 +186,11 @@ await waitIdle();
     }
     const st = await waitIdle();
     after = (await body()).faces.length;
-    check("…and committing it rounds the whole rim", /up to date/i.test(st) && after === before + 1,
-      `${before} -> ${after} faces (expected ${before + 1}), status ${st}`);
+    check(
+      "…and committing it rounds the whole rim",
+      /up to date/i.test(st) && after === before + 1,
+      `${before} -> ${after} faces (expected ${before + 1}), status ${st}`,
+    );
   }
   await shoot("/tmp/openpoly-face-fillet-ui.png");
 }
@@ -181,15 +198,19 @@ await waitIdle();
 // --- 5. A face selection survives a size edit (it's stored, not one-shot) -----
 {
   const f = (await read({ read: "document" })).features.find((x) => x.type === "dressup");
-  check("the feature stores the FACE reference, not expanded edges",
+  check(
+    "the feature stores the FACE reference, not expanded edges",
     Array.isArray(f?.faces) && f.faces.length === 1 && (f.edges?.length ?? 0) === 0,
-    JSON.stringify({ faces: f?.faces, edges: f?.edges }));
+    JSON.stringify({ faces: f?.faces, edges: f?.edges }),
+  );
   await apply({ op: "setParam", featureId: f.id, name: "size", value: "2" });
   const st = await waitIdle();
   const after = (await body()).faces.length;
-  check("…so changing its radius re-resolves the face and still dresses the whole rim",
+  check(
+    "…so changing its radius re-resolves the face and still dresses the whole rim",
     /up to date/i.test(st) && after === FACETS + 3, // walls + 2 caps + 1 swept round
-    `${after} faces (expected ${FACETS + 3}), status ${st}`);
+    `${after} faces (expected ${FACETS + 3}), status ${st}`,
+  );
 }
 
 // --- 6. The reported repro: dress a rim, build on it, dress THAT rim ----------
@@ -214,9 +235,11 @@ await waitIdle();
   await apply({ op: "dressUp", kind: "fillet", targetId: stack.createdId, edges: [], faces: [t0], size: "4" });
   const s1 = await waitIdle();
   const b1 = await body();
-  check("repro step 1: the cylinder's top face rounds",
+  check(
+    "repro step 1: the cylinder's top face rounds",
     /up to date/i.test(s1) && b1.faces.length === FACETS + 3,
-    `${b1.faces.length} faces (expected ${FACETS + 3}), status ${s1}`);
+    `${b1.faces.length} faces (expected ${FACETS + 3}), status ${s1}`,
+  );
 
   const t1 = b1.faces.find((f) => /\+z$/.test(f));
   await apply({ op: "addExtrude", profile: { bodyId: stack.createdId, faceName: t1 }, distance: "25", mode: "add" });
@@ -229,18 +252,22 @@ await waitIdle();
   const s3 = await waitIdle();
   const b3 = await body();
   check("repro step 3: the extruded face rounds too", /up to date/i.test(s3), s3);
-  check("…adding material rather than leaving the shape put",
+  check(
+    "…adding material rather than leaving the shape put",
     b3.faces.length > b2.faces.length,
-    `faces ${b2.faces.length} -> ${b3.faces.length} (the crown held faces level)`);
+    `faces ${b2.faces.length} -> ${b3.faces.length} (the crown held faces level)`,
+  );
   // THE crown test. A crown is one tooth per chord, so a crowned rim names 127
   // fillet faces for this one feature; a swept round names exactly one. Edge
   // counts are NOT a usable signal here: the round's lower boundary is genuinely
   // split at every wall-facet seam, so edges rise steeply on a correct result
   // too (223 -> 434 measured).
-  check("…and each dress-up produced exactly ONE round — no crown of teeth",
+  check(
+    "…and each dress-up produced exactly ONE round — no crown of teeth",
     b3.faces.filter((f) => /\/fillet/.test(f)).length === 2,
     `${b3.faces.filter((f) => /\/fillet/.test(f)).length} fillet-named faces, want 2 ` +
-    `(one per dress-up; a crown would name one per chord)`);
+      `(one per dress-up; a crown would name one per chord)`,
+  );
   await shoot("/tmp/openpoly-face-fillet-stacked.png");
 }
 
@@ -265,9 +292,11 @@ for (const kind of ["chamfer", "fillet"]) {
     const inner = b1.faces.find((f) => /\+z$/.test(f));
     await apply({ op: "addExtrude", profile: { bodyId: c.createdId, faceName: inner }, distance: "15", mode });
     const se = await waitIdle();
-    check(`${kind} → extrude the inner circle (mode ${mode})`,
+    check(
+      `${kind} → extrude the inner circle (mode ${mode})`,
       /up to date/i.test(sd) && /up to date/i.test(se),
-      `dress=${sd}, extrude=${se}`);
+      `dress=${sd}, extrude=${se}`,
+    );
   }
 }
 
@@ -293,8 +322,11 @@ await waitIdle();
   await waitIdle();
   await apply({ op: "dressUp", kind: "fillet", targetId: cc.createdId, edges: botRim, size: "4" });
   await waitIdle();
-  check("two stacked rim fillets build", (await body()).faces.length === FACETS + 4,
-    `${(await body()).faces.length} faces (expected ${FACETS + 4}: walls + 2 caps + 2 rounds)`);
+  check(
+    "two stacked rim fillets build",
+    (await body()).faces.length === FACETS + 4,
+    `${(await body()).faces.length} faces (expected ${FACETS + 4}: walls + 2 caps + 2 rounds)`,
+  );
 
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press("7");
@@ -318,22 +350,31 @@ await waitIdle();
   };
   const direct3 = await setSize("3");
   const direct9 = await setSize("9");
-  check("the two radii give different geometry (so this test can see a difference)",
-    direct3 !== direct9, `r=3 -> ${direct3}, r=9 -> ${direct9}`);
+  check(
+    "the two radii give different geometry (so this test can see a difference)",
+    direct3 !== direct9,
+    `r=3 -> ${direct3}, r=9 -> ${direct9}`,
+  );
 
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press("Meta+z");
   await waitIdle();
   const undone = await topArea();
-  check("undo rebuilds the earlier state exactly, not a cached later one",
-    undone === direct3, `after undo ${undone}, direct build of that state ${direct3}`);
+  check(
+    "undo rebuilds the earlier state exactly, not a cached later one",
+    undone === direct3,
+    `after undo ${undone}, direct build of that state ${direct3}`,
+  );
 
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press("Meta+Shift+z");
   await waitIdle();
   const redone = await topArea();
-  check("…and redo comes back to exactly the later state",
-    redone === direct9, `after redo ${redone}, direct build of that state ${direct9}`);
+  check(
+    "…and redo comes back to exactly the later state",
+    redone === direct9,
+    `after redo ${redone}, direct build of that state ${direct9}`,
+  );
 }
 
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);

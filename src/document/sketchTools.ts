@@ -3,8 +3,10 @@
 // committing) or polylines (for preview rendering). Shared by App and Viewport.
 import type { SketchEntity, Vec2 } from "./types";
 import { arcStations, circleStations } from "../geom/circleFacets";
+import { dist2 as dist, approxEqual2, angleOf2 as angleOf } from "../lib/vec2";
 
-const dist = (a: Vec2, b: Vec2) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+const CHAIN_EPS = 1e-6;
+const veq = (a: Vec2, b: Vec2, eps = CHAIN_EPS) => approxEqual2(a, b, eps);
 
 /** Axis-aligned rectangle from two opposite corners. */
 export function rectangleCorners(a: Vec2, b: Vec2): Vec2[] {
@@ -118,7 +120,11 @@ export function loopSegments(points: Vec2[]): [Vec2, Vec2][] {
  *  is just a visual approximation of the same control points. */
 /** One cubic-Bézier span of a spline: control points `c1`/`c2` and the span end
  *  (its start is the previous span's end, or the curve start for the first). */
-export interface SplineBezier { c1: Vec2; c2: Vec2; end: Vec2; }
+export interface SplineBezier {
+  c1: Vec2;
+  c2: Vec2;
+  end: Vec2;
+}
 
 /** The canonical through-point spline as cubic-Bézier spans — the SINGLE source
  *  of truth shared by the on-screen curve (`sampleSpline`) and the swept spine
@@ -151,11 +157,11 @@ export function sampleSpline(points: Vec2[], segsPerSpan = 16): Vec2[] {
     for (let s = 1; s <= segsPerSpan; s++) {
       const t = s / segsPerSpan;
       const mt = 1 - t;
-      const a = mt * mt * mt, b = 3 * mt * mt * t, c = 3 * mt * t * t, d = t * t * t;
-      out.push([
-        a * p0[0] + b * c1[0] + c * c2[0] + d * end[0],
-        a * p0[1] + b * c1[1] + c * c2[1] + d * end[1],
-      ]);
+      const a = mt * mt * mt,
+        b = 3 * mt * mt * t,
+        c = 3 * mt * t * t,
+        d = t * t * t;
+      out.push([a * p0[0] + b * c1[0] + c * c2[0] + d * end[0], a * p0[1] + b * c1[1] + c * c2[1] + d * end[1]]);
     }
     p0 = end;
   }
@@ -177,10 +183,7 @@ export type OffsetPrimitive =
   | { type: "arc"; c: Vec2; r: number; start: number; end: number }
   | { type: "circle"; c: Vec2; r: number };
 
-const CHAIN_EPS = 1e-6;
-const veq = (a: Vec2, b: Vec2, eps = CHAIN_EPS) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= eps;
 const ptOnCircle = (c: Vec2, r: number, ang: number): Vec2 => [c[0] + r * Math.cos(ang), c[1] + r * Math.sin(ang)];
-const angleOf = (c: Vec2, p: Vec2) => Math.atan2(p[1] - c[1], p[0] - c[0]);
 
 /** The two free endpoints of an edge (lines and arcs); circles have none. */
 function edgeEnds(e: ChainEdge): [Vec2, Vec2] | null {
@@ -228,8 +231,16 @@ export function detectSingleChain(entities: SketchEntity[]): ChainEdge[] | null 
     for (let i = 0; i < edges.length; i++) {
       if (used[i]) continue;
       const [u, v] = ends[i];
-      if (veq(u, frontier)) { nextIdx = i; nextFrontier = v; break; }
-      if (veq(v, frontier)) { nextIdx = i; nextFrontier = u; break; }
+      if (veq(u, frontier)) {
+        nextIdx = i;
+        nextFrontier = v;
+        break;
+      }
+      if (veq(v, frontier)) {
+        nextIdx = i;
+        nextFrontier = u;
+        break;
+      }
     }
     if (nextIdx < 0) break; // chain ended
     used[nextIdx] = true;
@@ -274,7 +285,8 @@ export function connectedEntityIds(seedId: string, entities: SketchEntity[]): st
     }
   }
   const touching = (p: Vec2): string[] => {
-    const cx = bucket(p[0]), cy = bucket(p[1]);
+    const cx = bucket(p[0]),
+      cy = bucket(p[1]);
     const ids: string[] = [];
     for (let dx = -1; dx <= 1; dx++)
       for (let dy = -1; dy <= 1; dy++)
@@ -290,15 +302,17 @@ export function connectedEntityIds(seedId: string, entities: SketchEntity[]): st
     const id = stack.pop()!;
     for (const p of endpointsOfId.get(id) ?? [])
       for (const nb of touching(p))
-        if (!seen.has(nb)) { seen.add(nb); stack.push(nb); }
+        if (!seen.has(nb)) {
+          seen.add(nb);
+          stack.push(nb);
+        }
   }
   return [...seen];
 }
 
 // During offset, each chain edge is oriented in traversal order (p0 -> p1).
 type Oriented =
-  | { kind: "line"; p0: Vec2; p1: Vec2 }
-  | { kind: "arc"; c: Vec2; r: number; ccw: boolean; p0: Vec2; p1: Vec2 };
+  { kind: "line"; p0: Vec2; p1: Vec2 } | { kind: "arc"; c: Vec2; r: number; ccw: boolean; p0: Vec2; p1: Vec2 };
 
 /** Offset a single chain (the ordered output of `detectSingleChain`) by a
  *  signed distance. Sign convention: **positive offsets to the RIGHT of the
@@ -331,7 +345,10 @@ export function offsetChain(chain: ChainEdge[], d: number): OffsetPrimitive[] {
     const b = off[(i + 1) % n];
     const ref: Vec2 = [(a.p1[0] + b.p0[0]) / 2, (a.p1[1] + b.p0[1]) / 2];
     const x = intersectOffset(a, b, ref);
-    if (x) { a.p1 = x; b.p0 = x; }
+    if (x) {
+      a.p1 = x;
+      b.p0 = x;
+    }
   }
 
   // 4. Emit primitives.
@@ -390,22 +407,40 @@ function toOriented(e: ChainEdge, p0: Vec2, p1: Vec2): Oriented {
 
 function offsetOriented(e: Oriented, d: number): OffEdge {
   if (e.kind === "line") {
-    const dx = e.p1[0] - e.p0[0], dy = e.p1[1] - e.p0[1];
+    const dx = e.p1[0] - e.p0[0],
+      dy = e.p1[1] - e.p0[1];
     const len = Math.hypot(dx, dy) || 1;
     const t: Vec2 = [dx / len, dy / len];
     const nr: Vec2 = [t[1], -t[0]]; // right-of-travel normal
-    return { kind: "line", t, p0: [e.p0[0] + d * nr[0], e.p0[1] + d * nr[1]], p1: [e.p1[0] + d * nr[0], e.p1[1] + d * nr[1]] };
+    return {
+      kind: "line",
+      t,
+      p0: [e.p0[0] + d * nr[0], e.p0[1] + d * nr[1]],
+      p1: [e.p1[0] + d * nr[0], e.p1[1] + d * nr[1]],
+    };
   }
   // Arc: right-of-travel is outward for a CCW arc (radius grows), inward for CW.
   const r = Math.max(e.ccw ? e.r + d : e.r - d, CHAIN_EPS);
-  return { kind: "arc", kindArc: true, c: e.c, r, ccw: e.ccw, p0: ptOnCircle(e.c, r, angleOf(e.c, e.p0)), p1: ptOnCircle(e.c, r, angleOf(e.c, e.p1)) };
+  return {
+    kind: "arc",
+    kindArc: true,
+    c: e.c,
+    r,
+    ccw: e.ccw,
+    p0: ptOnCircle(e.c, r, angleOf(e.c, e.p0)),
+    p1: ptOnCircle(e.c, r, angleOf(e.c, e.p1)),
+  };
 }
 
 /** Intersection of two adjacent offset primitives, nearest `ref` (the gap
  *  midpoint). Falls back to `ref` when there's no clean intersection. */
 function intersectOffset(a: OffEdge, b: OffEdge, ref: Vec2): Vec2 | null {
   const nearest = (cands: Vec2[]) =>
-    cands.length === 0 ? null : cands.reduce((best, p) => (Math.hypot(p[0] - ref[0], p[1] - ref[1]) < Math.hypot(best[0] - ref[0], best[1] - ref[1]) ? p : best));
+    cands.length === 0
+      ? null
+      : cands.reduce((best, p) =>
+          Math.hypot(p[0] - ref[0], p[1] - ref[1]) < Math.hypot(best[0] - ref[0], best[1] - ref[1]) ? p : best,
+        );
   if (a.kind === "line" && b.kind === "line") {
     const p = lineLine(a.p0, a.t, b.p0, b.t);
     return p ?? ref;
@@ -425,27 +460,38 @@ function lineLine(p: Vec2, t: Vec2, q: Vec2, u: Vec2): Vec2 | null {
 
 function lineCircle(p: Vec2, t: Vec2, c: Vec2, r: number): Vec2[] {
   // Solve |p + s t - c|^2 = r^2.
-  const fx = p[0] - c[0], fy = p[1] - c[1];
+  const fx = p[0] - c[0],
+    fy = p[1] - c[1];
   const a = t[0] * t[0] + t[1] * t[1];
   const b = 2 * (fx * t[0] + fy * t[1]);
   const cc = fx * fx + fy * fy - r * r;
   const disc = b * b - 4 * a * cc;
   if (disc < 0) return [];
   const sq = Math.sqrt(disc);
-  const s1 = (-b + sq) / (2 * a), s2 = (-b - sq) / (2 * a);
-  return [[p[0] + s1 * t[0], p[1] + s1 * t[1]], [p[0] + s2 * t[0], p[1] + s2 * t[1]]];
+  const s1 = (-b + sq) / (2 * a),
+    s2 = (-b - sq) / (2 * a);
+  return [
+    [p[0] + s1 * t[0], p[1] + s1 * t[1]],
+    [p[0] + s2 * t[0], p[1] + s2 * t[1]],
+  ];
 }
 
 function circleCircle(c0: Vec2, r0: number, c1: Vec2, r1: number): Vec2[] {
-  const dx = c1[0] - c0[0], dy = c1[1] - c0[1];
+  const dx = c1[0] - c0[0],
+    dy = c1[1] - c0[1];
   const dDist = Math.hypot(dx, dy);
   if (dDist < 1e-9 || dDist > r0 + r1 || dDist < Math.abs(r0 - r1)) return [];
   const aa = (r0 * r0 - r1 * r1 + dDist * dDist) / (2 * dDist);
   const h2 = r0 * r0 - aa * aa;
   const h = Math.sqrt(Math.max(h2, 0));
-  const xm = c0[0] + (aa * dx) / dDist, ym = c0[1] + (aa * dy) / dDist;
-  const rx = -(dy / dDist) * h, ry = (dx / dDist) * h;
-  return [[xm + rx, ym + ry], [xm - rx, ym - ry]];
+  const xm = c0[0] + (aa * dx) / dDist,
+    ym = c0[1] + (aa * dy) / dDist;
+  const rx = -(dy / dDist) * h,
+    ry = (dx / dDist) * h;
+  return [
+    [xm + rx, ym + ry],
+    [xm - rx, ym - ry],
+  ];
 }
 
 // ── Sketch Mirror tool ────────────────────────────────────────────────────────
@@ -455,7 +501,8 @@ function circleCircle(c0: Vec2, r0: number, c1: Vec2, r1: number): Vec2[] {
 
 /** Reflect point `p` across the infinite line through `a` and `b`. */
 export function reflectPointAcrossLine(p: Vec2, a: Vec2, b: Vec2): Vec2 {
-  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const dx = b[0] - a[0],
+    dy = b[1] - a[1];
   const len2 = dx * dx + dy * dy;
   if (len2 < 1e-12) {
     // Degenerate axis (a == b): reflect through the point `a` instead.
@@ -463,7 +510,8 @@ export function reflectPointAcrossLine(p: Vec2, a: Vec2, b: Vec2): Vec2 {
   }
   // Project (p - a) onto the axis direction, then reflect across it.
   const t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
-  const projX = a[0] + t * dx, projY = a[1] + t * dy;
+  const projX = a[0] + t * dx,
+    projY = a[1] + t * dy;
   return [2 * projX - p[0], 2 * projY - p[1]];
 }
 
@@ -500,9 +548,14 @@ export function mirrorEntity(e: SketchEntity, a: Vec2, b: Vec2, newId: string): 
       // upright text, so a true mirror image isn't expressible.
       const axisAng = Math.atan2(b[1] - a[1], b[0] - a[0]);
       return {
-        type: "text", id: newId, p: r(e.p), value: e.value, height: e.height,
+        type: "text",
+        id: newId,
+        p: r(e.p),
+        value: e.value,
+        height: e.height,
         rotation: 2 * axisAng - (e.rotation ?? 0),
-        ...(e.font ? { font: e.font } : {}), ...c,
+        ...(e.font ? { font: e.font } : {}),
+        ...c,
       };
     }
   }
@@ -531,9 +584,14 @@ export function translateEntity(e: SketchEntity, dx: number, dy: number, newId: 
       return { type: "point", id: newId, p: t(e.p), ...c };
     case "text":
       return {
-        type: "text", id: newId, p: t(e.p), value: e.value, height: e.height,
+        type: "text",
+        id: newId,
+        p: t(e.p),
+        value: e.value,
+        height: e.height,
         ...(e.rotation !== undefined ? { rotation: e.rotation } : {}),
-        ...(e.font ? { font: e.font } : {}), ...c,
+        ...(e.font ? { font: e.font } : {}),
+        ...c,
       };
   }
 }
@@ -543,9 +601,11 @@ export function translateEntity(e: SketchEntity, dx: number, dy: number, newId: 
  *  start/end angles simply shift by the rotation angle (no re-fit needed).
  *  The copy is construction iff the source was. */
 export function rotateEntity(e: SketchEntity, center: Vec2, angle: number, newId: string): SketchEntity {
-  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const cos = Math.cos(angle),
+    sin = Math.sin(angle);
   const rot = (p: Vec2): Vec2 => {
-    const x = p[0] - center[0], y = p[1] - center[1];
+    const x = p[0] - center[0],
+      y = p[1] - center[1];
     return [center[0] + x * cos - y * sin, center[1] + x * sin + y * cos];
   };
   const c = e.construction ? { construction: true as const } : {};
@@ -562,9 +622,14 @@ export function rotateEntity(e: SketchEntity, center: Vec2, angle: number, newId
       return { type: "point", id: newId, p: rot(e.p), ...c };
     case "text":
       return {
-        type: "text", id: newId, p: rot(e.p), value: e.value, height: e.height,
+        type: "text",
+        id: newId,
+        p: rot(e.p),
+        value: e.value,
+        height: e.height,
         rotation: (e.rotation ?? 0) + angle,
-        ...(e.font ? { font: e.font } : {}), ...c,
+        ...(e.font ? { font: e.font } : {}),
+        ...c,
       };
   }
 }
@@ -585,10 +650,12 @@ export type FittedProjection =
 
 /** Largest perpendicular distance from any point to the chord a→b. */
 function maxDeviationFromChord(pts: Vec2[], a: Vec2, b: Vec2): number {
-  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const dx = b[0] - a[0],
+    dy = b[1] - a[1];
   const len = Math.hypot(dx, dy);
   if (len < CHAIN_EPS) return Math.max(...pts.map((p) => dist(p, a)));
-  const nx = -dy / len, ny = dx / len; // unit normal to the chord
+  const nx = -dy / len,
+    ny = dx / len; // unit normal to the chord
   let m = 0;
   for (const p of pts) m = Math.max(m, Math.abs((p[0] - a[0]) * nx + (p[1] - a[1]) * ny));
   return m;
@@ -628,8 +695,12 @@ export function fitProjectedPolyline(pts: Vec2[], tol = 1e-3): FittedProjection 
     // diagonal), NOT the fitted radius: a nearly-collinear sample triple yields
     // a huge radius, and a radius-scaled tolerance would wrongly accept any
     // gently-wavy curve. A real circular edge's vertices sit exactly on it.
-    let lo = pts[0], hi = pts[0];
-    for (const p of pts) { lo = [Math.min(lo[0], p[0]), Math.min(lo[1], p[1])]; hi = [Math.max(hi[0], p[0]), Math.max(hi[1], p[1])]; }
+    let lo = pts[0],
+      hi = pts[0];
+    for (const p of pts) {
+      lo = [Math.min(lo[0], p[0]), Math.min(lo[1], p[1])];
+      hi = [Math.max(hi[0], p[0]), Math.max(hi[1], p[1])];
+    }
     const onTol = Math.max(tol, dist(lo, hi) * 1e-3);
     if (cc && cc.r > tol) {
       const onCircle = pts.every((p) => Math.abs(dist(p, cc.center) - cc.r) <= onTol);

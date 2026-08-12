@@ -87,25 +87,34 @@ const shotUntil = async (ref, want, tries = 30) => {
 // of 4.7M even when the image is visually identical. A ghost, by contrast,
 // paints a solid region — percent-of-frame separates the two cleanly.
 const diffPct = (a, b) =>
-  page.evaluate(async ([da, db]) => {
-    const load = (src) => new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.src = src; });
-    const [ia, ib] = await Promise.all([load(da), load(db)]);
-    const px = (img) => {
-      const c = new OffscreenCanvas(img.width, img.height);
-      const x = c.getContext("2d");
-      x.drawImage(img, 0, 0);
-      return x.getImageData(0, 0, img.width, img.height).data;
-    };
-    const [pa, pb] = [px(ia), px(ib)];
-    let n = 0;
-    for (let i = 0; i < pa.length; i += 4) {
-      if (Math.max(Math.abs(pa[i] - pb[i]), Math.abs(pa[i + 1] - pb[i + 1]), Math.abs(pa[i + 2] - pb[i + 2])) > 8) n++;
-    }
-    return (100 * n) / (pa.length / 4);
-  }, [a, b]);
+  page.evaluate(
+    async ([da, db]) => {
+      const load = (src) =>
+        new Promise((res) => {
+          const i = new Image();
+          i.onload = () => res(i);
+          i.src = src;
+        });
+      const [ia, ib] = await Promise.all([load(da), load(db)]);
+      const px = (img) => {
+        const c = new OffscreenCanvas(img.width, img.height);
+        const x = c.getContext("2d");
+        x.drawImage(img, 0, 0);
+        return x.getImageData(0, 0, img.width, img.height).data;
+      };
+      const [pa, pb] = [px(ia), px(ib)];
+      let n = 0;
+      for (let i = 0; i < pa.length; i += 4) {
+        if (Math.max(Math.abs(pa[i] - pb[i]), Math.abs(pa[i + 1] - pb[i + 1]), Math.abs(pa[i + 2] - pb[i + 2])) > 8)
+          n++;
+      }
+      return (100 * n) / (pa.length / 4);
+    },
+    [a, b],
+  );
 // A ghost covers a chunk of the frame; rebuild noise is a rounding error.
 const SAME = 0.05; // % of frame — below this the two renders are the same picture
-const DREW = 0.30; // % of frame — above this something was genuinely painted
+const DREW = 0.3; // % of frame — above this something was genuinely painted
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -188,7 +197,13 @@ await sizeInput.fill("999"); // unbuildable on a 40mm box
 await settlePreview();
 check(
   "an unbuildable size is reported in the dialog",
-  /\S/.test((await page.locator(".extrude-dialog .ed-warning").first().textContent().catch(() => "")) ?? ""),
+  /\S/.test(
+    (await page
+      .locator(".extrude-dialog .ed-warning")
+      .first()
+      .textContent()
+      .catch(() => "")) ?? "",
+  ),
 );
 await sizeInput.fill("8");
 await settlePreview();
@@ -215,7 +230,8 @@ await closeDialog();
 // 2. A fillet on a CONCAVE edge ghosts ADDED material — and reads differently.
 // ---------------------------------------------------------------------------
 const post = await apply({
-  op: "addPrimitive", kind: "cylinder",
+  op: "addPrimitive",
+  kind: "cylinder",
   params: { radius: 10, height: 30, x: 0, y: 0, z: 40 },
 });
 check("boss created", post.ok, JSON.stringify(post).slice(0, 200));
@@ -235,9 +251,7 @@ const jointBody = fusedScene.bodies.find((b) => b.id === fused.createdId) ?? fus
 // Only the BASE joint — requiring the box's face name too excludes the boss's
 // own top rim, which shares the "+z" spelling. Dressing one ring is also what a
 // user does: a viewport click picks one tangent-continuous chain.
-const ring = (jointBody?.edges ?? []).filter(
-  (e) => e.includes(`${box.createdId}/+z`) && e.includes(post.createdId),
-);
+const ring = (jointBody?.edges ?? []).filter((e) => e.includes(`${box.createdId}/+z`) && e.includes(post.createdId));
 check("the boss/box joint ring is named", ring.length > 8, `${ring.length} chords`);
 
 if (ring.length > 8) {
@@ -276,7 +290,10 @@ outer: for (let gy = 0.15; gy <= 0.85 && !picked; gy += 0.025) {
   for (let gx = 0.15; gx <= 0.85; gx += 0.025) {
     await page.mouse.click(canvas.x + canvas.width * gx, canvas.y + canvas.height * gy);
     const sel = await read({ read: "selection" });
-    if (sel?.some?.((s) => s.kind === "edge")) { picked = { gx, gy }; break outer; }
+    if (sel?.some?.((s) => s.kind === "edge")) {
+      picked = { gx, gy };
+      break outer;
+    }
   }
 }
 check("an edge was picked by clicking the viewport", Boolean(picked), JSON.stringify(picked));

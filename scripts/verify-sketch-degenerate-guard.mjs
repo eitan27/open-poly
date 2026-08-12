@@ -57,7 +57,12 @@ await waitIdle();
 // --- 1. Zero-size entities can't be drawn ---------------------------------------
 await openSketch();
 const P = [20, 10, 0];
-for (const [tool, key] of [["line", "l"], ["rectangle", "r"], ["circle", "c"], ["polygon", "p"]]) {
+for (const [tool, key] of [
+  ["line", "l"],
+  ["rectangle", "r"],
+  ["circle", "c"],
+  ["polygon", "p"],
+]) {
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press(key);
   await page.waitForTimeout(200);
@@ -68,11 +73,15 @@ for (const [tool, key] of [["line", "l"], ["rectangle", "r"], ["circle", "c"], [
 }
 await waitIdle();
 const drawn = (await sketchNow()).entities;
-check("clicking twice in one spot draws nothing at all", drawn.length === 0,
-  drawn.map((e) => e.type).join(", ") || "no entities");
+check(
+  "clicking twice in one spot draws nothing at all",
+  drawn.length === 0,
+  drawn.map((e) => e.type).join(", ") || "no entities",
+);
 
 // --- 2. A stray zero-length line doesn't block dimensioning ----------------------
-const C = [30, 0], R = 20;
+const C = [30, 0],
+  R = 20;
 await openSketch([
   { shape: "circle", c: C, r: R },
   { shape: "line", a: [-40, 30], b: [-40, 30] }, // the invisible stray
@@ -92,9 +101,13 @@ if (boxOpen) {
   const s = await sketchNow();
   const circle = s.entities.find((e) => e.id === circleId);
   const msg = (await page.locator(".sketch-msg").count())
-    ? (await page.locator(".sketch-msg").textContent())?.trim() : "";
-  check("…and the radius actually applies", Math.abs(circle.r - 35) < 0.01,
-    `r=${circle.r.toFixed(2)}${msg ? ` | banner: ${msg}` : ""}`);
+    ? (await page.locator(".sketch-msg").textContent())?.trim()
+    : "";
+  check(
+    "…and the radius actually applies",
+    Math.abs(circle.r - 35) < 0.01,
+    `r=${circle.r.toFixed(2)}${msg ? ` | banner: ${msg}` : ""}`,
+  );
 }
 
 // --- 3. A constraint that DOES collapse a line is still refused -----------------
@@ -106,14 +119,16 @@ await openSketch([
   { shape: "line", a: [40, 30], b: [0, 0] },
 ]);
 const tri = (await sketchNow()).entities;
-const lengths = (es) => es.filter((e) => e.type === "line")
-  .map((e) => Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]));
+const lengths = (es) => es.filter((e) => e.type === "line").map((e) => Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]));
 const before = lengths(tri);
 const perpendicular = async (a, b) => {
-  await apply({ op: "select", refs: [
-    { kind: "sketchEntity", sketchId, entityId: a },
-    { kind: "sketchEntity", sketchId, entityId: b },
-  ] });
+  await apply({
+    op: "select",
+    refs: [
+      { kind: "sketchEntity", sketchId, entityId: a },
+      { kind: "sketchEntity", sketchId, entityId: b },
+    ],
+  });
   await page.waitForTimeout(200);
   // Perpendicular lives in the grouped constraint flyout.
   await page.click(".constraint-group .constraint-arrow");
@@ -125,12 +140,19 @@ await perpendicular(tri[0].id, tri[1].id); // already a right angle — fine
 await perpendicular(tri[1].id, tri[2].id); // would collapse the third side
 const after = await sketchNow();
 const msg3 = (await page.locator(".sketch-msg").count())
-  ? (await page.locator(".sketch-msg").textContent())?.trim() : "";
+  ? (await page.locator(".sketch-msg").textContent())?.trim()
+  : "";
 const shortest = Math.min(...lengths(after.entities));
-check("a constraint that would collapse a line is still rejected", shortest > 1,
-  `shortest side ${shortest.toFixed(3)}mm (was ${Math.min(...before).toFixed(1)})${msg3 ? ` | ${msg3}` : ""}`);
-check("…and the sketch is left as it was", after.entities.length === 3,
-  `${after.entities.length} entities, constraints: ${after.constraints.map((c) => c.type).join(", ") || "none"}`);
+check(
+  "a constraint that would collapse a line is still rejected",
+  shortest > 1,
+  `shortest side ${shortest.toFixed(3)}mm (was ${Math.min(...before).toFixed(1)})${msg3 ? ` | ${msg3}` : ""}`,
+);
+check(
+  "…and the sketch is left as it was",
+  after.entities.length === 3,
+  `${after.entities.length} entities, constraints: ${after.constraints.map((c) => c.type).join(", ") || "none"}`,
+);
 
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);
 await browser.close();

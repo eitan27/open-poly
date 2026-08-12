@@ -68,10 +68,20 @@ await apply({ op: "newDocument" });
 await waitIdle();
 await apply({ op: "setVariable", name: "dia", expression: 12 });
 await waitIdle();
-const sk = await apply({ op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "circle", c: [0, 0], r: "dia/2" }] });
+const sk = await apply({
+  op: "addSketch",
+  plane: { datum: "top" },
+  entities: [{ shape: "circle", c: [0, 0], r: "dia/2" }],
+});
 await waitIdle();
 const rid = (await summ()).sketches.find((s) => s.id === sk.createdId).regions[0].id;
-const ext = await apply({ op: "addExtrude", profile: { sketchId: sk.createdId, regionId: rid }, mode: "new", extent: "blind", distance: 10 });
+const ext = await apply({
+  op: "addExtrude",
+  profile: { sketchId: sk.createdId, regionId: rid },
+  mode: "new",
+  extent: "blind",
+  distance: 10,
+});
 check("extruded circle built", ext.ok);
 await waitIdle();
 
@@ -90,21 +100,38 @@ await apply({ op: "setVariable", name: "dia", expression: 20 });
 await waitIdle();
 await page.evaluate(() => window.__openpoly.screenshot("iso"));
 await page.waitForTimeout(300);
-check("after dia 12→20, top cap → Diameter 20 (re-derived, not stale)", (await clickFace([0, 0, 10]))?.Diameter === "20");
+check(
+  "after dia 12→20, top cap → Diameter 20 (re-derived, not stale)",
+  (await clickFace([0, 0, 10]))?.Diameter === "20",
+);
 check("after dia 12→20, wall → Diameter 20", (await clickWall(10, 5))?.Diameter === "20");
 
 // ---- Guard: a rectangular extrude must never report a diameter. ----
 await apply({ op: "newDocument" });
 await waitIdle();
-const sk2 = await apply({ op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "rect", center: [0, 0], w: 10, h: 10 }] });
+const sk2 = await apply({
+  op: "addSketch",
+  plane: { datum: "top" },
+  entities: [{ shape: "rect", center: [0, 0], w: 10, h: 10 }],
+});
 await waitIdle();
 const rid2 = (await summ()).sketches.find((s) => s.id === sk2.createdId).regions[0].id;
-await apply({ op: "addExtrude", profile: { sketchId: sk2.createdId, regionId: rid2 }, mode: "new", extent: "blind", distance: 5 });
+await apply({
+  op: "addExtrude",
+  profile: { sketchId: sk2.createdId, regionId: rid2 },
+  mode: "new",
+  extent: "blind",
+  distance: 5,
+});
 await waitIdle();
 await page.evaluate(() => window.__openpoly.screenshot("iso"));
 await page.waitForTimeout(300);
 const rectTop = await clickFace([0, 0, 5]);
-check("rectangle extrude top → no diameter", rectTop !== null && rectTop.Diameter === undefined, JSON.stringify(rectTop));
+check(
+  "rectangle extrude top → no diameter",
+  rectTop !== null && rectTop.Diameter === undefined,
+  JSON.stringify(rectTop),
+);
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 await browser.close();

@@ -5,13 +5,7 @@
 // the next) — React state + kernel regen are async, so request N+1 must observe
 // request N. Reconnects with capped backoff so it latches on whenever the user
 // starts the MCP server (and survives tab reloads / server restarts).
-import {
-  BRIDGE_URL,
-  PROTOCOL_VERSION,
-  type HelloMsg,
-  type RequestMsg,
-  type ResultMsg,
-} from "./protocol";
+import { BRIDGE_URL, PROTOCOL_VERSION, type HelloMsg, type RequestMsg, type ResultMsg } from "./protocol";
 
 export type BridgeStatus = "disconnected" | "connecting" | "connected";
 
@@ -149,9 +143,7 @@ export class BridgeClient {
     let result: ResultMsg;
     try {
       const payload =
-        req.kind === "apply"
-          ? await this.opts.handleApply(req.payload)
-          : await this.opts.handleRead(req.payload);
+        req.kind === "apply" ? await this.opts.handleApply(req.payload) : await this.opts.handleRead(req.payload);
       result = { type: "result", id: req.id, ok: true, payload };
     } catch (err) {
       result = {

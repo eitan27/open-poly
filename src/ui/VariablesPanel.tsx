@@ -1,4 +1,5 @@
 import type { Variable } from "../document/types";
+import { formatNumber } from "../lib/format";
 
 interface Props {
   variables: Variable[];
@@ -11,19 +12,7 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
-function formatValue(v: number): string {
-  return Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/\.?0+$/, "");
-}
-
-export function VariablesPanel({
-  variables,
-  scope,
-  errors,
-  nameErrors,
-  onAdd,
-  onChange,
-  onDelete,
-}: Props) {
+export function VariablesPanel({ variables, scope, errors, nameErrors, onAdd, onChange, onDelete }: Props) {
   return (
     <div className="vars">
       {variables.map((v) => {
@@ -51,7 +40,7 @@ export function VariablesPanel({
               onChange={(e) => onChange(v.id, "expression", e.target.value)}
             />
             <span className="var-value" title={nameError ?? error ?? undefined}>
-              {nameError || error ? "!" : value === undefined ? "" : formatValue(value)}
+              {nameError || error ? "!" : value === undefined ? "" : formatNumber(value)}
             </span>
             <button className="row-icon" title="Delete" onClick={() => onDelete(v.id)}>
               ✕

@@ -31,7 +31,9 @@ export function EditPanel({ title, targetKey, onClose, children }: Props) {
     // dialog's translate so drag deltas apply from that anchor.
     <DraggableDialog className="extrude-dialog edit-panel" baseTransform="">
       <div className="ep-titlebar">
-        <span className="ed-title" data-drag-handle>{title}</span>
+        <span className="ed-title" data-drag-handle>
+          {title}
+        </span>
         <button
           className="ep-close"
           title={onClose ? "Close" : "Hide (returns on the next selection)"}

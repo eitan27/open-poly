@@ -20,10 +20,7 @@ const topFrame: PlaneFrameData = {
   normal: [0, 0, 1],
 };
 
-const sketch = (
-  entities: SketchEntity[],
-  derived: DerivedOp[],
-): SketchFeature => ({
+const sketch = (entities: SketchEntity[], derived: DerivedOp[]): SketchFeature => ({
   id: "S",
   type: "sketch",
   name: "Sketch",
@@ -38,10 +35,7 @@ const gen = (s: SketchFeature) => s.entities.filter((e) => e.derivedFrom);
 
 describe("applyEntityExprs — expression-driven coordinates", () => {
   it("reflows a coordinate/radius from its exprs overlay against the scope", () => {
-    const s = sketch(
-      [{ type: "circle", id: "c", c: [0, 0], r: 1, exprs: { r: "innerRad + clearance" } }],
-      [],
-    );
+    const s = sketch([{ type: "circle", id: "c", c: [0, 0], r: 1, exprs: { r: "innerRad + clearance" } }], []);
     const out = applyEntityExprs(s, { innerRad: 6, clearance: 0.3 });
     expect(out.entities[0]).toMatchObject({ type: "circle", r: 6.3 });
     // Re-drives when the variable changes — the overlay is the source of truth.
@@ -49,19 +43,13 @@ describe("applyEntityExprs — expression-driven coordinates", () => {
   });
 
   it("writes nested array paths (line ends, spline points)", () => {
-    const s = sketch(
-      [{ type: "line", id: "l", a: [0, 0], b: [1, 0], exprs: { "a.0": "-w/2", "b.0": "w/2" } }],
-      [],
-    );
+    const s = sketch([{ type: "line", id: "l", a: [0, 0], b: [1, 0], exprs: { "a.0": "-w/2", "b.0": "w/2" } }], []);
     const out = applyEntityExprs(s, { w: 10 });
     expect(out.entities[0]).toMatchObject({ a: [-5, 0], b: [5, 0] });
   });
 
   it("keeps the stored literal when an expression is invalid or unknown", () => {
-    const s = sketch(
-      [{ type: "circle", id: "c", c: [0, 0], r: 4, exprs: { r: "missingVar" } }],
-      [],
-    );
+    const s = sketch([{ type: "circle", id: "c", c: [0, 0], r: 4, exprs: { r: "missingVar" } }], []);
     expect(applyEntityExprs(s, {}).entities[0]).toMatchObject({ r: 4 });
   });
 
@@ -89,7 +77,10 @@ describe("applyEntityExprs — expression-driven coordinates", () => {
 
 describe("project — pure projection helpers", () => {
   it("projects a straight world edge to a line, tagged derivedFrom", () => {
-    const poly: Vec3[] = [[0, 0, 5], [10, 0, 5]]; // off-plane (z=5) → drops to uv
+    const poly: Vec3[] = [
+      [0, 0, 5],
+      [10, 0, 5],
+    ]; // off-plane (z=5) → drops to uv
     const e = projectedEntityFromPolyline(topFrame, poly, "op:0", "op");
     expect(e?.type).toBe("line");
     if (e?.type === "line") {
@@ -110,7 +101,11 @@ describe("project — pure projection helpers", () => {
 
 describe("project — change-detection guard (sameProjectedEntities)", () => {
   const mk = (a: [number, number], b: [number, number]): SketchEntity => ({
-    type: "line", id: "x", a, b, derivedFrom: "op",
+    type: "line",
+    id: "x",
+    a,
+    b,
+    derivedFrom: "op",
   });
 
   it("equal geometry → true (no rewrite ⇒ loop converges)", () => {
@@ -289,8 +284,12 @@ describe("applyDerived — linear pattern", () => {
 describe("applyDerived — circular pattern", () => {
   const hole: SketchEntity = { type: "circle", id: "H", c: [20, 0], r: 2 };
   const full: DerivedOp = {
-    id: "cp", kind: "circularPattern", sourceIds: ["H"],
-    center: { at: [0, 0] }, count: "4", angle: "360",
+    id: "cp",
+    kind: "circularPattern",
+    sourceIds: ["H"],
+    center: { at: [0, 0] },
+    count: "4",
+    angle: "360",
   };
 
   it("full circle: count−1 copies at 360/count steps, no duplicate at the wrap", () => {

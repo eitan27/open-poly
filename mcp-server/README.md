@@ -4,7 +4,7 @@ A local **stdio MCP server** that lets an LLM agent (Claude Desktop, Cursor,
 Cline, Zed, …) **drive a live Open Poly browser tab** — sketch, extrude,
 transform, combine — while you watch it happen, and **read** state (document,
 scene summary, screenshot) so it can plan and self-correct. Part of Phase 9; see
-`PLAN.md` and `src/agent/modeling-guide.md`.
+[`../docs/PLAN.md`](../docs/PLAN.md) and `src/agent/modeling-guide.md`.
 
 ## Try it (manual test, with Claude Desktop)
 
@@ -13,21 +13,24 @@ have to (1) run the app and (2) point the client at the server. Order doesn't
 matter — the tab reconnects until the hub is up.
 
 1. **Run the app and open it.** From the repo root:
+
    ```sh
    npm run dev
    ```
+
    Open the printed URL (e.g. http://localhost:5173/) in a browser and **leave
    the tab open**.
 
 2. **Tell Claude Desktop about the server.** Edit
    `~/Library/Application Support/Claude/claude_desktop_config.json` (create it if
    missing) and add:
+
    ```json
    {
      "mcpServers": {
        "open-poly": {
          "command": "npx",
-         "args": ["-y", "tsx", "/Users/eitan/Developer/open-shape/mcp-server/src/index.ts"]
+         "args": ["-y", "tsx", "/absolute/path/to/open-poly/mcp-server/src/index.ts"]
        }
      }
    }
@@ -40,6 +43,7 @@ matter — the tab reconnects until the hub is up.
    in Claude Desktop the `open-poly` tools should appear (plug/tools icon).
 
 5. **Drive it.** Ask, e.g.:
+
    > Using the open-poly tools, read the modeling guide, then make a 40×40×10
    > plate with an 8 mm hole through the middle and fillet the top edges 2 mm.
    > Screenshot it when done.
@@ -94,7 +98,7 @@ Point your MCP client at the same command. Use an **absolute path** to
   "mcpServers": {
     "open-poly": {
       "command": "npx",
-      "args": ["-y", "tsx", "/ABS/PATH/TO/open-shape/mcp-server/src/index.ts"]
+      "args": ["-y", "tsx", "/absolute/path/to/open-poly/mcp-server/src/index.ts"]
     }
   }
 }

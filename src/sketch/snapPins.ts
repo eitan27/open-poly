@@ -12,7 +12,11 @@ import type { SketchConstraint, SketchEntity, Vec2 } from "../document/types";
  *  circle/arc's on-curve clicks, a spline point, and a polygon/rect centre have
  *  no nameable vertex, so those entities contribute none (and can't be pinned). */
 export function vertexRefsOf(e: SketchEntity): { at: "a" | "b" | "c"; uv: Vec2 }[] {
-  if (e.type === "line") return [{ at: "a", uv: e.a }, { at: "b", uv: e.b }];
+  if (e.type === "line")
+    return [
+      { at: "a", uv: e.a },
+      { at: "b", uv: e.b },
+    ];
   if (e.type === "circle" || e.type === "arc") return [{ at: "c", uv: e.c }];
   return [];
 }
