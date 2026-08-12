@@ -2556,25 +2556,35 @@ function shellNamed(
   // booleanRetrying's tolerance ladder for near-tangent walls.
   if (hits.length === 0) {
     const off = new oc.BRepOffsetAPI_MakeOffsetShape();
-    off.PerformByJoin(
-      target.shape.wrapped,
-      -thickness,
-      1e-3,
-      oc.BRepOffset_Mode.BRepOffset_Skin,
-      false,
-      false,
-      oc.GeomAbs_JoinType.GeomAbs_Arc,
-      false,
-      progress,
-    );
-    if (!off.IsDone()) {
+    // Everything from here to the cut is OCCT that can fail in ways that read
+    // as gibberish to a user — IsDone() false, a null shape that blows up on
+    // cast ("This shape has not type, it is null"), or a throw from deep in the
+    // offsetter. A freeform loft hits all three. Whatever the mechanism, the
+    // answer to the user is the same, so report the one actionable message
+    // instead of leaking the internals.
+    let cavity: Shape3D;
+    try {
+      off.PerformByJoin(
+        target.shape.wrapped,
+        -thickness,
+        1e-3,
+        oc.BRepOffset_Mode.BRepOffset_Skin,
+        false,
+        false,
+        oc.GeomAbs_JoinType.GeomAbs_Arc,
+        false,
+        progress,
+      );
+      if (!off.IsDone()) throw new Error(SHELL_BUILD_FAILED);
+      cavity = cast(off.Shape()) as Shape3D;
+      if (cavity.faces.length === 0) throw new Error(SHELL_BUILD_FAILED);
+    } catch {
       off.delete();
       builder.delete();
       progress.delete();
       facesToRemove.delete();
       throw new Error(SHELL_BUILD_FAILED);
     }
-    const cavity = cast(off.Shape()) as Shape3D;
     // The cavity's walls inherit the identity of the faces they were offset
     // from, so a sealed shell names its inner faces "<face>/in" exactly like
     // the opened-face path does.
@@ -2593,11 +2603,17 @@ function shellNamed(
     progress.delete();
     facesToRemove.delete();
 
-    const hollow = booleanRetrying(
-      "cut",
-      { shape: target.shape, names: target.names },
-      { shape: cavity, names: cavityNames },
-    );
+    let hollow: NamedShape;
+    try {
+      hollow = booleanRetrying(
+        "cut",
+        { shape: target.shape, names: target.names },
+        { shape: cavity, names: cavityNames },
+      );
+    } catch {
+      cavity.delete();
+      throw new Error(SHELL_BUILD_FAILED);
+    }
     cavity.delete();
     // Same degenerate-result guard as the opened path: a cut that collapsed
     // leaves a solid-less or un-hollowed shape, which must not reach the caller
