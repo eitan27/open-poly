@@ -52,7 +52,7 @@ import {
   type NamedFaceRefFingerprint,
 } from "./topoMatch";
 import { clamp } from "../lib/clamp";
-import { vunit, vcross, vdot as v3dot, vunit as v3unit, vcross as v3cross } from "../lib/vec3";
+import { vunit, vcross, vdot } from "../lib/vec3";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -1057,8 +1057,8 @@ interface ClipPlane { point: Vec3; normal: Vec3; boxSize: number }
 function makeClipPlane(facePoint: Vec3, faceNormal: Vec3, extrudeNormal: Vector, dirSign: number, reach: number): ClipPlane {
   const en = extrudeNormal.normalized().toTuple();
   const dir: Vec3 = [en[0] * dirSign, en[1] * dirSign, en[2] * dirSign];
-  const fn = v3unit(faceNormal);
-  const normal: Vec3 = v3dot(fn, dir) >= 0 ? fn : [-fn[0], -fn[1], -fn[2]];
+  const fn = vunit(faceNormal);
+  const normal: Vec3 = vdot(fn, dir) >= 0 ? fn : [-fn[0], -fn[1], -fn[2]];
   return { point: facePoint, normal, boxSize: reach * 2 };
 }
 
@@ -1082,8 +1082,8 @@ function upToNextFace(profileFace: Face, normal: Vector, sign: number, scan: Bod
   const EPS = 1e-4; // ignore the profile's own (coincident) start face
   const TOL = 1e-3;
   // Two axes spanning the plane perpendicular to n, for the cross-section test.
-  const u = v3unit(v3cross(n, Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]));
-  const v = v3unit(v3cross(n, u));
+  const u = vunit(vcross(n, Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]));
+  const v = vunit(vcross(n, u));
   const pB = profileFace.boundingBox.bounds;
   const [pu0, pu1] = projectBounds(pB, u);
   const [pv0, pv1] = projectBounds(pB, v);
@@ -1095,7 +1095,7 @@ function upToNextFace(profileFace: Face, normal: Vector, sign: number, scan: Bod
   for (const t of scan) {
     for (const f of t.shape.faces) {
       const m = f.normalAt(f.center).normalized().toTuple() as Vec3;
-      const denom = v3dot(n, m);
+      const denom = vdot(n, m);
       if (Math.abs(denom) < 1e-7) continue; // axis parallel to this face's plane
       const q = f.center.toTuple() as Vec3;
       const len = ((q[0] - p[0]) * m[0] + (q[1] - p[1]) * m[1] + (q[2] - p[2]) * m[2]) / denom;
@@ -1239,7 +1239,7 @@ function unifySameDomain(named: NamedShape): NamedShape | null {
   // second time ("This object has been deleted"). Such a face simply does not
   // take part in name matching.
   const centreNormal = (f: Face): Vec3 | null => {
-    try { return v3unit(f.normalAt(f.center).toTuple() as Vec3); } catch { return null; }
+    try { return vunit(f.normalAt(f.center).toTuple() as Vec3); } catch { return null; }
   };
   const originals: { nm: string; c: Vec3; n: Vec3 }[] = [];
   for (const f of named.shape.faces) {
@@ -1256,7 +1256,7 @@ function unifySameDomain(named: NamedShape): NamedShape | null {
     let best: string | undefined;
     let bestD = Infinity;
     for (const o of originals) {
-      if (Math.abs(v3dot(o.n, n)) < 0.999) continue; // not coplanar-parallel
+      if (Math.abs(vdot(o.n, n)) < 0.999) continue; // not coplanar-parallel
       const dd = (o.c[0] - c[0]) ** 2 + (o.c[1] - c[1]) ** 2 + (o.c[2] - c[2]) ** 2;
       if (dd < bestD) { bestD = dd; best = o.nm; }
     }
@@ -1549,14 +1549,14 @@ function polygonFace(pts: V3[]): Face | null {
   if (pts.length < 3) return null;
   const e1: V3 = [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]];
   const e2: V3 = [pts[2][0] - pts[0][0], pts[2][1] - pts[0][1], pts[2][2] - pts[0][2]];
-  const nRaw = v3cross(e1, e2);
+  const nRaw = vcross(e1, e2);
   if (Math.hypot(nRaw[0], nRaw[1], nRaw[2]) < 1e-12) return null;
   const n = vunit(nRaw);
   const u = vunit(e1);
-  const frame: ResolvedFrame = { origin: pts[0], uAxis: u, vAxis: v3cross(n, u), normal: n };
+  const frame: ResolvedFrame = { origin: pts[0], uAxis: u, vAxis: vcross(n, u), normal: n };
   const outline: [number, number][] = pts.map((p) => {
     const d: V3 = [p[0] - pts[0][0], p[1] - pts[0][1], p[2] - pts[0][2]];
-    return [v3dot(d, u), v3dot(d, frame.vAxis as V3)];
+    return [vdot(d, u), vdot(d, frame.vAxis as V3)];
   });
   return regionFace({ kind: "sketchRegion", outline, frame }, planeOf(frame));
 }
@@ -1590,7 +1590,7 @@ function ringSectionFace(
 ): Face | null {
   const u = vunit(towardRef);
   const v = vunit(towardOther);
-  const n = v3cross(u, v);
+  const n = vcross(u, v);
   if (Math.hypot(n[0], n[1], n[2]) < 1e-12) return null;
   const frame: ResolvedFrame = { origin: corner, uAxis: u, vAxis: v, normal: vunit(n) };
   const m = margin;
@@ -1621,12 +1621,12 @@ function filletFace(onEdge: V3, towardRef: V3, towardOther: V3, r: number): Face
   // along the other. Both legs are the radius, so the plane is well conditioned.
   const u = vunit(towardRef);
   const v = vunit(towardOther);
-  const n = v3cross(u, v);
+  const n = vcross(u, v);
   if (Math.hypot(n[0], n[1], n[2]) < 1e-12) return null;
   const frame: ResolvedFrame = { origin: onEdge, uAxis: u, vAxis: v, normal: vunit(n) };
   const uv = (p: V3): [number, number] => {
     const d: V3 = [p[0] - onEdge[0], p[1] - onEdge[1], p[2] - onEdge[2]];
-    return [v3dot(d, u), v3dot(d, v)];
+    return [vdot(d, u), vdot(d, v)];
   };
   // Loop: corner → along the reference face → arc (through arcMid) → back. The
   // `outline` is the faceted fallback; `segments` is what the kernel prefers.
@@ -1715,7 +1715,7 @@ function dressUpWedgeFor(
     for (const e of f.edges) {
       let ps: V3[];
       try { ps = sampleEdgePoints(e); } catch { continue; }
-      for (const p of ps) far = Math.max(far, v3dot([p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]], t));
+      for (const p of ps) far = Math.max(far, vdot([p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]], t));
     }
     return far;
   };
@@ -1880,7 +1880,7 @@ function revolvedRingTool(
     for (const e of f.edges) {
       let ps: V3[];
       try { ps = sampleEdgePoints(e); } catch { continue; }
-      for (const p of ps) far = Math.max(far, v3dot([p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]], t));
+      for (const p of ps) far = Math.max(far, vdot([p[0] - mid[0], p[1] - mid[1], p[2] - mid[2]], t));
     }
     return far;
   };
@@ -1891,7 +1891,7 @@ function revolvedRingTool(
   // chord's own perpendicular plane is tilted off the axis by half a facet, and
   // revolving a profile that isn't axial sweeps a skewed surface.
   const spoke: V3 = [mid[0] - ring.center[0], mid[1] - ring.center[1], mid[2] - ring.center[2]];
-  const height = v3dot(spoke, ring.axis);
+  const height = vdot(spoke, ring.axis);
   const radial = vunit([
     spoke[0] - ring.axis[0] * height,
     spoke[1] - ring.axis[1] * height,
@@ -1899,9 +1899,9 @@ function revolvedRingTool(
   ]);
   if (!(Math.hypot(radial[0], radial[1], radial[2]) > 0.5)) return null;
   // The circumferential direction — the component to drop from each leg.
-  const around = vunit(v3cross(ring.axis, radial));
+  const around = vunit(vcross(ring.axis, radial));
   const axialize = (t: V3): V3 => {
-    const k = v3dot(t, around);
+    const k = vdot(t, around);
     return vunit([t[0] - around[0] * k, t[1] - around[1] * k, t[2] - around[2] * k]);
   };
   const aRef = axialize(tRef);
@@ -1955,7 +1955,7 @@ function revolvedRingTool(
         corner[2] + aRef[2] * legs.ref + aOther[2] * legs.ref,
       ];
       const spokeC: V3 = [ctr[0] - ring.center[0], ctr[1] - ring.center[1], ctr[2] - ring.center[2]];
-      const hC = v3dot(spokeC, ring.axis);
+      const hC = vdot(spokeC, ring.axis);
       const major = Math.hypot(
         spokeC[0] - ring.axis[0] * hC, spokeC[1] - ring.axis[1] * hC, spokeC[2] - ring.axis[2] * hC,
       );
@@ -3343,12 +3343,12 @@ function triangulatePlanarFace(
   // the normal so the cross product is well conditioned.
   const ax: V3 = Math.abs(n[0]) < Math.abs(n[1]) && Math.abs(n[0]) < Math.abs(n[2]) ? [1, 0, 0]
     : Math.abs(n[1]) < Math.abs(n[2]) ? [0, 1, 0] : [0, 0, 1];
-  const u = vunit(v3cross(ax, n));
-  const v = v3cross(n, u);
+  const u = vunit(vcross(ax, n));
+  const v = vcross(n, u);
   const o = ring[0];
   const poly2d: [number, number][] = ring.map((p) => {
     const d: V3 = [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
-    return [v3dot(d, u), v3dot(d, v)];
+    return [vdot(d, u), vdot(d, v)];
   });
   // Ear clipping wants counter-clockwise input; the projection's winding follows
   // from the basis, so measure it rather than assume.
@@ -3608,7 +3608,7 @@ function smoothEdgeHashes(shape: Shape3D, stats?: FaceNormalStats): Set<number> 
   }
   const smooth = new Set<number>();
   for (const [h, ns] of adj) {
-    if (ns.length === 2 && v3dot(ns[0], ns[1]) > CREASE_DOT) smooth.add(h);
+    if (ns.length === 2 && vdot(ns[0], ns[1]) > CREASE_DOT) smooth.add(h);
   }
   return smooth;
 }
@@ -3642,7 +3642,7 @@ function faceClustersFrom(shape: Shape3D): Map<number, number> {
     }
   }
   for (const fs of adj.values()) {
-    if (fs.length === 2 && v3dot(fs[0].n, fs[1].n) > CREASE_DOT) union(fs[0].h, fs[1].h);
+    if (fs.length === 2 && vdot(fs[0].n, fs[1].n) > CREASE_DOT) union(fs[0].h, fs[1].h);
   }
   const out = new Map<number, number>();
   for (const h of parent.keys()) out.set(h, find(h));
@@ -3692,7 +3692,7 @@ function edgeChainsFrom(shape: Shape3D): Map<number, number> {
   for (const arr of atVertex.values()) {
     for (let i = 0; i < arr.length; i++)
       for (let j = i + 1; j < arr.length; j++)
-        if (arr[i].h !== arr[j].h && v3dot(arr[i].tan, arr[j].tan) < -CHAIN_DOT) union(arr[i].h, arr[j].h);
+        if (arr[i].h !== arr[j].h && vdot(arr[i].tan, arr[j].tan) < -CHAIN_DOT) union(arr[i].h, arr[j].h);
   }
   const out = new Map<number, number>();
   for (const h of parent.keys()) out.set(h, find(h));
@@ -3737,7 +3737,7 @@ function smoothMeshNormals(faces: MeshedFaces): void {
     const clusters: { sum: V3; rep: V3; members: number[] }[] = [];
     for (const vi of arr) {
       const n: V3 = [N[vi * 3], N[vi * 3 + 1], N[vi * 3 + 2]];
-      let c = clusters.find((cl) => v3dot(cl.rep, n) > CREASE_DOT);
+      let c = clusters.find((cl) => vdot(cl.rep, n) > CREASE_DOT);
       if (!c) { c = { sum: [0, 0, 0], rep: n, members: [] }; clusters.push(c); }
       c.sum[0] += n[0]; c.sum[1] += n[1]; c.sum[2] += n[2];
       c.members.push(vi);
