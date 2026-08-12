@@ -36,7 +36,14 @@ export interface MeshedFaces {
    *  edges share a clusterId, so a click selects the whole surface, not a slice.
    *  Build-local (a representative face's hash); a flat box face is its own
    *  singleton cluster. */
-  faceGroups?: { start: number; count: number; faceId: number; name?: string; surface?: FaceSurface; clusterId?: number }[];
+  faceGroups?: {
+    start: number;
+    count: number;
+    faceId: number;
+    name?: string;
+    surface?: FaceSurface;
+    clusterId?: number;
+  }[];
 }
 
 export interface MeshedEdges {
@@ -79,8 +86,7 @@ export interface ResolvedFrame {
  *  built orientation-free via a three-point arc). The loop starts at the
  *  profile's `segmentStart`. */
 export type ProfileSegment =
-  | { kind: "line"; to: [number, number] }
-  | { kind: "arc"; mid: [number, number]; to: [number, number] };
+  { kind: "line"; to: [number, number] } | { kind: "arc"; mid: [number, number]; to: [number, number] };
 
 /** A profile to extrude, resolved for the kernel: either a baked sketch outline
  *  (closed loop in u,v on a frame) or a reference to a face of a running body
@@ -88,15 +94,35 @@ export type ProfileSegment =
  *  `segments`/`segmentStart`, when present, give the same loop as exact curves
  *  (lines + arcs) — the kernel prefers them over the faceted `outline`. */
 export type ResolvedProfile =
-  | { kind: "sketchRegion"; outline: [number, number][]; frame: ResolvedFrame; segmentStart?: [number, number]; segments?: ProfileSegment[]; holes?: [number, number][][] }
+  | {
+      kind: "sketchRegion";
+      outline: [number, number][];
+      frame: ResolvedFrame;
+      segmentStart?: [number, number];
+      segments?: ProfileSegment[];
+      holes?: [number, number][][];
+    }
   // `faceName` is the persistent topological name (preferred); `center` (+
   // optional `normal`, for planar faces) is the geometric fingerprint used to
   // re-match the face when the name no longer exists on the rebuilt body.
-  | { kind: "bodyFace"; sourceId: string; faceName?: string; center: [number, number, number]; normal?: [number, number, number] }
+  | {
+      kind: "bodyFace";
+      sourceId: string;
+      faceName?: string;
+      center: [number, number, number];
+      normal?: [number, number, number];
+    }
   // A text run, baked to glyph faces in the worker (replicad `textBlueprints`,
   // which does even-odd counters/holes). `anchor` is the baseline-left in u,v,
   // `rotation` in radians (CCW about the anchor), `height` the em size.
-  | { kind: "sketchText"; value: string; height: number; rotation: number; anchor: [number, number]; frame: ResolvedFrame };
+  | {
+      kind: "sketchText";
+      value: string;
+      height: number;
+      rotation: number;
+      anchor: [number, number];
+      frame: ResolvedFrame;
+    };
 
 /** How an extrude combines with the running body set. */
 export type ExtrudeMode = "new" | "add" | "remove";
@@ -140,7 +166,18 @@ export type ResolvedFeature =
   // skipping the fuse/cut — used by the live extrude ghost preview so existing
   // bodies keep their own colour. Targets are still resolved so "throughAll"
   // sizes correctly.
-  | { id: string; type: "extrude"; profile: ResolvedProfile; distance: number; flip: boolean; extent: ExtrudeExtent; mode: ExtrudeMode; targetId?: string; upTo?: ResolvedUpToFace; previewTool?: boolean }
+  | {
+      id: string;
+      type: "extrude";
+      profile: ResolvedProfile;
+      distance: number;
+      flip: boolean;
+      extent: ExtrudeExtent;
+      mode: ExtrudeMode;
+      targetId?: string;
+      upTo?: ResolvedUpToFace;
+      previewTool?: boolean;
+    }
   // `edges` are persistent names; `edgeRefs` (parallel, when the doc has them)
   // carry the geometric fingerprints used to re-match renamed edges.
   // `angle` (chamfer only, degrees from the reference face) is absent for a
@@ -151,7 +188,20 @@ export type ResolvedFeature =
   // so downstream features (and this feature's own error) are unaffected.
   // `faces` dress every boundary edge of the named faces (see DressUpFeature) —
   // they are expanded to edges by the worker, which has the topology to do it.
-  | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; edgeRefs?: ResolvedEdgeRef[]; faces?: string[]; faceRefs?: ResolvedFaceRef[]; size: number; angle?: number; flip?: boolean; previewDelta?: boolean }
+  | {
+      id: string;
+      type: "dressup";
+      op: "chamfer" | "fillet";
+      targetId: string;
+      edges: string[];
+      edgeRefs?: ResolvedEdgeRef[];
+      faces?: string[];
+      faceRefs?: ResolvedFaceRef[];
+      size: number;
+      angle?: number;
+      flip?: boolean;
+      previewDelta?: boolean;
+    }
   // Hollow out a body: remove `faces` (by persistent name, `faceRefs` the
   // parallel geometric fingerprint) and leave a wall of `thickness` around
   // what remains. Zero faces = a fully sealed hollow shell.
@@ -160,7 +210,18 @@ export type ResolvedFeature =
   | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
   // A rigid transform moves a body (by id) — translate + rotate. `copy` keeps
   // the original and emits the moved body as a NEW body (keyed by this feature).
-  | { id: string; type: "transform"; targetId: string; tx: number; ty: number; tz: number; angle: number; axis: "x" | "y" | "z"; pivot: [number, number, number]; copy: boolean }
+  | {
+      id: string;
+      type: "transform";
+      targetId: string;
+      tx: number;
+      ty: number;
+      tz: number;
+      angle: number;
+      axis: "x" | "y" | "z";
+      pivot: [number, number, number];
+      copy: boolean;
+    }
   // Mirror a body (by id) across the plane through `origin` with `normal`,
   // producing a new reflected body (the original is kept).
   | { id: string; type: "mirror"; targetId: string; origin: [number, number, number]; normal: [number, number, number] }
@@ -170,18 +231,56 @@ export type ResolvedFeature =
   // `offsets` (world mm); circular copies rotate by each of `angles` (radians)
   // about the axis — a baked world line, or a body face resolved in the worker
   // (cylindrical/conical → that surface's own central axis).
-  | { id: string; type: "pattern"; targetId: string; offsets?: [number, number, number][]; angles?: number[]; axisOrigin?: [number, number, number]; axisDir?: [number, number, number]; axisFace?: { sourceId: string; faceName?: string; center: [number, number, number]; normal?: [number, number, number] } }
+  | {
+      id: string;
+      type: "pattern";
+      targetId: string;
+      offsets?: [number, number, number][];
+      angles?: number[];
+      axisOrigin?: [number, number, number];
+      axisDir?: [number, number, number];
+      axisFace?: {
+        sourceId: string;
+        faceName?: string;
+        center: [number, number, number];
+        normal?: [number, number, number];
+      };
+    }
   // Revolve a sketch profile around an axis by an angle. The axis is either a
   // baked world line (`axisOrigin`+`axisDir`, for sketch-line and plane axes,
   // resolved in the document layer) OR a body face (`axisFace`, resolved in the
   // kernel against the profile `frame` — planar → plane∩profile, cylinder/cone →
   // the surface axis). Exactly one form is present.
-  | { id: string; type: "revolve"; profile: ResolvedProfile; angle: number; symmetric: boolean; axisOrigin?: [number, number, number]; axisDir?: [number, number, number]; axisFace?: { sourceId: string; faceName?: string; center: [number, number, number]; normal?: [number, number, number] } }
+  | {
+      id: string;
+      type: "revolve";
+      profile: ResolvedProfile;
+      angle: number;
+      symmetric: boolean;
+      axisOrigin?: [number, number, number];
+      axisDir?: [number, number, number];
+      axisFace?: {
+        sourceId: string;
+        faceName?: string;
+        center: [number, number, number];
+        normal?: [number, number, number];
+      };
+    }
   // Sweep a sketch profile along a path (baked to 2D points on a frame). For a
   // spline, `beziers` carries the exact cubic-Bézier spans of the drawn curve
   // (the spine is built from them, so it matches the sketch exactly); otherwise
   // `smooth` fits a B-spline through `points` (arcs) or it's a polyline (lines).
-  | { id: string; type: "sweep"; profile: ResolvedProfile; path: { points: [number, number][]; smooth: boolean; frame: ResolvedFrame; beziers?: { c1: [number, number]; c2: [number, number]; end: [number, number] }[] } }
+  | {
+      id: string;
+      type: "sweep";
+      profile: ResolvedProfile;
+      path: {
+        points: [number, number][];
+        smooth: boolean;
+        frame: ResolvedFrame;
+        beziers?: { c1: [number, number]; c2: [number, number]; end: [number, number] }[];
+      };
+    }
   // Loft through 2+ sketch profiles (in order).
   | { id: string; type: "loft"; profiles: ResolvedProfile[] }
   // A body imported from a CAD file (the raw STEP text).
@@ -197,8 +296,7 @@ export const DRESSUP_DELTA_IDS = {
 } as const;
 
 export type RegenFeatureResult =
-  | { id: string; ok: true; mesh: ShapeMeshPayload }
-  | { id: string; ok: false; error: string };
+  { id: string; ok: true; mesh: ShapeMeshPayload } | { id: string; ok: false; error: string };
 
 /** The complete outcome of a regenerate: one result per surviving body (plus
  *  one per failed feature), and non-fatal per-FEATURE warnings — e.g. "this

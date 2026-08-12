@@ -85,8 +85,16 @@ export function FeatureTree({
               >
                 <span className="row-kind">{featureTypeLabel(feature)}</span>
                 <span className="row-name">{feature.name}</span>
-                {error && <span className="row-badge" title={error}>!</span>}
-                {!error && warning && <span className="row-badge warn" title={warning}>⚠</span>}
+                {error && (
+                  <span className="row-badge" title={error}>
+                    !
+                  </span>
+                )}
+                {!error && warning && (
+                  <span className="row-badge warn" title={warning}>
+                    ⚠
+                  </span>
+                )}
                 <button
                   className="row-icon"
                   title="Move up (Alt+↑)"
@@ -117,8 +125,12 @@ export function FeatureTree({
                   style={{
                     opacity:
                       feature.type === "sketch" || feature.type === "plane"
-                        ? feature.suppressed ? 0.35 : 1
-                        : feature.suppressed ? 1 : 0.35,
+                        ? feature.suppressed
+                          ? 0.35
+                          : 1
+                        : feature.suppressed
+                          ? 1
+                          : 0.35,
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -141,32 +153,18 @@ export function FeatureTree({
                   ✕
                 </button>
               </div>
-              <RollbackGutter
-                index={i + 1}
-                active={rollbackIndex === i + 1}
-                onSet={onSetRollback}
-              />
+              <RollbackGutter index={i + 1} active={rollbackIndex === i + 1} onSet={onSetRollback} />
             </li>
           );
         })}
       </ol>
 
-      {features.length === 0 && (
-        <p className="hint">Use the viewport toolbar to add a sketch or solid.</p>
-      )}
+      {features.length === 0 && <p className="hint">Use the viewport toolbar to add a sketch or solid.</p>}
     </div>
   );
 }
 
-function RollbackGutter({
-  index,
-  active,
-  onSet,
-}: {
-  index: number;
-  active: boolean;
-  onSet: (index: number) => void;
-}) {
+function RollbackGutter({ index, active, onSet }: { index: number; active: boolean; onSet: (index: number) => void }) {
   return (
     <div
       className={"rollback-gutter" + (active ? " active" : "")}

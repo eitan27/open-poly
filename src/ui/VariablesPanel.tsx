@@ -12,15 +12,7 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
-export function VariablesPanel({
-  variables,
-  scope,
-  errors,
-  nameErrors,
-  onAdd,
-  onChange,
-  onDelete,
-}: Props) {
+export function VariablesPanel({ variables, scope, errors, nameErrors, onAdd, onChange, onDelete }: Props) {
   return (
     <div className="vars">
       {variables.map((v) => {

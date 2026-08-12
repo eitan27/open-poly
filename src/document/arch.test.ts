@@ -18,17 +18,49 @@ function loop(start: Vec2, mid: Vec2, end: Vec2, lines: [Vec2, Vec2][]): SketchE
 
 describe("loop closing at the origin", () => {
   it("encloses with an on-axis arc through the origin", async () => {
-    const ents = loop([0, 0], [25, 25], [50, 0], [
-      [[50, 0], [50, -30]], [[50, -30], [0, -30]], [[0, -30], [0, 0]],
-    ]);
+    const ents = loop(
+      [0, 0],
+      [25, 25],
+      [50, 0],
+      [
+        [
+          [50, 0],
+          [50, -30],
+        ],
+        [
+          [50, -30],
+          [0, -30],
+        ],
+        [
+          [0, -30],
+          [0, 0],
+        ],
+      ],
+    );
     const res = await solveSketch(ents, []);
     expect(detectSketchRegions(res.entities).length).toBe(1);
   });
 
   it("encloses with an off-axis arc through the origin (negative-zero key)", async () => {
-    const ents = loop([0, 0], [8, 18], [28, 12], [
-      [[28, 12], [28, -12]], [[28, -12], [0, -12]], [[0, -12], [0, 0]],
-    ]);
+    const ents = loop(
+      [0, 0],
+      [8, 18],
+      [28, 12],
+      [
+        [
+          [28, 12],
+          [28, -12],
+        ],
+        [
+          [28, -12],
+          [0, -12],
+        ],
+        [
+          [0, -12],
+          [0, 0],
+        ],
+      ],
+    );
     const res = await solveSketch(ents, []);
     expect(detectSketchRegions(res.entities).length).toBe(1);
   });

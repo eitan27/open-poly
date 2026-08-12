@@ -102,7 +102,12 @@ await setFlip(false);
 await setAngle(20);
 const steep = await apply({ op: "setParam", featureId: chId, name: "angle", value: "120" });
 await waitIdle({ allowError: true });
-const errText = (await page.locator(".params .error, .row-badge.error").first().textContent().catch(() => null)) ?? "";
+const errText =
+  (await page
+    .locator(".params .error, .row-badge.error")
+    .first()
+    .textContent()
+    .catch(() => null)) ?? "";
 const docNow = await read({ read: "document" });
 check(
   "an out-of-range angle is reported, not silently built",
@@ -117,11 +122,17 @@ await setAngle(20);
 
 // --- 4. The angle drives off a variable, like every other parameter -------
 check("variable created", (await apply({ op: "setVariable", name: "draft", expression: "20" })).ok);
-check("angle accepts an expression", (await apply({ op: "setParam", featureId: chId, name: "angle", value: "draft" })).ok);
+check(
+  "angle accepts an expression",
+  (await apply({ op: "setParam", featureId: chId, name: "angle", value: "draft" })).ok,
+);
 await waitIdle();
 check("angle=draft(20) matches the literal 20° build", (await shot()) === at20);
 
-check("angle re-drives when the variable changes", (await apply({ op: "setVariable", name: "draft", expression: "35" })).ok);
+check(
+  "angle re-drives when the variable changes",
+  (await apply({ op: "setVariable", name: "draft", expression: "35" })).ok,
+);
 await waitIdle();
 check("a 35° build differs from the 20° one", (await shot()) !== at20);
 

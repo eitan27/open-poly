@@ -85,8 +85,7 @@ describe("the invariant that motivates all of this", () => {
   });
 
   it("pitch no longer depends on the arc's span", () => {
-    const step = (pts: readonly (readonly number[])[]) =>
-      Math.hypot(pts[2][0] - pts[1][0], pts[2][1] - pts[1][1]);
+    const step = (pts: readonly (readonly number[])[]) => Math.hypot(pts[2][0] - pts[1][0], pts[2][1] - pts[1][1]);
     const quarter = sampleArc([0, 0], 30, 0, Math.PI / 2);
     const half = sampleArc([0, 0], 30, 0, Math.PI);
     const full = sampleCircle([0, 0], 30);

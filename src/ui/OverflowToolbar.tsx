@@ -38,8 +38,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
   // Button widths depend on the labels and the shortcut hints, nothing else —
   // re-measure when those change (and on every resize, below).
   const layoutKey =
-    items.map((i) => `${i.icon}${i.label}${i.shortcut ?? ""}${i.choices ? "▾" : ""}`).join("|") +
-    `#${showShortcuts}`;
+    items.map((i) => `${i.icon}${i.label}${i.shortcut ?? ""}${i.choices ? "▾" : ""}`).join("|") + `#${showShortcuts}`;
 
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
@@ -76,9 +75,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
   // Closed-box default: the buttons you can't see. Typing searches the whole
   // bar — the flyout doubles as "find me the tool called…". Opened by "/" with
   // nothing hidden, it lists everything instead of nothing.
-  const hiddenRows: ToolbarRow[] = hidden.length
-    ? allRows.filter((r) => hiddenIds.has(r.itemId))
-    : allRows;
+  const hiddenRows: ToolbarRow[] = hidden.length ? allRows.filter((r) => hiddenIds.has(r.itemId)) : allRows;
 
   // Every tool in the bar is unavailable (the whole modeling toolbar greys out
   // while a sketch is being edited) → More greys out with them: there is
@@ -199,16 +196,18 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
         {items.slice(0, visibleCount).map((item) => renderButton(item, false))}
         {(hidden.length > 0 || menuOpen) && (
           <div className="tb-more" ref={moreRef}>
-            {hidden.length > 0 && <button
-              className="tb-more-btn"
-              title={`${hidden.length} more tool${hidden.length === 1 ? "" : "s"} — click to search all tools`}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              disabled={allDisabled}
-              onClick={() => (menuOpen ? closeMenu() : openMenu())}
-            >
-              More ▾{showShortcuts ? <span className="kbd-hint">/</span> : null}
-            </button>}
+            {hidden.length > 0 && (
+              <button
+                className="tb-more-btn"
+                title={`${hidden.length} more tool${hidden.length === 1 ? "" : "s"} — click to search all tools`}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                disabled={allDisabled}
+                onClick={() => (menuOpen ? closeMenu() : openMenu())}
+              >
+                More ▾{showShortcuts ? <span className="kbd-hint">/</span> : null}
+              </button>
+            )}
             {menuOpen && (
               // Keyed by the starting query so re-opening it pre-filtered (the
               // hidden-dropdown shortcut, below) remounts with that text.

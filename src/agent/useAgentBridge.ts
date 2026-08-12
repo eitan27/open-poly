@@ -156,7 +156,9 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
   // Apply/read handlers shared by the WS bridge and the dev console. Validate
   // every payload with the shared zod schemas (same as the MCP server will).
   const handleApply = useMemo(
-    () => (payload: unknown): Promise<OpResult> => applyOperation(ctx, operationSchema.parse(payload)),
+    () =>
+      (payload: unknown): Promise<OpResult> =>
+        applyOperation(ctx, operationSchema.parse(payload)),
     [ctx],
   );
   const handleRead = useMemo(

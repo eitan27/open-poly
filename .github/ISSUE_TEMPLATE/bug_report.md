@@ -8,10 +8,7 @@ labels: bug
 **Describe the bug**
 A clear description of what's wrong.
 
-**Steps to reproduce**
-1.
-2.
-3.
+**Steps to reproduce** 1. 2. 3.
 
 **Expected behavior**
 What you expected to happen instead.
@@ -22,6 +19,7 @@ If possible, attach the `.openpoly.json` document (or use the in-app
 screenshot).
 
 **Environment**
+
 - Browser + version:
 - OS:
 - Open Poly version/commit (if known):

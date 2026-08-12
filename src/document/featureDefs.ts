@@ -68,19 +68,33 @@ export const BOOLEAN_OP_LABELS: Record<BooleanOp, string> = {
  *  title. Primitives fall through to their `FEATURE_DEFS` label. */
 export function featureTypeLabel(feature: Feature): string {
   switch (feature.type) {
-    case "sketch": return "Sketch";
-    case "extrude": return "Extrude";
-    case "dressup": return feature.op === "chamfer" ? "Chamfer" : "Fillet";
-    case "shell": return "Shell";
-    case "boolean": return BOOLEAN_OP_LABELS[feature.op];
-    case "plane": return "Plane";
-    case "transform": return "Transform";
-    case "import": return "Import";
-    case "mirror": return "Mirror";
-    case "pattern": return "Pattern";
-    case "revolve": return "Revolve";
-    case "sweep": return "Sweep";
-    case "loft": return "Loft";
-    default: return FEATURE_DEFS[feature.kind].label;
+    case "sketch":
+      return "Sketch";
+    case "extrude":
+      return "Extrude";
+    case "dressup":
+      return feature.op === "chamfer" ? "Chamfer" : "Fillet";
+    case "shell":
+      return "Shell";
+    case "boolean":
+      return BOOLEAN_OP_LABELS[feature.op];
+    case "plane":
+      return "Plane";
+    case "transform":
+      return "Transform";
+    case "import":
+      return "Import";
+    case "mirror":
+      return "Mirror";
+    case "pattern":
+      return "Pattern";
+    case "revolve":
+      return "Revolve";
+    case "sweep":
+      return "Sweep";
+    case "loft":
+      return "Loft";
+    default:
+      return FEATURE_DEFS[feature.kind].label;
   }
 }

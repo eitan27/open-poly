@@ -12,81 +12,81 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 
 ## Already shipped
 
-| Action | Shortcut |
-|---|---|
-| Undo / Redo | `⌘Z` / `⌘⇧Z` |
-| Delete selection | `Delete` / `Backspace` |
-| Cancel current mode / dialog | `Esc` |
-| Dimension selected line/circle | `D` (sketch mode) |
-| Spline: finish + commit accumulated points | `Esc` (sketch mode, spline tool — matches how the line tool ends a chain; `Esc` with no draft still cancels the tool) |
-| Find a tool ("More" flyout) | `/` — opens the search flyout of whichever toolbar is live (sketch column while editing a sketch, modeling bar otherwise). Lists the buttons that didn't fit; typing searches every tool in that bar, `↑`/`↓` + `Enter` to pick. Works even when nothing is hidden, as a plain tool search. |
+| Action                                     | Shortcut                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Undo / Redo                                | `⌘Z` / `⌘⇧Z`                                                                                                                                                                                                                                                                                |
+| Delete selection                           | `Delete` / `Backspace`                                                                                                                                                                                                                                                                      |
+| Cancel current mode / dialog               | `Esc`                                                                                                                                                                                                                                                                                       |
+| Dimension selected line/circle             | `D` (sketch mode)                                                                                                                                                                                                                                                                           |
+| Spline: finish + commit accumulated points | `Esc` (sketch mode, spline tool — matches how the line tool ends a chain; `Esc` with no draft still cancels the tool)                                                                                                                                                                       |
+| Find a tool ("More" flyout)                | `/` — opens the search flyout of whichever toolbar is live (sketch column while editing a sketch, modeling bar otherwise). Lists the buttons that didn't fit; typing searches every tool in that bar, `↑`/`↓` + `Enter` to pick. Works even when nothing is hidden, as a plain tool search. |
 
 ## Modeling toolbar (available whenever you're not editing a sketch)
 
-| Action | Key | Notes |
-|---|---|---|
-| Sketch | `S` | Pick a plane/face to start a sketch. |
-| New Body | `N` | Opens the Box/Cylinder/Sphere menu (item itself stays mouse-only — 3-item pick isn't worth 3 more bindings). Ignores `picking`, same as the button. |
-| Plane | `P` | Reuses `P` from Polygon (sketch mode) — mutually exclusive, safe. |
-| Extrude | `E` | |
-| Revolve | `R` | Reuses `R` from Rectangle (sketch mode) — mutually exclusive, safe. |
-| Sweep | `W` | `S` was already taken by Sketch, so this uses the next distinctive letter in "s**w**eep" — weakest mnemonic in this table. |
-| Loft | `L` | Reuses `L` from Line (sketch mode) — mutually exclusive, safe. |
-| Chamfer | `C` | Reuses `C` from Circle-center (sketch mode) — mutually exclusive, safe. |
-| Fillet | `F` | |
-| Shell | `G` | Hollow the selected body (select faces to open, or the whole body for a sealed shell). No strong mnemonic available (S/H/O all taken) — picked arbitrarily, like construction `Q`. |
-| Boolean | `B` | Resolves conflict #1 (below). |
-| Transform | `T` | |
-| Mirror | `M` | |
-| Pattern | `X` | Repeat the selected body — linear run/grid or circular ring. Same letter as the sketch pattern tools (mutually exclusive contexts, safe). |
+| Action    | Key | Notes                                                                                                                                                                              |
+| --------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sketch    | `S` | Pick a plane/face to start a sketch.                                                                                                                                               |
+| New Body  | `N` | Opens the Box/Cylinder/Sphere menu (item itself stays mouse-only — 3-item pick isn't worth 3 more bindings). Ignores `picking`, same as the button.                                |
+| Plane     | `P` | Reuses `P` from Polygon (sketch mode) — mutually exclusive, safe.                                                                                                                  |
+| Extrude   | `E` |                                                                                                                                                                                    |
+| Revolve   | `R` | Reuses `R` from Rectangle (sketch mode) — mutually exclusive, safe.                                                                                                                |
+| Sweep     | `W` | `S` was already taken by Sketch, so this uses the next distinctive letter in "s**w**eep" — weakest mnemonic in this table.                                                         |
+| Loft      | `L` | Reuses `L` from Line (sketch mode) — mutually exclusive, safe.                                                                                                                     |
+| Chamfer   | `C` | Reuses `C` from Circle-center (sketch mode) — mutually exclusive, safe.                                                                                                            |
+| Fillet    | `F` |                                                                                                                                                                                    |
+| Shell     | `G` | Hollow the selected body (select faces to open, or the whole body for a sealed shell). No strong mnemonic available (S/H/O all taken) — picked arbitrarily, like construction `Q`. |
+| Boolean   | `B` | Resolves conflict #1 (below).                                                                                                                                                      |
+| Transform | `T` |                                                                                                                                                                                    |
+| Mirror    | `M` |                                                                                                                                                                                    |
+| Pattern   | `X` | Repeat the selected body — linear run/grid or circular ring. Same letter as the sketch pattern tools (mutually exclusive contexts, safe).                                          |
 
 ## Sketch toolbar (only available while editing a sketch)
 
-| Action | Key | Notes |
-|---|---|---|
-| Select / Line / Rectangle (2-corner) / Circle (center) / Polygon / Arc | `S` `L` `R` `C` `P` `A` | Already shipped. (Select moved `V`→`S`.) |
-| Rectangle: center + corner | `Shift+R` | Variant of `R`. |
-| Circle: 3 points | `Shift+C` | Variant of `C`. |
-| Spline | `Shift+S` | Variant of `S` (which now selects the **Select** tool). Moved `S`→`Shift+S` so the bare letter goes to the more frequently used Select pointer. |
-| Offset | `O` | **O**ffset. Acts on the current selection (must be a single chain); opens an on-canvas distance box + a draggable arrow. |
-| Mirror (sketch) | `M` | **M**irror. Click a line to arm the mirror axis, then click entities to mirror them across it (live dashed previews); `Enter` commits, `Esc` cancels. Distinct from the modeling-toolbar `M` (body Mirror) — mutually exclusive, safe. |
-| Linear pattern | `X` | Click entities to repeat (seeds from the current selection; re-click removes), set count + ΔX/ΔY in the floating box (live dashed previews); `Enter` commits an associative op, `Esc` cancels. |
-| Circular pattern | `Shift+X` | Variant of `X`. First click sets the center (a vertex, the origin, or empty space — the latter commits a construction point), then click entities to repeat; count + 360°/angle/symmetric in the floating box; `Enter` commits, `Esc` cancels. |
-| Project / Convert | `U` | "**U**se" existing geometry. Click body edges & vertices to project them onto the sketch plane as new entities (live dashed previews); `Enter` commits, `Esc` cancels. Straight edges → lines, planar circular edges → circles/arcs, anything else → splines. |
-| Text | `T` | **T**ext. Click to place the baseline anchor, then type the string + height in the floating box; the glyphs preview live. `Enter` commits, `Esc` cancels. Sketch-mode only — distinct from the modeling-toolbar `T` (Transform), mutually exclusive, safe. |
-| Dimension | `D` | Already shipped. |
-| Horizontal | `H` | Select a single line. |
-| Vertical | `V` | Select a single line. |
-| Parallel | `Shift+P` | Resolves conflict #2 (below). |
-| Perpendicular | `N` | Resolves conflict #2. Reuses `N` from New Body (modeling toolbar) — mutually exclusive, safe. |
-| Equal | `=` | Matches the button's own "＝" glyph. |
-| Construction (toggle) | `Q` | No strong mnemonic available (`C` taken twice over); picked arbitrarily. |
+| Action                                                                 | Key                     | Notes                                                                                                                                                                                                                                                         |
+| ---------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Select / Line / Rectangle (2-corner) / Circle (center) / Polygon / Arc | `S` `L` `R` `C` `P` `A` | Already shipped. (Select moved `V`→`S`.)                                                                                                                                                                                                                      |
+| Rectangle: center + corner                                             | `Shift+R`               | Variant of `R`.                                                                                                                                                                                                                                               |
+| Circle: 3 points                                                       | `Shift+C`               | Variant of `C`.                                                                                                                                                                                                                                               |
+| Spline                                                                 | `Shift+S`               | Variant of `S` (which now selects the **Select** tool). Moved `S`→`Shift+S` so the bare letter goes to the more frequently used Select pointer.                                                                                                               |
+| Offset                                                                 | `O`                     | **O**ffset. Acts on the current selection (must be a single chain); opens an on-canvas distance box + a draggable arrow.                                                                                                                                      |
+| Mirror (sketch)                                                        | `M`                     | **M**irror. Click a line to arm the mirror axis, then click entities to mirror them across it (live dashed previews); `Enter` commits, `Esc` cancels. Distinct from the modeling-toolbar `M` (body Mirror) — mutually exclusive, safe.                        |
+| Linear pattern                                                         | `X`                     | Click entities to repeat (seeds from the current selection; re-click removes), set count + ΔX/ΔY in the floating box (live dashed previews); `Enter` commits an associative op, `Esc` cancels.                                                                |
+| Circular pattern                                                       | `Shift+X`               | Variant of `X`. First click sets the center (a vertex, the origin, or empty space — the latter commits a construction point), then click entities to repeat; count + 360°/angle/symmetric in the floating box; `Enter` commits, `Esc` cancels.                |
+| Project / Convert                                                      | `U`                     | "**U**se" existing geometry. Click body edges & vertices to project them onto the sketch plane as new entities (live dashed previews); `Enter` commits, `Esc` cancels. Straight edges → lines, planar circular edges → circles/arcs, anything else → splines. |
+| Text                                                                   | `T`                     | **T**ext. Click to place the baseline anchor, then type the string + height in the floating box; the glyphs preview live. `Enter` commits, `Esc` cancels. Sketch-mode only — distinct from the modeling-toolbar `T` (Transform), mutually exclusive, safe.    |
+| Dimension                                                              | `D`                     | Already shipped.                                                                                                                                                                                                                                              |
+| Horizontal                                                             | `H`                     | Select a single line.                                                                                                                                                                                                                                         |
+| Vertical                                                               | `V`                     | Select a single line.                                                                                                                                                                                                                                         |
+| Parallel                                                               | `Shift+P`               | Resolves conflict #2 (below).                                                                                                                                                                                                                                 |
+| Perpendicular                                                          | `N`                     | Resolves conflict #2. Reuses `N` from New Body (modeling toolbar) — mutually exclusive, safe.                                                                                                                                                                 |
+| Equal                                                                  | `=`                     | Matches the button's own "＝" glyph.                                                                                                                                                                                                                          |
+| Construction (toggle)                                                  | `Q`                     | No strong mnemonic available (`C` taken twice over); picked arbitrarily.                                                                                                                                                                                      |
 
-*(There is no longer a "Solve constraints" shortcut: drawing and editing
+_(There is no longer a "Solve constraints" shortcut: drawing and editing
 constraints now solve automatically, so the manual ⛓ Solve button and its `S`
 binding were removed. `S` in sketch mode now selects the **Select** tool (the
-pointer), and the **Spline** tool moved to `Shift+S`.)*
+pointer), and the **Spline** tool moved to `Shift+S`.)_
 
 ## Standard views
 
-| Action | Key |
-|---|---|
+| Action                                           | Key     |
+| ------------------------------------------------ | ------- |
 | Top / Front / Right / Back / Left / Bottom / Iso | `1`–`7` |
 
 Numbers instead of first letters, on purpose: first letters would collide on
 **B** (Back vs. Bottom) and, worse, with modeling-toolbar letters that stay
 live in the same context — `T`op vs. `T`ransform, `F`ront vs. `F`illet, `L`eft
 vs. `L`oft/`L`ine, `R`ight vs. `R`evolve/`R`ectangle. The view-controls bar is
-visible and clickable in *both* modeling and sketch mode, so digits work in
+visible and clickable in _both_ modeling and sketch mode, so digits work in
 both, unlike every other binding in this doc.
 
 ## Timeline / Parts list
 
-| Action | Key | Notes |
-|---|---|---|
-| Move selected feature up/down | `Alt+↑` / `Alt+↓` | Acts on the single selected timeline row (`primaryFeatureId`); no-ops at the ends. |
-| Toggle suppress/hide on selected feature | `H` | Matches the row's own eye/suppress icon. |
-| Import STEP | `⌘I` / `Ctrl+I` | Opens the file picker, same as the toolbar button. |
+| Action                                   | Key               | Notes                                                                              |
+| ---------------------------------------- | ----------------- | ---------------------------------------------------------------------------------- |
+| Move selected feature up/down            | `Alt+↑` / `Alt+↓` | Acts on the single selected timeline row (`primaryFeatureId`); no-ops at the ends. |
+| Toggle suppress/hide on selected feature | `H`               | Matches the row's own eye/suppress icon.                                           |
+| Import STEP                              | `⌘I` / `Ctrl+I`   | Opens the file picker, same as the toolbar button.                                 |
 
 ## Not bound
 

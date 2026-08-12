@@ -34,10 +34,14 @@ await waitIdle();
 
 // A sketch with two perpendicular lines sharing a corner → a Perpendicular
 // constraint (references two entities) and a Coincident (references two points).
-const sk = await apply({ op: "addSketch", plane: { datum: "front" }, entities: [
-  { shape: "line", a: [0, 0], b: [40, 0] },
-  { shape: "line", a: [0, 0], b: [0, 30] },
-] });
+const sk = await apply({
+  op: "addSketch",
+  plane: { datum: "front" },
+  entities: [
+    { shape: "line", a: [0, 0], b: [40, 0] },
+    { shape: "line", a: [0, 0], b: [0, 30] },
+  ],
+});
 await waitIdle();
 const sketchId = sk.id ?? sk.createdId;
 const doc = await read({ read: "document" });

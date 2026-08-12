@@ -27,8 +27,26 @@ export type EntityExprs = Record<string, string>;
  *  variable expressions. */
 export type SketchEntity =
   | { type: "line"; id: string; a: Vec2; b: Vec2; construction?: boolean; derivedFrom?: string; exprs?: EntityExprs }
-  | { type: "circle"; id: string; c: Vec2; r: number; construction?: boolean; derivedFrom?: string; exprs?: EntityExprs }
-  | { type: "arc"; id: string; c: Vec2; r: number; start: number; end: number; construction?: boolean; derivedFrom?: string; exprs?: EntityExprs }
+  | {
+      type: "circle";
+      id: string;
+      c: Vec2;
+      r: number;
+      construction?: boolean;
+      derivedFrom?: string;
+      exprs?: EntityExprs;
+    }
+  | {
+      type: "arc";
+      id: string;
+      c: Vec2;
+      r: number;
+      start: number;
+      end: number;
+      construction?: boolean;
+      derivedFrom?: string;
+      exprs?: EntityExprs;
+    }
   // A smooth (interpolated) open spline through its control points. An open curve
   // — used for snapping and as a sweep path, not a region boundary.
   | { type: "spline"; id: string; points: Vec2[]; construction?: boolean; derivedFrom?: string; exprs?: EntityExprs }
@@ -38,7 +56,18 @@ export type SketchEntity =
   // the anchor. Rendered as glyph outlines; not a constraint/region participant
   // (the solver and region detector skip it). `font` is reserved for future
   // per-text font choice (the bundled font is used today).
-  | { type: "text"; id: string; p: Vec2; value: string; height: number; rotation?: number; font?: string; construction?: boolean; derivedFrom?: string; exprs?: EntityExprs };
+  | {
+      type: "text";
+      id: string;
+      p: Vec2;
+      value: string;
+      height: number;
+      rotation?: number;
+      font?: string;
+      construction?: boolean;
+      derivedFrom?: string;
+      exprs?: EntityExprs;
+    };
 
 /** A derived-geometry operation on a sketch: geometry generated FROM other
  *  sketch entities and re-computed whenever its sources change, so the result
@@ -136,9 +165,7 @@ export type PointRef =
  *  circle/arc → `rim` (nearest boundary, i.e. centre distance ∓ radius). So the
  *  user chooses centre-vs-rim just by what they select. */
 export type DistanceRef =
-  | { on: "point"; ref: PointRef }
-  | { on: "line"; entity: string }
-  | { on: "rim"; entity: string };
+  { on: "point"; ref: PointRef } | { on: "line"; entity: string } | { on: "rim"; entity: string };
 
 /** Dimensional/geometric constraints over sketch entities (solved by planegcs).
  *  `entity`/`a`/`b` reference SketchEntity ids. */
@@ -259,7 +286,14 @@ export type ExtrudeProfile =
   // A body face. `faceName` is the persistent topological name (preferred,
   // stable across rebuilds); `faceId` is the build-local hash from selection and
   // `center` the centroid — both kept as fallback when there's no name yet.
-  | { kind: "bodyFace"; featureId: string; faceId: number; faceName?: string; center: [number, number, number]; normal?: [number, number, number] }
+  | {
+      kind: "bodyFace";
+      featureId: string;
+      faceId: number;
+      faceName?: string;
+      center: [number, number, number];
+      normal?: [number, number, number];
+    }
   // A run of text in a sketch (a `text` entity). The kernel re-bakes the glyph
   // wires from the entity's value/height/rotation/anchor each rebuild, so editing
   // the text re-extrudes parametrically.
@@ -428,9 +462,7 @@ export interface RevolveAxisFace {
  *  - a plane, where the axis is the line the plane makes with the profile plane;
  *  - a body face (planar → plane ∩ profile plane; cylinder/cone → surface axis). */
 export type RevolveAxis =
-  | { sketchId: string; entityId: string }
-  | { plane: SketchPlaneRef }
-  | { face: RevolveAxisFace };
+  { sketchId: string; entityId: string } | { plane: SketchPlaneRef } | { face: RevolveAxisFace };
 
 /** Revolve a sketch region around an axis (a sketch line, or a plane) to make a
  *  solid. Like extrude, a body *producer*. (Phase 6.) */
@@ -454,18 +486,14 @@ export interface RevolveFeature extends FeatureBase {
 /** A direction for a linear body pattern: a world axis, or a sketch line entity
  *  (its two endpoints baked to a world direction at resolve time, so the pattern
  *  follows when the line is re-drawn/re-solved). */
-export type PatternDirRef =
-  | { world: "x" | "y" | "z" }
-  | { sketchId: string; entityId: string };
+export type PatternDirRef = { world: "x" | "y" | "z" } | { sketchId: string; entityId: string };
 
 /** A circular body pattern's rotation axis: a world axis (through the origin),
  *  a sketch line entity, or a body face (cylindrical/conical → that surface's
  *  own central axis, resolved in the kernel; reuses revolve's face reference —
  *  planar faces are rejected since a pattern has no profile plane to intersect). */
 export type PatternAxisRef =
-  | { world: "x" | "y" | "z" }
-  | { sketchId: string; entityId: string }
-  | { face: RevolveAxisFace };
+  { world: "x" | "y" | "z" } | { sketchId: string; entityId: string } | { face: RevolveAxisFace };
 
 /** Repeat a body as rigid copies — a linear run/grid or a circular ring. The
  *  copies are compounded into ONE new body keyed by this feature and the seed

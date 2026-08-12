@@ -174,10 +174,7 @@ class Parser {
 
 /** Names that can't be used as variable names: built-in constants and functions
  *  (using one would shadow it and break expressions that rely on it). */
-export const RESERVED_NAMES = new Set([
-  ...Object.keys(CONSTANTS),
-  ...Object.keys(FUNCTIONS),
-]);
+export const RESERVED_NAMES = new Set([...Object.keys(CONSTANTS), ...Object.keys(FUNCTIONS)]);
 
 export function evaluateExpression(expr: string, scope: Scope = {}): number {
   const value = new Parser(tokenize(expr), scope).parse();

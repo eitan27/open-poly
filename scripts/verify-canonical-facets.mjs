@@ -61,7 +61,8 @@ const rad = (d) => (d * Math.PI) / 180;
 // the phase — where the arc starts relative to the primitive's own stations.
 const semiDxf = (a0) => {
   const p = (d) => [R * Math.cos(rad(d)), R * Math.sin(rad(d))];
-  const [x0, y0] = p(a0), [x1, y1] = p(a0 + 180);
+  const [x0, y0] = p(a0),
+    [x1, y1] = p(a0 + 180);
   return (
     `0\nSECTION\n2\nENTITIES\n` +
     `0\nLINE\n8\n0\n10\n${x1}\n20\n${y1}\n11\n${x0}\n21\n${y0}\n` +
@@ -99,13 +100,17 @@ for (const a0 of phases) {
 
   // Sketch onto the cylinder's TOP FACE, as reported, and fuse the extrusion in.
   const sk = await apply({
-    op: "importDxf", source: semiDxf(a0),
+    op: "importDxf",
+    source: semiDxf(a0),
     plane: { bodyId: cyl.createdId, faceName: `${cyl.createdId}/+z` },
   });
   await waitIdle();
   const ex = await apply({
-    op: "addExtrude", profile: { sketchId: sk.createdId },
-    distance: "20", mode: "add", targetId: cyl.createdId,
+    op: "addExtrude",
+    profile: { sketchId: sk.createdId },
+    distance: "20",
+    mode: "add",
+    targetId: cyl.createdId,
   });
   await waitIdle();
   const fused = (await read({ read: "sceneSummary" })).bodies.find((b) => b.id === cyl.createdId);
@@ -140,7 +145,7 @@ for (const a0 of phases) {
   await waitIdle();
   console.log(
     `  note: chamfer on the joint at phase ${a0}deg -> ${ch.ok ? "ok" : (ch.error ?? "failed").slice(0, 60)},` +
-    ` ${unmeshed.reduce((a, b) => a + b, 0)} unmeshed`,
+      ` ${unmeshed.reduce((a, b) => a + b, 0)} unmeshed`,
   );
   if (a0 === phases[phases.length - 1]) {
     await apply({ op: "select", refs: [] });
@@ -178,10 +183,18 @@ for (const rot of [1.875, 7]) {
     ],
   });
   await waitIdle();
-  await apply({ op: "addExtrude", profile: { sketchId: rsk.createdId }, distance: "20", mode: "add", targetId: rc.createdId });
+  await apply({
+    op: "addExtrude",
+    profile: { sketchId: rsk.createdId },
+    distance: "20",
+    mode: "add",
+    targetId: rc.createdId,
+  });
   await waitIdle();
   const rb = (await read({ read: "sceneSummary" })).bodies.find((b) => b.id === rc.createdId);
-  console.log(`  note: cylinder rotated ${rot}deg -> ${rb?.faces?.length} faces (clean ${CLEAN}) — the known gap above`);
+  console.log(
+    `  note: cylinder rotated ${rot}deg -> ${rb?.faces?.length} faces (clean ${CLEAN}) — the known gap above`,
+  );
 }
 
 // The count barely moves with phase now; before, it swung from 100 to 245.

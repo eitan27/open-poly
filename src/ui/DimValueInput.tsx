@@ -29,9 +29,7 @@ export function matchVariables(value: string, variables: VarOption[]): VarOption
   const token = trailingToken(value);
   if (!token) return [];
   const lower = token.toLowerCase();
-  return variables
-    .filter((v) => v.name.toLowerCase().startsWith(lower) && v.name !== token)
-    .slice(0, 6);
+  return variables.filter((v) => v.name.toLowerCase().startsWith(lower) && v.name !== token).slice(0, 6);
 }
 
 /** Replace the trailing identifier in `value` with `name`. */

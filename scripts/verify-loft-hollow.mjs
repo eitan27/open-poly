@@ -42,12 +42,96 @@ const check = (label, ok, detail = "") => {
 // Outer stations, and the inner ring offset inward by `wall` (deliberately
 // NON-uniform per station in the real model; uniform here is the harder case).
 const OUTER = [
-  [0.0,   [[16,0],[17.5,7],[16.5,16],[13,25],[7,31],[-3,34],[-11,29],[-16,20],[-18.5,8],[-16,0]]],
-  [22.0,  [[24,0],[26,12],[26.5,28],[22,44],[12.5,57],[-5,63],[-15,59],[-23,48],[-27,25],[-24,0]]],
-  [47.0,  [[26,0],[28,14],[28,33],[24,52],[13.5,68],[-6,74],[-17,70],[-26,60],[-29,30],[-26,0]]],
-  [72.0,  [[25,0],[27,13],[27,31],[23,50],[12.5,64],[-7,71],[-18,67],[-27,57],[-28.5,28],[-25,0]]],
-  [95.0,  [[21,0],[23,11],[23,26],[19,40],[10,51],[-6,57],[-15,54],[-21,46],[-24,22],[-21,0]]],
-  [116.0, [[15,0],[16,7],[16,16],[13,25],[7,31],[-4,34],[-11,29],[-15,20],[-17,9],[-15,0]]],
+  [
+    0.0,
+    [
+      [16, 0],
+      [17.5, 7],
+      [16.5, 16],
+      [13, 25],
+      [7, 31],
+      [-3, 34],
+      [-11, 29],
+      [-16, 20],
+      [-18.5, 8],
+      [-16, 0],
+    ],
+  ],
+  [
+    22.0,
+    [
+      [24, 0],
+      [26, 12],
+      [26.5, 28],
+      [22, 44],
+      [12.5, 57],
+      [-5, 63],
+      [-15, 59],
+      [-23, 48],
+      [-27, 25],
+      [-24, 0],
+    ],
+  ],
+  [
+    47.0,
+    [
+      [26, 0],
+      [28, 14],
+      [28, 33],
+      [24, 52],
+      [13.5, 68],
+      [-6, 74],
+      [-17, 70],
+      [-26, 60],
+      [-29, 30],
+      [-26, 0],
+    ],
+  ],
+  [
+    72.0,
+    [
+      [25, 0],
+      [27, 13],
+      [27, 31],
+      [23, 50],
+      [12.5, 64],
+      [-7, 71],
+      [-18, 67],
+      [-27, 57],
+      [-28.5, 28],
+      [-25, 0],
+    ],
+  ],
+  [
+    95.0,
+    [
+      [21, 0],
+      [23, 11],
+      [23, 26],
+      [19, 40],
+      [10, 51],
+      [-6, 57],
+      [-15, 54],
+      [-21, 46],
+      [-24, 22],
+      [-21, 0],
+    ],
+  ],
+  [
+    116.0,
+    [
+      [15, 0],
+      [16, 7],
+      [16, 16],
+      [13, 25],
+      [7, 31],
+      [-4, 34],
+      [-11, 29],
+      [-15, 20],
+      [-17, 9],
+      [-15, 0],
+    ],
+  ],
 ];
 const WALL = 2.4;
 
@@ -56,11 +140,24 @@ function offsetRing(ring, wall) {
   return ring.map(([x, z], i) => {
     const [px, pz] = i > 0 ? ring[i - 1] : ring[i];
     const [nx, nz] = i < n - 1 ? ring[i + 1] : ring[i];
-    let ax = 0, az = 0;
-    for (const [[sx, sz], [ex, ez]] of [[[px, pz], [x, z]], [[x, z], [nx, nz]]]) {
-      const dx = ex - sx, dz = ez - sz, L = Math.hypot(dx, dz);
+    let ax = 0,
+      az = 0;
+    for (const [[sx, sz], [ex, ez]] of [
+      [
+        [px, pz],
+        [x, z],
+      ],
+      [
+        [x, z],
+        [nx, nz],
+      ],
+    ]) {
+      const dx = ex - sx,
+        dz = ez - sz,
+        L = Math.hypot(dx, dz);
       if (L < 1e-9) continue;
-      ax += -dz / L; az += dx / L;            // inward normal of a CCW ring
+      ax += -dz / L;
+      az += dx / L; // inward normal of a CCW ring
     }
     const L = Math.hypot(ax, az) || 1;
     const ox = x + (ax / L) * wall;
@@ -76,8 +173,14 @@ await waitIdle();
 async function buildLoft(name, rings, skirt) {
   const profiles = [];
   for (const [y, ring] of rings) {
-    const plane = y === 0 ? { datum: "front" } : { planeId: (await apply({ op: "addPlane", method: "offset", base: { datum: "front" }, offset: y })).createdId };
-    const xR = ring[0][0], xL = ring[ring.length - 1][0];
+    const plane =
+      y === 0
+        ? { datum: "front" }
+        : {
+            planeId: (await apply({ op: "addPlane", method: "offset", base: { datum: "front" }, offset: y })).createdId,
+          };
+    const xR = ring[0][0],
+      xL = ring[ring.length - 1][0];
     const entities = [{ shape: "spline", points: ring }];
     if (skirt) {
       entities.push({ shape: "line", a: [xL, 0], b: [xL, -3] });
@@ -99,7 +202,10 @@ async function buildLoft(name, rings, skirt) {
 }
 
 const outerId = await buildLoft("Outer", OUTER, false);
-const innerRings = OUTER.map(([y, ring], i) => [i === 0 ? 2.4 : i === OUTER.length - 1 ? 113.6 : y, offsetRing(ring, WALL)]);
+const innerRings = OUTER.map(([y, ring], i) => [
+  i === 0 ? 2.4 : i === OUTER.length - 1 ? 113.6 : y,
+  offsetRing(ring, WALL),
+]);
 const innerId = await buildLoft("Cavity", innerRings, true);
 
 let scene = await read({ read: "sceneSummary" });
@@ -109,7 +215,10 @@ check("outer loft built", Boolean(outer), `faces=${outer?.faces.length}`);
 check("cavity loft built", Boolean(inner), `faces=${inner?.faces.length}`);
 check(
   "cavity is strictly inside the outer in x/z",
-  inner && outer && inner.bbox.min[0] > outer.bbox.min[0] && inner.bbox.max[0] < outer.bbox.max[0] &&
+  inner &&
+    outer &&
+    inner.bbox.min[0] > outer.bbox.min[0] &&
+    inner.bbox.max[0] < outer.bbox.max[0] &&
     inner.bbox.max[2] < outer.bbox.max[2],
   `outer=${JSON.stringify(outer?.bbox)} inner=${JSON.stringify(inner?.bbox)}`,
 );
@@ -130,7 +239,8 @@ check(
 );
 check(
   "outer dimensions unchanged by hollowing",
-  hollow && Math.abs(hollow.bbox.max[2] - (outer?.bbox.max[2] ?? 0)) < 1e-6 &&
+  hollow &&
+    Math.abs(hollow.bbox.max[2] - (outer?.bbox.max[2] ?? 0)) < 1e-6 &&
     Math.abs(hollow.bbox.min[0] - (outer?.bbox.min[0] ?? 0)) < 1e-6,
   JSON.stringify(hollow?.bbox),
 );

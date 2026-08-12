@@ -19,8 +19,7 @@ export function useHistory<T>(initial: T | (() => T)) {
 
   const set = useCallback((next: T | ((prev: T) => T), coalesceKey?: string) => {
     setHist((h) => {
-      const value =
-        typeof next === "function" ? (next as (prev: T) => T)(h.present) : next;
+      const value = typeof next === "function" ? (next as (prev: T) => T)(h.present) : next;
       if (value === h.present) return h;
       if (coalesceKey && h.lastKey === coalesceKey) {
         return { ...h, present: value, future: [] };

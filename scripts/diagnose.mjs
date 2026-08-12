@@ -13,9 +13,7 @@ const page = await context.newPage();
 
 page.on("console", (m) => console.log(`[console.${m.type()}] ${m.text()}`));
 page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-page.on("requestfailed", (r) =>
-  console.log(`[requestfailed] ${r.url()} :: ${r.failure()?.errorText}`),
-);
+page.on("requestfailed", (r) => console.log(`[requestfailed] ${r.url()} :: ${r.failure()?.errorText}`));
 page.on("worker", (w) => console.log(`[worker created] ${w.url()}`));
 
 await page.goto(URL, { waitUntil: "domcontentloaded" });

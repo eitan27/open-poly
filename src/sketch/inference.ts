@@ -125,12 +125,7 @@ export function guideIntersection(a: Guide, b: Guide): Vec2 | null {
  *  range. Extra guides on the same line as a chosen snap fold their meanings in
  *  (so an intersection that also lies on a third parallel guide still reports it
  *  once). */
-export function snapToGuides(
-  cursor: Vec2,
-  guides: Guide[],
-  pxOf: (uv: Vec2) => Vec2,
-  tolPx: number,
-): GuideSnap | null {
+export function snapToGuides(cursor: Vec2, guides: Guide[], pxOf: (uv: Vec2) => Vec2, tolPx: number): GuideSnap | null {
   const pxBetween = (a: Vec2, b: Vec2): number => {
     const pa = pxOf(a);
     const pb = pxOf(b);

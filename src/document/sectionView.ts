@@ -43,7 +43,11 @@ const normalize = (v: Vec3): Vec3 => {
 
 export function resolveSectionPlane(frame: PlaneFrameData, offset: number, flip: boolean): ResolvedSectionPlane {
   const n = normalize(frame.normal);
-  const origin: Vec3 = [frame.origin[0] + n[0] * offset, frame.origin[1] + n[1] * offset, frame.origin[2] + n[2] * offset];
+  const origin: Vec3 = [
+    frame.origin[0] + n[0] * offset,
+    frame.origin[1] + n[1] * offset,
+    frame.origin[2] + n[2] * offset,
+  ];
   const normal: Vec3 = flip ? [-n[0], -n[1], -n[2]] : n;
   return { origin, normal };
 }

@@ -52,7 +52,7 @@ const clickWorld = async (w) => {
 };
 const selKind = async () => {
   const sel = await read({ read: "selection" });
-  const one = (Array.isArray(sel) ? sel : sel?.selection ?? [])[0];
+  const one = (Array.isArray(sel) ? sel : (sel?.selection ?? []))[0];
   return one?.kind ?? "none";
 };
 const pickAt = async (w) => {
@@ -88,19 +88,31 @@ await waitIdle();
 const cylBody = (await read({ read: "sceneSummary" })).bodies[0];
 FACETS = cylBody.edges.filter((e) => e.includes(`${cyl.createdId}/+z`)).length;
 const CYL_FACES = cylBody.faces.length; // FACETS walls + 2 caps
-check("the cylinder's rim is a chain of chords", FACETS > 8 && CYL_FACES === FACETS + 2,
-  `${FACETS} chords, ${CYL_FACES} faces`);
+check(
+  "the cylinder's rim is a chain of chords",
+  FACETS > 8 && CYL_FACES === FACETS + 2,
+  `${FACETS} chords, ${CYL_FACES} faces`,
+);
 
-for (const [viewName, digit] of [["iso", "7"], ["top (down the axis — the depth-tie case)", "1"]]) {
+for (const [viewName, digit] of [
+  ["iso", "7"],
+  ["top (down the axis — the depth-tie case)", "1"],
+]) {
   await setView(digit);
-  for (const [where, frac] of [["at a facet vertex", 0], ["mid-chord", 0.5]]) {
+  for (const [where, frac] of [
+    ["at a facet vertex", 0],
+    ["mid-chord", 0.5],
+  ]) {
     const got = [];
     for (const i of [0, 12, 24, 36, 48, 60, 72, 84]) {
       const k = await pickAt(ringPoint(R, H, i, frac));
       got.push(k === "edge" ? "•" : `✗${i}(${k})`);
     }
-    check(`${viewName}: the top rim picks as an edge, ${where}`,
-      got.every((g) => g === "•"), got.join(" "));
+    check(
+      `${viewName}: the top rim picks as an edge, ${where}`,
+      got.every((g) => g === "•"),
+      got.join(" "),
+    );
   }
 }
 
@@ -119,21 +131,41 @@ await setView("7");
   const [x0, y0, z0] = b.min;
   const [x1, y1, z1] = b.max;
   const got = [];
-  for (const c of [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z0], [x1, y1, z0]]) {
+  for (const c of [
+    [x0, y0, z1],
+    [x1, y0, z1],
+    [x1, y1, z1],
+    [x0, y1, z1],
+    [x0, y0, z0],
+    [x1, y1, z0],
+  ]) {
     const k = await pickAt(c);
     got.push(k === "vertex" ? "•" : `✗${c.join(",")}(${k})`);
   }
-  check("a box's corners still pick as vertices", got.every((g) => g === "•"), got.join(" "));
+  check(
+    "a box's corners still pick as vertices",
+    got.every((g) => g === "•"),
+    got.join(" "),
+  );
   // …and its edge mid-spans still pick as edges. Top edges only: an edge behind
   // a face is correctly rejected by the depth gate, so a hidden bottom edge
   // would fail for the right reason and tell us nothing.
   const mid = (a, c) => (a + c) / 2;
   const mids = [];
-  for (const m of [[mid(x0, x1), y0, z1], [x1, mid(y0, y1), z1], [mid(x0, x1), y1, z1], [x0, mid(y0, y1), z1]]) {
+  for (const m of [
+    [mid(x0, x1), y0, z1],
+    [x1, mid(y0, y1), z1],
+    [mid(x0, x1), y1, z1],
+    [x0, mid(y0, y1), z1],
+  ]) {
     const k = await pickAt(m);
     mids.push(k === "edge" ? "•" : `✗${m.map((v) => v.toFixed(0)).join(",")}(${k})`);
   }
-  check("…and its edge mid-spans still pick as edges", mids.every((g) => g === "•"), mids.join(" "));
+  check(
+    "…and its edge mid-spans still pick as edges",
+    mids.every((g) => g === "•"),
+    mids.join(" "),
+  );
 }
 
 // --- 4. The rim of an EXTRUDED CIRCLE (the other reported case) ---------------
@@ -154,7 +186,11 @@ await setView("7");
       got.push(k === "edge" ? "•" : `✗${i}+${frac}(${k})`);
     }
   }
-  check("an extruded circle's rim picks as an edge", got.every((g) => g === "•"), got.join(" "));
+  check(
+    "an extruded circle's rim picks as an edge",
+    got.every((g) => g === "•"),
+    got.join(" "),
+  );
 }
 
 // --- 5. The payoff: click the rim, then fillet it -----------------------------
@@ -178,14 +214,21 @@ await setView("7");
   // Wait for the FEATURE to exist before waiting for idle: the status still
   // reads "up to date" for a moment after Enter, so waitIdle alone would return
   // on the pre-mutation state and read back the undressed body.
-  await page.waitForFunction(
-    async () => (await window.__openpoly.read({ read: "document" })).features.some((f) => f.type === "dressup"),
-    null, { timeout: 20000 },
-  ).catch(() => {});
+  await page
+    .waitForFunction(
+      async () => (await window.__openpoly.read({ read: "document" })).features.some((f) => f.type === "dressup"),
+      null,
+      { timeout: 20000 },
+    )
+    .catch(() => {});
   const st = await waitIdle();
   const feats = (await read({ read: "document" })).features.map((f) => f.type).join(" → ");
   console.log(`  features: ${feats}`);
-  const banner = await page.locator(".error-banner, .banner").first().textContent().catch(() => null);
+  const banner = await page
+    .locator(".error-banner, .banner")
+    .first()
+    .textContent()
+    .catch(() => null);
   if (banner) console.log(`  banner: ${banner.trim()}`);
   const after = (await read({ read: "sceneSummary" })).bodies[0];
   // 98 base faces (96 wall facets + 2 caps) + the one swept round.
@@ -196,14 +239,18 @@ await setView("7");
   // to store it afresh" notice — meant for a STORED selection gone stale after
   // an upstream edit — fired on every freshly picked rim.
   const feat = (await read({ read: "document" })).features.find((f) => f.type === "dressup");
-  check("a picked rim stores its whole chain, so no stale-selection notice fires",
+  check(
+    "a picked rim stores its whole chain, so no stale-selection notice fires",
     (feat?.edges?.length ?? 0) === FACETS,
-    `stored ${feat?.edges?.length} of ${FACETS} chords`);
-  check("…and dresses the WHOLE circle, as one swept round",
+    `stored ${feat?.edges?.length} of ${FACETS} chords`,
+  );
+  check(
+    "…and dresses the WHOLE circle, as one swept round",
     after.faces.length === before.faces.length + 1,
     `${before.faces.length} -> ${after.faces.length} faces (expected ${before.faces.length + 1}; ` +
-    `${before.faces.length + FACETS} would mean one bevel per chord, ` +
-    `${before.faces.length} that nothing was dressed)`);
+      `${before.faces.length + FACETS} would mean one bevel per chord, ` +
+      `${before.faces.length} that nothing was dressed)`,
+  );
 }
 
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);

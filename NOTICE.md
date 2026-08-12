@@ -24,7 +24,7 @@ calling out explicitly:
   unmodified as an ordinary npm dependency and loaded dynamically at
   runtime, never vendored into this repository's source.
 
-  This is flagged rather than resolved: if you redistribute a *built*
+  This is flagged rather than resolved: if you redistribute a _built_
   bundle of Open Poly (as opposed to this source repository), confirm what
   OCCT's exception requires of you. Using it from source, as here, is the
   ordinary case.

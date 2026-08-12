@@ -39,7 +39,10 @@ export function ringArea(ring: Ring): number {
 }
 
 function ringBBoxArea(ring: Ring): number {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
   for (const [x, y] of ring) {
     if (x < minX) minX = x;
     if (y < minY) minY = y;
@@ -63,33 +66,56 @@ const dist = (ax: number, ay: number, bx: number, by: number) => Math.hypot(bx -
 export function glyphRings(commands: PathCommand[], tol = 0.1): Ring[] {
   const rings: Ring[] = [];
   let ring: Ring = [];
-  let cx = 0, cy = 0;
-  const flush = () => { if (ring.length >= 3) rings.push(ring); ring = []; };
+  let cx = 0,
+    cy = 0;
+  const flush = () => {
+    if (ring.length >= 3) rings.push(ring);
+    ring = [];
+  };
   const push = (x: number, y: number) => {
     const last = ring[ring.length - 1];
     if (!last || Math.abs(last[0] - x) > 1e-9 || Math.abs(last[1] - y) > 1e-9) ring.push([x, -y]);
   };
   for (const c of commands) {
-    if (c.type === "Z") { flush(); continue; }
-    if (c.type === "M") { flush(); cx = c.x; cy = c.y; ring = [[cx, -cy]]; continue; }
-    if (c.type === "L") { cx = c.x; cy = c.y; push(cx, cy); }
-    else if (c.type === "Q") {
+    if (c.type === "Z") {
+      flush();
+      continue;
+    }
+    if (c.type === "M") {
+      flush();
+      cx = c.x;
+      cy = c.y;
+      ring = [[cx, -cy]];
+      continue;
+    }
+    if (c.type === "L") {
+      cx = c.x;
+      cy = c.y;
+      push(cx, cy);
+    } else if (c.type === "Q") {
       const n = bezierSegments(dist(cx, cy, c.x1, c.y1) + dist(c.x1, c.y1, c.x, c.y), tol);
       for (let i = 1; i <= n; i++) {
-        const t = i / n, m = 1 - t;
+        const t = i / n,
+          m = 1 - t;
         push(m * m * cx + 2 * m * t * c.x1 + t * t * c.x, m * m * cy + 2 * m * t * c.y1 + t * t * c.y);
       }
-      cx = c.x; cy = c.y;
+      cx = c.x;
+      cy = c.y;
     } else if (c.type === "C") {
-      const n = bezierSegments(dist(cx, cy, c.x1, c.y1) + dist(c.x1, c.y1, c.x2, c.y2) + dist(c.x2, c.y2, c.x, c.y), tol);
+      const n = bezierSegments(
+        dist(cx, cy, c.x1, c.y1) + dist(c.x1, c.y1, c.x2, c.y2) + dist(c.x2, c.y2, c.x, c.y),
+        tol,
+      );
       for (let i = 1; i <= n; i++) {
-        const t = i / n, m = 1 - t;
+        const t = i / n,
+          m = 1 - t;
         push(
           m * m * m * cx + 3 * m * m * t * c.x1 + 3 * m * t * t * c.x2 + t * t * t * c.x,
           m * m * m * cy + 3 * m * m * t * c.y1 + 3 * m * t * t * c.y2 + t * t * t * c.y,
         );
       }
-      cx = c.x; cy = c.y;
+      cx = c.x;
+      cy = c.y;
     }
   }
   flush();

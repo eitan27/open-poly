@@ -59,10 +59,17 @@ await page.waitForTimeout(400);
 check("double-clicking a primitive opens its parameters", (await panel.count()) === 1);
 check("panel is titled with the feature type", (await panel.locator(".ed-title").textContent()) === "Box");
 const headings = await panel.locator(".ep-heading").allTextContents();
-check("no redundant 'Parameters' heading (the title names it)", !headings.includes("Parameters"), headings.join(", ") || "(none)");
+check(
+  "no redundant 'Parameters' heading (the title names it)",
+  !headings.includes("Parameters"),
+  headings.join(", ") || "(none)",
+);
 const widthField = panel.locator(".param-field", { hasText: "Width" }).locator("input");
-check("parameter value is editable in the panel", (await widthField.inputValue()) === "40",
-  `width=${await widthField.inputValue()}`);
+check(
+  "parameter value is editable in the panel",
+  (await widthField.inputValue()) === "40",
+  `width=${await widthField.inputValue()}`,
+);
 
 // Editing a parameter through the panel drives a rebuild.
 await widthField.fill("55");
@@ -70,8 +77,11 @@ await widthField.press("Enter");
 await waitIdle();
 const doc1 = await page.evaluate(() => window.__openpoly.read({ read: "document" }));
 const boxFeature = (doc1.document ?? doc1).features.find((f) => f.id === boxId);
-check("editing a parameter updates the feature", String(boxFeature?.params?.width) === "55",
-  `width=${boxFeature?.params?.width}`);
+check(
+  "editing a parameter updates the feature",
+  String(boxFeature?.params?.width) === "55",
+  `width=${boxFeature?.params?.width}`,
+);
 await page.screenshot({ path: "/tmp/edit-panel-feature.png" });
 
 // 4. Drag by the title bar moves it; ✕ closes it.
@@ -93,10 +103,14 @@ await page.waitForTimeout(200);
 check("✕ closes the panel", (await panel.count()) === 0);
 
 // 5. A sketch with constraints shows the Constraints section.
-const sk = await apply({ op: "addSketch", plane: { datum: "front" }, entities: [
-  { shape: "line", a: [0, 0], b: [40, 0] },
-  { shape: "line", a: [40, 0], b: [40, 30] },
-] });
+const sk = await apply({
+  op: "addSketch",
+  plane: { datum: "front" },
+  entities: [
+    { shape: "line", a: [0, 0], b: [40, 0] },
+    { shape: "line", a: [40, 0], b: [40, 30] },
+  ],
+});
 await waitIdle();
 const sketchId = sk.id ?? sk.createdId;
 const doc = await page.evaluate(() => window.__openpoly.read({ read: "document" }));
@@ -107,7 +121,11 @@ await waitIdle();
 await page.locator(".tree-row", { hasText: "Sketch" }).first().dblclick();
 await page.waitForTimeout(600);
 const h2 = await panel.locator(".ep-heading").allTextContents();
-check("panel shows Constraints while editing a sketch", h2.some((t) => t.startsWith("Constraints")), h2.join(", "));
+check(
+  "panel shows Constraints while editing a sketch",
+  h2.some((t) => t.startsWith("Constraints")),
+  h2.join(", "),
+);
 await page.screenshot({ path: "/tmp/edit-panel-sketch.png" });
 
 // 6. The sidebar is clean.

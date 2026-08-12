@@ -17,9 +17,11 @@ export function DraggableDialog({
   const startDrag = (e: PointerEvent<HTMLDivElement>) => {
     if (!(e.target as HTMLElement).closest("[data-drag-handle]")) return;
     e.preventDefault();
-    const sx = e.clientX, sy = e.clientY, ox = delta.x, oy = delta.y;
-    const move = (ev: globalThis.PointerEvent) =>
-      setDelta({ x: ox + ev.clientX - sx, y: oy + ev.clientY - sy });
+    const sx = e.clientX,
+      sy = e.clientY,
+      ox = delta.x,
+      oy = delta.y;
+    const move = (ev: globalThis.PointerEvent) => setDelta({ x: ox + ev.clientX - sx, y: oy + ev.clientY - sy });
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
@@ -28,9 +30,7 @@ export function DraggableDialog({
     window.addEventListener("pointerup", up);
   };
 
-  const transform = [baseTransform, `translate(${delta.x}px, ${delta.y}px)`]
-    .filter(Boolean)
-    .join(" ");
+  const transform = [baseTransform, `translate(${delta.x}px, ${delta.y}px)`].filter(Boolean).join(" ");
 
   return (
     <div {...rest} style={{ ...style, transform }} onPointerDown={startDrag}>

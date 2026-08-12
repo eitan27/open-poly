@@ -96,13 +96,17 @@ export function OverflowColumn({
       // The column is anchored at the top; what's left is the window below it.
       const avail = window.innerHeight - barTop - bottomMargin - chrome;
       const moreHeight = moreRef.current?.getBoundingClientRect().height ?? boxes[0].outer;
-      const count = fitCount(boxes.map((b) => b.outer), gap, avail, moreHeight);
+      const count = fitCount(
+        boxes.map((b) => b.outer),
+        gap,
+        avail,
+        moreHeight,
+      );
       // Height straight off the last visible slot's measured bottom, rather than
       // re-adding the parts — whatever the layout actually did (margins, gaps,
       // sub-pixel rounding) is already in that number.
-      const contentBottom = count > 0
-        ? boxes[count - 1].bottom
-        : parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop);
+      const contentBottom =
+        count > 0 ? boxes[count - 1].bottom : parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop);
       const height =
         contentBottom +
         (count < boxes.length ? gap + moreHeight : 0) +

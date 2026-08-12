@@ -154,18 +154,15 @@ export function sameSelection(a: Selection | null, b: Selection | null): boolean
   if (a === b) return true;
   if (!a || !b || a.kind !== b.kind) return false;
   if (a.kind === "feature" && b.kind === "feature") return a.id === b.id;
-  if (a.kind === "face" && b.kind === "face")
-    return a.featureId === b.featureId && a.faceId === b.faceId;
-  if (a.kind === "edge" && b.kind === "edge")
-    return a.featureId === b.featureId && a.edgeId === b.edgeId;
+  if (a.kind === "face" && b.kind === "face") return a.featureId === b.featureId && a.faceId === b.faceId;
+  if (a.kind === "edge" && b.kind === "edge") return a.featureId === b.featureId && a.edgeId === b.edgeId;
   if (a.kind === "vertex" && b.kind === "vertex")
     return a.featureId === b.featureId && a.point.every((v, i) => v === b.point[i]);
   if (a.kind === "sketchEntity" && b.kind === "sketchEntity")
     return a.sketchId === b.sketchId && a.entityId === b.entityId;
   if (a.kind === "sketchPoint" && b.kind === "sketchPoint")
     return a.sketchId === b.sketchId && a.point.every((v, i) => v === b.point[i]);
-  if (a.kind === "sketchFace" && b.kind === "sketchFace")
-    return a.sketchId === b.sketchId && a.regionId === b.regionId;
+  if (a.kind === "sketchFace" && b.kind === "sketchFace") return a.sketchId === b.sketchId && a.regionId === b.regionId;
   return false;
 }
 
@@ -380,8 +377,13 @@ function transformMatrix(
  *  identically without ever needing to be touched again after creation. */
 const makeBodyMaterial = (color: number, clippingPlanes: THREE.Plane[]) =>
   new THREE.MeshStandardMaterial({
-    color, metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide,
-    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    color,
+    metalness: 0.1,
+    roughness: 0.55,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
     clippingPlanes,
   });
 
@@ -515,7 +517,12 @@ const EDGE_HOV_COLOR = new THREE.Color(0x36d6c3);
 // line (recoloured live with its constrained state — see applyHighlights); the
 // hover/selection marker is larger and translucent so this dot shows through it.
 const sketchDotMaterial = new THREE.PointsMaterial({
-  color: 0x4d8dff, size: 5, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.95,
+  color: 0x4d8dff,
+  size: 5,
+  sizeAttenuation: false,
+  depthTest: false,
+  transparent: true,
+  opacity: 0.95,
 });
 // Edge/vertex picking is done entirely in SCREEN space (pixels), at every stage,
 // so it behaves identically at any zoom. The old design used a world-space ray
@@ -700,11 +707,7 @@ function chainInteriorPositions(geom: THREE.BufferGeometry): Set<string> {
  *     there is a corner. The vertical wall seams landing on those same junctions
  *     drop out too, since the test is by position.
  */
-function realVertexNear(
-  geom: THREE.BufferGeometry,
-  hitIndex: number,
-  at: THREE.Vector3,
-): THREE.Vector3 | null {
+function realVertexNear(geom: THREE.BufferGeometry, hitIndex: number, at: THREE.Vector3): THREE.Vector3 | null {
   const eg = geom.userData.edgeGroups as PickEdgeGroup[] | undefined;
   const pos = geom.getAttribute("position");
   if (!eg || !pos) return null;
@@ -717,7 +720,10 @@ function realVertexNear(
     const p = new THREE.Vector3().fromBufferAttribute(pos, v);
     if (interior.has(posKey(p.x, p.y, p.z))) continue;
     const d = p.distanceTo(at);
-    if (d < bestD) { bestD = d; best = p; }
+    if (d < bestD) {
+      bestD = d;
+      best = p;
+    }
   }
   return best;
 }
@@ -743,7 +749,12 @@ const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, numb
 const VIEWCUBE_DIM = 108; // corner size in CSS px
 const VIEWCUBE_TOP = 60; // px from the canvas top — clears the modeling toolbar
 const VIEWCUBE_RIGHT = 14;
-const VIEWCUBE_FACES: { view: ViewName; label: string; normal: [number, number, number]; up: [number, number, number] }[] = [
+const VIEWCUBE_FACES: {
+  view: ViewName;
+  label: string;
+  normal: [number, number, number];
+  up: [number, number, number];
+}[] = [
   { view: "right", label: "RIGHT", normal: [1, 0, 0], up: [0, 0, 1] },
   { view: "left", label: "LEFT", normal: [-1, 0, 0], up: [0, 0, 1] },
   { view: "back", label: "BACK", normal: [0, 1, 0], up: [0, 0, 1] },
@@ -850,7 +861,12 @@ function createViewCube(initialTheme: ResolvedTheme): ViewCube {
   const edgeMat = new THREE.LineBasicMaterial({ color: pal.edge });
   const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), edgeMat);
   group.add(body, edges);
-  const disposables: { dispose(): void }[] = [body.geometry, body.material as THREE.Material, edges.geometry, edges.material as THREE.Material];
+  const disposables: { dispose(): void }[] = [
+    body.geometry,
+    body.material as THREE.Material,
+    edges.geometry,
+    edges.material as THREE.Material,
+  ];
 
   // Per-object hover appearance: faces swap their label texture, corners swap
   // colour. Stored on userData so a single applyHover handles both.
@@ -858,11 +874,19 @@ function createViewCube(initialTheme: ResolvedTheme): ViewCube {
 
   // One label plane per face, oriented by an explicit basis (local +Z → outward
   // normal, local +Y → the face's up) so every label reads upright.
-  const x = new THREE.Vector3(), y = new THREE.Vector3(), z = new THREE.Vector3();
+  const x = new THREE.Vector3(),
+    y = new THREE.Vector3(),
+    z = new THREE.Vector3();
   for (const f of VIEWCUBE_FACES) {
     const themed = {
-      dark: { normal: viewCubeFaceTexture(f.label, false, palettes.dark), hover: viewCubeFaceTexture(f.label, true, palettes.dark) },
-      light: { normal: viewCubeFaceTexture(f.label, false, palettes.light), hover: viewCubeFaceTexture(f.label, true, palettes.light) },
+      dark: {
+        normal: viewCubeFaceTexture(f.label, false, palettes.dark),
+        hover: viewCubeFaceTexture(f.label, true, palettes.dark),
+      },
+      light: {
+        normal: viewCubeFaceTexture(f.label, false, palettes.light),
+        hover: viewCubeFaceTexture(f.label, true, palettes.light),
+      },
     };
     const texNormal = themed[initialTheme].normal;
     const texHover = themed[initialTheme].hover;
@@ -876,7 +900,14 @@ function createViewCube(initialTheme: ResolvedTheme): ViewCube {
     plane.userData = { hit: { view: f.view } as CubeHit, kind: "face", texNormal, texHover, themed };
     group.add(plane);
     targets.push(plane);
-    disposables.push(plane.geometry, mat, themed.dark.normal, themed.dark.hover, themed.light.normal, themed.light.hover);
+    disposables.push(
+      plane.geometry,
+      mat,
+      themed.dark.normal,
+      themed.dark.hover,
+      themed.light.normal,
+      themed.light.hover,
+    );
   }
 
   // A small nub at each of the 8 corners → the iso view looking down that corner's
@@ -893,27 +924,38 @@ function createViewCube(initialTheme: ResolvedTheme): ViewCube {
   // A slightly larger BackSide sphere behind each nub = a blue outline ring, shown
   // only on hover (matching the faces' blue hover border).
   const cornerOutlineGeom = new THREE.SphereGeometry(0.125, 16, 12);
-  disposables.push(cornerGeom, cornerOutlineGeom, cornerThemed.dark.normal, cornerThemed.dark.hover, cornerThemed.light.normal, cornerThemed.light.hover);
+  disposables.push(
+    cornerGeom,
+    cornerOutlineGeom,
+    cornerThemed.dark.normal,
+    cornerThemed.dark.hover,
+    cornerThemed.light.normal,
+    cornerThemed.light.hover,
+  );
   const outlineMats: THREE.MeshBasicMaterial[] = [];
-  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
-    const outlineMat = new THREE.MeshBasicMaterial({ color: pal.cornerOutline, side: THREE.BackSide });
-    outlineMats.push(outlineMat);
-    const outline = new THREE.Mesh(cornerOutlineGeom, outlineMat);
-    outline.position.set(sx * 0.5, sy * 0.5, sz * 0.5);
-    outline.visible = false;
-    group.add(outline);
-    const mat = new THREE.MeshBasicMaterial({ map: cornerThemed[initialTheme].normal });
-    const nub = new THREE.Mesh(cornerGeom, mat);
-    nub.position.set(sx * 0.5, sy * 0.5, sz * 0.5);
-    nub.userData = {
-      hit: { dir: [sx, sy, sz], up: [0, 0, 1] } as CubeHit,
-      texNormal: cornerThemed[initialTheme].normal, texHover: cornerThemed[initialTheme].hover,
-      themed: cornerThemed, outline,
-    };
-    group.add(nub);
-    targets.push(nub);
-    disposables.push(outlineMat, mat);
-  }
+  for (const sx of [-1, 1])
+    for (const sy of [-1, 1])
+      for (const sz of [-1, 1]) {
+        const outlineMat = new THREE.MeshBasicMaterial({ color: pal.cornerOutline, side: THREE.BackSide });
+        outlineMats.push(outlineMat);
+        const outline = new THREE.Mesh(cornerOutlineGeom, outlineMat);
+        outline.position.set(sx * 0.5, sy * 0.5, sz * 0.5);
+        outline.visible = false;
+        group.add(outline);
+        const mat = new THREE.MeshBasicMaterial({ map: cornerThemed[initialTheme].normal });
+        const nub = new THREE.Mesh(cornerGeom, mat);
+        nub.position.set(sx * 0.5, sy * 0.5, sz * 0.5);
+        nub.userData = {
+          hit: { dir: [sx, sy, sz], up: [0, 0, 1] } as CubeHit,
+          texNormal: cornerThemed[initialTheme].normal,
+          texHover: cornerThemed[initialTheme].hover,
+          themed: cornerThemed,
+          outline,
+        };
+        group.add(nub);
+        targets.push(nub);
+        disposables.push(outlineMat, mat);
+      }
 
   const raycaster = new THREE.Raycaster();
   const size = new THREE.Vector2();
@@ -945,7 +987,12 @@ function createViewCube(initialTheme: ResolvedTheme): ViewCube {
       renderer.clearDepth();
       renderer.getViewport(prevVp);
       // WebGL viewport y is measured from the bottom.
-      renderer.setViewport(size.x - VIEWCUBE_DIM - VIEWCUBE_RIGHT, size.y - VIEWCUBE_DIM - VIEWCUBE_TOP, VIEWCUBE_DIM, VIEWCUBE_DIM);
+      renderer.setViewport(
+        size.x - VIEWCUBE_DIM - VIEWCUBE_RIGHT,
+        size.y - VIEWCUBE_DIM - VIEWCUBE_TOP,
+        VIEWCUBE_DIM,
+        VIEWCUBE_DIM,
+      );
       renderer.render(cubeScene, cam);
       renderer.setViewport(prevVp.x, prevVp.y, prevVp.z, prevVp.w);
       renderer.autoClear = true;
@@ -955,7 +1002,8 @@ function createViewCube(initialTheme: ResolvedTheme): ViewCube {
       renderer.getSize(size);
       const left = rect.left + size.x - VIEWCUBE_DIM - VIEWCUBE_RIGHT;
       const top = rect.top + VIEWCUBE_TOP;
-      const lx = clientX - left, ly = clientY - top;
+      const lx = clientX - left,
+        ly = clientY - top;
       if (lx < 0 || lx > VIEWCUBE_DIM || ly < 0 || ly > VIEWCUBE_DIM) {
         setHovered(null);
         return null;
@@ -1171,7 +1219,10 @@ export function Viewport({
   // Inference "armed" refs: key points and edge directions the cursor has recently
   // brushed, which emit alignment guides while drawing. Capped + time-limited so
   // they fade rather than pile up (Onshape-style priming).
-  const armedRef = useRef<{ points: { uv: Vec2; at: number }[]; lines: { dir: Vec2; refId?: string; at: number }[] }>({ points: [], lines: [] });
+  const armedRef = useRef<{ points: { uv: Vec2; at: number }[]; lines: { dir: Vec2; refId?: string; at: number }[] }>({
+    points: [],
+    lines: [],
+  });
   const polygonSidesRef = useRef(polygonSides);
   polygonSidesRef.current = polygonSides;
   const sketchFullyConstrainedRef = useRef(sketchFullyConstrained);
@@ -1198,7 +1249,9 @@ export function Viewport({
   //  • a point with `vertex` = an existing corner (line/arc endpoint, or the
   //    origin) — snapping the line tool there ends the polyline chain.
   // Undefined for body edges / other-sketch geometry (not constrainable here).
-  const snapPointsRef = useRef<{ uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number }; external?: boolean }[]>([]);
+  const snapPointsRef = useRef<
+    { uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number }; external?: boolean }[]
+  >([]);
   const snapLinesRef = useRef<{ a: Vec2; b: Vec2; id?: string; construction?: boolean; external?: boolean }[]>([]);
   // Circles (centre + radius, in the active sketch's uv) coplanar with the sketch
   // — a hole rim, a cylinder cap. Their centre + quadrant points are added to
@@ -1249,8 +1302,14 @@ export function Viewport({
     // perspective would show; the aspect is fixed on the first resize.
     const initPos = new THREE.Vector3(110, -120, 90);
     const initHalfH = initPos.length() * Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2);
-    let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera =
-      new THREE.OrthographicCamera(-initHalfH, initHalfH, initHalfH, -initHalfH, 0.1, 10_000);
+    let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = new THREE.OrthographicCamera(
+      -initHalfH,
+      initHalfH,
+      initHalfH,
+      -initHalfH,
+      0.1,
+      10_000,
+    );
     camera.up.set(0, 0, 1);
     camera.position.copy(initPos);
 
@@ -1307,14 +1366,16 @@ export function Viewport({
     // to these; index 0 is the per-sketch base material set in the render effect).
 
     // Fat-line overlay (real line width) for the highlighted body edge.
-    const highlightMaterial = buttCaps(new LineMaterial({
-      vertexColors: true,
-      linewidth: 3,
-      worldUnits: false,
-      depthTest: false,
-      transparent: true,
-      clippingPlanes: sectionClipPlanes,
-    }));
+    const highlightMaterial = buttCaps(
+      new LineMaterial({
+        vertexColors: true,
+        linewidth: 3,
+        worldUnits: false,
+        depthTest: false,
+        transparent: true,
+        clippingPlanes: sectionClipPlanes,
+      }),
+    );
     const highlightOverlay = new LineSegments2(new LineSegmentsGeometry(), highlightMaterial);
     highlightOverlay.renderOrder = 11;
     highlightOverlay.frustumCulled = false;
@@ -1346,7 +1407,14 @@ export function Viewport({
       new THREE.BufferGeometry(),
       // Translucent so the small persistent vertex dot (sketchDotMaterial) stays
       // visible underneath when a sketch vertex is hovered/selected.
-      new THREE.PointsMaterial({ size: 11, sizeAttenuation: false, vertexColors: true, depthTest: false, transparent: true, opacity: 0.65 }),
+      new THREE.PointsMaterial({
+        size: 11,
+        sizeAttenuation: false,
+        vertexColors: true,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.65,
+      }),
     );
     pointMarkers.renderOrder = 13;
     pointMarkers.visible = false;
@@ -1363,11 +1431,20 @@ export function Viewport({
     // colour) so a preview always reads as "not committed yet," regardless of
     // what it's standing in for.
     const ghostMaterial = new THREE.MeshStandardMaterial({
-      color: GHOST_COLOR, metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide,
-      transparent: true, opacity: 0.35, depthWrite: false, clippingPlanes: sectionClipPlanes,
+      color: GHOST_COLOR,
+      metalness: 0.1,
+      roughness: 0.55,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false,
+      clippingPlanes: sectionClipPlanes,
     });
     const ghostLineMaterial = new THREE.LineBasicMaterial({
-      color: GHOST_COLOR, transparent: true, opacity: 0.7, clippingPlanes: sectionClipPlanes,
+      color: GHOST_COLOR,
+      transparent: true,
+      opacity: 0.7,
+      clippingPlanes: sectionClipPlanes,
     });
     // Dress-up delta ghosts (see GhostMesh.variant). `depthTest: false` is the
     // point of these: the delta is flush with — or inside — the body it changes,
@@ -1377,13 +1454,23 @@ export function Viewport({
     // additive ghost: these wedges are thin, and read weakly at 0.35.
     const deltaFaceMat = (color: number) =>
       new THREE.MeshStandardMaterial({
-        color, metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide,
-        transparent: true, opacity: 0.5, depthWrite: false, depthTest: false,
+        color,
+        metalness: 0.1,
+        roughness: 0.55,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+        depthTest: false,
         clippingPlanes: sectionClipPlanes,
       });
     const deltaLineMat = (color: number) =>
       new THREE.LineBasicMaterial({
-        color, transparent: true, opacity: 0.9, depthTest: false, clippingPlanes: sectionClipPlanes,
+        color,
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+        clippingPlanes: sectionClipPlanes,
       });
     const ghostFillMaterial = deltaFaceMat(GHOST_FILL_COLOR);
     const ghostFillLineMaterial = deltaLineMat(GHOST_FILL_COLOR);
@@ -1398,7 +1485,11 @@ export function Viewport({
     // frame, so no transform is set here.
     const sectionWidgetGeom = new THREE.PlaneGeometry(1, 1);
     const sectionWidgetMat = new THREE.MeshBasicMaterial({
-      color: 0x5da9ff, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false,
+      color: 0x5da9ff,
+      transparent: true,
+      opacity: 0.08,
+      side: THREE.DoubleSide,
+      depthWrite: false,
     });
     const sectionWidget = new THREE.Mesh(sectionWidgetGeom, sectionWidgetMat);
     sectionWidget.visible = false;
@@ -1428,8 +1519,13 @@ export function Viewport({
     const SECTION_HANDLE_EMISSIVE_COLD = new THREE.Color(0x12304f);
     const SECTION_HANDLE_EMISSIVE_HOT = new THREE.Color(0x59a6e6);
     const sectionHandleMat = new THREE.MeshStandardMaterial({
-      color: SECTION_HANDLE_COLD, emissive: SECTION_HANDLE_EMISSIVE_COLD,
-      metalness: 0.1, roughness: 0.5, depthTest: false, transparent: true, opacity: 0.95,
+      color: SECTION_HANDLE_COLD,
+      emissive: SECTION_HANDLE_EMISSIVE_COLD,
+      metalness: 0.1,
+      roughness: 0.5,
+      depthTest: false,
+      transparent: true,
+      opacity: 0.95,
     });
     const sectionHandle = new THREE.Mesh(sectionHandleGeom, sectionHandleMat);
     sectionHandle.renderOrder = 14;
@@ -1457,9 +1553,16 @@ export function Viewport({
     scene.add(sectionCapGroup);
     const sectionCapGeometry = new THREE.PlaneGeometry(1, 1);
     const sectionCapMaterial = new THREE.MeshStandardMaterial({
-      color: 0x9aa0ab, metalness: 0.05, roughness: 0.9, side: THREE.DoubleSide,
-      stencilWrite: true, stencilRef: 0, stencilFunc: THREE.NotEqualStencilFunc,
-      stencilFail: THREE.ReplaceStencilOp, stencilZFail: THREE.ReplaceStencilOp, stencilZPass: THREE.ReplaceStencilOp,
+      color: 0x9aa0ab,
+      metalness: 0.05,
+      roughness: 0.9,
+      side: THREE.DoubleSide,
+      stencilWrite: true,
+      stencilRef: 0,
+      stencilFunc: THREE.NotEqualStencilFunc,
+      stencilFail: THREE.ReplaceStencilOp,
+      stencilZFail: THREE.ReplaceStencilOp,
+      stencilZPass: THREE.ReplaceStencilOp,
     });
     // Mechanical section hatch: 45° stripes over the (stencil-masked) cap fill so
     // the cross-section reads as cut solid material, not just another face. Drawn
@@ -1592,7 +1695,11 @@ export function Viewport({
     });
 
     const previewMaterial = new LineMaterial({
-      color: 0x7da8ff, linewidth: 3, worldUnits: false, depthTest: false, transparent: true,
+      color: 0x7da8ff,
+      linewidth: 3,
+      worldUnits: false,
+      depthTest: false,
+      transparent: true,
     });
     const previewLine = new Line2(new LineGeometry(), previewMaterial);
     previewLine.frustumCulled = false;
@@ -1610,10 +1717,17 @@ export function Viewport({
     keepConstantPixelRadius(snapMarker, 1.4, SNAP_PIXEL_RADIUS);
     // Whole-edge snap highlight: a bright FAT line over the edge under the cursor,
     // drawn on top (depthTest off) so it reads even against the dimmed body.
-    const snapEdgeMaterial = buttCaps(new LineMaterial({
-      color: 0xffe14a, linewidth: 4, worldUnits: false, depthTest: false, transparent: true,
-      dashSize: 1.4, gapSize: 0.9, // used only when `dashed` is toggled on (construction edges)
-    }));
+    const snapEdgeMaterial = buttCaps(
+      new LineMaterial({
+        color: 0xffe14a,
+        linewidth: 4,
+        worldUnits: false,
+        depthTest: false,
+        transparent: true,
+        dashSize: 1.4,
+        gapSize: 0.9, // used only when `dashed` is toggled on (construction edges)
+      }),
+    );
     const snapEdgeLine = new LineSegments2(new LineSegmentsGeometry(), snapEdgeMaterial);
     snapEdgeLine.renderOrder = 11;
     snapEdgeLine.frustumCulled = false;
@@ -1621,15 +1735,27 @@ export function Viewport({
     // Dotted inference/alignment guides — a fat dashed line so its width reads,
     // and small square markers on each anchor point in the same colour + width.
     const guideMaterial = new LineMaterial({
-      color: GUIDE_COLOR, linewidth: GUIDE_LINE_WIDTH, worldUnits: false, dashed: true,
-      dashSize: 1.4, gapSize: 0.9, depthTest: false, transparent: true, opacity: 0.9,
+      color: GUIDE_COLOR,
+      linewidth: GUIDE_LINE_WIDTH,
+      worldUnits: false,
+      dashed: true,
+      dashSize: 1.4,
+      gapSize: 0.9,
+      depthTest: false,
+      transparent: true,
+      opacity: 0.9,
     });
     const guideOverlay = new LineSegments2(new LineSegmentsGeometry(), guideMaterial);
     guideOverlay.renderOrder = 10;
     guideOverlay.frustumCulled = false;
     guideOverlay.visible = false;
     const anchorMaterial = new LineMaterial({
-      color: GUIDE_COLOR, linewidth: GUIDE_LINE_WIDTH, worldUnits: false, depthTest: false, transparent: true, opacity: 0.9,
+      color: GUIDE_COLOR,
+      linewidth: GUIDE_LINE_WIDTH,
+      worldUnits: false,
+      depthTest: false,
+      transparent: true,
+      opacity: 0.9,
     });
     const anchorOverlay = new LineSegments2(new LineSegmentsGeometry(), anchorMaterial);
     anchorOverlay.renderOrder = 10;
@@ -1645,18 +1771,50 @@ export function Viewport({
     document.body.appendChild(guideBadge);
 
     const state: SceneState = {
-      renderer, scene, camera, controls, group,
-      sketchDimActive: false, selectedMaterial, hoverMaterial, lineMaterial,
-      highlightMaterial, highlightOverlay, highlightMaterialDash, highlightOverlayDash, pointMarkers,
-      datums, sketchGroup, planeGroup, transformControls, gizmoProxy,
+      renderer,
+      scene,
+      camera,
+      controls,
+      group,
+      sketchDimActive: false,
+      selectedMaterial,
+      hoverMaterial,
+      lineMaterial,
+      highlightMaterial,
+      highlightOverlay,
+      highlightMaterialDash,
+      highlightOverlayDash,
+      pointMarkers,
+      datums,
+      sketchGroup,
+      planeGroup,
+      transformControls,
+      gizmoProxy,
       liveDrag: null,
       pendingCommit: null,
-      ghostGroup, ghostMaterial, ghostLineMaterial,
-      ghostFillMaterial, ghostFillLineMaterial, ghostCutMaterial, ghostCutLineMaterial,
-      previewLine, snapMarker, snapEdgeLine, guideOverlay, anchorOverlay, guideBadge, tween: null,
-      sectionPlane, sectionClipPlanes, sectionWidget, sectionCapGroup, sectionCapGeometry,
-      sectionCapMaterial, sectionHandle,
-      grid, viewCube,
+      ghostGroup,
+      ghostMaterial,
+      ghostLineMaterial,
+      ghostFillMaterial,
+      ghostFillLineMaterial,
+      ghostCutMaterial,
+      ghostCutLineMaterial,
+      previewLine,
+      snapMarker,
+      snapEdgeLine,
+      guideOverlay,
+      anchorOverlay,
+      guideBadge,
+      tween: null,
+      sectionPlane,
+      sectionClipPlanes,
+      sectionWidget,
+      sectionCapGroup,
+      sectionCapGeometry,
+      sectionCapMaterial,
+      sectionHandle,
+      grid,
+      viewCube,
     };
     stateRef.current = state;
     applyDatumAppearance(state, null);
@@ -1668,8 +1826,7 @@ export function Viewport({
       const sels = selectionRef.current;
       const hov = hoverSelRef.current;
       const hovered = hov && !sels.some((s) => sameSelection(s, hov)) ? hov : null;
-      const isSketchId = (id: string) =>
-        sketchGroup.children.some((c) => c.userData.sketchId === id);
+      const isSketchId = (id: string) => sketchGroup.children.some((c) => c.userData.sketchId === id);
 
       // Faces
       for (const child of group.children) {
@@ -1697,8 +1854,7 @@ export function Viewport({
         const selClusters = new Set(
           sels.filter((s) => s.kind === "face" && s.featureId === fid).map((s) => cl((s as { faceId: number }).faceId)),
         );
-        const hovCluster =
-          hovered?.kind === "face" && hovered.featureId === fid ? cl(hovered.faceId) : undefined;
+        const hovCluster = hovered?.kind === "face" && hovered.featureId === fid ? cl(hovered.faceId) : undefined;
         let dirty = false;
         geom.groups.forEach((g: { materialIndex?: number }, i: number) => {
           const faceId = fg[i]?.faceId;
@@ -1707,7 +1863,10 @@ export function Viewport({
           const hovF = wholeHov || (hovCluster !== undefined && fc === hovCluster);
           const sketchF = asfFaces?.has(faceId as number) ?? false;
           const idx = wholeGhost ? 3 : selF || wholeOrange ? 2 : hovF ? 1 : sketchF ? 4 : 0;
-          if (g.materialIndex !== idx) { g.materialIndex = idx; dirty = true; }
+          if (g.materialIndex !== idx) {
+            g.materialIndex = idx;
+            dirty = true;
+          }
         });
         if (dirty) (geom as THREE.BufferGeometry & { groupsNeedUpdate: boolean }).groupsNeedUpdate = true;
       }
@@ -1737,7 +1896,8 @@ export function Viewport({
             (x): x is THREE.LineSegments =>
               x instanceof THREE.LineSegments && x.userData.isBodyEdges && x.userData.featureId === s.featureId,
           );
-          const eg = child?.geometry.userData.edgeGroups as { start: number; count: number; edgeId: number; chainId?: number }[] | undefined;
+          const eg = child?.geometry.userData.edgeGroups as
+            { start: number; count: number; edgeId: number; chainId?: number }[] | undefined;
           if (child && eg) {
             // Logical-edge selection: highlight every chord of the picked edge's
             // chain (the whole faceted circle), not just the one segment.
@@ -1748,7 +1908,8 @@ export function Viewport({
           }
         } else if (s.kind === "sketchEntity") {
           const child = sketchChild(s.sketchId);
-          const eg = child?.geometry.userData.entityGroups as { start: number; count: number; entityId: string; construction?: boolean }[] | undefined;
+          const eg = child?.geometry.userData.entityGroups as
+            { start: number; count: number; entityId: string; construction?: boolean }[] | undefined;
           const g = eg?.find((x) => x.entityId === s.entityId);
           if (child && g) pushRange(child.geometry, g.start, g.count, c, !!g.construction);
         } else if (s.kind === "feature" && isSketchId(s.id)) {
@@ -1757,7 +1918,8 @@ export function Viewport({
           // inside the sketch, individual entity selection is what matters.
           if (s.id === activeSketchIdRef.current) return;
           const child = sketchChild(s.id);
-          const eg = child?.geometry.userData.entityGroups as { start: number; count: number; entityId: string; construction?: boolean }[] | undefined;
+          const eg = child?.geometry.userData.entityGroups as
+            { start: number; count: number; entityId: string; construction?: boolean }[] | undefined;
           if (child && eg) {
             for (const g of eg) pushRange(child.geometry, g.start, g.count, c, !!g.construction);
           } else if (child) {
@@ -1778,7 +1940,9 @@ export function Viewport({
             const fgm = faceMesh.geometry.userData.faceGroups as { faceId: number; clusterId?: number }[] | undefined;
             const selCluster = fgm?.find((g) => g.faceId === s.faceId)?.clusterId;
             const clusterIds = new Set<number>(
-              selCluster !== undefined && fgm ? fgm.filter((g) => g.clusterId === selCluster).map((g) => g.faceId) : [s.faceId],
+              selCluster !== undefined && fgm
+                ? fgm.filter((g) => g.clusterId === selCluster).map((g) => g.faceId)
+                : [s.faceId],
             );
             for (const [start, count] of faceBoundaryEdges(faceMesh.geometry, edgeMesh.geometry, clusterIds)) {
               pushRange(edgeMesh.geometry, start, count, c);
@@ -1786,7 +1950,11 @@ export function Viewport({
           }
         } else if (s.kind === "sketchFace") {
           const fill = sketchGroup.children.find(
-            (x) => x instanceof THREE.Mesh && x.userData.isRegion && x.userData.sketchId === s.sketchId && x.userData.regionId === s.regionId,
+            (x) =>
+              x instanceof THREE.Mesh &&
+              x.userData.isRegion &&
+              x.userData.sketchId === s.sketchId &&
+              x.userData.regionId === s.regionId,
           );
           const outline = fill?.userData.outlineWorld as number[] | undefined;
           if (outline) {
@@ -1839,15 +2007,24 @@ export function Viewport({
       };
       for (const s of sels) {
         const w = ptWorld(s);
-        if (w) { ptPos.push(w[0], w[1], w[2]); ptCol.push(EDGE_SEL_COLOR.r, EDGE_SEL_COLOR.g, EDGE_SEL_COLOR.b); }
+        if (w) {
+          ptPos.push(w[0], w[1], w[2]);
+          ptCol.push(EDGE_SEL_COLOR.r, EDGE_SEL_COLOR.g, EDGE_SEL_COLOR.b);
+        }
       }
       if (hovered) {
         const w = ptWorld(hovered);
-        if (w) { ptPos.push(w[0], w[1], w[2]); ptCol.push(EDGE_HOV_COLOR.r, EDGE_HOV_COLOR.g, EDGE_HOV_COLOR.b); }
+        if (w) {
+          ptPos.push(w[0], w[1], w[2]);
+          ptCol.push(EDGE_HOV_COLOR.r, EDGE_HOV_COLOR.g, EDGE_HOV_COLOR.b);
+        }
       }
       for (const s of emphasizeRef.current ?? []) {
         const w = ptWorld(s);
-        if (w) { ptPos.push(w[0], w[1], w[2]); ptCol.push(EDGE_HOV_COLOR.r, EDGE_HOV_COLOR.g, EDGE_HOV_COLOR.b); }
+        if (w) {
+          ptPos.push(w[0], w[1], w[2]);
+          ptCol.push(EDGE_HOV_COLOR.r, EDGE_HOV_COLOR.g, EDGE_HOV_COLOR.b);
+        }
       }
       if (ptPos.length > 0) {
         pointMarkers.geometry.setAttribute("position", new THREE.Float32BufferAttribute(ptPos, 3));
@@ -1929,10 +2106,7 @@ export function Viewport({
       );
       return child?.geometry.userData.edgeGroups as EdgeGroup[] | undefined;
     };
-    const edgePolyline = (
-      featureId: string,
-      match: (g: EdgeGroup) => boolean,
-    ): [number, number, number][] | null => {
+    const edgePolyline = (featureId: string, match: (g: EdgeGroup) => boolean): [number, number, number][] | null => {
       const child = group.children.find(
         (x): x is THREE.LineSegments =>
           x instanceof THREE.LineSegments && x.userData.isBodyEdges && x.userData.featureId === featureId,
@@ -2054,10 +2228,9 @@ export function Viewport({
         const V = new THREE.Vector3(...frame.vAxis);
         const N = new THREE.Vector3(...frame.normal).normalize();
         // Bounds centre mapped from (u,v) into world space — the point we aim at.
-        const cu = (min[0] + max[0]) / 2, cv = (min[1] + max[1]) / 2;
-        const center = O.clone()
-          .add(U.clone().multiplyScalar(cu))
-          .add(V.clone().multiplyScalar(cv));
+        const cu = (min[0] + max[0]) / 2,
+          cv = (min[1] + max[1]) / 2;
+        const center = O.clone().add(U.clone().multiplyScalar(cu)).add(V.clone().multiplyScalar(cv));
         // In-plane half-extents with a margin so the geometry isn't edge-to-edge.
         // Guard against a zero-size box (single point / all-coincident import).
         const MARGIN = 1.15;
@@ -2072,7 +2245,11 @@ export function Viewport({
           const frustHalfH = (oc.top - oc.bottom) / 2;
           oc.zoom = Math.min(frustHalfW / halfW, frustHalfH / halfH);
           oc.updateProjectionMatrix();
-          startTween(center.clone().add(N.clone().multiplyScalar(VIEW_DISTANCE)), new THREE.Vector3(...frame.vAxis), center);
+          startTween(
+            center.clone().add(N.clone().multiplyScalar(VIEW_DISTANCE)),
+            new THREE.Vector3(...frame.vAxis),
+            center,
+          );
         } else {
           // Perspective: fit by pulling the camera back to the distance whose
           // frustum spans the bounds on the tighter axis.
@@ -2154,9 +2331,13 @@ export function Viewport({
     // distinguishes a one-vertex drag (snap to cursor) from a body/region
     // translate (every point shifts by the same delta). `moved` gates the click
     // vs. drag decision so a tap still selects.
-    let sketchDrag:
-      | { startClient: { x: number; y: number }; grab: Vec2; origins: Vec2[]; single: boolean; moved: boolean }
-      | null = null;
+    let sketchDrag: {
+      startClient: { x: number; y: number };
+      grab: Vec2;
+      origins: Vec2[];
+      single: boolean;
+      moved: boolean;
+    } | null = null;
     // An in-progress drag of the section-plane handle. `axisOrigin`/`axisDir` are
     // the frame's own origin/normal (unflipped, world space) at drag start;
     // `grabDelta` is fixed at press time (committed offset − the ray/axis
@@ -2166,7 +2347,8 @@ export function Viewport({
     // plane/cap/widget each frame — see syncSectionPlane, which prefers this
     // over the (one-render-behind) prop while dragging, for zero-latency
     // feedback.
-    let sectionDrag: { axisOrigin: THREE.Vector3; axisDir: THREE.Vector3; grabDelta: number; offset: number } | null = null;
+    let sectionDrag: { axisOrigin: THREE.Vector3; axisDir: THREE.Vector3; grabDelta: number; offset: number } | null =
+      null;
 
     const projectToPx = (world: THREE.Vector3) => {
       const v = world.clone().project(camera);
@@ -2247,15 +2429,27 @@ export function Viewport({
       // 1. nearest snap point (static candidates + the current draft points).
       // Draft points carry no `vertex` flag, so snapping back onto the chain's
       // own in-progress point never counts as closing on an existing corner.
-      let best: { uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number }; external?: boolean } | null = null;
+      let best: {
+        uv: Vec2;
+        midpointOf?: string;
+        vertex?: boolean;
+        circle?: { c: Vec2; r: number };
+        external?: boolean;
+      } | null = null;
       let bestD = SNAP_PX;
       for (const c of snapPointsRef.current) {
         const d = distPx(c.uv);
-        if (d < bestD) { bestD = d; best = c; }
+        if (d < bestD) {
+          bestD = d;
+          best = c;
+        }
       }
       for (const c of draftRef.current) {
         const d = distPx(c);
-        if (d < bestD) { bestD = d; best = { uv: c }; }
+        if (d < bestD) {
+          bestD = d;
+          best = { uv: c };
+        }
       }
       if (best)
         return {
@@ -2279,18 +2473,35 @@ export function Viewport({
       for (const seg of snapLinesRef.current) {
         const q = nearestOnSegment(raw, seg.a, seg.b);
         const d = distPx(q);
-        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = seg.id; bestSeg = [seg.a, seg.b]; bestConstruction = !!seg.construction; bestLineCircle = undefined; bestLineExternal = !!seg.external; }
+        if (d < bestLD) {
+          bestLD = d;
+          bestLine = q;
+          bestLineId = seg.id;
+          bestSeg = [seg.a, seg.b];
+          bestConstruction = !!seg.construction;
+          bestLineCircle = undefined;
+          bestLineExternal = !!seg.external;
+        }
       }
       // On-circle: nearest point on a coplanar ring (a hole rim / cap). Competes
       // at the same tier as edges; the exact centre/quadrants already won above as
       // points. No `id`/`seg` — it's a positional snap, no constraint attached.
       for (const circ of snapCirclesRef.current) {
-        const dx = raw[0] - circ.c[0], dy = raw[1] - circ.c[1];
+        const dx = raw[0] - circ.c[0],
+          dy = raw[1] - circ.c[1];
         const len = Math.hypot(dx, dy);
         if (len < 1e-6) continue;
         const q: Vec2 = [circ.c[0] + (circ.r * dx) / len, circ.c[1] + (circ.r * dy) / len];
         const d = distPx(q);
-        if (d < bestLD) { bestLD = d; bestLine = q; bestLineId = circ.id; bestSeg = undefined; bestConstruction = false; bestLineCircle = circ; bestLineExternal = !!circ.external; }
+        if (d < bestLD) {
+          bestLD = d;
+          bestLine = q;
+          bestLineId = circ.id;
+          bestSeg = undefined;
+          bestConstruction = false;
+          bestLineCircle = circ;
+          bestLineExternal = !!circ.external;
+        }
       }
       if (bestLine)
         return {
@@ -2385,7 +2596,10 @@ export function Viewport({
       const bodies = group.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
       const hit = raycaster
         .intersectObjects([...planeObjs, ...userPlaneObjs, ...bodies], false)
-        .find((h) => planeObjs.includes(h.object) || userPlaneObjs.includes(h.object as THREE.Mesh) || sectionAllows(h.point));
+        .find(
+          (h) =>
+            planeObjs.includes(h.object) || userPlaneObjs.includes(h.object as THREE.Mesh) || sectionAllows(h.point),
+        );
       if (!hit) return null;
       const datum = datums.find((d) => d.object === hit.object);
       if (datum) return { kind: "datum" as const, id: datum.id };
@@ -2423,9 +2637,7 @@ export function Viewport({
       const bodyEdges = group.children.filter(
         (c): c is THREE.LineSegments => c instanceof THREE.LineSegments && c.userData.isBodyEdges,
       );
-      const sketchSegs = sketchGroup.children.filter(
-        (c): c is THREE.LineSegments => c instanceof THREE.LineSegments,
-      );
+      const sketchSegs = sketchGroup.children.filter((c): c is THREE.LineSegments => c instanceof THREE.LineSegments);
       const regionMeshes = sketchGroup.children.filter(
         (c): c is THREE.Mesh => c instanceof THREE.Mesh && c.userData.isRegion === true,
       );
@@ -2465,9 +2677,13 @@ export function Viewport({
       // whole chord away, which then failed the EDGE_PICK_PX gate.
       const edgeNear = nearestHitInPixels(edgeHits, projectToPx, clientX, clientY, faceDist + PICK_DEPTH_TOL);
       const edgeHit = edgeNear?.hit;
-      let edgeInfo:
-        | { fid: string; edgeId: number | undefined; near: THREE.Vector3 | null; edgePx: number; vertexPx: number }
-        | null = null;
+      let edgeInfo: {
+        fid: string;
+        edgeId: number | undefined;
+        near: THREE.Vector3 | null;
+        edgePx: number;
+        vertexPx: number;
+      } | null = null;
       if (edgeHit && edgeHit.index != null) {
         const mesh = edgeHit.object as THREE.LineSegments;
         const near = realVertexNear(mesh.geometry, edgeHit.index, edgeHit.point);
@@ -2520,13 +2736,15 @@ export function Viewport({
               const w = uvToWorld(frame, uv[0], uv[1]);
               const px = projectToPx(new THREE.Vector3(w[0], w[1], w[2]));
               const d = Math.hypot(px.x - clientX, px.y - clientY);
-              if (d < bestD) { bestD = d; best = uv; }
+              if (d < bestD) {
+                bestD = d;
+                best = uv;
+              }
             }
             if (best) return { kind: "sketchPoint", sketchId: sid, point: best };
           }
           const eg = obj.geometry.userData.entityGroups as
-            | { start: number; count: number; entityId: string }[]
-            | undefined;
+            { start: number; count: number; entityId: string }[] | undefined;
           if (eg && sketchHit!.index != null) {
             const grp = eg.find((g) => sketchHit!.index! >= g.start && sketchHit!.index! < g.start + g.count);
             if (grp) return { kind: "sketchEntity", sketchId: sid, entityId: grp.entityId };
@@ -2582,7 +2800,10 @@ export function Viewport({
         const w = uvToWorld(frame, uv[0], uv[1]);
         const px = projectToPx(new THREE.Vector3(w[0], w[1], w[2]));
         const d = Math.hypot(px.x - clientX, px.y - clientY);
-        if (d < bestD) { bestD = d; best = uv; }
+        if (d < bestD) {
+          bestD = d;
+          best = uv;
+        }
       }
       if (best) return { origins: [best], grab, single: true };
 
@@ -2606,8 +2827,7 @@ export function Viewport({
         const hit = raycaster.intersectObject(seg, false)[0];
         if (hit && hit.index != null) {
           const eg = seg.geometry.userData.entityGroups as
-            | { start: number; count: number; entityId: string }[]
-            | undefined;
+            { start: number; count: number; entityId: string }[] | undefined;
           const g = eg?.find((x) => hit.index! >= x.start && hit.index! < x.start + x.count);
           const e = g && sketch.entities.find((x) => x.id === g.entityId);
           if (e) return { origins: entityDragPoints(e), grab, single: false };
@@ -2616,8 +2836,7 @@ export function Viewport({
 
       // 3. An enclosed region (polygon/face interior) → translate the whole loop.
       const regions = sketchGroup.children.filter(
-        (c): c is THREE.Mesh =>
-          c instanceof THREE.Mesh && c.userData.isRegion === true && c.userData.sketchId === sid,
+        (c): c is THREE.Mesh => c instanceof THREE.Mesh && c.userData.isRegion === true && c.userData.sketchId === sid,
       );
       const rHit = raycaster.intersectObjects(regions, false)[0];
       if (rHit) {
@@ -2631,7 +2850,10 @@ export function Viewport({
             if (!e) continue;
             for (const p of entityDragPoints(e)) {
               const k = `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
-              if (!seen.has(k)) { seen.add(k); origins.push(p); }
+              if (!seen.has(k)) {
+                seen.add(k);
+                origins.push(p);
+              }
             }
           }
           if (origins.length) return { origins, grab, single: false };
@@ -2668,7 +2890,12 @@ export function Viewport({
         pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
         pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
         raycaster.setFromCamera(pointer, camera);
-        const s = closestLineParamToRay(sectionDrag.axisOrigin, sectionDrag.axisDir, raycaster.ray.origin, raycaster.ray.direction);
+        const s = closestLineParamToRay(
+          sectionDrag.axisOrigin,
+          sectionDrag.axisDir,
+          raycaster.ray.origin,
+          raycaster.ray.direction,
+        );
         const next = s + sectionDrag.grabDelta;
         sectionDrag.offset = next;
         onSectionOffsetChangeRef.current(next);
@@ -2718,7 +2945,10 @@ export function Viewport({
           // Drop any body/face/plane hover so it doesn't stay stuck behind the
           // handle highlight when the pointer slides from a body onto the arrow.
           clearHover();
-          if (hoverSelRef.current) { hoverSelRef.current = null; applyHighlights(); }
+          if (hoverSelRef.current) {
+            hoverSelRef.current = null;
+            applyHighlights();
+          }
           setSectionHandleHot(true);
           renderer.domElement.style.cursor = "grab";
           return;
@@ -2727,9 +2957,7 @@ export function Viewport({
       setSectionHandleHot(false);
       // Selection (hover) is active when idle OR editing a sketch with the Select
       // tool. Drop a stale hover when neither applies.
-      const selecting =
-        !pickingRef.current &&
-        (activeFrameRef.current === null || isPickTool(sketchToolRef.current));
+      const selecting = !pickingRef.current && (activeFrameRef.current === null || isPickTool(sketchToolRef.current));
       if (!selecting && hoverSelRef.current) {
         hoverSelRef.current = null;
         applyHighlights();
@@ -2740,7 +2968,10 @@ export function Viewport({
         const prevHover = hoverSelRef.current;
         let nextHover: Selection | null = null;
         if (!p) {
-          if (prevHover) { hoverSelRef.current = null; applyHighlights(); }
+          if (prevHover) {
+            hoverSelRef.current = null;
+            applyHighlights();
+          }
           return;
         }
         renderer.domElement.style.cursor = "pointer";
@@ -2777,7 +3008,10 @@ export function Viewport({
         const poly = previewPolyline(sketchToolRef.current, draftRef.current, uv, polygonSidesRef.current);
         if (poly && poly.length >= 2) {
           const flat: number[] = [];
-          for (const p of poly) { const w = uvToWorld(frame, p[0], p[1]); flat.push(w[0], w[1], w[2]); }
+          for (const p of poly) {
+            const w = uvToWorld(frame, p[0], p[1]);
+            flat.push(w[0], w[1], w[2]);
+          }
           // Rebuild the geometry fresh rather than setPositions on the reused one:
           // a fat LineGeometry doesn't grow its instance count when the point count
           // increases (same gotcha as the highlight overlay), so a spline preview
@@ -2818,9 +3052,11 @@ export function Viewport({
           state.snapEdgeLine.visible = true;
         };
         if (circle) {
-          const seg2 = 64, ringPos: number[] = [];
+          const seg2 = 64,
+            ringPos: number[] = [];
           for (let i = 0; i < seg2; i++) {
-            const a0 = (2 * Math.PI * i) / seg2, a1 = (2 * Math.PI * (i + 1)) / seg2;
+            const a0 = (2 * Math.PI * i) / seg2,
+              a1 = (2 * Math.PI * (i + 1)) / seg2;
             const p = uvToWorld(frame, circle.c[0] + circle.r * Math.cos(a0), circle.c[1] + circle.r * Math.sin(a0));
             const q = uvToWorld(frame, circle.c[0] + circle.r * Math.cos(a1), circle.c[1] + circle.r * Math.sin(a1));
             ringPos.push(p[0], p[1], p[2], q[0], q[1], q[2]);
@@ -2853,12 +3089,19 @@ export function Viewport({
           const oc = camera as THREE.OrthographicCamera;
           const worldPerPx = oc.isOrthographicCamera
             ? (oc.top - oc.bottom) / oc.zoom / bufH
-            : (2 * (camera as THREE.PerspectiveCamera).position.distanceTo(new THREE.Vector3(...frame.origin)) *
-                Math.tan(((camera as THREE.PerspectiveCamera).fov * Math.PI) / 360)) / bufH;
+            : (2 *
+                (camera as THREE.PerspectiveCamera).position.distanceTo(new THREE.Vector3(...frame.origin)) *
+                Math.tan(((camera as THREE.PerspectiveCamera).fov * Math.PI) / 360)) /
+              bufH;
           const hw = worldPerPx * 14; // half-width in world units (~14 buffer px)
           const spos: number[] = [];
           for (const o of anchors) {
-            const c: Vec2[] = [[o[0] - hw, o[1] - hw], [o[0] + hw, o[1] - hw], [o[0] + hw, o[1] + hw], [o[0] - hw, o[1] + hw]];
+            const c: Vec2[] = [
+              [o[0] - hw, o[1] - hw],
+              [o[0] + hw, o[1] - hw],
+              [o[0] + hw, o[1] + hw],
+              [o[0] - hw, o[1] + hw],
+            ];
             for (let i = 0; i < 4; i++) {
               const p = uvToWorld(frame, c[i][0], c[i][1]);
               const q = uvToWorld(frame, c[(i + 1) % 4][0], c[(i + 1) % 4][1]);
@@ -2996,23 +3239,40 @@ export function Viewport({
         if (axisPickRef.current) {
           const sel = pickSelection(e.clientX, e.clientY);
           clearHover();
-          if (hoverSelRef.current) { hoverSelRef.current = null; applyHighlightsRef.current(); }
-          if (sel?.kind === "sketchEntity") { onAxisPickRef.current({ kind: "line", sketchId: sel.sketchId, entityId: sel.entityId }); return; }
-          if (sel?.kind === "face") { onAxisPickRef.current({ kind: "bodyFace", featureId: sel.featureId, faceId: sel.faceId }); return; }
+          if (hoverSelRef.current) {
+            hoverSelRef.current = null;
+            applyHighlightsRef.current();
+          }
+          if (sel?.kind === "sketchEntity") {
+            onAxisPickRef.current({ kind: "line", sketchId: sel.sketchId, entityId: sel.entityId });
+            return;
+          }
+          if (sel?.kind === "face") {
+            onAxisPickRef.current({ kind: "bodyFace", featureId: sel.featureId, faceId: sel.faceId });
+            return;
+          }
           const pp = pick(e.clientX, e.clientY);
           if (!pp) return;
-          if (pp.kind === "datum") { if (pp.id !== "origin") onAxisPickRef.current({ kind: "plane", ref: { kind: "datum", id: pp.id } }); }
-          else if (pp.kind === "userplane") onAxisPickRef.current({ kind: "plane", ref: { kind: "plane", planeId: pp.planeId } });
+          if (pp.kind === "datum") {
+            if (pp.id !== "origin") onAxisPickRef.current({ kind: "plane", ref: { kind: "datum", id: pp.id } });
+          } else if (pp.kind === "userplane")
+            onAxisPickRef.current({ kind: "plane", ref: { kind: "plane", planeId: pp.planeId } });
           else {
             const featureId = (pp.mesh.userData.featureId as string) ?? "";
-            const frame = deriveFaceFrame([pp.point.x, pp.point.y, pp.point.z], [pp.normal.x, pp.normal.y, pp.normal.z]);
+            const frame = deriveFaceFrame(
+              [pp.point.x, pp.point.y, pp.point.z],
+              [pp.normal.x, pp.normal.y, pp.normal.z],
+            );
             onAxisPickRef.current({ kind: "plane", ref: { kind: "face", featureId, frame } });
           }
           return;
         }
         const p = pick(e.clientX, e.clientY);
         clearHover();
-        if (hoverSelRef.current) { hoverSelRef.current = null; applyHighlightsRef.current(); }
+        if (hoverSelRef.current) {
+          hoverSelRef.current = null;
+          applyHighlightsRef.current();
+        }
         if (!p) return;
         if (p.kind === "datum") {
           if (p.id !== "origin") onPickRef.current({ kind: "datum", id: p.id });
@@ -3171,7 +3431,8 @@ export function Viewport({
     // reach along that axis to cover the cross-section. |axis·size|/2 is the AABB's
     // projected half-width; exact because partBox is axis-aligned.
     const reachAlongAxis = (axis: THREE.Vector3): number => {
-      const half = 0.5 * (Math.abs(axis.x) * sectionBoxS.x + Math.abs(axis.y) * sectionBoxS.y + Math.abs(axis.z) * sectionBoxS.z);
+      const half =
+        0.5 * (Math.abs(axis.x) * sectionBoxS.x + Math.abs(axis.y) * sectionBoxS.y + Math.abs(axis.z) * sectionBoxS.z);
       const off = Math.abs(sectionBoxC.x * axis.x + sectionBoxC.y * axis.y + sectionBoxC.z * axis.z);
       return off + half;
     };
@@ -3454,9 +3715,11 @@ export function Viewport({
       // depth buffer out of the picture, draw order is all that separates them
       // (fill below cut, both above the model).
       const [faceMat, lineMat, order] =
-        ghost.variant === "cut" ? [state.ghostCutMaterial, state.ghostCutLineMaterial, 3]
-        : ghost.variant === "fill" ? [state.ghostFillMaterial, state.ghostFillLineMaterial, 2]
-        : [state.ghostMaterial, state.ghostLineMaterial, 0];
+        ghost.variant === "cut"
+          ? [state.ghostCutMaterial, state.ghostCutLineMaterial, 3]
+          : ghost.variant === "fill"
+            ? [state.ghostFillMaterial, state.ghostFillLineMaterial, 2]
+            : [state.ghostMaterial, state.ghostLineMaterial, 0];
       const faceMesh = new THREE.Mesh(geometry.faces, faceMat);
       const edges = new THREE.LineSegments(geometry.lines, lineMat);
       faceMesh.renderOrder = order;
@@ -3526,7 +3789,13 @@ export function Viewport({
       const pos = new THREE.Vector3(...rp.frame.origin);
       const mesh = new THREE.Mesh(
         geo,
-        new THREE.MeshBasicMaterial({ color: rp.color, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false }),
+        new THREE.MeshBasicMaterial({
+          color: rp.color,
+          transparent: true,
+          opacity: 0.1,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
       );
       mesh.quaternion.copy(quat);
       mesh.position.copy(pos);
@@ -3580,8 +3849,12 @@ export function Viewport({
   const [fontTick, setFontTick] = useState(0);
   useEffect(() => {
     let live = true;
-    void loadSketchFont().then(() => { if (live) setFontTick((t) => t + 1); });
-    return () => { live = false; };
+    void loadSketchFont().then(() => {
+      if (live) setFontTick((t) => t + 1);
+    });
+    return () => {
+      live = false;
+    };
   }, []);
 
   // Render every sketch (so finished sketches stay visible); set the active
@@ -3592,12 +3865,25 @@ export function Viewport({
     disposeSketchGroup(state.sketchGroup);
     for (const s of sketches) {
       const pts: number[] = [];
-      const entityGroups: { start: number; count: number; entityId: string; construction: boolean; derived: boolean }[] = [];
+      const entityGroups: {
+        start: number;
+        count: number;
+        entityId: string;
+        construction: boolean;
+        derived: boolean;
+      }[] = [];
       for (const e of s.entities) {
         const startVert = pts.length / 3;
         entitySegments(e, s.frame, pts);
         const count = pts.length / 3 - startVert;
-        if (count > 0) entityGroups.push({ start: startVert, count, entityId: e.id, construction: !!e.construction, derived: !!e.derivedFrom });
+        if (count > 0)
+          entityGroups.push({
+            start: startVert,
+            count,
+            entityId: e.id,
+            construction: !!e.construction,
+            derived: !!e.derivedFrom,
+          });
       }
       if (pts.length === 0) continue;
       const geom = new THREE.BufferGeometry();
@@ -3618,7 +3904,11 @@ export function Viewport({
       // below (same width + colour as solid sketch lines), so this thin twin only
       // exists for the group structure / picking.
       const constructionMat = new THREE.LineDashedMaterial({
-        color: 0xe0a64f, dashSize: 1.4, gapSize: 0.9, transparent: true, opacity: 0,
+        color: 0xe0a64f,
+        dashSize: 1.4,
+        gapSize: 0.9,
+        transparent: true,
+        opacity: 0,
       });
       // Associative/derived geometry (offset/mirror/projected) — a distinct
       // purple so it reads as driven, not free, geometry.
@@ -3652,18 +3942,20 @@ export function Viewport({
         if (fpts.length < 6) return;
         const fatGeom = new LineSegmentsGeometry();
         fatGeom.setPositions(fpts);
-        const fatMat = buttCaps(new LineMaterial({
-          color: sketchColor,
-          linewidth: SKETCH_LINE_WIDTH,
-          worldUnits: false,
-          ...(dashed && { dashed: true, dashSize: 1.4, gapSize: 0.9 }),
-          // Nudge toward the camera so the fat line wins over the (coincident)
-          // thin line without turning depth testing off — sketches behind a solid
-          // body still read as occluded.
-          polygonOffset: true,
-          polygonOffsetFactor: -2,
-          polygonOffsetUnits: -2,
-        }));
+        const fatMat = buttCaps(
+          new LineMaterial({
+            color: sketchColor,
+            linewidth: SKETCH_LINE_WIDTH,
+            worldUnits: false,
+            ...(dashed && { dashed: true, dashSize: 1.4, gapSize: 0.9 }),
+            // Nudge toward the camera so the fat line wins over the (coincident)
+            // thin line without turning depth testing off — sketches behind a solid
+            // body still read as occluded.
+            polygonOffset: true,
+            polygonOffsetFactor: -2,
+            polygonOffsetUnits: -2,
+          }),
+        );
         fatMat.resolution.set(size.x, size.y);
         const fat = new LineSegments2(fatGeom, fatMat);
         if (dashed) fat.computeLineDistances();
@@ -3687,7 +3979,9 @@ export function Viewport({
           const dotPos = new Float32Array(verts.length * 3);
           verts.forEach((uv, i) => {
             const w = uvToWorld(s.frame, uv[0], uv[1]);
-            dotPos[i * 3] = w[0]; dotPos[i * 3 + 1] = w[1]; dotPos[i * 3 + 2] = w[2];
+            dotPos[i * 3] = w[0];
+            dotPos[i * 3 + 1] = w[1];
+            dotPos[i * 3 + 2] = w[2];
           });
           const dotGeom = new THREE.BufferGeometry();
           dotGeom.setAttribute("position", new THREE.BufferAttribute(dotPos, 3));
@@ -3724,7 +4018,13 @@ export function Viewport({
         geom2d.dispose();
         const fill = new THREE.Mesh(
           fillGeom,
-          new THREE.MeshBasicMaterial({ color: 0x36d6c3, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }),
+          new THREE.MeshBasicMaterial({
+            color: 0x36d6c3,
+            transparent: true,
+            opacity: 0,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
         );
         fill.userData.sketchId = s.id;
         fill.userData.regionId = region.id;
@@ -3778,7 +4078,13 @@ export function Viewport({
       const d = w.clone().sub(O);
       return [d.dot(U), d.dot(V)];
     };
-    const points: { uv: Vec2; midpointOf?: string; vertex?: boolean; circle?: { c: Vec2; r: number }; external?: boolean }[] = [{ uv: [0, 0], vertex: true }];
+    const points: {
+      uv: Vec2;
+      midpointOf?: string;
+      vertex?: boolean;
+      circle?: { c: Vec2; r: number };
+      external?: boolean;
+    }[] = [{ uv: [0, 0], vertex: true }];
     const lines: { a: Vec2; b: Vec2; id?: string; construction?: boolean; external?: boolean }[] = [];
     /** Rings from the sketch's own circles (see the on-circle snap below). */
     const sketchRings: { c: Vec2; r: number; id?: string }[] = [];
@@ -3892,7 +4198,8 @@ export function Viewport({
       const fn: Vec3 = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
       const fnl = Math.hypot(fn[0], fn[1], fn[2]);
       if (fnl < 1e-9) continue;
-      const sin = Math.hypot(fn[1] * N[2] - fn[2] * N[1], fn[2] * N[0] - fn[0] * N[2], fn[0] * N[1] - fn[1] * N[0]) / fnl;
+      const sin =
+        Math.hypot(fn[1] * N[2] - fn[2] * N[1], fn[2] * N[0] - fn[0] * N[2], fn[0] * N[1] - fn[1] * N[0]) / fnl;
       if (sin > 1e-2) continue;
       faceIds.add(g.faceId);
     }
@@ -3901,7 +4208,6 @@ export function Viewport({
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
-
 
 /** Append world-space segment endpoints for an entity to a flat buffer. */
 function entitySegments(e: SketchEntity, frame: PlaneFrameData, out: number[]) {
@@ -3995,12 +4301,18 @@ function sketchPointCandidates(sketch: RenderSketch): Vec2[] {
  *  means a vertex shared with another entity (a chained corner) moves on both. */
 function entityDragPoints(e: SketchEntity): Vec2[] {
   switch (e.type) {
-    case "line": return [e.a, e.b];
-    case "circle": return [e.c];
-    case "arc": return [e.c];
-    case "spline": return e.points;
-    case "point": return [e.p];
-    case "text": return [e.p];
+    case "line":
+      return [e.a, e.b];
+    case "circle":
+      return [e.c];
+    case "arc":
+      return [e.c];
+    case "spline":
+      return e.points;
+    case "point":
+      return [e.p];
+    case "text":
+      return [e.p];
   }
 }
 
@@ -4049,11 +4361,17 @@ function fitCircle(pts: THREE.Vector3[]): { center: THREE.Vector3; radius: numbe
   for (const p of pts) center.add(p);
   center.divideScalar(pts.length);
   let sum = 0;
-  const radii = pts.map((p) => { const r = p.distanceTo(center); sum += r; return r; });
+  const radii = pts.map((p) => {
+    const r = p.distanceTo(center);
+    sum += r;
+    return r;
+  });
   const radius = sum / radii.length;
   if (radius < 1e-3) return null;
   for (const r of radii) if (Math.abs(r - radius) > 0.02 * radius) return null;
-  const p0 = pts[0], p1 = pts[Math.floor(pts.length / 3)], p2 = pts[Math.floor((2 * pts.length) / 3)];
+  const p0 = pts[0],
+    p1 = pts[Math.floor(pts.length / 3)],
+    p2 = pts[Math.floor((2 * pts.length) / 3)];
   const normal = new THREE.Vector3().crossVectors(p1.clone().sub(p0), p2.clone().sub(p0));
   if (normal.lengthSq() < 1e-9) return null;
   return { center, radius, normal: normal.normalize() };
@@ -4067,7 +4385,8 @@ function collectBodyCircles(group: THREE.Group): { center: THREE.Vector3; radius
   const out: { center: THREE.Vector3; radius: number; normal: THREE.Vector3 }[] = [];
   for (const child of group.children) {
     if (!(child instanceof THREE.LineSegments)) continue;
-    const eg = child.geometry.userData.edgeGroups as { start: number; count: number; edgeId: number; chainId?: number }[] | undefined;
+    const eg = child.geometry.userData.edgeGroups as
+      { start: number; count: number; edgeId: number; chainId?: number }[] | undefined;
     const pos = child.geometry.getAttribute("position");
     if (!eg || !pos) continue;
     // Group segments by chain (an un-chained edge is its own candidate).
@@ -4075,11 +4394,13 @@ function collectBodyCircles(group: THREE.Group): { center: THREE.Vector3; radius
     for (const g of eg) {
       const k = g.chainId ?? `e${g.edgeId}`;
       const arr = byChain.get(k);
-      if (arr) arr.push(g); else byChain.set(k, [g]);
+      if (arr) arr.push(g);
+      else byChain.set(k, [g]);
     }
     for (const groups of byChain.values()) {
       const pts: THREE.Vector3[] = [];
-      for (const g of groups) for (let v = g.start; v < g.start + g.count; v++) pts.push(new THREE.Vector3().fromBufferAttribute(pos, v));
+      for (const g of groups)
+        for (let v = g.start; v < g.start + g.count; v++) pts.push(new THREE.Vector3().fromBufferAttribute(pos, v));
       const circ = fitCircle(pts);
       if (circ) out.push(circ);
     }
@@ -4138,8 +4459,30 @@ const GRID_CENTRE_VERTS = 8;
 function createGroundGrid(major: number, minor: number): THREE.LineSegments {
   // The two centre lines, minus the gap the axes fill on +X and +Y.
   const positions: number[] = [
-    -GRID_HALF, 0, 0, 0, 0, 0, AXES_LENGTH, 0, 0, GRID_HALF, 0, 0,
-    0, -GRID_HALF, 0, 0, 0, 0, 0, AXES_LENGTH, 0, 0, GRID_HALF, 0,
+    -GRID_HALF,
+    0,
+    0,
+    0,
+    0,
+    0,
+    AXES_LENGTH,
+    0,
+    0,
+    GRID_HALF,
+    0,
+    0,
+    0,
+    -GRID_HALF,
+    0,
+    0,
+    0,
+    0,
+    0,
+    AXES_LENGTH,
+    0,
+    0,
+    GRID_HALF,
+    0,
   ];
   for (let k = -GRID_HALF; k <= GRID_HALF; k += GRID_STEP) {
     if (k === 0) continue; // owned by the centre lines above
@@ -4149,10 +4492,7 @@ function createGroundGrid(major: number, minor: number): THREE.LineSegments {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(positions.length, 3));
-  const grid = new THREE.LineSegments(
-    geometry,
-    new THREE.LineBasicMaterial({ vertexColors: true, toneMapped: false }),
-  );
+  const grid = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ vertexColors: true, toneMapped: false }));
   paintGroundGrid(grid, major, minor);
   return grid;
 }
@@ -4210,7 +4550,10 @@ function createDatums(scene: THREE.Scene): DatumEntry[] {
   const entries: DatumEntry[] = [];
 
   const originMat = new THREE.MeshBasicMaterial({
-    color: 0xffd24a, depthTest: false, transparent: true, opacity: 0.5,
+    color: 0xffd24a,
+    depthTest: false,
+    transparent: true,
+    opacity: 0.5,
   });
   const origin = new THREE.Mesh(new THREE.SphereGeometry(1.0, 20, 20), originMat);
   origin.renderOrder = 10;
@@ -4230,7 +4573,11 @@ function createDatums(scene: THREE.Scene): DatumEntry[] {
   for (const { id, rot } of planes) {
     const tint = PLANE_TINTS[id];
     const mat = new THREE.MeshBasicMaterial({
-      color: tint, transparent: true, opacity: 0.06, side: THREE.DoubleSide, depthWrite: false,
+      color: tint,
+      transparent: true,
+      opacity: 0.06,
+      side: THREE.DoubleSide,
+      depthWrite: false,
     });
     const mesh = new THREE.Mesh(planeGeo, mat);
     mesh.rotation.set(...rot);
@@ -4257,7 +4604,6 @@ function applyDatumAppearance(state: SceneState, hovered: DatumId | null): void 
     }
   }
 }
-
 
 function disposeGroup(group: THREE.Group): void {
   for (const child of group.children) {

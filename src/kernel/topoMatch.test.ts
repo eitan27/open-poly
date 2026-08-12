@@ -72,29 +72,17 @@ describe("matchEdges", () => {
   });
 
   it("matches geometrically when the name is gone entirely", () => {
-    const [m] = matchEdges(
-      [{ name: "a/+z∩a/side9", mid: [0, 5, 10.5], length: 10 }],
-      cands,
-      scale,
-    );
+    const [m] = matchEdges([{ name: "a/+z∩a/side9", mid: [0, 5, 10.5], length: 10 }], cands, scale);
     expect(m).toEqual({ kind: "geom", index: 3 });
   });
 
   it("reports lost when nothing is plausibly the same edge", () => {
-    const [m] = matchEdges(
-      [{ name: "a/+z∩a/side9", mid: [300, 300, 300], length: 10 }],
-      cands,
-      scale,
-    );
+    const [m] = matchEdges([{ name: "a/+z∩a/side9", mid: [300, 300, 300], length: 10 }], cands, scale);
     expect(m).toEqual({ kind: "lost" });
   });
 
   it("rejects a geometric match whose length changed too much", () => {
-    const [m] = matchEdges(
-      [{ name: "gone", mid: [0, 5, 10], length: 100 }],
-      cands,
-      scale,
-    );
+    const [m] = matchEdges([{ name: "gone", mid: [0, 5, 10], length: 100 }], cands, scale);
     expect(m).toEqual({ kind: "lost" });
   });
 
@@ -137,20 +125,12 @@ describe("matchFaces", () => {
   });
 
   it("matches geometrically when the name is gone entirely", () => {
-    const [m] = matchFaces(
-      [{ name: "a/-x", center: [0.2, 5.1, 5], normal: [-1, 0, 0] }],
-      cands,
-      scale,
-    );
+    const [m] = matchFaces([{ name: "a/-x", center: [0.2, 5.1, 5], normal: [-1, 0, 0] }], cands, scale);
     expect(m).toEqual({ kind: "geom", index: 3 });
   });
 
   it("reports lost when nothing is plausibly the same face", () => {
-    const [m] = matchFaces(
-      [{ name: "a/-x", center: [500, 500, 500], normal: [-1, 0, 0] }],
-      cands,
-      scale,
-    );
+    const [m] = matchFaces([{ name: "a/-x", center: [500, 500, 500], normal: [-1, 0, 0] }], cands, scale);
     expect(m).toEqual({ kind: "lost" });
   });
 

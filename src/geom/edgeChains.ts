@@ -38,7 +38,8 @@ export function expandToChains(hits: Iterable<number>, chainOf: ReadonlyMap<numb
       members = new Map();
       for (const [edge, rep] of chainOf) {
         const arr = members.get(rep);
-        if (arr) arr.push(edge); else members.set(rep, [edge]);
+        if (arr) arr.push(edge);
+        else members.set(rep, [edge]);
       }
     }
     for (const edge of members.get(chain) ?? []) wanted.add(edge);
@@ -79,13 +80,15 @@ export interface ChainedEdgeGroup {
  * Returns edge ids with the picked ones first, so a caller that anchors UI on
  * "the edge you clicked" still can.
  */
-export function expandPickToChains(
-  groups: readonly ChainedEdgeGroup[],
-  picked: readonly number[],
-): number[] {
+export function expandPickToChains(groups: readonly ChainedEdgeGroup[], picked: readonly number[]): number[] {
   const out: number[] = [];
   const seen = new Set<number>();
-  const add = (id: number) => { if (!seen.has(id)) { seen.add(id); out.push(id); } };
+  const add = (id: number) => {
+    if (!seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  };
   for (const id of picked) add(id);
   for (const id of picked) {
     const chain = groups.find((g) => g.edgeId === id)?.chainId;

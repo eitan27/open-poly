@@ -7,18 +7,16 @@
 // must not be polluted.
 import { WebSocketServer, WebSocket } from "ws";
 import { randomUUID } from "node:crypto";
-import {
-  BRIDGE_PORT,
-  type HelloMsg,
-  type RequestMsg,
-  type ResultMsg,
-} from "../../src/agent/protocol.ts";
+import { BRIDGE_PORT, type HelloMsg, type RequestMsg, type ResultMsg } from "../../src/agent/protocol.ts";
 
 const log = (...args: unknown[]) => console.error("[hub]", ...args);
 
 /** A clear, taxonomy-tagged error the MCP tools turn into a readable message. */
 export class HubError extends Error {
-  constructor(public kind: "no_session" | "timeout", message: string) {
+  constructor(
+    public kind: "no_session" | "timeout",
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -65,7 +63,9 @@ export class WsHub {
         log("tab disconnected");
       }
     });
-    ws.on("error", () => {/* close handler does cleanup */});
+    ws.on("error", () => {
+      /* close handler does cleanup */
+    });
   }
 
   hasTab(): boolean {
@@ -77,7 +77,12 @@ export class WsHub {
   request(kind: "apply" | "read", payload: unknown, timeoutMs = 20000): Promise<ResultMsg> {
     return new Promise((resolve, reject) => {
       if (!this.hasTab()) {
-        reject(new HubError("no_session", "No Open Poly tab is connected. Open the app in your browser (and keep the tab focused) so the agent can drive it."));
+        reject(
+          new HubError(
+            "no_session",
+            "No Open Poly tab is connected. Open the app in your browser (and keep the tab focused) so the agent can drive it.",
+          ),
+        );
         return;
       }
       const id = randomUUID();

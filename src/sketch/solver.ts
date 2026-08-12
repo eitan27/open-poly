@@ -187,10 +187,7 @@ export async function solveSketch(
       // Resolve each side to the planegcs object it needs and pick the matching
       // primitive. `null` = a side didn't resolve (missing/derived entity), so the
       // whole constraint is skipped (it contributes no DOF rather than throwing).
-      type Side =
-        | { k: "point"; id: string }
-        | { k: "line"; id: string }
-        | { k: "rim"; id: string };
+      type Side = { k: "point"; id: string } | { k: "line"; id: string } | { k: "rim"; id: string };
       const side = (ref: typeof c.a): Side | null => {
         if (ref.on === "point") {
           const p = refCoord(ref.ref);
@@ -225,15 +222,19 @@ export async function solveSketch(
           // `v` away, on the side it already sits (parallel at creation time).
           const eA = c.a.on === "line" ? c.a.entity : "";
           const eB = c.b.on === "line" ? c.b.entity : "";
-          const has = (t: "horizontal" | "vertical", e: string) => constraints.some((o) => o.type === t && o.entity === e);
+          const has = (t: "horizontal" | "vertical", e: string) =>
+            constraints.some((o) => o.type === t && o.entity === e);
           const forcedParallel =
-            constraints.some((o) => o.type === "parallel" && ((o.a === eA && o.b === eB) || (o.a === eB && o.b === eA))) ||
+            constraints.some(
+              (o) => o.type === "parallel" && ((o.a === eA && o.b === eB) || (o.a === eB && o.b === eA)),
+            ) ||
             (has("horizontal", eA) && has("horizontal", eB)) ||
             (has("vertical", eA) && has("vertical", eB));
           const ln = entities.find((e) => e.id === eA);
           if (ln?.type === "line") {
             prims.push({ id, type: "p2l_distance", p_id: ensurePoint(ln.a), l_id: y.id, distance: v });
-            if (!forcedParallel) prims.push({ id: `${id}~b`, type: "p2l_distance", p_id: ensurePoint(ln.b), l_id: y.id, distance: v });
+            if (!forcedParallel)
+              prims.push({ id: `${id}~b`, type: "p2l_distance", p_id: ensurePoint(ln.b), l_id: y.id, distance: v });
           }
         } else if (x.k === "line" && y.k === "rim") {
           prims.push({ id, type: "c2ldistance", c_id: y.id, l_id: x.id, dist: v });
@@ -341,9 +342,19 @@ export async function solveSketch(
       // unlike the positional snap this replaces, which just placed the point.
       const p = refCoord(c.point);
       if (p && circleIdByEntity.has(c.circle)) {
-        prims.push({ id, type: "point_on_circle", p_id: ensurePoint(p, "fixed" in c.point), c_id: circleIdByEntity.get(c.circle) });
+        prims.push({
+          id,
+          type: "point_on_circle",
+          p_id: ensurePoint(p, "fixed" in c.point),
+          c_id: circleIdByEntity.get(c.circle),
+        });
       } else if (p && arcIdByEntity.has(c.circle)) {
-        prims.push({ id, type: "point_on_arc", p_id: ensurePoint(p, "fixed" in c.point), a_id: arcIdByEntity.get(c.circle) });
+        prims.push({
+          id,
+          type: "point_on_arc",
+          p_id: ensurePoint(p, "fixed" in c.point),
+          a_id: arcIdByEntity.get(c.circle),
+        });
       }
     } else if (c.type === "midpoint") {
       const p = refCoord(c.point);

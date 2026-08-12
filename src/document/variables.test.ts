@@ -10,12 +10,7 @@ describe("validateVariableNames", () => {
   });
 
   it("rejects numbers, spaces, and special characters", () => {
-    const errs = validateVariableNames([
-      v("1", "var1"),
-      v("2", "my var"),
-      v("3", "a-b"),
-      v("4", ""),
-    ]);
+    const errs = validateVariableNames([v("1", "var1"), v("2", "my var"), v("3", "a-b"), v("4", "")]);
     expect(errs["1"]).toMatch(/number/i);
     expect(errs["2"]).toMatch(/space/i);
     expect(errs["3"]).toMatch(/special/i);

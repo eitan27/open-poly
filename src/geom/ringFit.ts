@@ -17,11 +17,7 @@ export type V3 = [number, number, number];
 
 const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const cross = (a: V3, b: V3): V3 => [
-  a[1] * b[2] - a[2] * b[1],
-  a[2] * b[0] - a[0] * b[2],
-  a[0] * b[1] - a[1] * b[0],
-];
+const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const norm = (a: V3) => Math.hypot(a[0], a[1], a[2]);
 const unit = (a: V3): V3 => {
   const n = norm(a);
@@ -61,8 +57,11 @@ export interface Ring {
  */
 export function fitRing(
   edges: [V3, V3][],
-  { roundTol = 2e-2, planeTol = 1e-3, minSegments = 12 }:
-    { roundTol?: number; planeTol?: number; minSegments?: number } = {},
+  {
+    roundTol = 2e-2,
+    planeTol = 1e-3,
+    minSegments = 12,
+  }: { roundTol?: number; planeTol?: number; minSegments?: number } = {},
 ): Ring | null {
   if (edges.length < minSegments) return null;
 
@@ -83,8 +82,14 @@ export function fitRing(
   if (!verts.every((v) => v.n === 2)) return null;
 
   const c: V3 = [0, 0, 0];
-  for (const v of verts) { c[0] += v.p[0]; c[1] += v.p[1]; c[2] += v.p[2]; }
-  c[0] /= verts.length; c[1] /= verts.length; c[2] /= verts.length;
+  for (const v of verts) {
+    c[0] += v.p[0];
+    c[1] += v.p[1];
+    c[2] += v.p[2];
+  }
+  c[0] /= verts.length;
+  c[1] /= verts.length;
+  c[2] /= verts.length;
 
   const spokes = verts.map((v) => sub(v.p, c));
   const radii = spokes.map(norm);
@@ -102,7 +107,10 @@ export function fitRing(
   for (let i = 1; i < spokes.length; i++) {
     const x = cross(spokes[0], spokes[i]);
     const m = norm(x);
-    if (m > best) { best = m; axis = x; }
+    if (m > best) {
+      best = m;
+      axis = x;
+    }
   }
   axis = unit(axis);
   if (norm(axis) < 0.5) return null;

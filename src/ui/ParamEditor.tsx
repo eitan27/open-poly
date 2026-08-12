@@ -33,11 +33,7 @@ export function ParamEditor({
 
   return (
     <div className="params">
-      <input
-        className="param-name-input"
-        value={feature.name}
-        onChange={(e) => onRename(feature.id, e.target.value)}
-      />
+      <input className="param-name-input" value={feature.name} onChange={(e) => onRename(feature.id, e.target.value)} />
       {feature.type === "extrude" ? (
         <div className="sketch-params">
           <label className="param-field">
@@ -66,7 +62,9 @@ export function ParamEditor({
               {/* The up-to-face target face is chosen in the extrude dialog at
                   creation; shown here read-only so a committed feature displays
                   correctly. */}
-              <option value="upToFace" disabled>Up to face</option>
+              <option value="upToFace" disabled>
+                Up to face
+              </option>
             </select>
           </label>
           <label className="param-field">

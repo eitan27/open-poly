@@ -180,7 +180,13 @@ describe("solveSketch distanceBetween", () => {
     if (!m) throw new Error("degenerate pair");
     return m.value;
   };
-  const dim = (a: DistanceRef, b: DistanceRef, value: number): SketchConstraint => ({ id: "d", type: "distanceBetween", a, b, value });
+  const dim = (a: DistanceRef, b: DistanceRef, value: number): SketchConstraint => ({
+    id: "d",
+    type: "distanceBetween",
+    a,
+    b,
+    value,
+  });
 
   it("point–point (two circle centres) drives the straight distance", async () => {
     const c1: SketchEntity = { type: "circle", id: "A", c: [0, 0], r: 3 };
@@ -217,7 +223,10 @@ describe("solveSketch distanceBetween", () => {
     const circle: SketchEntity = { type: "circle", id: "C", c: [0, 8], r: 2 };
     const a: DistanceRef = { on: "line", entity: "L" };
     const b: DistanceRef = { on: "rim", entity: "C" };
-    const res = await solveSketch([l, circle], [{ id: "h", type: "horizontal", entity: "L" }, { id: "r", type: "radius", entity: "C", value: 2 }, dim(a, b, 5)]);
+    const res = await solveSketch(
+      [l, circle],
+      [{ id: "h", type: "horizontal", entity: "L" }, { id: "r", type: "radius", entity: "C", value: 2 }, dim(a, b, 5)],
+    );
     expect(res.hasConflicts).toBe(false);
     expect(measure(res.entities, a, b)).toBeCloseTo(5, 3);
   });
@@ -227,7 +236,14 @@ describe("solveSketch distanceBetween", () => {
     const c2: SketchEntity = { type: "circle", id: "B", c: [10, 0], r: 2 };
     const a: DistanceRef = { on: "rim", entity: "A" };
     const b: DistanceRef = { on: "rim", entity: "B" };
-    const res = await solveSketch([c1, c2], [{ id: "ra", type: "radius", entity: "A", value: 3 }, { id: "rb", type: "radius", entity: "B", value: 2 }, dim(a, b, 15)]);
+    const res = await solveSketch(
+      [c1, c2],
+      [
+        { id: "ra", type: "radius", entity: "A", value: 3 },
+        { id: "rb", type: "radius", entity: "B", value: 2 },
+        dim(a, b, 15),
+      ],
+    );
     expect(res.hasConflicts).toBe(false);
     expect(measure(res.entities, a, b)).toBeCloseTo(15, 3);
   });
@@ -237,11 +253,10 @@ describe("solveSketch distanceBetween", () => {
     const l2: SketchEntity = { type: "line", id: "B", a: [0, 4], b: [10, 4] };
     const a: DistanceRef = { on: "line", entity: "A" };
     const b: DistanceRef = { on: "line", entity: "B" };
-    const res = await solveSketch([l1, l2], [
-      { id: "h1", type: "horizontal", entity: "A" },
-      { id: "h2", type: "horizontal", entity: "B" },
-      dim(a, b, 12),
-    ]);
+    const res = await solveSketch(
+      [l1, l2],
+      [{ id: "h1", type: "horizontal", entity: "A" }, { id: "h2", type: "horizontal", entity: "B" }, dim(a, b, 12)],
+    );
     expect(res.hasConflicts).toBe(false);
     expect(res.redundantIds).not.toContain("d"); // adaptive encoding avoids the self-redundancy
     expect(measure(res.entities, a, b)).toBeCloseTo(12, 3);
@@ -280,11 +295,14 @@ describe("solveSketch midpoint", () => {
     // the edge's midpoint. Growing the edge keeps the endpoint on the new midpoint.
     const edge: SketchEntity = { type: "line", id: "E", a: [0, 0], b: [40, 0] };
     const drawn: SketchEntity = { type: "line", id: "D", a: [20, 20], b: [20, 0] };
-    const res = await solveSketch([edge, drawn], [
-      { id: "h", type: "horizontal", entity: "E" },
-      { id: "m", type: "midpoint", point: { entity: "D", at: "b" }, target: "E" },
-      { id: "d", type: "distance", entity: "E", value: 60 }, // grows the edge (origin-fixed a)
-    ]);
+    const res = await solveSketch(
+      [edge, drawn],
+      [
+        { id: "h", type: "horizontal", entity: "E" },
+        { id: "m", type: "midpoint", point: { entity: "D", at: "b" }, target: "E" },
+        { id: "d", type: "distance", entity: "E", value: 60 }, // grows the edge (origin-fixed a)
+      ],
+    );
     expect(res.hasConflicts).toBe(false);
     const e = res.entities.find((x) => x.id === "E");
     const d = res.entities.find((x) => x.id === "D");
@@ -300,9 +318,10 @@ describe("solveSketch midpoint", () => {
     // is on the arc and equidistant from its two ends (⇒ the angular midpoint).
     const arc: SketchEntity = { type: "arc", id: "A", c: [0, 0], r: 10, start: 0, end: Math.PI / 2 };
     const drawn: SketchEntity = { type: "line", id: "D", a: [0, 20], b: [5, 5] };
-    const res = await solveSketch([arc, drawn], [
-      { id: "m", type: "midpoint", point: { entity: "D", at: "b" }, target: "A" },
-    ]);
+    const res = await solveSketch(
+      [arc, drawn],
+      [{ id: "m", type: "midpoint", point: { entity: "D", at: "b" }, target: "A" }],
+    );
     expect(res.hasConflicts).toBe(false);
     const a = res.entities.find((x) => x.id === "A");
     const d = res.entities.find((x) => x.id === "D");
@@ -331,10 +350,13 @@ describe("solveSketch arcs (solver-aware)", () => {
     // and the arc reshapes to keep its endpoint attached.
     const line: SketchEntity = { type: "line", id: "L", a: [0, 0], b: [10, 0] };
     const arc: SketchEntity = { type: "arc", id: "A", c: [10, 5], r: 5, start: -Math.PI / 2, end: 0 };
-    const res = await solveSketch([line, arc], [
-      { id: "h", type: "horizontal", entity: "L" },
-      { id: "d", type: "distance", entity: "L", value: 20 },
-    ]);
+    const res = await solveSketch(
+      [line, arc],
+      [
+        { id: "h", type: "horizontal", entity: "L" },
+        { id: "d", type: "distance", entity: "L", value: 20 },
+      ],
+    );
     expect(res.hasConflicts).toBe(false);
     const l = res.entities.find((x) => x.id === "L");
     const a = res.entities.find((x) => x.id === "A");
@@ -349,11 +371,14 @@ describe("solveSketch arcs (solver-aware)", () => {
   it("makes a line tangent to an arc", async () => {
     const line: SketchEntity = { type: "line", id: "L", a: [-10, 5], b: [10, 5] };
     const arc: SketchEntity = { type: "arc", id: "A", c: [0, 0], r: 3, start: 0, end: Math.PI };
-    const res = await solveSketch([line, arc], [
-      { id: "h", type: "horizontal", entity: "L" },
-      { id: "r", type: "radius", entity: "A", value: 3 }, // pin the arc radius
-      { id: "t", type: "tangent", a: "L", b: "A" },
-    ]);
+    const res = await solveSketch(
+      [line, arc],
+      [
+        { id: "h", type: "horizontal", entity: "L" },
+        { id: "r", type: "radius", entity: "A", value: 3 }, // pin the arc radius
+        { id: "t", type: "tangent", a: "L", b: "A" },
+      ],
+    );
     expect(res.hasConflicts).toBe(false);
     const l = res.entities.find((x) => x.id === "L");
     const a = res.entities.find((x) => x.id === "A");

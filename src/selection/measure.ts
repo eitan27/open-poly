@@ -73,16 +73,29 @@ function edgeChainIds(edges: MeshedEdges, edgeId: number): number[] {
  *  arc (centroid off the axis → radii spread) or any non-circular chain. */
 function edgeChainRadius(edges: MeshedEdges, ids: number[]): number | null {
   if (ids.length < 6) return null; // too few chords to trust as a circle
-  const groups = ids.map((id) => edges.edgeGroups!.find((eg) => eg.edgeId === id)).filter(Boolean) as NonNullable<MeshedEdges["edgeGroups"]>;
+  const groups = ids.map((id) => edges.edgeGroups!.find((eg) => eg.edgeId === id)).filter(Boolean) as NonNullable<
+    MeshedEdges["edgeGroups"]
+  >;
   const { lines } = edges;
   const pts: Vec3[] = [];
-  for (const g of groups) for (let v = g.start; v < g.start + g.count; v++) pts.push([lines[v * 3], lines[v * 3 + 1], lines[v * 3 + 2]]);
+  for (const g of groups)
+    for (let v = g.start; v < g.start + g.count; v++) pts.push([lines[v * 3], lines[v * 3 + 1], lines[v * 3 + 2]]);
   if (pts.length < 6) return null;
   const c: Vec3 = [0, 0, 0];
-  for (const p of pts) { c[0] += p[0]; c[1] += p[1]; c[2] += p[2]; }
-  c[0] /= pts.length; c[1] /= pts.length; c[2] /= pts.length;
+  for (const p of pts) {
+    c[0] += p[0];
+    c[1] += p[1];
+    c[2] += p[2];
+  }
+  c[0] /= pts.length;
+  c[1] /= pts.length;
+  c[2] /= pts.length;
   let sum = 0;
-  const radii = pts.map((p) => { const r = Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2]); sum += r; return r; });
+  const radii = pts.map((p) => {
+    const r = Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2]);
+    sum += r;
+    return r;
+  });
   const r = sum / radii.length;
   if (r < 1e-6) return null;
   for (const ri of radii) if (Math.abs(ri - r) > 0.02 * r) return null; // not a full circle
@@ -304,7 +317,10 @@ function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[], 
     const m = meshes.find((x) => x.id === selection.featureId);
     if (!m) return null;
     // Sum over the whole logical face (a cylinder's facet cluster), not one slice.
-    const clusterArea = faceClusterIds(m.mesh.faces, selection.faceId).reduce((sum, id) => sum + faceArea(m.mesh.faces, id), 0);
+    const clusterArea = faceClusterIds(m.mesh.faces, selection.faceId).reduce(
+      (sum, id) => sum + faceArea(m.mesh.faces, id),
+      0,
+    );
     const rows = [{ label: "Area", value: fmt(clusterArea) }];
     const group = m.mesh.faces.faceGroups?.find((g) => g.faceId === selection.faceId);
     // Diameter, for the faces the kernel could describe analytically (see FaceSurface).
@@ -330,9 +346,13 @@ function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[], 
     const ids = edgeChainIds(m.mesh.edges, selection.edgeId);
     const length = ids.reduce((sum, id) => sum + edgeLength(m.mesh.edges, id), 0);
     const radius = edgeChainRadius(m.mesh.edges, ids);
-    const rows = radius !== null
-      ? [{ label: "Diameter", value: fmt(2 * radius) }, { label: "Circumference", value: fmt(length) }]
-      : [{ label: "Length", value: fmt(length) }];
+    const rows =
+      radius !== null
+        ? [
+            { label: "Diameter", value: fmt(2 * radius) },
+            { label: "Circumference", value: fmt(length) },
+          ]
+        : [{ label: "Length", value: fmt(length) }];
     return { title: radius !== null ? "Circle" : "Edge", rows };
   }
 

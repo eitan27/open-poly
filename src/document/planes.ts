@@ -162,14 +162,11 @@ export function midplaneFrame(a: PlaneFrameData, b: PlaneFrameData): PlaneFrameD
 
 /** Rotate vector v about unit axis k by `ang` radians (Rodrigues' formula). */
 function rotateAbout(v: Vec3, k: Vec3, ang: number): Vec3 {
-  const c = Math.cos(ang), s = Math.sin(ang);
+  const c = Math.cos(ang),
+    s = Math.sin(ang);
   const kxv = cross(k, v);
   const kdv = dot3(k, v) * (1 - c);
-  return [
-    v[0] * c + kxv[0] * s + k[0] * kdv,
-    v[1] * c + kxv[1] * s + k[1] * kdv,
-    v[2] * c + kxv[2] * s + k[2] * kdv,
-  ];
+  return [v[0] * c + kxv[0] * s + k[0] * kdv, v[1] * c + kxv[1] * s + k[1] * kdv, v[2] * c + kxv[2] * s + k[2] * kdv];
 }
 
 /** A plane hinged on the base's u- or v-axis (through the base origin), tilted by
@@ -193,10 +190,7 @@ export function planeThrough3Points(p0: Vec3, p1: Vec3, p2: Vec3): PlaneFrameDat
  *  line closest to the world origin. Returns null if the planes are parallel
  *  (|n_a × n_b| ≈ 0, no intersection line). Used to turn a plane armed as a
  *  revolve axis into a concrete rotation axis (the plane ∩ the profile plane). */
-export function planeIntersectionLine(
-  a: PlaneFrameData,
-  b: PlaneFrameData,
-): { origin: Vec3; dir: Vec3 } | null {
+export function planeIntersectionLine(a: PlaneFrameData, b: PlaneFrameData): { origin: Vec3; dir: Vec3 } | null {
   const dir = cross(a.normal, b.normal);
   const denom = dot3(dir, dir);
   if (denom < 1e-12) return null; // parallel planes
@@ -205,9 +199,6 @@ export function planeIntersectionLine(
   const db = dot3(b.normal, b.origin);
   // p0 = ( da (n_b × dir) + db (dir × n_a) ) / |dir|²  — the foot of the
   // perpendicular from the origin onto the intersection line.
-  const origin = scale3(
-    add3(scale3(cross(b.normal, dir), da), scale3(cross(dir, a.normal), db)),
-    1 / denom,
-  );
+  const origin = scale3(add3(scale3(cross(b.normal, dir), da), scale3(cross(dir, a.normal), db)), 1 / denom);
   return { origin, dir };
 }

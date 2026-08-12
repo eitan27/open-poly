@@ -110,8 +110,8 @@ describe("chamferLegs", () => {
   it("refuses degenerate sizes and angles", () => {
     expect(chamferLegs(0, 45)).toBeNull();
     expect(chamferLegs(-1, 45)).toBeNull();
-    expect(chamferLegs(2, 0)).toBeNull();   // zero far leg: no wedge
-    expect(chamferLegs(2, 90)).toBeNull();  // tan blows up
+    expect(chamferLegs(2, 0)).toBeNull(); // zero far leg: no wedge
+    expect(chamferLegs(2, 90)).toBeNull(); // tan blows up
     expect(chamferLegs(2, 180)).toBeNull(); // tan(180) is ~0 and negative
     expect(chamferLegs(Number.NaN, 45)).toBeNull();
   });

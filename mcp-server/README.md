@@ -13,15 +13,18 @@ have to (1) run the app and (2) point the client at the server. Order doesn't
 matter — the tab reconnects until the hub is up.
 
 1. **Run the app and open it.** From the repo root:
+
    ```sh
    npm run dev
    ```
+
    Open the printed URL (e.g. http://localhost:5173/) in a browser and **leave
    the tab open**.
 
 2. **Tell Claude Desktop about the server.** Edit
    `~/Library/Application Support/Claude/claude_desktop_config.json` (create it if
    missing) and add:
+
    ```json
    {
      "mcpServers": {
@@ -40,6 +43,7 @@ matter — the tab reconnects until the hub is up.
    in Claude Desktop the `open-poly` tools should appear (plug/tools icon).
 
 5. **Drive it.** Ask, e.g.:
+
    > Using the open-poly tools, read the modeling guide, then make a 40×40×10
    > plate with an 8 mm hole through the middle and fillet the top edges 2 mm.
    > Screenshot it when done.

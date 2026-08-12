@@ -47,8 +47,9 @@ const key = (p: Vec2) => `${coord(p[0])},${coord(p[1])}`;
 function pointInPoly(p: Vec2, poly: Vec2[]): boolean {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const yi = poly[i][1], yj = poly[j][1];
-    if ((yi > p[1]) !== (yj > p[1])) {
+    const yi = poly[i][1],
+      yj = poly[j][1];
+    if (yi > p[1] !== yj > p[1]) {
       const x = poly[i][0] + ((p[1] - yi) / (yj - yi)) * (poly[j][0] - poly[i][0]);
       if (p[0] < x) inside = !inside;
     }
@@ -61,23 +62,36 @@ function pointInPoly(p: Vec2, poly: Vec2[]): boolean {
  *  span. Robust for non-convex faces (an L-shaped cell) where the centroid can
  *  fall outside; falls back to the centroid only if the scan finds no span. */
 function interiorPoint(poly: Vec2[]): Vec2 {
-  let minY = Infinity, maxY = -Infinity;
-  for (const p of poly) { if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1]; }
+  let minY = Infinity,
+    maxY = -Infinity;
+  for (const p of poly) {
+    if (p[1] < minY) minY = p[1];
+    if (p[1] > maxY) maxY = p[1];
+  }
   const y = (minY + maxY) / 2;
   const xs: number[] = [];
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const yi = poly[i][1], yj = poly[j][1];
-    if ((yi > y) !== (yj > y)) xs.push(poly[i][0] + ((y - yi) / (yj - yi)) * (poly[j][0] - poly[i][0]));
+    const yi = poly[i][1],
+      yj = poly[j][1];
+    if (yi > y !== yj > y) xs.push(poly[i][0] + ((y - yi) / (yj - yi)) * (poly[j][0] - poly[i][0]));
   }
   xs.sort((a, b) => a - b);
-  let bestMid = 0, bestW = -1;
+  let bestMid = 0,
+    bestW = -1;
   for (let i = 0; i + 1 < xs.length; i += 2) {
     const w = xs[i + 1] - xs[i];
-    if (w > bestW) { bestW = w; bestMid = (xs[i] + xs[i + 1]) / 2; }
+    if (w > bestW) {
+      bestW = w;
+      bestMid = (xs[i] + xs[i + 1]) / 2;
+    }
   }
   if (bestW >= 0) return [bestMid, y];
-  let cx = 0, cy = 0;
-  for (const p of poly) { cx += p[0]; cy += p[1]; }
+  let cx = 0,
+    cy = 0;
+  for (const p of poly) {
+    cx += p[0];
+    cy += p[1];
+  }
   return [cx / poly.length, cy / poly.length];
 }
 
@@ -114,13 +128,17 @@ const EPS = 1e-4;
 /** Intersection of segments p1→p2 and q1→q2, endpoints inclusive (within EPS),
  *  parallel/collinear pairs excluded. Returns the point + both segment params. */
 function segIntersect(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): { point: Vec2; t: number; u: number } | null {
-  const rx = p2[0] - p1[0], ry = p2[1] - p1[1];
-  const sx = q2[0] - q1[0], sy = q2[1] - q1[1];
-  const lenR = Math.hypot(rx, ry), lenS = Math.hypot(sx, sy);
+  const rx = p2[0] - p1[0],
+    ry = p2[1] - p1[1];
+  const sx = q2[0] - q1[0],
+    sy = q2[1] - q1[1];
+  const lenR = Math.hypot(rx, ry),
+    lenS = Math.hypot(sx, sy);
   if (lenR < 1e-12 || lenS < 1e-12) return null;
   const denom = rx * sy - ry * sx;
   if (Math.abs(denom) < 1e-12 * lenR * lenS) return null;
-  const qpx = q1[0] - p1[0], qpy = q1[1] - p1[1];
+  const qpx = q1[0] - p1[0],
+    qpy = q1[1] - p1[1];
   let t = (qpx * sy - qpy * sx) / denom;
   let u = (qpx * ry - qpy * rx) / denom;
   if (t < -EPS / lenR || t > 1 + EPS / lenR || u < -EPS / lenS || u > 1 + EPS / lenS) return null;
@@ -133,7 +151,12 @@ function segIntersect(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): { point: Vec2; t:
  *  self-closed curves (poly[0] === poly[last]). `cuts` collects the parameter
  *  positions (segment index + fraction, i.e. param `i` is vertex `i`) where
  *  another entity touches or crosses this one. */
-interface BoundaryPoly { entityId: string; poly: Vec2[]; closed: boolean; cuts: { t: number; p: Vec2 }[] }
+interface BoundaryPoly {
+  entityId: string;
+  poly: Vec2[];
+  closed: boolean;
+  cuts: { t: number; p: Vec2 }[];
+}
 
 /** The sub-polyline from param `ta` to `tb` (ta < tb), using the exact cut
  *  points at the ends so both sides of a split share identical coordinates. */
@@ -175,7 +198,10 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
   // rejection (per polyline pair, then per segment pair) keeps the quadratic
   // sweep cheap on curve-heavy sketches.
   const bbox = polys.map((bp) => {
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    let x0 = Infinity,
+      y0 = Infinity,
+      x1 = -Infinity,
+      y1 = -Infinity;
     for (const p of bp.poly) {
       if (p[0] < x0) x0 = p[0];
       if (p[0] > x1) x1 = p[0];
@@ -186,15 +212,21 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
   });
   for (let i = 0; i < polys.length; i++) {
     for (let j = i + 1; j < polys.length; j++) {
-      const P = polys[i], Q = polys[j];
-      const bi = bbox[i], bj = bbox[j];
+      const P = polys[i],
+        Q = polys[j];
+      const bi = bbox[i],
+        bj = bbox[j];
       if (bi.x1 + EPS < bj.x0 || bj.x1 + EPS < bi.x0 || bi.y1 + EPS < bj.y0 || bj.y1 + EPS < bi.y0) continue;
       for (let a = 0; a < P.poly.length - 1; a++) {
-        const p1 = P.poly[a], p2 = P.poly[a + 1];
-        const ax0 = Math.min(p1[0], p2[0]) - EPS, ax1 = Math.max(p1[0], p2[0]) + EPS;
-        const ay0 = Math.min(p1[1], p2[1]) - EPS, ay1 = Math.max(p1[1], p2[1]) + EPS;
+        const p1 = P.poly[a],
+          p2 = P.poly[a + 1];
+        const ax0 = Math.min(p1[0], p2[0]) - EPS,
+          ax1 = Math.max(p1[0], p2[0]) + EPS;
+        const ay0 = Math.min(p1[1], p2[1]) - EPS,
+          ay1 = Math.max(p1[1], p2[1]) + EPS;
         for (let b = 0; b < Q.poly.length - 1; b++) {
-          const q1 = Q.poly[b], q2 = Q.poly[b + 1];
+          const q1 = Q.poly[b],
+            q2 = Q.poly[b + 1];
           if (Math.max(q1[0], q2[0]) < ax0 || Math.min(q1[0], q2[0]) > ax1) continue;
           if (Math.max(q1[1], q2[1]) < ay0 || Math.min(q1[1], q2[1]) > ay1) continue;
           const hit = segIntersect(p1, p2, q1, q2);
@@ -223,7 +255,13 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
     return i;
   };
 
-  interface HalfEdge { from: number; to: number; entityId: string; angle: number; poly: Vec2[] }
+  interface HalfEdge {
+    from: number;
+    to: number;
+    entityId: string;
+    angle: number;
+    poly: Vec2[];
+  }
   const he: HalfEdge[] = [];
   // Collapse exact-duplicate edges (same endpoints AND same mid-point) so a
   // shared edge drawn twice doesn't corrupt the angular traversal — while still
@@ -280,13 +318,19 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
         const poly =
           c < cuts.length - 1
             ? polySlice(bp.poly, cur.t, cur.p, nxt.t, nxt.p)
-            : [...polySlice(bp.poly, cur.t, cur.p, N, bp.poly[N]), ...polySlice(bp.poly, 0, bp.poly[0], nxt.t, nxt.p).slice(1)];
+            : [
+                ...polySlice(bp.poly, cur.t, cur.p, N, bp.poly[N]),
+                ...polySlice(bp.poly, 0, bp.poly[0], nxt.t, nxt.p).slice(1),
+              ];
         pieces.push({ entityId: bp.entityId, poly });
       }
     } else {
       const bounds = [{ t: 0, p: bp.poly[0] }, ...cuts, { t: N, p: bp.poly[N] }];
       for (let c = 0; c < bounds.length - 1; c++) {
-        pieces.push({ entityId: bp.entityId, poly: polySlice(bp.poly, bounds[c].t, bounds[c].p, bounds[c + 1].t, bounds[c + 1].p) });
+        pieces.push({
+          entityId: bp.entityId,
+          poly: polySlice(bp.poly, bounds[c].t, bounds[c].p, bounds[c + 1].t, bounds[c + 1].p),
+        });
       }
     }
   }
@@ -303,10 +347,15 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
     // centroid. The centroid is the same whichever way the edge was drawn (so a
     // duplicate collapses) yet differs for two distinct curves between the same
     // endpoints (so a lens is kept).
-    let cx = 0, cy = 0;
-    for (const p of poly) { cx += p[0]; cy += p[1]; }
+    let cx = 0,
+      cy = 0;
+    for (const p of poly) {
+      cx += p[0];
+      cy += p[1];
+    }
     const mid = key([cx / poly.length, cy / poly.length]);
-    const ka = key(a), kb = key(b);
+    const ka = key(a),
+      kb = key(b);
     const ek = (ka < kb ? `${ka}:${kb}` : `${kb}:${ka}`) + `:${mid}`;
     if (seenEdge.has(ek)) continue;
     seenEdge.add(ek);
@@ -369,14 +418,20 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
   for (const group of byId.values()) {
     if (group.length < 2) continue;
     const centroid = (r: SketchRegion): Vec2 => {
-      let x = 0, y = 0;
-      for (const p of r.outline) { x += p[0]; y += p[1]; }
+      let x = 0,
+        y = 0;
+      for (const p of r.outline) {
+        x += p[0];
+        y += p[1];
+      }
       return [x / r.outline.length, y / r.outline.length];
     };
     group
       .map((r) => ({ r, c: centroid(r) }))
       .sort((p, q) => p.c[0] - q.c[0] || p.c[1] - q.c[1])
-      .forEach(({ r }, k) => { r.id = `${r.id}~${k}`; });
+      .forEach(({ r }, k) => {
+        r.id = `${r.id}~${k}`;
+      });
   }
 
   // Island nesting → holes. Adjacent cells of a connected sketch come out as
@@ -390,7 +445,8 @@ export function detectSketchRegions(entities: SketchEntity[]): SketchRegion[] {
     const rep = regions.map((r) => interiorPoint(r.outline));
     const origArea = regions.map((r) => r.area);
     const parent = regions.map((_r, i) => {
-      let best = -1, bestArea = Infinity;
+      let best = -1,
+        bestArea = Infinity;
       for (let j = 0; j < regions.length; j++) {
         if (j === i || origArea[j] <= origArea[i]) continue;
         if (pointInPoly(rep[i], regions[j].outline) && origArea[j] < bestArea) {
@@ -464,8 +520,16 @@ export function regionProfileSegments(
     let next: Edge | undefined;
     for (let i = 0; i < edges.length; i++) {
       if (used[i]) continue;
-      if (eq(edges[i].from, cur)) { used[i] = true; next = edges[i]; break; }
-      if (eq(edges[i].to, cur)) { used[i] = true; next = { from: edges[i].to, to: edges[i].from, mid: edges[i].mid }; break; }
+      if (eq(edges[i].from, cur)) {
+        used[i] = true;
+        next = edges[i];
+        break;
+      }
+      if (eq(edges[i].to, cur)) {
+        used[i] = true;
+        next = { from: edges[i].to, to: edges[i].from, mid: edges[i].mid };
+        break;
+      }
     }
     if (!next) return undefined; // a gap → not a single chain
     chain.push(next);

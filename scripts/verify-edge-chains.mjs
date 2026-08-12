@@ -63,17 +63,29 @@ async function build(label, take) {
   const st = await waitIdle();
   const after = await read({ read: "sceneSummary" });
   const b2 = after.bodies.find((b) => b.id === body.id);
-  return { ring: ring.length, chosen: chosen.length, ok: fil.ok, status: st, faces: b2?.faces?.length, edges: b2?.edges?.length, notice: noticeOf(fil) };
+  return {
+    ring: ring.length,
+    chosen: chosen.length,
+    ok: fil.ok,
+    status: st,
+    faces: b2?.faces?.length,
+    edges: b2?.edges?.length,
+    notice: noticeOf(fil),
+  };
 }
 
 const whole = await build("whole-ring", (r) => r);
-console.log(`whole ring: ${whole.chosen}/${whole.ring} segments -> faces=${whole.faces} edges=${whole.edges} ok=${whole.ok}`);
+console.log(
+  `whole ring: ${whole.chosen}/${whole.ring} segments -> faces=${whole.faces} edges=${whole.edges} ok=${whole.ok}`,
+);
 check("the joint ring is a real chain of many segments", whole.ring > 8, `${whole.ring} segments`);
 check("dressing the whole ring builds", whole.ok && /up to date/.test(whole.status), whole.status);
 check("…and needs no expansion", whole.notice === null, String(whole.notice));
 
 const half = await build("half-ring", (r) => r.filter((_, i) => i % 2 === 0));
-console.log(`half ring:  ${half.chosen}/${half.ring} segments -> faces=${half.faces} edges=${half.edges} ok=${half.ok}`);
+console.log(
+  `half ring:  ${half.chosen}/${half.ring} segments -> faces=${half.faces} edges=${half.edges} ok=${half.ok}`,
+);
 check("dressing half the ring builds", half.ok && /up to date/.test(half.status), half.status);
 // This used to assert the kernel's repair NOTICE fired here. It no longer can:
 // naming part of a chain no longer STORES part of a chain, because the viewport
@@ -104,7 +116,9 @@ await waitIdle();
 const b = await apply({ op: "addPrimitive", kind: "box", params: { width: "40", depth: "40", height: "40" } });
 await waitIdle();
 const sc = await read({ read: "sceneSummary" });
-const one = (sc.bodies.find((x) => x.id === b.createdId)?.edges ?? []).filter((e) => e.includes("+z") && e.includes("+x"));
+const one = (sc.bodies.find((x) => x.id === b.createdId)?.edges ?? []).filter(
+  (e) => e.includes("+z") && e.includes("+x"),
+);
 const ch = await apply({ op: "dressUp", kind: "chamfer", targetId: b.createdId, edges: one.slice(0, 1), size: "4" });
 await waitIdle();
 const after = await read({ read: "sceneSummary" });

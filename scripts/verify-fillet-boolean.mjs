@@ -90,7 +90,9 @@ const boxBody = await bodyOf(box.createdId);
 check("box built", (boxBody?.faces?.length ?? 0) === 6, `${boxBody?.faces?.length} faces`);
 
 // The top/front edge: where +z meets -y.
-const boxEdge = (boxBody?.edges ?? []).filter((e) => e.includes(`${box.createdId}/+z`) && e.includes(`${box.createdId}/-y`));
+const boxEdge = (boxBody?.edges ?? []).filter(
+  (e) => e.includes(`${box.createdId}/+z`) && e.includes(`${box.createdId}/-y`),
+);
 check("the convex edge is named", boxEdge.length === 1, JSON.stringify(boxEdge));
 
 const bf = await apply({ op: "dressUp", kind: "fillet", targetId: box.createdId, edges: boxEdge, size: "4" });
@@ -100,9 +102,13 @@ check(
   "a convex fillet builds and adds exactly ONE round face",
   bf.ok && !errOf(bf, bf.createdId) && after?.faces?.length === 7,
   `faces=${after?.faces?.length} (want 7: the box's 6 + one cylindrical round; a 12-chord ` +
-  `approximation would give 18) ${errOf(bf, bf.createdId) ?? ""} status="${bst}"`,
+    `approximation would give 18) ${errOf(bf, bf.createdId) ?? ""} status="${bst}"`,
 );
-check("and it meshes whole", unmeshed.length === 0 && normalless.length === 0, `${sum(unmeshed)} unmeshed, ${sum(normalless)} normalless`);
+check(
+  "and it meshes whole",
+  unmeshed.length === 0 && normalless.length === 0,
+  `${sum(unmeshed)} unmeshed, ${sum(normalless)} normalless`,
+);
 
 // Radius sweep: the face count must not move. Any radius that starts producing
 // extra faces is a cross-section that stopped being a single arc.
@@ -126,7 +132,9 @@ await waitIdle();
 check(
   "a fillet larger than the face it runs along is refused, not silently gouged",
   !!errOf(over, bf.createdId),
-  errOf(over, bf.createdId) ? String(errOf(over, bf.createdId)).slice(0, 70) : "it SUCCEEDED — a 999mm round on a 40mm box",
+  errOf(over, bf.createdId)
+    ? String(errOf(over, bf.createdId)).slice(0, 70)
+    : "it SUCCEEDED — a 999mm round on a 40mm box",
 );
 await apply({ op: "setParam", featureId: bf.createdId, name: "size", value: "4" });
 await waitIdle();
@@ -142,14 +150,20 @@ await shoot("/tmp/openpoly-fillet-convex.png");
 await apply({ op: "newDocument", name: "fillet-concave-step" });
 await waitIdle();
 const base = await apply({ op: "addPrimitive", kind: "box", params: { width: 40, depth: 40, height: 20 } });
-const step = await apply({ op: "addPrimitive", kind: "box", params: { width: 40, depth: 20, height: 20, y: 10, z: 20 } });
+const step = await apply({
+  op: "addPrimitive",
+  kind: "box",
+  params: { width: 40, depth: 20, height: 20, y: 10, z: 20 },
+});
 await waitIdle();
 const L = await apply({ op: "boolean", kind: "union", operands: [base.createdId, step.createdId] });
 await waitIdle();
 const Lbody = await bodyOf(L.createdId);
 check("the step body is an L-prism", Lbody?.faces?.length === 8, `${Lbody?.faces?.length} faces (want 8)`);
 
-const stepEdge = (Lbody?.edges ?? []).filter((e) => e.includes(`${base.createdId}/+z`) && e.includes(`${step.createdId}/-y`));
+const stepEdge = (Lbody?.edges ?? []).filter(
+  (e) => e.includes(`${base.createdId}/+z`) && e.includes(`${step.createdId}/-y`),
+);
 check("the re-entrant edge is named", stepEdge.length === 1, JSON.stringify(stepEdge));
 
 unmeshed.length = 0;
@@ -160,9 +174,13 @@ check(
   "a concave fillet builds and adds exactly ONE round face",
   sf.ok && !errOf(sf, sf.createdId) && sAfter?.faces?.length === 9,
   `faces=${sAfter?.faces?.length} (want 9: the L's 8 + one cylindrical round) ` +
-  `${errOf(sf, sf.createdId) ?? ""} status="${sst}"`,
+    `${errOf(sf, sf.createdId) ?? ""} status="${sst}"`,
 );
-check("and it meshes whole", unmeshed.length === 0 && normalless.length === 0, `${sum(unmeshed)} unmeshed, ${sum(normalless)} normalless`);
+check(
+  "and it meshes whole",
+  unmeshed.length === 0 && normalless.length === 0,
+  `${sum(unmeshed)} unmeshed, ${sum(normalless)} normalless`,
+);
 for (const r of ["1", "10", "18"]) {
   unmeshed.length = 0;
   const s = await apply({ op: "setParam", featureId: sf.createdId, name: "size", value: r });
@@ -201,8 +219,11 @@ const sk = await apply({
 });
 await waitIdle();
 const ex = await apply({
-  op: "addExtrude", profile: { sketchId: sk.createdId },
-  distance: "20", mode: "add", targetId: cyl.createdId,
+  op: "addExtrude",
+  profile: { sketchId: sk.createdId },
+  distance: "20",
+  mode: "add",
+  targetId: cyl.createdId,
 });
 await waitIdle();
 const fused = await bodyOf(cyl.createdId);
@@ -212,8 +233,11 @@ const fused = await bodyOf(cyl.createdId);
 // fuse being clean, not about how finely walls are cut.
 const CLEAN = CYL_FACES + 2; // + the prism's flat side and its top
 const BASE = fused?.faces?.length ?? -1;
-check("the fused body is clean", BASE >= CLEAN && BASE <= CLEAN + 6,
-  `${BASE} faces (clean ${CLEAN}, up to 6 end residue)`);
+check(
+  "the fused body is clean",
+  BASE >= CLEAN && BASE <= CLEAN + 6,
+  `${BASE} faces (clean ${CLEAN}, up to 6 end residue)`,
+);
 
 const joint = (fused?.edges ?? []).filter((e) => /\/\+z/.test(e) && /\/side\d/.test(e));
 check("the concave joint is a single edge", joint.length === 1, `${joint.length} edge(s): ${JSON.stringify(joint)}`);
@@ -251,8 +275,8 @@ for (const r of ["0.5", "1", "2", "3", "6"]) {
     `concave fillet at r=${r}mm ${Number(r) > chord ? "(past the old chord ceiling)" : ""}`,
     !e && after?.faces?.length === BASE + 1 && unmeshed.length === 0 && normalless.length === 0,
     `faces=${after?.faces?.length} (want ${BASE + 1})` +
-    `${e ? " " + String(e).slice(0, 56) : ""}` +
-    `${unmeshed.length ? ` ${sum(unmeshed)} unmeshed` : ""}${normalless.length ? ` ${sum(normalless)} normalless` : ""}`,
+      `${e ? " " + String(e).slice(0, 56) : ""}` +
+      `${unmeshed.length ? ` ${sum(unmeshed)} unmeshed` : ""}${normalless.length ? ` ${sum(normalless)} normalless` : ""}`,
   );
 }
 await apply({ op: "setParam", featureId: ff.createdId, name: "size", value: "4" });
@@ -309,8 +333,8 @@ for (const kind of ["fillet", "chamfer"]) {
     `${kind}: the rim is one swept round — no crown, no per-chord bevels`,
     counts.every((c) => c.faces === want && c.faces !== CROWN.faces && c.edges !== CROWN.edges),
     `${JSON.stringify(counts.map((c) => [c.r, c.faces, c.edges]))}, want ${want} faces — ` +
-    `the crown was ${CROWN.faces} faces / ${CROWN.edges} edges at every radius, and ` +
-    `one bevel per chord (the old BRepFilletAPI answer) would be ${(c2b?.faces?.length ?? 0) + rim.length}`,
+      `the crown was ${CROWN.faces} faces / ${CROWN.edges} edges at every radius, and ` +
+      `one bevel per chord (the old BRepFilletAPI answer) would be ${(c2b?.faces?.length ?? 0) + rim.length}`,
   );
   // The round is named, so downstream features can reference it. A nameless
   // round is how the first attempt failed: unifySameDomain's coplanar-parallel

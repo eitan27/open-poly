@@ -6,10 +6,7 @@ import path from "node:path";
 // from the filesystem. Rewrite the planegcs wasm `?url` import to a real
 // absolute path so the constraint solver can run in unit tests.
 function wasmUrlForNode(): Plugin {
-  const abs = path.resolve(
-    __dirname,
-    "node_modules/@salusoft89/planegcs/dist/planegcs_dist/planegcs.wasm",
-  );
+  const abs = path.resolve(__dirname, "node_modules/@salusoft89/planegcs/dist/planegcs_dist/planegcs.wasm");
   return {
     name: "wasm-url-for-node",
     enforce: "pre",

@@ -57,12 +57,7 @@ export interface ToolbarRow {
  * (`moreWidth`, plus its own gap) is reserved first — so the answer is how many
  * fit *alongside* More.
  */
-export function fitCount(
-  widths: number[],
-  gap: number,
-  available: number,
-  moreWidth: number,
-): number {
+export function fitCount(widths: number[], gap: number, available: number, moreWidth: number): number {
   // A sub-pixel slack: widths come from getBoundingClientRect, and a total that
   // rounds to exactly the available width must not overflow by 0.0001px.
   const SLACK = 0.5;

@@ -40,14 +40,17 @@ await waitIdle();
 // --- Open the Import flyout and choose "DXF sketch…" -----------------------
 await page.locator(".parts-import > button").click();
 await page.waitForTimeout(150);
-check("Import flyout shows a DXF option", await page.locator(".mt-menu button", { hasText: "DXF sketch" }).count() > 0);
+check(
+  "Import flyout shows a DXF option",
+  (await page.locator(".mt-menu button", { hasText: "DXF sketch" }).count()) > 0,
+);
 // Feed the hidden DXF file input (clicking the menu item just opens the picker).
 await page.setInputFiles('input[accept=".dxf,.DXF"]', SAMPLE);
 await page.waitForTimeout(300);
 
 // --- The placement dialog appears with a parse preview ---------------------
 const dialog = page.locator(".extrude-dialog", { hasText: "Import DXF sketch" });
-check("DXF placement dialog opened", await dialog.count() > 0);
+check("DXF placement dialog opened", (await dialog.count()) > 0);
 const hint = (await dialog.locator(".ed-hint").textContent()) ?? "";
 check("Preview counts entities", /entit/.test(hint), hint.trim());
 // $INSUNITS = 4 (mm) → units preselected to Millimeters.

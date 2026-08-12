@@ -64,7 +64,11 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
 
   // Optional spam check — only enforced when a Turnstile secret is set.
   if (env.TURNSTILE_SECRET) {
-    const ok = await verifyTurnstile(env.TURNSTILE_SECRET, payload.turnstileToken, request.headers.get("cf-connecting-ip"));
+    const ok = await verifyTurnstile(
+      env.TURNSTILE_SECRET,
+      payload.turnstileToken,
+      request.headers.get("cf-connecting-ip"),
+    );
     if (!ok) return json(403, { error: "failed spam check" });
   }
 
@@ -77,7 +81,9 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
   if (env.REPORTS && env.PUBLIC_R2_BASE) {
     const stamp = `${now.replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`;
     if (payload.doc) {
-      await env.REPORTS.put(`reports/${stamp}.openpoly.json`, payload.doc, { httpMetadata: { contentType: "application/json" } });
+      await env.REPORTS.put(`reports/${stamp}.openpoly.json`, payload.doc, {
+        httpMetadata: { contentType: "application/json" },
+      });
       links.push(`- [document (.openpoly.json)](${env.PUBLIC_R2_BASE}/reports/${stamp}.openpoly.json)`);
     }
     const png = dataUrlToBytes(payload.screenshot);
@@ -100,9 +106,19 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
   );
   if (links.length) bodyParts.push("### Attachments", ...links, "");
   else if (payload.doc && payload.doc.length <= MAX_INLINE_DOC) {
-    bodyParts.push("<details><summary>document (.openpoly.json)</summary>", "", "```json", payload.doc, "```", "", "</details>");
+    bodyParts.push(
+      "<details><summary>document (.openpoly.json)</summary>",
+      "",
+      "```json",
+      payload.doc,
+      "```",
+      "",
+      "</details>",
+    );
   } else if (payload.doc) {
-    bodyParts.push(`_document omitted — ${payload.doc.length} chars exceeds the inline limit; enable R2 to attach it._`);
+    bodyParts.push(
+      `_document omitted — ${payload.doc.length} chars exceeds the inline limit; enable R2 to attach it._`,
+    );
   }
 
   const title = `[${category}] ${description.split("\n")[0].slice(0, 80)}`;

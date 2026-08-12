@@ -88,7 +88,7 @@ check("section view is on before sketching", toggleActive);
 
 // --- Pick the pocket floor, exposed by the cut, and start a sketch on it ---
 const floorPoint = [8, 8, 8]; // center of the pocket floor (x = 20 − 12mm depth)
-await page.click(".model-toolbar > button[title^=\"Sketch\"]");
+await page.click('.model-toolbar > button[title^="Sketch"]');
 await page.waitForTimeout(150);
 await clickWorld(floorPoint);
 await page.waitForTimeout(300);
@@ -106,7 +106,9 @@ check(
   JSON.stringify(sk?.plane),
 );
 
-const toggleActiveInSketch = await page.locator(".section-view-toggle").evaluate((el) => el.classList.contains("active"));
+const toggleActiveInSketch = await page
+  .locator(".section-view-toggle")
+  .evaluate((el) => el.classList.contains("active"));
 check("section view stays on while a sketch is being edited", toggleActiveInSketch);
 const panelVisible = (await page.locator(".section-view-panel").count()) > 0;
 check("the section-view panel stays visible during sketch edit", panelVisible);
@@ -157,7 +159,11 @@ if (sk && circle) {
   await waitIdle();
   check("the interior-face sketch's region extrudes without error", ex.ok === true, JSON.stringify(ex));
   const summary = await read({ read: "sceneSummary" });
-  check("no regen errors after extruding from the interior sketch", !summary?.errors || Object.keys(summary.errors).length === 0, JSON.stringify(summary?.errors));
+  check(
+    "no regen errors after extruding from the interior sketch",
+    !summary?.errors || Object.keys(summary.errors).length === 0,
+    JSON.stringify(summary?.errors),
+  );
 }
 
 await page.screenshot({ path: "/tmp/verify-section-view-sketch.png" });

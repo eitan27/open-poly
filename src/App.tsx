@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import { KernelClient } from "./kernel/KernelClient";
 import { clamp } from "./lib/clamp";
 import { useUpdateAvailable } from "./useVersionCheck";
@@ -95,7 +105,16 @@ import type { BooleanOp, MeshedEdges, MeshedFaces, ShapeMeshPayload } from "./ke
 import { DRESSUP_DELTA_IDS } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
-import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, worldToUv, type PlaneFrameData, type SketchPlaneId, type SketchPlaneRef } from "./document/planes";
+import {
+  deriveFaceFrame,
+  frameOf,
+  planeRefLabel,
+  uvToWorld,
+  worldToUv,
+  type PlaneFrameData,
+  type SketchPlaneId,
+  type SketchPlaneRef,
+} from "./document/planes";
 import { DEFAULT_SECTION_VIEW, type SectionViewState } from "./document/sectionView";
 import { evaluateExpression } from "./document/expression";
 import { validateDressUpSize, validateDressUpAngle, mapDressUpKernelError } from "./document/dressUpValidation";
@@ -205,14 +224,7 @@ function guessDxfUnits(text: string): DxfUnitsKey | null {
 
 // The geometric constraints grouped behind the one toolbar button, in flyout
 // order. (Dimensional constraints and the construction toggle stay separate.)
-type ConstraintKind =
-  | "horizontal"
-  | "vertical"
-  | "parallel"
-  | "perpendicular"
-  | "equal"
-  | "coincident"
-  | "tangent";
+type ConstraintKind = "horizontal" | "vertical" | "parallel" | "perpendicular" | "equal" | "coincident" | "tangent";
 const CONSTRAINT_ORDER: readonly ConstraintKind[] = [
   "horizontal",
   "vertical",
@@ -235,20 +247,34 @@ const CONSTRAINT_NAME: Record<ConstraintKind, string> = {
 /** Human-readable label for a sketch constraint (for the constraints list). */
 const constraintLabel = (c: SketchConstraint): string => {
   switch (c.type) {
-    case "horizontal": return "Horizontal";
-    case "vertical": return "Vertical";
-    case "parallel": return "Parallel";
-    case "perpendicular": return "Perpendicular";
-    case "equal": return "Equal";
-    case "distance": return `Length ${fmt(c.value)}`;
-    case "distanceBetween": return `Distance ${fmt(c.value)}`;
-    case "radius": return `Radius ${fmt(c.value)}`;
-    case "angle": return `Angle ${fmt(c.value)}°`;
-    case "tangent": return "Tangent";
-    case "coincident": return "origin" in c.a || "origin" in c.b ? "Coincident (origin)" : "Coincident";
-    case "pointOnLine": return "origin" in c.point ? "On line (origin)" : "Point on line";
-    case "pointOnCircle": return "Point on circle";
-    case "midpoint": return "Midpoint";
+    case "horizontal":
+      return "Horizontal";
+    case "vertical":
+      return "Vertical";
+    case "parallel":
+      return "Parallel";
+    case "perpendicular":
+      return "Perpendicular";
+    case "equal":
+      return "Equal";
+    case "distance":
+      return `Length ${fmt(c.value)}`;
+    case "distanceBetween":
+      return `Distance ${fmt(c.value)}`;
+    case "radius":
+      return `Radius ${fmt(c.value)}`;
+    case "angle":
+      return `Angle ${fmt(c.value)}°`;
+    case "tangent":
+      return "Tangent";
+    case "coincident":
+      return "origin" in c.a || "origin" in c.b ? "Coincident (origin)" : "Coincident";
+    case "pointOnLine":
+      return "origin" in c.point ? "On line (origin)" : "Point on line";
+    case "pointOnCircle":
+      return "Point on circle";
+    case "midpoint":
+      return "Midpoint";
   }
 };
 
@@ -275,11 +301,7 @@ const pointRefUv = (entities: SketchEntity[], ref: PointRef): Vec2 | null => {
  *  so hovering the constraint in the list lights them up. Entity refs become
  *  `sketchEntity`; point refs become a precise `sketchPoint` marker (plus the
  *  owning line/target entity for context). */
-const constraintSelections = (
-  sketchId: string,
-  entities: SketchEntity[],
-  c: SketchConstraint,
-): Selection[] => {
+const constraintSelections = (sketchId: string, entities: SketchEntity[], c: SketchConstraint): Selection[] => {
   const ent = (entityId: string): Selection => ({ kind: "sketchEntity", sketchId, entityId });
   const pt = (ref: PointRef): Selection[] => {
     const uv = pointRefUv(entities, ref);
@@ -287,8 +309,7 @@ const constraintSelections = (
     if ("entity" in ref) out.push(ent(ref.entity));
     return out;
   };
-  const dist = (ref: DistanceRef): Selection[] =>
-    ref.on === "point" ? pt(ref.ref) : [ent(ref.entity)];
+  const dist = (ref: DistanceRef): Selection[] => (ref.on === "point" ? pt(ref.ref) : [ent(ref.entity)]);
   switch (c.type) {
     case "horizontal":
     case "vertical":
@@ -316,14 +337,14 @@ const constraintSelections = (
 
 /** Average position of a tessellated body face — the centroid fallback used to
  *  re-find a face that has no persistent name yet. */
-function faceCentroid(
-  faces: MeshedFaces,
-  faceId: number,
-): [number, number, number] | null {
+function faceCentroid(faces: MeshedFaces, faceId: number): [number, number, number] | null {
   const g = faces.faceGroups?.find((fg) => fg.faceId === faceId);
   if (!g) return null;
   const { triangles, vertices } = faces;
-  let sx = 0, sy = 0, sz = 0, n = 0;
+  let sx = 0,
+    sy = 0,
+    sz = 0,
+    n = 0;
   for (let k = g.start; k < g.start + g.count; k++) {
     const vi = triangles[k] * 3;
     sx += vertices[vi];
@@ -344,28 +365,45 @@ function faceNormal(faces: MeshedFaces, faceId: number): [number, number, number
   const { triangles, vertices, normals } = faces;
   let n: [number, number, number] | null = null;
   if (normals && normals.length) {
-    let nx = 0, ny = 0, nz = 0;
+    let nx = 0,
+      ny = 0,
+      nz = 0;
     for (let k = g.start; k < g.start + g.count; k++) {
       const vi = triangles[k] * 3;
-      nx += normals[vi]; ny += normals[vi + 1]; nz += normals[vi + 2];
+      nx += normals[vi];
+      ny += normals[vi + 1];
+      nz += normals[vi + 2];
     }
     const l = Math.hypot(nx, ny, nz);
     if (l > 1e-9) n = [nx / l, ny / l, nz / l];
   }
   if (!n) {
     for (let k = g.start; k + 2 < g.start + g.count; k += 3) {
-      const a = triangles[k] * 3, b = triangles[k + 1] * 3, c = triangles[k + 2] * 3;
-      const ux = vertices[b] - vertices[a], uy = vertices[b + 1] - vertices[a + 1], uz = vertices[b + 2] - vertices[a + 2];
-      const vx = vertices[c] - vertices[a], vy = vertices[c + 1] - vertices[a + 1], vz = vertices[c + 2] - vertices[a + 2];
-      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const a = triangles[k] * 3,
+        b = triangles[k + 1] * 3,
+        c = triangles[k + 2] * 3;
+      const ux = vertices[b] - vertices[a],
+        uy = vertices[b + 1] - vertices[a + 1],
+        uz = vertices[b + 2] - vertices[a + 2];
+      const vx = vertices[c] - vertices[a],
+        vy = vertices[c + 1] - vertices[a + 1],
+        vz = vertices[c + 2] - vertices[a + 2];
+      const nx = uy * vz - uz * vy,
+        ny = uz * vx - ux * vz,
+        nz = ux * vy - uy * vx;
       const l = Math.hypot(nx, ny, nz);
-      if (l > 1e-9) { n = [nx / l, ny / l, nz / l]; break; }
+      if (l > 1e-9) {
+        n = [nx / l, ny / l, nz / l];
+        break;
+      }
     }
   }
   if (!n) return null;
   // Reject a non-planar face: every vertex must lie on the plane (point + n).
   const a0 = triangles[g.start] * 3;
-  const px = vertices[a0], py = vertices[a0 + 1], pz = vertices[a0 + 2];
+  const px = vertices[a0],
+    py = vertices[a0 + 1],
+    pz = vertices[a0 + 2];
   for (let k = g.start; k < g.start + g.count; k++) {
     const vi = triangles[k] * 3;
     const d = (vertices[vi] - px) * n[0] + (vertices[vi + 1] - py) * n[1] + (vertices[vi + 2] - pz) * n[2];
@@ -379,13 +417,22 @@ function faceNormal(faces: MeshedFaces, faceId: number): [number, number, number
 function bodyCenter(faces: MeshedFaces): [number, number, number] {
   const { vertices } = faces;
   if (vertices.length === 0) return [0, 0, 0];
-  let minX = Infinity, minY = Infinity, minZ = Infinity;
-  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let minX = Infinity,
+    minY = Infinity,
+    minZ = Infinity;
+  let maxX = -Infinity,
+    maxY = -Infinity,
+    maxZ = -Infinity;
   for (let i = 0; i < vertices.length; i += 3) {
-    const x = vertices[i], y = vertices[i + 1], z = vertices[i + 2];
-    if (x < minX) minX = x; if (x > maxX) maxX = x;
-    if (y < minY) minY = y; if (y > maxY) maxY = y;
-    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    const x = vertices[i],
+      y = vertices[i + 1],
+      z = vertices[i + 2];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
   }
   return [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
 }
@@ -393,17 +440,25 @@ function bodyCenter(faces: MeshedFaces): [number, number, number] {
 /** 2D: is point p inside triangle a-b-c (uv space)? (sign-consistency test) */
 function pointInTriangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2): boolean {
   const cross = (o: Vec2, u: Vec2, w: Vec2) => (u[0] - o[0]) * (w[1] - o[1]) - (u[1] - o[1]) * (w[0] - o[0]);
-  const d1 = cross(p, a, b), d2 = cross(p, b, c), d3 = cross(p, c, a);
+  const d1 = cross(p, a, b),
+    d2 = cross(p, b, c),
+    d3 = cross(p, c, a);
   return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
 }
 
 /** Where two infinite lines (uv space) cross, or null if they're parallel
  *  (within ~0.006°) — the corner an angle dimension's arc/box is anchored on. */
 function lineLineIntersection(a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2): Vec2 | null {
-  const d1x = b1[0] - a1[0], d1y = b1[1] - a1[1];
-  const d2x = b2[0] - a2[0], d2y = b2[1] - a2[1];
-  const len1 = Math.hypot(d1x, d1y) || 1, len2 = Math.hypot(d2x, d2y) || 1;
-  const ux1 = d1x / len1, uy1 = d1y / len1, ux2 = d2x / len2, uy2 = d2y / len2;
+  const d1x = b1[0] - a1[0],
+    d1y = b1[1] - a1[1];
+  const d2x = b2[0] - a2[0],
+    d2y = b2[1] - a2[1];
+  const len1 = Math.hypot(d1x, d1y) || 1,
+    len2 = Math.hypot(d2x, d2y) || 1;
+  const ux1 = d1x / len1,
+    uy1 = d1y / len1,
+    ux2 = d2x / len2,
+    uy2 = d2y / len2;
   const denom = ux1 * uy2 - uy1 * ux2;
   if (Math.abs(denom) < 1e-4) return null;
   const t = ((a2[0] - a1[0]) * uy2 - (a2[1] - a1[1]) * ux2) / denom;
@@ -417,7 +472,8 @@ function rayFromCorner(line: Extract<SketchEntity, { type: "line" }>, p: Vec2): 
   const da = Math.hypot(line.a[0] - p[0], line.a[1] - p[1]);
   const db = Math.hypot(line.b[0] - p[0], line.b[1] - p[1]);
   const far = da > db ? line.a : line.b;
-  const dx = far[0] - p[0], dy = far[1] - p[1];
+  const dx = far[0] - p[0],
+    dy = far[1] - p[1];
   const l = Math.hypot(dx, dy) || 1;
   return [dx / l, dy / l];
 }
@@ -426,7 +482,10 @@ function rayFromCorner(line: Extract<SketchEntity, { type: "line" }>, p: Vec2): 
  *  a length dimension pick the offset side that reads outside the profile
  *  rather than across it. */
 function sketchBoundsCenter(entities: SketchEntity[]): Vec2 {
-  let minU = Infinity, minV = Infinity, maxU = -Infinity, maxV = -Infinity;
+  let minU = Infinity,
+    minV = Infinity,
+    maxU = -Infinity,
+    maxV = -Infinity;
   const visit = (u: number, v: number) => {
     if (u < minU) minU = u;
     if (u > maxU) maxU = u;
@@ -457,21 +516,24 @@ function sketchBoundsCenter(entities: SketchEntity[]): Vec2 {
  *  degrees of freedom simply follow the cursor. Lines/circles/arcs are
  *  solver-driven; splines aren't mapped by the solver, so moving their stored
  *  points here translates them directly. */
-function moveSketchPoints(
-  entities: SketchEntity[],
-  points: { from: Vec2; to: Vec2 }[],
-): SketchEntity[] {
+function moveSketchPoints(entities: SketchEntity[], points: { from: Vec2; to: Vec2 }[]): SketchEntity[] {
   const key = (p: Vec2) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
   const moves = new Map(points.map((m) => [key(m.from), m.to]));
   const mv = (p: Vec2): Vec2 => moves.get(key(p)) ?? p;
   return entities.map((e) => {
     switch (e.type) {
-      case "line": return { ...e, a: mv(e.a), b: mv(e.b) };
-      case "circle": return { ...e, c: mv(e.c) };
-      case "arc": return { ...e, c: mv(e.c) };
-      case "spline": return { ...e, points: e.points.map(mv) };
-      case "point": return { ...e, p: mv(e.p) };
-      case "text": return { ...e, p: mv(e.p) };
+      case "line":
+        return { ...e, a: mv(e.a), b: mv(e.b) };
+      case "circle":
+        return { ...e, c: mv(e.c) };
+      case "arc":
+        return { ...e, c: mv(e.c) };
+      case "spline":
+        return { ...e, points: e.points.map(mv) };
+      case "point":
+        return { ...e, p: mv(e.p) };
+      case "text":
+        return { ...e, p: mv(e.p) };
     }
   });
 }
@@ -488,8 +550,12 @@ function bodyUnderRegion(frame: PlaneFrameData, outline: Vec2[], meshes: Feature
   const [ux, uy, uz] = frame.uAxis;
   const [vx, vy, vz] = frame.vAxis;
   const TOL = 0.05; // mm coplanarity tolerance
-  let cu = 0, cv = 0;
-  for (const p of outline) { cu += p[0]; cv += p[1]; }
+  let cu = 0,
+    cv = 0;
+  for (const p of outline) {
+    cu += p[0];
+    cv += p[1];
+  }
   const centroid: Vec2 = [cu / outline.length, cv / outline.length];
   for (const m of meshes) {
     const { vertices, triangles, faceGroups } = m.mesh.faces;
@@ -499,8 +565,13 @@ function bodyUnderRegion(frame: PlaneFrameData, outline: Vec2[], meshes: Feature
       let coplanar = true;
       for (let k = g.start; k < g.start + g.count; k++) {
         const i = triangles[k] * 3;
-        const dx = vertices[i] - ox, dy = vertices[i + 1] - oy, dz = vertices[i + 2] - oz;
-        if (Math.abs(dx * nx + dy * ny + dz * nz) > TOL) { coplanar = false; break; }
+        const dx = vertices[i] - ox,
+          dy = vertices[i + 1] - oy,
+          dz = vertices[i + 2] - oz;
+        if (Math.abs(dx * nx + dy * ny + dz * nz) > TOL) {
+          coplanar = false;
+          break;
+        }
         uv.push([dx * ux + dy * uy + dz * uz, dx * vx + dy * vy + dz * vz]);
       }
       if (!coplanar) continue;
@@ -528,9 +599,15 @@ function edgeMidpoint(edges: MeshedEdges, edgeId: number): [number, number, numb
   const g = edges.edgeGroups?.find((eg) => eg.edgeId === edgeId);
   if (!g) return null;
   const { lines } = edges;
-  let sx = 0, sy = 0, sz = 0, n = 0;
+  let sx = 0,
+    sy = 0,
+    sz = 0,
+    n = 0;
   for (let v = g.start; v < g.start + g.count; v++) {
-    sx += lines[v * 3]; sy += lines[v * 3 + 1]; sz += lines[v * 3 + 2]; n++;
+    sx += lines[v * 3];
+    sy += lines[v * 3 + 1];
+    sz += lines[v * 3 + 2];
+    n++;
   }
   return n ? [sx / n, sy / n, sz / n] : null;
 }
@@ -544,13 +621,23 @@ function edgeFingerprint(edges: MeshedEdges, edgeId: number): { mid: [number, nu
   const g = edges.edgeGroups?.find((eg) => eg.edgeId === edgeId);
   if (!g || g.count === 0) return null;
   const { lines } = edges;
-  let minX = Infinity, minY = Infinity, minZ = Infinity;
-  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let minX = Infinity,
+    minY = Infinity,
+    minZ = Infinity;
+  let maxX = -Infinity,
+    maxY = -Infinity,
+    maxZ = -Infinity;
   let length = 0;
   for (let v = g.start; v < g.start + g.count; v++) {
-    const x = lines[v * 3], y = lines[v * 3 + 1], z = lines[v * 3 + 2];
-    minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
-    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+    const x = lines[v * 3],
+      y = lines[v * 3 + 1],
+      z = lines[v * 3 + 2];
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    minZ = Math.min(minZ, z);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+    maxZ = Math.max(maxZ, z);
     if (v > g.start) {
       length += Math.hypot(x - lines[(v - 1) * 3], y - lines[(v - 1) * 3 + 1], z - lines[(v - 1) * 3 + 2]);
     }
@@ -571,7 +658,9 @@ function transformMeshPayload(
     const out = new Array<number>(src.length);
     for (let i = 0; i < src.length; i += 3) {
       const [x, y, z] = fn([src[i], src[i + 1], src[i + 2]]);
-      out[i] = x; out[i + 1] = y; out[i + 2] = z;
+      out[i] = x;
+      out[i + 1] = y;
+      out[i + 2] = z;
     }
     return out;
   };
@@ -590,11 +679,14 @@ function transformMeshPayload(
  *  through `origin` along (unit) `dir` — Rodrigues' formula. */
 function rotationMappers(origin: [number, number, number], dir: [number, number, number], angle: number) {
   const [ux, uy, uz] = dir;
-  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const cos = Math.cos(angle),
+    sin = Math.sin(angle);
   const mapVec = (v: [number, number, number]): [number, number, number] => {
     const [x, y, z] = v;
     const dot = ux * x + uy * y + uz * z;
-    const cx = uy * z - uz * y, cy = uz * x - ux * z, cz = ux * y - uy * x;
+    const cx = uy * z - uz * y,
+      cy = uz * x - ux * z,
+      cz = ux * y - uy * x;
     return [
       x * cos + cx * sin + ux * dot * (1 - cos),
       y * cos + cy * sin + uy * dot * (1 - cos),
@@ -634,18 +726,61 @@ const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; name: string; title: s
   { tool: "select", label: "↖", name: "Select", title: "Select (S)", sc: "S" },
   { tool: "line", label: "╱", name: "Line", title: "Line (L)", sc: "L" },
   { tool: "rect-corner", label: "▭", name: "Rectangle: 2 corners", title: "Rectangle: 2 corners (R)", sc: "R" },
-  { tool: "rect-center", label: "⊞", name: "Rectangle: center", title: "Rectangle: center + corner (Shift+R)", sc: "⇧R" },
+  {
+    tool: "rect-center",
+    label: "⊞",
+    name: "Rectangle: center",
+    title: "Rectangle: center + corner (Shift+R)",
+    sc: "⇧R",
+  },
   { tool: "circle-center", label: "○", name: "Circle: center + radius", title: "Circle: center + radius (C)", sc: "C" },
   { tool: "circle-3p", label: "◔", name: "Circle: 3 points", title: "Circle: 3 points (Shift+C)", sc: "⇧C" },
   { tool: "polygon", label: "⬢", name: "Polygon", title: "Regular polygon (P)", sc: "P" },
   { tool: "arc-3p", label: "⌒", name: "Arc", title: "Arc: 3 points (A)", sc: "A" },
   { tool: "spline", label: "∿", name: "Spline", title: "Spline (Shift+S): click points, Esc to finish", sc: "⇧S" },
-  { tool: "offset", label: <OffsetIcon />, name: "Offset", title: "Offset (O): select a single chain of edges, then drag / type the distance", sc: "O" },
-  { tool: "mirror", label: "◫", name: "Mirror", title: "Mirror (M): click a line to arm the mirror axis, then click entities to mirror; Enter commits, Esc cancels", sc: "M" },
-  { tool: "pattern-linear", label: "⋯", name: "Linear pattern", title: "Linear pattern (X): click entities to repeat, set count + step; Enter commits, Esc cancels", sc: "X" },
-  { tool: "pattern-circular", label: "⊛", name: "Circular pattern", title: "Circular pattern (Shift+X): click the center point, then entities to repeat; Enter commits, Esc cancels", sc: "⇧X" },
-  { tool: "project", label: "⧉", name: "Project / Convert", title: "Project / Convert (U): click body edges & vertices to project them onto the sketch; Enter commits, Esc cancels", sc: "U" },
-  { tool: "text", label: "T", name: "Text", title: "Text (T): click to place, then type the text & height; Enter commits, Esc cancels", sc: "T" },
+  {
+    tool: "offset",
+    label: <OffsetIcon />,
+    name: "Offset",
+    title: "Offset (O): select a single chain of edges, then drag / type the distance",
+    sc: "O",
+  },
+  {
+    tool: "mirror",
+    label: "◫",
+    name: "Mirror",
+    title: "Mirror (M): click a line to arm the mirror axis, then click entities to mirror; Enter commits, Esc cancels",
+    sc: "M",
+  },
+  {
+    tool: "pattern-linear",
+    label: "⋯",
+    name: "Linear pattern",
+    title: "Linear pattern (X): click entities to repeat, set count + step; Enter commits, Esc cancels",
+    sc: "X",
+  },
+  {
+    tool: "pattern-circular",
+    label: "⊛",
+    name: "Circular pattern",
+    title: "Circular pattern (Shift+X): click the center point, then entities to repeat; Enter commits, Esc cancels",
+    sc: "⇧X",
+  },
+  {
+    tool: "project",
+    label: "⧉",
+    name: "Project / Convert",
+    title:
+      "Project / Convert (U): click body edges & vertices to project them onto the sketch; Enter commits, Esc cancels",
+    sc: "U",
+  },
+  {
+    tool: "text",
+    label: "T",
+    name: "Text",
+    title: "Text (T): click to place, then type the text & height; Enter commits, Esc cancels",
+    sc: "T",
+  },
 ];
 const sketchToolMeta = (t: SketchTool) => SKETCH_TOOLS.find((x) => x.tool === t)!;
 
@@ -655,9 +790,21 @@ const sketchToolMeta = (t: SketchTool) => SKETCH_TOOLS.find((x) => x.tool === t)
 // constraint button. Shortcuts are unchanged: the bare key picks variant[0],
 // Shift the second (see SKETCH_KEYS / SKETCH_SHIFT_KEYS).
 const SKETCH_GROUPS = {
-  rect: { name: "Rectangle", title: "Rectangle (R = 2 corners, Shift+R = center)", variants: ["rect-corner", "rect-center"] as const },
-  circle: { name: "Circle", title: "Circle (C = center + radius, Shift+C = 3 points)", variants: ["circle-center", "circle-3p"] as const },
-  pattern: { name: "Pattern", title: "Pattern (X = linear, Shift+X = circular)", variants: ["pattern-linear", "pattern-circular"] as const },
+  rect: {
+    name: "Rectangle",
+    title: "Rectangle (R = 2 corners, Shift+R = center)",
+    variants: ["rect-corner", "rect-center"] as const,
+  },
+  circle: {
+    name: "Circle",
+    title: "Circle (C = center + radius, Shift+C = 3 points)",
+    variants: ["circle-center", "circle-3p"] as const,
+  },
+  pattern: {
+    name: "Pattern",
+    title: "Pattern (X = linear, Shift+X = circular)",
+    variants: ["pattern-linear", "pattern-circular"] as const,
+  },
 };
 type SketchGroupId = keyof typeof SKETCH_GROUPS;
 // Short display names for the variants shown in each group's vertical flyout.
@@ -766,16 +913,12 @@ export default function App() {
   // commit that applies a settings change (the agent bridge, or an undo landing
   // alongside), and this has to be in place first.
   useLayoutEffect(() => {
-    setNewBodyColorPreference(
-      settings.newBodyColor === "random" ? null : hexToColor(settings.newBodyColor),
-    );
+    setNewBodyColorPreference(settings.newBodyColor === "random" ? null : hexToColor(settings.newBodyColor));
   }, [settings.newBodyColor]);
   // Left panel visibility. Togglable at any width; on a phone it's an
   // off-canvas drawer over the viewport, so it starts hidden there to keep the
   // 3D view (the point of the app) front and centre.
-  const [sidebarOpen, setSidebarOpen] = useState(
-    () => typeof window === "undefined" || window.innerWidth > 820,
-  );
+  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === "undefined" || window.innerWidth > 820);
   // True while the SAME document is open in another tab (BroadcastChannel).
   const [docInOtherTab, setDocInOtherTab] = useState(false);
   const tabIdRef = useRef(genId());
@@ -814,8 +957,7 @@ export default function App() {
     return ids;
   }, [selection, doc]);
   const primaryFeatureId = selection.length ? featureIdOf(selection[selection.length - 1]) : null;
-  const selectFeature = (id: string | null) =>
-    setSelection(id === null ? [] : [{ kind: "feature", id }]);
+  const selectFeature = (id: string | null) => setSelection(id === null ? [] : [{ kind: "feature", id }]);
   // Regular clicks accumulate into the set; clicking a selected element removes
   // it; clicking empty space clears.
   const handlePick = (picked: Selection | null, sketchUv?: Vec2) => {
@@ -980,8 +1122,7 @@ export default function App() {
         // A vertex of DERIVED geometry can't anchor the center (applyDerived
         // only sources hand-authored entities) — fall back to the raw uv.
         const ref = pointRefAt(sketchUv);
-        const refDerived =
-          ref && "entity" in ref && sk.entities.find((x) => x.id === ref.entity)?.derivedFrom;
+        const refDerived = ref && "entity" in ref && sk.entities.find((x) => x.id === ref.entity)?.derivedFrom;
         setPatternSession({ ...s, center: ref && !refDerived ? ref : { at: sketchUv } });
         return;
       }
@@ -996,9 +1137,7 @@ export default function App() {
       }
       setPatternSession({
         ...s,
-        sourceIds: s.sourceIds.includes(ent.id)
-          ? s.sourceIds.filter((id) => id !== ent.id)
-          : [...s.sourceIds, ent.id],
+        sourceIds: s.sourceIds.includes(ent.id) ? s.sourceIds.filter((id) => id !== ent.id) : [...s.sourceIds, ent.id],
       });
       return;
     }
@@ -1040,7 +1179,10 @@ export default function App() {
         });
         return;
       }
-      if (!entity) { flashSketchMsg("Couldn't project that edge."); return; }
+      if (!entity) {
+        flashSketchMsg("Couldn't project that edge.");
+        return;
+      }
       setProjectSession({ refs: [...s.refs, ref], keys: [...s.keys, key], previews: [...s.previews, entity] });
       return;
     }
@@ -1066,8 +1208,9 @@ export default function App() {
   const [picking, setPicking] = useState(false);
   // What the plane/face pick flow is for: starting a sketch, or the base of a
   // new reference plane.
-  const [pickPurpose, setPickPurpose] =
-    useState<"sketch" | "plane" | "revolveAxis" | "patternAxis" | "patternDir" | "sectionPlane">("sketch");
+  const [pickPurpose, setPickPurpose] = useState<
+    "sketch" | "plane" | "revolveAxis" | "patternAxis" | "patternDir" | "sectionPlane"
+  >("sketch");
   // The reference-plane dialog. `method` chooses the placement; the relevant
   // fields are filled by picks (base/refB planes-or-faces; points) or text inputs.
   const [planeDialog, setPlaneDialog] = useState<{
@@ -1087,9 +1230,12 @@ export default function App() {
   // The Mirror dialog: the body to mirror + the chosen plane key (see plane keys).
   // `plane === "face"` mirrors across a picked planar body face, stored in
   // `faceRef` (a frozen frame snapshot, like a sketch-on-face placement).
-  const [mirrorDialog, setMirrorDialog] = useState<
-    { targetId: string; plane: string; faceRef: { featureId: string; frame: PlaneFrameData } | null; editId?: string } | null
-  >(null);
+  const [mirrorDialog, setMirrorDialog] = useState<{
+    targetId: string;
+    plane: string;
+    faceRef: { featureId: string; frame: PlaneFrameData } | null;
+    editId?: string;
+  } | null>(null);
   // Armed by the Mirror dialog: the next clicked planar body face is the plane.
   const [pickingMirrorFace, setPickingMirrorFace] = useState(false);
   // The body Pattern dialog: repeat `targetId` as a linear run/grid or a
@@ -1198,7 +1344,11 @@ export default function App() {
   // edges/vertices projected onto the active sketch plane. `keys` tracks the
   // source pick of each preview (featureId/edgeId or vertex) so re-clicking a
   // source toggles it off. Committed on Enter, discarded on Esc. Null = none.
-  const [projectSession, setProjectSession] = useState<{ refs: ProjectRef[]; keys: string[]; previews: SketchEntity[] } | null>(null);
+  const [projectSession, setProjectSession] = useState<{
+    refs: ProjectRef[];
+    keys: string[];
+    previews: SketchEntity[];
+  } | null>(null);
   const projectSessionRef = useRef(projectSession);
   projectSessionRef.current = projectSession;
   const commitProjectRef = useRef<() => void>(() => {});
@@ -1232,7 +1382,9 @@ export default function App() {
   // discarded on Esc. Null = no placement in progress.
   // `editId` set ⇒ editing an existing text entity in place (re-edit), else a
   // fresh placement.
-  const [textDraft, setTextDraft] = useState<{ anchor: Vec2; value: string; height: string; editId?: string } | null>(null);
+  const [textDraft, setTextDraft] = useState<{ anchor: Vec2; value: string; height: string; editId?: string } | null>(
+    null,
+  );
   const textDraftRef = useRef(textDraft);
   textDraftRef.current = textDraft;
   // In-progress edit of a committed offset op's distance (keyed by op id). Shown
@@ -1256,22 +1408,20 @@ export default function App() {
   // Dimension entry: the entity being dimensioned, whether it's a line length or
   // a circle radius, the in-progress text, and the on-screen position (px,
   // canvas-relative) to anchor the input box.
-  const [dimInput, setDimInput] = useState<
-    {
-      entityId: string;
-      /** Second line, for an angle dimension between two lines. */
-      entityId2?: string;
-      kind: "length" | "radius" | "angle" | "distance";
-      /** The two sides of a `distance` dimension (point/line/rim each). */
-      refs?: [DistanceRef, DistanceRef];
-      /** The constraint being edited (if reopening an existing one), so its
-       *  on-canvas label is hidden while the input is open. */
-      editId?: string;
-      value: string;
-      x: number;
-      y: number;
-    } | null
-  >(null);
+  const [dimInput, setDimInput] = useState<{
+    entityId: string;
+    /** Second line, for an angle dimension between two lines. */
+    entityId2?: string;
+    kind: "length" | "radius" | "angle" | "distance";
+    /** The two sides of a `distance` dimension (point/line/rim each). */
+    refs?: [DistanceRef, DistanceRef];
+    /** The constraint being edited (if reopening an existing one), so its
+     *  on-canvas label is hidden while the input is open. */
+    editId?: string;
+    value: string;
+    x: number;
+    y: number;
+  } | null>(null);
   // Armed dimension mode: D was pressed with nothing selected; the next picked
   // line/circle becomes the dimension target.
   const [dimPending, setDimPending] = useState(false);
@@ -1294,7 +1444,11 @@ export default function App() {
   const editSigRef = useRef<string | null>(null);
   // Returns true if this live-sync run should proceed to apply. Seeds/loops skip.
   const shouldLiveApply = (sig: string): boolean => {
-    if (editSeedRef.current) { editSeedRef.current = false; editSigRef.current = sig; return false; }
+    if (editSeedRef.current) {
+      editSeedRef.current = false;
+      editSigRef.current = sig;
+      return false;
+    }
     if (sig === editSigRef.current) return false;
     editSigRef.current = sig;
     return true;
@@ -1308,7 +1462,9 @@ export default function App() {
     editSeedRef.current = true;
     editSigRef.current = null;
   };
-  const commitEdit = () => { editSnapshotRef.current = null; };
+  const commitEdit = () => {
+    editSnapshotRef.current = null;
+  };
   const cancelEdit = () => {
     const snap = editSnapshotRef.current;
     editSnapshotRef.current = null;
@@ -1317,9 +1473,17 @@ export default function App() {
   // The extrude dialog (anchored at the profile) while choosing parameters.
   // `editId` set ⇒ editing an existing extrude in place (Confirm updates it);
   // else creating from the current profile selection.
-  const [extrudeDialog, setExtrudeDialog] = useState<
-    { mode: "new" | "add" | "remove"; distance: string; flip: boolean; extent: ExtrudeExtent; targetId: string | null; upTo: UpToFaceRef | null; x: number; y: number; editId?: string } | null
-  >(null);
+  const [extrudeDialog, setExtrudeDialog] = useState<{
+    mode: "new" | "add" | "remove";
+    distance: string;
+    flip: boolean;
+    extent: ExtrudeExtent;
+    targetId: string | null;
+    upTo: UpToFaceRef | null;
+    x: number;
+    y: number;
+    editId?: string;
+  } | null>(null);
   // True while the extrude dialog's "Select a face" pick is armed: the next
   // body face clicked in the viewport fills the up-to-face target.
   const [pickingUpFace, setPickingUpFace] = useState(false);
@@ -1327,9 +1491,7 @@ export default function App() {
   // body the regen result represents (every new extrude for "new", or the
   // single chosen target for "add"/"remove") — used to swap those bodies' real
   // meshes out for the translucent previews while the dialog is open.
-  const [extrudePreview, setExtrudePreview] = useState<{ bodyId: string; mesh: FeatureMesh["mesh"] }[] | null>(
-    null,
-  );
+  const [extrudePreview, setExtrudePreview] = useState<{ bodyId: string; mesh: FeatureMesh["mesh"] }[] | null>(null);
   const [extrudePreviewError, setExtrudePreviewError] = useState<string | null>(null);
   // Live ghost of the revolve dialog's currently-armed inputs (translucent solid
   // of the would-be result), and its build/resolve error if any.
@@ -1338,7 +1500,15 @@ export default function App() {
   const [dressUpDialog, setDressUpDialog] = useState<
     // `angle`/`flip` are chamfer-only (degrees from the reference face, and
     // which adjacent face that is); they're ignored when the op is a fillet.
-    { op: "chamfer" | "fillet"; size: string; angle: string; flip: boolean; x: number; y: number; editId?: string } | null
+    {
+      op: "chamfer" | "fillet";
+      size: string;
+      angle: string;
+      flip: boolean;
+      x: number;
+      y: number;
+      editId?: string;
+    } | null
   >(null);
   // Validation for the chamfer/fillet dialog: a human-readable message when the
   // current size is unsatisfiable (e.g. a fillet radius larger than the
@@ -1351,12 +1521,13 @@ export default function App() {
   // may be absent — a feature whose edges are all convex only removes. Produced
   // by the same debounced regen that validates the dialog, so previewing costs
   // no extra kernel round trip.
-  const [dressUpPreview, setDressUpPreview] = useState<
-    { removed?: FeatureMesh["mesh"]; added?: FeatureMesh["mesh"] } | null
-  >(null);
-  const [shellDialog, setShellDialog] = useState<
-    { thickness: string; x: number; y: number; editId?: string } | null
-  >(null);
+  const [dressUpPreview, setDressUpPreview] = useState<{
+    removed?: FeatureMesh["mesh"];
+    added?: FeatureMesh["mesh"];
+  } | null>(null);
+  const [shellDialog, setShellDialog] = useState<{ thickness: string; x: number; y: number; editId?: string } | null>(
+    null,
+  );
   // Validation for the Shell dialog: a human-readable message when the current
   // thickness is unsatisfiable (e.g. too thick for the body), or null when it
   // builds cleanly. Set live as the user types and re-checked authoritatively
@@ -1366,26 +1537,26 @@ export default function App() {
   // plane) by clicking in the viewport — like the Boolean dialog — then sets the
   // angle (Full 360° vs. a specified angle + optional symmetric sweep). `armed`
   // says which role the next viewport click fills.
-  const [revolveDialog, setRevolveDialog] = useState<
-    {
-      profile: { sketchId: string; regionId: string } | null;
-      axis: RevolveAxis | null;
-      armed: "profile" | "axis" | null;
-      mode: "full" | "angle";
-      degrees: string;
-      symmetric: boolean;
-      x: number;
-      y: number;
-      editId?: string;
-    } | null
-  >(null);
+  const [revolveDialog, setRevolveDialog] = useState<{
+    profile: { sketchId: string; regionId: string } | null;
+    axis: RevolveAxis | null;
+    armed: "profile" | "axis" | null;
+    mode: "full" | "angle";
+    degrees: string;
+    symmetric: boolean;
+    x: number;
+    y: number;
+    editId?: string;
+  } | null>(null);
   // The Transform feature currently being edited with the gizmo (a floating
   // panel + viewport gizmo are shown while this is set), and which gizmo to show.
   const [transformEditId, setTransformEditId] = useState<string | null>(null);
   const [transformMode, setTransformMode] = useState<TransformMode>("translate");
   // Live numeric readout during a gizmo drag (display only; cleared on commit).
   // Kept out of the document so dragging never regenerates the kernel.
-  const [liveTransform, setLiveTransform] = useState<{ tx: number; ty: number; tz: number; angle: number } | null>(null);
+  const [liveTransform, setLiveTransform] = useState<{ tx: number; ty: number; tz: number; angle: number } | null>(
+    null,
+  );
   // How the current transform edit began, so Cancel knows what to undo: a
   // just-created transform is dropped entirely; an existing one being re-edited
   // is reverted to the snapshot it had when this edit started.
@@ -1404,8 +1575,7 @@ export default function App() {
     () => updateSettings((s) => ({ showShortcuts: !s.showShortcuts })),
     [updateSettings],
   );
-  const kbd = (sc: string): ReactNode =>
-    showShortcuts ? <span className="kbd-hint">{sc}</span> : null;
+  const kbd = (sc: string): ReactNode => (showShortcuts ? <span className="kbd-hint">{sc}</span> : null);
   // Collapsed circle/rectangle flyouts: which group (if any) is expanded, and the
   // last-used variant each collapses to. Selecting any tool (button OR shortcut)
   // updates the remembered variant and closes any open flyout.
@@ -1461,8 +1631,7 @@ export default function App() {
     e.preventDefault();
     const startY = e.clientY;
     const startHeight = timelineHeight;
-    const move = (ev: globalThis.PointerEvent) =>
-      setTimelineHeight(clamp(startHeight + ev.clientY - startY, 80, 600));
+    const move = (ev: globalThis.PointerEvent) => setTimelineHeight(clamp(startHeight + ev.clientY - startY, 80, 600));
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
@@ -1478,16 +1647,13 @@ export default function App() {
   // The DXF placement dialog: raw file text + a live parse preview (counts), plus
   // the chosen destination plane and unit scale. Held open until the user
   // confirms; the sketch is built from `text` re-parsed at the chosen scale.
-  const [dxfDialog, setDxfDialog] = useState<
-    | {
-        fileName: string;
-        text: string;
-        planeKey: string;
-        unitsKey: DxfUnitsKey;
-        preview: { total: number; skipped: number };
-      }
-    | null
-  >(null);
+  const [dxfDialog, setDxfDialog] = useState<{
+    fileName: string;
+    text: string;
+    planeKey: string;
+    unitsKey: DxfUnitsKey;
+    preview: { total: number; skipped: number };
+  } | null>(null);
   const startDimensionRef = useRef<() => void>(() => {});
   const dimPendingRef = useRef(dimPending);
   dimPendingRef.current = dimPending;
@@ -1536,7 +1702,12 @@ export default function App() {
     // it forms a single chain and open the offset session (or flash the error
     // and stay in Select). beginOffset is defined below — a closure, so it's
     // initialised by the time any click/keypress calls this.
-    if (t === "offset") { setProjectSession(null); setPatternSession(null); beginOffsetRef.current(); return; }
+    if (t === "offset") {
+      setProjectSession(null);
+      setPatternSession(null);
+      beginOffsetRef.current();
+      return;
+    }
     setOffsetSession(null);
     // Mirror opens a session that arms an axis on the next line click, then
     // mirrors each subsequently clicked entity. Starting any other tool ends it.
@@ -1567,9 +1738,7 @@ export default function App() {
     // between the two pattern variants keeps the accumulated sources.
     if (t === "pattern-linear" || t === "pattern-circular") {
       const prev = patternSessionRef.current;
-      const seed = prev
-        ? prev.sourceIds
-        : selectedSketchEntities.filter((e) => !e.derivedFrom).map((e) => e.id);
+      const seed = prev ? prev.sourceIds : selectedSketchEntities.filter((e) => !e.derivedFrom).map((e) => e.id);
       setPatternSession({
         kind: t === "pattern-linear" ? "linear" : "circular",
         sourceIds: seed,
@@ -1592,8 +1761,10 @@ export default function App() {
     setDraft([]); // starting a new tool abandons any in-progress points
     // Selecting the polygon tool (re)opens its Sides prompt, seeded with the
     // committed count; any other tool dismisses it.
-    if (t === "polygon") { setPolySidesText(String(polygonSides)); setPolySidesOpen(true); }
-    else setPolySidesOpen(false);
+    if (t === "polygon") {
+      setPolySidesText(String(polygonSides));
+      setPolySidesOpen(true);
+    } else setPolySidesOpen(false);
   };
   const beginOffsetRef = useRef<() => void>(() => {});
   // Geometry from the last kernel regen, keyed by feature id. Color/opacity
@@ -1641,12 +1812,18 @@ export default function App() {
       new Promise((resolve) => {
         let done = false;
         const settle = (s: RegenSettle) => {
-          if (!done) { done = true; resolve(s); }
+          if (!done) {
+            done = true;
+            resolve(s);
+          }
         };
         regenWaitersRef.current.push({ threshold: regenStartSeqRef.current, settle });
         // Never hang: if regen doesn't settle (kernel not ready, a competing
         // edit cancelled it), resolve with whatever errors we last knew.
-        setTimeout(() => settle({ errors: agentErrorsRef.current, warnings: agentWarningsRef.current, timedOut: true }), 8000);
+        setTimeout(
+          () => settle({ errors: agentErrorsRef.current, warnings: agentWarningsRef.current, timedOut: true }),
+          8000,
+        );
       }),
     [],
   );
@@ -1808,9 +1985,13 @@ export default function App() {
       canvas.width = w;
       canvas.height = h;
       canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
-      canvas.toBlob((blob) => {
-        if (blob) setThumb(docId, blob).catch(() => {});
-      }, "image/jpeg", 0.75);
+      canvas.toBlob(
+        (blob) => {
+          if (blob) setThumb(docId, blob).catch(() => {});
+        },
+        "image/jpeg",
+        0.75,
+      );
     };
     img.src = dataUrl;
   }, []);
@@ -1908,7 +2089,14 @@ export default function App() {
       if (id === docIdRef.current) await flushSave();
       const metas = await listMeta();
       const source = metas.find((m) => m.id === id);
-      const copy = await duplicateDoc(id, genId(), copyName(source?.name ?? "Untitled", metas.map((m) => m.name)));
+      const copy = await duplicateDoc(
+        id,
+        genId(),
+        copyName(
+          source?.name ?? "Untitled",
+          metas.map((m) => m.name),
+        ),
+      );
       if (!copy) throw new Error("This document no longer exists — it may have been deleted.");
       try {
         adoptRecord(copy); // throws if the SOURCE was itself corrupt (copied verbatim)
@@ -1931,7 +2119,13 @@ export default function App() {
         adoptRecord(next);
       } else {
         const now = Date.now();
-        const record: StoredDoc = { id: genId(), name: "Untitled", doc: createDocument(), createdAt: now, updatedAt: now };
+        const record: StoredDoc = {
+          id: genId(),
+          name: "Untitled",
+          doc: createDocument(),
+          createdAt: now,
+          updatedAt: now,
+        };
         await putDoc(record);
         adoptRecord(record);
       }
@@ -1977,7 +2171,10 @@ export default function App() {
       const now = Date.now();
       const record: StoredDoc = {
         id: genId(),
-        name: dedupeName(parsed.name, metas.map((m) => m.name)),
+        name: dedupeName(
+          parsed.name,
+          metas.map((m) => m.name),
+        ),
         doc: migrateDocument(parsed.doc),
         createdAt: now,
         updatedAt: now,
@@ -2086,22 +2283,26 @@ export default function App() {
       const perfT0 = PERF_LOG ? performance.now() : 0;
 
       kernel
-        .regenerate(resolved.features, (r) => {
-          // Progressive paint: fold each body into the shown set the moment it's
-          // meshed (replace by id, else append) so a heavy rebuild reveals the
-          // model piece by piece instead of all at once. The final result below
-          // is authoritative and reconciles (drops bodies that no longer exist).
-          if (cancelled || !r.ok) return;
-          setRawMeshes((prev) => {
-            const next = prev.slice();
-            const i = next.findIndex((m) => m.id === r.id);
-            if (i >= 0) next[i] = { id: r.id, mesh: r.mesh };
-            else next.push({ id: r.id, mesh: r.mesh });
-            return next;
-          });
-        }, (_featureId, done, total) => {
-          if (!cancelled) setMeshProgress(done < total ? { done, total } : null);
-        })
+        .regenerate(
+          resolved.features,
+          (r) => {
+            // Progressive paint: fold each body into the shown set the moment it's
+            // meshed (replace by id, else append) so a heavy rebuild reveals the
+            // model piece by piece instead of all at once. The final result below
+            // is authoritative and reconciles (drops bodies that no longer exist).
+            if (cancelled || !r.ok) return;
+            setRawMeshes((prev) => {
+              const next = prev.slice();
+              const i = next.findIndex((m) => m.id === r.id);
+              if (i >= 0) next[i] = { id: r.id, mesh: r.mesh };
+              else next.push({ id: r.id, mesh: r.mesh });
+              return next;
+            });
+          },
+          (_featureId, done, total) => {
+            if (!cancelled) setMeshProgress(done < total ? { done, total } : null);
+          },
+        )
         .then(({ results, warnings: regenWarnings }) => {
           if (cancelled) return;
           const nextMeshes: { id: string; mesh: FeatureMesh["mesh"] }[] = [];
@@ -2135,7 +2336,10 @@ export default function App() {
           if (cancelled) return;
           setBusy(false);
           setMeshProgress(null);
-          if (PERF_LOG) console.log(`[perf] regen round-trip ${(performance.now() - perfT0).toFixed(0)} ms (${resolved.features.length} features)`);
+          if (PERF_LOG)
+            console.log(
+              `[perf] regen round-trip ${(performance.now() - perfT0).toFixed(0)} ms (${resolved.features.length} features)`,
+            );
           // Resolve only waiters that began before this regen started; keep the
           // rest pending for a later regen.
           const stillWaiting: typeof regenWaitersRef.current = [];
@@ -2266,7 +2470,11 @@ export default function App() {
     if (!d) return null;
     if (!d.targetId) return "Pick a body to pattern.";
     const num = (expr: string): number => {
-      try { return evaluateExpression(expr, resolved.scope); } catch { return NaN; }
+      try {
+        return evaluateExpression(expr, resolved.scope);
+      } catch {
+        return NaN;
+      }
     };
     const badCount = (expr: string) => resolvePatternCount(expr, resolved.scope) === null;
     if (d.kind === "linear") {
@@ -2314,14 +2522,19 @@ export default function App() {
       return len < 1e-9 ? null : [v[0] / len, v[1] / len, v[2] / len];
     };
     const num = (expr: string): number => {
-      try { return evaluateExpression(expr, resolved.scope); } catch { return NaN; }
+      try {
+        return evaluateExpression(expr, resolved.scope);
+      } catch {
+        return NaN;
+      }
     };
     if (d.kind === "linear") {
       const count1 = resolvePatternCount(d.count1, resolved.scope);
       const d1 = worldDir(d.dir1);
       if (count1 === null || !d1) return [];
       const s1 = num(d.spacing1) * (d.flip1 ? -1 : 1);
-      let count2 = 1, s2 = 0;
+      let count2 = 1,
+        s2 = 0;
       let d2: [number, number, number] = [0, 0, 0];
       if (d.dir2on && d.dir2) {
         const c2 = resolvePatternCount(d.count2, resolved.scope);
@@ -2417,9 +2630,16 @@ export default function App() {
   };
 
   const { status: agentStatus } = useAgentBridge({
-    doc, setDoc, selection, setSelection,
-    sectionView, setSectionView,
-    meshesRef: agentMeshesRef, errorsRef: agentErrorsRef, waitForRegen, viewApiRef,
+    doc,
+    setDoc,
+    selection,
+    setSelection,
+    sectionView,
+    setSectionView,
+    meshesRef: agentMeshesRef,
+    errorsRef: agentErrorsRef,
+    waitForRegen,
+    viewApiRef,
     docApiRef: agentDocApiRef,
   });
 
@@ -2431,13 +2651,9 @@ export default function App() {
 
   // Bodies available as Boolean operands: features with a rendered body.
   const booleanCandidates = useMemo(
-    () =>
-      doc.features
-        .filter((f) => bodyIds.has(f.id))
-        .map((f) => ({ id: f.id, name: f.name })),
+    () => doc.features.filter((f) => bodyIds.has(f.id)).map((f) => ({ id: f.id, name: f.name })),
     [doc, bodyIds],
   );
-
 
   const editingSketch = useMemo(() => {
     const f = doc.features.find((x) => x.id === editingSketchId);
@@ -2447,7 +2663,7 @@ export default function App() {
   // The no-dialog feature whose params panel is open (double-click), if it still
   // exists. The panel closes automatically once the selection moves elsewhere.
   const editParamsFeature = useMemo(
-    () => (editParamsId ? doc.features.find((f) => f.id === editParamsId) ?? null : null),
+    () => (editParamsId ? (doc.features.find((f) => f.id === editParamsId) ?? null) : null),
     [editParamsId, doc],
   );
   useEffect(() => {
@@ -2528,9 +2744,7 @@ export default function App() {
   // Sketch points (endpoints/centres/origin) currently selected in this sketch.
   const selectedSketchPoints = useMemo<Vec2[]>(() => {
     if (!editingSketch) return [];
-    return selection.flatMap((s) =>
-      s.kind === "sketchPoint" && s.sketchId === editingSketch.id ? [s.point] : [],
-    );
+    return selection.flatMap((s) => (s.kind === "sketchPoint" && s.sketchId === editingSketch.id ? [s.point] : []));
   }, [editingSketch, selection]);
 
   // Selected line entities in this sketch (for the point-on-line coincidence).
@@ -2550,10 +2764,7 @@ export default function App() {
   // annotations. The dimension currently being edited (its dim-input is open)
   // is dropped so the two don't overlap.
   const ent = (id: string) => editingSketch?.entities.find((x) => x.id === id);
-  const dimCentroid = useMemo<Vec2>(
-    () => sketchBoundsCenter(editingSketch?.entities ?? []),
-    [editingSketch],
-  );
+  const dimCentroid = useMemo<Vec2>(() => sketchBoundsCenter(editingSketch?.entities ?? []), [editingSketch]);
   // Variables (well-named, evaluated) offered as autocomplete in the dimension
   // value field — a dimension may be a number, an expression, or a variable.
   const dimVarOptions = useMemo<VarOption[]>(
@@ -2690,8 +2901,12 @@ export default function App() {
     }
     const region = detectSketchRegions(sk.entities).find((r) => r.id === p.regionId);
     if (!region || region.outline.length === 0) return null;
-    let u = 0, v = 0;
-    for (const pt of region.outline) { u += pt[0]; v += pt[1]; }
+    let u = 0,
+      v = 0;
+    for (const pt of region.outline) {
+      u += pt[0];
+      v += pt[1];
+    }
     const n = region.outline.length;
     return uvToWorld(frameOf(sk.plane, resolved.planeFrames), u / n, v / n);
   };
@@ -2721,11 +2936,7 @@ export default function App() {
     //  - a sketch region drawn on / coplanar+overlapping a solid's face -> that solid.
     // Otherwise a new body (target = first available, for if the user switches mode).
     const addTarget =
-      first.kind === "bodyFace"
-        ? bodyIds.has(first.featureId)
-          ? first.featureId
-          : null
-        : extrudeHostBody();
+      first.kind === "bodyFace" ? (bodyIds.has(first.featureId) ? first.featureId : null) : extrudeHostBody();
     const defaultTarget = addTarget ?? booleanCandidates[0]?.id ?? null;
     setExtrudeDialog({
       mode: addTarget ? "add" : "new",
@@ -2750,8 +2961,8 @@ export default function App() {
       flip: extrudeDialog.flip,
       extent: extrudeDialog.extent,
       mode: extrudeDialog.mode,
-      targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
-      upTo: extrudeDialog.extent === "upToFace" ? extrudeDialog.upTo ?? undefined : undefined,
+      targetId: extrudeDialog.mode === "new" ? undefined : (extrudeDialog.targetId ?? undefined),
+      upTo: extrudeDialog.extent === "upToFace" ? (extrudeDialog.upTo ?? undefined) : undefined,
     };
     // Editing: update the one feature in place with the (possibly re-picked)
     // first profile — an edit doesn't split into several features.
@@ -2806,8 +3017,8 @@ export default function App() {
       flip: d.flip,
       extent: d.extent,
       mode: d.mode,
-      targetId: d.mode === "new" ? undefined : d.targetId ?? undefined,
-      upTo: d.extent === "upToFace" ? d.upTo ?? undefined : undefined,
+      targetId: d.mode === "new" ? undefined : (d.targetId ?? undefined),
+      upTo: d.extent === "upToFace" ? (d.upTo ?? undefined) : undefined,
     };
     if (!shouldLiveApply(JSON.stringify({ e: d.editId, profile, opts }))) return;
     setDoc((prev) => updateExtrude(prev, d.editId!, profile, opts), `edit:${d.editId}`);
@@ -2883,8 +3094,8 @@ export default function App() {
         flip: extrudeDialog.flip,
         extent: extrudeDialog.extent,
         mode: extrudeDialog.mode,
-        targetId: extrudeDialog.mode === "new" ? undefined : extrudeDialog.targetId ?? undefined,
-        upTo: extrudeDialog.extent === "upToFace" ? extrudeDialog.upTo ?? undefined : undefined,
+        targetId: extrudeDialog.mode === "new" ? undefined : (extrudeDialog.targetId ?? undefined),
+        upTo: extrudeDialog.extent === "upToFace" ? (extrudeDialog.upTo ?? undefined) : undefined,
       });
       previewDoc = res.doc;
       createdIds.push(res.id);
@@ -3004,7 +3215,10 @@ export default function App() {
     // pick made a moment ago. Storing the chain up front is exactly what it asks
     // for. `chainId` comes from the same mesh data the viewport highlights with,
     // so what gets dressed is what was lit up under the cursor.
-    const wanted = expandPickToChains(m.mesh.edges.edgeGroups ?? [], edges.map((e) => e.edgeId));
+    const wanted = expandPickToChains(
+      m.mesh.edges.edgeGroups ?? [],
+      edges.map((e) => e.edgeId),
+    );
     const names: string[] = [];
     const edgeRefs: EdgeRef[] = [];
     for (const edgeId of wanted) {
@@ -3052,7 +3266,15 @@ export default function App() {
     beginEdit(f);
     selectFeature(id);
     setDressUpError(null);
-    setDressUpDialog({ op: f.op, size: f.size, angle: f.angle ?? "45", flip: f.flip ?? false, x: 240, y: 160, editId: id });
+    setDressUpDialog({
+      op: f.op,
+      size: f.size,
+      angle: f.angle ?? "45",
+      flip: f.flip ?? false,
+      x: 240,
+      y: 160,
+      editId: id,
+    });
   };
   const closeDressUpDialog = () => {
     setDressUpDialog(null);
@@ -3102,10 +3324,25 @@ export default function App() {
 
   // Add a new dress-up, or (editing) update the existing one in place — shared by
   // the commit and the live-validation effect so both build the same doc.
-  const applyDressUp = (base: Document, t: NonNullable<typeof dressUpDialogTarget>, d: NonNullable<typeof dressUpDialog>) =>
+  const applyDressUp = (
+    base: Document,
+    t: NonNullable<typeof dressUpDialogTarget>,
+    d: NonNullable<typeof dressUpDialog>,
+  ) =>
     d.editId
       ? { doc: updateDressUp(base, d.editId, dressUpSpec(t, d)), id: d.editId }
-      : addDressUp(base, d.op, t.targetId, t.edges, d.size, t.edgeRefs, d.op === "chamfer" ? d.angle : undefined, d.op === "chamfer" && d.flip, t.faces, t.faceRefs);
+      : addDressUp(
+          base,
+          d.op,
+          t.targetId,
+          t.edges,
+          d.size,
+          t.edgeRefs,
+          d.op === "chamfer" ? d.angle : undefined,
+          d.op === "chamfer" && d.flip,
+          t.faces,
+          t.faceRefs,
+        );
 
   // Live-preview a chamfer/fillet edit: apply the new size/angle/edges to the
   // real feature as they change (skipping empty/invalid inputs). The existing
@@ -3120,7 +3357,14 @@ export default function App() {
     if (!shouldLiveApply(JSON.stringify({ e: d.editId, spec }))) return;
     setDoc((prev) => updateDressUp(prev, d.editId!, spec), `edit:${d.editId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dressUpDialog?.editId, dressUpDialog?.size, dressUpDialog?.angle, dressUpDialog?.flip, dressUpDialog?.op, dressUpDialogTarget]);
+  }, [
+    dressUpDialog?.editId,
+    dressUpDialog?.size,
+    dressUpDialog?.angle,
+    dressUpDialog?.flip,
+    dressUpDialog?.op,
+    dressUpDialogTarget,
+  ]);
 
   const createDressUp = async () => {
     if (!dressUpDialogTarget || !dressUpDialog) return;
@@ -3265,7 +3509,12 @@ export default function App() {
       return { targetId, faces: names, faceRefs, anchor };
     }
     if (selection.length === 1 && selection[0].kind === "feature" && bodyIds.has(selection[0].id)) {
-      return { targetId: selection[0].id, faces: [] as string[], faceRefs: [] as FaceRef[], anchor: null as [number, number, number] | null };
+      return {
+        targetId: selection[0].id,
+        faces: [] as string[],
+        faceRefs: [] as FaceRef[],
+        anchor: null as [number, number, number] | null,
+      };
     }
     return null;
   }, [selection, meshes, bodyIds]);
@@ -3300,7 +3549,12 @@ export default function App() {
     if (shellTarget) return shellTarget;
     const f = doc.features.find((x) => x.id === shellDialog.editId);
     return f?.type === "shell"
-      ? { targetId: f.targetId, faces: f.faces, faceRefs: f.faceRefs ?? [], anchor: null as [number, number, number] | null }
+      ? {
+          targetId: f.targetId,
+          faces: f.faces,
+          faceRefs: f.faceRefs ?? [],
+          anchor: null as [number, number, number] | null,
+        }
       : null;
   }, [shellDialog, shellTarget, doc]);
 
@@ -3308,7 +3562,15 @@ export default function App() {
   // the commit and the live-validation effect so both build the same doc.
   const applyShell = (base: Document, t: NonNullable<typeof shellDialogTarget>, d: NonNullable<typeof shellDialog>) =>
     d.editId
-      ? { doc: updateShell(base, d.editId, { targetId: t.targetId, faces: t.faces, thickness: d.thickness, faceRefs: t.faceRefs }), id: d.editId }
+      ? {
+          doc: updateShell(base, d.editId, {
+            targetId: t.targetId,
+            faces: t.faces,
+            thickness: d.thickness,
+            faceRefs: t.faceRefs,
+          }),
+          id: d.editId,
+        }
       : addShell(base, t.targetId, t.faces, d.thickness, t.faceRefs);
 
   // Live-preview a Shell edit: apply the new thickness/faces to the real
@@ -3498,7 +3760,14 @@ export default function App() {
     if (!shouldLiveApply(JSON.stringify({ e: d.editId, p: d.profile, a: d.axis, angle, symmetric }))) return;
     setDoc((prev) => updateRevolve(prev, d.editId!, d.profile!, d.axis!, angle, symmetric), `edit:${d.editId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revolveDialog?.editId, revolveDialog?.profile, revolveDialog?.axis, revolveDialog?.mode, revolveDialog?.degrees, revolveDialog?.symmetric]);
+  }, [
+    revolveDialog?.editId,
+    revolveDialog?.profile,
+    revolveDialog?.axis,
+    revolveDialog?.mode,
+    revolveDialog?.degrees,
+    revolveDialog?.symmetric,
+  ]);
 
   const createRevolve = () => {
     if (!revolveDialog || !revolveDialog.profile || !revolveDialog.axis) return;
@@ -3607,27 +3876,41 @@ export default function App() {
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (offsetSessionRef.current) { setOffsetSession(null); setSketchToolState("select"); }
-        else if (mirrorSessionRef.current) { setMirrorSession(null); setSelection([]); setSketchToolState("select"); }
-        else if (patternSessionRef.current) { setPatternSession(null); setSelection([]); setSketchToolState("select"); }
-        else if (projectSessionRef.current) { setProjectSession(null); setSketchToolState("select"); }
-        else if (textDraftRef.current) setTextDraft(null);
+        if (offsetSessionRef.current) {
+          setOffsetSession(null);
+          setSketchToolState("select");
+        } else if (mirrorSessionRef.current) {
+          setMirrorSession(null);
+          setSelection([]);
+          setSketchToolState("select");
+        } else if (patternSessionRef.current) {
+          setPatternSession(null);
+          setSelection([]);
+          setSketchToolState("select");
+        } else if (projectSessionRef.current) {
+          setProjectSession(null);
+          setSketchToolState("select");
+        } else if (textDraftRef.current) setTextDraft(null);
         else if (dimInputRef.current) setDimInput(null);
         else if (dimPendingRef.current) setDimPending(false);
         else if (polySidesOpen) setPolySidesOpen(false);
         else if (planeDialog) closePlaneDialog();
         // While the revolve dialog is arming a plane axis, Esc cancels just that
         // pick (keeping the dialog); a second Esc then closes the dialog.
-        else if (revolveDialog && picking) { setPicking(false); setPickPurpose("sketch"); }
-        else if (revolveDialog) closeRevolveDialog();
+        else if (revolveDialog && picking) {
+          setPicking(false);
+          setPickPurpose("sketch");
+        } else if (revolveDialog) closeRevolveDialog();
         // Mirror dialog: like Revolve, Esc first cancels an in-progress face
         // pick (keeping the dialog), then a second Esc closes the dialog.
         else if (mirrorDialog && pickingMirrorFace) setPickingMirrorFace(false);
         else if (mirrorDialog) closeMirror();
         // Pattern dialog: Esc first cancels an in-progress direction/axis pick
         // (keeping the dialog), then a second Esc closes the dialog.
-        else if (patternDialog && picking) { setPicking(false); setPickPurpose("sketch"); }
-        else if (patternDialog) closePattern();
+        else if (patternDialog && picking) {
+          setPicking(false);
+          setPickPurpose("sketch");
+        } else if (patternDialog) closePattern();
         else if (transformEditId) cancelTransform();
         else if (editParamsId) setEditParamsId(null);
         else if (picking) setPicking(false);
@@ -3635,8 +3918,9 @@ export default function App() {
         // points (like ending a polyline); every other tool just abandons the
         // draft. finishSpline() returns false unless the spline tool has ≥2
         // points, so non-spline drafts fall through to setDraft([]).
-        else if (draft.length > 0) { if (!finishSpline()) setDraft([]); }
-        else if (editingSketchId) finishSketch();
+        else if (draft.length > 0) {
+          if (!finishSpline()) setDraft([]);
+        } else if (editingSketchId) finishSketch();
         return;
       }
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -3882,7 +4166,9 @@ export default function App() {
     if (!d?.editId) return;
     const ref: SketchPlaneRef | null =
       d.plane === "face"
-        ? d.faceRef ? { kind: "face", featureId: d.faceRef.featureId, frame: d.faceRef.frame } : null
+        ? d.faceRef
+          ? { kind: "face", featureId: d.faceRef.featureId, frame: d.faceRef.frame }
+          : null
         : planeKeyToRef(d.plane);
     if (!ref) return;
     if (!shouldLiveApply(JSON.stringify({ e: d.editId, t: d.targetId, ref }))) return;
@@ -3919,9 +4205,7 @@ export default function App() {
     beginEdit(f);
     selectFeature(id);
     const planeKey =
-      f.plane.kind === "datum" ? `datum:${f.plane.id}`
-      : f.plane.kind === "plane" ? `plane:${f.plane.planeId}`
-      : "face";
+      f.plane.kind === "datum" ? `datum:${f.plane.id}` : f.plane.kind === "plane" ? `plane:${f.plane.planeId}` : "face";
     const faceRef = f.plane.kind === "face" ? { featureId: f.plane.featureId, frame: f.plane.frame } : null;
     setMirrorDialog({ targetId: f.targetId, plane: planeKey, faceRef, editId: id });
   };
@@ -3934,9 +4218,20 @@ export default function App() {
     setPatternDialog({
       kind: "linear",
       targetId: transformTarget,
-      dir1: { world: "x" }, count1: "3", spacing1: "25", flip1: false,
-      dir2on: false, dir2: null, count2: "2", spacing2: "25", flip2: false,
-      axis: null, count: "6", mode: "full", angle: "90", symmetric: false,
+      dir1: { world: "x" },
+      count1: "3",
+      spacing1: "25",
+      flip1: false,
+      dir2on: false,
+      dir2: null,
+      count2: "2",
+      spacing2: "25",
+      flip2: false,
+      axis: null,
+      count: "6",
+      mode: "full",
+      angle: "90",
+      symmetric: false,
       arming: transformTarget ? null : "target",
     });
   };
@@ -3954,7 +4249,10 @@ export default function App() {
     d.kind === "linear"
       ? {
           kind: "linear" as const,
-          dir1: d.dir1, count1: d.count1, spacing1: d.spacing1, flip1: d.flip1,
+          dir1: d.dir1,
+          count1: d.count1,
+          spacing1: d.spacing1,
+          flip1: d.flip1,
           ...(d.dir2on && d.dir2 ? { dir2: d.dir2, count2: d.count2, spacing2: d.spacing2, flip2: d.flip2 } : {}),
         }
       : {
@@ -4179,9 +4477,7 @@ export default function App() {
     if (!patternSession || !editingSketch) return [];
     const s = patternSession;
     try {
-      const byId = new Map(
-        editingSketch.entities.filter((e) => !e.derivedFrom).map((e) => [e.id, e] as const),
-      );
+      const byId = new Map(editingSketch.entities.filter((e) => !e.derivedFrom).map((e) => [e.id, e] as const));
       const out: SketchEntity[] = [];
       const count = resolvePatternCount(s.count, resolved.scope);
       if (s.kind === "linear") {
@@ -4230,13 +4526,20 @@ export default function App() {
       // Guard the eval: a half-typed / non-numeric height must not throw and
       // crash this render memo — just skip the preview until it's valid.
       let h = NaN;
-      try { h = evaluateExpression(textDraft.height, resolved.scope); } catch { h = NaN; }
+      try {
+        h = evaluateExpression(textDraft.height, resolved.scope);
+      } catch {
+        h = NaN;
+      }
       if (Number.isFinite(h) && h > 0)
         textPreview = [{ type: "text", id: "__textpv", p: textDraft.anchor, value: textDraft.value, height: h }];
     }
     if (
-      (offsetPreview.length === 0 && mirrorPreview.length === 0 && projectPreview.length === 0 &&
-        patternPreview.length === 0 && textPreview.length === 0) ||
+      (offsetPreview.length === 0 &&
+        mirrorPreview.length === 0 &&
+        projectPreview.length === 0 &&
+        patternPreview.length === 0 &&
+        textPreview.length === 0) ||
       !dimFrame
     )
       return renderSketches;
@@ -4271,7 +4574,16 @@ export default function App() {
         regions: [],
       });
     return [...renderSketches, ...extra];
-  }, [renderSketches, offsetPreview, mirrorSession, projectSession, patternPreview, textDraft, resolved.scope, dimFrame]);
+  }, [
+    renderSketches,
+    offsetPreview,
+    mirrorSession,
+    projectSession,
+    patternPreview,
+    textDraft,
+    resolved.scope,
+    dimFrame,
+  ]);
 
   const startSketchOn = (ref: SketchPlaneRef, aim?: [number, number, number]) => {
     const { doc: next, id } = addSketch(doc, ref);
@@ -4321,7 +4633,16 @@ export default function App() {
     if (!shouldLiveApply(JSON.stringify({ e: d.editId, spec }))) return;
     setDoc((prev) => updatePlane(prev, d.editId!, spec), `edit:${d.editId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planeDialog?.editId, planeDialog?.method, planeDialog?.base, planeDialog?.offset, planeDialog?.refB, planeDialog?.angleAxis, planeDialog?.angle, planeDialog?.points]);
+  }, [
+    planeDialog?.editId,
+    planeDialog?.method,
+    planeDialog?.base,
+    planeDialog?.offset,
+    planeDialog?.refB,
+    planeDialog?.angleAxis,
+    planeDialog?.angle,
+    planeDialog?.points,
+  ]);
 
   // The plane/face pick resolved: start a sketch on it, or fill the plane
   // dialog's base / second reference (whichever slot is armed).
@@ -4350,7 +4671,10 @@ export default function App() {
       if (pick.kind === "line") {
         const sk = doc.features.find((f) => f.id === pick.sketchId);
         const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === pick.entityId) : undefined;
-        if (e?.type !== "line") { flashSketchMsg("Pick a straight sketch line."); return; }
+        if (e?.type !== "line") {
+          flashSketchMsg("Pick a straight sketch line.");
+          return;
+        }
         const ref = { sketchId: pick.sketchId, entityId: pick.entityId };
         setPatternDialog((d) =>
           d && d.arming
@@ -4369,7 +4693,11 @@ export default function App() {
         const normal = (m && faceNormal(m.mesh.faces, pick.faceId)) || undefined;
         setPatternDialog((d) =>
           d && d.arming === "axis"
-            ? { ...d, axis: { face: { featureId: pick.featureId, faceId: pick.faceId, faceName, center, normal } }, arming: null }
+            ? {
+                ...d,
+                axis: { face: { featureId: pick.featureId, faceId: pick.faceId, faceName, center, normal } },
+                arming: null,
+              }
             : d,
         );
       } else {
@@ -4387,7 +4715,10 @@ export default function App() {
     if (pick.kind === "line") {
       const sk = doc.features.find((f) => f.id === pick.sketchId);
       const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === pick.entityId) : undefined;
-      if (e?.type !== "line") { flashSketchMsg("The axis must be a straight edge, a plane, or a face."); return; }
+      if (e?.type !== "line") {
+        flashSketchMsg("The axis must be a straight edge, a plane, or a face.");
+        return;
+      }
       setRevolveDialog((d) => (d ? { ...d, axis: { sketchId: pick.sketchId, entityId: pick.entityId } } : d));
     } else if (pick.kind === "bodyFace") {
       const m = meshes.find((x) => x.id === pick.featureId);
@@ -4395,7 +4726,9 @@ export default function App() {
       if (!center) return;
       const faceName = m ? faceNameOf(m.mesh.faces, pick.faceId) : undefined;
       const normal = (m && faceNormal(m.mesh.faces, pick.faceId)) || undefined;
-      setRevolveDialog((d) => (d ? { ...d, axis: { face: { featureId: pick.featureId, faceId: pick.faceId, faceName, center, normal } } } : d));
+      setRevolveDialog((d) =>
+        d ? { ...d, axis: { face: { featureId: pick.featureId, faceId: pick.faceId, faceName, center, normal } } } : d,
+      );
     } else {
       setRevolveDialog((d) => (d ? { ...d, axis: { plane: pick.ref } } : d));
     }
@@ -4492,16 +4825,36 @@ export default function App() {
     const f = doc.features.find((x) => x.id === id);
     if (!f) return;
     switch (f.type) {
-      case "sketch": editSketch(id); break;
-      case "transform": editTransform(id); break;
-      case "extrude": editExtrude(id); break;
-      case "plane": editPlane(id); break;
-      case "revolve": editRevolve(id); break;
-      case "boolean": editBoolean(id); break;
-      case "mirror": editMirror(id); break;
-      case "pattern": editPattern(id); break;
-      case "dressup": editDressUp(id); break;
-      case "shell": editShell(id); break;
+      case "sketch":
+        editSketch(id);
+        break;
+      case "transform":
+        editTransform(id);
+        break;
+      case "extrude":
+        editExtrude(id);
+        break;
+      case "plane":
+        editPlane(id);
+        break;
+      case "revolve":
+        editRevolve(id);
+        break;
+      case "boolean":
+        editBoolean(id);
+        break;
+      case "mirror":
+        editMirror(id);
+        break;
+      case "pattern":
+        editPattern(id);
+        break;
+      case "dressup":
+        editDressUp(id);
+        break;
+      case "shell":
+        editShell(id);
+        break;
       default: // primitive / import / sweep / loft — no creation dialog
         selectFeature(id);
         setEditParamsId(id);
@@ -4612,8 +4965,12 @@ export default function App() {
           if (on) cons.push(attach("b", on));
           // A body-geometry snap (hole rim/centre) → pin that endpoint to the spot
           // with a coincident-to-`{fixed}`, so it can't drift on a later drag.
-          const pin = (at: "a" | "b", p: Vec2): SketchConstraint =>
-            ({ id: genId(), type: "coincident", a: { entity: line.id, at }, b: { fixed: p } });
+          const pin = (at: "a" | "b", p: Vec2): SketchConstraint => ({
+            id: genId(),
+            type: "coincident",
+            a: { entity: line.id, at },
+            b: { fixed: p },
+          });
           if (lineStartFixedRef.current) cons.push(pin("a", lineStartFixedRef.current));
           if (onFixed) cons.push(pin("b", onFixed));
           if (cons.length) next = addSketchConstraints(next, sketchId, cons);
@@ -4635,22 +4992,28 @@ export default function App() {
         }
         break;
       case "rect-corner":
-        if (draft.length === 0) { setDraft([uv]); draftFixedRef.current = [onFixed]; }
-        else {
+        if (draft.length === 0) {
+          setDraft([uv]);
+          draftFixedRef.current = [onFixed];
+        } else {
           if (Math.abs(uv[0] - draft[0][0]) < MIN_SEGMENT || Math.abs(uv[1] - draft[0][1]) < MIN_SEGMENT) break;
           // Both opposite corners (draft[0], uv) are rectangle corners → pin either
           // that snapped to a hole. The other two corners aren't snap targets.
           commitRect(rectangleCorners(draft[0], uv), [draftFixedRef.current[0], onFixed]);
-          setDraft([]); draftFixedRef.current = [];
+          setDraft([]);
+          draftFixedRef.current = [];
         }
         break;
       case "rect-center":
-        if (draft.length === 0) { setDraft([uv]); draftFixedRef.current = [onFixed]; }
-        else {
+        if (draft.length === 0) {
+          setDraft([uv]);
+          draftFixedRef.current = [onFixed];
+        } else {
           if (Math.abs(uv[0] - draft[0][0]) < MIN_SEGMENT || Math.abs(uv[1] - draft[0][1]) < MIN_SEGMENT) break;
           // Only the corner (uv) is a rectangle vertex; the centre (draft[0]) isn't.
           commitRect(rectangleFromCenter(draft[0], uv), [onFixed]);
-          setDraft([]); draftFixedRef.current = [];
+          setDraft([]);
+          draftFixedRef.current = [];
         }
         break;
       case "circle-center":
@@ -4665,7 +5028,12 @@ export default function App() {
           // Pin the centre to the body circle it snapped to (concentric that LASTS).
           if (circleCenterFixedRef.current) {
             next = addSketchConstraints(next, sketchId, [
-              { id: genId(), type: "coincident", a: { entity: circle.id, at: "c" }, b: { fixed: circleCenterFixedRef.current } },
+              {
+                id: genId(),
+                type: "coincident",
+                a: { entity: circle.id, at: "c" },
+                b: { fixed: circleCenterFixedRef.current },
+              },
             ]);
           }
           void applyAndSolve(next);
@@ -4712,7 +5080,12 @@ export default function App() {
         // Click sets/repositions the baseline anchor and opens the floating
         // editor; the string + height are typed there and committed on Enter.
         // Re-positioning keeps any in-progress value/height and edit target.
-        setTextDraft({ anchor: uv, value: textDraft?.value ?? "", height: textDraft?.height ?? "10", editId: textDraft?.editId });
+        setTextDraft({
+          anchor: uv,
+          value: textDraft?.value ?? "",
+          height: textDraft?.height ?? "10",
+          editId: textDraft?.editId,
+        });
         break;
     }
   };
@@ -4723,17 +5096,22 @@ export default function App() {
     const td = textDraftRef.current;
     if (!editingSketchId || !td) return;
     let h = NaN;
-    try { h = evaluateExpression(td.height, resolved.scope); } catch { h = NaN; }
-    if (!td.value.trim() || !Number.isFinite(h) || h <= 0) { setTextDraft(null); return; }
+    try {
+      h = evaluateExpression(td.height, resolved.scope);
+    } catch {
+      h = NaN;
+    }
+    if (!td.value.trim() || !Number.isFinite(h) || h <= 0) {
+      setTextDraft(null);
+      return;
+    }
     if (td.editId) {
       // Re-edit: update the existing text entity in place (preserving its
       // construction flag), so its glyphs / any extrude of it follow.
       const sk = doc.features.find((f) => f.id === editingSketchId);
       if (sk?.type === "sketch") {
         const entities = sk.entities.map((en) =>
-          en.id === td.editId && en.type === "text"
-            ? { ...en, p: td.anchor, value: td.value, height: h }
-            : en,
+          en.id === td.editId && en.type === "text" ? { ...en, p: td.anchor, value: td.value, height: h } : en,
         );
         setDoc(setSketchEntities(doc, editingSketchId, entities));
       }
@@ -4801,7 +5179,10 @@ export default function App() {
     if (!res.hasRedundant && res.redundantIds.length === 0) return false;
     if (res.redundantIds.includes(addedId)) return true;
     try {
-      const baseline = await solveSketch(entities, constraints.filter((c) => c.id !== addedId));
+      const baseline = await solveSketch(
+        entities,
+        constraints.filter((c) => c.id !== addedId),
+      );
       return res.redundantIds.length > baseline.redundantIds.length || (res.hasRedundant && !baseline.hasRedundant);
     } catch {
       return true; // baseline itself unsolvable — blame the addition
@@ -4810,7 +5191,11 @@ export default function App() {
 
   // The labels of the constraints planegcs blames for a conflict (minus the one
   // just added), for a rejection message that names the actual culprits.
-  const conflictNames = (constraints: SketchConstraint[], res: { conflictingIds: string[] }, addedId: string): string[] => [
+  const conflictNames = (
+    constraints: SketchConstraint[],
+    res: { conflictingIds: string[] },
+    addedId: string,
+  ): string[] => [
     ...new Set(
       res.conflictingIds
         .filter((id) => id !== addedId)
@@ -4889,7 +5274,12 @@ export default function App() {
   // (so repeated frames don't accumulate) with the grabbed points relocated to
   // their cursor targets. Only one solve runs at a time; the latest request waits
   // and supersedes any earlier pending one (coalescing fast pointer moves).
-  const dragBaseRef = useRef<{ sketchId: string; key: string; entities: SketchEntity[]; constraints: SketchConstraint[] } | null>(null);
+  const dragBaseRef = useRef<{
+    sketchId: string;
+    key: string;
+    entities: SketchEntity[];
+    constraints: SketchConstraint[];
+  } | null>(null);
   const dragActiveRef = useRef(false);
   const dragBusyRef = useRef(false);
   const dragPendingRef = useRef<{ from: Vec2; to: Vec2 }[] | null>(null);
@@ -4920,7 +5310,9 @@ export default function App() {
         try {
           res = await solveDrag(true);
           if (res.hasConflicts) res = null; // pinning was infeasible → fall back
-        } catch { /* pinning threw → fall back */ }
+        } catch {
+          /* pinning threw → fall back */
+        }
         if (!res) {
           try {
             res = await solveDrag(false);
@@ -4987,7 +5379,9 @@ export default function App() {
     let normal: Vec2;
     if (e0.type === "line") {
       anchor = [(e0.a[0] + e0.b[0]) / 2, (e0.a[1] + e0.b[1]) / 2];
-      const dx = e0.b[0] - e0.a[0], dy = e0.b[1] - e0.a[1], len = Math.hypot(dx, dy) || 1;
+      const dx = e0.b[0] - e0.a[0],
+        dy = e0.b[1] - e0.a[1],
+        len = Math.hypot(dx, dy) || 1;
       normal = [dy / len, -dx / len]; // right of travel (positive offset side)
     } else if (e0.type === "arc") {
       const mid = (e0.start + e0.end) / 2;
@@ -5011,11 +5405,21 @@ export default function App() {
     const sess = offsetSession;
     if (!sess || !editingSketch) return;
     let d = NaN;
-    try { d = evaluateExpression(sess.value, resolved.scope); } catch { d = NaN; }
+    try {
+      d = evaluateExpression(sess.value, resolved.scope);
+    } catch {
+      d = NaN;
+    }
     // A non-numeric / unparseable distance: flag it and keep the box open so the
     // user can correct it (don't throw, don't silently discard the chain).
-    if (!Number.isFinite(d)) { flashSketchMsg("Enter a numeric offset distance."); return; }
-    if (Math.abs(d) < 1e-9) { cancelOffset(); return; }
+    if (!Number.isFinite(d)) {
+      flashSketchMsg("Enter a numeric offset distance.");
+      return;
+    }
+    if (Math.abs(d) < 1e-9) {
+      cancelOffset();
+      return;
+    }
     const allConstruction = sess.chain.every((e) => !!e.construction);
     // Commit as an associative DerivedOp (not a static snapshot): the offset
     // re-computes from its source chain whenever they move. solveSketchIn →
@@ -5103,18 +5507,25 @@ export default function App() {
       return;
     }
     if (sess.kind === "linear") {
-      let dx = NaN, dy = NaN;
+      let dx = NaN,
+        dy = NaN;
       try {
         dx = evaluateExpression(sess.dx, resolved.scope);
         dy = evaluateExpression(sess.dy, resolved.scope);
-      } catch { /* fall through to the finite check */ }
+      } catch {
+        /* fall through to the finite check */
+      }
       if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < 1e-9) {
         flashSketchMsg("Enter a non-zero numeric step.");
         return;
       }
     } else if (sess.mode === "angle") {
       let a = NaN;
-      try { a = evaluateExpression(sess.angle, resolved.scope); } catch { /* as above */ }
+      try {
+        a = evaluateExpression(sess.angle, resolved.scope);
+      } catch {
+        /* as above */
+      }
       if (!Number.isFinite(a) || Math.abs(a) < 1e-9) {
         flashSketchMsg("Enter a non-zero numeric angle.");
         return;
@@ -5165,7 +5576,10 @@ export default function App() {
   const commitProject = async () => {
     const sess = projectSession;
     if (!sess || !editingSketch) return;
-    if (sess.refs.length === 0) { cancelProject(); return; }
+    if (sess.refs.length === 0) {
+      cancelProject();
+      return;
+    }
     const sketchId = editingSketch.id;
     const op: DerivedOp = { id: genId(), kind: "project", refs: sess.refs };
     const seeded: SketchEntity[] = sess.previews.map((e, i) => ({
@@ -5257,7 +5671,15 @@ export default function App() {
     if (!m) return;
     const s = screenOf([(m.wa[0] + m.wb[0]) / 2, (m.wa[1] + m.wb[1]) / 2]);
     setDimPending(false);
-    setDimInput({ entityId: "", kind: "distance", refs: [a, b], editId, value: fmt(prefill ?? Math.abs(m.value)), x: s.x, y: s.y });
+    setDimInput({
+      entityId: "",
+      kind: "distance",
+      refs: [a, b],
+      editId,
+      value: fmt(prefill ?? Math.abs(m.value)),
+      x: s.x,
+      y: s.y,
+    });
   };
 
   // D (or the ↔ button): dimension the current selection — a single line/circle
@@ -5369,7 +5791,8 @@ export default function App() {
       } else if (e.type === "arc") {
         if (near(e.c)) return { entity: e.id, at: "c" };
         // Arc endpoints ("a" = start angle, "b" = end angle).
-        if (near([e.c[0] + e.r * Math.cos(e.start), e.c[1] + e.r * Math.sin(e.start)])) return { entity: e.id, at: "a" };
+        if (near([e.c[0] + e.r * Math.cos(e.start), e.c[1] + e.r * Math.sin(e.start)]))
+          return { entity: e.id, at: "a" };
         if (near([e.c[0] + e.r * Math.cos(e.end), e.c[1] + e.r * Math.sin(e.end)])) return { entity: e.id, at: "b" };
       }
     }
@@ -5450,14 +5873,20 @@ export default function App() {
   //    face vertex (the sketch vertex snaps onto the solid's projected vertex).
   //  • one movable sketch vertex → anchor it to the origin.
   const addCoincident = async () => {
-    const plan = planCoincident(selectedPointRefs, selectedSketchLines.map((l) => l.id));
+    const plan = planCoincident(
+      selectedPointRefs,
+      selectedSketchLines.map((l) => l.id),
+    );
     if (!plan) return;
     if (plan.kind === "pointOnLine") {
       const exists = editingSketch?.constraints.some(
         (c) => c.type === "pointOnLine" && c.line === plan.lineId && samePointRef(c.point, plan.point),
       );
       if (exists) return;
-      await commitConstraint({ id: genId(), type: "pointOnLine", point: plan.point, line: plan.lineId }, "Point on line");
+      await commitConstraint(
+        { id: genId(), type: "pointOnLine", point: plan.point, line: plan.lineId },
+        "Point on line",
+      );
       return;
     }
     const a = plan.kind === "originAnchor" ? plan.point : plan.a;
@@ -5482,9 +5911,7 @@ export default function App() {
     }
     const ids = new Set(selectedSketchEntities.map((e) => e.id));
     const makeConstruction = selectedSketchEntities.some((e) => !e.construction);
-    const entities = editingSketch.entities.map((e) =>
-      ids.has(e.id) ? { ...e, construction: makeConstruction } : e,
-    );
+    const entities = editingSketch.entities.map((e) => (ids.has(e.id) ? { ...e, construction: makeConstruction } : e));
     setDoc(setSketchEntities(doc, editingSketch.id, entities));
     // Keep the draw-mode button in sync with what the selection just became, so
     // the toolbar reflects the current construction state.
@@ -5494,7 +5921,10 @@ export default function App() {
   // The seven geometric constraints, keyed for the grouped toolbar button: the
   // icon/kbd node, tooltip, whether the current selection makes it applicable,
   // and the action. `enabled` mirrors each constraint's own selection rule.
-  const coincidentEnabled = coincidentIsEnabled(selectedPointRefs, selectedSketchLines.map((l) => l.id));
+  const coincidentEnabled = coincidentIsEnabled(
+    selectedPointRefs,
+    selectedSketchLines.map((l) => l.id),
+  );
   // `icon` is the bare glyph (what the More flyout's icon column shows); `node`
   // is the toolbar button's content — the same glyph plus the "?" shortcut hint.
   const constraintDefs: Record<
@@ -5503,7 +5933,12 @@ export default function App() {
   > = {
     horizontal: {
       icon: <HorizontalIcon />,
-      node: <><HorizontalIcon />{kbd("H")}</>,
+      node: (
+        <>
+          <HorizontalIcon />
+          {kbd("H")}
+        </>
+      ),
       sc: "H",
       title: "Horizontal (H) — select a line",
       enabled: !!oneSelectedLine,
@@ -5511,7 +5946,12 @@ export default function App() {
     },
     vertical: {
       icon: <VerticalIcon />,
-      node: <><VerticalIcon />{kbd("V")}</>,
+      node: (
+        <>
+          <VerticalIcon />
+          {kbd("V")}
+        </>
+      ),
       sc: "V",
       title: "Vertical (V) — select a line",
       enabled: !!oneSelectedLine,
@@ -5519,7 +5959,12 @@ export default function App() {
     },
     parallel: {
       icon: <ParallelIcon />,
-      node: <><ParallelIcon />{kbd("⇧P")}</>,
+      node: (
+        <>
+          <ParallelIcon />
+          {kbd("⇧P")}
+        </>
+      ),
       sc: "⇧P",
       title: "Parallel (Shift+P) — select two lines",
       enabled: !!twoSelectedLines,
@@ -5531,7 +5976,8 @@ export default function App() {
       sc: "N",
       title: "Perpendicular (N) — select two lines",
       enabled: !!twoSelectedLines,
-      apply: () => twoSelectedLines && addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id),
+      apply: () =>
+        twoSelectedLines && addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id),
     },
     equal: {
       icon: <>＝</>,
@@ -5547,7 +5993,8 @@ export default function App() {
     coincident: {
       icon: <>⌖</>,
       node: <>⌖</>,
-      title: "Coincident — two points make them coincident (a sketch vertex snaps onto a solid/body vertex too); a point + a line puts the point on the line; one point anchors it to the origin",
+      title:
+        "Coincident — two points make them coincident (a sketch vertex snaps onto a solid/body vertex too); a point + a line puts the point on the line; one point anchors it to the origin",
       enabled: coincidentEnabled,
       apply: addCoincident,
     },
@@ -5609,7 +6056,11 @@ export default function App() {
     // Order-independent equality of two distance sides / pairs, so re-dimensioning
     // the same two elements replaces the prior dimension instead of stacking.
     const sameSide = (x: DistanceRef, y: DistanceRef): boolean =>
-      x.on !== y.on ? false : x.on === "point" && y.on === "point" ? samePointRef(x.ref, y.ref) : (x as { entity: string }).entity === (y as { entity: string }).entity;
+      x.on !== y.on
+        ? false
+        : x.on === "point" && y.on === "point"
+          ? samePointRef(x.ref, y.ref)
+          : (x as { entity: string }).entity === (y as { entity: string }).entity;
     const samePairRefs = (p: [DistanceRef, DistanceRef], q: [DistanceRef, DistanceRef]) =>
       (sameSide(p[0], q[0]) && sameSide(p[1], q[1])) || (sameSide(p[0], q[1]) && sameSide(p[1], q[0]));
     // Filter the constraints of the LAST COMMITTED sketch, not this render's —
@@ -5620,7 +6071,8 @@ export default function App() {
     if (baseSk?.type !== "sketch") return;
     const kept = baseSk.constraints.filter((c) => {
       if (c.id === dimInput.editId) return false; // the one being edited is replaced
-      if (kind === "distance") return !(c.type === "distanceBetween" && dimInput.refs != null && samePairRefs([c.a, c.b], dimInput.refs));
+      if (kind === "distance")
+        return !(c.type === "distanceBetween" && dimInput.refs != null && samePairRefs([c.a, c.b], dimInput.refs));
       if (kind === "angle") return !(c.type === "angle" && samePair(c.a, c.b));
       const ctype = kind === "radius" ? "radius" : "distance";
       return !(c.type === ctype && c.entity === entityId);
@@ -5671,7 +6123,9 @@ export default function App() {
     // rectangle) solves "fine" but is dead weight: it changes nothing now and
     // makes every later edit of the coupled dimension conflict. Reject it.
     if (await introducedRedundancy(candidateSk.entities, candidateSk.constraints, added.id, res)) {
-      reject(`That ${kind} is already driven by the existing constraints — not added. Edit the existing dimension instead.`);
+      reject(
+        `That ${kind} is already driven by the existing constraints — not added. Edit the existing dimension instead.`,
+      );
       return;
     }
     setFullyConstrained(res.dof === 0 && !res.hasConflicts);
@@ -5688,18 +6142,14 @@ export default function App() {
   // status badge (the count alone is a dead end otherwise). Feature errors are
   // labelled by feature name; variable errors by their key.
   const errorDetail = [
-    ...Object.entries(errors).map(
-      ([id, msg]) => `${doc.features.find((f) => f.id === id)?.name ?? id}: ${msg}`,
-    ),
+    ...Object.entries(errors).map(([id, msg]) => `${doc.features.find((f) => f.id === id)?.name ?? id}: ${msg}`),
     ...Object.entries(resolved.variableErrors).map(([k, msg]) => `Variable ${k}: ${msg}`),
     ...Object.entries(resolved.variableNameErrors).map(([k, msg]) => `Variable name ${k}: ${msg}`),
   ].join("\n");
   // How far a long rebuild has got, when the worker reports it. Kept beside the
   // spinner: the glyph says "working", this says "and how far".
   const meshPercent =
-    busy && meshProgress
-      ? Math.round((100 * meshProgress.done) / Math.max(1, meshProgress.total))
-      : null;
+    busy && meshProgress ? Math.round((100 * meshProgress.done) / Math.max(1, meshProgress.total)) : null;
   // The sentence. Only the error states still SHOW it (see the chip below), but
   // it stays in the DOM either way — screen readers need it, and the E2E
   // harnesses poll this chip's text to know the app has settled.
@@ -5725,9 +6175,7 @@ export default function App() {
   // base/tools split (for subtract) is seeded from the same list.
   const openBooleanDialog = () => {
     const candidateIds = new Set(booleanCandidates.map((c) => c.id));
-    const operandIds = [...new Set(selection.map(featureIdOf))].filter((id) =>
-      candidateIds.has(id),
-    );
+    const operandIds = [...new Set(selection.map(featureIdOf))].filter((id) => candidateIds.has(id));
     setBooleanDialog({
       op: "union",
       operandIds,
@@ -5754,8 +6202,12 @@ export default function App() {
   // Valid operand list for the current boolean dialog, or null while incomplete.
   const booleanOperands = (d: NonNullable<typeof booleanDialog>): string[] | null =>
     d.op === "subtract"
-      ? d.base && d.tools.length >= 1 ? [d.base, ...d.tools] : null
-      : d.operandIds.length >= 2 ? d.operandIds : null;
+      ? d.base && d.tools.length >= 1
+        ? [d.base, ...d.tools]
+        : null
+      : d.operandIds.length >= 2
+        ? d.operandIds
+        : null;
   const closeBooleanDialog = () => {
     setBooleanDialog(null);
     cancelEdit();
@@ -5830,8 +6282,7 @@ export default function App() {
   const handleSolidOpacity = (id: string, opacity: number) =>
     setDoc(setFeatureOpacity(doc, id, opacity), `opacity:${id}`);
 
-  const handleSolidHidden = (id: string, hidden: boolean) =>
-    setDoc(setFeatureHidden(doc, id, hidden));
+  const handleSolidHidden = (id: string, hidden: boolean) => setDoc(setFeatureHidden(doc, id, hidden));
 
   const exportSolid = (id: string, format: "step" | "stl") => {
     const kernel = kernelRef.current;
@@ -5915,9 +6366,7 @@ export default function App() {
     if (bounds) viewApiRef.current?.frameSketchBounds(frame, bounds.min, bounds.max);
     else viewApiRef.current?.lookAtFrame(frame);
     const skippedCount = Object.values(skipped).reduce((a, b) => a + b, 0);
-    const skipMsg = skippedCount
-      ? ` (skipped ${skippedCount} unsupported: ${Object.keys(skipped).join(", ")})`
-      : "";
+    const skipMsg = skippedCount ? ` (skipped ${skippedCount} unsupported: ${Object.keys(skipped).join(", ")})` : "";
     flashSketchMsg(`Imported ${entities.length} entities from ${dxfDialog.fileName}${skipMsg}.`);
     setDxfDialog(null);
   };
@@ -5975,204 +6424,234 @@ export default function App() {
       ...extra,
     };
   };
-  const sketchSlots: ColumnSlot[] = !editingSketch ? [] : [
-    ...SKETCH_LAYOUT.map((slot): ColumnSlot => {
-      if (slot.kind === "tool") {
-        const t = sketchToolMeta(slot.tool);
-        // Offset needs a selected chain of edges — grey it out when
-        // nothing is selected.
-        const disabled = slot.tool === "offset" && selectedSketchEntities.length === 0;
-        return {
-          id: `tool:${t.tool}`,
-          rows: [sketchToolRow(slot.tool, { disabled })],
+  const sketchSlots: ColumnSlot[] = !editingSketch
+    ? []
+    : [
+        ...SKETCH_LAYOUT.map((slot): ColumnSlot => {
+          if (slot.kind === "tool") {
+            const t = sketchToolMeta(slot.tool);
+            // Offset needs a selected chain of edges — grey it out when
+            // nothing is selected.
+            const disabled = slot.tool === "offset" && selectedSketchEntities.length === 0;
+            return {
+              id: `tool:${t.tool}`,
+              rows: [sketchToolRow(slot.tool, { disabled })],
+              node: (
+                <button
+                  className={sketchTool === t.tool ? "active" : ""}
+                  title={t.title}
+                  disabled={disabled}
+                  onClick={() => setSketchTool(t.tool)}
+                >
+                  {t.label}
+                  {kbd(t.sc)}
+                </button>
+              ),
+            };
+          }
+          const g = SKETCH_GROUPS[slot.group];
+          const variant =
+            slot.group === "circle" ? circleVariant : slot.group === "rect" ? rectVariant : patternVariant;
+          const groupActive = (g.variants as readonly SketchTool[]).includes(sketchTool);
+          const expanded = expandedSketchGroup === slot.group;
+          const vm = sketchToolMeta(variant);
+          return {
+            id: `group:${slot.group}`,
+            // Both variants are searchable in their own right ("3 points", "center").
+            rows: g.variants.map((tv) =>
+              sketchToolRow(tv, {
+                id: `group:${slot.group}/${tv}`,
+                label: `${g.name} ▸ ${SKETCH_VARIANT_NAME[tv] ?? sketchToolMeta(tv).name}`,
+              }),
+            ),
+            node: (
+              <div className="sketch-group">
+                {/* Primary applies the last-used variant; ▸ opens the vertical
+                flyout of variants (to the right of the toolbar). */}
+                <button
+                  className={"sketch-group-primary" + (groupActive ? " active" : "")}
+                  title={vm.title}
+                  onClick={() => setSketchTool(variant)}
+                >
+                  {vm.label}
+                  {kbd(vm.sc)}
+                </button>
+                <button
+                  className={"sketch-group-arrow" + (expanded ? " expanded" : "")}
+                  title={g.title}
+                  aria-expanded={expanded}
+                  onClick={() => setExpandedSketchGroup(expanded ? null : slot.group)}
+                >
+                  ▸
+                </button>
+                {expanded && (
+                  <div className="sketch-flyout">
+                    {g.variants.map((tv) => {
+                      const t = sketchToolMeta(tv);
+                      return (
+                        <button
+                          key={tv}
+                          className={sketchTool === tv ? "active" : ""}
+                          title={t.title}
+                          onClick={() => setSketchTool(tv)}
+                        >
+                          <span className="cf-icon">{t.label}</span>
+                          <span className="cf-name">
+                            {SKETCH_VARIANT_NAME[tv] ?? t.title}
+                            {kbd(t.sc)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ),
+          };
+        }),
+        {
+          id: "dimension",
+          rows: [
+            {
+              id: "dimension",
+              itemId: "dimension",
+              icon: "↔",
+              label: "Dimension",
+              shortcut: "D",
+              title:
+                "Dimension (D): a line (length), circle (radius), or two lines (angle) — pick one if none selected",
+              disabled: false,
+              keywords: ["length", "radius", "angle", "distance"],
+              onSelect: () => startDimension(),
+            },
+          ],
           node: (
             <button
-              className={sketchTool === t.tool ? "active" : ""}
-              title={t.title}
-              disabled={disabled}
-              onClick={() => setSketchTool(t.tool)}
+              title="Dimension (D): a line (length), circle (radius), or two lines (angle) — pick one if none selected"
+              className={dimPending ? "active" : ""}
+              onClick={startDimension}
             >
-              {t.label}{kbd(t.sc)}
+              ↔{kbd("D")}
             </button>
           ),
-        };
-      }
-      const g = SKETCH_GROUPS[slot.group];
-      const variant =
-        slot.group === "circle" ? circleVariant : slot.group === "rect" ? rectVariant : patternVariant;
-      const groupActive = (g.variants as readonly SketchTool[]).includes(sketchTool);
-      const expanded = expandedSketchGroup === slot.group;
-      const vm = sketchToolMeta(variant);
-      return {
-        id: `group:${slot.group}`,
-        // Both variants are searchable in their own right ("3 points", "center").
-        rows: g.variants.map((tv) =>
-          sketchToolRow(tv, {
-            id: `group:${slot.group}/${tv}`,
-            label: `${g.name} ▸ ${SKETCH_VARIANT_NAME[tv] ?? sketchToolMeta(tv).name}`,
-          }),
-        ),
-        node: (
-          <div className="sketch-group">
-            {/* Primary applies the last-used variant; ▸ opens the vertical
-                flyout of variants (to the right of the toolbar). */}
-            <button
-              className={"sketch-group-primary" + (groupActive ? " active" : "")}
-              title={vm.title}
-              onClick={() => setSketchTool(variant)}
-            >
-              {vm.label}{kbd(vm.sc)}
-            </button>
-            <button
-              className={"sketch-group-arrow" + (expanded ? " expanded" : "")}
-              title={g.title}
-              aria-expanded={expanded}
-              onClick={() => setExpandedSketchGroup(expanded ? null : slot.group)}
-            >
-              ▸
-            </button>
-            {expanded && (
-              <div className="sketch-flyout">
-                {g.variants.map((tv) => {
-                  const t = sketchToolMeta(tv);
-                  return (
-                    <button
-                      key={tv}
-                      className={sketchTool === tv ? "active" : ""}
-                      title={t.title}
-                      onClick={() => setSketchTool(tv)}
-                    >
-                      <span className="cf-icon">{t.label}</span>
-                      <span className="cf-name">{SKETCH_VARIANT_NAME[tv] ?? t.title}{kbd(t.sc)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ),
-      };
-    }),
-    {
-      id: "dimension",
-      rows: [{
-        id: "dimension", itemId: "dimension", icon: "↔", label: "Dimension", shortcut: "D",
-        title: "Dimension (D): a line (length), circle (radius), or two lines (angle) — pick one if none selected",
-        disabled: false, keywords: ["length", "radius", "angle", "distance"], onSelect: () => startDimension(),
-      }],
-      node: (
-        <button
-          title="Dimension (D): a line (length), circle (radius), or two lines (angle) — pick one if none selected"
-          className={dimPending ? "active" : ""}
-          onClick={startDimension}
-        >
-          ↔{kbd("D")}
-        </button>
-      ),
-    },
-    { id: "sep1", rows: [], node: <div className="sketch-toolbar-sep" /> },
-    {
-      id: "constraints",
-      rows: CONSTRAINT_ORDER.map((k) => ({
-        id: `constraint:${k}`,
-        itemId: "constraints",
-        icon: constraintDefs[k].icon,
-        label: CONSTRAINT_NAME[k],
-        shortcut: constraintDefs[k].sc,
-        title: constraintDefs[k].title,
-        disabled: !constraintDefs[k].enabled,
-        keywords: ["constraint"],
-        onSelect: () => { setConstraintChoice(k); constraintDefs[k].apply(); },
-      })),
-      node: (
-        /* All seven geometric constraints behind one button: the primary
+        },
+        { id: "sep1", rows: [], node: <div className="sketch-toolbar-sep" /> },
+        {
+          id: "constraints",
+          rows: CONSTRAINT_ORDER.map((k) => ({
+            id: `constraint:${k}`,
+            itemId: "constraints",
+            icon: constraintDefs[k].icon,
+            label: CONSTRAINT_NAME[k],
+            shortcut: constraintDefs[k].sc,
+            title: constraintDefs[k].title,
+            disabled: !constraintDefs[k].enabled,
+            keywords: ["constraint"],
+            onSelect: () => {
+              setConstraintChoice(k);
+              constraintDefs[k].apply();
+            },
+          })),
+          node: (
+            /* All seven geometric constraints behind one button: the primary
            applies the last-used one; ▸ opens a vertical flyout (to the
            right of the toolbar) of every choice. Disabled choices show
            what selection they need via their tooltip. */
-        <div className="constraint-group">
-          <button
-            className="constraint-primary"
-            title={constraintDefs[constraintChoice].title}
-            disabled={!constraintDefs[constraintChoice].enabled}
-            onClick={() => constraintDefs[constraintChoice].apply()}
-          >
-            {constraintDefs[constraintChoice].node}
-          </button>
-          <button
-            className={"constraint-arrow" + (constraintFlyoutOpen ? " expanded" : "")}
-            title="More constraints"
-            aria-expanded={constraintFlyoutOpen}
-            onClick={() => setConstraintFlyoutOpen((v) => !v)}
-          >
-            ▸
-          </button>
-          {constraintFlyoutOpen && (
-            <div className="constraint-flyout">
-              {CONSTRAINT_ORDER.map((k) => {
-                const d = constraintDefs[k];
-                return (
-                  <button
-                    key={k}
-                    className={k === constraintChoice ? "active" : ""}
-                    title={d.title}
-                    disabled={!d.enabled}
-                    onClick={() => {
-                      setConstraintChoice(k);
-                      setConstraintFlyoutOpen(false);
-                      d.apply();
-                    }}
-                  >
-                    <span className="cf-icon">{d.node}</span>
-                    <span className="cf-name">{CONSTRAINT_NAME[k]}</span>
-                  </button>
-                );
-              })}
+            <div className="constraint-group">
+              <button
+                className="constraint-primary"
+                title={constraintDefs[constraintChoice].title}
+                disabled={!constraintDefs[constraintChoice].enabled}
+                onClick={() => constraintDefs[constraintChoice].apply()}
+              >
+                {constraintDefs[constraintChoice].node}
+              </button>
+              <button
+                className={"constraint-arrow" + (constraintFlyoutOpen ? " expanded" : "")}
+                title="More constraints"
+                aria-expanded={constraintFlyoutOpen}
+                onClick={() => setConstraintFlyoutOpen((v) => !v)}
+              >
+                ▸
+              </button>
+              {constraintFlyoutOpen && (
+                <div className="constraint-flyout">
+                  {CONSTRAINT_ORDER.map((k) => {
+                    const d = constraintDefs[k];
+                    return (
+                      <button
+                        key={k}
+                        className={k === constraintChoice ? "active" : ""}
+                        title={d.title}
+                        disabled={!d.enabled}
+                        onClick={() => {
+                          setConstraintChoice(k);
+                          setConstraintFlyoutOpen(false);
+                          d.apply();
+                        }}
+                      >
+                        <span className="cf-icon">{d.node}</span>
+                        <span className="cf-name">{CONSTRAINT_NAME[k]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      ),
-    },
-    { id: "sep2", rows: [], node: <div className="sketch-toolbar-sep" /> },
-    {
-      id: "construction",
-      rows: [{
-        id: "construction", itemId: "construction", icon: <ConstructionIcon />, label: "Construction", shortcut: "Q",
-        title: "Construction (Q): reference geometry — toggle the draw mode, or convert the selection",
-        disabled: false, keywords: ["reference", "guide"], onSelect: () => toggleConstruction(),
-      }],
-      node: (
-        <button
-          title={
-            selectedSketchEntities.length > 0
-              ? "Construction (Q): toggle construction (reference) geometry on the selection"
-              : "Construction (Q): draw reference geometry (toggle)"
-          }
-          className={constructionMode ? "active" : ""}
-          onClick={toggleConstruction}
-        >
-          <ConstructionIcon />{kbd("Q")}
-        </button>
-      ),
-    },
-    ...(editingSketch.constraints.length > 0
-      ? [{
-          id: "constraint-count",
-          rows: [],
-          node: (
-            <span
-              className={`constraint-count${solveConflict ? " conflict" : ""}`}
-              title={
-                solveConflict
-                  ? "Over-constrained / conflicting constraints"
-                  : `${editingSketch.constraints.length} constraints${fullyConstrained ? " · fully constrained" : ""}`
-              }
-            >
-              {solveConflict ? "⚠" : fullyConstrained ? "✓" : editingSketch.constraints.length}
-            </span>
           ),
-        } satisfies ColumnSlot]
-      : []),
-  ];
+        },
+        { id: "sep2", rows: [], node: <div className="sketch-toolbar-sep" /> },
+        {
+          id: "construction",
+          rows: [
+            {
+              id: "construction",
+              itemId: "construction",
+              icon: <ConstructionIcon />,
+              label: "Construction",
+              shortcut: "Q",
+              title: "Construction (Q): reference geometry — toggle the draw mode, or convert the selection",
+              disabled: false,
+              keywords: ["reference", "guide"],
+              onSelect: () => toggleConstruction(),
+            },
+          ],
+          node: (
+            <button
+              title={
+                selectedSketchEntities.length > 0
+                  ? "Construction (Q): toggle construction (reference) geometry on the selection"
+                  : "Construction (Q): draw reference geometry (toggle)"
+              }
+              className={constructionMode ? "active" : ""}
+              onClick={toggleConstruction}
+            >
+              <ConstructionIcon />
+              {kbd("Q")}
+            </button>
+          ),
+        },
+        ...(editingSketch.constraints.length > 0
+          ? [
+              {
+                id: "constraint-count",
+                rows: [],
+                node: (
+                  <span
+                    className={`constraint-count${solveConflict ? " conflict" : ""}`}
+                    title={
+                      solveConflict
+                        ? "Over-constrained / conflicting constraints"
+                        : `${editingSketch.constraints.length} constraints${fullyConstrained ? " · fully constrained" : ""}`
+                    }
+                  >
+                    {solveConflict ? "⚠" : fullyConstrained ? "✓" : editingSketch.constraints.length}
+                  </span>
+                ),
+              } satisfies ColumnSlot,
+            ]
+          : []),
+      ];
 
   // The modeling toolbar as data: <OverflowToolbar> renders as many of these as
   // fit and collapses the rest into its searchable "More ▾" flyout. `keywords`
@@ -6186,7 +6665,10 @@ export default function App() {
       title: "Sketch (S): start a sketch — pick a plane or face",
       keywords: ["draw", "2d", "profile"],
       disabled: !!editingSketch || picking,
-      onSelect: () => { setPickPurpose("sketch"); setPicking(true); },
+      onSelect: () => {
+        setPickPurpose("sketch");
+        setPicking(true);
+      },
     },
     {
       id: "body",
@@ -6362,11 +6844,7 @@ export default function App() {
           >
             ＋ New
           </button>
-          <button
-            className="text-btn docs-btn"
-            title="Open a document"
-            onClick={() => setDocsDialogOpen(true)}
-          >
+          <button className="text-btn docs-btn" title="Open a document" onClick={() => setDocsDialogOpen(true)}>
             Open…
           </button>
         </div>
@@ -6411,7 +6889,9 @@ export default function App() {
                 {statusClass === "busy" ? (
                   <span className="status-spinner" aria-hidden />
                 ) : (
-                  <span className="status-check" aria-hidden>✓</span>
+                  <span className="status-check" aria-hidden>
+                    ✓
+                  </span>
                 )}
                 {meshPercent !== null && <span aria-hidden>{meshPercent}%</span>}
                 <span className="sr-only">{status}</span>
@@ -6530,7 +7010,13 @@ export default function App() {
         <ReportDialog
           onClose={() => setReportOpen(false)}
           version={__BUILD_ID__}
-          getDocJson={() => { try { return JSON.stringify(doc); } catch { return null; } }}
+          getDocJson={() => {
+            try {
+              return JSON.stringify(doc);
+            } catch {
+              return null;
+            }
+          }}
           getScreenshot={() => viewApiRef.current?.capturePNG({ plain: true }) ?? null}
         />
       )}
@@ -6571,9 +7057,7 @@ export default function App() {
                 const { doc: next } = addVariable(doc);
                 setDoc(next);
               }}
-              onChange={(id, field, value) =>
-                setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)
-              }
+              onChange={(id, field, value) => setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)}
               onDelete={(id) => setDoc(removeVariable(doc, id))}
             />
           )}
@@ -6596,11 +7080,7 @@ export default function App() {
             onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
             onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
           />
-          <div
-            className="panel-splitter"
-            title="Drag to resize the timeline"
-            onPointerDown={startTimelineResize}
-          />
+          <div className="panel-splitter" title="Drag to resize the timeline" onPointerDown={startTimelineResize} />
           <div className="parts-header">
             <h2 className="params-heading">Parts</h2>
             <div className="parts-import" ref={importMenuRef}>
@@ -6616,14 +7096,20 @@ export default function App() {
                   <button
                     type="button"
                     title="Import a STEP file as a new part (⌘I / Ctrl+I)"
-                    onClick={() => { setImportMenuOpen(false); importInputRef.current?.click(); }}
+                    onClick={() => {
+                      setImportMenuOpen(false);
+                      importInputRef.current?.click();
+                    }}
                   >
                     STEP part…
                   </button>
                   <button
                     type="button"
                     title="Import a DXF drawing as an editable sketch"
-                    onClick={() => { setImportMenuOpen(false); dxfInputRef.current?.click(); }}
+                    onClick={() => {
+                      setImportMenuOpen(false);
+                      dxfInputRef.current?.click();
+                    }}
                   >
                     DXF sketch…
                   </button>
@@ -6682,12 +7168,13 @@ export default function App() {
             onTransformPreview={handleTransformPreview}
             picking={picking}
             onPick={handlePickRef}
-            axisPick={picking && (pickPurpose === "revolveAxis" || pickPurpose === "patternAxis" || pickPurpose === "patternDir")}
+            axisPick={
+              picking &&
+              (pickPurpose === "revolveAxis" || pickPurpose === "patternAxis" || pickPurpose === "patternDir")
+            }
             onAxisPick={handleAxisPick}
             activeSketch={
-              editingSketch
-                ? { datumId: editingSketch.plane.kind === "datum" ? editingSketch.plane.id : null }
-                : null
+              editingSketch ? { datumId: editingSketch.plane.kind === "datum" ? editingSketch.plane.id : null } : null
             }
             activeSketchFace={
               editingSketch && editingSketch.plane.kind === "face"
@@ -6704,7 +7191,12 @@ export default function App() {
             onSketchDragMove={handleSketchDragMove}
             onSketchDragEnd={handleSketchDragEnd}
             selectionFilter={selFilter}
-            sectionView={{ enabled: sectionView.enabled, frame: sectionFrame, offset: sectionView.offset, flip: sectionView.flip }}
+            sectionView={{
+              enabled: sectionView.enabled,
+              frame: sectionFrame,
+              offset: sectionView.offset,
+              flip: sectionView.flip,
+            }}
             onSectionOffsetChange={(offset) => setSectionView((s) => ({ ...s, offset }))}
             theme={resolvedTheme}
             mouseMiddle={settings.mouseMiddle}
@@ -6732,7 +7224,12 @@ export default function App() {
                 <>
                   <div className="ep-heading">
                     Constraints ({editingSketch.constraints.length})
-                    {solveConflict && <span className="constraint-warn" title="Over-constrained / conflicting"> ⚠ conflict</span>}
+                    {solveConflict && (
+                      <span className="constraint-warn" title="Over-constrained / conflicting">
+                        {" "}
+                        ⚠ conflict
+                      </span>
+                    )}
                   </div>
                   <ul className="constraint-list">
                     {editingSketch.constraints.map((c) => (
@@ -6771,16 +7268,16 @@ export default function App() {
               )}
             </EditPanel>
           )}
-          {editingSketch && <OverflowColumn
+          {editingSketch && (
+            <OverflowColumn
               className="sketch-toolbar"
               slots={sketchSlots}
               openRequest={sketchMoreRequest}
               showShortcuts={showShortcuts}
               searchPlaceholder="Search sketch tools…"
-            />}
-          {dimPending && (
-            <div className="dim-hint">Pick a line or circle to dimension · Esc to cancel</div>
+            />
           )}
+          {dimPending && <div className="dim-hint">Pick a line or circle to dimension · Esc to cancel</div>}
           {dimInput && (
             <DraggableDialog
               className="dim-input"
@@ -6788,7 +7285,13 @@ export default function App() {
               style={{ left: dimInput.x, top: dimInput.y }}
             >
               <label data-drag-handle>
-                {dimInput.kind === "radius" ? "Radius" : dimInput.kind === "angle" ? "Angle °" : dimInput.kind === "distance" ? "Distance" : "Length"}
+                {dimInput.kind === "radius"
+                  ? "Radius"
+                  : dimInput.kind === "angle"
+                    ? "Angle °"
+                    : dimInput.kind === "distance"
+                      ? "Distance"
+                      : "Length"}
               </label>
               <DimValueInput
                 value={dimInput.value}
@@ -6808,231 +7311,275 @@ export default function App() {
               changes the signed distance live (cross to the other side → negative);
               the dashed offset preview updates as it moves. Set/Enter commits,
               ✕/Esc cancels. */}
-          {editingSketch && offsetSession && (() => {
-            // Guarded: a half-typed / non-numeric distance must not throw here.
-            let raw = NaN;
-            try { raw = evaluateExpression(offsetSession.value, resolved.scope); } catch { raw = NaN; }
-            const dv = Number.isFinite(raw) ? raw : 0;
-            const a0 = screenOf(offsetSession.anchor);
-            const a1 = screenOf([offsetSession.anchor[0] + offsetSession.normal[0], offsetSession.anchor[1] + offsetSession.normal[1]]);
-            const axisX = a1.x - a0.x, axisY = a1.y - a0.y, axisLen2 = axisX * axisX + axisY * axisY || 1;
-            const handle = screenOf([offsetSession.anchor[0] + offsetSession.normal[0] * dv, offsetSession.anchor[1] + offsetSession.normal[1] * dv]);
-            // Point the arrow along the (screen-space) drag axis, flipping 180°
-            // when the offset has gone negative — like the Transform gizmo's
-            // translate handle pointing in the drag direction.
-            const arrowAng = (Math.atan2(axisY, axisX) * 180) / Math.PI + (dv < 0 ? 180 : 0);
-            const onDrag = (ev: React.PointerEvent) => {
-              ev.preventDefault();
-              ev.stopPropagation();
-              const sx = ev.clientX, sy = ev.clientY, d0 = dv;
-              const move = (m: WindowEventMap["pointermove"]) => {
-                const proj = ((m.clientX - sx) * axisX + (m.clientY - sy) * axisY) / axisLen2;
-                setOffsetSession((s) => (s ? { ...s, value: (d0 + proj).toFixed(2) } : s));
+          {editingSketch &&
+            offsetSession &&
+            (() => {
+              // Guarded: a half-typed / non-numeric distance must not throw here.
+              let raw = NaN;
+              try {
+                raw = evaluateExpression(offsetSession.value, resolved.scope);
+              } catch {
+                raw = NaN;
+              }
+              const dv = Number.isFinite(raw) ? raw : 0;
+              const a0 = screenOf(offsetSession.anchor);
+              const a1 = screenOf([
+                offsetSession.anchor[0] + offsetSession.normal[0],
+                offsetSession.anchor[1] + offsetSession.normal[1],
+              ]);
+              const axisX = a1.x - a0.x,
+                axisY = a1.y - a0.y,
+                axisLen2 = axisX * axisX + axisY * axisY || 1;
+              const handle = screenOf([
+                offsetSession.anchor[0] + offsetSession.normal[0] * dv,
+                offsetSession.anchor[1] + offsetSession.normal[1] * dv,
+              ]);
+              // Point the arrow along the (screen-space) drag axis, flipping 180°
+              // when the offset has gone negative — like the Transform gizmo's
+              // translate handle pointing in the drag direction.
+              const arrowAng = (Math.atan2(axisY, axisX) * 180) / Math.PI + (dv < 0 ? 180 : 0);
+              const onDrag = (ev: React.PointerEvent) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                const sx = ev.clientX,
+                  sy = ev.clientY,
+                  d0 = dv;
+                const move = (m: WindowEventMap["pointermove"]) => {
+                  const proj = ((m.clientX - sx) * axisX + (m.clientY - sy) * axisY) / axisLen2;
+                  setOffsetSession((s) => (s ? { ...s, value: (d0 + proj).toFixed(2) } : s));
+                };
+                const up = () => {
+                  window.removeEventListener("pointermove", move);
+                  window.removeEventListener("pointerup", up);
+                };
+                window.addEventListener("pointermove", move);
+                window.addEventListener("pointerup", up);
               };
-              const up = () => {
-                window.removeEventListener("pointermove", move);
-                window.removeEventListener("pointerup", up);
-              };
-              window.addEventListener("pointermove", move);
-              window.addEventListener("pointerup", up);
-            };
-            return (
-              <>
-                <svg
-                  className="offset-arrow"
-                  onPointerDown={onDrag}
-                  width={48}
-                  height={18}
-                  viewBox="0 0 48 18"
-                  style={{ left: handle.x, top: handle.y, transform: `translate(-50%, -50%) rotate(${arrowAng}deg)` }}
-                >
-                  <title>Drag to set the offset distance (cross over to flip the side)</title>
-                  <line className="offset-arrow-shaft" x1="3" y1="9" x2="31" y2="9" />
-                  <path className="offset-arrow-head" d="M30 2.5 L45 9 L30 15.5 Z" />
-                </svg>
-                <DraggableDialog className="dim-input" baseTransform="translate(14px, -130%)" style={{ left: a0.x, top: a0.y }}>
-                  <label data-drag-handle>Offset</label>
-                  <DimValueInput
-                    value={offsetSession.value}
-                    variables={dimVarOptions}
-                    onChange={(v) => setOffsetSession((s) => (s ? { ...s, value: v } : s))}
-                    onSubmit={commitOffset}
-                    onCancel={cancelOffset}
-                  />
-                  <button onClick={commitOffset}>Set</button>
-                  <button className="ghost" onClick={cancelOffset}>
-                    ✕
-                  </button>
-                </DraggableDialog>
-              </>
-            );
-          })()}
+              return (
+                <>
+                  <svg
+                    className="offset-arrow"
+                    onPointerDown={onDrag}
+                    width={48}
+                    height={18}
+                    viewBox="0 0 48 18"
+                    style={{ left: handle.x, top: handle.y, transform: `translate(-50%, -50%) rotate(${arrowAng}deg)` }}
+                  >
+                    <title>Drag to set the offset distance (cross over to flip the side)</title>
+                    <line className="offset-arrow-shaft" x1="3" y1="9" x2="31" y2="9" />
+                    <path className="offset-arrow-head" d="M30 2.5 L45 9 L30 15.5 Z" />
+                  </svg>
+                  <DraggableDialog
+                    className="dim-input"
+                    baseTransform="translate(14px, -130%)"
+                    style={{ left: a0.x, top: a0.y }}
+                  >
+                    <label data-drag-handle>Offset</label>
+                    <DimValueInput
+                      value={offsetSession.value}
+                      variables={dimVarOptions}
+                      onChange={(v) => setOffsetSession((s) => (s ? { ...s, value: v } : s))}
+                      onSubmit={commitOffset}
+                      onCancel={cancelOffset}
+                    />
+                    <button onClick={commitOffset}>Set</button>
+                    <button className="ghost" onClick={cancelOffset}>
+                      ✕
+                    </button>
+                  </DraggableDialog>
+                </>
+              );
+            })()}
           {/* Re-edit a committed offset's distance: shown when a single generated
               offset entity is selected. Editing re-runs applyDerived. */}
-          {editingSketch && !offsetSession && selectedOffsetOp && (() => {
-            const e = selectedOffsetOp.entity;
-            const uv: Vec2 =
-              e.type === "line"
-                ? [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2]
-                : e.type === "circle"
-                  ? [e.c[0], e.c[1]]
-                  : e.type === "arc"
-                    ? [e.c[0] + e.r * Math.cos((e.start + e.end) / 2), e.c[1] + e.r * Math.sin((e.start + e.end) / 2)]
-                    : [0, 0];
-            const a0 = screenOf(uv);
-            const shown = offsetEdit?.opId === selectedOffsetOp.op.id ? offsetEdit.value : selectedOffsetOp.op.distance;
-            return (
-              <DraggableDialog className="dim-input" baseTransform="translate(14px, -130%)" style={{ left: a0.x, top: a0.y }}>
-                <label data-drag-handle>Offset</label>
-                <DimValueInput
-                  value={shown}
-                  variables={dimVarOptions}
-                  onChange={(v) => setOffsetEdit({ opId: selectedOffsetOp.op.id, value: v })}
-                  onSubmit={commitOffsetEdit}
-                  onCancel={() => setOffsetEdit(null)}
-                />
-                <button onClick={commitOffsetEdit}>Set</button>
-              </DraggableDialog>
-            );
-          })()}
+          {editingSketch &&
+            !offsetSession &&
+            selectedOffsetOp &&
+            (() => {
+              const e = selectedOffsetOp.entity;
+              const uv: Vec2 =
+                e.type === "line"
+                  ? [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2]
+                  : e.type === "circle"
+                    ? [e.c[0], e.c[1]]
+                    : e.type === "arc"
+                      ? [e.c[0] + e.r * Math.cos((e.start + e.end) / 2), e.c[1] + e.r * Math.sin((e.start + e.end) / 2)]
+                      : [0, 0];
+              const a0 = screenOf(uv);
+              const shown =
+                offsetEdit?.opId === selectedOffsetOp.op.id ? offsetEdit.value : selectedOffsetOp.op.distance;
+              return (
+                <DraggableDialog
+                  className="dim-input"
+                  baseTransform="translate(14px, -130%)"
+                  style={{ left: a0.x, top: a0.y }}
+                >
+                  <label data-drag-handle>Offset</label>
+                  <DimValueInput
+                    value={shown}
+                    variables={dimVarOptions}
+                    onChange={(v) => setOffsetEdit({ opId: selectedOffsetOp.op.id, value: v })}
+                    onSubmit={commitOffsetEdit}
+                    onCancel={() => setOffsetEdit(null)}
+                  />
+                  <button onClick={commitOffsetEdit}>Set</button>
+                </DraggableDialog>
+              );
+            })()}
           {/* Mirror tool: a floating prompt. Before an axis is armed it asks the
               user to click a line; once armed it shows the live mirrored count and
               Done/Cancel. Enter commits, Esc cancels (see the key handler). */}
-          {editingSketch && mirrorSession && (() => {
-            const sk = doc.features.find((f) => f.id === editingSketchId);
-            const axis =
-              mirrorSession.axisEntityId && sk?.type === "sketch"
-                ? sk.entities.find((x) => x.id === mirrorSession.axisEntityId)
-                : undefined;
-            const anchorUv: Vec2 =
-              axis && axis.type === "line"
-                ? [(axis.a[0] + axis.b[0]) / 2, (axis.a[1] + axis.b[1]) / 2]
-                : [0, 0];
-            const a0 = screenOf(anchorUv);
-            return (
-              <DraggableDialog className="dim-input" baseTransform="translate(14px, -130%)" style={{ left: a0.x, top: a0.y }}>
-                <label data-drag-handle>Mirror</label>
-                {!mirrorSession.axisEntityId ? (
-                  <span className="dim-status" style={{ padding: "0 6px" }}>Click a line to set the axis</span>
-                ) : (
-                  <span className="dim-status" style={{ padding: "0 6px" }}>
-                    {mirrorSession.previews.length} mirrored — click entities to add
-                  </span>
-                )}
-                <button onClick={commitMirror} disabled={mirrorSession.previews.length === 0}>
-                  Done
-                </button>
-                <button className="ghost" onClick={cancelMirror}>
-                  ✕
-                </button>
-              </DraggableDialog>
-            );
-          })()}
+          {editingSketch &&
+            mirrorSession &&
+            (() => {
+              const sk = doc.features.find((f) => f.id === editingSketchId);
+              const axis =
+                mirrorSession.axisEntityId && sk?.type === "sketch"
+                  ? sk.entities.find((x) => x.id === mirrorSession.axisEntityId)
+                  : undefined;
+              const anchorUv: Vec2 =
+                axis && axis.type === "line" ? [(axis.a[0] + axis.b[0]) / 2, (axis.a[1] + axis.b[1]) / 2] : [0, 0];
+              const a0 = screenOf(anchorUv);
+              return (
+                <DraggableDialog
+                  className="dim-input"
+                  baseTransform="translate(14px, -130%)"
+                  style={{ left: a0.x, top: a0.y }}
+                >
+                  <label data-drag-handle>Mirror</label>
+                  {!mirrorSession.axisEntityId ? (
+                    <span className="dim-status" style={{ padding: "0 6px" }}>
+                      Click a line to set the axis
+                    </span>
+                  ) : (
+                    <span className="dim-status" style={{ padding: "0 6px" }}>
+                      {mirrorSession.previews.length} mirrored — click entities to add
+                    </span>
+                  )}
+                  <button onClick={commitMirror} disabled={mirrorSession.previews.length === 0}>
+                    Done
+                  </button>
+                  <button className="ghost" onClick={cancelMirror}>
+                    ✕
+                  </button>
+                </DraggableDialog>
+              );
+            })()}
           {/* Pattern tool (linear/circular): a fixed floating prompt at the top
               (sources accumulate by clicks anywhere, so there's no single
               anchor). Expression fields for count/step/angle; Done/Enter commits
               the DerivedOp, ✕/Esc discards the session. */}
-          {editingSketch && patternSession && (() => {
-            const s = patternSession;
-            const n = s.sourceIds.length;
-            const status =
-              s.kind === "circular" && !s.center
-                ? "Click the center point (a vertex, the origin, or empty space)"
-                : n === 0
-                  ? "Click entities to pattern"
-                  : `${n} in pattern — click entities to add`;
-            return (
-              <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
-                <div className="ed-title" data-drag-handle>{s.kind === "linear" ? "Linear pattern" : "Circular pattern"}</div>
-                <div className="ed-hint">{status}</div>
-                <label className="ed-field">
-                  <span>Count</span>
-                  <DimValueInput
-                    value={s.count}
-                    variables={dimVarOptions}
-                    onChange={(v) => setPatternSession((p) => (p ? { ...p, count: v } : p))}
-                    onSubmit={commitPattern}
-                    onCancel={cancelPattern}
-                  />
-                </label>
-                {s.kind === "linear" ? (
-                  <>
-                    <label className="ed-field">
-                      <span>ΔX</span>
-                      <DimValueInput
-                        value={s.dx}
-                        variables={dimVarOptions}
-                        onChange={(v) => setPatternSession((p) => (p ? { ...p, dx: v } : p))}
-                        onSubmit={commitPattern}
-                        onCancel={cancelPattern}
-                      />
-                    </label>
-                    <label className="ed-field">
-                      <span>ΔY</span>
-                      <DimValueInput
-                        value={s.dy}
-                        variables={dimVarOptions}
-                        onChange={(v) => setPatternSession((p) => (p ? { ...p, dy: v } : p))}
-                        onSubmit={commitPattern}
-                        onCancel={cancelPattern}
-                      />
-                    </label>
-                  </>
-                ) : (
-                  <>
-                    <div className="ed-modes">
-                      <button
-                        className={s.mode === "full" ? "active" : ""}
-                        title="Full circle: instances at equal 360°/count steps"
-                        onClick={() => setPatternSession((p) => (p ? { ...p, mode: "full" } : p))}
-                      >
-                        Full (360°)
-                      </button>
-                      <button
-                        className={s.mode === "angle" ? "active" : ""}
-                        title="Spread the instances across a total sweep angle"
-                        onClick={() => setPatternSession((p) => (p ? { ...p, mode: "angle" } : p))}
-                      >
-                        Angle
-                      </button>
-                    </div>
-                    {s.mode === "angle" && (
-                      <>
-                        <label className="ed-field">
-                          <span>Angle (°)</span>
-                          <DimValueInput
-                            value={s.angle}
-                            variables={dimVarOptions}
-                            onChange={(v) => setPatternSession((p) => (p ? { ...p, angle: v } : p))}
-                            onSubmit={commitPattern}
-                            onCancel={cancelPattern}
-                          />
-                        </label>
-                        <label className="ed-field ed-flip" title="Spread ±angle/2 to both sides of the seed">
-                          <span>Symmetric</span>
-                          <input
-                            type="checkbox"
-                            checked={s.symmetric}
-                            onChange={(ev) => setPatternSession((p) => (p ? { ...p, symmetric: ev.target.checked } : p))}
-                          />
-                        </label>
-                      </>
-                    )}
-                  </>
-                )}
-                <div className="ed-actions">
-                  <button
-                    className="ed-primary"
-                    onClick={commitPattern}
-                    disabled={n === 0 || (s.kind === "circular" && !s.center)}
-                  >
-                    Done
-                  </button>
-                  <button onClick={cancelPattern}>Cancel</button>
-                </div>
-              </DraggableDialog>
-            );
-          })()}
+          {editingSketch &&
+            patternSession &&
+            (() => {
+              const s = patternSession;
+              const n = s.sourceIds.length;
+              const status =
+                s.kind === "circular" && !s.center
+                  ? "Click the center point (a vertex, the origin, or empty space)"
+                  : n === 0
+                    ? "Click entities to pattern"
+                    : `${n} in pattern — click entities to add`;
+              return (
+                <DraggableDialog
+                  className="extrude-dialog"
+                  style={{ left: "50%", top: 70 }}
+                  baseTransform="translateX(-50%)"
+                >
+                  <div className="ed-title" data-drag-handle>
+                    {s.kind === "linear" ? "Linear pattern" : "Circular pattern"}
+                  </div>
+                  <div className="ed-hint">{status}</div>
+                  <label className="ed-field">
+                    <span>Count</span>
+                    <DimValueInput
+                      value={s.count}
+                      variables={dimVarOptions}
+                      onChange={(v) => setPatternSession((p) => (p ? { ...p, count: v } : p))}
+                      onSubmit={commitPattern}
+                      onCancel={cancelPattern}
+                    />
+                  </label>
+                  {s.kind === "linear" ? (
+                    <>
+                      <label className="ed-field">
+                        <span>ΔX</span>
+                        <DimValueInput
+                          value={s.dx}
+                          variables={dimVarOptions}
+                          onChange={(v) => setPatternSession((p) => (p ? { ...p, dx: v } : p))}
+                          onSubmit={commitPattern}
+                          onCancel={cancelPattern}
+                        />
+                      </label>
+                      <label className="ed-field">
+                        <span>ΔY</span>
+                        <DimValueInput
+                          value={s.dy}
+                          variables={dimVarOptions}
+                          onChange={(v) => setPatternSession((p) => (p ? { ...p, dy: v } : p))}
+                          onSubmit={commitPattern}
+                          onCancel={cancelPattern}
+                        />
+                      </label>
+                    </>
+                  ) : (
+                    <>
+                      <div className="ed-modes">
+                        <button
+                          className={s.mode === "full" ? "active" : ""}
+                          title="Full circle: instances at equal 360°/count steps"
+                          onClick={() => setPatternSession((p) => (p ? { ...p, mode: "full" } : p))}
+                        >
+                          Full (360°)
+                        </button>
+                        <button
+                          className={s.mode === "angle" ? "active" : ""}
+                          title="Spread the instances across a total sweep angle"
+                          onClick={() => setPatternSession((p) => (p ? { ...p, mode: "angle" } : p))}
+                        >
+                          Angle
+                        </button>
+                      </div>
+                      {s.mode === "angle" && (
+                        <>
+                          <label className="ed-field">
+                            <span>Angle (°)</span>
+                            <DimValueInput
+                              value={s.angle}
+                              variables={dimVarOptions}
+                              onChange={(v) => setPatternSession((p) => (p ? { ...p, angle: v } : p))}
+                              onSubmit={commitPattern}
+                              onCancel={cancelPattern}
+                            />
+                          </label>
+                          <label className="ed-field ed-flip" title="Spread ±angle/2 to both sides of the seed">
+                            <span>Symmetric</span>
+                            <input
+                              type="checkbox"
+                              checked={s.symmetric}
+                              onChange={(ev) =>
+                                setPatternSession((p) => (p ? { ...p, symmetric: ev.target.checked } : p))
+                              }
+                            />
+                          </label>
+                        </>
+                      )}
+                    </>
+                  )}
+                  <div className="ed-actions">
+                    <button
+                      className="ed-primary"
+                      onClick={commitPattern}
+                      disabled={n === 0 || (s.kind === "circular" && !s.center)}
+                    >
+                      Done
+                    </button>
+                    <button onClick={cancelPattern}>Cancel</button>
+                  </div>
+                </DraggableDialog>
+              );
+            })()}
           {/* Project/Convert tool: a fixed floating prompt. There's no single
               anchor (the user clicks body edges/vertices anywhere), so it sits at
               the top. Done commits the projected previews; ✕/Esc discards them. */}
@@ -7055,58 +7602,87 @@ export default function App() {
           {/* Text tool: once the anchor is clicked, a floating box takes the
               string + height. Enter commits, ✕/Esc cancels. The text is live-
               previewed in the sketch (see renderSketchesWithPreview). */}
-          {editingSketch && textDraft && (() => {
-            const a0 = screenOf(textDraft.anchor);
-            return (
-              <DraggableDialog className="dim-input" baseTransform="translate(14px, -130%)" style={{ left: a0.x, top: a0.y }}>
-                <label data-drag-handle>Text</label>
-                <input
-                  autoFocus
-                  value={textDraft.value}
-                  placeholder="Type text…"
-                  style={{ width: 120 }}
-                  onChange={(ev) => setTextDraft((s) => (s ? { ...s, value: ev.target.value } : s))}
-                  onKeyDown={(ev) => {
-                    if (ev.key === "Enter") { ev.preventDefault(); commitText(); }
-                  }}
-                />
-                <DimValueInput
-                  value={textDraft.height}
-                  variables={dimVarOptions}
-                  onChange={(v) => setTextDraft((s) => (s ? { ...s, height: v } : s))}
-                  onSubmit={commitText}
-                  onCancel={() => setTextDraft(null)}
-                />
-                <button onClick={commitText} disabled={!textDraft.value.trim()}>Set</button>
-                <button className="ghost" onClick={() => setTextDraft(null)}>✕</button>
-              </DraggableDialog>
-            );
-          })()}
+          {editingSketch &&
+            textDraft &&
+            (() => {
+              const a0 = screenOf(textDraft.anchor);
+              return (
+                <DraggableDialog
+                  className="dim-input"
+                  baseTransform="translate(14px, -130%)"
+                  style={{ left: a0.x, top: a0.y }}
+                >
+                  <label data-drag-handle>Text</label>
+                  <input
+                    autoFocus
+                    value={textDraft.value}
+                    placeholder="Type text…"
+                    style={{ width: 120 }}
+                    onChange={(ev) => setTextDraft((s) => (s ? { ...s, value: ev.target.value } : s))}
+                    onKeyDown={(ev) => {
+                      if (ev.key === "Enter") {
+                        ev.preventDefault();
+                        commitText();
+                      }
+                    }}
+                  />
+                  <DimValueInput
+                    value={textDraft.height}
+                    variables={dimVarOptions}
+                    onChange={(v) => setTextDraft((s) => (s ? { ...s, height: v } : s))}
+                    onSubmit={commitText}
+                    onCancel={() => setTextDraft(null)}
+                  />
+                  <button onClick={commitText} disabled={!textDraft.value.trim()}>
+                    Set
+                  </button>
+                  <button className="ghost" onClick={() => setTextDraft(null)}>
+                    ✕
+                  </button>
+                </DraggableDialog>
+              );
+            })()}
           {/* Polygon tool: a one-shot floating "Sides" box (like the dimension
               input). The draft is free text; Set (enabled only for an integer in
               3..24) commits the count and closes the box so the next viewport click
               draws. Cancel/✕/Esc just closes it, keeping the previous count. */}
-          {editingSketch && sketchTool === "polygon" && polySidesOpen && (() => {
-            const n = Number(polySidesText);
-            const valid = Number.isInteger(n) && n >= 3 && n <= 24;
-            const commit = () => { if (valid) { setPolygonSides(n); setPolySidesOpen(false); } };
-            return (
-              <DraggableDialog className="dim-input" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
-                <label data-drag-handle>Sides</label>
-                <input
-                  autoFocus
-                  value={polySidesText}
-                  onChange={(e) => setPolySidesText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") commit();
-                    else if (e.key === "Escape") setPolySidesOpen(false);
-                  }}
-                />
-                <button onClick={commit} disabled={!valid}>Set</button>
-                <button className="ghost" onClick={() => setPolySidesOpen(false)}>✕</button>
-              </DraggableDialog>
-            );
-          })()}
+          {editingSketch &&
+            sketchTool === "polygon" &&
+            polySidesOpen &&
+            (() => {
+              const n = Number(polySidesText);
+              const valid = Number.isInteger(n) && n >= 3 && n <= 24;
+              const commit = () => {
+                if (valid) {
+                  setPolygonSides(n);
+                  setPolySidesOpen(false);
+                }
+              };
+              return (
+                <DraggableDialog
+                  className="dim-input"
+                  style={{ left: "50%", top: 70 }}
+                  baseTransform="translateX(-50%)"
+                >
+                  <label data-drag-handle>Sides</label>
+                  <input
+                    autoFocus
+                    value={polySidesText}
+                    onChange={(e) => setPolySidesText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commit();
+                      else if (e.key === "Escape") setPolySidesOpen(false);
+                    }}
+                  />
+                  <button onClick={commit} disabled={!valid}>
+                    Set
+                  </button>
+                  <button className="ghost" onClick={() => setPolySidesOpen(false)}>
+                    ✕
+                  </button>
+                </DraggableDialog>
+              );
+            })()}
           {dimFrame && dimSpecs.length > 0 && (
             <DimensionOverlay
               frame={dimFrame}
@@ -7117,7 +7693,11 @@ export default function App() {
               onDelete={deleteConstraint}
             />
           )}
-          {editingSketch && sketchMsg && <div className="sketch-msg" role="alert">⚠ {sketchMsg}</div>}
+          {editingSketch && sketchMsg && (
+            <div className="sketch-msg" role="alert">
+              ⚠ {sketchMsg}
+            </div>
+          )}
           {/* Named views (Top/Front/Right/…) + iso corners live on the on-canvas
               navigation gizmo (see Viewport.tsx). This small Home button, tucked
               at the gizmo's bottom-right, snaps to the iso view zoomed to fit
@@ -7127,7 +7707,17 @@ export default function App() {
             title="Home — iso view, fit all (H)"
             onClick={() => viewApiRef.current?.homeView()}
           >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
               <path d="M3 10.5 12 3l9 7.5" />
               <path d="M5 9.5V20h14V9.5" />
               <path d="M9.5 20v-6h5v6" />
@@ -7138,7 +7728,11 @@ export default function App() {
               the icon shows a box in one-point perspective, filled while active. */}
           <button
             className={"view-reset perspective-toggle" + (perspective ? " active" : "")}
-            title={perspective ? "Perspective view: on — click for orthographic" : "Orthographic view — click for perspective"}
+            title={
+              perspective
+                ? "Perspective view: on — click for orthographic"
+                : "Orthographic view — click for perspective"
+            }
             aria-pressed={perspective}
             onClick={() => {
               const next = !perspective;
@@ -7146,7 +7740,17 @@ export default function App() {
               viewApiRef.current?.setProjection(next ? "perspective" : "orthographic");
             }}
           >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
               {/* Cube seen from a front corner (perspective feel via the asymmetric
                   top). Outer silhouette, then the 3 inner edges from the near
                   top-corner — each ends exactly on a silhouette vertex, so nothing
@@ -7161,11 +7765,25 @@ export default function App() {
               button only turns the feature on/off. */}
           <button
             className={"view-reset section-view-toggle" + (sectionView.enabled ? " active" : "")}
-            title={sectionView.enabled ? "Section view: on — click to turn off" : "Section view: cut through the model to see the interior"}
+            title={
+              sectionView.enabled
+                ? "Section view: on — click to turn off"
+                : "Section view: cut through the model to see the interior"
+            }
             aria-pressed={sectionView.enabled}
             onClick={() => setSectionView((s) => ({ ...s, enabled: !s.enabled }))}
           >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
               <rect x="5" y="4" width="14" height="16" rx="1" />
               <path d="M2 12h20" />
             </svg>
@@ -7191,7 +7809,10 @@ export default function App() {
               </button>
               <button
                 title="Pick a different plane or face to cut through"
-                onClick={() => { setPickPurpose("sectionPlane"); setPicking(true); }}
+                onClick={() => {
+                  setPickPurpose("sectionPlane");
+                  setPicking(true);
+                }}
               >
                 ⌖ Pick plane
               </button>
@@ -7224,8 +7845,7 @@ export default function App() {
           {editingSketch ? (
             <div className="sketch-banner">
               <span>
-                Editing <strong>{editingSketch.name}</strong> ·{" "}
-                {planeRefLabel(editingSketch.plane)}
+                Editing <strong>{editingSketch.name}</strong> · {planeRefLabel(editingSketch.plane)}
               </span>
               <button onClick={finishSketch}>Finish sketch ⏎</button>
             </div>
@@ -7243,7 +7863,14 @@ export default function App() {
                           ? "Select a plane or planar face to offset the new plane from"
                           : "Select a plane or planar face for the sketch"}
                 </span>
-                <button onClick={() => { setPicking(false); if (pickPurpose !== "sketch" && pickPurpose !== "plane") setPickPurpose("sketch"); }}>Cancel (Esc)</button>
+                <button
+                  onClick={() => {
+                    setPicking(false);
+                    if (pickPurpose !== "sketch" && pickPurpose !== "plane") setPickPurpose("sketch");
+                  }}
+                >
+                  Cancel (Esc)
+                </button>
               </div>
             )
           )}
@@ -7251,7 +7878,9 @@ export default function App() {
             <DraggableDialog className="extrude-dialog" style={{ left: extrudeDialog.x, top: extrudeDialog.y }}>
               <div className="ed-title" data-drag-handle>
                 {extrudeDialog.editId ? "Edit extrude" : "Extrude"}
-                {!extrudeDialog.editId && extrudeDialogProfiles.length > 1 ? ` (${extrudeDialogProfiles.length} profiles)` : ""}
+                {!extrudeDialog.editId && extrudeDialogProfiles.length > 1
+                  ? ` (${extrudeDialogProfiles.length} profiles)`
+                  : ""}
               </div>
               <div className="ed-modes">
                 {(["new", "add", "remove"] as const).map((m) => (
@@ -7262,7 +7891,9 @@ export default function App() {
                       setExtrudeDialog((d) =>
                         // Through All is only meaningful for a cut (Remove); switching
                         // to New or Add drops it back to Blind.
-                        d ? { ...d, mode: m, extent: m !== "remove" && d.extent === "throughAll" ? "blind" : d.extent } : d,
+                        d
+                          ? { ...d, mode: m, extent: m !== "remove" && d.extent === "throughAll" ? "blind" : d.extent }
+                          : d,
                       )
                     }
                   >
@@ -7277,9 +7908,13 @@ export default function App() {
                     value={extrudeDialog.targetId ?? ""}
                     onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, targetId: e.target.value || null } : d))}
                   >
-                    <option value="" disabled>Select a part…</option>
+                    <option value="" disabled>
+                      Select a part…
+                    </option>
                     {booleanCandidates.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
                     ))}
                   </select>
                 </label>
@@ -7361,201 +7996,234 @@ export default function App() {
               </div>
             </DraggableDialog>
           )}
-          {dressUpDialog && (() => {
-            // Synchronous validation (empty / unparseable / ≤ 0) is instant and
-            // kernel-free; the async geometry error (size too big) lives in
-            // `dressUpError`. Show whichever applies; empty stays silent.
-            const sv = validateDressUpDialog(dressUpDialog);
-            const message = sv.value === null ? sv.error : dressUpError;
-            const disabled = sv.value === null || !!dressUpError;
-            return (
-              <DraggableDialog className="extrude-dialog" style={{ left: dressUpDialog.x, top: dressUpDialog.y }}>
-                <div className="ed-title" data-drag-handle>
-                  {dressUpDialog.editId ? "Edit " : ""}{dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}
-                </div>
-                <label className="ed-field">
-                  <span>{dressUpDialog.op === "chamfer" ? "Distance" : "Radius"}</span>
-                  <input
-                    autoFocus
-                    onFocus={(e) => e.currentTarget.select()}
-                    value={dressUpDialog.size}
-                    onChange={(e) => setDressUpDialog((d) => (d ? { ...d, size: e.target.value } : d))}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") createDressUp();
-                      else if (e.key === "Escape") closeDressUpDialog();
-                    }}
-                  />
-                </label>
-                {/* Chamfer only: the bevel angle off the reference face (45° is
-                    the symmetric cut), and which of the edge's two adjacent
-                    faces that reference is. Flip does nothing at 45°. */}
-                {dressUpDialog.op === "chamfer" && (
-                  <>
-                    <label className="ed-field">
-                      <span>Angle (°)</span>
-                      <input
-                        value={dressUpDialog.angle}
-                        onFocus={(e) => e.currentTarget.select()}
-                        onChange={(e) => setDressUpDialog((d) => (d ? { ...d, angle: e.target.value } : d))}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") createDressUp();
-                          else if (e.key === "Escape") closeDressUpDialog();
-                        }}
-                      />
-                    </label>
-                    <label className="ed-field ed-flip" title="Measure the distance and angle from the edge's other face">
-                      <span>Flip angle</span>
-                      <input
-                        type="checkbox"
-                        checked={dressUpDialog.flip}
-                        onChange={(e) => setDressUpDialog((d) => (d ? { ...d, flip: e.target.checked } : d))}
-                      />
-                    </label>
-                  </>
-                )}
-                {message && <p className="ed-warning">{message}</p>}
-                <div className="ed-actions">
-                  <button className="ed-primary" onClick={createDressUp} disabled={disabled}>{dressUpDialog.editId ? "Done" : "Create"}</button>
-                  <button onClick={closeDressUpDialog}>Cancel</button>
-                </div>
-              </DraggableDialog>
-            );
-          })()}
-          {shellDialog && (() => {
-            // Synchronous validation (empty / unparseable / ≤ 0) is instant and
-            // kernel-free; the async geometry error (thickness too big) lives in
-            // `shellError`. Show whichever applies; empty stays silent.
-            const sv = validateShellThickness(shellDialog.thickness, resolved.scope);
-            const message = sv.value === null ? sv.error : shellError;
-            const disabled = sv.value === null || !!shellError;
-            return (
-              <DraggableDialog className="extrude-dialog" style={{ left: shellDialog.x, top: shellDialog.y }}>
-                <div className="ed-title" data-drag-handle>
-                  {shellDialog.editId ? "Edit " : ""}Shell
-                </div>
-                <label className="ed-field">
-                  <span>Thickness</span>
-                  <input
-                    autoFocus
-                    onFocus={(e) => e.currentTarget.select()}
-                    value={shellDialog.thickness}
-                    onChange={(e) => setShellDialog((d) => (d ? { ...d, thickness: e.target.value } : d))}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") createShell();
-                      else if (e.key === "Escape") closeShellDialog();
-                    }}
-                  />
-                </label>
-                {message && <p className="ed-warning">{message}</p>}
-                <div className="ed-actions">
-                  <button className="ed-primary" onClick={createShell} disabled={disabled}>{shellDialog.editId ? "Done" : "Create"}</button>
-                  <button onClick={closeShellDialog}>Cancel</button>
-                </div>
-              </DraggableDialog>
-            );
-          })()}
-          {revolveDialog && (() => {
-            const profileLabel = revolveDialog.profile
-              ? doc.features.find((f) => f.id === revolveDialog.profile!.sketchId)?.name ?? "Region"
-              : null;
-            const ax = revolveDialog.axis;
-            const axisLabel = !ax
-              ? null
-              : "plane" in ax
-                ? planeRefLabel(ax.plane)
-                : "face" in ax
-                  ? (doc.features.find((f) => f.id === ax.face.featureId)?.name ?? "Body") + " · face"
-                  : (doc.features.find((f) => f.id === ax.sketchId)?.name ?? "Edge") + " · edge";
-            const axisArming = picking && pickPurpose === "revolveAxis";
-            const armAxis = () => {
-              setRevolveDialog((d) => (d ? { ...d, armed: null } : d));
-              setPickPurpose("revolveAxis");
-              setPicking(true);
-            };
-            return (
-            <DraggableDialog className="extrude-dialog" style={{ left: revolveDialog.x, top: revolveDialog.y }}>
-              <div className="ed-title" data-drag-handle>{revolveDialog.editId ? "Edit revolve" : "Revolve"}</div>
-              <div className="ed-hint">Arm a profile face, then an axis — a sketch line, a plane, or a body face.</div>
-              <div className="bool-group-label">Profile</div>
-              {profileLabel ? (
-                <div className="bool-operand-row">
-                  <span className="bool-operand-name">{profileLabel}</span>
-                  <button className="bool-operand-x" title="Re-pick" onClick={() => setRevolveDialog((d) => (d ? { ...d, profile: null, armed: "profile" } : d))}>✕</button>
-                </div>
-              ) : (
-                <button
-                  className={"ed-pick-btn" + (revolveDialog.armed === "profile" ? " active" : "")}
-                  onClick={() => setRevolveDialog((d) => (d ? { ...d, armed: "profile" } : d))}
-                >
-                  {revolveDialog.armed === "profile" ? "Click a region…" : "Select profile face"}
-                </button>
-              )}
-              <div className="bool-group-label">Axis</div>
-              {axisLabel ? (
-                <div className="bool-operand-row">
-                  <span className="bool-operand-name">{axisLabel}</span>
-                  <button className="bool-operand-x" title="Re-pick" onClick={() => { setRevolveDialog((d) => (d ? { ...d, axis: null } : d)); armAxis(); }}>✕</button>
-                </div>
-              ) : (
-                <button
-                  className={"ed-pick-btn" + (axisArming ? " active" : "")}
-                  onClick={armAxis}
-                >
-                  {axisArming ? "Click an edge, plane, or face…" : "Select axis"}
-                </button>
-              )}
-              <div className="ed-modes">
-                {(["full", "angle"] as const).map((m) => (
-                  <button
-                    key={m}
-                    className={revolveDialog.mode === m ? "active" : ""}
-                    onClick={() => setRevolveDialog((d) => (d ? { ...d, mode: m } : d))}
-                  >
-                    {m === "full" ? "Full (360°)" : "Angle"}
-                  </button>
-                ))}
-              </div>
-              {revolveDialog.mode === "angle" && (
-                <>
+          {dressUpDialog &&
+            (() => {
+              // Synchronous validation (empty / unparseable / ≤ 0) is instant and
+              // kernel-free; the async geometry error (size too big) lives in
+              // `dressUpError`. Show whichever applies; empty stays silent.
+              const sv = validateDressUpDialog(dressUpDialog);
+              const message = sv.value === null ? sv.error : dressUpError;
+              const disabled = sv.value === null || !!dressUpError;
+              return (
+                <DraggableDialog className="extrude-dialog" style={{ left: dressUpDialog.x, top: dressUpDialog.y }}>
+                  <div className="ed-title" data-drag-handle>
+                    {dressUpDialog.editId ? "Edit " : ""}
+                    {dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}
+                  </div>
                   <label className="ed-field">
-                    <span>Angle (°)</span>
+                    <span>{dressUpDialog.op === "chamfer" ? "Distance" : "Radius"}</span>
                     <input
                       autoFocus
-                      value={revolveDialog.degrees}
-                      onChange={(e) => setRevolveDialog((d) => (d ? { ...d, degrees: e.target.value } : d))}
+                      onFocus={(e) => e.currentTarget.select()}
+                      value={dressUpDialog.size}
+                      onChange={(e) => setDressUpDialog((d) => (d ? { ...d, size: e.target.value } : d))}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") createRevolve();
-                        else if (e.key === "Escape") closeRevolveDialog();
+                        if (e.key === "Enter") createDressUp();
+                        else if (e.key === "Escape") closeDressUpDialog();
                       }}
                     />
                   </label>
-                  <label className="ed-field ed-flip">
-                    <span>Symmetric</span>
+                  {/* Chamfer only: the bevel angle off the reference face (45° is
+                    the symmetric cut), and which of the edge's two adjacent
+                    faces that reference is. Flip does nothing at 45°. */}
+                  {dressUpDialog.op === "chamfer" && (
+                    <>
+                      <label className="ed-field">
+                        <span>Angle (°)</span>
+                        <input
+                          value={dressUpDialog.angle}
+                          onFocus={(e) => e.currentTarget.select()}
+                          onChange={(e) => setDressUpDialog((d) => (d ? { ...d, angle: e.target.value } : d))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") createDressUp();
+                            else if (e.key === "Escape") closeDressUpDialog();
+                          }}
+                        />
+                      </label>
+                      <label
+                        className="ed-field ed-flip"
+                        title="Measure the distance and angle from the edge's other face"
+                      >
+                        <span>Flip angle</span>
+                        <input
+                          type="checkbox"
+                          checked={dressUpDialog.flip}
+                          onChange={(e) => setDressUpDialog((d) => (d ? { ...d, flip: e.target.checked } : d))}
+                        />
+                      </label>
+                    </>
+                  )}
+                  {message && <p className="ed-warning">{message}</p>}
+                  <div className="ed-actions">
+                    <button className="ed-primary" onClick={createDressUp} disabled={disabled}>
+                      {dressUpDialog.editId ? "Done" : "Create"}
+                    </button>
+                    <button onClick={closeDressUpDialog}>Cancel</button>
+                  </div>
+                </DraggableDialog>
+              );
+            })()}
+          {shellDialog &&
+            (() => {
+              // Synchronous validation (empty / unparseable / ≤ 0) is instant and
+              // kernel-free; the async geometry error (thickness too big) lives in
+              // `shellError`. Show whichever applies; empty stays silent.
+              const sv = validateShellThickness(shellDialog.thickness, resolved.scope);
+              const message = sv.value === null ? sv.error : shellError;
+              const disabled = sv.value === null || !!shellError;
+              return (
+                <DraggableDialog className="extrude-dialog" style={{ left: shellDialog.x, top: shellDialog.y }}>
+                  <div className="ed-title" data-drag-handle>
+                    {shellDialog.editId ? "Edit " : ""}Shell
+                  </div>
+                  <label className="ed-field">
+                    <span>Thickness</span>
                     <input
-                      type="checkbox"
-                      checked={revolveDialog.symmetric}
-                      onChange={(e) => setRevolveDialog((d) => (d ? { ...d, symmetric: e.target.checked } : d))}
+                      autoFocus
+                      onFocus={(e) => e.currentTarget.select()}
+                      value={shellDialog.thickness}
+                      onChange={(e) => setShellDialog((d) => (d ? { ...d, thickness: e.target.value } : d))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") createShell();
+                        else if (e.key === "Escape") closeShellDialog();
+                      }}
                     />
                   </label>
-                </>
-              )}
-              {revolvePreviewError && <p className="ed-warning">{revolvePreviewError}</p>}
-              <div className="ed-actions">
-                <button
-                  className="ed-primary"
-                  disabled={!revolveDialog.profile || !revolveDialog.axis}
-                  onClick={createRevolve}
-                >
-                  {revolveDialog.editId ? "Done" : "Create"}
-                </button>
-                <button onClick={closeRevolveDialog}>Cancel</button>
-              </div>
-            </DraggableDialog>
-            );
-          })()}
+                  {message && <p className="ed-warning">{message}</p>}
+                  <div className="ed-actions">
+                    <button className="ed-primary" onClick={createShell} disabled={disabled}>
+                      {shellDialog.editId ? "Done" : "Create"}
+                    </button>
+                    <button onClick={closeShellDialog}>Cancel</button>
+                  </div>
+                </DraggableDialog>
+              );
+            })()}
+          {revolveDialog &&
+            (() => {
+              const profileLabel = revolveDialog.profile
+                ? (doc.features.find((f) => f.id === revolveDialog.profile!.sketchId)?.name ?? "Region")
+                : null;
+              const ax = revolveDialog.axis;
+              const axisLabel = !ax
+                ? null
+                : "plane" in ax
+                  ? planeRefLabel(ax.plane)
+                  : "face" in ax
+                    ? (doc.features.find((f) => f.id === ax.face.featureId)?.name ?? "Body") + " · face"
+                    : (doc.features.find((f) => f.id === ax.sketchId)?.name ?? "Edge") + " · edge";
+              const axisArming = picking && pickPurpose === "revolveAxis";
+              const armAxis = () => {
+                setRevolveDialog((d) => (d ? { ...d, armed: null } : d));
+                setPickPurpose("revolveAxis");
+                setPicking(true);
+              };
+              return (
+                <DraggableDialog className="extrude-dialog" style={{ left: revolveDialog.x, top: revolveDialog.y }}>
+                  <div className="ed-title" data-drag-handle>
+                    {revolveDialog.editId ? "Edit revolve" : "Revolve"}
+                  </div>
+                  <div className="ed-hint">
+                    Arm a profile face, then an axis — a sketch line, a plane, or a body face.
+                  </div>
+                  <div className="bool-group-label">Profile</div>
+                  {profileLabel ? (
+                    <div className="bool-operand-row">
+                      <span className="bool-operand-name">{profileLabel}</span>
+                      <button
+                        className="bool-operand-x"
+                        title="Re-pick"
+                        onClick={() => setRevolveDialog((d) => (d ? { ...d, profile: null, armed: "profile" } : d))}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className={"ed-pick-btn" + (revolveDialog.armed === "profile" ? " active" : "")}
+                      onClick={() => setRevolveDialog((d) => (d ? { ...d, armed: "profile" } : d))}
+                    >
+                      {revolveDialog.armed === "profile" ? "Click a region…" : "Select profile face"}
+                    </button>
+                  )}
+                  <div className="bool-group-label">Axis</div>
+                  {axisLabel ? (
+                    <div className="bool-operand-row">
+                      <span className="bool-operand-name">{axisLabel}</span>
+                      <button
+                        className="bool-operand-x"
+                        title="Re-pick"
+                        onClick={() => {
+                          setRevolveDialog((d) => (d ? { ...d, axis: null } : d));
+                          armAxis();
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button className={"ed-pick-btn" + (axisArming ? " active" : "")} onClick={armAxis}>
+                      {axisArming ? "Click an edge, plane, or face…" : "Select axis"}
+                    </button>
+                  )}
+                  <div className="ed-modes">
+                    {(["full", "angle"] as const).map((m) => (
+                      <button
+                        key={m}
+                        className={revolveDialog.mode === m ? "active" : ""}
+                        onClick={() => setRevolveDialog((d) => (d ? { ...d, mode: m } : d))}
+                      >
+                        {m === "full" ? "Full (360°)" : "Angle"}
+                      </button>
+                    ))}
+                  </div>
+                  {revolveDialog.mode === "angle" && (
+                    <>
+                      <label className="ed-field">
+                        <span>Angle (°)</span>
+                        <input
+                          autoFocus
+                          value={revolveDialog.degrees}
+                          onChange={(e) => setRevolveDialog((d) => (d ? { ...d, degrees: e.target.value } : d))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") createRevolve();
+                            else if (e.key === "Escape") closeRevolveDialog();
+                          }}
+                        />
+                      </label>
+                      <label className="ed-field ed-flip">
+                        <span>Symmetric</span>
+                        <input
+                          type="checkbox"
+                          checked={revolveDialog.symmetric}
+                          onChange={(e) => setRevolveDialog((d) => (d ? { ...d, symmetric: e.target.checked } : d))}
+                        />
+                      </label>
+                    </>
+                  )}
+                  {revolvePreviewError && <p className="ed-warning">{revolvePreviewError}</p>}
+                  <div className="ed-actions">
+                    <button
+                      className="ed-primary"
+                      disabled={!revolveDialog.profile || !revolveDialog.axis}
+                      onClick={createRevolve}
+                    >
+                      {revolveDialog.editId ? "Done" : "Create"}
+                    </button>
+                    <button onClick={closeRevolveDialog}>Cancel</button>
+                  </div>
+                </DraggableDialog>
+              );
+            })()}
           {dxfDialog && (
-            <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
-              <div className="ed-title" data-drag-handle>Import DXF sketch</div>
+            <DraggableDialog
+              className="extrude-dialog"
+              style={{ left: "50%", top: 64 }}
+              baseTransform="translateX(-50%)"
+            >
+              <div className="ed-title" data-drag-handle>
+                Import DXF sketch
+              </div>
               <div className="ed-hint">
                 {dxfDialog.fileName} — {dxfDialog.preview.total} entit{dxfDialog.preview.total === 1 ? "y" : "ies"}
                 {dxfDialog.preview.skipped > 0 && `, ${dxfDialog.preview.skipped} unsupported skipped`}
@@ -7570,7 +8238,9 @@ export default function App() {
                   <option value="datum:plane-front">Front</option>
                   <option value="datum:plane-right">Right</option>
                   {userPlanes.map((pl) => (
-                    <option key={pl.id} value={`plane:${pl.id}`}>{pl.name}</option>
+                    <option key={pl.id} value={`plane:${pl.id}`}>
+                      {pl.name}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -7581,7 +8251,9 @@ export default function App() {
                   onChange={(e) => setDxfDialog((d) => (d ? { ...d, unitsKey: e.target.value as DxfUnitsKey } : d))}
                 >
                   {DXF_UNITS.map((u) => (
-                    <option key={u.key} value={u.key}>{u.label}</option>
+                    <option key={u.key} value={u.key}>
+                      {u.label}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -7594,8 +8266,14 @@ export default function App() {
             </DraggableDialog>
           )}
           {planeDialog && (
-            <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
-              <div className="ed-title" data-drag-handle>{planeDialog.editId ? "Edit plane" : "Reference plane"}</div>
+            <DraggableDialog
+              className="extrude-dialog"
+              style={{ left: "50%", top: 64 }}
+              baseTransform="translateX(-50%)"
+            >
+              <div className="ed-title" data-drag-handle>
+                {planeDialog.editId ? "Edit plane" : "Reference plane"}
+              </div>
               <label className="ed-field">
                 <span>Method</span>
                 <select
@@ -7605,8 +8283,14 @@ export default function App() {
                     setPlaneDialog((d) => (d ? { ...d, method } : d));
                     // Arm the first pick the method needs: a plane/face for all but
                     // "through", which collects vertices/sketch points via clicks.
-                    if (method === "through") { setPlanePick("point"); setPicking(false); }
-                    else { setPlanePick("base"); setPickPurpose("plane"); setPicking(true); }
+                    if (method === "through") {
+                      setPlanePick("point");
+                      setPicking(false);
+                    } else {
+                      setPlanePick("base");
+                      setPickPurpose("plane");
+                      setPicking(true);
+                    }
                   }}
                 >
                   <option value="offset">Offset</option>
@@ -7621,9 +8305,17 @@ export default function App() {
                   <span>{planeDialog.method === "midplane" ? "First" : "Base"}</span>
                   <button
                     className={"ed-pick-btn" + (planePick === "base" ? " active" : "")}
-                    onClick={() => { setPlanePick("base"); setPickPurpose("plane"); setPicking(true); }}
+                    onClick={() => {
+                      setPlanePick("base");
+                      setPickPurpose("plane");
+                      setPicking(true);
+                    }}
                   >
-                    {planePick === "base" ? "Click a plane/face…" : planeDialog.base ? planeRefLabel(planeDialog.base) : "Select plane/face"}
+                    {planePick === "base"
+                      ? "Click a plane/face…"
+                      : planeDialog.base
+                        ? planeRefLabel(planeDialog.base)
+                        : "Select plane/face"}
                   </button>
                 </div>
               )}
@@ -7634,7 +8326,10 @@ export default function App() {
                   <input
                     value={planeDialog.offset}
                     onChange={(e) => setPlaneDialog((d) => (d ? { ...d, offset: e.target.value } : d))}
-                    onKeyDown={(e) => { if (e.key === "Enter") createPlane(); else if (e.key === "Escape") closePlaneDialog(); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") createPlane();
+                      else if (e.key === "Escape") closePlaneDialog();
+                    }}
                   />
                 </label>
               )}
@@ -7644,9 +8339,17 @@ export default function App() {
                   <span>Second</span>
                   <button
                     className={"ed-pick-btn" + (planePick === "refB" ? " active" : "")}
-                    onClick={() => { setPlanePick("refB"); setPickPurpose("plane"); setPicking(true); }}
+                    onClick={() => {
+                      setPlanePick("refB");
+                      setPickPurpose("plane");
+                      setPicking(true);
+                    }}
                   >
-                    {planePick === "refB" ? "Click a plane/face…" : planeDialog.refB ? planeRefLabel(planeDialog.refB) : "Select plane/face"}
+                    {planePick === "refB"
+                      ? "Click a plane/face…"
+                      : planeDialog.refB
+                        ? planeRefLabel(planeDialog.refB)
+                        : "Select plane/face"}
                   </button>
                 </div>
               )}
@@ -7672,7 +8375,10 @@ export default function App() {
                     <input
                       value={planeDialog.angle}
                       onChange={(e) => setPlaneDialog((d) => (d ? { ...d, angle: e.target.value } : d))}
-                      onKeyDown={(e) => { if (e.key === "Enter") createPlane(); else if (e.key === "Escape") closePlaneDialog(); }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") createPlane();
+                        else if (e.key === "Escape") closePlaneDialog();
+                      }}
                     />
                   </label>
                 </>
@@ -7683,9 +8389,13 @@ export default function App() {
                   <span>Points</span>
                   <button
                     className={"ed-pick-btn" + (planePick === "point" ? " active" : "")}
-                    onClick={() => { setPlanePick("point"); setPicking(false); }}
+                    onClick={() => {
+                      setPlanePick("point");
+                      setPicking(false);
+                    }}
                   >
-                    {`${planeDialog.points.length}/3 picked`}{planePick === "point" ? " · click vertices/points…" : ""}
+                    {`${planeDialog.points.length}/3 picked`}
+                    {planePick === "point" ? " · click vertices/points…" : ""}
                   </button>
                 </div>
               )}
@@ -7709,15 +8419,17 @@ export default function App() {
             </DraggableDialog>
           )}
           {editingTransform && (
-            <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
-              <div className="ed-title" data-drag-handle>Transform · {editingTransform.name}</div>
+            <DraggableDialog
+              className="extrude-dialog"
+              style={{ left: "50%", top: 64 }}
+              baseTransform="translateX(-50%)"
+            >
+              <div className="ed-title" data-drag-handle>
+                Transform · {editingTransform.name}
+              </div>
               <div className="ed-modes">
                 {(["translate", "rotate"] as const).map((m) => (
-                  <button
-                    key={m}
-                    className={transformMode === m ? "active" : ""}
-                    onClick={() => setTransformMode(m)}
-                  >
+                  <button key={m} className={transformMode === m ? "active" : ""} onClick={() => setTransformMode(m)}>
                     {m === "translate" ? "Move" : "Rotate"}
                   </button>
                 ))}
@@ -7729,7 +8441,10 @@ export default function App() {
                     <input
                       value={liveTransform ? fmt(liveTransform[k]) : editingTransform[k]}
                       onChange={(e) =>
-                        setDoc(updateParam(doc, editingTransform.id, k, e.target.value), `param:${editingTransform.id}:${k}`)
+                        setDoc(
+                          updateParam(doc, editingTransform.id, k, e.target.value),
+                          `param:${editingTransform.id}:${k}`,
+                        )
                       }
                       onKeyDown={(e) => {
                         if (e.key === "Enter") finishTransform();
@@ -7748,7 +8463,10 @@ export default function App() {
                           key={ax}
                           className={editingTransform.axis === ax ? "active" : ""}
                           onClick={() =>
-                            setDoc(updateParam(doc, editingTransform.id, "axis", ax), `param:${editingTransform.id}:axis`)
+                            setDoc(
+                              updateParam(doc, editingTransform.id, "axis", ax),
+                              `param:${editingTransform.id}:axis`,
+                            )
                           }
                         >
                           {ax.toUpperCase()}
@@ -7761,7 +8479,10 @@ export default function App() {
                     <input
                       value={liveTransform ? fmt(liveTransform.angle) : editingTransform.angle}
                       onChange={(e) =>
-                        setDoc(updateParam(doc, editingTransform.id, "angle", e.target.value), `param:${editingTransform.id}:angle`)
+                        setDoc(
+                          updateParam(doc, editingTransform.id, "angle", e.target.value),
+                          `param:${editingTransform.id}:angle`,
+                        )
                       }
                       onKeyDown={(e) => {
                         if (e.key === "Enter") finishTransform();
@@ -7776,14 +8497,14 @@ export default function App() {
                 <input
                   type="checkbox"
                   checked={editingTransform.copy}
-                  onChange={(e) =>
-                    setDoc(updateParam(doc, editingTransform.id, "copy", String(e.target.checked)))
-                  }
+                  onChange={(e) => setDoc(updateParam(doc, editingTransform.id, "copy", String(e.target.checked)))}
                 />
               </label>
               <div className="ed-hint">Drag the gizmo, or type exact values.</div>
               <div className="ed-actions">
-                <button className="ed-primary" onClick={finishTransform}>Done</button>
+                <button className="ed-primary" onClick={finishTransform}>
+                  Done
+                </button>
                 <button onClick={cancelTransform}>Cancel</button>
               </div>
             </DraggableDialog>
@@ -7816,20 +8537,16 @@ export default function App() {
             setBooleanDialog((d) => (d ? { ...d, operandIds: d.operandIds.filter((x) => x !== id) } : d))
           }
           onClearBase={() => setBooleanDialog((d) => (d ? { ...d, base: null, armed: "base" } : d))}
-          onRemoveTool={(id) =>
-            setBooleanDialog((d) => (d ? { ...d, tools: d.tools.filter((x) => x !== id) } : d))
-          }
+          onRemoveTool={(id) => setBooleanDialog((d) => (d ? { ...d, tools: d.tools.filter((x) => x !== id) } : d))}
           onConfirm={confirmBoolean}
           onCancel={closeBooleanDialog}
         />
       )}
       {mirrorDialog && (
-        <DraggableDialog
-          className="extrude-dialog"
-          style={{ left: "50%", top: 70 }}
-          baseTransform="translateX(-50%)"
-        >
-          <div className="ed-title" data-drag-handle>Mirror across plane</div>
+        <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
+          <div className="ed-title" data-drag-handle>
+            Mirror across plane
+          </div>
           <label className="ed-field">
             <span>Plane</span>
             <select
@@ -7841,7 +8558,9 @@ export default function App() {
               }}
             >
               {mirrorPlaneOptions.map((o) => (
-                <option key={o.key} value={o.key}>{o.label}</option>
+                <option key={o.key} value={o.key}>
+                  {o.label}
+                </option>
               ))}
             </select>
           </label>
@@ -7862,270 +8581,318 @@ export default function App() {
             </label>
           )}
           <div className="ed-actions">
-            <button className="ed-primary" onClick={createMirror} disabled={mirrorDialog.plane === "face" && !mirrorDialog.faceRef}>
+            <button
+              className="ed-primary"
+              onClick={createMirror}
+              disabled={mirrorDialog.plane === "face" && !mirrorDialog.faceRef}
+            >
               Create
             </button>
             <button onClick={closeMirror}>Cancel</button>
           </div>
         </DraggableDialog>
       )}
-      {patternDialog && (() => {
-        const d = patternDialog;
-        const targetName = doc.features.find((f) => f.id === d.targetId)?.name ?? "Body";
-        const lineLabel = (ref: { sketchId: string }) =>
-          (doc.features.find((f) => f.id === ref.sketchId)?.name ?? "Sketch") + " · line";
-        const axis = d.axis;
-        const axisLabel = !axis
-          ? null
-          : "world" in axis
-            ? `World ${axis.world.toUpperCase()}`
-            : "face" in axis
-              ? (doc.features.find((f) => f.id === axis.face.featureId)?.name ?? "Body") + " · face"
-              : lineLabel(axis);
-        // The direction dropdowns show "line" while a sketch-line ref is set OR
-        // its pick is being armed; picking a world option cancels the arming.
-        const dirValue = (slot: "dir1" | "dir2", ref: PatternDirRef | null) =>
-          d.arming === slot || (ref && !("world" in ref)) ? "line" : ref ? ref.world : "";
-        const setDir = (slot: "dir1" | "dir2") => (v: string) => {
-          if (v === "line") { armPatternPick(slot); return; }
-          if (v !== "x" && v !== "y" && v !== "z") return;
-          if (picking && d.arming === slot) { setPicking(false); setPickPurpose("sketch"); }
-          setPatternDialog((p) => (p ? { ...p, [slot]: { world: v }, arming: null } : p));
-        };
-        const dirPicking = (slot: "dir1" | "dir2") => picking && pickPurpose === "patternDir" && d.arming === slot;
-        const targetArming = patternDialog.arming === "target";
-        const armTarget = () => setPatternDialog((p) => (p ? { ...p, targetId: null, arming: "target" } : p));
-        return (
-          <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 64 }} baseTransform="translateX(-50%)">
-            <div className="ed-title" data-drag-handle>{d.editId ? "Edit pattern" : "Pattern"}</div>
-            <div className="ed-modes">
-              {(["linear", "circular"] as const).map((k) => (
-                <button
-                  key={k}
-                  className={d.kind === k ? "active" : ""}
-                  onClick={() => setPatternDialog((p) => (p ? { ...p, kind: k, arming: null } : p))}
-                >
-                  {k === "linear" ? "Linear" : "Circular"}
-                </button>
-              ))}
-            </div>
-            <div className="bool-group-label">Body</div>
-            {d.targetId ? (
-              <div className="bool-operand-row">
-                <span className="bool-operand-name">{targetName}</span>
-                <button className="bool-operand-x" title="Re-pick" onClick={armTarget}>✕</button>
+      {patternDialog &&
+        (() => {
+          const d = patternDialog;
+          const targetName = doc.features.find((f) => f.id === d.targetId)?.name ?? "Body";
+          const lineLabel = (ref: { sketchId: string }) =>
+            (doc.features.find((f) => f.id === ref.sketchId)?.name ?? "Sketch") + " · line";
+          const axis = d.axis;
+          const axisLabel = !axis
+            ? null
+            : "world" in axis
+              ? `World ${axis.world.toUpperCase()}`
+              : "face" in axis
+                ? (doc.features.find((f) => f.id === axis.face.featureId)?.name ?? "Body") + " · face"
+                : lineLabel(axis);
+          // The direction dropdowns show "line" while a sketch-line ref is set OR
+          // its pick is being armed; picking a world option cancels the arming.
+          const dirValue = (slot: "dir1" | "dir2", ref: PatternDirRef | null) =>
+            d.arming === slot || (ref && !("world" in ref)) ? "line" : ref ? ref.world : "";
+          const setDir = (slot: "dir1" | "dir2") => (v: string) => {
+            if (v === "line") {
+              armPatternPick(slot);
+              return;
+            }
+            if (v !== "x" && v !== "y" && v !== "z") return;
+            if (picking && d.arming === slot) {
+              setPicking(false);
+              setPickPurpose("sketch");
+            }
+            setPatternDialog((p) => (p ? { ...p, [slot]: { world: v }, arming: null } : p));
+          };
+          const dirPicking = (slot: "dir1" | "dir2") => picking && pickPurpose === "patternDir" && d.arming === slot;
+          const targetArming = patternDialog.arming === "target";
+          const armTarget = () => setPatternDialog((p) => (p ? { ...p, targetId: null, arming: "target" } : p));
+          return (
+            <DraggableDialog
+              className="extrude-dialog"
+              style={{ left: "50%", top: 64 }}
+              baseTransform="translateX(-50%)"
+            >
+              <div className="ed-title" data-drag-handle>
+                {d.editId ? "Edit pattern" : "Pattern"}
               </div>
-            ) : (
-              <button className={"ed-pick-btn ed-wide" + (targetArming ? " active" : "")} onClick={armTarget}>
-                {targetArming ? "Click a body…" : "Select a body"}
-              </button>
-            )}
-            {d.kind === "linear" ? (
-              <>
-                <div className="bool-group-label">Direction</div>
-                <label className="ed-field">
-                  <span>Along</span>
-                  <select value={dirValue("dir1", d.dir1)} onChange={(e) => setDir("dir1")(e.target.value)}>
-                    <option value="x">World X</option>
-                    <option value="y">World Y</option>
-                    <option value="z">World Z</option>
-                    <option value="line">Sketch line…</option>
-                  </select>
-                </label>
-                {dirPicking("dir1") ? (
-                  <button className="ed-pick-btn active">Click a sketch line…</button>
-                ) : (
-                  !("world" in d.dir1) && (
+              <div className="ed-modes">
+                {(["linear", "circular"] as const).map((k) => (
+                  <button
+                    key={k}
+                    className={d.kind === k ? "active" : ""}
+                    onClick={() => setPatternDialog((p) => (p ? { ...p, kind: k, arming: null } : p))}
+                  >
+                    {k === "linear" ? "Linear" : "Circular"}
+                  </button>
+                ))}
+              </div>
+              <div className="bool-group-label">Body</div>
+              {d.targetId ? (
+                <div className="bool-operand-row">
+                  <span className="bool-operand-name">{targetName}</span>
+                  <button className="bool-operand-x" title="Re-pick" onClick={armTarget}>
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <button className={"ed-pick-btn ed-wide" + (targetArming ? " active" : "")} onClick={armTarget}>
+                  {targetArming ? "Click a body…" : "Select a body"}
+                </button>
+              )}
+              {d.kind === "linear" ? (
+                <>
+                  <div className="bool-group-label">Direction</div>
+                  <label className="ed-field">
+                    <span>Along</span>
+                    <select value={dirValue("dir1", d.dir1)} onChange={(e) => setDir("dir1")(e.target.value)}>
+                      <option value="x">World X</option>
+                      <option value="y">World Y</option>
+                      <option value="z">World Z</option>
+                      <option value="line">Sketch line…</option>
+                    </select>
+                  </label>
+                  {dirPicking("dir1") ? (
+                    <button className="ed-pick-btn active">Click a sketch line…</button>
+                  ) : (
+                    !("world" in d.dir1) && (
+                      <div className="bool-operand-row">
+                        <span className="bool-operand-name">{lineLabel(d.dir1)}</span>
+                        <button className="bool-operand-x" title="Re-pick" onClick={() => armPatternPick("dir1")}>
+                          ✕
+                        </button>
+                      </div>
+                    )
+                  )}
+                  <label className="ed-field">
+                    <span>Count</span>
+                    <input
+                      autoFocus
+                      value={d.count1}
+                      onChange={(e) => setPatternDialog((p) => (p ? { ...p, count1: e.target.value } : p))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") createPattern();
+                      }}
+                    />
+                  </label>
+                  <label className="ed-field">
+                    <span>Spacing</span>
+                    <input
+                      value={d.spacing1}
+                      onChange={(e) => setPatternDialog((p) => (p ? { ...p, spacing1: e.target.value } : p))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") createPattern();
+                      }}
+                    />
+                  </label>
+                  <label className="ed-field ed-flip">
+                    <span>Flip</span>
+                    <input
+                      type="checkbox"
+                      checked={d.flip1}
+                      onChange={(e) => setPatternDialog((p) => (p ? { ...p, flip1: e.target.checked } : p))}
+                    />
+                  </label>
+                  <label className="ed-field ed-flip">
+                    <span>Second direction</span>
+                    <input
+                      type="checkbox"
+                      checked={d.dir2on}
+                      onChange={(e) =>
+                        setPatternDialog((p) => (p ? { ...p, dir2on: e.target.checked, arming: null } : p))
+                      }
+                    />
+                  </label>
+                  {d.dir2on && (
+                    <>
+                      <label className="ed-field">
+                        <span>Along</span>
+                        <select value={dirValue("dir2", d.dir2)} onChange={(e) => setDir("dir2")(e.target.value)}>
+                          <option value="" disabled>
+                            Choose…
+                          </option>
+                          <option value="x">World X</option>
+                          <option value="y">World Y</option>
+                          <option value="z">World Z</option>
+                          <option value="line">Sketch line…</option>
+                        </select>
+                      </label>
+                      {dirPicking("dir2") ? (
+                        <button className="ed-pick-btn active">Click a sketch line…</button>
+                      ) : (
+                        d.dir2 &&
+                        !("world" in d.dir2) && (
+                          <div className="bool-operand-row">
+                            <span className="bool-operand-name">{lineLabel(d.dir2)}</span>
+                            <button className="bool-operand-x" title="Re-pick" onClick={() => armPatternPick("dir2")}>
+                              ✕
+                            </button>
+                          </div>
+                        )
+                      )}
+                      <label className="ed-field">
+                        <span>Count</span>
+                        <input
+                          value={d.count2}
+                          onChange={(e) => setPatternDialog((p) => (p ? { ...p, count2: e.target.value } : p))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") createPattern();
+                          }}
+                        />
+                      </label>
+                      <label className="ed-field">
+                        <span>Spacing</span>
+                        <input
+                          value={d.spacing2}
+                          onChange={(e) => setPatternDialog((p) => (p ? { ...p, spacing2: e.target.value } : p))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") createPattern();
+                          }}
+                        />
+                      </label>
+                      <label className="ed-field ed-flip">
+                        <span>Flip</span>
+                        <input
+                          type="checkbox"
+                          checked={d.flip2}
+                          onChange={(e) => setPatternDialog((p) => (p ? { ...p, flip2: e.target.checked } : p))}
+                        />
+                      </label>
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="bool-group-label">Axis</div>
+                  {axisLabel ? (
                     <div className="bool-operand-row">
-                      <span className="bool-operand-name">{lineLabel(d.dir1)}</span>
-                      <button className="bool-operand-x" title="Re-pick" onClick={() => armPatternPick("dir1")}>✕</button>
-                    </div>
-                  )
-                )}
-                <label className="ed-field">
-                  <span>Count</span>
-                  <input
-                    autoFocus
-                    value={d.count1}
-                    onChange={(e) => setPatternDialog((p) => (p ? { ...p, count1: e.target.value } : p))}
-                    onKeyDown={(e) => { if (e.key === "Enter") createPattern(); }}
-                  />
-                </label>
-                <label className="ed-field">
-                  <span>Spacing</span>
-                  <input
-                    value={d.spacing1}
-                    onChange={(e) => setPatternDialog((p) => (p ? { ...p, spacing1: e.target.value } : p))}
-                    onKeyDown={(e) => { if (e.key === "Enter") createPattern(); }}
-                  />
-                </label>
-                <label className="ed-field ed-flip">
-                  <span>Flip</span>
-                  <input
-                    type="checkbox"
-                    checked={d.flip1}
-                    onChange={(e) => setPatternDialog((p) => (p ? { ...p, flip1: e.target.checked } : p))}
-                  />
-                </label>
-                <label className="ed-field ed-flip">
-                  <span>Second direction</span>
-                  <input
-                    type="checkbox"
-                    checked={d.dir2on}
-                    onChange={(e) => setPatternDialog((p) => (p ? { ...p, dir2on: e.target.checked, arming: null } : p))}
-                  />
-                </label>
-                {d.dir2on && (
-                  <>
-                    <label className="ed-field">
-                      <span>Along</span>
-                      <select value={dirValue("dir2", d.dir2)} onChange={(e) => setDir("dir2")(e.target.value)}>
-                        <option value="" disabled>Choose…</option>
-                        <option value="x">World X</option>
-                        <option value="y">World Y</option>
-                        <option value="z">World Z</option>
-                        <option value="line">Sketch line…</option>
-                      </select>
-                    </label>
-                    {dirPicking("dir2") ? (
-                      <button className="ed-pick-btn active">Click a sketch line…</button>
-                    ) : (
-                      d.dir2 && !("world" in d.dir2) && (
-                        <div className="bool-operand-row">
-                          <span className="bool-operand-name">{lineLabel(d.dir2)}</span>
-                          <button className="bool-operand-x" title="Re-pick" onClick={() => armPatternPick("dir2")}>✕</button>
-                        </div>
-                      )
-                    )}
-                    <label className="ed-field">
-                      <span>Count</span>
-                      <input
-                        value={d.count2}
-                        onChange={(e) => setPatternDialog((p) => (p ? { ...p, count2: e.target.value } : p))}
-                        onKeyDown={(e) => { if (e.key === "Enter") createPattern(); }}
-                      />
-                    </label>
-                    <label className="ed-field">
-                      <span>Spacing</span>
-                      <input
-                        value={d.spacing2}
-                        onChange={(e) => setPatternDialog((p) => (p ? { ...p, spacing2: e.target.value } : p))}
-                        onKeyDown={(e) => { if (e.key === "Enter") createPattern(); }}
-                      />
-                    </label>
-                    <label className="ed-field ed-flip">
-                      <span>Flip</span>
-                      <input
-                        type="checkbox"
-                        checked={d.flip2}
-                        onChange={(e) => setPatternDialog((p) => (p ? { ...p, flip2: e.target.checked } : p))}
-                      />
-                    </label>
-                  </>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="bool-group-label">Axis</div>
-                {axisLabel ? (
-                  <div className="bool-operand-row">
-                    <span className="bool-operand-name">{axisLabel}</span>
-                    <button
-                      className="bool-operand-x"
-                      title="Re-pick"
-                      onClick={() => { setPatternDialog((p) => (p ? { ...p, axis: null } : p)); armPatternPick("axis"); }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <label className="ed-field">
-                      <span>World</span>
-                      <select
-                        value=""
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v !== "x" && v !== "y" && v !== "z") return;
-                          if (picking && d.arming === "axis") { setPicking(false); setPickPurpose("sketch"); }
-                          setPatternDialog((p) => (p ? { ...p, axis: { world: v }, arming: null } : p));
+                      <span className="bool-operand-name">{axisLabel}</span>
+                      <button
+                        className="bool-operand-x"
+                        title="Re-pick"
+                        onClick={() => {
+                          setPatternDialog((p) => (p ? { ...p, axis: null } : p));
+                          armPatternPick("axis");
                         }}
                       >
-                        <option value="">Choose…</option>
-                        <option value="x">World X (through the origin)</option>
-                        <option value="y">World Y (through the origin)</option>
-                        <option value="z">World Z (through the origin)</option>
-                      </select>
-                    </label>
-                    <button
-                      className={"ed-pick-btn ed-wide" + (picking && pickPurpose === "patternAxis" ? " active" : "")}
-                      onClick={() => armPatternPick("axis")}
-                    >
-                      {picking && pickPurpose === "patternAxis"
-                        ? "Click a line or cylindrical face…"
-                        : "Select axis (sketch line / cylindrical face)"}
-                    </button>
-                  </>
-                )}
-                <label className="ed-field">
-                  <span>Count</span>
-                  <input
-                    autoFocus
-                    value={d.count}
-                    onChange={(e) => setPatternDialog((p) => (p ? { ...p, count: e.target.value } : p))}
-                    onKeyDown={(e) => { if (e.key === "Enter") createPattern(); }}
-                  />
-                </label>
-                <div className="ed-modes">
-                  {(["full", "angle"] as const).map((m) => (
-                    <button
-                      key={m}
-                      className={d.mode === m ? "active" : ""}
-                      onClick={() => setPatternDialog((p) => (p ? { ...p, mode: m } : p))}
-                    >
-                      {m === "full" ? "Full (360°)" : "Angle"}
-                    </button>
-                  ))}
-                </div>
-                {d.mode === "angle" && (
-                  <>
-                    <label className="ed-field">
-                      <span>Angle (°)</span>
-                      <input
-                        value={d.angle}
-                        onChange={(e) => setPatternDialog((p) => (p ? { ...p, angle: e.target.value } : p))}
-                        onKeyDown={(e) => { if (e.key === "Enter") createPattern(); }}
-                      />
-                    </label>
-                    <label className="ed-field ed-flip">
-                      <span>Symmetric</span>
-                      <input
-                        type="checkbox"
-                        checked={d.symmetric}
-                        onChange={(e) => setPatternDialog((p) => (p ? { ...p, symmetric: e.target.checked } : p))}
-                      />
-                    </label>
-                  </>
-                )}
-                {axis && "face" in axis && (
-                  <div className="ed-hint">A face axis resolves in the kernel — the preview appears after Create.</div>
-                )}
-              </>
-            )}
-            {patternDialogWarning && <p className="ed-warning">{patternDialogWarning}</p>}
-            <div className="ed-actions">
-              <button
-                className="ed-primary"
-                disabled={!!patternDialogWarning || (d.kind === "circular" && !d.axis)}
-                onClick={createPattern}
-              >
-                {d.editId ? "Done" : "Create"}
-              </button>
-              <button onClick={closePattern}>Cancel</button>
-            </div>
-          </DraggableDialog>
-        );
-      })()}
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <label className="ed-field">
+                        <span>World</span>
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v !== "x" && v !== "y" && v !== "z") return;
+                            if (picking && d.arming === "axis") {
+                              setPicking(false);
+                              setPickPurpose("sketch");
+                            }
+                            setPatternDialog((p) => (p ? { ...p, axis: { world: v }, arming: null } : p));
+                          }}
+                        >
+                          <option value="">Choose…</option>
+                          <option value="x">World X (through the origin)</option>
+                          <option value="y">World Y (through the origin)</option>
+                          <option value="z">World Z (through the origin)</option>
+                        </select>
+                      </label>
+                      <button
+                        className={"ed-pick-btn ed-wide" + (picking && pickPurpose === "patternAxis" ? " active" : "")}
+                        onClick={() => armPatternPick("axis")}
+                      >
+                        {picking && pickPurpose === "patternAxis"
+                          ? "Click a line or cylindrical face…"
+                          : "Select axis (sketch line / cylindrical face)"}
+                      </button>
+                    </>
+                  )}
+                  <label className="ed-field">
+                    <span>Count</span>
+                    <input
+                      autoFocus
+                      value={d.count}
+                      onChange={(e) => setPatternDialog((p) => (p ? { ...p, count: e.target.value } : p))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") createPattern();
+                      }}
+                    />
+                  </label>
+                  <div className="ed-modes">
+                    {(["full", "angle"] as const).map((m) => (
+                      <button
+                        key={m}
+                        className={d.mode === m ? "active" : ""}
+                        onClick={() => setPatternDialog((p) => (p ? { ...p, mode: m } : p))}
+                      >
+                        {m === "full" ? "Full (360°)" : "Angle"}
+                      </button>
+                    ))}
+                  </div>
+                  {d.mode === "angle" && (
+                    <>
+                      <label className="ed-field">
+                        <span>Angle (°)</span>
+                        <input
+                          value={d.angle}
+                          onChange={(e) => setPatternDialog((p) => (p ? { ...p, angle: e.target.value } : p))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") createPattern();
+                          }}
+                        />
+                      </label>
+                      <label className="ed-field ed-flip">
+                        <span>Symmetric</span>
+                        <input
+                          type="checkbox"
+                          checked={d.symmetric}
+                          onChange={(e) => setPatternDialog((p) => (p ? { ...p, symmetric: e.target.checked } : p))}
+                        />
+                      </label>
+                    </>
+                  )}
+                  {axis && "face" in axis && (
+                    <div className="ed-hint">
+                      A face axis resolves in the kernel — the preview appears after Create.
+                    </div>
+                  )}
+                </>
+              )}
+              {patternDialogWarning && <p className="ed-warning">{patternDialogWarning}</p>}
+              <div className="ed-actions">
+                <button
+                  className="ed-primary"
+                  disabled={!!patternDialogWarning || (d.kind === "circular" && !d.axis)}
+                  onClick={createPattern}
+                >
+                  {d.editId ? "Done" : "Create"}
+                </button>
+                <button onClick={closePattern}>Cancel</button>
+              </div>
+            </DraggableDialog>
+          );
+        })()}
     </div>
   );
 }

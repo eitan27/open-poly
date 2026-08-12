@@ -69,7 +69,11 @@ await apply({ op: "newDocument" });
 await waitIdle();
 await apply({ op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "rect", corner: [0, 0], w: 40, h: 30 }] });
 await waitIdle();
-const ex = await apply({ op: "addExtrude", profile: { sketchId: (await read({ read: "document" })).features?.[0]?.id ?? undefined }, distance: "10" });
+const ex = await apply({
+  op: "addExtrude",
+  profile: { sketchId: (await read({ read: "document" })).features?.[0]?.id ?? undefined },
+  distance: "10",
+});
 // The above profile guess may fail; re-fetch the sketch id robustly.
 await waitIdle();
 doc = await read({ read: "document" });
@@ -91,7 +95,10 @@ await waitIdle();
 doc = await read({ read: "document" });
 const exFeat = (doc.document ?? doc).features.find((f) => f.id === exId);
 check("editing extrude distance updates in place (no new feature)", exFeat.distance === "22", exFeat.distance);
-check("still exactly one extrude (updated, not duplicated)", (doc.document ?? doc).features.filter((f) => f.type === "extrude").length === 1);
+check(
+  "still exactly one extrude (updated, not duplicated)",
+  (doc.document ?? doc).features.filter((f) => f.type === "extrude").length === 1,
+);
 await page.screenshot({ path: "/tmp/edit-extrude.png" });
 
 await browser.close();

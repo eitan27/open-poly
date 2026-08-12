@@ -70,7 +70,14 @@ export type ProfileSpec = z.infer<typeof profileSchema>;
 const construction = z.boolean().optional();
 const posNum = z.union([z.number().positive(), z.string()]);
 export const entitySchema = z.discriminatedUnion("shape", [
-  z.object({ shape: z.literal("rect"), center: sketchVec2.optional(), corner: sketchVec2.optional(), w: posNum, h: posNum, construction }),
+  z.object({
+    shape: z.literal("rect"),
+    center: sketchVec2.optional(),
+    corner: sketchVec2.optional(),
+    w: posNum,
+    h: posNum,
+    construction,
+  }),
   z.object({ shape: z.literal("circle"), c: sketchVec2, r: posNum, construction }),
   z.object({ shape: z.literal("polygon"), c: sketchVec2, r: posNum, n: z.number().int().min(3), construction }),
   z.object({ shape: z.literal("line"), a: sketchVec2, b: sketchVec2, construction }),
@@ -83,7 +90,14 @@ export const entitySchema = z.discriminatedUnion("shape", [
   // A run of text placed at baseline-left anchor `p`, `height` ems tall (sketch
   // units), optionally rotated `rotation` DEGREES. Extrude it with add_extrude
   // using a `{sketchId, textId}` profile — the kernel bakes the glyphs.
-  z.object({ shape: z.literal("text"), p: sketchVec2, value: z.string().min(1), height: posNum, rotation: sketchNum.optional(), construction }),
+  z.object({
+    shape: z.literal("text"),
+    p: sketchVec2,
+    value: z.string().min(1),
+    height: posNum,
+    rotation: sketchNum.optional(),
+    construction,
+  }),
 ]);
 export type EntitySpec = z.infer<typeof entitySchema>;
 
@@ -629,7 +643,10 @@ function toNum(v: number | string, scope: Scope): Num {
   }
   return namesSomething(v) ? { n, e: v } : { n };
 }
-const toPt = (v: [number | string, number | string], scope: Scope): Pt => ({ x: toNum(v[0], scope), y: toNum(v[1], scope) });
+const toPt = (v: [number | string, number | string], scope: Scope): Pt => ({
+  x: toNum(v[0], scope),
+  y: toNum(v[1], scope),
+});
 
 const addN = (a: Num, b: Num): Num => ({ n: a.n + b.n, ...(a.e || b.e ? { e: `(${tok(a)})+(${tok(b)})` } : {}) });
 const subN = (a: Num, b: Num): Num => ({ n: a.n - b.n, ...(a.e || b.e ? { e: `(${tok(a)})-(${tok(b)})` } : {}) });
@@ -719,7 +736,10 @@ export function expandEntities(specs: EntitySpec[], scope: Scope = {}): SketchEn
       case "line": {
         const a = toPt(s.a, scope);
         const b = toPt(s.b, scope);
-        const e = mark({ type: "line" as const, id: genId(), a: [a.x.n, a.y.n] as Vec2, b: [b.x.n, b.y.n] as Vec2 }, s.construction);
+        const e = mark(
+          { type: "line" as const, id: genId(), a: [a.x.n, a.y.n] as Vec2, b: [b.x.n, b.y.n] as Vec2 },
+          s.construction,
+        );
         out.push(withExprs(e, collectExprs({ "a.0": a.x, "a.1": a.y, "b.0": b.x, "b.1": b.y })));
         break;
       }
@@ -729,13 +749,19 @@ export function expandEntities(specs: EntitySpec[], scope: Scope = {}): SketchEn
         const r = toNum(s.r, scope);
         const start = degToRad(toNum(s.start, scope));
         const end = degToRad(toNum(s.end, scope));
-        const e = mark({ type: "arc" as const, id: genId(), c: [c.x.n, c.y.n] as Vec2, r: r.n, start: start.n, end: end.n }, s.construction);
+        const e = mark(
+          { type: "arc" as const, id: genId(), c: [c.x.n, c.y.n] as Vec2, r: r.n, start: start.n, end: end.n },
+          s.construction,
+        );
         out.push(withExprs(e, collectExprs({ "c.0": c.x, "c.1": c.y, r, start, end })));
         break;
       }
       case "spline": {
         const pts = s.points.map((p) => toPt(p, scope));
-        const e = mark({ type: "spline" as const, id: genId(), points: pts.map((p) => [p.x.n, p.y.n] as Vec2) }, s.construction);
+        const e = mark(
+          { type: "spline" as const, id: genId(), points: pts.map((p) => [p.x.n, p.y.n] as Vec2) },
+          s.construction,
+        );
         const fields: Record<string, Num> = {};
         pts.forEach((p, i) => {
           fields[`points.${i}.0`] = p.x;
@@ -754,7 +780,17 @@ export function expandEntities(specs: EntitySpec[], scope: Scope = {}): SketchEn
         const p = toPt(s.p, scope);
         const height = toNum(s.height, scope);
         const rot = s.rotation !== undefined ? degToRad(toNum(s.rotation, scope)) : undefined;
-        const e = mark({ type: "text" as const, id: genId(), p: [p.x.n, p.y.n] as Vec2, value: s.value, height: height.n, ...(rot ? { rotation: rot.n } : {}) }, s.construction);
+        const e = mark(
+          {
+            type: "text" as const,
+            id: genId(),
+            p: [p.x.n, p.y.n] as Vec2,
+            value: s.value,
+            height: height.n,
+            ...(rot ? { rotation: rot.n } : {}),
+          },
+          s.construction,
+        );
         const fields: Record<string, Num> = { "p.0": p.x, "p.1": p.y, height };
         if (rot) fields.rotation = rot;
         out.push(withExprs(e, collectExprs(fields)));

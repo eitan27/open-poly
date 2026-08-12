@@ -82,7 +82,11 @@ await waitIdle();
 const cyl = await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: 30, height: 60 } });
 // Exactly as wide as the cylinder, so its side walls are TANGENT to the round
 // one — the coincident-surface condition that makes the union leave slivers.
-const blk = await apply({ op: "addPrimitive", kind: "box", params: { width: 60, depth: 30, height: 20, y: 15, z: 60 } });
+const blk = await apply({
+  op: "addPrimitive",
+  kind: "box",
+  params: { width: 60, depth: 30, height: 20, y: 15, z: 60 },
+});
 await waitIdle();
 const solid = await apply({ op: "boolean", kind: "union", operands: [cyl.createdId, blk.createdId] });
 check("body built", solid.ok, JSON.stringify(solid).slice(0, 160));
@@ -91,7 +95,9 @@ check("the un-chamfered body meshes whole", unmeshed.length === 0, `${sum(unmesh
 
 const scene = await read({ read: "sceneSummary" });
 const body = scene.bodies.find((b) => b.id === solid.createdId) ?? scene.bodies[0];
-const concave = (body?.edges ?? []).filter((e) => e.includes(`${cyl.createdId}/+z`) && e.includes(`${blk.createdId}/-y`));
+const concave = (body?.edges ?? []).filter(
+  (e) => e.includes(`${cyl.createdId}/+z`) && e.includes(`${blk.createdId}/-y`),
+);
 check("the concave edge is named", concave.length === 1, `${concave.length} edges`);
 
 resetCounters();
@@ -143,9 +149,11 @@ await apply({ op: "newDocument", name: "plain" });
 await waitIdle();
 await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: 20, height: 40 } });
 await waitIdle();
-check("an ordinary body needs no patching at all",
+check(
+  "an ordinary body needs no patching at all",
   recovered.length === 0 && unmeshed.length === 0 && fallbackNormals.length === 0 && normalless.length === 0,
-  `${sum(recovered)} recovered, ${sum(unmeshed)} unmeshed, ${sum(fallbackNormals)} fallback normals`);
+  `${sum(recovered)} recovered, ${sum(unmeshed)} unmeshed, ${sum(fallbackNormals)} fallback normals`,
+);
 
 await page.screenshot({ path: "/tmp/openpoly-mesh-holes.png" });
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);

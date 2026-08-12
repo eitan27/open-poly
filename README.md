@@ -70,10 +70,10 @@ Notes:
 
 | Command              | Description                                       |
 | -------------------- | ------------------------------------------------- |
-| `npm run build`      | Type-check and build a production bundle.          |
-| `npm run preview`    | Serve the production build locally to preview it.  |
-| `npm test`           | Run the unit tests once (Vitest).                  |
-| `npm run test:watch` | Run the unit tests in watch mode (Vitest).         |
+| `npm run build`      | Type-check and build a production bundle.         |
+| `npm run preview`    | Serve the production build locally to preview it. |
+| `npm test`           | Run the unit tests once (Vitest).                 |
+| `npm run test:watch` | Run the unit tests in watch mode (Vitest).        |
 
 ## Contributing
 

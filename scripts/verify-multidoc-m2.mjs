@@ -63,7 +63,11 @@ check("DocA still has exactly its box", (await featureCount()) === 1);
 await page.locator(".docs-btn").click();
 await page.locator(".docs-row:not(.active) .text-btn", { hasText: "Open" }).first().click();
 await waitIdle();
-check("DocB kept the cylinder added right before switching (flush)", (await featureCount()) === 1, `title: ${await title()}`);
+check(
+  "DocB kept the cylinder added right before switching (flush)",
+  (await featureCount()) === 1,
+  `title: ${await title()}`,
+);
 check("DocB does NOT contain DocA's box", (await featureCount()) === 1);
 
 // 4. Duplicate DocA → "Copy of DocA" opens with the same content.
@@ -83,16 +87,23 @@ await page.waitForTimeout(400);
 await page.locator(".docs-close").click();
 await waitIdle();
 const afterDelete = await title();
-check("deleting the active doc fell back to another", afterDelete === "DocA" || /^Untitled/.test(afterDelete), afterDelete);
-check("copy is gone from the list", await page.evaluate(async () => {
-  return new Promise((resolve) => {
-    const req = indexedDB.open("open-poly");
-    req.onsuccess = () => {
-      const get = req.result.transaction("meta").objectStore("meta").getAll();
-      get.onsuccess = () => resolve(!get.result.some((m) => m.name === "Copy of DocA"));
-    };
-  });
-}));
+check(
+  "deleting the active doc fell back to another",
+  afterDelete === "DocA" || /^Untitled/.test(afterDelete),
+  afterDelete,
+);
+check(
+  "copy is gone from the list",
+  await page.evaluate(async () => {
+    return new Promise((resolve) => {
+      const req = indexedDB.open("open-poly");
+      req.onsuccess = () => {
+        const get = req.result.transaction("meta").objectStore("meta").getAll();
+        get.onsuccess = () => resolve(!get.result.some((m) => m.name === "Copy of DocA"));
+      };
+    });
+  }),
+);
 
 // 6. Two tabs on the same document → both warn.
 const page2 = await context.newPage();
@@ -107,7 +118,10 @@ await page2.locator(".docs-btn").click();
 await page2.locator(".docs-row:not(.active) .text-btn", { hasText: "Open" }).first().click();
 await waitIdle(page2);
 await page.waitForTimeout(500);
-check("warning clears when the tabs diverge", (await page.locator(".tab-warning").count()) === 0 && (await page2.locator(".tab-warning").count()) === 0);
+check(
+  "warning clears when the tabs diverge",
+  (await page.locator(".tab-warning").count()) === 0 && (await page2.locator(".tab-warning").count()) === 0,
+);
 
 await page.locator(".docs-btn").click();
 await page.screenshot({ path: "/tmp/openshape-multidoc-m2.png" });

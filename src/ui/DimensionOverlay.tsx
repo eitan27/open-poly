@@ -264,7 +264,11 @@ export function DimensionOverlay({
               else labelNodes.current.delete(s.id);
             }}
             className={isRightAngle ? "dim-right-angle" : "dim-label"}
-            title={isRightAngle ? "Right angle (90°) — double-click to edit · click + Delete to remove" : "Double-click to edit · click + Delete to remove"}
+            title={
+              isRightAngle
+                ? "Right angle (90°) — double-click to edit · click + Delete to remove"
+                : "Double-click to edit · click + Delete to remove"
+            }
             onDoubleClick={() => onEdit(s.id)}
             onKeyDown={(e) => {
               if (e.key === "Delete" || e.key === "Backspace") {

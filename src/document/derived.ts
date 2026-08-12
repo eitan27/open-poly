@@ -84,7 +84,11 @@ export const MAX_PATTERN_INSTANCES = 200;
  *  nothing rather than throwing, per the DerivedOp policy). */
 export function resolvePatternCount(expr: string, scope: Scope): number | null {
   let n: number;
-  try { n = evaluateExpression(expr, scope); } catch { return null; }
+  try {
+    n = evaluateExpression(expr, scope);
+  } catch {
+    return null;
+  }
   if (!Number.isFinite(n)) return null;
   n = Math.round(n);
   if (n < 2) return null;
@@ -121,10 +125,7 @@ export function circularPatternAngles(count: number, totalDeg: number, symmetric
  *  center, arc endpoints — and, beyond the solver's `refCoord`, a point
  *  entity's own position, which the tool uses for a free-placed construction
  *  point center). Null when the referenced entity is gone. */
-export function resolvePatternCenter(
-  center: PointRef | { at: Vec2 },
-  byId: Map<string, SketchEntity>,
-): Vec2 | null {
+export function resolvePatternCenter(center: PointRef | { at: Vec2 }, byId: Map<string, SketchEntity>): Vec2 | null {
   // NB: check the PointRef variants FIRST — the entity variant also has an
   // `at` field (the vertex name), so `"at" in center` alone would match it.
   if ("origin" in center) return [0, 0];
@@ -166,9 +167,7 @@ export function applyDerived(sketch: SketchFeature, scope: Scope): SketchFeature
   // each build). So PRESERVE their existing outputs and only regenerate
   // offset/mirror outputs from the hand-authored entities.
   const projectOpIds = new Set(ops.filter((o) => o.kind === "project").map((o) => o.id));
-  const projectKeep = sketch.entities.filter(
-    (e) => e.derivedFrom && projectOpIds.has(e.derivedFrom),
-  );
+  const projectKeep = sketch.entities.filter((e) => e.derivedFrom && projectOpIds.has(e.derivedFrom));
   const byId = new Map(base.map((e) => [e.id, e] as const));
   const generated: SketchEntity[] = [];
   for (const op of ops) {
@@ -234,9 +233,7 @@ export function applyDerived(sketch: SketchFeature, scope: Scope): SketchFeature
 export function applyDerivedToSketch(doc: Document, sketchId: string, scope: Scope): Document {
   return {
     ...doc,
-    features: doc.features.map((f) =>
-      f.id === sketchId && f.type === "sketch" ? applyDerived(f, scope) : f,
-    ),
+    features: doc.features.map((f) => (f.id === sketchId && f.type === "sketch" ? applyDerived(f, scope) : f)),
   };
 }
 
@@ -248,10 +245,14 @@ export function applyDerivedToSketch(doc: Document, sketchId: string, scope: Sco
 
 function fittedToEntity(f: FittedProjection, id: string, derivedFrom: string): SketchEntity {
   switch (f.type) {
-    case "line": return { type: "line", id, a: f.a, b: f.b, derivedFrom };
-    case "circle": return { type: "circle", id, c: f.c, r: f.r, derivedFrom };
-    case "arc": return { type: "arc", id, c: f.c, r: f.r, start: f.start, end: f.end, derivedFrom };
-    case "spline": return { type: "spline", id, points: f.points, derivedFrom };
+    case "line":
+      return { type: "line", id, a: f.a, b: f.b, derivedFrom };
+    case "circle":
+      return { type: "circle", id, c: f.c, r: f.r, derivedFrom };
+    case "arc":
+      return { type: "arc", id, c: f.c, r: f.r, start: f.start, end: f.end, derivedFrom };
+    case "spline":
+      return { type: "spline", id, points: f.points, derivedFrom };
   }
 }
 
@@ -289,7 +290,8 @@ export function sameProjectedEntities(a: SketchEntity[], b: SketchEntity[], eps 
   const near = (x: number, y: number) => Math.abs(x - y) <= eps;
   const nearPt = (p: [number, number], q: [number, number]) => near(p[0], q[0]) && near(p[1], q[1]);
   for (let i = 0; i < a.length; i++) {
-    const e = a[i], f = b[i];
+    const e = a[i],
+      f = b[i];
     if (e.type !== f.type) return false;
     if (e.type === "line" && f.type === "line") {
       if (!nearPt(e.a, f.a) || !nearPt(e.b, f.b)) return false;

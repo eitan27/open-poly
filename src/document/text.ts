@@ -41,19 +41,16 @@ const SEGS_PER_CURVE = 8;
 
 const quad = (p0: Vec2, c: Vec2, p1: Vec2, t: number): Vec2 => {
   const mt = 1 - t;
-  return [
-    mt * mt * p0[0] + 2 * mt * t * c[0] + t * t * p1[0],
-    mt * mt * p0[1] + 2 * mt * t * c[1] + t * t * p1[1],
-  ];
+  return [mt * mt * p0[0] + 2 * mt * t * c[0] + t * t * p1[0], mt * mt * p0[1] + 2 * mt * t * c[1] + t * t * p1[1]];
 };
 
 const cubic = (p0: Vec2, c1: Vec2, c2: Vec2, p1: Vec2, t: number): Vec2 => {
   const mt = 1 - t;
-  const a = mt * mt * mt, b = 3 * mt * mt * t, c = 3 * mt * t * t, d = t * t * t;
-  return [
-    a * p0[0] + b * c1[0] + c * c2[0] + d * p1[0],
-    a * p0[1] + b * c1[1] + c * c2[1] + d * p1[1],
-  ];
+  const a = mt * mt * mt,
+    b = 3 * mt * mt * t,
+    c = 3 * mt * t * t,
+    d = t * t * t;
+  return [a * p0[0] + b * c1[0] + c * c2[0] + d * p1[0], a * p0[1] + b * c1[1] + c * c2[1] + d * p1[1]];
 };
 
 /** Glyph outlines of `value` as closed contours in sketch u,v. `height` is the
@@ -71,11 +68,13 @@ export function textToContours(
   if (!value) return [];
   const anchor = opts.anchor ?? [0, 0];
   const rot = opts.rotation ?? 0;
-  const cosR = Math.cos(rot), sinR = Math.sin(rot);
+  const cosR = Math.cos(rot),
+    sinR = Math.sin(rot);
   // Map a raw glyph point (x right, y down from baseline) into sketch u,v:
   // flip y, rotate, then translate to the anchor.
   const place = (x: number, y: number): Vec2 => {
-    const lx = x, ly = -y; // y-flip: glyphs grow upward in u,v
+    const lx = x,
+      ly = -y; // y-flip: glyphs grow upward in u,v
     return [anchor[0] + lx * cosR - ly * sinR, anchor[1] + lx * sinR + ly * cosR];
   };
 

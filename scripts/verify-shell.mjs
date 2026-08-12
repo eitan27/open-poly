@@ -67,7 +67,11 @@ check(
   boxBody.faces.some((f) => f.endsWith("/in")),
   JSON.stringify(boxBody.faces),
 );
-check("face count grew (opening removed one, offset added several)", boxBody.faces.length > 5, JSON.stringify(boxBody.faces));
+check(
+  "face count grew (opening removed one, offset added several)",
+  boxBody.faces.length > 5,
+  JSON.stringify(boxBody.faces),
+);
 
 // --- 2. Sealed shell (no faces removed) on a fresh cylinder ---
 const cyl = await apply({ op: "addPrimitive", kind: "cylinder", params: { radius: 10, height: 20 } });
@@ -79,13 +83,21 @@ await waitIdle();
 // --- 3. Edit in place: re-open with a different thickness via updateShell path ---
 const doc1 = await read({ read: "document" });
 const shellFeature = doc1.features.find((f) => f.id === shell.createdId);
-check("shell feature persisted with thickness + faces", shellFeature?.thickness === "2" && shellFeature.faces.length === 1, JSON.stringify(shellFeature));
+check(
+  "shell feature persisted with thickness + faces",
+  shellFeature?.thickness === "2" && shellFeature.faces.length === 1,
+  JSON.stringify(shellFeature),
+);
 const reset = await apply({ op: "setParam", featureId: shell.createdId, name: "thickness", value: "3" });
 check("setParam updates shell thickness", reset.ok, JSON.stringify(reset).slice(0, 200));
 await waitIdle();
 scene = await read({ read: "sceneSummary" });
 boxBody = scene.bodies.find((b) => b.id === boxId);
-check("body still valid after thickness edit", Boolean(boxBody) && !scene.errors?.[shell.createdId], JSON.stringify(scene.errors));
+check(
+  "body still valid after thickness edit",
+  Boolean(boxBody) && !scene.errors?.[shell.createdId],
+  JSON.stringify(scene.errors),
+);
 
 // --- 4. Bad reference: a bogus face name errors descriptively, doesn't corrupt the body ---
 const bad = await apply({ op: "shell", targetId: cyl.createdId, faces: ["nope/xx"], thickness: 1 });

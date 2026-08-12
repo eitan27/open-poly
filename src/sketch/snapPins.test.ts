@@ -7,7 +7,10 @@ const circle = (id: string, c: [number, number], r = 5): SketchEntity => ({ type
 const arc = (id: string, c: [number, number]): SketchEntity => ({ type: "arc", id, c, r: 5, start: 0, end: 1 });
 
 /** Deterministic ids so constraints are easy to assert. */
-const counter = () => { let n = 0; return () => `k${n++}`; };
+const counter = () => {
+  let n = 0;
+  return () => `k${n++}`;
+};
 
 describe("vertexRefsOf", () => {
   it("gives a line's two endpoints", () => {
@@ -21,7 +24,16 @@ describe("vertexRefsOf", () => {
     expect(vertexRefsOf(arc("a", [1, 2]))).toEqual([{ at: "c", uv: [1, 2] }]);
   });
   it("gives nothing for entities with no addressable vertex", () => {
-    expect(vertexRefsOf({ type: "spline", id: "s", points: [[0, 0], [1, 1]] } as SketchEntity)).toEqual([]);
+    expect(
+      vertexRefsOf({
+        type: "spline",
+        id: "s",
+        points: [
+          [0, 0],
+          [1, 1],
+        ],
+      } as SketchEntity),
+    ).toEqual([]);
     expect(vertexRefsOf({ type: "text", id: "t", p: [0, 0], value: "x", height: 5 } as SketchEntity)).toEqual([]);
   });
 });
@@ -30,16 +42,12 @@ describe("pinConstraints", () => {
   it("pins a line endpoint that sits on a pin location", () => {
     const l = line("l1", [0, 0], [10, 5]);
     const cons = pinConstraints([l], [[10, 5]], counter());
-    expect(cons).toEqual([
-      { id: "k0", type: "coincident", a: { entity: "l1", at: "b" }, b: { fixed: [10, 5] } },
-    ]);
+    expect(cons).toEqual([{ id: "k0", type: "coincident", a: { entity: "l1", at: "b" }, b: { fixed: [10, 5] } }]);
   });
 
   it("pins a circle centre", () => {
     const cons = pinConstraints([circle("c1", [12, 8])], [[12, 8]], counter());
-    expect(cons).toEqual([
-      { id: "k0", type: "coincident", a: { entity: "c1", at: "c" }, b: { fixed: [12, 8] } },
-    ]);
+    expect(cons).toEqual([{ id: "k0", type: "coincident", a: { entity: "c1", at: "c" }, b: { fixed: [12, 8] } }]);
   });
 
   it("skips undefined pins (un-snapped clicks)", () => {
