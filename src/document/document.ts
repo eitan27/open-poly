@@ -37,6 +37,7 @@ import type {
   PlaneMethod,
   RevolveAxis,
   RevolveFeature,
+  ShellFeature,
   SketchConstraint,
   SketchEntity,
   SketchFeature,
@@ -233,6 +234,27 @@ export function addDressUp(
     // stored only when set so the common case stays field-free.
     ...(op === "chamfer" && angle !== undefined ? { angle } : {}),
     ...(op === "chamfer" && flip ? { flip: true } : {}),
+  };
+  return insertFeature(doc, feature);
+}
+
+export function addShell(
+  doc: Document,
+  targetId: string,
+  faces: string[],
+  thickness = "2",
+  faceRefs?: FaceRef[],
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "shell").length + 1;
+  const feature: ShellFeature = {
+    id: uid(),
+    type: "shell",
+    name: `Shell ${ordinal}`,
+    suppressed: false,
+    targetId,
+    faces,
+    faceRefs,
+    thickness,
   };
   return insertFeature(doc, feature);
 }
@@ -500,6 +522,18 @@ export function updateDressUp(
           angle: spec.op === "chamfer" ? spec.angle : undefined,
           flip: spec.op === "chamfer" && spec.flip ? true : undefined,
         }
+      : f,
+  );
+}
+
+export function updateShell(
+  doc: Document,
+  id: string,
+  spec: { targetId: string; faces: string[]; thickness: string; faceRefs?: FaceRef[] },
+): Document {
+  return mapFeature(doc, id, (f) =>
+    f.type === "shell"
+      ? { ...f, targetId: spec.targetId, faces: spec.faces, faceRefs: spec.faceRefs, thickness: spec.thickness }
       : f,
   );
 }
@@ -802,6 +836,7 @@ export function updateParam(
       if (name === "angle" && f.op === "chamfer") return { ...f, angle: value };
       if (name === "flip" && f.op === "chamfer") return { ...f, flip: value === "true" };
     }
+    if (f.type === "shell" && name === "thickness") return { ...f, thickness: value };
     if (f.type === "revolve" && name === "angle") return { ...f, angle: value };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
     if (f.type === "plane" && name === "angle") return { ...f, angle: value };
@@ -1070,6 +1105,15 @@ export function resolveDocument(doc: Document): ResolveResult {
           size: evaluateExpression(f.size, scope),
           ...(angle !== undefined ? { angle } : {}),
           ...(angle !== undefined && f.flip ? { flip: true } : {}),
+        });
+      } else if (f.type === "shell") {
+        features.push({
+          id: f.id,
+          type: "shell",
+          targetId: f.targetId,
+          faces: f.faces,
+          faceRefs: f.faceRefs,
+          thickness: evaluateExpression(f.thickness, scope),
         });
       } else if (f.type === "boolean") {
         if (f.operands.length < 2) throw new Error("A boolean needs at least two operands.");

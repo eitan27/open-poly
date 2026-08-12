@@ -71,6 +71,7 @@ export function featureTypeLabel(feature: Feature): string {
     case "sketch": return "Sketch";
     case "extrude": return "Extrude";
     case "dressup": return feature.op === "chamfer" ? "Chamfer" : "Fillet";
+    case "shell": return "Shell";
     case "boolean": return BOOLEAN_OP_LABELS[feature.op];
     case "plane": return "Plane";
     case "transform": return "Transform";

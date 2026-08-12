@@ -152,6 +152,10 @@ export type ResolvedFeature =
   // `faces` dress every boundary edge of the named faces (see DressUpFeature) —
   // they are expanded to edges by the worker, which has the topology to do it.
   | { id: string; type: "dressup"; op: "chamfer" | "fillet"; targetId: string; edges: string[]; edgeRefs?: ResolvedEdgeRef[]; faces?: string[]; faceRefs?: ResolvedFaceRef[]; size: number; angle?: number; flip?: boolean; previewDelta?: boolean }
+  // Hollow out a body: remove `faces` (by persistent name, `faceRefs` the
+  // parallel geometric fingerprint) and leave a wall of `thickness` around
+  // what remains. Zero faces = a fully sealed hollow shell.
+  | { id: string; type: "shell"; targetId: string; faces: string[]; faceRefs?: ResolvedFaceRef[]; thickness: number }
   // A boolean combines existing bodies (by id) from the running set.
   | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
   // A rigid transform moves a body (by id) — translate + rotate. `copy` keeps

@@ -63,9 +63,10 @@ quoted in the warning).
   `add_offset` / `add_sketch_mirror` (associative DRIVEN sketch geometry —
   offset a chain, or mirror entities across a sketch line), `add_mirror`
   (3D body + plane), `add_plane`, `transform` (translate/rotate, optional
-  `copy`), `boolean`, `dress_up` (chamfer/fillet), `set_param`, `set_appearance`,
-  `rename`, `delete`, `select`, `import_step`, `import_dxf` (a DXF drawing →
-  editable sketch on a chosen plane).
+  `copy`), `boolean`, `dress_up` (chamfer/fillet), `shell` (hollow a body —
+  remove faces by name to open it, or none for a sealed shell), `set_param`,
+  `set_appearance`, `rename`, `delete`, `select`, `import_step`, `import_dxf`
+  (a DXF drawing → editable sketch on a chosen plane).
 - **Feedback:** `report_issue` — see below.
 - **Documents (the workspace):** `list_documents` (all stored docs, active one
   flagged), `open_document`, `new_document`, `rename_document`,
@@ -179,6 +180,13 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
   bevel; set `angle` (degrees, 0–90) for an asymmetric one — `size` runs along
   the reference face and the bevel leaves it at `angle`, and `flip: true`
   measures from the edge's other adjacent face.
+- **Hollow out a body (a box, a printed enclosure, a bottle):** `shell`
+  (`targetId` + `faces` + `thickness`) — pick the face(s) to remove (they
+  become openings) by **name** from the scene summary; the wall grows
+  **inward** from the kept faces, so the body's outer dimensions don't change.
+  Omit `faces` (or pass `[]`) for a fully **sealed** hollow shell with no
+  opening. The new inner-wall faces are named `"<kept-face-name>/in"` for
+  later reference (e.g. filleting an inside corner).
 - **Combine two bodies:** `boolean` (union/subtract/intersect) by body ids.
 - **Place/duplicate a body:** `transform` (translate + single-axis rotate). Set
   `copy: true` to keep the original and emit a moved copy as a new part.

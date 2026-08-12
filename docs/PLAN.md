@@ -447,6 +447,28 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 - **Chamfer + Fillet** — ✅ DONE: edge dress-up via `BRepFilletAPI`, edges
   referenced by **persistent name**. *(Chamfer two-distance/angle variants:
   TODO; currently single distance / single radius.)*
+- **Shell (2026-07-24) — ✅ DONE.** A `ShellFeature` hollows a body: pick the
+  face(s) to remove (they become openings, referenced by **persistent name** +
+  a `FaceRef` geometric fingerprint for the same topo-naming fallback as
+  dress-up's `edgeRefs`) and a `thickness` that grows the wall **inward**
+  (outer dimensions unchanged); zero faces makes a fully **sealed** hollow
+  shell. Kernel: `shellNamed` in `worker.ts` calls OCCT's
+  `BRepOffsetAPI_MakeThickSolid.MakeThickSolidByJoin` directly (the same op
+  replicad's `.shell()` wraps, used raw here since the running-fold model
+  needs the target's `NamedShape` history) — kept faces keep their names, each
+  kept face's new inner-offset face is named `"<name>/in"`. Face-reference
+  re-matching after an upstream edit renames a face uses a new batch
+  `matchFaces` in `topoMatch.ts` (mirrors `matchEdges`: exact name → base name
+  → geometric centroid+normal, one-to-one best-pairing). UI: a **▢ Shell**
+  modeling-toolbar button (`G`) — select faces to open (or the whole body via
+  the Body selection filter for a sealed shell) — opens a small anchored
+  dialog (thickness field, live preview, kernel-error validation), same
+  pattern as Chamfer/Fillet's dialog; double-click the timeline row to edit in
+  place. Agent: `shell` op (`add_shell` tool) with a `targetId` + optional
+  `faces` + `thickness`, auto-registered from the shared zod schema like every
+  other operation. Verified end-to-end against the real OCCT wasm kernel by
+  `scripts/verify-shell.mjs` (open/sealed shells, outer-bbox preserved,
+  inner-face naming, edit-in-place, bogus-face and too-thick error paths).
 - **Topological naming** — ✅ DONE (the real version, via OCCT history; see the
   phase intro above). **Robustness layer (N3, 2026-07-06) — ✅ DONE:** when a
   name is gone (an upstream edit split/merged topology, churning `#n` suffixes),

@@ -42,7 +42,15 @@ import {
   isRightAngle,
   legFits,
 } from "../geom/chamferWedge";
-import { matchEdges, matchFace, type EdgeCandidate, type FaceCandidate } from "./topoMatch";
+import {
+  matchEdges,
+  matchFace,
+  matchFaces,
+  type EdgeCandidate,
+  type FaceCandidate,
+  type NamedFaceCandidate,
+  type NamedFaceRefFingerprint,
+} from "./topoMatch";
 import { clamp } from "../lib/clamp";
 import { vunit, vcross, vdot as v3dot, vunit as v3unit, vcross as v3cross } from "../lib/vec3";
 
@@ -128,6 +136,15 @@ const MESH_OPTS = { tolerance: 0.05, angularTolerance: 30 };
 // So 0.01 is the sweet spot: ~45% faster, no geometry change. Don't raise it
 // without re-checking every boolean result.
 const BOOL_FUZZY = 0.01;
+
+// Fallback tolerances tried, in order, when a boolean comes back DEGENERATE (no
+// solid at all). Two near-tangent B-spline surfaces — e.g. an inner offset loft
+// held a uniform ~2.4mm inside its outer, the standard way to hollow an organic
+// shell — make BRepAlgoAPI return an EMPTY shape at one tolerance and the right
+// answer at another. Only ever step DOWN from BOOL_FUZZY: per the note above, a
+// fuzzy value larger than the thinnest wall collapses the cut, so raising it
+// would trade one silent failure for another.
+const BOOL_FUZZY_FALLBACKS = [BOOL_FUZZY, 1e-3, 1e-4, 0] as const;
 
 // --- Topological naming (N2: OCCT construction history) ---
 // A body carries a name map (face hashCode -> persistent name) built at creation
@@ -1163,6 +1180,26 @@ function booleanNamed(op: "fuse" | "cut" | "common", base: NamedShape, tool: Nam
   tools.delete();
   progress.delete();
   return { shape, names };
+}
+
+/** `booleanNamed`, retried down BOOL_FUZZY_FALLBACKS while OCCT hands back a
+ *  DEGENERATE (solid-less) shape. BRepAlgoAPI is not robust on near-tangent
+ *  B-spline pairs: the same cut can yield an empty shape at one fuzzy value and
+ *  the correct solid at the next, so one attempt isn't enough. Returns the first
+ *  result with a solid in it; if every tolerance degenerates, returns the last
+ *  one and lets the caller report the failure. */
+function booleanRetrying(op: "fuse" | "cut" | "common", base: NamedShape, tool: NamedShape): NamedShape {
+  let last: NamedShape | null = null;
+  for (const fuzzy of BOOL_FUZZY_FALLBACKS) {
+    const next = booleanNamed(op, base, tool, fuzzy);
+    if (countSolids(next.shape) > 0) {
+      if (last) last.shape.delete();
+      return next;
+    }
+    if (last) last.shape.delete();
+    last = next;
+  }
+  return last!;
 }
 
 function requireBody(bodies: Body[], id: string): Body {
@@ -2216,6 +2253,156 @@ function boxFromBounds([lo, hi]: [Vec3, Vec3], margin: number): Shape3D {
   return box.translate((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2] - margin) as Shape3D;
 }
 
+/** Re-resolve a Shell's stored face references (the faces to remove) against
+ *  the body's current faces — mirrors `resolveDressUpEdges`: exact persistent
+ *  name first, then a suffix-insensitive base-name match, then a geometric
+ *  match on the stored fingerprint (centroid + normal). Emits a warning for
+ *  every re-matched or lost face; only outright-lost faces are dropped. */
+function resolveShellFaces(
+  target: Body,
+  faceNames: string[],
+  faceRefs: ResolvedFaceRef[] | undefined,
+  warn: Warn | undefined,
+): { hits: Face[]; lost: string[] } {
+  const faces = target.shape.faces;
+
+  // Fast path: every requested name still exists — no fingerprinting needed.
+  const byName = new Map<string, number>();
+  faces.forEach((f, i) => {
+    const nm = target.names.get(f.hashCode);
+    if (nm !== undefined && !byName.has(nm)) byName.set(nm, i);
+  });
+  if (faceNames.every((nm) => byName.has(nm))) {
+    return { hits: faceNames.map((nm) => faces[byName.get(nm)!]), lost: [] };
+  }
+
+  // Slow path: build geometric candidates and match all refs one-to-one.
+  const candidates: NamedFaceCandidate[] = faces.map((f) => ({
+    name: target.names.get(f.hashCode),
+    center: f.center.toTuple() as [number, number, number],
+    normal: f.geomType === "PLANE" ? (f.normalAt().normalized().toTuple() as [number, number, number]) : undefined,
+  }));
+  const refs: NamedFaceRefFingerprint[] = faceNames.map((nm, i) => ({
+    name: nm,
+    center: faceRefs?.[i]?.center,
+    normal: faceRefs?.[i]?.normal,
+  }));
+  const matches = matchFaces(refs, candidates, bboxDiagonal(target.shape));
+
+  const hits: Face[] = [];
+  const lost: string[] = [];
+  matches.forEach((m, i) => {
+    if (m.kind === "lost") {
+      lost.push(faceNames[i]);
+      return;
+    }
+    hits.push(faces[m.index]);
+    if (m.kind !== "name") {
+      const nowName = candidates[m.index].name;
+      warn?.(
+        `face "${faceNames[i]}" was renamed by an upstream edit; re-matched ` +
+          `${m.kind === "base" ? "by base name" : "geometrically"}${nowName ? ` (now "${nowName}")` : ""}`,
+      );
+    }
+  });
+  return { hits, lost };
+}
+
+/** Hollow out a body: remove the named faces (they become openings) and offset
+ *  the remaining wall inward by `thickness`, propagating face names through
+ *  the operation's history (kept faces keep their names; each kept face's new
+ *  inner-offset face is named `"<name>/in"`). Zero faces makes a fully sealed
+ *  hollow shell. Uses OCCT's `BRepOffsetAPI_MakeThickSolid` (the same op
+ *  replicad's `.shell()` wraps) directly, since the running-fold model needs
+ *  the target's `NamedShape` history, which replicad's high-level API doesn't
+ *  expose. Modifies geometry; returns a NamedShape. */
+function shellNamed(
+  target: Body,
+  faceNames: string[],
+  faceRefs: ResolvedFaceRef[] | undefined,
+  thickness: number,
+  warn?: Warn,
+): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const { hits, lost } = resolveShellFaces(target, faceNames, faceRefs, warn);
+  if (faceNames.length > 0 && hits.length === 0) {
+    throw new Error(
+      "shell: none of the picked faces could be re-found on the body (an upstream edit changed its shape) — edit the feature to re-pick them",
+    );
+  }
+  if (lost.length > 0) {
+    warn?.(
+      `${lost.length} of ${faceNames.length} faces could not be re-found and were skipped: ${lost.join(", ")} — edit the feature to re-pick them`,
+    );
+  }
+  const removedHashes = new Set(hits.map((f) => f.hashCode));
+  const facesToRemove = new oc.TopTools_ListOfShape_1();
+  for (const f of hits) facesToRemove.Append_1(f.wrapped);
+
+  const builder = new oc.BRepOffsetAPI_MakeThickSolid();
+  const progress = new oc.Message_ProgressRange_1();
+  builder.MakeThickSolidByJoin(
+    target.shape.wrapped,
+    facesToRemove,
+    -thickness,
+    1e-3,
+    oc.BRepOffset_Mode.BRepOffset_Skin,
+    false,
+    false,
+    oc.GeomAbs_JoinType.GeomAbs_Arc,
+    false,
+    progress,
+  );
+  const shape = cast(builder.Shape()) as Shape3D;
+  // MakeThickSolidByJoin can "succeed" and hand back a shape with no solid in it
+  // (or the untouched input) on geometry it can't offset — freeform lofts with
+  // many small spline patches are the usual case. Both look like success to the
+  // caller, so check the result really is a hollowed solid rather than emitting a
+  // zero-face body downstream.
+  if (countSolids(shape) === 0 || shape.faces.length <= target.shape.faces.length) {
+    shape.delete();
+    facesToRemove.delete();
+    builder.delete();
+    progress.delete();
+    throw new Error(
+      "Shell failed on this geometry — the offset could not be built. This is common on " +
+        "freeform lofted surfaces; try a thinner wall, or hollow it by subtracting an inner body.",
+    );
+  }
+
+  const names = new Map<number, string>();
+  const used = new Map<string, number>();
+  const assign = (h: number, name: string) => {
+    const c = used.get(name) ?? 0;
+    used.set(name, c + 1);
+    names.set(h, c === 0 ? name : `${name}#${c}`);
+  };
+  for (const f of target.shape.faces) {
+    // A removed face is skipped unconditionally: MakeThickSolidByJoin doesn't
+    // reliably flag its "closing" faces IsDeleted (unlike a boolean/fillet),
+    // so trusting IsDeleted here can leak the old name onto a stray hash that
+    // happens to collide with an unrelated face in the result.
+    if (removedHashes.has(f.hashCode)) continue;
+    const nm = target.names.get(f.hashCode);
+    if (!nm || builder.IsDeleted(f.wrapped)) continue;
+    const images = drainList(builder.Modified(f.wrapped));
+    if (images.length === 0) names.set(f.hashCode, nm);
+    else for (const img of images) assign(hashOf(img), nm);
+  }
+  // The new inner-wall faces, generated as the offset image of each face that
+  // was kept (an opening has no offset image of its own).
+  for (const f of target.shape.faces) {
+    if (removedHashes.has(f.hashCode)) continue;
+    const nm = target.names.get(f.hashCode);
+    if (!nm) continue;
+    for (const g of drainList(builder.Generated(f.wrapped))) assign(hashOf(g), `${nm}/in`);
+  }
+  facesToRemove.delete();
+  builder.delete();
+  return { shape, names };
+}
+
 const AXIS_DIR: Record<"x" | "y" | "z", [number, number, number]> = {
   x: [1, 0, 0],
   y: [0, 1, 0],
@@ -2418,7 +2605,20 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): Nam
   let accVol = op === "union" ? 0 : measureVolume(acc.shape);
   let accIsIntermediate = false;
   for (let i = 1; i < ops.length; i++) {
-    const next = booleanNamed(BOOL_OCC[op], acc, ops[i]);
+    const next = booleanRetrying(BOOL_OCC[op], acc, ops[i]);
+    // A DEGENERATE result (no solids) has to be caught here, before the
+    // op-specific tests below: an empty cut has volume 0, so `nextVol >= accVol`
+    // is false and it would sail through the "nothing to subtract" guard as if
+    // it were a successful large cut — consuming both operands and leaving a
+    // zero-face body. Report it instead of silently producing nothing.
+    if (countSolids(next.shape) === 0) {
+      next.shape.delete();
+      if (accIsIntermediate) acc.shape.delete();
+      throw new Error(
+        "The boolean produced an empty result — the operands are probably tangent or " +
+          "near-coincident over some region. Try nudging one operand so the surfaces aren't parallel.",
+      );
+    }
     // A union is valid when it actually joins the bodies into fewer solids —
     // true for overlapping AND merely-touching (shared-face) bodies, which have
     // no shared volume and so can't be told apart from disjoint by volume alone.
@@ -2806,6 +3006,14 @@ function buildBodies(
           if (afterLocal !== res) afterLocal.shape.delete();
           clipBox?.delete();
         }
+        target.shape.delete();
+        target.shape = res.shape;
+        target.names = res.names;
+        target.key = contentKey(feature, [target.key]);
+      } else if (feature.type === "shell") {
+        // Hollow out the target body in place, keeping its id.
+        const target = requireBody(bodies, feature.targetId);
+        const res = shellNamed(target, feature.faces, feature.faceRefs, feature.thickness, warn);
         target.shape.delete();
         target.shape = res.shape;
         target.names = res.names;

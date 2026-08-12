@@ -6,6 +6,7 @@ import {
   addPattern,
   addPlane,
   addRevolve,
+  addShell,
   addSketch,
   createDocument,
   updateBoolean,
@@ -14,8 +15,9 @@ import {
   updatePattern,
   updatePlane,
   updateRevolve,
+  updateShell,
 } from "./document";
-import type { BooleanFeature, DressUpFeature, ExtrudeFeature, PatternFeature, PlaneFeature, RevolveFeature } from "./types";
+import type { BooleanFeature, DressUpFeature, ExtrudeFeature, PatternFeature, PlaneFeature, RevolveFeature, ShellFeature } from "./types";
 
 const feat = <T,>(doc: ReturnType<typeof createDocument>, id: string) =>
   doc.features.find((f) => f.id === id) as unknown as T;
@@ -90,6 +92,25 @@ describe("in-place feature edits preserve identity + timeline position", () => {
     const { doc, id } = addDressUp(createDocument(), "fillet", "body", ["e1"], "2", undefined, "30", true);
     expect(feat<DressUpFeature>(doc, id).angle).toBeUndefined();
     expect(feat<DressUpFeature>(doc, id).flip).toBeUndefined();
+  });
+
+  it("updateShell changes thickness + faces, keeps id/name", () => {
+    const { doc: d1, id } = addShell(createDocument(), "body", ["+z"], "2");
+    const before = feat<ShellFeature>(d1, id);
+    const doc = updateShell(d1, id, { targetId: "body", faces: ["+z", "+x"], thickness: "4" });
+    const after = feat<ShellFeature>(doc, id);
+    expect(after.id).toBe(id);
+    expect(after.name).toBe(before.name);
+    expect(after.thickness).toBe("4");
+    expect(after.faces).toEqual(["+z", "+x"]);
+  });
+
+  it("addShell allows zero faces (a fully sealed hollow shell)", () => {
+    const { doc, id } = addShell(createDocument(), "body", [], "3");
+    const s = feat<ShellFeature>(doc, id);
+    expect(s.faces).toEqual([]);
+    expect(s.thickness).toBe("3");
+    expect(s.targetId).toBe("body");
   });
 
   it("updatePattern changes count/spacing", () => {

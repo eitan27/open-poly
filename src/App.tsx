@@ -34,6 +34,7 @@ import {
   setFeatureColor,
   setFeatureHidden,
   setFeatureOpacity,
+  addShell,
   setRollbackIndex,
   setSketchConstraints,
   setSketchEntities,
@@ -41,6 +42,7 @@ import {
   setTransform,
   updateBoolean,
   updateDressUp,
+  updateShell,
   updateExtrude,
   updateMirror,
   updateParam,
@@ -97,6 +99,7 @@ import { deriveFaceFrame, frameOf, planeRefLabel, uvToWorld, worldToUv, type Pla
 import { DEFAULT_SECTION_VIEW, type SectionViewState } from "./document/sectionView";
 import { evaluateExpression } from "./document/expression";
 import { validateDressUpSize, validateDressUpAngle, mapDressUpKernelError } from "./document/dressUpValidation";
+import { validateShellThickness, mapShellKernelError } from "./document/shellValidation";
 import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
 import { FEATURE_DEFS, FEATURE_KINDS, featureTypeLabel } from "./document/featureDefs";
 import {
@@ -804,6 +807,7 @@ export default function App() {
       const f = doc.features.find((x) => x.id === s.id);
       if (f?.type === "extrude" && (f.mode === "add" || f.mode === "remove") && f.targetId) ids.add(f.targetId);
       else if (f?.type === "dressup") ids.add(f.targetId);
+      else if (f?.type === "shell") ids.add(f.targetId);
       else if (f?.type === "transform") ids.add(f.copy ? f.id : f.targetId);
       else ids.add(s.id);
     }
@@ -1350,6 +1354,14 @@ export default function App() {
   const [dressUpPreview, setDressUpPreview] = useState<
     { removed?: FeatureMesh["mesh"]; added?: FeatureMesh["mesh"] } | null
   >(null);
+  const [shellDialog, setShellDialog] = useState<
+    { thickness: string; x: number; y: number; editId?: string } | null
+  >(null);
+  // Validation for the Shell dialog: a human-readable message when the current
+  // thickness is unsatisfiable (e.g. too thick for the body), or null when it
+  // builds cleanly. Set live as the user types and re-checked authoritatively
+  // before commit, so an invalid thickness can't close it.
+  const [shellError, setShellError] = useState<string | null>(null);
   // Revolve dialog. The user arms a profile face and an axis (a sketch line or a
   // plane) by clicking in the viewport — like the Boolean dialog — then sets the
   // angle (Full 360° vs. a specified angle + optional symmetric sweep). `armed`
@@ -3228,6 +3240,175 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dressUpDialog, dressUpDialogTarget, doc, ready, resolved.scope]);
 
+  // One or more selected body faces, all on the same body — the faces a Shell
+  // would remove (open up). Resolves each face to its persistent name +
+  // geometric fingerprint. A single whole-body pick (Body selection filter)
+  // targets that body with no faces removed — a fully sealed hollow shell.
+  const shellTarget = useMemo(() => {
+    const faces = selection.filter((s): s is Extract<Selection, { kind: "face" }> => s.kind === "face");
+    if (faces.length > 0 && faces.length === selection.length) {
+      const targetId = faces[0].featureId;
+      if (!faces.every((f) => f.featureId === targetId)) return null;
+      const m = meshes.find((x) => x.id === targetId);
+      if (!m) return null;
+      const names: string[] = [];
+      const faceRefs: FaceRef[] = [];
+      for (const f of faces) {
+        const nm = faceNameOf(m.mesh.faces, f.faceId);
+        if (!nm) return null; // unnamed face — can't reference it stably
+        names.push(nm);
+        const center = faceCentroid(m.mesh.faces, f.faceId);
+        const normal = faceNormal(m.mesh.faces, f.faceId);
+        faceRefs.push({ name: nm, center: center ?? undefined, normal: normal ?? undefined });
+      }
+      const anchor = faceCentroid(m.mesh.faces, faces[0].faceId);
+      return { targetId, faces: names, faceRefs, anchor };
+    }
+    if (selection.length === 1 && selection[0].kind === "feature" && bodyIds.has(selection[0].id)) {
+      return { targetId: selection[0].id, faces: [] as string[], faceRefs: [] as FaceRef[], anchor: null as [number, number, number] | null };
+    }
+    return null;
+  }, [selection, meshes, bodyIds]);
+
+  const openShell = () => {
+    if (!shellTarget) return;
+    const s = (shellTarget.anchor && viewApiRef.current?.worldToScreen(shellTarget.anchor)) || { x: 240, y: 160 };
+    setShellError(null);
+    setShellDialog({ thickness: "2", x: s.x, y: s.y });
+  };
+
+  // Re-open the Shell dialog to edit in place. Seeds thickness from the
+  // feature; its faces stay referenced (re-pick by clicking faces on the body).
+  const editShell = (id: string) => {
+    const f = doc.features.find((x) => x.id === id);
+    if (f?.type !== "shell") return;
+    beginEdit(f);
+    selectFeature(id);
+    setShellError(null);
+    setShellDialog({ thickness: f.thickness, x: 240, y: 160, editId: id });
+  };
+  const closeShellDialog = () => {
+    setShellDialog(null);
+    setShellError(null);
+    cancelEdit();
+  };
+
+  // Which faces/body the dialog shells: a re-picked face selection if present,
+  // else (editing) the feature's own referenced faces.
+  const shellDialogTarget = useMemo(() => {
+    if (!shellDialog?.editId) return shellTarget;
+    if (shellTarget) return shellTarget;
+    const f = doc.features.find((x) => x.id === shellDialog.editId);
+    return f?.type === "shell"
+      ? { targetId: f.targetId, faces: f.faces, faceRefs: f.faceRefs ?? [], anchor: null as [number, number, number] | null }
+      : null;
+  }, [shellDialog, shellTarget, doc]);
+
+  // Add a new shell, or (editing) update the existing one in place — shared by
+  // the commit and the live-validation effect so both build the same doc.
+  const applyShell = (base: Document, t: NonNullable<typeof shellDialogTarget>, d: NonNullable<typeof shellDialog>) =>
+    d.editId
+      ? { doc: updateShell(base, d.editId, { targetId: t.targetId, faces: t.faces, thickness: d.thickness, faceRefs: t.faceRefs }), id: d.editId }
+      : addShell(base, t.targetId, t.faces, d.thickness, t.faceRefs);
+
+  // Live-preview a Shell edit: apply the new thickness/faces to the real
+  // feature as they change (skipping empty/invalid thicknesses). The existing
+  // async validation effect still surfaces an unsatisfiable thickness.
+  useEffect(() => {
+    const d = shellDialog;
+    const t = shellDialogTarget;
+    if (!d?.editId || !t) return;
+    if (validateShellThickness(d.thickness, resolved.scope).value === null) return;
+    const spec = { targetId: t.targetId, faces: t.faces, thickness: d.thickness, faceRefs: t.faceRefs };
+    if (!shouldLiveApply(JSON.stringify({ e: d.editId, spec }))) return;
+    setDoc((prev) => updateShell(prev, d.editId!, spec), `edit:${d.editId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shellDialog?.editId, shellDialog?.thickness, shellDialogTarget]);
+
+  const createShell = async () => {
+    if (!shellDialogTarget || !shellDialog) return;
+    // Synchronous gate first: an empty/garbage/≤0 thickness never reaches the
+    // kernel. Empty is silently ignored (no error, just a no-op); anything
+    // invalid keeps the dialog open with its message.
+    const sv = validateShellThickness(shellDialog.thickness, resolved.scope);
+    if (sv.value === null) {
+      setShellError(null);
+      return;
+    }
+    const { doc: next, id } = applyShell(doc, shellDialogTarget, shellDialog);
+    // Authoritative pre-commit check against the kernel: an unsatisfiable
+    // thickness keeps the dialog open with the error rather than committing a
+    // broken feature. Runs even if the live-validation effect hasn't caught up
+    // (e.g. Enter pressed immediately after typing).
+    const kernel = kernelRef.current;
+    if (ready && kernel) {
+      const resolvedNext = resolveDocument(next);
+      let err: string | null = resolvedNext.errors[id] ?? null;
+      if (!err) {
+        try {
+          const { results } = await kernel.regenerate(resolvedNext.features);
+          const hit = results.find((r) => r.id === id);
+          if (hit && !hit.ok) err = hit.error;
+        } catch (e) {
+          err = String((e as Error)?.message ?? e);
+        }
+      }
+      if (err) {
+        setShellError(mapShellKernelError(err));
+        return;
+      }
+    }
+    setDoc(next);
+    selectFeature(id);
+    commitEdit();
+    setShellDialog(null);
+    setShellError(null);
+  };
+
+  // Live geometry validation of the Shell dialog — mirrors the chamfer/fillet
+  // one above. The sync part (empty / unparseable / ≤ 0) is done in render off
+  // the raw thickness — instant, never touches the kernel. This effect covers
+  // only the case that NEEDS the kernel: a valid positive thickness OCCT still
+  // can't build. Debounced so each keystroke on a heavy body stays responsive.
+  useEffect(() => {
+    if (!shellDialog || !shellDialogTarget) {
+      setShellError(null);
+      return;
+    }
+    const sv = validateShellThickness(shellDialog.thickness, resolved.scope);
+    if (sv.value === null) {
+      setShellError(null);
+      return;
+    }
+    const kernel = kernelRef.current;
+    if (!ready || !kernel) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      const { doc: next, id } = applyShell(doc, shellDialogTarget, shellDialog);
+      const resolvedNext = resolveDocument(next);
+      const resolveErr = resolvedNext.errors[id];
+      if (resolveErr) {
+        if (!cancelled) setShellError(mapShellKernelError(resolveErr));
+        return;
+      }
+      kernel
+        .regenerate(resolvedNext.features)
+        .then(({ results }) => {
+          if (cancelled) return;
+          const hit = results.find((r) => r.id === id);
+          setShellError(hit && !hit.ok ? mapShellKernelError(hit.error) : null);
+        })
+        .catch((err) => {
+          if (!cancelled) setShellError(mapShellKernelError(String(err?.message ?? err)));
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shellDialog, shellDialogTarget, doc, ready, resolved.scope]);
+
   // The single body a Transform would move, resolved from the selection: any
   // pick (feature / face / edge / vertex) on exactly one rendered body. In-place
   // modifiers map to the body they affect (like highlightBodyIds).
@@ -3238,6 +3419,7 @@ export default function App() {
       const f = doc.features.find((x) => x.id === id);
       if (f?.type === "extrude" && (f.mode === "add" || f.mode === "remove") && f.targetId) id = f.targetId;
       else if (f?.type === "dressup") id = f.targetId;
+      else if (f?.type === "shell") id = f.targetId;
       else if (f?.type === "transform" && !f.copy) id = f.targetId;
       ids.add(id);
     }
@@ -3623,6 +3805,9 @@ export default function App() {
         case "f":
           if (dressUpTarget) openDressUp("fillet");
           break;
+        case "g":
+          if (shellTarget) openShell();
+          break;
         case "b":
           if (bodyIds.size >= 2) openBooleanDialog();
           break;
@@ -3664,6 +3849,7 @@ export default function App() {
     sweepInputs,
     loftInputs,
     dressUpTarget,
+    shellTarget,
     bodyIds,
     transformTarget,
     twoSelectedLines,
@@ -4315,6 +4501,7 @@ export default function App() {
       case "mirror": editMirror(id); break;
       case "pattern": editPattern(id); break;
       case "dressup": editDressUp(id); break;
+      case "shell": editShell(id); break;
       default: // primitive / import / sweep / loft — no creation dialog
         selectFeature(id);
         setEditParamsId(id);
@@ -6089,6 +6276,16 @@ export default function App() {
       onSelect: () => openDressUp("fillet"),
     },
     {
+      id: "shell",
+      icon: "▢",
+      label: "Shell",
+      shortcut: "G",
+      title: "Shell (G): hollow the selected body — select faces to open, or the whole body for a sealed shell",
+      keywords: ["hollow", "thickness", "wall", "enclosure", "thicken"],
+      disabled: !shellTarget || !!editingSketch || picking,
+      onSelect: openShell,
+    },
+    {
       id: "boolean",
       icon: "⊕",
       label: "Boolean",
@@ -7220,6 +7417,39 @@ export default function App() {
                 <div className="ed-actions">
                   <button className="ed-primary" onClick={createDressUp} disabled={disabled}>{dressUpDialog.editId ? "Done" : "Create"}</button>
                   <button onClick={closeDressUpDialog}>Cancel</button>
+                </div>
+              </DraggableDialog>
+            );
+          })()}
+          {shellDialog && (() => {
+            // Synchronous validation (empty / unparseable / ≤ 0) is instant and
+            // kernel-free; the async geometry error (thickness too big) lives in
+            // `shellError`. Show whichever applies; empty stays silent.
+            const sv = validateShellThickness(shellDialog.thickness, resolved.scope);
+            const message = sv.value === null ? sv.error : shellError;
+            const disabled = sv.value === null || !!shellError;
+            return (
+              <DraggableDialog className="extrude-dialog" style={{ left: shellDialog.x, top: shellDialog.y }}>
+                <div className="ed-title" data-drag-handle>
+                  {shellDialog.editId ? "Edit " : ""}Shell
+                </div>
+                <label className="ed-field">
+                  <span>Thickness</span>
+                  <input
+                    autoFocus
+                    onFocus={(e) => e.currentTarget.select()}
+                    value={shellDialog.thickness}
+                    onChange={(e) => setShellDialog((d) => (d ? { ...d, thickness: e.target.value } : d))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") createShell();
+                      else if (e.key === "Escape") closeShellDialog();
+                    }}
+                  />
+                </label>
+                {message && <p className="ed-warning">{message}</p>}
+                <div className="ed-actions">
+                  <button className="ed-primary" onClick={createShell} disabled={disabled}>{shellDialog.editId ? "Done" : "Create"}</button>
+                  <button onClick={closeShellDialog}>Cancel</button>
                 </div>
               </DraggableDialog>
             );

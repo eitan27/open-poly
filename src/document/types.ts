@@ -332,6 +332,24 @@ export interface DressUpFeature extends FeatureBase {
   flip?: boolean;
 }
 
+/** Hollow out a body: remove the picked faces (they become openings) and leave
+ *  a wall of `thickness` around what remains. Zero removed faces makes a fully
+ *  sealed hollow shell (no opening). Faces are referenced by persistent name,
+ *  with a parallel `faceRefs` fingerprint array for geometric re-matching after
+ *  an upstream edit churns names — same shape as `DressUpFeature.edgeRefs`. */
+export interface ShellFeature extends FeatureBase {
+  type: "shell";
+  /** The body being hollowed (the feature id that produced it). */
+  targetId: string;
+  /** Persistent names of the faces to remove (open up). */
+  faces: string[];
+  /** Geometric fingerprints for `faces` (parallel array). */
+  faceRefs?: FaceRef[];
+  /** Wall thickness, as an expression string. The wall grows inward from the
+   *  kept faces (the outside dimensions of the body are preserved). */
+  thickness: string;
+}
+
 /** How a reference plane is placed. Older documents stored only offset planes and
  *  have no `method`, so a missing method is treated as "offset". */
 export type PlaneMethod = "offset" | "midplane" | "angle" | "through";
@@ -538,6 +556,7 @@ export type Feature =
   | SketchFeature
   | ExtrudeFeature
   | DressUpFeature
+  | ShellFeature
   | BooleanFeature
   | PlaneFeature
   | TransformFeature

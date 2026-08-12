@@ -406,6 +406,15 @@ export const operationSchema = z.discriminatedUnion("op", [
     flip: z.boolean().optional(),
   }),
   z.object({
+    op: z.literal("shell"),
+    targetId: z.string(),
+    /** Persistent face names from the scene summary — the faces to remove
+     *  (open up). Omit/empty for a fully sealed hollow shell (no opening). */
+    faces: z.array(z.string()).optional(),
+    /** Wall thickness; the wall grows inward from the kept faces. */
+    thickness: expr.optional(),
+  }),
+  z.object({
     op: z.literal("setParam"),
     featureId: z.string(),
     name: z.string(),

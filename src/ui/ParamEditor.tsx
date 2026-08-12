@@ -125,6 +125,21 @@ export function ParamEditor({
             </>
           )}
         </div>
+      ) : feature.type === "shell" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Open faces</span>
+            <span className="param-static">{feature.faces.length}</span>
+          </div>
+          <label className="param-field">
+            <span className="param-label">Thickness</span>
+            <input
+              className="param-input"
+              value={feature.thickness}
+              onChange={(e) => onChangeParam(feature.id, "thickness", e.target.value)}
+            />
+          </label>
+        </div>
       ) : feature.type === "sketch" ? (
         <div className="sketch-params">
           <div className="param-field">
