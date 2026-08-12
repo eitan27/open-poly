@@ -10,23 +10,28 @@ npm install
 npm run dev      # starts Vite; open the printed localhost URL
 npm test         # run the unit test suite (Vitest)
 npm run typecheck
-npm run lint      # ESLint
+npm run lint         # ESLint
+npm run format:check # Prettier
 ```
 
 Node 20.19+ or 22.12+ is required (see `README.md`).
 
 ### Formatting
 
-Prettier is configured (`.prettierrc.json`, `npm run format` / `format:check`)
-but the existing codebase has **not** been bulk-reformatted — doing so in one
-shot would touch essentially every file and drown out real changes in noise,
-especially while the large files (`App.tsx`, `Viewport.tsx`, `worker.ts`) are
-still being split up. New/touched code should be Prettier-clean; don't run
-`format` across the whole tree in an unrelated PR.
+Prettier (`.prettierrc.json`) owns layout, and the tree has been formatted in
+one pass, so `npm run format:check` is clean and CI enforces it. Run
+`npm run format` before pushing and don't hand-tune whitespace — if the output
+looks wrong, change the code, not the spacing.
+
+One markdown gotcha worth knowing when editing the issue templates: a list
+that isn't preceded by a blank line gets folded into the paragraph above it,
+so `**Steps to reproduce**` followed straight by `1.` `2.` `3.` collapses onto
+a single line. Keep the blank line.
 
 ## Before opening a PR
 
-- `npm test` and `npm run typecheck` must pass.
+- `npm test`, `npm run typecheck`, `npm run lint` and `npm run format:check`
+  must pass — CI runs all four.
 - `npm run build` should succeed (catches anything the dev server tolerates
   but a production build won't).
 - If you touched anything rendering- or interaction-related in the viewport
@@ -41,6 +46,7 @@ still being split up. New/touched code should be Prettier-clean; don't run
 | Path             | What lives there                                                                                                                                                             |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/document/`  | The document model — features, sketch tools, DXF import, expressions, planes, regions. Pure logic, no React/DOM.                                                             |
+| `src/lib/`       | Dependency-free primitives shared by everything else — number formatting, `clamp`, 2D/3D vector math.                                                                        |
 | `src/geom/`      | Small standalone geometry algorithms (circle faceting, edge chains, chamfer wedges, ring fitting).                                                                           |
 | `src/kernel/`    | The web worker that drives the OpenCascade/replicad geometry kernel — feature regeneration, meshing, topological naming.                                                     |
 | `src/sketch/`    | The 2D constraint solver integration and sketch-specific geometry (inference, snapping, dimensions).                                                                         |
@@ -61,9 +67,8 @@ still being split up. New/touched code should be Prettier-clean; don't run
 - Domain/geometry logic (`document/`, `geom/`, `kernel/`, `sketch/`) should
   stay framework-free — no React imports there.
 - Prefer adding a shared helper in a natural home over copy-pasting an
-  existing one — check `src/document/`, `src/geom/`, and (once split out per
-  the open-source refactor) `src/lib/` before writing new vector-math,
-  formatting, or ID-generation helpers.
+  existing one — check `src/lib/`, `src/document/` and `src/geom/` before
+  writing new vector-math, formatting, or ID-generation helpers.
 - The agent path (`src/agent/`) and the UI path (`src/App.tsx` and friends)
   should converge on the same `src/document/` mutation functions rather
   than each implementing feature creation independently.

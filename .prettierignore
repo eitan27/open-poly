@@ -1,0 +1,3 @@
+# npm owns this file's layout and rewrites it on every install; don't let
+# Prettier fight it.
+package-lock.json

@@ -1,8 +1,11 @@
 name: CI
 
-# Type-check (tsc -b — the ONLY real typecheck here; the root tsconfig has
-# files:[] so `tsc --noEmit` alone is a no-op) and run the test suite on every
-# push to main and every PR, so dangling references / type errors can't slip in.
+# Lint, check formatting, type-check (tsc -b — the ONLY real typecheck here;
+# the root tsconfig has files:[] so `tsc --noEmit` alone is a no-op), run the
+# test suite, and build, on every push to main and every PR — so dangling
+# references, type errors, and formatting drift can't slip in. The build step
+# is separate from typecheck because it catches what only the production
+# bundler sees, and it costs about a second.
 
 on:
   push:
@@ -20,5 +23,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      - run: npm run format:check
       - run: npm run typecheck
       - run: npm test
+      - run: npm run build

@@ -40,8 +40,8 @@ host. The public build is served from **Cloudflare Pages** at
 <https://open-poly.pages.dev>.
 
 Deploys use Wrangler's **direct upload** — only the built `dist/` folder is
-uploaded, so the source repository stays private and is never connected to
-Cloudflare.
+uploaded, so no git integration is configured and Cloudflare never needs
+access to the repository.
 
 One-time setup:
 
@@ -74,6 +74,9 @@ Notes:
 | `npm run preview`    | Serve the production build locally to preview it. |
 | `npm test`           | Run the unit tests once (Vitest).                 |
 | `npm run test:watch` | Run the unit tests in watch mode (Vitest).        |
+| `npm run typecheck`  | Type-check the app and the MCP server.            |
+| `npm run lint`       | Lint with ESLint.                                 |
+| `npm run format`     | Format the tree with Prettier (`:check` to test). |
 
 ## Contributing
 

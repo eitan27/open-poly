@@ -30,7 +30,7 @@ matter — the tab reconnects until the hub is up.
      "mcpServers": {
        "open-poly": {
          "command": "npx",
-         "args": ["-y", "tsx", "/Users/eitan/Developer/open-shape/mcp-server/src/index.ts"]
+         "args": ["-y", "tsx", "/absolute/path/to/open-poly/mcp-server/src/index.ts"]
        }
      }
    }
@@ -98,7 +98,7 @@ Point your MCP client at the same command. Use an **absolute path** to
   "mcpServers": {
     "open-poly": {
       "command": "npx",
-      "args": ["-y", "tsx", "/ABS/PATH/TO/open-shape/mcp-server/src/index.ts"]
+      "args": ["-y", "tsx", "/absolute/path/to/open-poly/mcp-server/src/index.ts"]
     }
   }
 }
