@@ -1514,7 +1514,7 @@ export function Viewport({
     // an invisible proxy whose local +Z is the handle's axis — space "local"
     // with only the Z arrow shown — and the proxy's position is read back as
     // the value, exactly like the Transform gizmo's proxy.
-    const makeAxisGizmo = () => {
+    const makeAxisGizmo = ({ oneWay = false, joinShaft = false } = {}) => {
       const proxy = new THREE.Object3D();
       scene.add(proxy);
       const tc = new TransformControls(camera, renderer.domElement);
@@ -1527,12 +1527,17 @@ export function Viewport({
       tc.enabled = false;
       const helper = tc.getHelper();
       helper.visible = false;
+      if (oneWay) dropBackwardArrow(helper);
+      if (joinShaft) joinShaftToBothArrows(helper);
       softenGizmo(helper); // mute the default pure-RGB arrow to fit the UI
       scene.add(helper);
       return { proxy, tc, helper };
     };
-    const { proxy: sectionProxy, tc: sectionControls, helper: sectionHelper } = makeAxisGizmo();
-    const { proxy: extrudeProxy, tc: extrudeControls, helper: extrudeHelper } = makeAxisGizmo();
+    // The section handle keeps both arrows — it straddles the body, so either
+    // direction reads as meaningful — but the shaft has to span them both.
+    const { proxy: sectionProxy, tc: sectionControls, helper: sectionHelper } = makeAxisGizmo({ joinShaft: true });
+    // Extrude shows one arrow: see dropBackwardArrow.
+    const { proxy: extrudeProxy, tc: extrudeControls, helper: extrudeHelper } = makeAxisGizmo({ oneWay: true });
 
     // Section-offset gizmo: each drag frame projects the proxy back onto the
     // frame's (unflipped) normal. Plain view state — safe to fire every frame;
@@ -3404,6 +3409,9 @@ export function Viewport({
     const sectionUpZ = new THREE.Vector3(0, 0, 1);
     const sectionBoxC = new THREE.Vector3();
     const sectionBoxS = new THREE.Vector3();
+    // Where the quad and the drag handle sit IN the cut plane — the middle of
+    // the cross-section, not the plane frame's own origin (see syncSectionPlane).
+    const sectionCentre = new THREE.Vector3();
     // Half-extent of the (axis-aligned) part box along an in-plane unit axis, plus
     // the part centre's offset from the cut origin along it → how far the quad must
     // reach along that axis to cover the cross-section. |axis·size|/2 is the AABB's
@@ -3459,34 +3467,49 @@ export function Viewport({
       // AABB onto the cut plane's own u/v axes so the quad hugs the cross-section
       // tightly — using the 3D radius would let the depth ⟂ to the cut inflate it.
       // The quad spans ±size/2, so size = 2·reach·margin just covers the section.
-      partBox.getCenter(sectionBoxC).sub(sectionOrigin);
+      //
+      // Both the quad and the handle are parked at the middle of the CUT, not at
+      // the plane frame's origin: primitives sit on z=0, so the world origin is
+      // at the bottom edge of the part and the handle ended up running along the
+      // bottom of the cross-section instead of through it. Centring also stops
+      // the quad being sized to reach a far-off origin — the u/v offset term in
+      // reachAlongAxis falls to zero, so it hugs the section tightly.
+      // Only the in-plane position moves; `offset` is measured along the normal
+      // and is unchanged by this, so the drag maths is untouched.
+      partBox.getCenter(sectionCentre);
+      if (partBox.isEmpty()) sectionCentre.copy(sectionOrigin);
+      sectionCentre.addScaledVector(
+        sectionEffNormal,
+        sectionOrigin.dot(sectionEffNormal) - sectionCentre.dot(sectionEffNormal),
+      );
+      partBox.getCenter(sectionBoxC).sub(sectionCentre);
       partBox.getSize(sectionBoxS);
       const reach = partBox.isEmpty() ? 0 : Math.max(reachAlongAxis(sectionU), reachAlongAxis(sectionV));
       const size = Math.max(SECTION_CAP_MIN_SIZE, reach * 2 * SECTION_CAP_MARGIN);
       // Refresh the section-hatch uniforms: same plane origin/axes as the cap, and
       // a spacing scaled to the model so the stripe density reads the same whether
       // it's a 20 mm bracket or a 2 m assembly (≈24 lines across the part).
-      sectionHatchUniforms.uHatchOrigin.value.copy(sectionOrigin);
+      sectionHatchUniforms.uHatchOrigin.value.copy(sectionCentre);
       sectionHatchUniforms.uHatchU.value.copy(sectionU);
       sectionHatchUniforms.uHatchV.value.copy(sectionV);
       const hatchSpacing = Math.max(1.5, partSphere.radius * 0.06);
       sectionHatchUniforms.uHatchSpacing.value = hatchSpacing;
       sectionHatchUniforms.uHatchHalfWidth.value = hatchSpacing * 0.07;
-      sectionWidget.position.copy(sectionOrigin);
+      sectionWidget.position.copy(sectionCentre);
       sectionWidget.quaternion.setFromRotationMatrix(sectionBasis);
       sectionWidget.scale.set(size, size, 1);
       for (const child of sectionCapGroup.children) {
         if ((child as THREE.Mesh).geometry === sectionCapGeometry) {
-          child.position.copy(sectionOrigin);
+          child.position.copy(sectionCentre);
           child.quaternion.setFromRotationMatrix(sectionBasis);
           (child as THREE.Mesh).scale.set(size, size, 1);
         }
       }
-      // The offset gizmo rides the plane's centre, its arrow along the
+      // The offset gizmo rides the middle of the cut, its arrow along the
       // effective normal. Mid-drag the proxy is TransformControls' to move —
       // re-posing it would fight the drag; the offset round-trips back here.
       if (!sectionControls.dragging) {
-        sectionProxy.position.copy(sectionOrigin);
+        sectionProxy.position.copy(sectionCentre);
         sectionProxy.quaternion.setFromUnitVectors(sectionUpZ, sectionEffNormal);
       }
       if (sectionControls.object !== sectionProxy) sectionControls.attach(sectionProxy);
@@ -4451,6 +4474,72 @@ function softenGizmo(helper: THREE.Object3D): void {
       m._color = m.color.clone();
       m._opacity = m.opacity;
     }
+  });
+}
+
+/** Delete the translate gizmo's backward-pointing Z arrow (and its pick
+ *  target), leaving one arrow and the line it grows out of.
+ *
+ *  TransformControls draws every translate axis twice — an arrow at +0.5 and a
+ *  mirrored one at -0.5, with the shaft only spanning the middle. With X and Y
+ *  hidden, what's left reads as one arrow on a stick plus a second arrow
+ *  stranded on the far side of the handle with nothing joining it, which on an
+ *  extrude off a top face is a downward arrow floating under the profile. It
+ *  says nothing the forward arrow doesn't: dragging the forward arrow back
+ *  through the profile already reaches the other side (as a direction flip with
+ *  a positive distance — see emitExtrudeDistance), which is what
+ *  verify-extrude-gizmo.mjs pins down.
+ *
+ *  Removed rather than hidden, because TransformControls re-asserts `visible`
+ *  on every handle each frame (the same reason softenGizmo has to stash its
+ *  colours) — a one-time `visible = false` would be undone on the next render.
+ *
+ *  Identified by GEOMETRY, not by `position`: setupGizmo bakes each handle's
+ *  offset into its geometry and then resets the object's transform to identity,
+ *  so every child reports position (0,0,0) and only the baked bounds say which
+ *  side of the origin it sits on. The shaft runs from the origin outwards, so a
+ *  centre well below zero is the backward arrow and its picker, nothing else. */
+function dropBackwardArrow(helper: THREE.Object3D): void {
+  const doomed: THREE.Object3D[] = [];
+  const centre = new THREE.Vector3();
+  helper.traverse((o) => {
+    const geom = (o as THREE.Mesh).geometry;
+    if (o.name !== "Z" || !geom) return;
+    if (!geom.boundingBox) geom.computeBoundingBox();
+    geom.boundingBox?.getCenter(centre);
+    if (centre.z < -0.1) doomed.push(o);
+  });
+  for (const o of doomed) o.removeFromParent();
+}
+
+/** Stretch the translate gizmo's shaft so it reaches BOTH arrows.
+ *
+ *  TransformControls builds the shaft as `lineGeometry2` — a cylinder half the
+ *  axis long, pushed out to span [0, +0.5]. So it meets the forward arrow at
+ *  +0.5 and stops dead at the origin, leaving the backward arrow at -0.5
+ *  floating with nothing joining it. On a handle that keeps both arrows (the
+ *  section plane, which straddles the body and reads as meaningful in either
+ *  direction) that gap looks like a rendering fault rather than a design.
+ *
+ *  Doubling the shaft and re-centring it spans [-0.5, +0.5]; both arrow bases
+ *  sit exactly at ±0.5 (arrowGeometry runs 0 -> 0.1 from there, pointing out),
+ *  so the join is exact rather than approximately closed. Safe to mutate the
+ *  geometry in place: setupGizmo clones per handle, so this touches only this
+ *  gizmo instance. */
+function joinShaftToBothArrows(helper: THREE.Object3D): void {
+  const size = new THREE.Vector3();
+  const stretch = new THREE.Matrix4().makeScale(1, 1, 2).premultiply(new THREE.Matrix4().makeTranslation(0, 0, -0.5));
+  helper.traverse((o) => {
+    const geom = (o as THREE.Mesh).geometry;
+    if (o.name !== "Z" || !geom) return;
+    if (!geom.boundingBox) geom.computeBoundingBox();
+    geom.boundingBox?.getSize(size);
+    // The shaft is the only long, hair-thin handle on the axis — the arrows are
+    // short and wide, and the invisible pick cones are wide.
+    if (size.x > 0.05 || size.z < 0.3) return;
+    geom.applyMatrix4(stretch);
+    geom.computeBoundingBox();
+    geom.computeBoundingSphere();
   });
 }
 
