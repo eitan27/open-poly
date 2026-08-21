@@ -1608,15 +1608,25 @@ button:disabled .kbd-hint {
   border-radius: 6px;
 }
 
+/* Text-4 + accent hover, matching .view-reset (Home / the section toggle) in
+   the same corner: these are live controls whenever the panel is on, and at
+   --text-9 — the dimmest step on the scale — they read as disabled. `.active`
+   still marks Flip's on-state, so the off-state no longer has to carry that
+   meaning by being greyed out. */
 .section-view-panel button {
   padding: 3px 9px;
   font-size: 11px;
-  color: var(--text-9);
+  color: var(--text-4);
   background: rgba(var(--hud-rgb), 0.8);
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.section-view-panel button:hover {
+  color: var(--accent-palest);
+  border-color: var(--accent);
 }
 
 .section-view-panel button.active {
