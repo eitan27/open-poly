@@ -414,10 +414,12 @@ function chainWirePoints(edges: Edge[]): V3[] {
  *  A faceted (polygonal) wall booleans fine, matching how sketch-region extrudes
  *  already facet their profile. Straight-edged faces are returned unchanged
  *  (they prism to planar walls and stay exact). */
-function facetedProfileFace(face: Face, normal: Vector): { face: Face; normal: Vector } {
-  if (!face.edges.some((e) => e.geomType !== "LINE")) return { face, normal };
-  const n = vunit(normal.toTuple() as V3);
-  const origin = face.center.toTuple() as V3;
+/** A sketch-style frame for a PLANAR face: the face's own centroid + normal, with
+ *  an arbitrary but well-conditioned u/v pair spanning its plane. Lets a body
+ *  face stand in for a sketch plane wherever the kernel needs a profile frame —
+ *  faceting a profile, and intersecting a plane/face axis with it. */
+function planarFaceFrame(origin: V3, normal: V3): ResolvedFrame {
+  const n = vunit(normal);
   // A u axis perpendicular to the normal (cross with the world axis least aligned
   // with n, so the cross product is well-conditioned).
   const ax: V3 =
@@ -427,7 +429,13 @@ function facetedProfileFace(face: Face, normal: Vector): { face: Face; normal: V
         ? [0, 1, 0]
         : [0, 0, 1];
   const uAxis = vunit(vcross(n, ax));
-  const vAxis = vcross(n, uAxis);
+  return { origin, uAxis, vAxis: vcross(n, uAxis), normal: n };
+}
+
+function facetedProfileFace(face: Face, normal: Vector): { face: Face; normal: Vector } {
+  if (!face.edges.some((e) => e.geomType !== "LINE")) return { face, normal };
+  const frame = planarFaceFrame(face.center.toTuple() as V3, normal.toTuple() as V3);
+  const { origin, uAxis, vAxis, normal: n } = frame;
   const toUv = (p: V3): [number, number] => {
     const d: V3 = [p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]];
     return [d[0] * uAxis[0] + d[1] * uAxis[1] + d[2] * uAxis[2], d[0] * vAxis[0] + d[1] * vAxis[1] + d[2] * vAxis[2]];
@@ -438,7 +446,6 @@ function facetedProfileFace(face: Face, normal: Vector): { face: Face; normal: V
     .innerWires()
     .map((w) => chainWirePoints(w.edges).map(toUv))
     .filter((r) => r.length >= 3);
-  const frame: ResolvedFrame = { origin, uAxis, vAxis, normal: n };
   const faceted = regionFace({ kind: "sketchRegion", outline: outer, holes, frame }, planeOf(frame));
   return { face: faceted, normal: new Vector(n) };
 }
@@ -649,21 +656,6 @@ function revolveFromFace(
   pnt.delete();
   rotated?.delete();
   return { shape, names };
-}
-
-/** Build a face from a baked sketch outline and revolve it around an axis. */
-function revolveSketchRegion(
-  profile: Extract<ResolvedFeature, { type: "revolve" }>["profile"] & { kind: "sketchRegion" },
-  axisOrigin: number[],
-  axisDir: number[],
-  angleRad: number,
-  symmetric: boolean,
-  id: string,
-): NamedShape {
-  const { outline, frame } = profile;
-  if (outline.length < 3) throw new Error("revolve: profile needs at least 3 points");
-  const face = regionFace(profile, planeOf(frame));
-  return revolveFromFace(face, axisOrigin, axisDir, angleRad, symmetric, id);
 }
 
 type RegionProfile = Extract<ResolvedProfile, { kind: "sketchRegion" }>;
@@ -1046,6 +1038,33 @@ function faceRevolveAxis(
   );
   if (!line) throw new Error("revolve: axis face is parallel to the profile plane (no intersection line)");
   return line;
+}
+
+/** Resolve a body edge armed as a revolve axis to a world line (origin + dir).
+ *  The edge must be STRAIGHT — a circular/spline edge isn't a line, so there'd be
+ *  no axis to spin about. Re-found by persistent name first, then the stored
+ *  mid/length fingerprint, sharing the dress-up resolver so a renamed edge
+ *  behaves the same here as it does for a fillet. */
+function edgeRevolveAxis(
+  body: Body,
+  edgeName: string | undefined,
+  ref: { mid?: V3; length?: number },
+  warn?: Warn,
+): { origin: V3; dir: V3 } {
+  if (!edgeName) throw new Error("revolve: axis edge has no name — edit the feature to re-pick it");
+  const { hits, lost } = resolveDressUpEdges(body, [edgeName], [{ name: edgeName, ...ref }], warn);
+  if (lost.length || hits.length === 0) {
+    throw new Error(
+      `revolve: axis edge "${edgeName}" no longer exists on the body and nothing similar was found — edit the feature to re-pick it`,
+    );
+  }
+  const edge = hits[0];
+  if (edge.geomType !== "LINE") throw new Error("revolve: axis edge must be straight (a curved edge isn't an axis)");
+  const a = edge.startPoint.toTuple() as V3;
+  const b = edge.endPoint.toTuple() as V3;
+  const dir: V3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  if (Math.hypot(dir[0], dir[1], dir[2]) < 1e-9) throw new Error("revolve: axis edge is degenerate (zero length)");
+  return { origin: a, dir };
 }
 
 /** A prism length, starting anywhere on `face`, guaranteed to clear past every
@@ -3432,10 +3451,45 @@ function buildBodies(
         const res = buildCached(key, used, () => patternNamed(src, feature, axisOrigin, axisDir));
         bodies.push({ id: feature.id, key, ...res });
       } else if (feature.type === "revolve") {
-        if (feature.profile.kind !== "sketchRegion") throw new Error("revolve: profile must be a sketch region");
-        const revProfile = feature.profile; // narrowed; used inside the build closure
-        // A body-face axis is resolved here (needs the built body + profile frame);
-        // sketch-line/plane axes arrive pre-baked as axisOrigin/axisDir.
+        const profile = feature.profile;
+        // The profile is either a baked sketch region or a PLANAR body face. Both
+        // reduce to one face + the plane it lies in (`frame`): the face is what
+        // gets spun, the frame is what a plane/face axis is intersected with.
+        // A curved face profile is faceted, exactly as extrude does, so the
+        // surface of revolution stays booleanable.
+        let profileFace: Face;
+        let frame: ResolvedFrame;
+        if (profile.kind === "sketchRegion") {
+          if (profile.outline.length < 3) throw new Error("revolve: profile needs at least 3 points");
+          frame = profile.frame;
+          profileFace = regionFace(profile, planeOf(frame));
+        } else if (profile.kind === "bodyFace") {
+          const r = bodyProfileFace(
+            requireBody(bodies, profile.sourceId),
+            profile.faceName,
+            profile.center,
+            profile.normal,
+            warn,
+            "revolve profile face",
+          );
+          // A curved face has no single plane, so there'd be nothing to spin
+          // (and no plane for a plane/face axis to meet) — rejected up front
+          // rather than producing a self-intersecting solid.
+          if (r.face.geomType !== "PLANE") {
+            throw new Error(
+              "revolve: profile face must be planar — a curved face (cylinder, sphere, fillet) has no plane to spin",
+            );
+          }
+          const ff = facetedProfileFace(r.face, r.normal);
+          profileFace = ff.face;
+          frame = planarFaceFrame(r.face.center.toTuple() as V3, r.normal.toTuple() as V3);
+        } else {
+          throw new Error("revolve: profile must be a sketch region or a planar body face");
+        }
+        // A body-face axis is resolved here (needs the built body + profile
+        // plane), as is a plane axis whose profile is a body face (the document
+        // layer had no profile plane to intersect it with). A sketch-line axis —
+        // and a plane axis on a sketch-region profile — arrive pre-baked.
         let axisOrigin = feature.axisOrigin;
         let axisDir = feature.axisDir;
         if (feature.axisFace) {
@@ -3444,21 +3498,43 @@ function buildBodies(
             axBody,
             feature.axisFace.faceName,
             feature.axisFace.center,
-            feature.profile.frame,
+            frame,
             feature.axisFace.normal,
             warn,
           );
+          axisOrigin = line.origin;
+          axisDir = line.dir;
+        } else if (feature.axisEdge) {
+          const axBody = requireBody(bodies, feature.axisEdge.sourceId);
+          const line = edgeRevolveAxis(
+            axBody,
+            feature.axisEdge.edgeName,
+            { mid: feature.axisEdge.mid, length: feature.axisEdge.length },
+            warn,
+          );
+          axisOrigin = line.origin;
+          axisDir = line.dir;
+        } else if (feature.axisPlane) {
+          const line = intersectPlanes(feature.axisPlane.origin, feature.axisPlane.normal, frame.origin, frame.normal);
+          if (!line) throw new Error("revolve: axis plane is parallel to the profile plane (no intersection line)");
           axisOrigin = line.origin;
           axisDir = line.dir;
         }
         if (!axisOrigin || !axisDir) throw new Error("revolve: missing axis");
         const ao = axisOrigin,
           ad = axisDir;
-        // A body-face axis makes the result depend on that body's geometry, so
-        // fold its key in; a baked line axis is fully captured by the feature.
-        const key = feature.axisFace ? contentKey(feature, [keyOf(feature.axisFace.sourceId)]) : builderKey(feature);
+        // A body-face profile or axis makes the result depend on that body's
+        // geometry, so fold its key in; baked profiles/axes are fully captured by
+        // the feature itself.
+        const sourceKeys = [
+          ...(profile.kind === "bodyFace" ? [keyOf(profile.sourceId)] : []),
+          ...(feature.axisFace ? [keyOf(feature.axisFace.sourceId)] : []),
+          ...(feature.axisEdge ? [keyOf(feature.axisEdge.sourceId)] : []),
+        ];
+        const key = sourceKeys.length ? contentKey(feature, sourceKeys) : builderKey(feature);
+        const face = profileFace;
         const built = buildCached(key, used, () =>
-          revolveSketchRegion(revProfile, ao, ad, (feature.angle * Math.PI) / 180, feature.symmetric, feature.id),
+          revolveFromFace(face, ao, ad, (feature.angle * Math.PI) / 180, feature.symmetric, feature.id),
         );
         bodies.push({ id: feature.id, key, ...built });
       } else if (feature.type === "sweep") {

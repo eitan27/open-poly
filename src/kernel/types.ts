@@ -247,10 +247,13 @@ export type ResolvedFeature =
       };
     }
   // Revolve a sketch profile around an axis by an angle. The axis is either a
-  // baked world line (`axisOrigin`+`axisDir`, for sketch-line and plane axes,
-  // resolved in the document layer) OR a body face (`axisFace`, resolved in the
-  // kernel against the profile `frame` — planar → plane∩profile, cylinder/cone →
-  // the surface axis). Exactly one form is present.
+  // baked world line (`axisOrigin`+`axisDir`, for sketch-line axes and for plane
+  // axes on a sketch-region profile, resolved in the document layer), a plane
+  // deferred to the worker (`axisPlane`, when the profile is a body face), OR a
+  // body face (`axisFace`, resolved in the kernel against the profile plane —
+  // planar → plane∩profile, cylinder/cone → the surface axis), OR a straight body
+  // edge (`axisEdge`, the line through its endpoints). Exactly one form is
+  // present.
   | {
       id: string;
       type: "revolve";
@@ -259,12 +262,19 @@ export type ResolvedFeature =
       symmetric: boolean;
       axisOrigin?: [number, number, number];
       axisDir?: [number, number, number];
+      /** A PLANE axis that couldn't be baked in the document layer because the
+       *  profile is a body face (its plane is only known once the B-rep is
+       *  built): the worker intersects this frame with the profile's plane. */
+      axisPlane?: ResolvedFrame;
       axisFace?: {
         sourceId: string;
         faceName?: string;
         center: [number, number, number];
         normal?: [number, number, number];
       };
+      /** A straight body EDGE axis, resolved in the worker (name first, then the
+       *  mid/length fingerprint) and read as the line through its endpoints. */
+      axisEdge?: { sourceId: string; edgeName?: string; mid?: [number, number, number]; length?: number };
     }
   // Sweep a sketch profile along a path (baked to 2D points on a frame). For a
   // spline, `beziers` carries the exact cubic-Bézier spans of the drawn curve

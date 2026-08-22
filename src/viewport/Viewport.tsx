@@ -160,9 +160,11 @@ export type Selection =
   | { kind: "sketchFace"; sketchId: string; regionId: string };
 
 /** A revolve-axis pick from the unified "Select axis" arming: a sketch line, a
- *  body face (resolved to a line in the kernel), or a datum/reference plane. */
+ *  straight body edge (the axis line itself), a body face (resolved to a line in
+ *  the kernel), or a datum/reference plane. */
 export type RevolveAxisPick =
   | { kind: "line"; sketchId: string; entityId: string }
+  | { kind: "bodyEdge"; featureId: string; edgeId: number }
   | { kind: "bodyFace"; featureId: string; faceId: number }
   | { kind: "plane"; ref: SketchPlaneRef };
 
@@ -1066,6 +1068,7 @@ export function Viewport({
   onSketchDragMove,
   onSketchDragEnd,
   selectionFilter,
+  regionPickPriority,
   sectionView,
   onSectionOffsetChange,
   theme,
@@ -1153,6 +1156,12 @@ export function Viewport({
   /** Drag released — App finalizes the move (drops the pre-drag snapshot). */
   onSketchDragEnd: () => void;
   selectionFilter: SelectionFilter;
+  /** True while a dialog is waiting for a sketch REGION to be clicked (Revolve's
+   *  profile). A region is normally the loser of every depth tie — it's a
+   *  paper-thin fill, so any body face in front of it wins — which made the
+   *  arming a dead end whenever a solid sat between the camera and the profile.
+   *  With this set, a region under the cursor is returned before anything else. */
+  regionPickPriority: boolean;
   /** Section view: a resolved cut plane (App owns the SketchPlaneRef → frame
    *  resolution, same as activeSketchFace) plus a signed offset along the
    *  frame's own normal and a flip (which half is kept). `enabled` false still
@@ -1219,6 +1228,8 @@ export function Viewport({
   sketchToolRef.current = sketchTool;
   const selectionFilterRef = useRef(selectionFilter);
   selectionFilterRef.current = selectionFilter;
+  const regionPickPriorityRef = useRef(regionPickPriority);
+  regionPickPriorityRef.current = regionPickPriority;
   const draftRef = useRef(draft);
   draftRef.current = draft;
   // Inference "armed" refs: key points and edge directions the cursor has recently
@@ -2640,9 +2651,13 @@ export function Viewport({
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
-      const planeObjs = datums.filter((d) => d.kind === "plane").map((d) => d.object);
-      const userPlaneObjs = planeGroup.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
-      const bodies = group.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
+      // `.visible` filters are load-bearing, not tidiness: three.js raycasts
+      // invisible objects happily, and datum visibility is implemented by
+      // setting `object.visible` — so without this a datum the user switched OFF
+      // still swallows clicks (and hover) meant for the geometry behind it.
+      const planeObjs = datums.filter((d) => d.kind === "plane" && d.object.visible).map((d) => d.object);
+      const userPlaneObjs = planeGroup.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh && c.visible);
+      const bodies = group.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh && c.visible);
       const hit = raycaster
         .intersectObjects([...planeObjs, ...userPlaneObjs, ...bodies], false)
         .find(
@@ -2708,6 +2723,16 @@ export function Viewport({
       // Selection filters: which body-geometry kinds the picker may return.
       // (Sketch picks below are unaffected — they belong to sketch editing.)
       const flt = selectionFilterRef.current;
+
+      // Arming a profile: the only thing worth returning is a region, and it
+      // wins outright — no depth gate, no thin-element priority. Without this a
+      // body (or even the profile's own sketch lines) shadows the fill and the
+      // click silently does nothing.
+      if (regionPickPriorityRef.current && regionHit) {
+        const sid = regionHit.object.userData.sketchId as string | undefined;
+        const rid = regionHit.object.userData.regionId as string | undefined;
+        if (sid && rid) return { kind: "sketchFace", sketchId: sid, regionId: rid };
+      }
 
       // Thin elements (body edges, sketch lines) take priority over a face when
       // the cursor is near them (in pixels) and they're not behind that face.
@@ -2973,6 +2998,23 @@ export function Viewport({
         applyHighlights();
       }
       if (pickingRef.current) {
+        // An AXIS pick resolves the same way its click does — the selection
+        // raycaster first (sketch line / body edge / face), planes only as the
+        // fallback. Hovering used to run `pick()` alone, which sees neither
+        // lines nor edges: the thing you were aiming at stayed unlit while the
+        // plane behind it lit up, and the click then landed on that plane.
+        if (axisPickRef.current) {
+          const sel = pickSelection(e.clientX, e.clientY);
+          if (sel && (sel.kind === "edge" || sel.kind === "face" || sel.kind === "sketchEntity")) {
+            clearHover();
+            renderer.domElement.style.cursor = "pointer";
+            if (!sameSelection(sel, hoverSelRef.current)) {
+              hoverSelRef.current = sel;
+              applyHighlights();
+            }
+            return;
+          }
+        }
         const p = pick(e.clientX, e.clientY);
         clearHover();
         const prevHover = hoverSelRef.current;
@@ -3227,6 +3269,10 @@ export function Viewport({
           }
           if (sel?.kind === "sketchEntity") {
             onAxisPickRef.current({ kind: "line", sketchId: sel.sketchId, entityId: sel.entityId });
+            return;
+          }
+          if (sel?.kind === "edge") {
+            onAxisPickRef.current({ kind: "bodyEdge", featureId: sel.featureId, edgeId: sel.edgeId });
             return;
           }
           if (sel?.kind === "face") {

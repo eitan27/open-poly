@@ -457,19 +457,44 @@ export interface RevolveAxisFace {
   normal?: [number, number, number];
 }
 
+/** A body EDGE armed as a revolve axis: a straight edge IS a line, so it needs
+ *  no intersection — the kernel reads its two endpoints. `edgeName` is the
+ *  persistent topological name (preferred); `mid`/`length` are the geometric
+ *  fingerprint it's re-matched by when an upstream edit renames it (the same
+ *  pair dress-ups store, see `EdgeRef`). */
+export interface RevolveAxisEdge {
+  featureId: string;
+  edgeName?: string;
+  edgeId: number;
+  mid?: [number, number, number];
+  length?: number;
+}
+
 /** The rotation axis of a revolve. One of:
  *  - a sketch line entity (its two endpoints define the axis);
  *  - a plane, where the axis is the line the plane makes with the profile plane;
- *  - a body face (planar → plane ∩ profile plane; cylinder/cone → surface axis). */
+ *  - a body face (planar → plane ∩ profile plane; cylinder/cone → surface axis);
+ *  - a straight body edge (the edge itself is the axis line). */
 export type RevolveAxis =
-  { sketchId: string; entityId: string } | { plane: SketchPlaneRef } | { face: RevolveAxisFace };
+  | { sketchId: string; entityId: string }
+  | { plane: SketchPlaneRef }
+  | { face: RevolveAxisFace }
+  | { edge: RevolveAxisEdge };
 
-/** Revolve a sketch region around an axis (a sketch line, or a plane) to make a
- *  solid. Like extrude, a body *producer*. (Phase 6.) */
+/** What a revolve spins: a closed sketch region, or a PLANAR face of an existing
+ *  body — the same two reference shapes extrude accepts (text is excluded: glyph
+ *  runs are many disjoint faces, which a revolve has no sensible axis story for).
+ *  A face profile makes the revolve depend on that body, exactly like an extrude
+ *  pulled off a face. */
+export type RevolveProfile = Extract<ExtrudeProfile, { kind: "sketchRegion" } | { kind: "bodyFace" }>;
+
+/** Revolve a sketch region or planar body face around an axis (a sketch line, a
+ *  plane, or a body face) to make a solid. Like extrude, a body *producer*.
+ *  (Phase 6.) */
 export interface RevolveFeature extends FeatureBase {
   type: "revolve";
-  /** The closed sketch region to revolve. */
-  profile: { sketchId: string; regionId: string };
+  /** The closed region (or planar body face) to revolve. */
+  profile: RevolveProfile;
   /** The rotation axis: a sketch line, or a plane (axis = plane ∩ profile plane). */
   axis: RevolveAxis;
   /** Revolve angle in degrees, as an expression (e.g. "360" or "angle/2").

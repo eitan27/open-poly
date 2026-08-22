@@ -57,8 +57,9 @@ quoted in the warning).
   entity `construction:true` to make it reference-only — snapping / a revolve
   axis, never extruded), `add_extrude` (profile + distance + mode
   `new|add|remove` + extent `blind|symmetric|throughAll|upToFace`; profile may be
-  a region, a body face, or a `text` entity), `add_revolve` (region + axis +
-  angle + optional `symmetric`; axis = a sketch line, a plane, or a body face),
+  a region, a body face, or a `text` entity), `add_revolve` (profile + axis +
+  angle + optional `symmetric`; profile = a region or a **planar** body face;
+  axis = a sketch line, a straight body edge, a plane, or a body face),
   `add_sweep` (region + path entity), `add_loft` (2+ regions),
   `add_offset` / `add_sketch_mirror` (associative DRIVEN sketch geometry —
   offset a chain, or mirror entities across a sketch line), `add_mirror`
@@ -130,7 +131,12 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
 entityId}` (get the id from `get_scene_summary`); a plane `{plane: …}` (the axis
   is where it meets the profile plane); or a body face `{bodyId, faceName}`
   (planar face → that intersection; a cylinder/cone face → its own axis, e.g. to
-  revolve around an existing shaft). The profile must **not cross** the axis.
+  revolve around an existing shaft); or a straight body edge `{bodyId, edgeName}`
+  (the edge IS the axis line). The profile must **not cross** the axis.
+  The **profile** can also be a planar body face `{bodyId, faceName}` instead of
+  a sketch region — spin a flat face of an existing part straight into a solid of
+  revolution, no sketch needed. A curved face (cylinder, fillet) has no plane to
+  spin and is rejected.
 - **Mirror a body across a plane:** `add_mirror` (body + plane) → a reflected
   **new** body, original kept. Use it for symmetric parts: build one half, mirror
   it, then `boolean` `union` if you need a single body.

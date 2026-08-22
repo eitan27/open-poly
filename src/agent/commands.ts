@@ -630,10 +630,13 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         break;
       }
       case "addRevolve": {
-        // Validate the region (so the agent gets a clear error, not a kernel
-        // failure). The axis is one of: a sketch line, a plane, or a body face.
+        // Validate the profile (so the agent gets a clear error, not a kernel
+        // failure). A region or a planar body face; the axis is one of: a sketch
+        // line, a plane, or a body face.
         const prof = resolveProfile(ctx, op.profile);
-        if (prof.kind !== "sketchRegion") throw new OpError("invalid_op", "revolve profile must be a sketch region.");
+        if (prof.kind !== "sketchRegion" && prof.kind !== "bodyFace") {
+          throw new OpError("invalid_op", "revolve profile must be a sketch region or a planar body face.");
+        }
         let axis: RevolveAxis;
         // Bind to a const so the `in`-narrowing survives the .find() closures.
         const ax = op.axis;
@@ -646,6 +649,15 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           axis = { sketchId: ax.sketchId, entityId: ax.entityId };
         } else if ("plane" in ax) {
           axis = { plane: resolvePlaneRef(ctx, ax.plane) };
+        } else if ("edgeName" in ax) {
+          const mesh = ctx.getMeshes().find((m) => m.id === ax.bodyId);
+          if (!mesh) throw new OpError("not_found", `No body "${ax.bodyId}" for the revolve axis.`);
+          const g = mesh.mesh.edges.edgeGroups?.find((eg) => eg.name === ax.edgeName);
+          if (!g) throw new OpError("not_found", `Edge "${ax.edgeName}" not found on body "${ax.bodyId}".`);
+          const fp = edgeFingerprintByName(mesh.mesh.edges, ax.edgeName);
+          axis = {
+            edge: { featureId: ax.bodyId, edgeName: ax.edgeName, edgeId: g.edgeId, mid: fp.mid, length: fp.length },
+          };
         } else {
           const mesh = ctx.getMeshes().find((m) => m.id === ax.bodyId);
           if (!mesh) throw new OpError("not_found", `No body "${ax.bodyId}" for the revolve axis.`);
@@ -661,7 +673,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
             },
           };
         }
-        const r = addRevolve(doc, { sketchId: prof.sketchId, regionId: prof.regionId }, axis, op.angle, op.symmetric);
+        const r = addRevolve(doc, prof, axis, op.angle, op.symmetric);
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;
         break;

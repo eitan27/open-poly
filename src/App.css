@@ -1525,6 +1525,12 @@ button:disabled .kbd-hint {
   pointer-events: none;
 }
 
+/* The sketch/pick banner owns the same top-centre slot, so drop below it rather
+   than covering the instruction the message is about. */
+.sketch-msg.below-banner {
+  top: 58px;
+}
+
 /* Named views + iso corners live on the on-canvas gizmo (top-right); this small
    round button is tucked just below the gizmo and resets to the iso view. */
 .view-reset {
@@ -2280,38 +2286,93 @@ button:disabled .kbd-hint {
   font-size: 13px;
 }
 
-/* "Select a face" arming button inside the extrude dialog. Matches the select
-   width; turns accented while armed (awaiting a viewport face click). */
+/* ---- Pick slots (see src/ui/PickSlot.tsx) -------------------------------
+   One box, three states. A slot keeps the same metrics and type throughout —
+   only the border and fill change — so filling it doesn't make the text jump
+   or resize:
+
+     UNARMED  .ed-pick-btn            plain control, sunken
+     ARMING   .ed-pick-btn.active     dashed accent outline, softly pulsing
+     ARMED    .bool-operand-row       solid accent fill (further down)
+
+   The shared metrics live here and are re-declared by .bool-operand-row so the
+   two agree; anything that differs between the three is listed in this block. */
+.ed-pick-btn,
+.bool-operand-row {
+  box-sizing: border-box;
+  min-height: 26px;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+/* Field-aligned slots (a label beside them) match the select width; standalone
+   ones take .ed-wide below. */
 .ed-pick-btn {
   width: 112px;
   background: var(--bg-sunken);
   border: 1px solid var(--border);
   color: var(--text-2);
-  border-radius: 5px;
-  padding: 4px 6px;
-  font-size: 12px;
   cursor: pointer;
-  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ed-pick-btn.active {
-  border-color: var(--accent);
-  background: var(--accent-surface);
-  color: var(--accent-palest);
+.ed-pick-btn:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  color: var(--text-1);
 }
 
-/* Pattern dialog's longer standalone labels ("▾ Second direction", "Select
-   axis (sketch line / cylindrical face)") don't fit the default 112px arming
-   width Revolve/Boolean's short labels use — wrap instead of truncating. */
+/* Nothing to pick yet (Shell's face slot before a body is chosen): match the
+   dialog's other disabled controls rather than looking clickable. */
+.ed-pick-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ARMING (waiting for a click in the viewport) — deliberately NOT the solid
+   accent fill of .bool-operand-row, which means "this slot is filled". A
+   dashed, softly pulsing outline reads as an empty slot listening for a pick,
+   so an arming button can't be mistaken for a chosen one. The label itself
+   stays the plain high-contrast text colour — the state is carried by the
+   outline, not by tinting the words. */
+.ed-pick-btn.active,
+.ed-pick-btn.active:hover {
+  border: 1px dashed var(--accent);
+  background: var(--accent-surface-2);
+  color: var(--text-1);
+  animation: pick-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pick-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 2px var(--accent-border);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ed-pick-btn.active {
+    animation: none;
+  }
+}
+
+/* Standalone slots — no field label beside them, replaced by a full-width
+   .bool-operand-row once filled. They carry the whole phrase ("Selecting a
+   profile…", "Select an axis (sketch line / cylindrical face)"), which doesn't
+   fit the 112px field width, so they take the dialog's full width and wrap
+   instead of truncating. */
 .ed-pick-btn.ed-wide {
   width: 100%;
   white-space: normal;
   overflow: visible;
   text-overflow: clip;
-  line-height: 1.3;
 }
 
 .ed-actions button:disabled {
@@ -2873,14 +2934,15 @@ button:disabled .kbd-hint {
   margin-top: 2px;
 }
 
-/* Chosen operand rows reuse the accented "armed" look (matching .ed-pick-btn.active)
-   so they read clearly against the dialog instead of a low-contrast fill. */
+/* ARMED — the third pick-slot state (see the .ed-pick-btn block above, which
+   sets the metrics both share): a solid accent fill, the one look that means
+   "this slot is filled". Padded 4px shorter on the right for the ✕ that sits
+   there, so its label starts on the same 8px inset as the button's. */
 .bool-operand-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 4px 3px 8px;
-  border-radius: 5px;
+  padding-right: 4px;
   border: 1px solid var(--accent);
   background: var(--accent-surface);
 }
@@ -2891,8 +2953,7 @@ button:disabled .kbd-hint {
      width, so a long body name pushes the ✕ past the dialog edge and the
      ellipsis never engages. */
   min-width: 0;
-  font-size: 13px;
-  color: var(--accent-palest);
+  color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

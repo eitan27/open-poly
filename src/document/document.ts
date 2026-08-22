@@ -37,6 +37,7 @@ import type {
   PlaneMethod,
   RevolveAxis,
   RevolveFeature,
+  RevolveProfile,
   ShellFeature,
   SketchConstraint,
   SketchEntity,
@@ -45,7 +46,7 @@ import type {
   TransformFeature,
   Variable,
 } from "./types";
-import type { BooleanOp, ResolvedFeature } from "../kernel/types";
+import type { BooleanOp, ResolvedFeature, ResolvedFrame } from "../kernel/types";
 import { sampleArc, splineBeziers } from "./sketchTools";
 
 function uid(): string {
@@ -90,7 +91,14 @@ export function migrateDocument(doc: Document): Document {
     // Revolve gained a `symmetric` flag (one-sided was the only prior behavior).
     if (feat.type === "revolve" && f.symmetric === undefined) {
       changed = true;
-      return { ...feat, symmetric: false };
+      feat = { ...feat, symmetric: false };
+    }
+    // Revolve profiles used to be an untagged {sketchId, regionId}; they became a
+    // tagged union when planar body faces joined sketch regions as profiles.
+    if (feat.type === "revolve" && (f.profile as { kind?: string } | undefined)?.kind === undefined) {
+      changed = true;
+      const prof = f.profile as { sketchId: string; regionId: string };
+      return { ...feat, profile: { kind: "sketchRegion" as const, sketchId: prof.sketchId, regionId: prof.regionId } };
     }
     return feat;
   });
@@ -333,10 +341,11 @@ export function setTransform(
   return mapFeature(doc, id, (f) => (f.type === "transform" ? { ...f, ...patch } : f));
 }
 
-/** Revolve a sketch region around an axis line into a solid body. */
+/** Revolve a sketch region (or a planar body face) around an axis line into a
+ *  solid body. */
 export function addRevolve(
   doc: Document,
-  profile: { sketchId: string; regionId: string },
+  profile: RevolveProfile,
   axis: RevolveAxis,
   angle = "360",
   symmetric = false,
@@ -567,7 +576,7 @@ export function updatePlane(
 export function updateRevolve(
   doc: Document,
   id: string,
-  profile: { sketchId: string; regionId: string },
+  profile: RevolveProfile,
   axis: RevolveAxis,
   angle: string,
   symmetric: boolean,
@@ -1244,18 +1253,41 @@ export function resolveDocument(doc: Document): ResolveResult {
         }
       } else if (f.type === "revolve") {
         const angle = evaluateExpression(f.angle, scope);
-        const sketch = dDoc.features.find((x) => x.id === f.profile.sketchId);
-        if (sketch?.type !== "sketch") throw new Error("revolve: profile sketch not found");
-        const region = detectSketchRegions(sketch.entities).find((r) => r.id === f.profile.regionId);
-        if (!region) throw new Error("revolve: profile region not found");
-        const frame = frameOf(sketch.plane, planeFrames);
-        // Bake the axis. A sketch line (its two endpoints) or a plane (the line
-        // where it meets the profile plane) resolve here to a world line; a body
-        // face can't be resolved without kernel geometry, so its reference is
-        // carried through and resolved by the worker against the profile frame.
+        // A sketch-region profile bakes to an outline + its plane frame here; a
+        // body-face profile is carried through as a reference (the B-rep lives in
+        // the worker), so its plane — and with it the axis intersection below —
+        // is only known there.
+        const prof = f.profile;
+        let revProfile: Extract<ResolvedFeature, { type: "revolve" }>["profile"];
+        let frame: ResolvedFrame | null = null;
+        if (prof.kind === "sketchRegion") {
+          const sketch = dDoc.features.find((x) => x.id === prof.sketchId);
+          if (sketch?.type !== "sketch") throw new Error("revolve: profile sketch not found");
+          const region = detectSketchRegions(sketch.entities).find((r) => r.id === prof.regionId);
+          if (!region) throw new Error("revolve: profile region not found");
+          frame = frameOf(sketch.plane, planeFrames);
+          revProfile = { kind: "sketchRegion", outline: region.outline, holes: region.holes, frame };
+        } else {
+          revProfile = {
+            kind: "bodyFace",
+            sourceId: prof.featureId,
+            faceName: prof.faceName,
+            center: prof.center,
+            normal: prof.normal,
+          };
+        }
+        // Bake the axis. A sketch line (its two endpoints) resolves to a world
+        // line whatever the profile is. A plane needs the PROFILE plane to
+        // intersect with: known here for a sketch region, deferred to the worker
+        // (as `axisPlane`) for a body face. A body-face axis is always deferred —
+        // it can't be resolved without kernel geometry.
         const axis = f.axis;
         let axisPart:
           | { axisOrigin: [number, number, number]; axisDir: [number, number, number] }
+          | { axisPlane: ResolvedFrame }
+          | {
+              axisEdge: { sourceId: string; edgeName?: string; mid?: [number, number, number]; length?: number };
+            }
           | {
               axisFace: {
                 sourceId: string;
@@ -1264,7 +1296,18 @@ export function resolveDocument(doc: Document): ResolveResult {
                 normal?: [number, number, number];
               };
             };
-        if ("face" in axis) {
+        if ("edge" in axis) {
+          // A straight body edge IS the axis line, but its endpoints live in the
+          // B-rep — carried through for the worker to read.
+          axisPart = {
+            axisEdge: {
+              sourceId: axis.edge.featureId,
+              edgeName: axis.edge.edgeName,
+              mid: axis.edge.mid,
+              length: axis.edge.length,
+            },
+          };
+        } else if ("face" in axis) {
           axisPart = {
             axisFace: {
               sourceId: axis.face.featureId,
@@ -1275,9 +1318,13 @@ export function resolveDocument(doc: Document): ResolveResult {
           };
         } else if ("plane" in axis) {
           const axisFrame = frameOf(axis.plane, planeFrames);
-          const line = planeIntersectionLine(axisFrame, frame);
-          if (!line) throw new Error("revolve: axis plane is parallel to the profile plane (no intersection line)");
-          axisPart = { axisOrigin: line.origin, axisDir: line.dir };
+          if (!frame) {
+            axisPart = { axisPlane: axisFrame };
+          } else {
+            const line = planeIntersectionLine(axisFrame, frame);
+            if (!line) throw new Error("revolve: axis plane is parallel to the profile plane (no intersection line)");
+            axisPart = { axisOrigin: line.origin, axisDir: line.dir };
+          }
         } else {
           const axisSketch = dDoc.features.find((x) => x.id === axis.sketchId);
           if (axisSketch?.type !== "sketch") throw new Error("revolve: axis sketch not found");
@@ -1291,7 +1338,7 @@ export function resolveDocument(doc: Document): ResolveResult {
         features.push({
           id: f.id,
           type: "revolve",
-          profile: { kind: "sketchRegion", outline: region.outline, holes: region.holes, frame },
+          profile: revProfile,
           angle,
           symmetric: f.symmetric ?? false,
           ...axisPart,

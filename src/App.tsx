@@ -92,6 +92,7 @@ import type {
   PlaneMethod,
   PointRef,
   RevolveAxis,
+  RevolveProfile,
   SketchConstraint,
   SketchEntity,
   SketchFeature,
@@ -164,6 +165,7 @@ import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
+import { PickButton, PickedRow } from "./ui/PickSlot";
 import { DraggableDialog } from "./ui/DraggableDialog";
 import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
 import { DimValueInput, type VarOption } from "./ui/DimValueInput";
@@ -751,21 +753,22 @@ const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; name: string; title: s
     tool: "mirror",
     label: "◫",
     name: "Mirror",
-    title: "Mirror (M): click a line to arm the mirror axis, then click entities to mirror; Enter commits, Esc cancels",
+    title:
+      "Mirror (M): select a line to arm the mirror axis, then select entities to mirror; Enter commits, Esc cancels",
     sc: "M",
   },
   {
     tool: "pattern-linear",
     label: "⋯",
     name: "Linear pattern",
-    title: "Linear pattern (X): click entities to repeat, set count + step; Enter commits, Esc cancels",
+    title: "Linear pattern (X): select entities to repeat, set count + step; Enter commits, Esc cancels",
     sc: "X",
   },
   {
     tool: "pattern-circular",
     label: "⊛",
     name: "Circular pattern",
-    title: "Circular pattern (Shift+X): click the center point, then entities to repeat; Enter commits, Esc cancels",
+    title: "Circular pattern (Shift+X): select the center point, then entities to repeat; Enter commits, Esc cancels",
     sc: "⇧X",
   },
   {
@@ -1091,8 +1094,32 @@ export default function App() {
     // face, or a datum/reference plane.
     if (revolveDialog && revolveDialog.armed === "profile") {
       if (picked?.kind === "sketchFace") {
-        const profile = { sketchId: picked.sketchId, regionId: picked.regionId };
+        const profile: RevolveProfile = { kind: "sketchRegion", sketchId: picked.sketchId, regionId: picked.regionId };
         setRevolveDialog((d) => (d ? { ...d, profile, armed: null } : d));
+      } else if (picked?.kind === "face") {
+        // A body face is a profile too (same reference as an extrude pulled off
+        // a face). Only a PLANAR one: faceNormal is null for anything curved,
+        // which has no plane to spin — the arming stays live for another try.
+        const m = meshes.find((x) => x.id === picked.featureId);
+        const center = m ? faceCentroid(m.mesh.faces, picked.faceId) : null;
+        const normal = m ? faceNormal(m.mesh.faces, picked.faceId) : null;
+        if (!center || !normal) {
+          flashMsg("That face isn't planar — a revolve profile needs a flat face (or a sketch region).");
+          return;
+        }
+        const profile: RevolveProfile = {
+          kind: "bodyFace",
+          featureId: picked.featureId,
+          faceId: picked.faceId,
+          faceName: m ? faceNameOf(m.mesh.faces, picked.faceId) : undefined,
+          center,
+          normal,
+        };
+        setRevolveDialog((d) => (d ? { ...d, profile, armed: null } : d));
+      } else if (picked) {
+        // Anything else keeps the arming live — but say why nothing happened,
+        // instead of leaving the button looking stuck on "Selecting a profile…".
+        flashMsg("Select a closed sketch region or a planar body face to revolve.");
       }
       return;
     }
@@ -1127,7 +1154,7 @@ export default function App() {
       // normal selection) so the armed axis reads clearly.
       if (!s.axisEntityId) {
         if (ent.type !== "line") {
-          flashSketchMsg("Click a line to set the mirror axis.");
+          flashMsg("Select a line to set the mirror axis.");
           return;
         }
         setMirrorSession({ ...s, axisEntityId: ent.id });
@@ -1175,7 +1202,7 @@ export default function App() {
           : undefined;
       if (!ent) return; // empty / non-sketch click: keep the session armed
       if (ent.derivedFrom) {
-        flashSketchMsg("Derived geometry can't be patterned — pick its source instead.");
+        flashMsg("Derived geometry can't be patterned — pick its source instead.");
         return;
       }
       setPatternSession({
@@ -1223,7 +1250,7 @@ export default function App() {
         return;
       }
       if (!entity) {
-        flashSketchMsg("Couldn't project that edge.");
+        flashMsg("Couldn't project that edge.");
         return;
       }
       setProjectSession({ refs: [...s.refs, ref], keys: [...s.keys, key], previews: [...s.previews, entity] });
@@ -1439,14 +1466,16 @@ export default function App() {
   // The constraints-list row the pointer is over, so the viewport lights up the
   // entities/points that constraint acts on.
   const [hoveredConstraintId, setHoveredConstraintId] = useState<string | null>(null);
-  // A transient banner shown over the sketch (e.g. a rejected, conflicting
-  // dimension), auto-dismissed after a few seconds.
-  const [sketchMsg, setSketchMsg] = useState<string | null>(null);
-  const sketchMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flashSketchMsg = (text: string) => {
-    setSketchMsg(text);
-    if (sketchMsgTimer.current) clearTimeout(sketchMsgTimer.current);
-    sketchMsgTimer.current = setTimeout(() => setSketchMsg(null), 4000);
+  // A transient banner over the viewport (a rejected conflicting dimension, an
+  // arming click that resolved to the wrong kind of geometry…), auto-dismissed
+  // after a few seconds. Not sketch-only — several of the messages below are
+  // raised by dialogs armed outside sketch mode.
+  const [hudMsg, setHudMsg] = useState<string | null>(null);
+  const hudMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashMsg = (text: string) => {
+    setHudMsg(text);
+    if (hudMsgTimer.current) clearTimeout(hudMsgTimer.current);
+    hudMsgTimer.current = setTimeout(() => setHudMsg(null), 4000);
   };
   // Dimension entry: the entity being dimensioned, whether it's a line length or
   // a circle radius, the in-progress text, and the on-screen position (px,
@@ -1580,12 +1609,13 @@ export default function App() {
   // builds cleanly. Set live as the user types and re-checked authoritatively
   // before commit, so an invalid thickness can't close it.
   const [shellError, setShellError] = useState<string | null>(null);
-  // Revolve dialog. The user arms a profile face and an axis (a sketch line or a
-  // plane) by clicking in the viewport — like the Boolean dialog — then sets the
-  // angle (Full 360° vs. a specified angle + optional symmetric sweep). `armed`
-  // says which role the next viewport click fills.
+  // Revolve dialog. The user arms a profile (a sketch region or a planar body
+  // face) and an axis (a sketch line, a plane, or a body face) by clicking in the
+  // viewport — like the Boolean dialog — then sets the angle (Full 360° vs. a
+  // specified angle + optional symmetric sweep). `armed` says which role the next
+  // viewport click fills.
   const [revolveDialog, setRevolveDialog] = useState<{
-    profile: { sketchId: string; regionId: string } | null;
+    profile: RevolveProfile | null;
     axis: RevolveAxis | null;
     armed: "profile" | "axis" | null;
     mode: "full" | "angle";
@@ -1595,6 +1625,13 @@ export default function App() {
     y: number;
     editId?: string;
   } | null>(null);
+  // True while the Revolve dialog is waiting for a profile to be clicked (a
+  // sketch region or a planar body face). It unlocks two things the plain
+  // selection path can't offer: hidden sketches are drawn (a sketch consumed by
+  // an earlier feature is hidden, and was therefore unpickable — the arming could
+  // never be satisfied), and a region outranks the body geometry in front of it
+  // in the picker, so a profile behind a solid stays reachable.
+  const armingRevolveProfile = revolveDialog?.armed === "profile";
   // The Transform feature currently being edited with the gizmo (a floating
   // panel + viewport gizmo are shown while this is set), and which gizmo to show.
   const [transformEditId, setTransformEditId] = useState<string | null>(null);
@@ -2468,7 +2505,7 @@ export default function App() {
     });
     // Only warn when a dangling source actually changed the result (avoids
     // re-flashing the same banner on every settled rebuild).
-    if (changed && dangling) flashSketchMsg("A projected edge's source is missing.");
+    if (changed && dangling) flashMsg("A projected edge's source is missing.");
     if (changed) setDoc({ ...cur, features });
     // Keyed on the SETTLED regen (not progressive partials) so it reprojects
     // against the complete rebuilt scene, never a half-streamed one.
@@ -3795,20 +3832,39 @@ export default function App() {
       ? { kind: "plane", planeId: key.slice(6) }
       : { kind: "datum", id: key.slice(6) as SketchPlaneId };
 
-  // Revolve needs a profile region + an axis line, both in the same sketch.
+  // Revolve prefills from a selection of a profile + an axis line: a sketch
+  // region (which must share its sketch with the axis line — the same-sketch rule
+  // that made the old pair unambiguous), or a planar body face, whose axis line
+  // may live in any sketch since there's no sketch of its own to match.
   const revolveInputs = useMemo(() => {
-    let profile: { sketchId: string; regionId: string } | null = null;
+    let profile: RevolveProfile | null = null;
     let axis: { sketchId: string; entityId: string } | null = null;
     for (const s of selection) {
-      if (s.kind === "sketchFace") profile = { sketchId: s.sketchId, regionId: s.regionId };
-      else if (s.kind === "sketchEntity") {
+      if (s.kind === "sketchFace") profile = { kind: "sketchRegion", sketchId: s.sketchId, regionId: s.regionId };
+      else if (s.kind === "face") {
+        const m = meshes.find((x) => x.id === s.featureId);
+        const center = m ? faceCentroid(m.mesh.faces, s.faceId) : null;
+        const normal = m ? faceNormal(m.mesh.faces, s.faceId) : null;
+        if (center && normal) {
+          profile = {
+            kind: "bodyFace",
+            featureId: s.featureId,
+            faceId: s.faceId,
+            faceName: m ? faceNameOf(m.mesh.faces, s.faceId) : undefined,
+            center,
+            normal,
+          };
+        }
+      } else if (s.kind === "sketchEntity") {
         const sk = doc.features.find((f) => f.id === s.sketchId);
         const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === s.entityId) : undefined;
         if (e?.type === "line") axis = { sketchId: s.sketchId, entityId: s.entityId };
       }
     }
-    return profile && axis && profile.sketchId === axis.sketchId ? { profile, axis } : null;
-  }, [selection, doc]);
+    if (!profile || !axis) return null;
+    if (profile.kind === "sketchRegion" && profile.sketchId !== axis.sketchId) return null;
+    return { profile, axis };
+  }, [selection, doc, meshes]);
 
   // Open the Revolve dialog. Always available: profile + axis are armed inside
   // the dialog by clicking the viewport. If a profile region + axis line happen
@@ -3863,18 +3919,20 @@ export default function App() {
     // Full revolve = 360°; symmetric is meaningless there, so force it off.
     const angle = revolveDialog.mode === "full" ? "360" : revolveDialog.degrees;
     const symmetric = revolveDialog.mode === "angle" && revolveDialog.symmetric;
+    // Hide the originating sketch once it's been consumed (like extrude does).
+    // A body-face profile has no sketch to hide — the face stays part of its body.
+    const prof = revolveDialog.profile;
+    const hideSource = (d: Document) => (prof.kind === "sketchRegion" ? setSuppressed(d, prof.sketchId, true) : d);
     if (revolveDialog.editId) {
-      let next = updateRevolve(doc, revolveDialog.editId, revolveDialog.profile, revolveDialog.axis, angle, symmetric);
-      next = setSuppressed(next, revolveDialog.profile.sketchId, true);
+      const next = hideSource(updateRevolve(doc, revolveDialog.editId, prof, revolveDialog.axis, angle, symmetric));
       setDoc(next);
       selectFeature(revolveDialog.editId);
       commitEdit();
       closeRevolveDialog();
       return;
     }
-    const { doc: created } = addRevolve(doc, revolveDialog.profile, revolveDialog.axis, angle, symmetric);
-    // Hide the originating sketch once it's been consumed (like extrude does).
-    const next = setSuppressed(created, revolveDialog.profile.sketchId, true);
+    const { doc: created } = addRevolve(doc, prof, revolveDialog.axis, angle, symmetric);
+    const next = hideSource(created);
     setDoc(next);
     selectFeature(null);
     closeRevolveDialog();
@@ -4538,8 +4596,14 @@ export default function App() {
       doc.features
         .slice(0, doc.rollbackIndex)
         // Hidden (suppressed) sketches aren't drawn — except the one being
-        // actively edited, so editing a post-extrude hidden sketch still shows it.
-        .filter((f): f is SketchFeature => f.type === "sketch" && (!f.suppressed || f.id === editingSketchId))
+        // actively edited, so editing a post-extrude hidden sketch still shows it,
+        // and every sketch while Revolve waits for a profile: consuming a sketch
+        // hides it, so otherwise the regions you're being asked to click aren't
+        // on screen at all.
+        .filter(
+          (f): f is SketchFeature =>
+            f.type === "sketch" && (!f.suppressed || f.id === editingSketchId || armingRevolveProfile),
+        )
         // Reflow expression-driven coordinates so the on-canvas sketch tracks its
         // variables, matching the solids built from it.
         .map((f) => applyEntityExprs(f, resolved.scope))
@@ -4549,7 +4613,7 @@ export default function App() {
           entities: f.entities,
           regions: detectSketchRegions(f.entities),
         })),
-    [doc, editingSketchId, resolved.planeFrames, resolved.scope],
+    [doc, editingSketchId, armingRevolveProfile, resolved.planeFrames, resolved.scope],
   );
 
   // Live dashed preview of the in-progress offset, rebuilt as the distance
@@ -4770,7 +4834,7 @@ export default function App() {
         const sk = doc.features.find((f) => f.id === pick.sketchId);
         const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === pick.entityId) : undefined;
         if (e?.type !== "line") {
-          flashSketchMsg("Pick a straight sketch line.");
+          flashMsg("Pick a straight sketch line.");
           return;
         }
         const ref = { sketchId: pick.sketchId, entityId: pick.entityId };
@@ -4799,10 +4863,10 @@ export default function App() {
             : d,
         );
       } else {
-        flashSketchMsg(
+        flashMsg(
           pickPurpose === "patternDir"
             ? "The direction must be a sketch line (or use World X/Y/Z)."
-            : "The axis must be a sketch line or a cylindrical face.",
+            : "The axis must be a sketch line or a cylindrical face (a body edge only works for a revolve).",
         );
         return; // keep the pick armed for another try
       }
@@ -4814,10 +4878,31 @@ export default function App() {
       const sk = doc.features.find((f) => f.id === pick.sketchId);
       const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === pick.entityId) : undefined;
       if (e?.type !== "line") {
-        flashSketchMsg("The axis must be a straight edge, a plane, or a face.");
+        flashMsg("The axis must be a straight sketch line, a body edge, a plane, or a face.");
         return;
       }
       setRevolveDialog((d) => (d ? { ...d, axis: { sketchId: pick.sketchId, entityId: pick.entityId } } : d));
+    } else if (pick.kind === "bodyEdge") {
+      // A straight body edge is the axis line itself. Stored by persistent name
+      // + the mid/length fingerprint, like a dress-up's edges, so it survives an
+      // upstream edit that renames it.
+      const m = meshes.find((x) => x.id === pick.featureId);
+      const edgeName = m ? edgeNameOf(m.mesh.edges, pick.edgeId) : undefined;
+      if (!edgeName) {
+        flashMsg("That edge can't be referenced — pick another edge, a sketch line, a plane, or a face.");
+        return; // keep the pick armed
+      }
+      const fp = m ? edgeFingerprint(m.mesh.edges, pick.edgeId) : null;
+      setRevolveDialog((d) =>
+        d
+          ? {
+              ...d,
+              axis: {
+                edge: { featureId: pick.featureId, edgeId: pick.edgeId, edgeName, mid: fp?.mid, length: fp?.length },
+              },
+            }
+          : d,
+      );
     } else if (pick.kind === "bodyFace") {
       const m = meshes.find((x) => x.id === pick.featureId);
       const center = m ? faceCentroid(m.mesh.faces, pick.faceId) : null;
@@ -5468,7 +5553,7 @@ export default function App() {
     if (!editingSketch) return;
     const chain = detectSingleChain(selectedSketchEntities);
     if (!chain) {
-      flashSketchMsg("Can only offset a single chain at once.");
+      flashMsg("Can only offset a single chain at once.");
       setSketchToolState("select");
       return;
     }
@@ -5511,7 +5596,7 @@ export default function App() {
     // A non-numeric / unparseable distance: flag it and keep the box open so the
     // user can correct it (don't throw, don't silently discard the chain).
     if (!Number.isFinite(d)) {
-      flashSketchMsg("Enter a numeric offset distance.");
+      flashMsg("Enter a numeric offset distance.");
       return;
     }
     if (Math.abs(d) < 1e-9) {
@@ -5601,7 +5686,7 @@ export default function App() {
     // Validate the numeric fields like commitOffset: flag and keep the session
     // open so the user can correct them (don't throw, don't silently discard).
     if (resolvePatternCount(sess.count, resolved.scope) === null) {
-      flashSketchMsg("Enter an instance count of 2 or more.");
+      flashMsg("Enter an instance count of 2 or more.");
       return;
     }
     if (sess.kind === "linear") {
@@ -5614,7 +5699,7 @@ export default function App() {
         /* fall through to the finite check */
       }
       if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < 1e-9) {
-        flashSketchMsg("Enter a non-zero numeric step.");
+        flashMsg("Enter a non-zero numeric step.");
         return;
       }
     } else if (sess.mode === "angle") {
@@ -5625,7 +5710,7 @@ export default function App() {
         /* as above */
       }
       if (!Number.isFinite(a) || Math.abs(a) < 1e-9) {
-        flashSketchMsg("Enter a non-zero numeric angle.");
+        flashMsg("Enter a non-zero numeric angle.");
         return;
       }
     }
@@ -5814,7 +5899,7 @@ export default function App() {
     const wasDegenerate = degenerateLineIds(previous, sketchId);
     const reject = (msg: string) => {
       abandonSketchEdit(seq, previous);
-      flashSketchMsg(msg);
+      flashMsg(msg);
       setSelection([]);
     };
     const { doc: solved, res } = await runSolve(candidate, sketchId);
@@ -6190,7 +6275,7 @@ export default function App() {
     const wasDegenerate = degenerateLineIds(previous, sketchId);
     const reject = (msg: string) => {
       abandonSketchEdit(seq, previous);
-      flashSketchMsg(msg);
+      flashMsg(msg);
       setSelection([]);
     };
     const { doc: solved, res } = await runSolve(candidate, sketchId);
@@ -6428,7 +6513,7 @@ export default function App() {
         skipped: Object.values(res.skipped).reduce((a, b) => a + b, 0),
       };
     } catch {
-      flashSketchMsg("Couldn't read that DXF file.");
+      flashMsg("Couldn't read that DXF file.");
       return;
     }
     setDxfDialog({
@@ -6444,7 +6529,7 @@ export default function App() {
     if (!dxfDialog) return;
     const { entities, skipped } = parseDxfToEntities(dxfDialog.text, { scale: dxfScaleOf(dxfDialog.unitsKey) });
     if (entities.length === 0) {
-      flashSketchMsg("No importable geometry found in that DXF.");
+      flashMsg("No importable geometry found in that DXF.");
       setDxfDialog(null);
       return;
     }
@@ -6465,7 +6550,7 @@ export default function App() {
     else viewApiRef.current?.lookAtFrame(frame);
     const skippedCount = Object.values(skipped).reduce((a, b) => a + b, 0);
     const skipMsg = skippedCount ? ` (skipped ${skippedCount} unsupported: ${Object.keys(skipped).join(", ")})` : "";
-    flashSketchMsg(`Imported ${entities.length} entities from ${dxfDialog.fileName}${skipMsg}.`);
+    flashMsg(`Imported ${entities.length} entities from ${dxfDialog.fileName}${skipMsg}.`);
     setDxfDialog(null);
   };
 
@@ -6810,7 +6895,7 @@ export default function App() {
       icon: "⟳",
       label: "Revolve",
       shortcut: "R",
-      title: "Revolve (R): arm a profile face + an axis (edge or plane) in the dialog",
+      title: "Revolve (R): select a profile (sketch region or planar face) + an axis (edge or plane) in the dialog",
       keywords: ["lathe", "turn", "axis"],
       disabled: !!editingSketch || picking || !!revolveDialog,
       onSelect: openRevolve,
@@ -7291,6 +7376,7 @@ export default function App() {
             onSketchDragMove={handleSketchDragMove}
             onSketchDragEnd={handleSketchDragEnd}
             selectionFilter={selFilter}
+            regionPickPriority={armingRevolveProfile}
             sectionView={{
               enabled: sectionView.enabled,
               frame: sectionFrame,
@@ -7549,11 +7635,11 @@ export default function App() {
                   <label data-drag-handle>Mirror</label>
                   {!mirrorSession.axisEntityId ? (
                     <span className="dim-status" style={{ padding: "0 6px" }}>
-                      Click a line to set the axis
+                      Select a line to set the axis
                     </span>
                   ) : (
                     <span className="dim-status" style={{ padding: "0 6px" }}>
-                      {mirrorSession.previews.length} mirrored — click entities to add
+                      {mirrorSession.previews.length} mirrored — select entities to add
                     </span>
                   )}
                   <button onClick={commitMirror} disabled={mirrorSession.previews.length === 0}>
@@ -7576,10 +7662,10 @@ export default function App() {
               const n = s.sourceIds.length;
               const status =
                 s.kind === "circular" && !s.center
-                  ? "Click the center point (a vertex, the origin, or empty space)"
+                  ? "Select the center point (a vertex, the origin, or empty space)"
                   : n === 0
-                    ? "Click entities to pattern"
-                    : `${n} in pattern — click entities to add`;
+                    ? "Select entities to pattern"
+                    : `${n} in pattern — select entities to add`;
               return (
                 <DraggableDialog
                   className="extrude-dialog"
@@ -7688,8 +7774,8 @@ export default function App() {
               <label data-drag-handle>Project</label>
               <span className="dim-status" style={{ padding: "0 6px" }}>
                 {projectSession.previews.length > 0
-                  ? `${projectSession.previews.length} projected — click more edges/vertices`
-                  : "Click body edges or vertices to project"}
+                  ? `${projectSession.previews.length} projected — select more edges/vertices`
+                  : "Select body edges or vertices to project"}
               </span>
               <button onClick={commitProject} disabled={projectSession.previews.length === 0}>
                 Done
@@ -7793,9 +7879,14 @@ export default function App() {
               onDelete={deleteConstraint}
             />
           )}
-          {editingSketch && sketchMsg && (
-            <div className="sketch-msg" role="alert">
-              ⚠ {sketchMsg}
+          {hudMsg && (
+            // Nudged below the sketch/pick banner when one is up, so it doesn't
+            // land on top of it — they share the top-centre slot.
+            <div
+              className={"sketch-msg" + (editingSketch || picking || armingRevolveProfile ? " below-banner" : "")}
+              role="alert"
+            >
+              ⚠ {hudMsg}
             </div>
           )}
           {/* Named views (Top/Front/Right/…) + iso corners live on the on-canvas
@@ -7949,28 +8040,40 @@ export default function App() {
               </span>
               <button onClick={finishSketch}>Finish sketch ⏎</button>
             </div>
+          ) : picking ? (
+            <div className="sketch-banner pick">
+              <span>
+                {pickPurpose === "revolveAxis"
+                  ? "Select a sketch line, a straight body edge, a plane, or a face to revolve around"
+                  : pickPurpose === "patternAxis"
+                    ? "Select a sketch line or a cylindrical face to pattern around"
+                    : pickPurpose === "patternDir"
+                      ? "Select a sketch line for the pattern direction"
+                      : pickPurpose === "plane"
+                        ? "Select a plane or planar face to offset the new plane from"
+                        : "Select a plane or planar face for the sketch"}
+              </span>
+              <button
+                onClick={() => {
+                  setPicking(false);
+                  if (pickPurpose !== "sketch" && pickPurpose !== "plane") setPickPurpose("sketch");
+                }}
+              >
+                Cancel (Esc)
+              </button>
+            </div>
           ) : (
-            picking && (
+            // Arming the revolve PROFILE doesn't go through `picking` (it reads
+            // the normal selection raycaster), so it needs its own banner —
+            // otherwise the only sign the app is waiting on a click is a small
+            // highlighted button in the dialog.
+            armingRevolveProfile && (
               <div className="sketch-banner pick">
                 <span>
-                  {pickPurpose === "revolveAxis"
-                    ? "Click an edge, plane, or face to revolve around"
-                    : pickPurpose === "patternAxis"
-                      ? "Click a sketch line or a cylindrical face to pattern around"
-                      : pickPurpose === "patternDir"
-                        ? "Click a sketch line for the pattern direction"
-                        : pickPurpose === "plane"
-                          ? "Select a plane or planar face to offset the new plane from"
-                          : "Select a plane or planar face for the sketch"}
+                  Select a closed sketch region or a planar body face to revolve — hidden sketches are shown while you
+                  pick
                 </span>
-                <button
-                  onClick={() => {
-                    setPicking(false);
-                    if (pickPurpose !== "sketch" && pickPurpose !== "plane") setPickPurpose("sketch");
-                  }}
-                >
-                  Cancel (Esc)
-                </button>
+                <button onClick={() => setRevolveDialog((d) => (d ? { ...d, armed: null } : d))}>Cancel</button>
               </div>
             )
           )}
@@ -8043,17 +8146,11 @@ export default function App() {
               {extrudeDialog.extent === "upToFace" && (
                 <label className="ed-field">
                   <span>Face</span>
-                  <button
-                    type="button"
-                    className={"ed-pick-btn" + (pickingUpFace ? " active" : "")}
-                    onClick={() => setPickingUpFace((v) => !v)}
-                  >
-                    {pickingUpFace
-                      ? "Click a face…"
-                      : extrudeDialog.upTo
-                        ? `On ${doc.features.find((f) => f.id === extrudeDialog.upTo!.featureId)?.name ?? "body"}`
-                        : "Select a face"}
-                  </button>
+                  <PickButton noun="a face" armed={pickingUpFace} onClick={() => setPickingUpFace((v) => !v)}>
+                    {!pickingUpFace && extrudeDialog.upTo
+                      ? `On ${doc.features.find((f) => f.id === extrudeDialog.upTo!.featureId)?.name ?? "body"}`
+                      : undefined}
+                  </PickButton>
                 </label>
               )}
               {extrudeDialog.extent !== "upToFace" && extrudeDialog.extent !== "upToNext" && (
@@ -8205,45 +8302,32 @@ export default function App() {
                   </div>
                   <div className="bool-group-label">Body</div>
                   {d.targetId && d.arming !== "body" ? (
-                    <div className="bool-operand-row">
-                      <span className="bool-operand-name">{bodyName}</span>
-                      <button className="bool-operand-x" title="Re-pick" onClick={armBody}>
-                        ✕
-                      </button>
-                    </div>
+                    <PickedRow label={bodyName} onClear={armBody} />
                   ) : (
-                    <button
-                      className={"ed-pick-btn ed-wide" + (d.arming === "body" ? " active" : "")}
-                      onClick={armBody}
-                    >
-                      {d.arming === "body" ? "Click a body…" : "Select a body"}
-                    </button>
+                    <PickButton noun="a body" armed={d.arming === "body"} wide onClick={armBody} />
                   )}
                   {/* Openings are optional — no faces means a fully sealed hollow
                     shell, which is the common case and so must not require a
                     pick to get to. */}
                   <div className="bool-group-label">Faces to open (optional)</div>
                   {d.faces.map((name) => (
-                    <div className="bool-operand-row" key={name}>
-                      <span className="bool-operand-name" title={name}>
-                        {faceLabel(name)}
-                      </span>
-                      <button className="bool-operand-x" title="Remove" onClick={() => dropFace(name)}>
-                        ✕
-                      </button>
-                    </div>
+                    <PickedRow
+                      key={name}
+                      label={faceLabel(name)}
+                      title={name}
+                      clearTitle="Remove"
+                      onClear={() => dropFace(name)}
+                    />
                   ))}
-                  <button
-                    className={"ed-pick-btn ed-wide" + (d.arming === "faces" ? " active" : "")}
-                    disabled={!d.targetId}
-                    onClick={armFaces}
-                  >
+                  <PickButton noun="faces" armed={d.arming === "faces"} wide disabled={!d.targetId} onClick={armFaces}>
+                    {/* An accumulating slot: it keeps taking clicks after the
+                        first, so it says how to stop and how to add more. */}
                     {d.arming === "faces"
-                      ? "Click faces to open… (Esc to stop)"
+                      ? "Selecting faces… (Esc to stop)"
                       : d.faces.length
                         ? "Add more faces"
-                        : "Select faces…"}
-                  </button>
+                        : undefined}
+                  </PickButton>
                   <label className="ed-field">
                     <span>Thickness</span>
                     <input
@@ -8276,9 +8360,12 @@ export default function App() {
             })()}
           {revolveDialog &&
             (() => {
-              const profileLabel = revolveDialog.profile
-                ? (doc.features.find((f) => f.id === revolveDialog.profile!.sketchId)?.name ?? "Region")
-                : null;
+              const prof = revolveDialog.profile;
+              const profileLabel = !prof
+                ? null
+                : prof.kind === "bodyFace"
+                  ? (doc.features.find((f) => f.id === prof.featureId)?.name ?? "Body") + " · face"
+                  : (doc.features.find((f) => f.id === prof.sketchId)?.name ?? "Region");
               const ax = revolveDialog.axis;
               const axisLabel = !ax
                 ? null
@@ -8286,12 +8373,25 @@ export default function App() {
                   ? planeRefLabel(ax.plane)
                   : "face" in ax
                     ? (doc.features.find((f) => f.id === ax.face.featureId)?.name ?? "Body") + " · face"
-                    : (doc.features.find((f) => f.id === ax.sketchId)?.name ?? "Edge") + " · edge";
+                    : "edge" in ax
+                      ? (doc.features.find((f) => f.id === ax.edge.featureId)?.name ?? "Body") + " · edge"
+                      : (doc.features.find((f) => f.id === ax.sketchId)?.name ?? "Sketch") + " · line";
               const axisArming = picking && pickPurpose === "revolveAxis";
               const armAxis = () => {
                 setRevolveDialog((d) => (d ? { ...d, armed: null } : d));
                 setPickPurpose("revolveAxis");
                 setPicking(true);
+              };
+              // Arming the profile has to CANCEL an armed axis: the two roles read
+              // different click streams (profile = the selection raycaster, axis =
+              // picking mode), so without this both stay live — the axis button
+              // keeps its armed styling and the next click still fills the axis.
+              const armProfile = (clear = false) => {
+                if (picking && pickPurpose === "revolveAxis") {
+                  setPicking(false);
+                  setPickPurpose("sketch");
+                }
+                setRevolveDialog((d) => (d ? { ...d, ...(clear ? { profile: null } : {}), armed: "profile" } : d));
               };
               return (
                 <DraggableDialog className="extrude-dialog" style={{ left: revolveDialog.x, top: revolveDialog.y }}>
@@ -8299,47 +8399,31 @@ export default function App() {
                     {revolveDialog.editId ? "Edit revolve" : "Revolve"}
                   </div>
                   <div className="ed-hint">
-                    Arm a profile face, then an axis — a sketch line, a plane, or a body face.
+                    Profile: a closed sketch region or a planar body face. Axis: a sketch line, a straight body edge, a
+                    plane, or a body face.
                   </div>
                   <div className="bool-group-label">Profile</div>
                   {profileLabel ? (
-                    <div className="bool-operand-row">
-                      <span className="bool-operand-name">{profileLabel}</span>
-                      <button
-                        className="bool-operand-x"
-                        title="Re-pick"
-                        onClick={() => setRevolveDialog((d) => (d ? { ...d, profile: null, armed: "profile" } : d))}
-                      >
-                        ✕
-                      </button>
-                    </div>
+                    <PickedRow label={profileLabel} onClear={() => armProfile(true)} />
                   ) : (
-                    <button
-                      className={"ed-pick-btn" + (revolveDialog.armed === "profile" ? " active" : "")}
-                      onClick={() => setRevolveDialog((d) => (d ? { ...d, armed: "profile" } : d))}
-                    >
-                      {revolveDialog.armed === "profile" ? "Click a region…" : "Select profile face"}
-                    </button>
+                    <PickButton
+                      noun="a profile"
+                      armed={revolveDialog.armed === "profile"}
+                      wide
+                      onClick={() => armProfile()}
+                    />
                   )}
                   <div className="bool-group-label">Axis</div>
                   {axisLabel ? (
-                    <div className="bool-operand-row">
-                      <span className="bool-operand-name">{axisLabel}</span>
-                      <button
-                        className="bool-operand-x"
-                        title="Re-pick"
-                        onClick={() => {
-                          setRevolveDialog((d) => (d ? { ...d, axis: null } : d));
-                          armAxis();
-                        }}
-                      >
-                        ✕
-                      </button>
-                    </div>
+                    <PickedRow
+                      label={axisLabel}
+                      onClear={() => {
+                        setRevolveDialog((d) => (d ? { ...d, axis: null } : d));
+                        armAxis();
+                      }}
+                    />
                   ) : (
-                    <button className={"ed-pick-btn" + (axisArming ? " active" : "")} onClick={armAxis}>
-                      {axisArming ? "Click an edge, plane, or face…" : "Select axis"}
-                    </button>
+                    <PickButton noun="an axis" armed={axisArming} wide onClick={armAxis} />
                   )}
                   <div className="ed-modes">
                     {(["full", "angle"] as const).map((m) => (
@@ -8478,20 +8562,17 @@ export default function App() {
               {planeDialog.method !== "through" && (
                 <div className="ed-field">
                   <span>{planeDialog.method === "midplane" ? "First" : "Base"}</span>
-                  <button
-                    className={"ed-pick-btn" + (planePick === "base" ? " active" : "")}
+                  <PickButton
+                    noun="a plane/face"
+                    armed={planePick === "base"}
                     onClick={() => {
                       setPlanePick("base");
                       setPickPurpose("plane");
                       setPicking(true);
                     }}
                   >
-                    {planePick === "base"
-                      ? "Click a plane/face…"
-                      : planeDialog.base
-                        ? planeRefLabel(planeDialog.base)
-                        : "Select plane/face"}
-                  </button>
+                    {planePick !== "base" && planeDialog.base ? planeRefLabel(planeDialog.base) : undefined}
+                  </PickButton>
                 </div>
               )}
 
@@ -8512,20 +8593,17 @@ export default function App() {
               {planeDialog.method === "midplane" && (
                 <div className="ed-field">
                   <span>Second</span>
-                  <button
-                    className={"ed-pick-btn" + (planePick === "refB" ? " active" : "")}
+                  <PickButton
+                    noun="a plane/face"
+                    armed={planePick === "refB"}
                     onClick={() => {
                       setPlanePick("refB");
                       setPickPurpose("plane");
                       setPicking(true);
                     }}
                   >
-                    {planePick === "refB"
-                      ? "Click a plane/face…"
-                      : planeDialog.refB
-                        ? planeRefLabel(planeDialog.refB)
-                        : "Select plane/face"}
-                  </button>
+                    {planePick !== "refB" && planeDialog.refB ? planeRefLabel(planeDialog.refB) : undefined}
+                  </PickButton>
                 </div>
               )}
 
@@ -8562,16 +8640,18 @@ export default function App() {
               {planeDialog.method === "through" && (
                 <div className="ed-field">
                   <span>Points</span>
-                  <button
-                    className={"ed-pick-btn" + (planePick === "point" ? " active" : "")}
+                  <PickButton
+                    noun="points"
+                    armed={planePick === "point"}
                     onClick={() => {
                       setPlanePick("point");
                       setPicking(false);
                     }}
                   >
-                    {`${planeDialog.points.length}/3 picked`}
-                    {planePick === "point" ? " · click vertices/points…" : ""}
-                  </button>
+                    {/* A counting slot: it takes three clicks, so it shows the
+                        tally in both states rather than a bare "Selecting…". */}
+                    {`${planeDialog.points.length}/3` + (planePick === "point" ? " · selecting…" : " picked")}
+                  </PickButton>
                 </div>
               )}
 
@@ -8742,17 +8822,11 @@ export default function App() {
           {mirrorDialog.plane === "face" && (
             <label className="ed-field">
               <span>Face</span>
-              <button
-                type="button"
-                className={"ed-pick-btn" + (pickingMirrorFace ? " active" : "")}
-                onClick={() => setPickingMirrorFace((v) => !v)}
-              >
-                {pickingMirrorFace
-                  ? "Click a planar face…"
-                  : mirrorDialog.faceRef
-                    ? `On ${doc.features.find((f) => f.id === mirrorDialog.faceRef!.featureId)?.name ?? "body"}`
-                    : "Select a face"}
-              </button>
+              <PickButton noun="a face" armed={pickingMirrorFace} onClick={() => setPickingMirrorFace((v) => !v)}>
+                {!pickingMirrorFace && mirrorDialog.faceRef
+                  ? `On ${doc.features.find((f) => f.id === mirrorDialog.faceRef!.featureId)?.name ?? "body"}`
+                  : undefined}
+              </PickButton>
             </label>
           )}
           <div className="ed-actions">
@@ -8822,16 +8896,9 @@ export default function App() {
               </div>
               <div className="bool-group-label">Body</div>
               {d.targetId ? (
-                <div className="bool-operand-row">
-                  <span className="bool-operand-name">{targetName}</span>
-                  <button className="bool-operand-x" title="Re-pick" onClick={armTarget}>
-                    ✕
-                  </button>
-                </div>
+                <PickedRow label={targetName} onClear={armTarget} />
               ) : (
-                <button className={"ed-pick-btn ed-wide" + (targetArming ? " active" : "")} onClick={armTarget}>
-                  {targetArming ? "Click a body…" : "Select a body"}
-                </button>
+                <PickButton noun="a body" armed={targetArming} wide onClick={armTarget} />
               )}
               {d.kind === "linear" ? (
                 <>
@@ -8846,15 +8913,10 @@ export default function App() {
                     </select>
                   </label>
                   {dirPicking("dir1") ? (
-                    <button className="ed-pick-btn active">Click a sketch line…</button>
+                    <PickButton noun="a sketch line" armed wide onClick={() => armPatternPick("dir1")} />
                   ) : (
                     !("world" in d.dir1) && (
-                      <div className="bool-operand-row">
-                        <span className="bool-operand-name">{lineLabel(d.dir1)}</span>
-                        <button className="bool-operand-x" title="Re-pick" onClick={() => armPatternPick("dir1")}>
-                          ✕
-                        </button>
-                      </div>
+                      <PickedRow label={lineLabel(d.dir1)} onClear={() => armPatternPick("dir1")} />
                     )
                   )}
                   <label className="ed-field">
@@ -8911,16 +8973,11 @@ export default function App() {
                         </select>
                       </label>
                       {dirPicking("dir2") ? (
-                        <button className="ed-pick-btn active">Click a sketch line…</button>
+                        <PickButton noun="a sketch line" armed wide onClick={() => armPatternPick("dir2")} />
                       ) : (
                         d.dir2 &&
                         !("world" in d.dir2) && (
-                          <div className="bool-operand-row">
-                            <span className="bool-operand-name">{lineLabel(d.dir2)}</span>
-                            <button className="bool-operand-x" title="Re-pick" onClick={() => armPatternPick("dir2")}>
-                              ✕
-                            </button>
-                          </div>
+                          <PickedRow label={lineLabel(d.dir2)} onClear={() => armPatternPick("dir2")} />
                         )
                       )}
                       <label className="ed-field">
@@ -8958,19 +9015,13 @@ export default function App() {
                 <>
                   <div className="bool-group-label">Axis</div>
                   {axisLabel ? (
-                    <div className="bool-operand-row">
-                      <span className="bool-operand-name">{axisLabel}</span>
-                      <button
-                        className="bool-operand-x"
-                        title="Re-pick"
-                        onClick={() => {
-                          setPatternDialog((p) => (p ? { ...p, axis: null } : p));
-                          armPatternPick("axis");
-                        }}
-                      >
-                        ✕
-                      </button>
-                    </div>
+                    <PickedRow
+                      label={axisLabel}
+                      onClear={() => {
+                        setPatternDialog((p) => (p ? { ...p, axis: null } : p));
+                        armPatternPick("axis");
+                      }}
+                    />
                   ) : (
                     <>
                       <label className="ed-field">
@@ -8993,14 +9044,16 @@ export default function App() {
                           <option value="z">World Z (through the origin)</option>
                         </select>
                       </label>
-                      <button
-                        className={"ed-pick-btn ed-wide" + (picking && pickPurpose === "patternAxis" ? " active" : "")}
+                      <PickButton
+                        noun="an axis (sketch line / cylindrical face)"
+                        armed={picking && pickPurpose === "patternAxis"}
+                        wide
                         onClick={() => armPatternPick("axis")}
                       >
-                        {picking && pickPurpose === "patternAxis"
-                          ? "Click a line or cylindrical face…"
-                          : "Select axis (sketch line / cylindrical face)"}
-                      </button>
+                        {/* The full "which kinds qualify" phrase is only useful
+                            before the pick; while arming, the banner says it. */}
+                        {picking && pickPurpose === "patternAxis" ? "Selecting an axis…" : undefined}
+                      </PickButton>
                     </>
                   )}
                   <label className="ed-field">

@@ -1,6 +1,7 @@
 import { BOOLEAN_OPS, BOOLEAN_OP_LABELS } from "../document/featureDefs";
 import type { BooleanOp } from "../kernel/types";
 import { DraggableDialog } from "./DraggableDialog";
+import { PickButton, PickedRow } from "./PickSlot";
 
 export interface BooleanCandidate {
   id: string;
@@ -48,12 +49,7 @@ export function BooleanDialog({
   const canConfirm = op === "subtract" ? !!base && tools.length >= 1 : operandIds.length >= 2;
 
   const row = (id: string, onRemove: () => void) => (
-    <div key={id} className="bool-operand-row">
-      <span className="bool-operand-name">{nameOf(id)}</span>
-      <button className="bool-operand-x" title="Remove" onClick={onRemove}>
-        ✕
-      </button>
-    </div>
+    <PickedRow key={id} label={nameOf(id)} clearTitle="Remove" onClear={onRemove} />
   );
 
   return (
@@ -78,24 +74,15 @@ export function BooleanDialog({
           <div className="ed-hint">Pick the base part, then the tool part(s) to cut from it.</div>
           <div className="bool-group-label">Base</div>
           {base ? (
-            <div className="bool-operand-row">
-              <span className="bool-operand-name">{nameOf(base)}</span>
-              <button className="bool-operand-x" title="Clear" onClick={onClearBase}>
-                ✕
-              </button>
-            </div>
+            <PickedRow label={nameOf(base)} clearTitle="Clear" onClear={onClearBase} />
           ) : (
-            <button className={"ed-pick-btn" + (armed === "base" ? " active" : "")} onClick={() => onArm("base")}>
-              {armed === "base" ? "Click a part…" : "Select base part"}
-            </button>
+            <PickButton noun="a base part" armed={armed === "base"} wide onClick={() => onArm("base")} />
           )}
           <div className="bool-group-label">Tools</div>
           {/* The arm button is only needed until the first tool lands; after that
               the slot stays armed, so more parts add on click without it. */}
           {tools.length === 0 && (
-            <button className={"ed-pick-btn" + (armed === "tools" ? " active" : "")} onClick={() => onArm("tools")}>
-              {armed === "tools" ? "Click parts…" : "Select tool parts"}
-            </button>
+            <PickButton noun="tool parts" armed={armed === "tools"} wide onClick={() => onArm("tools")} />
           )}
           {tools.length > 0 && (
             <div className="bool-operands">{tools.map((id) => row(id, () => onRemoveTool(id)))}</div>
@@ -103,7 +90,7 @@ export function BooleanDialog({
         </>
       ) : (
         <>
-          <div className="ed-hint">Click parts in the viewport to add or remove them.</div>
+          <div className="ed-hint">Select parts in the viewport to add or remove them.</div>
           {operandIds.length === 0 ? (
             <p className="ed-hint">No parts chosen yet.</p>
           ) : (

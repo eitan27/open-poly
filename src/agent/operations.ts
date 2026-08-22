@@ -210,8 +210,14 @@ export const operationSchema = z.discriminatedUnion("op", [
   }),
   z.object({
     op: z.literal("addRevolve"),
-    /** The closed sketch region to revolve (omit regionId for the sole region). */
-    profile: z.object({ sketchId: z.string(), regionId: z.string().optional() }),
+    /** What to spin: a closed sketch region (omit regionId for the sole region),
+     *  or a **planar** face of an existing body `{bodyId, faceName}` — a curved
+     *  face has no plane to revolve and is rejected. Text profiles aren't
+     *  revolvable. */
+    profile: z.union([
+      z.object({ sketchId: z.string(), regionId: z.string().optional() }),
+      z.object({ bodyId: z.string(), faceName: z.string() }),
+    ]),
     /** The rotation axis — one of:
      *  - a sketch **line** entity `{sketchId, entityId}` in the profile's sketch
      *    (its endpoints define the axis; make it a `construction` line so it
@@ -220,11 +226,14 @@ export const operationSchema = z.discriminatedUnion("op", [
      *    where that plane meets the profile's plane;
      *  - a body **face** `{bodyId, faceName}` — a planar face uses that same
      *    plane-intersection rule; a cylindrical/conical face uses its own
-     *    central axis (e.g. "revolve around this cylinder"). */
+     *    central axis (e.g. "revolve around this cylinder");
+     *  - a straight body **edge** `{bodyId, edgeName}` — the edge IS the axis
+     *    line (a curved edge is rejected). */
     axis: z.union([
       z.object({ sketchId: z.string(), entityId: z.string() }),
       z.object({ plane: planeRefSchema }),
       z.object({ bodyId: z.string(), faceName: z.string() }),
+      z.object({ bodyId: z.string(), edgeName: z.string() }),
     ]),
     /** Revolve angle in degrees (number or expression). Defaults to 360 (full). */
     angle: expr.optional(),

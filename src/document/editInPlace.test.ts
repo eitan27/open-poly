@@ -74,12 +74,19 @@ describe("in-place feature edits preserve identity + timeline position", () => {
   it("updateRevolve changes angle/symmetric", () => {
     const { doc: d1, id } = addRevolve(
       createDocument(),
-      { sketchId: "s", regionId: "r" },
+      { kind: "sketchRegion", sketchId: "s", regionId: "r" },
       { sketchId: "s", entityId: "e" },
       "360",
       false,
     );
-    const doc = updateRevolve(d1, id, { sketchId: "s", regionId: "r" }, { sketchId: "s", entityId: "e" }, "90", true);
+    const doc = updateRevolve(
+      d1,
+      id,
+      { kind: "sketchRegion", sketchId: "s", regionId: "r" },
+      { sketchId: "s", entityId: "e" },
+      "90",
+      true,
+    );
     const r = feat<RevolveFeature>(doc, id);
     expect(r.angle).toBe("90");
     expect(r.symmetric).toBe(true);

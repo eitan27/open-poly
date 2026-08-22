@@ -691,22 +691,31 @@ face` button, like up-to-face); the picked face's plane is derived via
   used mainly as a **sweep path**. The on-screen curve and the swept spine share
   one definition — `splineBeziers` (the Catmull-Rom curve as exact cubic-Bézier
   spans) — so the solid's centerline matches the drawn path exactly.
-- **Revolve — ✅ DONE** (dialog overhauled 2026-06-29). A `RevolveFeature`
-  revolves a **sketch region** around an **axis** by an expression-backed
-  **angle**. The `⟳ Revolve` button is **always enabled** and opens an **arming
-  dialog** (Boolean-style): arm a **profile** region, then arm an **axis** from a
+- **Revolve — ✅ DONE** (dialog overhauled 2026-06-29; body-face profiles
+  2026-08-22). A `RevolveFeature` revolves a **sketch region — or a planar body
+  face** — around an **axis** by an expression-backed **angle**. The `⟳ Revolve`
+  button is **always enabled** and opens an **arming
+  dialog** (Boolean-style): arm a **profile** (region or planar face), then arm an **axis** from a
   single "Select axis" target that accepts a **sketch line**, a **datum/reference
   plane** (→ its intersection line with the profile plane, `planeIntersectionLine`),
-  or a **body face** (planar → intersection line; cylindrical/conical → that
-  surface's central axis, read in the worker). The dialog offers **Full (360°)**
+  a **body face** (planar → intersection line; cylindrical/conical → that
+  surface's central axis, read in the worker), or a **straight body edge** (the
+  edge itself, resolved by persistent name + mid/length fingerprint). The dialog offers **Full (360°)**
   vs a specified **angle** + a **Symmetric** option (straddles the profile plane,
   ±angle/2, via a −angle/2 pre-rotation of the face), and shows a **translucent
   ghost** of the result (reusing the extrude ghost pipeline, debounced). On
-  success the **originating sketch is hidden**, like extrude. `RevolveAxis` is a
-  union (`{sketchId,entityId}` | `{plane}` | `{face}`); edge/plane axes resolve in
-  the document layer, face axes in the worker. Kernel `revolveFromFace` uses
-  `BRepPrimAPI_MakeRevol` with history-based naming (swept side faces per profile
-  edge + start/end caps for a partial revolve).
+  success the **originating sketch is hidden**, like extrude (a face profile has
+  no sketch to hide). `RevolveProfile` is the sketchRegion|bodyFace half of
+  `ExtrudeProfile`: a face profile is carried through as a reference (persistent
+  name + centroid/normal fingerprint) and turned into a region in the worker from
+  its **exact wire** by `facetedProfileFace`, with the profile plane derived from
+  the face itself (`planarFaceFrame`); a **curved** face is rejected, since it has
+  no plane to spin. `RevolveAxis` is a union (`{sketchId,entityId}` | `{plane}` |
+  `{face}`); edge axes and plane axes on a region profile resolve in the document
+  layer, face axes — and plane axes on a **face** profile, whose plane is only
+  known once the B-rep exists (`axisPlane`) — in the worker. Kernel
+  `revolveFromFace` uses `BRepPrimAPI_MakeRevol` with history-based naming (swept
+  side faces per profile edge + start/end caps for a partial revolve).
 
 ### Phase 7 — Multi-body, parts, selection UX — ✅ DONE
 
