@@ -107,9 +107,13 @@ import { DRESSUP_DELTA_IDS } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import {
+  angledFrame,
   deriveFaceFrame,
   frameOf,
+  midplaneFrame,
+  offsetFrame,
   planeRefLabel,
+  planeThrough3Points,
   uvToWorld,
   worldToUv,
   type PlaneFrameData,
@@ -2344,6 +2348,28 @@ export default function App() {
         .map((f) => ({ id: f.id, name: f.name, frame: resolved.planeFrames.get(f.id)!, color: f.color })),
     [doc, resolved.planeFrames],
   );
+
+  // Live ghost of the reference-plane dialog: as soon as the picked inputs
+  // define a frame, preview where the new plane will land (pure geometry — the
+  // same resolvers `resolvePlanes` uses, no kernel round trip). Create only: an
+  // edit live-applies to the real plane, which would double up with a ghost.
+  const ghostPlaneFrame = useMemo<PlaneFrameData | null>(() => {
+    const d = planeDialog;
+    if (!d || d.editId) return null;
+    try {
+      if (d.method === "through") {
+        const [p0, p1, p2] = d.points;
+        return d.points.length === 3 ? planeThrough3Points(p0, p1, p2) : null;
+      }
+      if (!d.base) return null;
+      const base = frameOf(d.base, resolved.planeFrames);
+      if (d.method === "midplane") return d.refB ? midplaneFrame(base, frameOf(d.refB, resolved.planeFrames)) : null;
+      if (d.method === "angle") return angledFrame(base, d.angleAxis, evaluateExpression(d.angle, resolved.scope));
+      return offsetFrame(base, evaluateExpression(d.offset, resolved.scope));
+    } catch {
+      return null; // an unresolved reference or a bad expression — no ghost
+    }
+  }, [planeDialog, resolved.planeFrames, resolved.scope]);
 
   // Regenerate whenever the resolved document changes — the kernel runs off-thread.
   // A short trailing debounce coalesces bursts (slider drags, multi-step edits)
@@ -4765,9 +4791,19 @@ export default function App() {
   // method; the dropdown switches to midplane / at-angle / through 3 points).
   const openPlaneDialog = () => {
     setPlaneDialog({ method: "offset", base: null, offset: "20", refB: null, angleAxis: "u", angle: "30", points: [] });
-    setPickPurpose("plane");
-    setPlanePick("base");
-    setPicking(true);
+    armPlanePick("base");
+  };
+  /** Arm one of the plane dialog's pick slots. "base"/"refB" ride the shared
+   *  plane/face pick stream; "point" reads a vertex or sketch point off an
+   *  ordinary click, so it leaves the normal selection flow running. */
+  const armPlanePick = (slot: "base" | "refB" | "point") => {
+    setPlanePick(slot);
+    if (slot === "point") {
+      setPicking(false);
+    } else {
+      setPickPurpose("plane");
+      setPicking(true);
+    }
   };
   const closePlaneDialog = () => {
     setPlaneDialog(null);
@@ -7345,6 +7381,7 @@ export default function App() {
             onSketchEntityDouble={handleSketchEntityDouble}
             datumVisibility={datumVisibility}
             userPlanes={userPlanes}
+            ghostPlane={ghostPlaneFrame}
             transformEdit={transformEdit}
             transformMode={transformMode}
             onTransformInput={handleTransformInput}
@@ -8542,14 +8579,7 @@ export default function App() {
                     setPlaneDialog((d) => (d ? { ...d, method } : d));
                     // Arm the first pick the method needs: a plane/face for all but
                     // "through", which collects vertices/sketch points via clicks.
-                    if (method === "through") {
-                      setPlanePick("point");
-                      setPicking(false);
-                    } else {
-                      setPlanePick("base");
-                      setPickPurpose("plane");
-                      setPicking(true);
-                    }
+                    armPlanePick(method === "through" ? "point" : "base");
                   }}
                 >
                   <option value="offset">Offset</option>
@@ -8562,17 +8592,18 @@ export default function App() {
               {planeDialog.method !== "through" && (
                 <div className="ed-field">
                   <span>{planeDialog.method === "midplane" ? "First" : "Base"}</span>
-                  <PickButton
-                    noun="a plane/face"
-                    armed={planePick === "base"}
-                    onClick={() => {
-                      setPlanePick("base");
-                      setPickPurpose("plane");
-                      setPicking(true);
-                    }}
-                  >
-                    {planePick !== "base" && planeDialog.base ? planeRefLabel(planeDialog.base) : undefined}
-                  </PickButton>
+                  {planePick !== "base" && planeDialog.base ? (
+                    <PickedRow
+                      label={planeRefLabel(planeDialog.base)}
+                      title={planeRefLabel(planeDialog.base)}
+                      onClear={() => {
+                        setPlaneDialog((d) => (d ? { ...d, base: null } : d));
+                        armPlanePick("base");
+                      }}
+                    />
+                  ) : (
+                    <PickButton noun="a plane/face" armed={planePick === "base"} onClick={() => armPlanePick("base")} />
+                  )}
                 </div>
               )}
 
@@ -8593,17 +8624,18 @@ export default function App() {
               {planeDialog.method === "midplane" && (
                 <div className="ed-field">
                   <span>Second</span>
-                  <PickButton
-                    noun="a plane/face"
-                    armed={planePick === "refB"}
-                    onClick={() => {
-                      setPlanePick("refB");
-                      setPickPurpose("plane");
-                      setPicking(true);
-                    }}
-                  >
-                    {planePick !== "refB" && planeDialog.refB ? planeRefLabel(planeDialog.refB) : undefined}
-                  </PickButton>
+                  {planePick !== "refB" && planeDialog.refB ? (
+                    <PickedRow
+                      label={planeRefLabel(planeDialog.refB)}
+                      title={planeRefLabel(planeDialog.refB)}
+                      onClear={() => {
+                        setPlaneDialog((d) => (d ? { ...d, refB: null } : d));
+                        armPlanePick("refB");
+                      }}
+                    />
+                  ) : (
+                    <PickButton noun="a plane/face" armed={planePick === "refB"} onClick={() => armPlanePick("refB")} />
+                  )}
                 </div>
               )}
 
@@ -8640,18 +8672,24 @@ export default function App() {
               {planeDialog.method === "through" && (
                 <div className="ed-field">
                   <span>Points</span>
-                  <PickButton
-                    noun="points"
-                    armed={planePick === "point"}
-                    onClick={() => {
-                      setPlanePick("point");
-                      setPicking(false);
-                    }}
-                  >
-                    {/* A counting slot: it takes three clicks, so it shows the
-                        tally in both states rather than a bare "Selecting…". */}
-                    {`${planeDialog.points.length}/3` + (planePick === "point" ? " · selecting…" : " picked")}
-                  </PickButton>
+                  {planeDialog.points.length === 3 ? (
+                    // Full: the slot is done taking clicks, so it reads as
+                    // filled — ✕ throws the three points away and starts over.
+                    <PickedRow
+                      label="3/3 picked"
+                      clearTitle="Clear the points and pick again"
+                      onClear={() => {
+                        setPlaneDialog((d) => (d ? { ...d, points: [] } : d));
+                        armPlanePick("point");
+                      }}
+                    />
+                  ) : (
+                    <PickButton noun="points" armed={planePick === "point"} onClick={() => armPlanePick("point")}>
+                      {/* A counting slot: it takes three clicks, so it shows the
+                          tally in both states rather than a bare "Selecting…". */}
+                      {`${planeDialog.points.length}/3` + (planePick === "point" ? " · selecting…" : " picked")}
+                    </PickButton>
+                  )}
                 </div>
               )}
 

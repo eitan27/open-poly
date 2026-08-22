@@ -300,6 +300,11 @@ interface SceneState {
   sketchGroup: THREE.Group;
   /** User-created reference planes (translucent quads), rebuilt from the prop. */
   planeGroup: THREE.Group;
+  /** The reference-plane dialog's live ghost quad (rebuilt from `ghostPlane`).
+   *  Its own group, kept OUT of `planeGroup`, so the plane-pick raycasts never
+   *  see it: the ghost is a preview of a plane that doesn't exist yet, and it
+   *  sits exactly where the user is still clicking to pick its own inputs. */
+  ghostPlaneGroup: THREE.Group;
   /** The live ghost-preview bodies (rebuilt from the `ghostMeshes` prop). */
   ghostGroup: THREE.Group;
   ghostMaterial: THREE.MeshStandardMaterial;
@@ -1046,6 +1051,7 @@ export function Viewport({
   onSketchEntityDouble,
   datumVisibility,
   userPlanes,
+  ghostPlane,
   transformEdit,
   transformMode,
   onTransformInput,
@@ -1103,6 +1109,10 @@ export function Viewport({
   datumVisibility: Record<DatumId, boolean>;
   /** User reference planes to render + make pickable (for sketch / plane base). */
   userPlanes: RenderPlane[];
+  /** Where the reference-plane dialog's current inputs would put the new plane —
+   *  drawn as a translucent ghost quad. Null when nothing is previewable yet
+   *  (no base picked, or an in-place edit, which moves the real plane instead). */
+  ghostPlane: PlaneFrameData | null;
   /** The active Transform gizmo (null = no gizmo shown). */
   transformEdit: TransformEdit | null;
   /** Which gizmo to show while editing a transform. */
@@ -1440,8 +1450,9 @@ export function Viewport({
     const group = new THREE.Group();
     const sketchGroup = new THREE.Group();
     const planeGroup = new THREE.Group();
+    const ghostPlaneGroup = new THREE.Group();
     const ghostGroup = new THREE.Group();
-    scene.add(group, sketchGroup, planeGroup, ghostGroup);
+    scene.add(group, sketchGroup, planeGroup, ghostPlaneGroup, ghostGroup);
 
     // Ghost-preview materials: a fixed accent colour (not the body's own
     // colour) so a preview always reads as "not committed yet," regardless of
@@ -1859,6 +1870,7 @@ export function Viewport({
       datums,
       sketchGroup,
       planeGroup,
+      ghostPlaneGroup,
       transformControls,
       gizmoProxy,
       liveDrag: null,
@@ -3621,7 +3633,7 @@ export function Viewport({
       scene.remove(gizmoHelper, gizmoProxy);
       disposeGroup(group);
       disposeSketchGroup(sketchGroup);
-      for (const c of planeGroup.children) {
+      for (const c of [...planeGroup.children, ...ghostPlaneGroup.children]) {
         if (c instanceof THREE.Mesh || c instanceof THREE.LineSegments) {
           c.geometry.dispose();
           (c.material as THREE.Material).dispose();
@@ -3901,6 +3913,50 @@ export function Viewport({
       state.planeGroup.add(mesh, outline);
     }
   }, [userPlanes]);
+
+  // The reference-plane dialog's ghost: where the plane WOULD land given the
+  // inputs picked so far, in the ghost accent (cyan, dashed outline) rather than
+  // a committed plane's amber. Same quad as a real reference plane, minus the
+  // `planeId` — and in its own group, so it is never pickable (the user is still
+  // clicking through this space to pick the plane's own references).
+  useEffect(() => {
+    const state = stateRef.current;
+    if (!state) return;
+    for (const c of state.ghostPlaneGroup.children) {
+      if (c instanceof THREE.Mesh || c instanceof THREE.LineSegments) {
+        c.geometry.dispose();
+        (c.material as THREE.Material).dispose();
+      }
+    }
+    state.ghostPlaneGroup.clear();
+    if (!ghostPlane) return;
+    const geo = new THREE.PlaneGeometry(60, 60);
+    const quat = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      new THREE.Vector3(...ghostPlane.normal).normalize(),
+    );
+    const pos = new THREE.Vector3(...ghostPlane.origin);
+    const mesh = new THREE.Mesh(
+      geo,
+      new THREE.MeshBasicMaterial({
+        color: GHOST_COLOR,
+        transparent: true,
+        opacity: 0.16,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    mesh.quaternion.copy(quat);
+    mesh.position.copy(pos);
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geo),
+      new THREE.LineDashedMaterial({ color: GHOST_COLOR, transparent: true, opacity: 0.9, dashSize: 2, gapSize: 1.4 }),
+    );
+    outline.computeLineDistances(); // dashes only show once the distances exist
+    outline.quaternion.copy(quat);
+    outline.position.copy(pos);
+    state.ghostPlaneGroup.add(mesh, outline);
+  }, [ghostPlane]);
 
   // Drive the transform gizmo from the active TransformEdit + mode. The gizmo is
   // attached to a proxy whose pose reflects the feature's current values; while

@@ -2947,6 +2947,13 @@ button:disabled .kbd-hint {
   background: var(--accent-surface);
 }
 
+/* A filled slot inside a labelled .ed-field (the reference-plane dialog's
+   Base/Second/Points) keeps the field control width, so it lines up with the
+   selects and inputs above it instead of hugging its own text. */
+.ed-field > .bool-operand-row {
+  width: 112px;
+}
+
 .bool-operand-name {
   flex: 1 1 auto;
   /* Without min-width:0 a flex item won't shrink below its text's intrinsic
