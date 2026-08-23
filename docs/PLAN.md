@@ -785,6 +785,8 @@ effects (`App.tsx` ~1145/1180), `useHistory.reset`, and `ViewportApi.capturePNG`
 without losing work; instant-feeling switches; `.json` portability; agent can
 list/open/create documents (Phase 9 L4). **Non-goals (v1):** cloud sync,
 folders/tags, collaborative editing, per-document settings profiles.
+(Cloud sync is planned separately, as an opt-in layer over this storage —
+see [`CLOUD_SYNC_PLAN.md`](CLOUD_SYNC_PLAN.md).)
 
 #### Data model & storage (DB v2)
 
@@ -1160,14 +1162,14 @@ center}`; re-clickable to re-pick). The kernel computes the signed prism
 client** (Claude Code + Claude Desktop): the agent reads the scene, sketches,
 extrudes, dresses up, and screenshots a live tab end to end — "runs extremely
 well" in manual testing. The command + read layer (L0), the browser WebSocket
-bridge (L1), the **Node stdio MCP server** (`mcp-server/`, L2), and **regen-await
+bridge (L1), the **Node stdio MCP server** (`mcp-server/`, L2), and \*\*regen-await
 
 - read/screenshot polish** (L3) flow client → server → hub → tab → kernel → back.
   After L3 a mutating op **awaits the kernel regen** before returning, so a single
   follow-up read/screenshot sees the result (no polling) and a failed build
   surfaces as `kernel_error` for the agent to self-correct. Wired for Claude Code
   via a committed root `.mcp.json`; setup in `mcp-server/README.md`. See the L0–L3
-  entries under _Delivery steps_. **Phase 9 work was merged to `main` on
+  entries under *Delivery steps*. **Phase 9 work was merged to `main` on
   2026-06-29** (branch `feat/phase9-agent` deleted). Beyond the core ops, the
   command/MCP layer exposes **up-to-face extrude**, **revolve** (symmetric +
   edge/plane/face axis), **extrudable text**, and the **`add_offset` /
@@ -1187,7 +1189,7 @@ bridge (L1), the **Node stdio MCP server** (`mcp-server/`, L2), and **regen-awai
   the UI's commitConstraint/applyDimension guardrails; `get_scene_summary` now lists
   each sketch's constraints (id + type + touched entity ids + value). Derived and
   text entities aren't constrainable. **L4 (robustness: token auth, multi-tab, error
-  taxonomy, list/open/new_document) is next.**
+  taxonomy, list/open/new_document) is next.\*\*
 
 **Goal.** Let a local LLM agent (Claude Desktop, Claude Code, Cursor, Cline, Zed,
 …) **drive the live Open Poly browser tab** — sketch, extrude, transform, arrange
