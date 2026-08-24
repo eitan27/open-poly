@@ -1,7 +1,7 @@
 import { BOOLEAN_OPS, BOOLEAN_OP_LABELS } from "../document/featureDefs";
 import type { BooleanOp } from "../kernel/types";
 import { DraggableDialog } from "./DraggableDialog";
-import { PickButton, PickedRow } from "./PickSlot";
+import { PickButton, PickedRow, PickSlot } from "./PickSlot";
 
 export interface BooleanCandidate {
   id: string;
@@ -73,11 +73,15 @@ export function BooleanDialog({
         <>
           <div className="ed-hint">Pick the base part, then the tool part(s) to cut from it.</div>
           <div className="bool-group-label">Base</div>
-          {base ? (
-            <PickedRow label={nameOf(base)} clearTitle="Clear" onClear={onClearBase} />
-          ) : (
-            <PickButton noun="a base part" armed={armed === "base"} wide onClick={() => onArm("base")} />
-          )}
+          <PickSlot
+            noun="a base part"
+            armed={armed === "base"}
+            value={base && nameOf(base)}
+            clearTitle="Clear"
+            wide
+            onArm={() => onArm("base")}
+            onClear={onClearBase}
+          />
           <div className="bool-group-label">Tools</div>
           {/* The arm button is only needed until the first tool lands; after that
               the slot stays armed, so more parts add on click without it. */}

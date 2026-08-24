@@ -2347,6 +2347,18 @@ button:disabled .kbd-hint {
   animation: pick-pulse 1.6s ease-in-out infinite;
 }
 
+/* The same ARMING treatment outside a dialog: the section view panel's
+   "Select plane" button while it waits for the click. Listening for a pick has
+   to look the same everywhere, so it borrows the dashed pulse rather than the
+   panel's `.active` fill (which means "on", as on Flip). */
+.section-view-panel button.arming,
+.section-view-panel button.arming:hover {
+  border: 1px dashed var(--accent);
+  background: var(--accent-surface-2);
+  color: var(--accent-palest);
+  animation: pick-pulse 1.6s ease-in-out infinite;
+}
+
 @keyframes pick-pulse {
   0%,
   100% {
@@ -2358,7 +2370,8 @@ button:disabled .kbd-hint {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ed-pick-btn.active {
+  .ed-pick-btn.active,
+  .section-view-panel button.arming {
     animation: none;
   }
 }

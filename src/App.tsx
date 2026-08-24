@@ -169,7 +169,7 @@ import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
-import { PickButton, PickedRow } from "./ui/PickSlot";
+import { PickButton, PickedRow, PickSlot } from "./ui/PickSlot";
 import { DraggableDialog } from "./ui/DraggableDialog";
 import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
 import { DimValueInput, type VarOption } from "./ui/DimValueInput";
@@ -990,7 +990,9 @@ export default function App() {
   // it; clicking empty space clears.
   const handlePick = (picked: Selection | null, sketchUv?: Vec2) => {
     // Up-to-face pick armed (from the extrude dialog): the next clicked body
-    // face becomes the extrude's target face; anything else cancels the arming.
+    // face becomes the extrude's target face. Anything else is ignored and the
+    // arming stays live for another try — a miss is a misclick, not a decision
+    // to stop picking (same as the mirror face and the shell faces below).
     if (pickingUpFace) {
       if (picked?.kind === "face") {
         const m = meshes.find((x) => x.id === picked.featureId);
@@ -1000,9 +1002,9 @@ export default function App() {
           // normal completes the geometric fingerprint (null for non-planar).
           const normal = (m && faceNormal(m.mesh.faces, picked.faceId)) || undefined;
           setExtrudeDialog((d) => (d ? { ...d, upTo: { featureId: picked.featureId, faceName, center, normal } } : d));
+          setPickingUpFace(false);
         }
       }
-      setPickingUpFace(false);
       return;
     }
     // Mirror-face pick armed (from the Mirror dialog): the next clicked planar
@@ -1636,6 +1638,22 @@ export default function App() {
   // never be satisfied), and a region outranks the body geometry in front of it
   // in the picker, so a profile behind a solid stays reachable.
   const armingRevolveProfile = revolveDialog?.armed === "profile";
+  // Arming that rides the NORMAL selection raycaster rather than `picking` mode
+  // (which has a banner of its own further down). Each of these still needs the
+  // banner — without it the only sign the app is waiting on a click is a small
+  // highlighted button inside a dialog — so they share one, keyed by whichever
+  // is live. Only one can be, since each belongs to a different dialog.
+  const selectionArming = armingRevolveProfile
+    ? {
+        message:
+          "Select a closed sketch region or a planar body face to revolve — hidden sketches are shown while you pick",
+        cancel: () => setRevolveDialog((d) => (d ? { ...d, armed: null } : d)),
+      }
+    : pickingUpFace
+      ? { message: "Select the body face to extrude up to", cancel: () => setPickingUpFace(false) }
+      : pickingMirrorFace
+        ? { message: "Select the planar body face to mirror across", cancel: () => setPickingMirrorFace(false) }
+        : null;
   // The Transform feature currently being edited with the gizmo (a floating
   // panel + viewport gizmo are shown while this is set), and which gizmo to show.
   const [transformEditId, setTransformEditId] = useState<string | null>(null);
@@ -7675,9 +7693,24 @@ export default function App() {
                       Select a line to set the axis
                     </span>
                   ) : (
-                    <span className="dim-status" style={{ padding: "0 6px" }}>
-                      {mirrorSession.previews.length} mirrored — select entities to add
-                    </span>
+                    <>
+                      <span className="dim-status" style={{ padding: "0 6px" }}>
+                        {mirrorSession.previews.length} mirrored — select entities to add
+                      </span>
+                      {/* The axis is a pick like any other, so it has to be
+                          undoable without throwing the session away. Its copies
+                          are measured from it, so they go with it. */}
+                      <button
+                        className="ghost"
+                        title="Clear the mirror axis and pick a different line"
+                        onClick={() => {
+                          setMirrorSession((m) => (m ? { ...m, axisEntityId: null, sourceIds: [], previews: [] } : m));
+                          setSelection([]);
+                        }}
+                      >
+                        Change axis
+                      </button>
+                    </>
                   )}
                   <button onClick={commitMirror} disabled={mirrorSession.previews.length === 0}>
                     Done
@@ -7703,6 +7736,17 @@ export default function App() {
                   : n === 0
                     ? "Select entities to pattern"
                     : `${n} in pattern — select entities to add`;
+              // The center is a pick like any other, so the dialog shows it as a
+              // slot: what it landed on, and ✕ to put it back to listening.
+              const c = s.center;
+              const centerAt = c && ("fixed" in c ? c.fixed : "at" in c && Array.isArray(c.at) ? c.at : null);
+              const centerLabel = !c
+                ? null
+                : "origin" in c
+                  ? "Origin"
+                  : centerAt
+                    ? `(${centerAt[0].toFixed(1)}, ${centerAt[1].toFixed(1)})`
+                    : "Sketch point";
               return (
                 <DraggableDialog
                   className="extrude-dialog"
@@ -7713,6 +7757,18 @@ export default function App() {
                     {s.kind === "linear" ? "Linear pattern" : "Circular pattern"}
                   </div>
                   <div className="ed-hint">{status}</div>
+                  {s.kind === "circular" && (
+                    <div className="ed-field">
+                      <span>Center</span>
+                      <PickSlot
+                        noun="the center"
+                        armed={!s.center}
+                        value={centerLabel}
+                        clearTitle="Pick a different center"
+                        onArm={() => setPatternSession((p) => (p ? { ...p, center: null } : p))}
+                      />
+                    </div>
+                  )}
                   <label className="ed-field">
                     <span>Count</span>
                     <DimValueInput
@@ -7920,7 +7976,7 @@ export default function App() {
             // Nudged below the sketch/pick banner when one is up, so it doesn't
             // land on top of it — they share the top-centre slot.
             <div
-              className={"sketch-msg" + (editingSketch || picking || armingRevolveProfile ? " below-banner" : "")}
+              className={"sketch-msg" + (editingSketch || picking || selectionArming ? " below-banner" : "")}
               role="alert"
             >
               ⚠ {hudMsg}
@@ -8035,14 +8091,24 @@ export default function App() {
               >
                 ⇅ Flip
               </button>
+              {/* The one arming affordance outside a dialog. It follows the same
+                  vocabulary as the pick slots: "Select …" while idle, a dashed
+                  pulse and "Selecting…" while it waits, and clicking again
+                  calls the pick off. */}
               <button
+                className={picking && pickPurpose === "sectionPlane" ? "arming" : undefined}
                 title="Pick a different plane or face to cut through"
                 onClick={() => {
+                  if (picking && pickPurpose === "sectionPlane") {
+                    setPicking(false);
+                    setPickPurpose("sketch");
+                    return;
+                  }
                   setPickPurpose("sectionPlane");
                   setPicking(true);
                 }}
               >
-                ⌖ Pick plane
+                {picking && pickPurpose === "sectionPlane" ? "⌖ Selecting…" : "⌖ Select plane"}
               </button>
             </div>
           )}
@@ -8086,9 +8152,15 @@ export default function App() {
                     ? "Select a sketch line or a cylindrical face to pattern around"
                     : pickPurpose === "patternDir"
                       ? "Select a sketch line for the pattern direction"
-                      : pickPurpose === "plane"
-                        ? "Select a plane or planar face to offset the new plane from"
-                        : "Select a plane or planar face for the sketch"}
+                      : pickPurpose === "sectionPlane"
+                        ? "Select a plane or planar face to cut the section through"
+                        : pickPurpose === "plane"
+                          ? // The wording only fits the offset method — the others
+                            // build off their reference rather than offsetting it.
+                            planeDialog?.method === "offset"
+                            ? "Select a plane or planar face to offset the new plane from"
+                            : "Select a plane or planar face for the new plane"
+                          : "Select a plane or planar face for the sketch"}
               </span>
               <button
                 onClick={() => {
@@ -8100,17 +8172,10 @@ export default function App() {
               </button>
             </div>
           ) : (
-            // Arming the revolve PROFILE doesn't go through `picking` (it reads
-            // the normal selection raycaster), so it needs its own banner —
-            // otherwise the only sign the app is waiting on a click is a small
-            // highlighted button in the dialog.
-            armingRevolveProfile && (
+            selectionArming && (
               <div className="sketch-banner pick">
-                <span>
-                  Select a closed sketch region or a planar body face to revolve — hidden sketches are shown while you
-                  pick
-                </span>
-                <button onClick={() => setRevolveDialog((d) => (d ? { ...d, armed: null } : d))}>Cancel</button>
+                <span>{selectionArming.message}</span>
+                <button onClick={selectionArming.cancel}>Cancel</button>
               </div>
             )
           )}
@@ -8166,7 +8231,10 @@ export default function App() {
                   onChange={(e) => {
                     const extent = e.target.value as ExtrudeExtent;
                     setExtrudeDialog((d) => (d ? { ...d, extent } : d));
-                    if (extent !== "upToFace") setPickingUpFace(false);
+                    // Arm (or disarm) the face pick with the extent that needs
+                    // it, the way the plane dialog arms the pick its method
+                    // needs — choosing "Up to face" IS asking to pick a face.
+                    setPickingUpFace(extent === "upToFace");
                   }}
                 >
                   <option value="blind">Blind</option>
@@ -8181,14 +8249,23 @@ export default function App() {
                 </select>
               </label>
               {extrudeDialog.extent === "upToFace" && (
-                <label className="ed-field">
+                <div className="ed-field">
                   <span>Face</span>
-                  <PickButton noun="a face" armed={pickingUpFace} onClick={() => setPickingUpFace((v) => !v)}>
-                    {!pickingUpFace && extrudeDialog.upTo
-                      ? `On ${doc.features.find((f) => f.id === extrudeDialog.upTo!.featureId)?.name ?? "body"}`
-                      : undefined}
-                  </PickButton>
-                </label>
+                  <PickSlot
+                    noun="a face"
+                    armed={pickingUpFace}
+                    value={
+                      extrudeDialog.upTo
+                        ? `On ${doc.features.find((f) => f.id === extrudeDialog.upTo!.featureId)?.name ?? "body"}`
+                        : null
+                    }
+                    onArm={() => setPickingUpFace((v) => !v)}
+                    onClear={() => {
+                      setExtrudeDialog((d) => (d ? { ...d, upTo: null } : d));
+                      setPickingUpFace(true);
+                    }}
+                  />
+                </div>
               )}
               {extrudeDialog.extent !== "upToFace" && extrudeDialog.extent !== "upToNext" && (
                 <label className="ed-field">
@@ -8338,11 +8415,13 @@ export default function App() {
                     {d.editId ? "Edit " : ""}Shell
                   </div>
                   <div className="bool-group-label">Body</div>
-                  {d.targetId && d.arming !== "body" ? (
-                    <PickedRow label={bodyName} onClear={armBody} />
-                  ) : (
-                    <PickButton noun="a body" armed={d.arming === "body"} wide onClick={armBody} />
-                  )}
+                  <PickSlot
+                    noun="a body"
+                    armed={d.arming === "body"}
+                    value={d.targetId ? bodyName : null}
+                    wide
+                    onArm={armBody}
+                  />
                   {/* Openings are optional — no faces means a fully sealed hollow
                     shell, which is the common case and so must not require a
                     pick to get to. */}
@@ -8440,28 +8519,26 @@ export default function App() {
                     plane, or a body face.
                   </div>
                   <div className="bool-group-label">Profile</div>
-                  {profileLabel ? (
-                    <PickedRow label={profileLabel} onClear={() => armProfile(true)} />
-                  ) : (
-                    <PickButton
-                      noun="a profile"
-                      armed={revolveDialog.armed === "profile"}
-                      wide
-                      onClick={() => armProfile()}
-                    />
-                  )}
+                  <PickSlot
+                    noun="a profile"
+                    armed={revolveDialog.armed === "profile"}
+                    value={profileLabel}
+                    wide
+                    onArm={() => armProfile()}
+                    onClear={() => armProfile(true)}
+                  />
                   <div className="bool-group-label">Axis</div>
-                  {axisLabel ? (
-                    <PickedRow
-                      label={axisLabel}
-                      onClear={() => {
-                        setRevolveDialog((d) => (d ? { ...d, axis: null } : d));
-                        armAxis();
-                      }}
-                    />
-                  ) : (
-                    <PickButton noun="an axis" armed={axisArming} wide onClick={armAxis} />
-                  )}
+                  <PickSlot
+                    noun="an axis"
+                    armed={axisArming}
+                    value={axisLabel}
+                    wide
+                    onArm={armAxis}
+                    onClear={() => {
+                      setRevolveDialog((d) => (d ? { ...d, axis: null } : d));
+                      armAxis();
+                    }}
+                  />
                   <div className="ed-modes">
                     {(["full", "angle"] as const).map((m) => (
                       <button
@@ -8592,18 +8669,17 @@ export default function App() {
               {planeDialog.method !== "through" && (
                 <div className="ed-field">
                   <span>{planeDialog.method === "midplane" ? "First" : "Base"}</span>
-                  {planePick !== "base" && planeDialog.base ? (
-                    <PickedRow
-                      label={planeRefLabel(planeDialog.base)}
-                      title={planeRefLabel(planeDialog.base)}
-                      onClear={() => {
-                        setPlaneDialog((d) => (d ? { ...d, base: null } : d));
-                        armPlanePick("base");
-                      }}
-                    />
-                  ) : (
-                    <PickButton noun="a plane/face" armed={planePick === "base"} onClick={() => armPlanePick("base")} />
-                  )}
+                  <PickSlot
+                    noun="a plane/face"
+                    armed={planePick === "base"}
+                    value={planeDialog.base && planeRefLabel(planeDialog.base)}
+                    title={planeDialog.base ? planeRefLabel(planeDialog.base) : undefined}
+                    onArm={() => armPlanePick("base")}
+                    onClear={() => {
+                      setPlaneDialog((d) => (d ? { ...d, base: null } : d));
+                      armPlanePick("base");
+                    }}
+                  />
                 </div>
               )}
 
@@ -8624,18 +8700,17 @@ export default function App() {
               {planeDialog.method === "midplane" && (
                 <div className="ed-field">
                   <span>Second</span>
-                  {planePick !== "refB" && planeDialog.refB ? (
-                    <PickedRow
-                      label={planeRefLabel(planeDialog.refB)}
-                      title={planeRefLabel(planeDialog.refB)}
-                      onClear={() => {
-                        setPlaneDialog((d) => (d ? { ...d, refB: null } : d));
-                        armPlanePick("refB");
-                      }}
-                    />
-                  ) : (
-                    <PickButton noun="a plane/face" armed={planePick === "refB"} onClick={() => armPlanePick("refB")} />
-                  )}
+                  <PickSlot
+                    noun="a plane/face"
+                    armed={planePick === "refB"}
+                    value={planeDialog.refB && planeRefLabel(planeDialog.refB)}
+                    title={planeDialog.refB ? planeRefLabel(planeDialog.refB) : undefined}
+                    onArm={() => armPlanePick("refB")}
+                    onClear={() => {
+                      setPlaneDialog((d) => (d ? { ...d, refB: null } : d));
+                      armPlanePick("refB");
+                    }}
+                  />
                 </div>
               )}
 
@@ -8672,24 +8747,23 @@ export default function App() {
               {planeDialog.method === "through" && (
                 <div className="ed-field">
                   <span>Points</span>
-                  {planeDialog.points.length === 3 ? (
-                    // Full: the slot is done taking clicks, so it reads as
-                    // filled — ✕ throws the three points away and starts over.
-                    <PickedRow
-                      label="3/3 picked"
-                      clearTitle="Clear the points and pick again"
-                      onClear={() => {
-                        setPlaneDialog((d) => (d ? { ...d, points: [] } : d));
-                        armPlanePick("point");
-                      }}
-                    />
-                  ) : (
-                    <PickButton noun="points" armed={planePick === "point"} onClick={() => armPlanePick("point")}>
-                      {/* A counting slot: it takes three clicks, so it shows the
-                          tally in both states rather than a bare "Selecting…". */}
-                      {`${planeDialog.points.length}/3` + (planePick === "point" ? " · selecting…" : " picked")}
-                    </PickButton>
-                  )}
+                  {/* A counting slot: it takes three clicks, so the button
+                      shows the tally in both states rather than a bare
+                      "Selecting…", and it only reads as FILLED at 3/3 — where
+                      it stops taking clicks and ✕ starts the three over. */}
+                  <PickSlot
+                    noun="points"
+                    armed={planePick === "point" && planeDialog.points.length < 3}
+                    value={planeDialog.points.length === 3 ? "3/3 picked" : null}
+                    clearTitle="Clear the points and pick again"
+                    onArm={() => armPlanePick("point")}
+                    onClear={() => {
+                      setPlaneDialog((d) => (d ? { ...d, points: [] } : d));
+                      armPlanePick("point");
+                    }}
+                  >
+                    {`${planeDialog.points.length}/3` + (planePick === "point" ? " · selecting…" : " picked")}
+                  </PickSlot>
                 </div>
               )}
 
@@ -8858,14 +8932,23 @@ export default function App() {
             </select>
           </label>
           {mirrorDialog.plane === "face" && (
-            <label className="ed-field">
+            <div className="ed-field">
               <span>Face</span>
-              <PickButton noun="a face" armed={pickingMirrorFace} onClick={() => setPickingMirrorFace((v) => !v)}>
-                {!pickingMirrorFace && mirrorDialog.faceRef
-                  ? `On ${doc.features.find((f) => f.id === mirrorDialog.faceRef!.featureId)?.name ?? "body"}`
-                  : undefined}
-              </PickButton>
-            </label>
+              <PickSlot
+                noun="a face"
+                armed={pickingMirrorFace}
+                value={
+                  mirrorDialog.faceRef
+                    ? `On ${doc.features.find((f) => f.id === mirrorDialog.faceRef!.featureId)?.name ?? "body"}`
+                    : null
+                }
+                onArm={() => setPickingMirrorFace((v) => !v)}
+                onClear={() => {
+                  setMirrorDialog((d) => (d ? { ...d, faceRef: null } : d));
+                  setPickingMirrorFace(true);
+                }}
+              />
+            </div>
           )}
           <div className="ed-actions">
             <button
@@ -8910,6 +8993,7 @@ export default function App() {
             setPatternDialog((p) => (p ? { ...p, [slot]: { world: v }, arming: null } : p));
           };
           const dirPicking = (slot: "dir1" | "dir2") => picking && pickPurpose === "patternDir" && d.arming === slot;
+          const axisArming = picking && pickPurpose === "patternAxis";
           const targetArming = patternDialog.arming === "target";
           const armTarget = () => setPatternDialog((p) => (p ? { ...p, targetId: null, arming: "target" } : p));
           return (
@@ -8933,11 +9017,13 @@ export default function App() {
                 ))}
               </div>
               <div className="bool-group-label">Body</div>
-              {d.targetId ? (
-                <PickedRow label={targetName} onClear={armTarget} />
-              ) : (
-                <PickButton noun="a body" armed={targetArming} wide onClick={armTarget} />
-              )}
+              <PickSlot
+                noun="a body"
+                armed={targetArming}
+                value={d.targetId ? targetName : null}
+                wide
+                onArm={armTarget}
+              />
               {d.kind === "linear" ? (
                 <>
                   <div className="bool-group-label">Direction</div>
@@ -8950,12 +9036,14 @@ export default function App() {
                       <option value="line">Sketch line…</option>
                     </select>
                   </label>
-                  {dirPicking("dir1") ? (
-                    <PickButton noun="a sketch line" armed wide onClick={() => armPatternPick("dir1")} />
-                  ) : (
-                    !("world" in d.dir1) && (
-                      <PickedRow label={lineLabel(d.dir1)} onClear={() => armPatternPick("dir1")} />
-                    )
+                  {(dirPicking("dir1") || !("world" in d.dir1)) && (
+                    <PickSlot
+                      noun="a sketch line"
+                      armed={dirPicking("dir1")}
+                      value={"world" in d.dir1 ? null : lineLabel(d.dir1)}
+                      wide
+                      onArm={() => armPatternPick("dir1")}
+                    />
                   )}
                   <label className="ed-field">
                     <span>Count</span>
@@ -9010,13 +9098,14 @@ export default function App() {
                           <option value="line">Sketch line…</option>
                         </select>
                       </label>
-                      {dirPicking("dir2") ? (
-                        <PickButton noun="a sketch line" armed wide onClick={() => armPatternPick("dir2")} />
-                      ) : (
-                        d.dir2 &&
-                        !("world" in d.dir2) && (
-                          <PickedRow label={lineLabel(d.dir2)} onClear={() => armPatternPick("dir2")} />
-                        )
+                      {(dirPicking("dir2") || (d.dir2 && !("world" in d.dir2))) && (
+                        <PickSlot
+                          noun="a sketch line"
+                          armed={dirPicking("dir2")}
+                          value={d.dir2 && !("world" in d.dir2) ? lineLabel(d.dir2) : null}
+                          wide
+                          onArm={() => armPatternPick("dir2")}
+                        />
                       )}
                       <label className="ed-field">
                         <span>Count</span>
@@ -9052,48 +9141,45 @@ export default function App() {
               ) : (
                 <>
                   <div className="bool-group-label">Axis</div>
-                  {axisLabel ? (
-                    <PickedRow
-                      label={axisLabel}
-                      onClear={() => {
-                        setPatternDialog((p) => (p ? { ...p, axis: null } : p));
-                        armPatternPick("axis");
-                      }}
-                    />
-                  ) : (
-                    <>
-                      <label className="ed-field">
-                        <span>World</span>
-                        <select
-                          value=""
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (v !== "x" && v !== "y" && v !== "z") return;
-                            if (picking && d.arming === "axis") {
-                              setPicking(false);
-                              setPickPurpose("sketch");
-                            }
-                            setPatternDialog((p) => (p ? { ...p, axis: { world: v }, arming: null } : p));
-                          }}
-                        >
-                          <option value="">Choose…</option>
-                          <option value="x">World X (through the origin)</option>
-                          <option value="y">World Y (through the origin)</option>
-                          <option value="z">World Z (through the origin)</option>
-                        </select>
-                      </label>
-                      <PickButton
-                        noun="an axis (sketch line / cylindrical face)"
-                        armed={picking && pickPurpose === "patternAxis"}
-                        wide
-                        onClick={() => armPatternPick("axis")}
+                  {/* The world-axis shortcut only shows while the slot is empty —
+                      once an axis is set, ✕ is the way back to choosing one. */}
+                  {!axisLabel && (
+                    <label className="ed-field">
+                      <span>World</span>
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v !== "x" && v !== "y" && v !== "z") return;
+                          if (picking && d.arming === "axis") {
+                            setPicking(false);
+                            setPickPurpose("sketch");
+                          }
+                          setPatternDialog((p) => (p ? { ...p, axis: { world: v }, arming: null } : p));
+                        }}
                       >
-                        {/* The full "which kinds qualify" phrase is only useful
-                            before the pick; while arming, the banner says it. */}
-                        {picking && pickPurpose === "patternAxis" ? "Selecting an axis…" : undefined}
-                      </PickButton>
-                    </>
+                        <option value="">Choose…</option>
+                        <option value="x">World X (through the origin)</option>
+                        <option value="y">World Y (through the origin)</option>
+                        <option value="z">World Z (through the origin)</option>
+                      </select>
+                    </label>
                   )}
+                  <PickSlot
+                    noun="an axis (sketch line / cylindrical face)"
+                    armed={axisArming}
+                    value={axisLabel}
+                    wide
+                    onArm={() => armPatternPick("axis")}
+                    onClear={() => {
+                      setPatternDialog((p) => (p ? { ...p, axis: null } : p));
+                      armPatternPick("axis");
+                    }}
+                  >
+                    {/* The full "which kinds qualify" phrase is only useful
+                        before the pick; while arming, the banner says it. */}
+                    {axisArming ? "Selecting an axis…" : undefined}
+                  </PickSlot>
                   <label className="ed-field">
                     <span>Count</span>
                     <input

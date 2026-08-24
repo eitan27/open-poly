@@ -17,7 +17,9 @@ import type { ReactNode } from "react";
  *
  *  Keeping that in one place is the point: the states used to be hand-rolled at
  *  ~16 call sites, which is how the arming state ended up wearing the *filled*
- *  state's styling and reading as "already picked". */
+ *  state's styling and reading as "already picked". Reach for `PickSlot` — it
+ *  drives the whole cycle from one `value` — and only drop to `PickButton` /
+ *  `PickedRow` for a slot that accumulates several picks. */
 
 /** "Select a profile" ⇄ "Selecting a profile…".
  *
@@ -61,6 +63,52 @@ export function PickButton({
     >
       {children ?? pickLabel(noun, armed, wide)}
     </button>
+  );
+}
+
+/** A single-value slot: the whole three-state cycle in ONE control. Filled and
+ *  idle → the ARMED row (name + ✕); empty, or listening for a click → the pick
+ *  button. Two rules fall out of putting it here rather than at each call site:
+ *  an armed slot never wears the filled styling (it's listening, not chosen),
+ *  and ✕ always re-arms, so clearing means "pick a different one" instead of
+ *  stranding the slot empty and inert.
+ *
+ *  Accumulating slots (Boolean's tools, Shell's faces to open) aren't this
+ *  shape — they render one `PickedRow` per item plus an "add more" button. */
+export function PickSlot({
+  noun,
+  armed,
+  value = null,
+  title,
+  clearTitle,
+  wide = false,
+  disabled = false,
+  onArm,
+  onClear,
+  children,
+}: {
+  noun: string;
+  armed: boolean;
+  /** The chosen thing's label — null while the slot is still empty. */
+  value?: ReactNode;
+  title?: string;
+  clearTitle?: string;
+  wide?: boolean;
+  disabled?: boolean;
+  onArm: () => void;
+  /** Runs instead of `onArm` on ✕ — for a slot that must also drop the value it
+   *  holds (re-arming alone doesn't). Keep it re-arming. */
+  onClear?: () => void;
+  /** Overrides the BUTTON's label: a counting slot's tally, say. */
+  children?: ReactNode;
+}) {
+  if (value != null && !armed) {
+    return <PickedRow label={value} title={title} clearTitle={clearTitle} onClear={onClear ?? onArm} />;
+  }
+  return (
+    <PickButton noun={noun} armed={armed} wide={wide} disabled={disabled} title={title} onClick={onArm}>
+      {children}
+    </PickButton>
   );
 }
 
