@@ -208,8 +208,10 @@ export type ResolvedFeature =
   | { id: string; type: "shell"; targetId: string; faces: string[]; faceRefs?: ResolvedFaceRef[]; thickness: number }
   // A boolean combines existing bodies (by id) from the running set.
   | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
-  // A rigid transform moves a body (by id) — translate + rotate. `copy` keeps
-  // the original and emits the moved body as a NEW body (keyed by this feature).
+  // A transform moves a body (by id) — uniform scale, then rotate, then
+  // translate (scale and rotation both about `pivot`). `scale` is always > 0
+  // (validated when resolving). `copy` keeps the original and emits the moved
+  // body as a NEW body (keyed by this feature).
   | {
       id: string;
       type: "transform";
@@ -219,6 +221,7 @@ export type ResolvedFeature =
       tz: number;
       angle: number;
       axis: "x" | "y" | "z";
+      scale: number;
       pivot: [number, number, number];
       copy: boolean;
     }

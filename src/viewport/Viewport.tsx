@@ -102,11 +102,45 @@ export interface RenderPlane {
   color: number;
 }
 
-export type TransformMode = "translate" | "rotate";
+export type TransformMode = "translate" | "rotate" | "scale";
 
-/** The live state of the Transform gizmo: which body it sits on, its rotation
- *  pivot, and the current (resolved, numeric) translate/rotate values. Numbers,
- *  not expressions — the gizmo is a numeric input device; the dialog owns text. */
+/** The muted grey every gizmo is toned toward, so none of them read as the
+ *  default pure-RGB three.js widget (see softenGizmo). */
+const GIZMO_NEUTRAL = 0xc2cad8;
+/** The yellow a gizmo handle lights up in when it's hovered or being dragged.
+ *  TransformControls paints its own active handle with `materialLib.active`
+ *  (`matYellow`), and softenGizmo never reaches that material — no handle mesh
+ *  uses it — so the move and rotate gizmos highlight in exactly this. The scale
+ *  gizmo is ours to paint, and matches it on purpose: one highlight colour means
+ *  "this is the thing you're about to drag" everywhere in the viewport. */
+const GIZMO_ACTIVE = 0xffff00;
+/** Step the scale factor snaps to while dragging the gizmo (5%). */
+const SCALE_SNAP = 0.05;
+/** On-screen half-width of a scale gizmo corner grip, in CSS pixels. Held
+ *  constant on screen so the grips stay grabbable whatever the body's size. */
+const SCALE_GRIP_PX = 5.5;
+/** How close to the pivot a grab may be (screen px) before its distance ratio
+ *  stops being a usable scale factor. */
+const SCALE_MIN_GRAB_PX = 10;
+/** Scratch vector for the scale gizmo's per-frame bounds loop (one allocation,
+ *  not one per mesh vertex). */
+const _scaleTmp = new THREE.Vector3();
+/** The eight corners of a unit box, as sign triples. */
+const BOX_CORNERS: [number, number, number][] = [
+  [-1, -1, -1],
+  [-1, -1, 1],
+  [-1, 1, -1],
+  [-1, 1, 1],
+  [1, -1, -1],
+  [1, -1, 1],
+  [1, 1, -1],
+  [1, 1, 1],
+];
+
+/** The live state of the Transform gizmo: which body it sits on, its rotation /
+ *  scaling pivot, and the current (resolved, numeric) translate/rotate/scale
+ *  values. Numbers, not expressions — the gizmo is a numeric input device; the
+ *  dialog owns text. */
 export interface TransformEdit {
   featureId: string;
   /** Which rendered body the gizmo moves: the source body (move-in-place) or the
@@ -119,15 +153,18 @@ export interface TransformEdit {
   /** Rotation angle in degrees about `axis` (a world axis). */
   angle: number;
   axis: "x" | "y" | "z";
+  /** Uniform scale factor about `pivot` (> 0; 1 = unscaled). */
+  scale: number;
 }
 
 /** Numeric values the gizmo emits on each drag (written back as the feature's
- *  translate/rotate expressions). */
+ *  translate/rotate/scale expressions). */
 export interface TransformDelta {
   tx: number;
   ty: number;
   tz: number;
   angle: number;
+  scale: number;
 }
 
 /** The live state of the extrude-distance gizmo: a single arrow at the
@@ -362,15 +399,18 @@ interface SceneState {
   sectionCapGroup: THREE.Group;
   sectionCapGeometry: THREE.PlaneGeometry;
   sectionCapMaterial: THREE.MeshStandardMaterial;
-  // Ground grid and navigation cube. Held so a theme change can recolour them
-  // in place rather than rebuilding the scene.
+  // Ground grid, navigation cube and the scale gizmo's box. Held so a theme
+  // change can recolour them in place rather than rebuilding the scene.
   grid: THREE.LineSegments;
+  scaleWire: THREE.LineSegments;
+  scaleGripMaterial: THREE.MeshBasicMaterial;
   viewCube: ViewCube;
 }
 
 /** Build the world matrix for a transform feature's values, matching the kernel's
- *  composition exactly: rotate about (pivot, axis) first, then translate (M = T·R).
- *  Keeps the live drag preview pixel-aligned with what regenerate will bake. */
+ *  composition exactly: uniformly scale about the pivot, then rotate about
+ *  (pivot, axis), then translate (M = T·R·S). Keeps the live drag preview
+ *  pixel-aligned with what regenerate will bake. */
 function transformMatrix(
   pivot: [number, number, number],
   tx: number,
@@ -378,16 +418,22 @@ function transformMatrix(
   tz: number,
   angle: number,
   axis: "x" | "y" | "z",
+  scale: number,
 ): THREE.Matrix4 {
-  const m = new THREE.Matrix4(); // identity = no rotation
+  const toPivot = new THREE.Matrix4().makeTranslation(-pivot[0], -pivot[1], -pivot[2]);
+  const fromPivot = new THREE.Matrix4().makeTranslation(pivot[0], pivot[1], pivot[2]);
+  const m = new THREE.Matrix4(); // identity = no rotation, no scale
   if (angle !== 0) {
     const axisVec = new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
     const rot = new THREE.Matrix4().makeRotationAxis(axisVec, THREE.MathUtils.degToRad(angle));
-    const toPivot = new THREE.Matrix4().makeTranslation(-pivot[0], -pivot[1], -pivot[2]);
-    const fromPivot = new THREE.Matrix4().makeTranslation(pivot[0], pivot[1], pivot[2]);
     m.multiply(fromPivot).multiply(rot).multiply(toPivot); // rotation about the pivot
   }
-  // Translation applies after rotation, so the final matrix is T · R.
+  if (scale !== 1) {
+    const sc = new THREE.Matrix4().makeScale(scale, scale, scale);
+    // Scale about the same pivot, applied BEFORE the rotation (R · S).
+    m.multiply(fromPivot).multiply(sc).multiply(toPivot);
+  }
+  // Translation applies last, so the final matrix is T · R · S.
   return new THREE.Matrix4().makeTranslation(tx, ty, tz).multiply(m);
 }
 
@@ -1209,6 +1255,8 @@ export function Viewport({
   userPlanesRef.current = userPlanes;
   const transformEditRef = useRef(transformEdit);
   transformEditRef.current = transformEdit;
+  const transformModeRef = useRef(transformMode);
+  transformModeRef.current = transformMode;
   const onTransformInputRef = useRef(onTransformInput);
   onTransformInputRef.current = onTransformInput;
   const onTransformPreviewRef = useRef(onTransformPreview);
@@ -1712,8 +1760,63 @@ export function Viewport({
     gizmoHelper.visible = false;
     softenGizmo(gizmoHelper); // mute the default pure-RGB arrows to fit the UI
     scene.add(gizmoHelper);
+    // Scale gizmo: a wireframe box wrapping the target body, with a grab cube at
+    // each of its eight corners. Dragging a corner away from the body grows it,
+    // toward the body shrinks it, and the box follows so it always reads as the
+    // body's own bounds.
+    //
+    // Not TransformControls' scale mode, which cannot express this: it sizes its
+    // WHOLE gizmo to a constant on-screen size, so its handles sit at a fixed
+    // distance from the pivot rather than on the body, and it derives a uniform
+    // factor as |pointEnd| / |pointStart| measured from that pivot — a ratio that
+    // divides by ~0 at the centre and, dragged through it, flips sign
+    // (`if (pointEnd.dot(pointStart) < 0) d *= -1`), mirroring the handle to the
+    // far side. A corner of the body's own box is far from the pivot, so the same
+    // ratio is well conditioned everywhere it can be grabbed.
+    const scaleGizmo = new THREE.Group();
+    scaleGizmo.visible = false;
+    const scaleWire = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+      // Colour and opacity are set from the theme on mount and on every change.
+      new THREE.LineBasicMaterial({ transparent: true, depthTest: false }),
+    );
+    scaleWire.renderOrder = 12;
+    const scaleGripGeometry = new THREE.BoxGeometry(2, 2, 2); // unit half-extent, scaled per frame
+    const scaleGripMaterial = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0.85,
+      depthTest: false, // colour from the theme, like the box it sits on
+    });
+    const scaleGripHoverMaterial = new THREE.MeshBasicMaterial({ color: GIZMO_ACTIVE, depthTest: false });
+    const scaleGrips = BOX_CORNERS.map((corner) => {
+      const m = new THREE.Mesh(scaleGripGeometry, scaleGripMaterial);
+      m.renderOrder = 13;
+      m.userData.corner = corner;
+      return m;
+    });
+    scaleGizmo.add(scaleWire, ...scaleGrips);
+    scene.add(scaleGizmo);
+
+    // The body's world bounds, measured from the mesh the kernel last returned,
+    // remembered with the factor they were measured AT — the box on screen is
+    // those bounds scaled about the pivot by (current factor / measured factor),
+    // so a drag grows the box and the body together without a kernel round trip.
+    let scaleBounds: { min: THREE.Vector3; max: THREE.Vector3; atFactor: number; source: unknown } | null = null;
+    // A corner drag in progress. `grabPx` is the press's distance from the pivot
+    // ON SCREEN, which is what the new factor is measured against.
+    let scaleDrag: {
+      grabPx: number;
+      dir: { x: number; y: number };
+      startFactor: number;
+      live: number;
+      moved: boolean;
+    } | null = null;
+
     // Suspend orbiting while a gizmo handle is being dragged.
     // The gizmo's current translate/rotate, read off the proxy relative to pivot.
+    // Scale is NOT part of this: TransformControls only drives move and rotate
+    // here, and the scale gizmo below is its own thing — so the factor is passed
+    // straight back out untouched.
     const proxyDelta = (te: TransformEdit): TransformDelta => {
       const p = gizmoProxy.position;
       const r = gizmoProxy.rotation;
@@ -1723,6 +1826,7 @@ export function Viewport({
         ty: p.y - te.pivot[1],
         tz: p.z - te.pivot[2],
         angle: THREE.MathUtils.radToDeg(rad),
+        scale: te.scale,
       };
     };
     transformControls.addEventListener("dragging-changed", (e) => {
@@ -1734,7 +1838,7 @@ export function Viewport({
         // matrix they currently carry, so each frame can re-pose them with a
         // pure matrix instead of asking the kernel to rebuild the document.
         if (!te) return;
-        const m0 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis);
+        const m0 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, te.scale);
         const objects = state.group.children.filter((c) => c.userData.featureId === te.bodyId);
         for (const o of objects) o.matrixAutoUpdate = false;
         state.liveDrag = { objects, m0Inverse: m0.clone().invert() };
@@ -1749,7 +1853,7 @@ export function Viewport({
           // triggers, until the body's real (re-baked) geometry arrives. Keyed
           // by the body's current mesh ref, which changes only when regenerate
           // returns — so the pin releases exactly when the new geometry lands.
-          const m1 = transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis);
+          const m1 = transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, d.scale);
           const delta = m1.multiply(ld.m0Inverse);
           const entry = meshesRef.current.find((m) => m.id === te.bodyId);
           state.pendingCommit = { bodyId: te.bodyId, delta, meshRef: entry?.mesh ?? null };
@@ -1766,7 +1870,7 @@ export function Viewport({
       const d = proxyDelta(te);
       const ld = state.liveDrag;
       if (ld) {
-        const m1 = transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis);
+        const m1 = transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, d.scale);
         const delta = m1.multiply(ld.m0Inverse); // current · committed⁻¹
         for (const o of ld.objects) {
           o.matrix.copy(delta);
@@ -1896,6 +2000,8 @@ export function Viewport({
       sectionCapGeometry,
       sectionCapMaterial,
       grid,
+      scaleWire,
+      scaleGripMaterial,
       viewCube,
     };
     stateRef.current = state;
@@ -2427,6 +2533,17 @@ export function Viewport({
       const rect = renderer.domElement.getBoundingClientRect();
       return { x: (v.x * 0.5 + 0.5) * rect.width + rect.left, y: (-v.y * 0.5 + 0.5) * rect.height + rect.top };
     };
+    /** The scale gizmo grip under the cursor, if any. Depth-independent: the grips
+     *  draw over everything (depthTest off), so they must pick that way too. */
+    const pickScaleGrip = (clientX: number, clientY: number): THREE.Mesh | null => {
+      if (!scaleGizmo.visible) return null;
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      return (raycaster.intersectObjects(scaleGrips, false)[0]?.object as THREE.Mesh) ?? null;
+    };
+
     const planeHitUv = (clientX: number, clientY: number): Vec2 | null => {
       const frame = activeFrameRef.current;
       if (!frame) return null;
@@ -2965,11 +3082,50 @@ export function Viewport({
     };
 
     const onMove = (e: PointerEvent) => {
+      // A scale-grip drag owns the pointer: the factor is how far along the
+      // pivot→corner line the pointer now sits, as a fraction of where the grab
+      // started, measured ON SCREEN. Screen space is what makes this stable — the
+      // grab is a corner of the body's own box, comfortably far from the pivot in
+      // pixels, so the ratio never approaches 0/0 the way a pivot-anchored
+      // handle's does; and it is what the eye is judging anyway.
+      //
+      // Projected onto that line rather than taken as a raw distance, so moving
+      // sideways doesn't resize, and pushing PAST the pivot goes negative and
+      // clamps to the floor — it can't come back up the far side (a raw distance
+      // would grow again there) and it can't flip the body inside out.
+      if (scaleDrag) {
+        const te = transformEditRef.current;
+        if (!te) return;
+        const pivotPx = projectToPx(new THREE.Vector3(...te.pivot));
+        const along = (e.clientX - pivotPx.x) * scaleDrag.dir.x + (e.clientY - pivotPx.y) * scaleDrag.dir.y;
+        const raw = (scaleDrag.startFactor * Math.max(0, along)) / scaleDrag.grabPx;
+        const snapped = Math.round(raw / SCALE_SNAP) * SCALE_SNAP;
+        const next = Number.isFinite(snapped) ? THREE.MathUtils.clamp(snapped, SCALE_SNAP, 1000) : scaleDrag.live;
+        scaleDrag.moved = true;
+        scaleDrag.live = next;
+        const ld = state.liveDrag;
+        if (ld) {
+          const m1 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, next);
+          const delta = m1.multiply(ld.m0Inverse); // current · committed⁻¹
+          for (const o of ld.objects) {
+            o.matrix.copy(delta);
+            o.matrixWorldNeedsUpdate = true; // matrixAutoUpdate is off; force the world recompute
+          }
+        }
+        onTransformPreviewRef.current({ tx: te.tx, ty: te.ty, tz: te.tz, angle: te.angle, scale: next });
+        return;
+      }
       // A drag owned by one of the TransformControls gizmos (transform /
       // section / extrude): the controls run their own pointermove (their
       // listeners registered first); skip hover picking underneath so
       // highlights don't churn behind the gizmo.
       if (transformControls.dragging || sectionControls.dragging || extrudeControls.dragging) return;
+      // Light up the grip under the pointer, so it reads as grabbable.
+      if (scaleGizmoActive()) {
+        const hit = pickScaleGrip(e.clientX, e.clientY);
+        for (const m of scaleGrips) m.material = m === hit ? scaleGripHoverMaterial : scaleGripMaterial;
+        renderer.domElement.style.cursor = hit ? "grab" : "";
+      }
       // An active sketch drag owns the pointer: move the grabbed geometry and let
       // App re-solve. Wait for a few px of travel before the first solve so a tap
       // still reads as a click (handled in onUp).
@@ -3238,6 +3394,38 @@ export function Viewport({
       return raw ? snap(raw, x, y).uv : undefined;
     };
     const onUp = (e: PointerEvent) => {
+      // Finish a scale-grip drag: commit the final factor ONCE (the only
+      // regenerate of the whole gesture) and pin the dragged matrix across the
+      // stale rebuild it triggers, until the re-baked geometry arrives.
+      if (scaleDrag) {
+        const { live, moved } = scaleDrag;
+        const te = transformEditRef.current;
+        scaleDrag = null;
+        const ld = state.liveDrag;
+        state.liveDrag = null;
+        controls.enabled = true;
+        if (renderer.domElement.hasPointerCapture(e.pointerId)) {
+          renderer.domElement.releasePointerCapture(e.pointerId);
+        }
+        renderer.domElement.style.cursor = "";
+        down = null;
+        if (te && moved) {
+          if (ld) {
+            const m1 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, live);
+            const entry = meshesRef.current.find((m) => m.id === te.bodyId);
+            state.pendingCommit = {
+              bodyId: te.bodyId,
+              delta: m1.multiply(ld.m0Inverse),
+              meshRef: entry?.mesh ?? null,
+            };
+          }
+          onTransformInputRef.current({ tx: te.tx, ty: te.ty, tz: te.tz, angle: te.angle, scale: live });
+        } else if (ld) {
+          // A tap that never moved: hand the objects back to normal updating.
+          for (const o of ld.objects) o.matrixAutoUpdate = true;
+        }
+        return;
+      }
       // Finish (or cancel) a sketch drag. A press that never travelled far enough
       // to become a drag falls through to a normal selection click.
       if (sketchDrag) {
@@ -3347,6 +3535,39 @@ export function Viewport({
     // is set before onUp runs.
     const onGizmoDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
+      // A press on a scale grip owns the gesture: start the drag here, in the
+      // capture phase, so the selection click underneath never runs. OrbitControls
+      // registered its own listener first and has already seen this press, but it
+      // only rotates on MOVE and bails when disabled, so switching it off now is
+      // enough to keep the camera still — the same thing the TransformControls
+      // gizmos do on dragging-changed.
+      const te = transformEditRef.current;
+      if (te && scaleGizmoActive()) {
+        const grip = pickScaleGrip(e.clientX, e.clientY);
+        const pivotPx = projectToPx(new THREE.Vector3(...te.pivot));
+        const grabPx = Math.hypot(e.clientX - pivotPx.x, e.clientY - pivotPx.y);
+        if (grip && grabPx >= SCALE_MIN_GRAB_PX) {
+          scaleDrag = {
+            grabPx,
+            // The line, on screen, from the pivot out through the grabbed corner.
+            // The drag is measured ALONG it (see onMove).
+            dir: { x: (e.clientX - pivotPx.x) / grabPx, y: (e.clientY - pivotPx.y) / grabPx },
+            startFactor: te.scale,
+            live: te.scale,
+            moved: false,
+          };
+          controls.enabled = false;
+          renderer.domElement.setPointerCapture(e.pointerId);
+          // Snapshot the body's objects and the matrix they carry, so each frame
+          // can re-pose them locally instead of asking the kernel to rebuild.
+          const m0 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, te.scale);
+          const objects = state.group.children.filter((c) => c.userData.featureId === te.bodyId);
+          for (const o of objects) o.matrixAutoUpdate = false;
+          state.liveDrag = { objects, m0Inverse: m0.clone().invert() };
+          e.stopImmediatePropagation();
+          return;
+        }
+      }
       cubeHit = viewCube.pick(renderer, e.clientX, e.clientY);
     };
     const onGizmoLeave = () => viewCube.clearHover();
@@ -3579,6 +3800,74 @@ export function Viewport({
     // `dir` prop can flip under it when a plane crossing is committed); the
     // committed values round-trip back here on release.
     const extrudeArrowDir = new THREE.Vector3();
+    // Is the scale gizmo the active tool right now?
+    const scaleGizmoActive = () =>
+      !!transformEditRef.current && transformModeRef.current === "scale" && !pickingRef.current;
+
+    /** The factor currently being shown — the drag's live value, else the feature's. */
+    const shownScaleFactor = (te: TransformEdit) => (scaleDrag ? scaleDrag.live : te.scale);
+
+    /** Where the box sits this frame: the measured bounds scaled about the pivot
+     *  by however far the factor has moved since they were measured. */
+    const scaleBoxNow = (te: TransformEdit) => {
+      if (!scaleBounds) return null;
+      const pivot = new THREE.Vector3(...te.pivot);
+      const k = scaleBounds.atFactor > 0 ? shownScaleFactor(te) / scaleBounds.atFactor : 1;
+      const min = scaleBounds.min.clone().sub(pivot).multiplyScalar(k).add(pivot);
+      const max = scaleBounds.max.clone().sub(pivot).multiplyScalar(k).add(pivot);
+      return { min, max };
+    };
+
+    const syncScaleGizmo = () => {
+      const te = transformEditRef.current;
+      if (!te || !scaleGizmoActive()) {
+        scaleGizmo.visible = false;
+        return;
+      }
+      const entry = meshesRef.current.find((m) => m.id === te.bodyId);
+      if (!entry) {
+        scaleGizmo.visible = false;
+        return;
+      }
+      // Re-measure whenever the kernel hands back a different mesh for this body
+      // (a commit landing, an upstream edit), but never mid-drag — the drag is
+      // driving the box itself, and the mesh under it is still the old one.
+      if (!scaleDrag && (!scaleBounds || scaleBounds.source !== entry.mesh)) {
+        const v = entry.mesh.faces.vertices;
+        if (v.length < 3) {
+          scaleGizmo.visible = false;
+          return;
+        }
+        const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+        const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+        for (let i = 0; i < v.length; i += 3) {
+          min.min(_scaleTmp.set(v[i], v[i + 1], v[i + 2]));
+          max.max(_scaleTmp);
+        }
+        scaleBounds = { min, max, atFactor: te.scale > 0 ? te.scale : 1, source: entry.mesh };
+      }
+      const box = scaleBoxNow(te);
+      if (!box) {
+        scaleGizmo.visible = false;
+        return;
+      }
+      scaleGizmo.visible = true;
+      const centre = box.min.clone().add(box.max).multiplyScalar(0.5);
+      const size = box.max.clone().sub(box.min);
+      // A flat body has a zero extent; the box still has to be drawable.
+      scaleWire.position.copy(centre);
+      scaleWire.scale.set(Math.max(size.x, 1e-4), Math.max(size.y, 1e-4), Math.max(size.z, 1e-4));
+      // Grips keep a constant on-screen size, so they stay grabbable on a 2mm
+      // part and don't swallow a 2m one.
+      const rect = renderer.domElement.getBoundingClientRect();
+      const grip = worldPerPixel(camera.position.distanceTo(centre), rect.height) * SCALE_GRIP_PX;
+      for (const m of scaleGrips) {
+        const [sx, sy, sz] = m.userData.corner as [number, number, number];
+        m.position.set(sx < 0 ? box.min.x : box.max.x, sy < 0 ? box.min.y : box.max.y, sz < 0 ? box.min.z : box.max.z);
+        m.scale.setScalar(grip);
+      }
+    };
+
     const syncExtrudeGizmo = () => {
       const eg = extrudeGizmoRef.current;
       extrudeHelper.visible = !!eg;
@@ -3611,6 +3900,7 @@ export function Viewport({
       syncClipPlanes();
       syncSectionPlane();
       syncExtrudeGizmo();
+      syncScaleGizmo();
       renderer.render(scene, camera);
       viewCube.render(renderer, state.camera);
       frame = requestAnimationFrame(animate);
@@ -3705,6 +3995,13 @@ export function Viewport({
     (state.scene.background as THREE.Color).set(t.background);
     // The grid bakes its two colours into per-vertex colours at construction.
     paintGroundGrid(state.grid, t.gridMajor, t.gridMinor);
+    // The scale box reads against the backdrop, not against the body, so both it
+    // and its grips are themed — as one widget, or the grips would sit on a
+    // recoloured box in the wrong grey.
+    const wire = state.scaleWire.material as THREE.LineBasicMaterial;
+    wire.color.setHex(t.scaleBoxColor);
+    wire.opacity = t.scaleBoxOpacity;
+    state.scaleGripMaterial.color.setHex(t.scaleBoxColor);
     state.viewCube.setTheme(theme);
     applyMouseBindings(state.controls, mouseMiddle, mouseRight);
   }, [theme, mouseMiddle, mouseRight]);
@@ -3968,7 +4265,10 @@ export function Viewport({
     const tc = state.transformControls;
     const proxy = state.gizmoProxy;
     const helper = tc.getHelper();
-    if (!transformEdit) {
+    // Scale has its own gizmo — a box on the body's own bounds, driven from the
+    // pointer handlers (see syncScaleGizmo) — so TransformControls stands down
+    // entirely for that mode rather than showing a second, competing widget.
+    if (!transformEdit || transformMode === "scale") {
       tc.detach();
       tc.enabled = false;
       helper.visible = false;
@@ -4562,7 +4862,7 @@ function collectBodyCircles(group: THREE.Group): { center: THREE.Vector3; radius
  *  picker handles (already near-zero opacity) just get fainter; hover-highlight
  *  still brightens the active axis from this softened base. */
 function softenGizmo(helper: THREE.Object3D): void {
-  const neutral = new THREE.Color(0xc2cad8);
+  const neutral = new THREE.Color(GIZMO_NEUTRAL);
   helper.traverse((o) => {
     const mat = (o as THREE.Mesh).material;
     if (!mat) return;

@@ -243,6 +243,14 @@ export function ParamEditor({
               onChange={(e) => onChangeParam(feature.id, "angle", e.target.value)}
             />
           </label>
+          <label className="param-field">
+            <span className="param-label">Scale</span>
+            <input
+              className="param-input"
+              value={feature.scale}
+              onChange={(e) => onChangeParam(feature.id, "scale", e.target.value)}
+            />
+          </label>
           <button className="add-btn sketch-btn" onClick={() => onEditTransform(feature.id)}>
             Edit in viewport
           </button>

@@ -1677,15 +1677,19 @@ export default function App() {
   const [transformPanelXY, setTransformPanelXY] = useState<{ x: number; y: number } | null>(null);
   // Live numeric readout during a gizmo drag (display only; cleared on commit).
   // Kept out of the document so dragging never regenerates the kernel.
-  const [liveTransform, setLiveTransform] = useState<{ tx: number; ty: number; tz: number; angle: number } | null>(
-    null,
-  );
+  const [liveTransform, setLiveTransform] = useState<{
+    tx: number;
+    ty: number;
+    tz: number;
+    angle: number;
+    scale: number;
+  } | null>(null);
   // How the current transform edit began, so Cancel knows what to undo: a
   // just-created transform is dropped entirely; an existing one being re-edited
   // is reverted to the snapshot it had when this edit started.
   const [transformOrigin, setTransformOrigin] = useState<
     | { created: true }
-    | { created: false; snapshot: Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis" | "copy"> }
+    | { created: false; snapshot: Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis" | "scale" | "copy"> }
     | null
   >(null);
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
@@ -4606,7 +4610,7 @@ export default function App() {
     );
     setTransformOrigin({
       created: false,
-      snapshot: { tx: f.tx, ty: f.ty, tz: f.tz, angle: f.angle, axis: f.axis, copy: f.copy },
+      snapshot: { tx: f.tx, ty: f.ty, tz: f.tz, angle: f.angle, axis: f.axis, scale: f.scale, copy: f.copy },
     });
   };
 
@@ -4635,6 +4639,9 @@ export default function App() {
       tz: num(f.tz),
       angle: num(f.angle),
       axis: f.axis,
+      // A half-typed / non-positive factor would collapse the gizmo's proxy;
+      // fall back to 1 until the field resolves to something buildable.
+      scale: num(f.scale) > 0 ? num(f.scale) : 1,
     };
   }, [transformEditId, doc, resolved.scope]);
 
@@ -4648,8 +4655,9 @@ export default function App() {
   // the feature's expressions (one regenerate for the whole drag). During the drag
   // the body is moved locally in the viewport, so the kernel never sees the
   // intermediate frames — the fix for "stuck regenerating" in a many-solid doc.
-  const handleTransformInput = (d: { tx: number; ty: number; tz: number; angle: number }) => {
+  const handleTransformInput = (d: { tx: number; ty: number; tz: number; angle: number; scale: number }) => {
     if (!transformEditId) return;
+    if (![d.tx, d.ty, d.tz, d.angle, d.scale].every(Number.isFinite)) return; // see handleTransformPreview
     setLiveTransform(null); // commit supersedes the live readout
     setDoc(
       setTransform(doc, transformEditId, {
@@ -4657,14 +4665,21 @@ export default function App() {
         ty: fmt(d.ty),
         tz: fmt(d.tz),
         angle: fmt(d.angle),
+        scale: fmt(d.scale),
       }),
       `transform:${transformEditId}`,
     );
   };
 
   // Per-frame readout while dragging — drives the floating panel's numbers only,
-  // never the document, so it can't trigger a regenerate.
-  const handleTransformPreview = (d: { tx: number; ty: number; tz: number; angle: number }) => {
+  // never the document, so it can't trigger a regenerate. A frame carrying a
+  // non-finite number is dropped rather than shown: `fmt` would render it into
+  // the field as the text "NaN"/"Infinity", and the same value on release would
+  // be committed as an expression that can't be evaluated. Holding the last good
+  // readout instead makes a degenerate frame invisible. (The gizmo guards this at
+  // source too — see proxyDelta — this is the backstop for every field.)
+  const handleTransformPreview = (d: { tx: number; ty: number; tz: number; angle: number; scale: number }) => {
+    if (![d.tx, d.ty, d.tz, d.angle, d.scale].every(Number.isFinite)) return;
     setLiveTransform(d);
   };
 
@@ -8864,9 +8879,9 @@ export default function App() {
                 Transform · {editingTransform.name}
               </div>
               <div className="ed-modes">
-                {(["translate", "rotate"] as const).map((m) => (
+                {(["translate", "rotate", "scale"] as const).map((m) => (
                   <button key={m} className={transformMode === m ? "active" : ""} onClick={() => setTransformMode(m)}>
-                    {m === "translate" ? "Move" : "Rotate"}
+                    {m === "translate" ? "Move" : m === "rotate" ? "Rotate" : "Scale"}
                   </button>
                 ))}
               </div>
@@ -8889,6 +8904,23 @@ export default function App() {
                     />
                   </label>
                 ))
+              ) : transformMode === "scale" ? (
+                <label className="ed-field">
+                  <span>Factor</span>
+                  <input
+                    value={liveTransform ? fmt(liveTransform.scale) : editingTransform.scale}
+                    onChange={(e) =>
+                      setDoc(
+                        updateParam(doc, editingTransform.id, "scale", e.target.value),
+                        `param:${editingTransform.id}:scale`,
+                      )
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") finishTransform();
+                      else if (e.key === "Escape") cancelTransform();
+                    }}
+                  />
+                </label>
               ) : (
                 <>
                   <div className="ed-field">
@@ -8936,7 +8968,11 @@ export default function App() {
                   onChange={(e) => setDoc(updateParam(doc, editingTransform.id, "copy", String(e.target.checked)))}
                 />
               </label>
-              <div className="ed-hint">Drag the gizmo, or type exact values.</div>
+              <div className="ed-hint">
+                {transformMode === "scale"
+                  ? "Uniform scale about the body's centre — drag a corner of the box out to grow, in to shrink."
+                  : "Drag the gizmo, or type exact values."}
+              </div>
               <div className="ed-actions">
                 <button className="ed-primary" onClick={finishTransform}>
                   Done

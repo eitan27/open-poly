@@ -73,14 +73,19 @@ export function migrateDocument(doc: Document): Document {
     // Backfills below stay on randomSolidColor, NOT the user's "new body
     // colour" preference: opening an old document isn't creating a body, and
     // repainting its whole history one flat colour would be a nasty surprise.
-    // Transforms gained copy/color/opacity (copy = a body-producing duplicate).
-    if (feat.type === "transform" && (f.copy === undefined || f.color === undefined || f.opacity === undefined)) {
+    // Transforms gained copy/color/opacity (copy = a body-producing duplicate),
+    // and later a uniform `scale` (1 = the translate+rotate-only original).
+    if (
+      feat.type === "transform" &&
+      (f.copy === undefined || f.color === undefined || f.opacity === undefined || f.scale === undefined)
+    ) {
       changed = true;
       return {
         ...feat,
         copy: f.copy ?? false,
         color: f.color ?? randomSolidColor(),
         opacity: f.opacity ?? 1,
+        scale: f.scale ?? "1",
       };
     }
     // Reference planes gained a color after they first shipped.
@@ -309,7 +314,15 @@ export function addTransform(
   doc: Document,
   targetId: string,
   pivot: [number, number, number],
-  opts: { tx?: string; ty?: string; tz?: string; angle?: string; axis?: "x" | "y" | "z"; copy?: boolean } = {},
+  opts: {
+    tx?: string;
+    ty?: string;
+    tz?: string;
+    angle?: string;
+    axis?: "x" | "y" | "z";
+    scale?: string;
+    copy?: boolean;
+  } = {},
 ): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "transform").length + 1;
   const feature: TransformFeature = {
@@ -323,6 +336,7 @@ export function addTransform(
     tz: opts.tz ?? "0",
     angle: opts.angle ?? "0",
     axis: opts.axis ?? "z",
+    scale: opts.scale ?? "1",
     pivot,
     copy: opts.copy ?? false,
     color: newBodyColor(),
@@ -336,7 +350,7 @@ export function addTransform(
 export function setTransform(
   doc: Document,
   id: string,
-  patch: Partial<Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis" | "copy">>,
+  patch: Partial<Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis" | "scale" | "copy">>,
 ): Document {
   return mapFeature(doc, id, (f) => (f.type === "transform" ? { ...f, ...patch } : f));
 }
@@ -807,7 +821,7 @@ export function updateParam(doc: Document, id: string, name: string, value: stri
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
     if (f.type === "plane" && name === "angle") return { ...f, angle: value };
     if (f.type === "transform") {
-      if (name === "tx" || name === "ty" || name === "tz" || name === "angle") {
+      if (name === "tx" || name === "ty" || name === "tz" || name === "angle" || name === "scale") {
         return { ...f, [name]: value };
       }
       if (name === "axis" && (value === "x" || value === "y" || value === "z")) {
@@ -1134,6 +1148,10 @@ export function resolveDocument(doc: Document): ResolveResult {
         if (f.operands.length < 2) throw new Error("A boolean needs at least two operands.");
         features.push({ id: f.id, type: "boolean", op: f.op, operands: f.operands });
       } else if (f.type === "transform") {
+        // A zero or negative factor would collapse or invert the body (OCCT
+        // happily builds either), so it's rejected here rather than baked.
+        const scale = evaluateExpression(f.scale, scope);
+        if (!(scale > 0)) throw new Error("transform: scale must be greater than zero.");
         features.push({
           id: f.id,
           type: "transform",
@@ -1143,6 +1161,7 @@ export function resolveDocument(doc: Document): ResolveResult {
           tz: evaluateExpression(f.tz, scope),
           angle: evaluateExpression(f.angle, scope),
           axis: f.axis,
+          scale,
           pivot: f.pivot,
           copy: f.copy,
         });
