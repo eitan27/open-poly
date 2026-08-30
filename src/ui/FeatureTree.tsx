@@ -20,6 +20,9 @@ interface Props {
   onDoubleClick: (id: string) => void;
   onDelete: (id: string) => void;
   onToggleSuppress: (id: string) => void;
+  /** Reference planes hide rather than suppress: a view toggle that leaves the
+   *  plane in the model, so sketches and features built on it keep resolving. */
+  onToggleHidden: (id: string, hidden: boolean) => void;
   onSetRollback: (index: number) => void;
   onMove: (id: string, delta: -1 | 1) => void;
 }
@@ -37,6 +40,7 @@ export function FeatureTree({
   onDoubleClick,
   onDelete,
   onToggleSuppress,
+  onToggleHidden,
   onSetRollback,
   onMove,
 }: Props) {
@@ -77,7 +81,7 @@ export function FeatureTree({
                 className={
                   "tree-row" +
                   (selectedIds.has(feature.id) ? " selected" : "") +
-                  (feature.suppressed || rolledBack ? " dim" : "") +
+                  (feature.suppressed || rolledBack || (feature.type === "plane" && feature.hidden) ? " dim" : "") +
                   (error ? " error" : "")
                 }
                 onClick={() => onSelect(feature.id)}
@@ -117,31 +121,42 @@ export function FeatureTree({
                 >
                   ▼
                 </button>
-                <button
-                  className="row-icon"
-                  title={feature.suppressed ? "Unsuppress (H)" : "Suppress (H): exclude from the model"}
-                  // Eye (sketch): bright = visible, faded = hidden. Suppress icon
-                  // (others): faded when active, bright when suppressed.
-                  style={{
-                    opacity:
-                      feature.type === "sketch" || feature.type === "plane"
-                        ? feature.suppressed
-                          ? 0.35
-                          : 1
-                        : feature.suppressed
-                          ? 1
-                          : 0.35,
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleSuppress(feature.id);
-                  }}
-                >
-                  {/* Sketches/planes produce no solid geometry, so suppress ≈ hide
-                      → eye; everything else removes geometry from the model → a
-                      distinct "disabled" icon. */}
-                  {feature.type === "sketch" || feature.type === "plane" ? <EyeIcon /> : <SuppressIcon />}
-                </button>
+                {/* A reference plane hides rather than suppresses: hiding is a
+                    view toggle, so sketches and features built on the plane keep
+                    resolving instead of breaking the model. */}
+                {feature.type === "plane" ? (
+                  <button
+                    className="row-icon"
+                    title={feature.hidden ? "Show" : "Hide"}
+                    style={{ opacity: feature.hidden ? 0.35 : 1 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleHidden(feature.id, !feature.hidden);
+                    }}
+                  >
+                    <EyeIcon />
+                  </button>
+                ) : (
+                  <button
+                    className="row-icon"
+                    title={feature.suppressed ? "Unsuppress (H)" : "Suppress (H): exclude from the model"}
+                    // Eye (sketch): bright = visible, faded = hidden. Suppress icon
+                    // (others): faded when active, bright when suppressed.
+                    style={{
+                      opacity:
+                        feature.type === "sketch" ? (feature.suppressed ? 0.35 : 1) : feature.suppressed ? 1 : 0.35,
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleSuppress(feature.id);
+                    }}
+                  >
+                    {/* Sketches produce no solid geometry, so suppress ≈ hide →
+                        eye; everything else removes geometry from the model → a
+                        distinct "disabled" icon. */}
+                    {feature.type === "sketch" ? <EyeIcon /> : <SuppressIcon />}
+                  </button>
+                )}
                 <button
                   className="row-icon"
                   title="Delete"

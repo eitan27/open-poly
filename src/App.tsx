@@ -113,6 +113,7 @@ import {
   midplaneFrame,
   offsetFrame,
   planeRefLabel,
+  planeResolves,
   planeThrough3Points,
   uvToWorld,
   worldToUv,
@@ -2387,9 +2388,19 @@ export default function App() {
     () =>
       doc.features
         .filter((f): f is PlaneFeature => f.type === "plane" && resolved.planeFrames.has(f.id))
-        .map((f) => ({ id: f.id, name: f.name, frame: resolved.planeFrames.get(f.id)!, color: f.color })),
+        .map((f) => ({
+          id: f.id,
+          name: f.name,
+          frame: resolved.planeFrames.get(f.id)!,
+          color: f.color,
+          hidden: !!f.hidden,
+        })),
     [doc, resolved.planeFrames],
   );
+  // Hiding a plane is a view toggle: it drops out of the viewport (so it's no
+  // longer drawn or pickable) but stays in every plane list, and anything built
+  // on it keeps resolving.
+  const visibleUserPlanes = useMemo(() => userPlanes.filter((p) => !p.hidden), [userPlanes]);
 
   // Live ghost of the reference-plane dialog: as soon as the picked inputs
   // define a frame, preview where the new plane will land (pure geometry — the
@@ -4725,6 +4736,10 @@ export default function App() {
         // Reflow expression-driven coordinates so the on-canvas sketch tracks its
         // variables, matching the solids built from it.
         .map((f) => applyEntityExprs(f, resolved.scope))
+        // A sketch whose plane no longer resolves (its reference plane was
+        // suppressed or deleted) simply isn't drawn — frameOf would throw, and a
+        // throw here takes the whole app down.
+        .filter((f) => planeResolves(f.plane, resolved.planeFrames))
         .map((f) => ({
           id: f.id,
           frame: frameOf(f.plane, resolved.planeFrames),
@@ -7392,6 +7407,7 @@ export default function App() {
             onToggleSuppress={(id) =>
               setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
             }
+            onToggleHidden={(id, hidden) => setDoc(setFeatureHidden(doc, id, hidden))}
             onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
             onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
           />
@@ -7476,7 +7492,7 @@ export default function App() {
             onSelect={handlePick}
             onSketchEntityDouble={handleSketchEntityDouble}
             datumVisibility={datumVisibility}
-            userPlanes={userPlanes}
+            userPlanes={visibleUserPlanes}
             ghostPlane={ghostPlaneFrame}
             transformEdit={transformEdit}
             transformMode={transformMode}

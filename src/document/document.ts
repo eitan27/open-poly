@@ -890,10 +890,13 @@ export function setFeatureOpacity(doc: Document, id: string, opacity: number): D
   );
 }
 
-/** Hide/show a part — a view toggle (skips rendering), distinct from suppress. */
+/** Hide/show a part or reference plane — a view toggle (skips rendering),
+ *  distinct from suppress: the feature stays in the model, so anything built on
+ *  it still resolves. */
 export function setFeatureHidden(doc: Document, id: string, hidden: boolean): Document {
   return mapFeature(doc, id, (f) =>
     f.type === "primitive" ||
+    f.type === "plane" ||
     f.type === "extrude" ||
     f.type === "boolean" ||
     f.type === "transform" ||

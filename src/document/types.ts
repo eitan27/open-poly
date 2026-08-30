@@ -410,6 +410,9 @@ export interface PlaneFeature extends FeatureBase {
   points?: [number, number, number][];
   /** Display color (0xRRGGBB), assigned once at creation from the pastel bank. */
   color: number;
+  /** Hidden (not rendered/pickable) — a view toggle. Unlike suppress it leaves
+   *  the plane in the model, so sketches and features built on it still resolve. */
+  hidden?: boolean;
 }
 
 /** A transform (translate + rotate + uniform scale) applied to a body in place.

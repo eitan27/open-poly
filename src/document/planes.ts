@@ -73,6 +73,13 @@ export function frameOf(ref: SketchPlaneRef, planes?: Map<string, PlaneFrameData
   return frame;
 }
 
+/** Whether `frameOf` would succeed for this ref — i.e. the plane it names still
+ *  exists and resolved. Lets render paths skip un-drawable geometry instead of
+ *  throwing. */
+export function planeResolves(ref: SketchPlaneRef, planes?: Map<string, PlaneFrameData>): boolean {
+  return ref.kind !== "plane" || planes?.has(ref.planeId) === true;
+}
+
 export function planeRefLabel(ref: SketchPlaneRef): string {
   if (ref.kind === "datum") return `${PLANES[ref.id].label} plane`;
   return ref.kind === "face" ? "Face" : "Reference plane";
