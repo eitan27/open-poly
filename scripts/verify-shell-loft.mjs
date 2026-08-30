@@ -7,11 +7,23 @@
 // exactly the outer−inner subtract that verify-loft-hollow.mjs showed can come
 // back EMPTY on near-tangent spline pairs.
 //
-// The invariant under test is not "shell always works on a loft" — it can't,
-// and the feature's error copy says so. It is that the result is never a
-// SILENT no-op: either a genuinely hollowed body, or ok:false with actionable
-// copy. An un-hollowed body reported as success is the failure mode this
-// guards, and the one Shell actually shipped with.
+// Shell now HAS a path for this geometry: when the offset fails and the target
+// is still the loft itself, it insets the loft's own sections in 2D and re-lofts
+// them into the cavity to subtract (shellLoftSections). So the bar here is
+// higher than it was — the loft is expected to hollow, not merely to fail
+// honestly — but the old invariant still holds underneath it: the result is
+// never a SILENT no-op. Either a genuinely hollowed body, or ok:false with
+// actionable copy. An un-hollowed body reported as success is the failure mode
+// this guards, and the one Shell actually shipped with.
+//
+// Named faces cannot prove any of that (sceneSummary lists names, not counts,
+// and a cavity has no name-level signature), so hollowness and openings are
+// tested by BOOLEAN PROBE: intersect the body with a small box parked in a
+// region whose contents we can predict, and read off whether anything came
+// back. An empty boolean leaves both operands standing and flags the feature,
+// so "one body" means the probed region was material and "two bodies" means it
+// was air. That distinguishes a cavity from a solid, which nothing else here
+// can do.
 //
 // Run: `npm run dev`, then `URL=http://localhost:5174/ node scripts/verify-shell-loft.mjs`.
 import { chromium } from "playwright";
@@ -152,9 +164,30 @@ async function shellAndClassify(targetId, faces, thickness) {
   return { kind: res.ok ? "built" : "refused", error: res.error ?? "", after };
 }
 
+/** Is the region occupied by a 2×2×`h` box at (0, 18, `tz`) MATERIAL in `bodyId`?
+ *
+ *  Intersects the body with that box and reads the outcome from the body COUNT,
+ *  relative to what the document held before: an intersect that finds material
+ *  consumes both operands and leaves one result in their place (count
+ *  unchanged), while an empty one is refused and leaves both standing (count up
+ *  by the probe box). CONSUMES `bodyId` when it hits material, so give each
+ *  probe a body of its own. */
+async function probeIsMaterial(bodyId, tz, h, tx = 0, ty = 18) {
+  const before = (await read({ read: "sceneSummary" })).bodies.length;
+  const box = await apply({ op: "addPrimitive", kind: "box", params: { width: 2, depth: 2, height: h } });
+  await apply({ op: "transform", targetId: box.createdId, tx, ty, tz });
+  await waitIdle();
+  await apply({ op: "boolean", kind: "intersect", operands: [bodyId, box.createdId] });
+  await waitIdle();
+  const after = (await read({ read: "sceneSummary" })).bodies.length;
+  if (after !== before && after !== before + 1) throw new Error(`probe: unreadable body count ${before} → ${after}`);
+  return after === before;
+}
+
 // --- 1. Sealed shell of the loft (the tool's default path) -----------------
 const sealed = await shellAndClassify(loftId, [], WALL);
 console.log(`   sealed outcome: ${sealed.kind}${sealed.error ? ` — ${sealed.error.slice(0, 120)}` : ""}`);
+check("a sealed shell of a freeform loft BUILDS", sealed.kind === "built", sealed.error.slice(0, 200));
 if (sealed.kind === "refused") {
   check(
     "…and when refused it says so in actionable copy, not a raw OCCT exception",
@@ -181,14 +214,31 @@ check(
   JSON.stringify(sealed.after?.id),
 );
 
-// --- 2. Open a face of the loft (the MakeThickSolidByJoin path) ------------
+// The check the name list can't make: the middle of the body is now AIR. This
+// is what "hollow" means, and the whole point of the feature — the loft was
+// solid there a moment ago, which case 4 confirms on an unshelled twin.
+if (sealed.kind === "built") {
+  check(
+    "…and the inside really is a cavity — a probe in the middle of it hits air",
+    (await probeIsMaterial(loftId, 6, 2)) === false,
+    "probe at (0, 18, 6…8)",
+  );
+}
+
+// --- 2. Open a face of the loft --------------------------------------------
 // Fresh loft, so this is judged independently of whatever case 1 did.
 const loft2Id = await buildLoft("Hull2", STATIONS);
 scene = await read({ read: "sceneSummary" });
 const loft2 = scene.bodies.find((b) => b.id === loft2Id);
-// The flat base created by the closing line is the natural opening.
-const baseFace = loft2.faces.find((f) => /-z|\/base|\+y|-y/.test(f)) ?? loft2.faces[0];
-check("picked a face of the loft to open", Boolean(baseFace), String(baseFace));
+// The flat base laid down by each section's closing line. `loftBody` names one
+// side face per edge of the FIRST section's outline, in outline order, and the
+// region walk starts on the spline — so the closing line is the LAST edge, and
+// its face is the last `side{i}`. Nothing rides on that derivation being right:
+// case 3 opens this face and case 4 leaves it sealed, and only the true base
+// face makes both of those come out the way they're asserted to.
+const sideCount = loft2.faces.filter((f) => /\/side\d+$/.test(f)).length;
+const baseFace = `${loft2Id}/side${sideCount - 1}`;
+check("picked the loft's flat base to open", loft2.faces.includes(baseFace), `${sideCount} side faces, ${baseFace}`);
 
 const opened = await shellAndClassify(loft2Id, [baseFace], WALL);
 console.log(`   opened outcome: ${opened.kind}${opened.error ? ` — ${opened.error.slice(0, 120)}` : ""}`);
@@ -199,9 +249,14 @@ if (opened.kind === "refused") {
     opened.error.slice(0, 200),
   );
 } else {
+  // The opened face's NAME survives here, and should. This path doesn't delete
+  // the face the way MakeThickSolidByJoin does — it cuts a cavity through it,
+  // so what's left is the same face trimmed back to the rim around the opening,
+  // and keeping its name keeps every downstream reference to it working. The
+  // opening itself is proved by the probe in case 3, not by a missing name.
   check(
-    "…and when it succeeds the opening is gone from the name list",
-    !opened.after.faces.includes(baseFace),
+    "…and the opened face survives as the rim around the opening, name intact",
+    opened.after.faces.includes(baseFace),
     `${opened.after.faces.length} faces remain`,
   );
   check(
@@ -224,23 +279,185 @@ if (opened.kind === "refused") {
   );
 }
 
-// --- 3. Whatever happened, the document is still coherent ------------------
+// --- 3. The opening is real: the wall behind the base face is gone ---------
+if (opened.kind === "built") {
+  check(
+    "opening the base face cuts the cavity through it — the bottom wall is air",
+    (await probeIsMaterial(loft2Id, 0, 1)) === false,
+    "probe at (0, 18, 0…1)",
+  );
+}
+
+// --- 4. Whatever happened, the document is still coherent ------------------
 scene = await read({ read: "sceneSummary" });
-// The refused sealed shell is deliberately left in the document, so an error
-// entry is EXPECTED here — what matters is that it's the feature's own
-// actionable copy rather than a crash, and that it's confined to that feature.
+// Errors are EXPECTED here, and they are the point rather than a smell: every
+// probe that correctly found air left its intersect flagged as an empty
+// boolean. A refused shell would show up here too, in its own actionable copy.
+// What must not appear is a crash, or an error on anything but those.
 const errs = Object.values(scene.errors ?? {});
 check(
   "any feature left in error carries actionable copy, not a crash",
-  errs.every((e) => /thinner wall|subtracting an inner body|re-pick/.test(String(e))),
+  errs.every((e) => /thinner wall|subtracting an inner body|re-pick|empty result/.test(String(e))),
   JSON.stringify(scene.errors),
 );
-check("a refused shell doesn't take other features down with it", errs.length <= 2, `${errs.length} features in error`);
+check("nothing errored but the probes that found air", errs.length <= 4, `${errs.length} features in error`);
 check(
   "no body came back with zero faces",
   scene.bodies.every((b) => b.faces.length > 0),
   JSON.stringify(scene.bodies.map((b) => [b.name, b.faces.length])),
 );
+
+// --- 5. The controls, so case 1 and case 3 mean something ------------------
+// The same probes on bodies that must read the OTHER way round: a sealed shell
+// keeps its bottom wall, and an unshelled loft is solid right through. Run in a
+// FRESH document — four shelled 300-face lofts plus their probes in one
+// timeline regenerates slower than this harness is willing to wait, and these
+// two cases share nothing with the ones above anyway.
+await apply({ op: "newDocument", name: "verify-shell-loft-controls" });
+await waitIdle();
+const loft3Id = await buildLoft("Hull3", STATIONS);
+const sealed3 = await shellAndClassify(loft3Id, [], WALL);
+check("the control's sealed shell builds too", sealed3.kind === "built", sealed3.error.slice(0, 160));
+if (sealed3.kind === "built") {
+  check(
+    "…and a SEALED shell of the same loft KEEPS that bottom wall",
+    (await probeIsMaterial(loft3Id, 0, 1)) === true,
+    "probe at (0, 18, 0…1)",
+  );
+}
+const loft4Id = await buildLoft("Hull4", STATIONS);
+check(
+  "…and the unshelled loft is solid where the cavity later is — the probe works",
+  (await probeIsMaterial(loft4Id, 6, 2)) === true,
+  "probe at (0, 18, 6…8)",
+);
+
+// --- 6. A loft between DIFFERENT profiles, with a side face opened ----------
+// The case that shipped broken: a side face is named for an edge of the FIRST
+// section, and that index means nothing on a section with a different point
+// count — so every such loft refused every side pick, and the tool looked like
+// it ignored the face. Worse, `ThruSections` names none of these faces
+// `side{i}` at all (their history is lost, so they come out `f{n}`), which the
+// name-matching refused a second time over. Both are traced geometrically now.
+//
+// `ok` is a strong claim here: the kernel refuses an opening that the wall
+// closes back over, so a side-face shell that builds really did open something.
+await apply({ op: "newDocument", name: "verify-shell-loft-mismatched" });
+await waitIdle();
+const square = [
+  [-15, -15],
+  [15, -15],
+  [15, 15],
+  [-15, 15],
+];
+const hexagon = Array.from({ length: 6 }, (_, i) => {
+  const t = (i * 2 * Math.PI) / 6;
+  return [18 * Math.cos(t), 18 * Math.sin(t)];
+});
+const section = async (plane, pts, name) => {
+  const entities = pts.map((a, i) => ({ shape: "line", a, b: pts[(i + 1) % pts.length] }));
+  const sk = await apply({ op: "addSketch", plane, entities, name });
+  const s = (await read({ read: "sceneSummary" })).sketches.find((q) => q.id === sk.createdId);
+  return { sketchId: sk.createdId, regionId: s.regions[0].id };
+};
+const base = await section({ datum: "top" }, square, "Square");
+const lid = await section(
+  { planeId: (await apply({ op: "addPlane", method: "offset", base: { datum: "top" }, offset: 30 })).createdId },
+  hexagon,
+  "Hexagon",
+);
+const mixed = await apply({ op: "addLoft", profiles: [base, lid], name: "Mixed" });
+check("a loft between a square and a hexagon builds", mixed.ok, JSON.stringify(mixed).slice(0, 140));
+await waitIdle();
+const mixedBody = (await read({ read: "sceneSummary" })).bodies.find((b) => b.id === mixed.createdId);
+const wall = (mixedBody?.faces ?? []).find((f) => !/\/(start|end)$/.test(f));
+check("…with side faces the loft couldn't name from history", /\/f\d+$/.test(String(wall)), String(wall));
+const mixedShell = await apply({ op: "shell", targetId: mixed.createdId, faces: [wall], thickness: 2 });
+await waitIdle();
+const mixedAfter = (await read({ read: "sceneSummary" })).bodies.find((b) => b.id === mixed.createdId);
+check(
+  "opening one of them hollows the body instead of refusing the pick",
+  mixedShell.ok,
+  (mixedShell.error ?? "").slice(0, 200),
+);
+check(
+  "…and the cavity it cut is nameable",
+  (mixedAfter?.faces ?? []).some((f) => f.endsWith("/in")),
+  `${(mixedAfter?.faces ?? []).filter((f) => f.endsWith("/in")).length} inner faces`,
+);
+
+// --- 7. A loft between two SQUARES, with one side opened -------------------
+// The plainest shape this feature has to hollow, and the one whose side walls a
+// user most obviously expects to open: four points a section means each side of
+// the loft is ONE face, not a run of tessellation slivers, so each is
+// individually openable. `side0` is generated by edge 0 of the FIRST section —
+// its bottom edge — so it is the −y wall, and opening it must breach that wall
+// and no other. The 2D half of this is unit-tested in geom/loftInset.test.ts;
+// what only the kernel can answer is whether the cavity really cuts through.
+const SQUARE_WALL = 2;
+const squareSection = (half) => [
+  [-half, -half],
+  [half, -half],
+  [half, half],
+  [-half, half],
+];
+async function buildSquareLoft(name) {
+  const section = async (plane, pts, label) => {
+    const entities = pts.map((a, i) => ({ shape: "line", a, b: pts[(i + 1) % pts.length] }));
+    const sk = await apply({ op: "addSketch", plane, entities, name: label });
+    const found = (await read({ read: "sceneSummary" })).sketches.find((q) => q.id === sk.createdId);
+    return { sketchId: sk.createdId, regionId: found.regions[0].id };
+  };
+  const bottom = await section({ datum: "top" }, squareSection(15), `${name}-lo`);
+  const top = await section(
+    { planeId: (await apply({ op: "addPlane", method: "offset", base: { datum: "top" }, offset: 30 })).createdId },
+    squareSection(10),
+    `${name}-hi`,
+  );
+  const built = await apply({ op: "addLoft", profiles: [bottom, top], name });
+  await waitIdle();
+  return built.createdId;
+}
+
+await apply({ op: "newDocument", name: "verify-shell-loft-squares" });
+await waitIdle();
+const sqId = await buildSquareLoft("Tapered");
+const sqBody = (await read({ read: "sceneSummary" })).bodies.find((b) => b.id === sqId);
+check(
+  "a loft between two squares names all four of its sides",
+  ["side0", "side1", "side2", "side3", "start", "end"].every((n) => sqBody?.faces.includes(`${sqId}/${n}`)),
+  JSON.stringify((sqBody?.faces ?? []).map((f) => f.split("/").pop())),
+);
+const sqShell = await apply({ op: "shell", targetId: sqId, faces: [`${sqId}/side0`], thickness: SQUARE_WALL });
+await waitIdle();
+const sqAfter = (await read({ read: "sceneSummary" })).bodies.find((b) => b.id === sqId);
+check("…and opening one of them builds", sqShell.ok, (sqShell.error ?? "").slice(0, 200));
+check(
+  "…leaving three inner walls and two capped ends nameable",
+  (sqAfter?.faces ?? []).filter((f) => f.endsWith("/in")).length === 5,
+  JSON.stringify((sqAfter?.faces ?? []).filter((f) => f.endsWith("/in")).map((f) => f.split("/").slice(1).join("/"))),
+);
+
+// Each probe consumes its body, so every wall gets a loft of its own. The
+// tapered sides slope inward, so sample low, where the section is still wide.
+for (const [tx, ty, tag] of [
+  [0, -14, "-y"],
+  [0, 14, "+y"],
+  [-14, 0, "-x"],
+  [14, 0, "+x"],
+]) {
+  await apply({ op: "newDocument", name: `verify-shell-loft-squares-${tag}` });
+  await waitIdle();
+  const probeId = await buildSquareLoft("Tapered");
+  await apply({ op: "shell", targetId: probeId, faces: [`${probeId}/side0`], thickness: SQUARE_WALL });
+  await waitIdle();
+  const material = await probeIsMaterial(probeId, 3, 3, tx, ty);
+  check(
+    `opening side0 breaches the ${tag} wall and no other — ${tag} is ${material ? "material" : "air"}`,
+    material === (tag !== "-y"),
+    `probe at (${tx}, ${ty}, 3…6)`,
+  );
+}
 
 await page.screenshot({ path: "/tmp/openpoly-shell-loft.png" });
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
