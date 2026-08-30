@@ -17,6 +17,17 @@ export interface ViewportTheme {
   gridMajor: number;
   /** …and the rest of the cells. */
   gridMinor: number;
+  /** The scale gizmo's wireframe box and its corner grips. The one gizmo that
+   *  has to follow the theme: it is a thin line drawn OVER the body and across
+   *  open space, so what it reads against changes completely between the two
+   *  backdrops. The pale grey that sits quietly on the dark viewport is nearly
+   *  the light one's own background — hence a slate here, dark enough to carry
+   *  the segments that cross empty space and still lighter than the cube's edge,
+   *  so the widget stays a guide rather than becoming the loudest thing on
+   *  screen. Opacity alone can't fix that: a light grey line at any opacity is
+   *  still a light grey line. */
+  scaleBoxColor: number;
+  scaleBoxOpacity: number;
   /** The navigation cube in the corner. It's the one widget that reads as UI
    *  chrome rather than as geometry, so it follows the theme like the panels do
    *  — a navy cube parked on a paper-white viewport looks like a bug. Its faces
@@ -48,6 +59,10 @@ export const VIEWPORT_THEMES: Record<ResolvedTheme, ViewportTheme> = {
     background: 0x1b1d23,
     gridMajor: 0x3a3d48,
     gridMinor: 0x282b33,
+    // The shared muted gizmo grey (GIZMO_NEUTRAL) — the box matches the move and
+    // rotate handles exactly here.
+    scaleBoxColor: 0xc2cad8,
+    scaleBoxOpacity: 0.5,
     cube: {
       body: 0x2c3340,
       edge: 0x6b748c,
@@ -67,6 +82,8 @@ export const VIEWPORT_THEMES: Record<ResolvedTheme, ViewportTheme> = {
     // white specular highlights on every body readable, and stops the viewport
     // from glaring next to the panels.
     background: 0xe9edf3,
+    scaleBoxColor: 0x7c879b,
+    scaleBoxOpacity: 0.7,
     gridMajor: 0xa9b4c6,
     gridMinor: 0xcfd6e1,
     cube: {

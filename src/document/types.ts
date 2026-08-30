@@ -412,11 +412,11 @@ export interface PlaneFeature extends FeatureBase {
   color: number;
 }
 
-/** A rigid transform (translate + rotate) applied to a body in place. A rigid
- *  motion doesn't alter topology, so the body keeps its identity AND its
- *  persistent topological names — downstream features still reference it. The
- *  body keeps the id of the feature that produced it (like chamfer/fillet).
- *  Phase 5.5. */
+/** A transform (translate + rotate + uniform scale) applied to a body in place.
+ *  Like a rigid motion, a similarity (uniform scale) doesn't alter topology, so
+ *  the body keeps its identity AND its persistent topological names — downstream
+ *  features still reference it. The body keeps the id of the feature that
+ *  produced it (like chamfer/fillet). Phase 5.5. */
 export interface TransformFeature extends FeatureBase {
   type: "transform";
   /** The body being moved (the feature id that produced it). */
@@ -429,8 +429,14 @@ export interface TransformFeature extends FeatureBase {
   angle: string;
   /** World axis the rotation turns about. */
   axis: "x" | "y" | "z";
-  /** Pivot the rotation turns around (world space), baked at creation from the
-   *  target body's centroid so the gizmo and kernel agree. */
+  /** Uniform scale factor (expression) about `pivot`, applied BEFORE the
+   *  rotation and translation. 1 = unscaled. Uniform only: OCCT's non-uniform
+   *  BRepBuilderAPI_GTransform isn't bound in this wasm build, and a similarity
+   *  is also what keeps the topology (and its names) intact. */
+  scale: string;
+  /** Pivot the rotation turns around and the scale grows from (world space),
+   *  baked at creation from the target body's centroid so the gizmo and kernel
+   *  agree. */
   pivot: [number, number, number];
   /** Keep the original: when true the transform produces a NEW body (a moved
    *  copy, keyed by this feature) and leaves the target untouched; when false it

@@ -3182,9 +3182,11 @@ function applyTrsf(target: NamedShape, trsf: Topo): NamedShape {
   return { shape, names };
 }
 
-/** Translate + rotate a body in place (rotation about pivot/axis first, then
- *  translation). Returns a FRESH NamedShape distinct from `target` (the caller
- *  disposes the original); names pass through unchanged since topology doesn't. */
+/** Scale + rotate + translate a body in place, composed in that order (the
+ *  uniform scale and the rotation both about `pivot`, then the translation).
+ *  Returns a FRESH NamedShape distinct from `target` (the caller disposes the
+ *  original); names pass through unchanged since topology doesn't — a similarity
+ *  transform is as topology-preserving as a rigid one. */
 function transformNamed(target: Body, t: Extract<ResolvedFeature, { type: "transform" }>): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
@@ -3197,6 +3199,16 @@ function transformNamed(target: Body, t: Extract<ResolvedFeature, { type: "trans
     owned = true;
     trsf.delete();
   };
+
+  // Scale first, so a scaled body still rotates about (and translates from) the
+  // same pivot — matching the viewport gizmo's T · R · S composition.
+  if (t.scale !== 1) {
+    const center = new oc.gp_Pnt_3(t.pivot[0], t.pivot[1], t.pivot[2]);
+    const sc = new oc.gp_Trsf_1();
+    sc.SetScale(center, t.scale);
+    step(sc);
+    center.delete();
+  }
 
   if (t.angle !== 0) {
     const [dx, dy, dz] = AXIS_DIR[t.axis];
