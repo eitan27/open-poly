@@ -1,6 +1,7 @@
-// Drives the modeling toolbar's overflow "More ▾" flyout at several window
-// widths: which buttons stay in the bar, the flyout's default (hidden) list,
-// search, arrow-key navigation, and Enter to run a tool.
+// Drives the modeling toolbar's overflow "…" flyout at several window widths:
+// which buttons stay in the bar, the flyout's default (hidden) list, search,
+// arrow-key navigation, and Enter to run a tool. The "…" button is permanent —
+// with nothing hidden it is still the tool search.
 import { chromium } from "playwright";
 
 const URL = process.env.URL ?? "http://localhost:5173/";
@@ -127,14 +128,14 @@ await page.keyboard.press("Escape");
 await page.waitForTimeout(150);
 console.log("   Esc closed it:", (await page.locator(".model-toolbar .tb-more-menu").count()) === 0);
 
-// Wide enough that everything fits: no More button, but "/" is still a tool
-// search — and then it lists every tool rather than an empty box.
+// Wide enough that everything fits: the "…" button is still there, and "/"
+// still opens it — listing every tool rather than an empty box.
 await page.setViewportSize({ width: 1660, height: 900 });
 await page.waitForTimeout(400);
 await page.evaluate(() => document.activeElement?.blur());
 await page.keyboard.press("/");
 await page.waitForTimeout(250);
-console.log("\n=== '/' at 1660px (nothing hidden — no More button)");
+console.log("\n=== '/' at 1660px (nothing hidden — the … button stays)");
 console.log(
   "   More button:",
   await page.locator(".model-toolbar > .tb-more > .tb-more-btn").count(),

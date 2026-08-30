@@ -14,8 +14,11 @@ interface Props {
 
 /**
  * A floating toolbar that never runs off the viewport: buttons that don't fit
- * collapse into a "More ▾" flyout listing the hidden ones, with a search box
- * that (once you type) searches every tool in the bar, arrow-navigable.
+ * collapse into a "…" flyout listing the hidden ones, with a search box that
+ * (once you type) searches every tool in the bar, arrow-navigable. The "…"
+ * button is always on the bar — with nothing hidden it still opens as the
+ * "find me a tool" search over every tool — so the room for it is reserved
+ * before any button is placed (see fitCount).
  *
  * Fitting is measured off a hidden mirror of the full button row (`.tb-mirror`)
  * rather than the live one, so the widths never depend on how many buttons are
@@ -89,18 +92,12 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
     if (allDisabled && menuOpen) closeMenu();
   }, [allDisabled]);
 
-  // "/" from the app: toggle the flyout. It opens even when nothing is hidden
-  // (there's no More button then) — as a plain "find me a tool" search.
+  // "/" from the app: toggle the flyout. With nothing hidden it opens as a
+  // plain "find me a tool" search over the whole bar.
   useEffect(() => {
     if (!openRequest || allDisabled) return;
     setMenuQuery((q) => (q === null ? "" : null));
   }, [openRequest]);
-
-  // Nothing hidden any more (the window widened) → no More button to anchor
-  // the flyout to.
-  useEffect(() => {
-    if (hidden.length === 0 && menuOpen) closeMenu();
-  }, [hidden.length]);
 
   // A dropdown button (New Body) whose menu was opened by its keyboard shortcut
   // while the button itself is hidden: honour the keystroke by opening the
@@ -194,40 +191,41 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
             the blur can't sit on the bar itself. */}
         <div className="tb-blur" />
         {items.slice(0, visibleCount).map((item) => renderButton(item, false))}
-        {(hidden.length > 0 || menuOpen) && (
-          <div className="tb-more" ref={moreRef}>
-            {hidden.length > 0 && (
-              <button
-                className="tb-more-btn"
-                title={`${hidden.length} more tool${hidden.length === 1 ? "" : "s"} — click to search all tools`}
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                disabled={allDisabled}
-                onClick={() => (menuOpen ? closeMenu() : openMenu())}
-              >
-                More ▾{showShortcuts ? <span className="kbd-hint">/</span> : null}
-              </button>
-            )}
-            {menuOpen && (
-              // Keyed by the starting query so re-opening it pre-filtered (the
-              // hidden-dropdown shortcut, below) remounts with that text.
-              <MoreFlyout
-                key={menuQuery}
-                className="tb-more-menu"
-                rows={allRows}
-                defaultRows={hiddenRows}
-                initialQuery={menuQuery}
-                onRun={(row) => row.onSelect()}
-                onClose={closeMenu}
-              />
-            )}
-          </div>
-        )}
+        <div className="tb-more" ref={moreRef}>
+          <button
+            className="tb-more-btn"
+            title={
+              hidden.length > 0
+                ? `${hidden.length} more tool${hidden.length === 1 ? "" : "s"} — click to search all tools`
+                : "Search all tools"
+            }
+            aria-label="More tools"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            disabled={allDisabled}
+            onClick={() => (menuOpen ? closeMenu() : openMenu())}
+          >
+            …{showShortcuts ? <span className="kbd-hint">/</span> : null}
+          </button>
+          {menuOpen && (
+            // Keyed by the starting query so re-opening it pre-filtered (the
+            // hidden-dropdown shortcut, below) remounts with that text.
+            <MoreFlyout
+              key={menuQuery}
+              className="tb-more-menu"
+              rows={allRows}
+              defaultRows={hiddenRows}
+              initialQuery={menuQuery}
+              onRun={(row) => row.onSelect()}
+              onClose={closeMenu}
+            />
+          )}
+        </div>
         {/* Measured, never seen: the full row at its natural width. */}
         <div className="tb-mirror" ref={mirrorRef} aria-hidden>
           {items.map((item) => renderButton(item, true))}
           <button className="tb-more-btn" tabIndex={-1}>
-            More ▾{showShortcuts ? <span className="kbd-hint">/</span> : null}
+            …{showShortcuts ? <span className="kbd-hint">/</span> : null}
           </button>
         </div>
       </div>

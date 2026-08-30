@@ -1,5 +1,5 @@
 // Overflow logic for the floating viewport toolbars: which buttons fit in the
-// space available, and how the "More ▾" flyout's search ranks tools. Kept free
+// space available, and how the "…" flyout's search ranks tools. Kept free
 // of React/DOM (the one React import is a type, erased at build) so both halves
 // are unit-testable in node.
 import type { ReactNode } from "react";
@@ -53,16 +53,15 @@ export interface ToolbarRow {
 
 /**
  * How many of `widths` fit in `available`, laid out in a row with `gap`
- * between neighbours. If they don't all fit, room for the More button
- * (`moreWidth`, plus its own gap) is reserved first — so the answer is how many
+ * between neighbours. The More button is always on the bar — it doubles as the
+ * "find me a tool" search, so it's there even when nothing is hidden — so its
+ * `moreWidth` (plus its own gap) is reserved first, and the answer is how many
  * fit *alongside* More.
  */
 export function fitCount(widths: number[], gap: number, available: number, moreWidth: number): number {
   // A sub-pixel slack: widths come from getBoundingClientRect, and a total that
   // rounds to exactly the available width must not overflow by 0.0001px.
   const SLACK = 0.5;
-  const total = widths.reduce((a, b) => a + b, 0) + gap * Math.max(0, widths.length - 1);
-  if (total <= available + SLACK) return widths.length;
   let used = moreWidth;
   let n = 0;
   for (const w of widths) {

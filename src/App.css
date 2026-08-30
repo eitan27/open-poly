@@ -762,12 +762,24 @@
   border-left: 1px solid var(--border);
 }
 
-/* The gear has far more internal detail than the ? beside it, so at a shared
-   font size it reads noticeably smaller. Sized up to match by eye. Compound
-   selector because .tool-btn sets font-size further down this file and would
-   otherwise win on source order at equal specificity. */
+/* The gear has far more internal detail than the glyphs beside it, so at a
+   shared font size it reads noticeably smaller. Sized up to match by eye.
+   Compound selector because .tool-btn sets font-size further down this file and
+   would otherwise win on source order at equal specificity. */
 .tool-btn.settings-btn {
   font-size: 17px;
+}
+
+/* The one labelled control in the chrome row: .tool-btn is a fixed 28px square
+   for the icon buttons, so this one opts out of the width and sizes to its
+   words instead. */
+.tool-btn.shortcuts-btn {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 /* The report bug is an SVG, not a glyph — centre it in the fixed-size button
@@ -1859,8 +1871,13 @@ button:disabled .kbd-hint {
   display: flex;
 }
 
+/* Always on the bar, even with nothing hidden — it doubles as the "find me a
+   tool" search. Labelled "…" rather than a word so a control that isn't a tool
+   doesn't outweigh the tools beside it; the min-width keeps it a comfortable
+   target at that short a label. */
 .model-toolbar .tb-more-btn {
   flex: 1;
+  min-width: 34px;
   white-space: nowrap;
 }
 
@@ -1987,9 +2004,11 @@ button:disabled .kbd-hint {
   border-radius: 8px;
   /* The column is given the exact height of what fits (OverflowColumn); the
      tools below that are still laid out — so measuring stays stable — and are
-     clipped here. Background + blur live on .tb-blur for the same
-     stacking-context reason as the modeling toolbar. */
-  overflow: hidden;
+     hidden by the `visibility: hidden` that component puts on them. NOT an
+     `overflow: hidden` here: the group flyouts (circle / rectangle / pattern /
+     constraints) open to the RIGHT of the column, so clipping the box clipped
+     them away entirely and the ▸ arrows looked dead. Background + blur live on
+     .tb-blur for the same stacking-context reason as the modeling toolbar. */
 }
 
 /* The tool slots: positioned so they paint above the .tb-blur layer, and never
@@ -2001,8 +2020,8 @@ button:disabled .kbd-hint {
 }
 
 /* The overflow button, pinned to the bottom of the visible column. Labelled
-   "More" in words: every glyph that reads as "and the rest" (⋯, ⋮, ▾) is
-   already a sketch tool's icon — ⋯ is the linear pattern. */
+   "More" in words rather than the modelling bar's "…": every button around it in
+   this column is a bare glyph, so a glyph here would read as one more tool. */
 .tbc-more {
   position: absolute;
   left: 5px;
