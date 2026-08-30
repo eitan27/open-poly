@@ -763,7 +763,10 @@ const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; name: string; title: s
   },
   {
     tool: "pattern-linear",
-    label: "⋯",
+    // The same glyph the solids toolbar's Pattern button wears: patterning is
+    // one idea, and it should look like one whether the thing being repeated is
+    // a body or a sketch entity.
+    label: "⁙",
     name: "Linear pattern",
     title: "Linear pattern (X): select entities to repeat, set count + step; Enter commits, Esc cancels",
     sc: "X",
@@ -1669,6 +1672,9 @@ export default function App() {
   // panel + viewport gizmo are shown while this is set), and which gizmo to show.
   const [transformEditId, setTransformEditId] = useState<string | null>(null);
   const [transformMode, setTransformMode] = useState<TransformMode>("translate");
+  // Where the panel opens: beside the gizmo, never on top of it (see
+  // transformPanelPos). Null until the first placement; draggable after that.
+  const [transformPanelXY, setTransformPanelXY] = useState<{ x: number; y: number } | null>(null);
   // Live numeric readout during a gizmo drag (display only; cleared on commit).
   // Kept out of the document so dragging never regenerates the kernel.
   const [liveTransform, setLiveTransform] = useState<{ tx: number; ty: number; tz: number; angle: number } | null>(
@@ -1756,6 +1762,9 @@ export default function App() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
+  // The viewport <main> — the containing block every floating dialog is
+  // positioned in, so its size is what a placement has to fit inside.
+  const viewportElRef = useRef<HTMLElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const dxfInputRef = useRef<HTMLInputElement>(null);
   // The "Import ▾" flyout (STEP part / DXF sketch) in the Parts panel.
@@ -4534,6 +4543,40 @@ export default function App() {
     });
   };
 
+  // An expression resolved to a number for geometry maths; unparseable (or
+  // mid-typing) reads as 0, the same way the gizmo's own resolver treats it.
+  const numOrZero = (expr: string) => {
+    try {
+      const v = evaluateExpression(expr, resolved.scope);
+      return Number.isFinite(v) ? v : 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  // Where the Transform panel opens: beside the gizmo rather than over it. The
+  // gizmo is drawn at the body's pivot and TransformControls sizes its arrows as
+  // a constant fraction of the viewport height, so it claims a wide disc around
+  // that point — parked at top-centre (where the panel used to live) it sat on
+  // the handles of anything near the middle of the view. Pick whichever side of
+  // the gizmo has room for the panel, preferring the left; the drag handle still
+  // lets the user move it anywhere afterwards.
+  const transformPanelPos = (pivot: [number, number, number]) => {
+    // .extrude-dialog: 190px of content + 10px padding + 1px border a side.
+    const PANEL_W = 212;
+    const el = viewportElRef.current;
+    const g = viewApiRef.current?.worldToScreen(pivot);
+    const vw = el?.clientWidth ?? 0;
+    const vh = el?.clientHeight ?? 0;
+    // Fallback: the old top-centre anchor, minus the panel's half width.
+    if (!g || vw === 0) return { x: Math.max(12, vw / 2 - PANEL_W / 2), y: 64 };
+    const radius = Math.min(0.3 * vh, 260); // the gizmo's on-screen reach, generously
+    const left = g.x - radius - 12 - PANEL_W;
+    const right = g.x + radius + 12;
+    const x = left >= 12 ? left : right + PANEL_W <= vw - 12 ? right : left >= vw - right ? 12 : vw - PANEL_W - 12;
+    return { x: Math.max(12, Math.min(x, Math.max(12, vw - PANEL_W - 12))), y: 64 };
+  };
+
   // Create a Transform on the selected body and open the gizmo to edit it.
   const openTransform = () => {
     if (!transformTarget) return;
@@ -4544,6 +4587,7 @@ export default function App() {
     selectFeature(null);
     setTransformMode("translate");
     setTransformEditId(id);
+    setTransformPanelXY(transformPanelPos(pivot));
     setTransformOrigin({ created: true });
   };
 
@@ -4555,6 +4599,11 @@ export default function App() {
     selectFeature(id);
     setTransformMode("translate");
     setTransformEditId(id);
+    // Re-opening: the gizmo sits at the pivot PLUS the translation already
+    // applied, which is where it will be drawn.
+    setTransformPanelXY(
+      transformPanelPos([f.pivot[0] + numOrZero(f.tx), f.pivot[1] + numOrZero(f.ty), f.pivot[2] + numOrZero(f.tz)]),
+    );
     setTransformOrigin({
       created: false,
       snapshot: { tx: f.tx, ty: f.ty, tz: f.tz, angle: f.angle, axis: f.axis, copy: f.copy },
@@ -4623,6 +4672,7 @@ export default function App() {
   const finishTransform = () => {
     setTransformEditId(null);
     setTransformOrigin(null);
+    setTransformPanelXY(null);
     setLiveTransform(null);
   };
 
@@ -4639,6 +4689,7 @@ export default function App() {
     }
     setTransformEditId(null);
     setTransformOrigin(null);
+    setTransformPanelXY(null);
     setLiveTransform(null);
   };
 
@@ -7148,13 +7199,17 @@ export default function App() {
               left it read as five unrelated things in a row. Icons only — these
               are recognised, not read, and the labels live in their tooltips. */}
           <div className="topbar-chrome">
+            {/* Named, not a bare glyph: a lone "?" beside the gear read as
+                "help", not "show me the shortcuts". The key that toggles it
+                rides along as a key cap, the same treatment every shortcut
+                gets on every other button. */}
             <button
-              className={"tool-btn" + (showShortcuts ? " active" : "")}
+              className={"tool-btn shortcuts-btn" + (showShortcuts ? " active" : "")}
               onClick={toggleShortcuts}
               title="Show keyboard shortcuts in button labels (?)"
               aria-pressed={showShortcuts}
             >
-              ?
+              Keyboard shortcuts<span className="kbd-hint">?</span>
             </button>
             <button
               className={"tool-btn settings-btn" + (settingsOpen ? " active" : "")}
@@ -7395,7 +7450,7 @@ export default function App() {
               thing you were editing was easy to miss. They're now the floating
               EditPanel over the viewport (see below). */}
         </aside>
-        <main className="viewport">
+        <main className="viewport" ref={viewportElRef}>
           <Viewport
             meshes={viewportMeshes}
             ghostMeshes={ghostMeshes}
@@ -8802,8 +8857,8 @@ export default function App() {
           {editingTransform && (
             <DraggableDialog
               className="extrude-dialog"
-              style={{ left: "50%", top: 64 }}
-              baseTransform="translateX(-50%)"
+              style={{ left: transformPanelXY?.x ?? "50%", top: transformPanelXY?.y ?? 64 }}
+              baseTransform={transformPanelXY ? undefined : "translateX(-50%)"}
             >
               <div className="ed-title" data-drag-handle>
                 Transform · {editingTransform.name}

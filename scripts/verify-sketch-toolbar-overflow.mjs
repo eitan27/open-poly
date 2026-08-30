@@ -1,9 +1,9 @@
 // The sketch toolbar is a vertical column, so it overflows the BOTTOM of a
 // short window. Checks that the tools which don't fit collapse into the "More"
-// flyout, that the column ends cleanly above the window edge, that the flyout
-// opens beside the column (not over it, and not clipped by it), and that its
-// search reaches every tool — grouped variants and the seven constraints
-// included.
+// flyout (which is always on the column, hidden tools or not), that the column
+// ends cleanly above the window edge, that the flyout opens beside the column
+// (not over it, and not clipped by it), and that its search reaches every tool
+// — grouped variants and the seven constraints included.
 import { chromium } from "playwright";
 
 const URL = process.env.URL ?? "http://localhost:5173/";
@@ -78,8 +78,9 @@ for (const height of [900, 700, 520, 420]) {
     fit.ok,
     `${fit.room}px below it (padding is ${fit.pad}px)`,
   );
-  if (height <= 520) check(`the More button appears at ${height}px`, more === 1);
-  else check(`no More button when everything fits (${height}px)`, more === 0);
+  // The More button is permanent — it doubles as the tool search, so it is on
+  // the column whether or not anything is hidden.
+  check(`the More button is on the column at ${height}px`, more === 1);
 }
 
 // --- The flyout at a short height ---------------------------------------------
@@ -102,9 +103,8 @@ console.log("\n=== flyout default (the tools below the fold)");
 console.log(defaults.join("\n"));
 check("the flyout lists the hidden tools", defaults.length > 0, `${defaults.length} rows`);
 
-// The popup must sit BESIDE the column, not over the tools, and must not be
-// clipped by the column's overflow — it is a sibling of the column for exactly
-// this reason.
+// The popup must sit BESIDE the column, not over the tools — it is a sibling of
+// the column, wider than it, for exactly this reason.
 const boxes = await page.evaluate(() => {
   const r = (s) => {
     const e = document.querySelector(s);
@@ -130,8 +130,8 @@ check(
 );
 check("the flyout stays inside the window", boxes.menu.r <= boxes.win, `right ${boxes.menu.r} of ${boxes.win}`);
 
-// The button says "More": every "and the rest" glyph is already a tool icon
-// (⋯ is the linear pattern).
+// The button says "More" in words, not the modelling bar's "…": every button
+// around it in this column is a bare glyph, so a glyph would read as a tool.
 const moreLabel = (await page.locator(moreBtn).textContent())?.trim();
 check("the overflow button is labelled in words, not a glyph", moreLabel === "More▸", `"${moreLabel}"`);
 // The column is only ~50px wide, so the label + arrow have to fit one line.

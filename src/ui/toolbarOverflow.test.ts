@@ -45,14 +45,20 @@ function row(label: string, keywords: string[] = [], disabled = false): ToolbarR
 }
 
 describe("fitCount", () => {
-  it("keeps every button when they all fit (no More button needed)", () => {
-    // 3×50 + 2×4 gap = 158
-    expect(fitCount([50, 50, 50], 4, 158, 60)).toBe(3);
+  it("keeps every button when they fit beside the always-present More button", () => {
+    // More (60) + 3 × (4 gap + 50) = 222
+    expect(fitCount([50, 50, 50], 4, 222, 60)).toBe(3);
+  });
+
+  it("reserves room for the More button even when the buttons alone would fit", () => {
+    // 158 would hold all three buttons on their own (3×50 + 2×4), but More is
+    // always on the bar, so only one 50px button fits beside it.
+    expect(fitCount([50, 50, 50], 4, 158, 60)).toBe(1);
   });
 
   it("reserves room for the More button once anything overflows", () => {
-    // 157 available: all three would need 158, so More (60 + gap) is reserved
-    // and only one 50px button fits alongside it (60 + 4 + 50 = 114).
+    // 157 available: More (60 + gap) is reserved and only one 50px button fits
+    // alongside it (60 + 4 + 50 = 114).
     expect(fitCount([50, 50, 50], 4, 157, 60)).toBe(1);
     // A narrower More button buys back room for a second real button.
     expect(fitCount([50, 50, 50], 4, 157, 40)).toBe(2);
@@ -63,7 +69,8 @@ describe("fitCount", () => {
   });
 
   it("tolerates sub-pixel measurement error", () => {
-    expect(fitCount([50.2, 50.2], 4, 104.3, 60)).toBe(2);
+    // 60 More + 2 × (4 + 50.2) = 168.4, just over the 168.3 available.
+    expect(fitCount([50.2, 50.2], 4, 168.3, 60)).toBe(2);
   });
 
   it("handles an empty toolbar", () => {

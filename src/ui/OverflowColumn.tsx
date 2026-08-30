@@ -43,7 +43,8 @@ interface Props {
  * hidden mirror for the same reason) — and the column is given the exact height
  * of what fits, so its panel still ends in a clean rounded edge. The hidden
  * tools move into a "More" flyout pinned to the bottom of the column, opening
- * beside it.
+ * beside it. The button is always there — with nothing hidden it opens as a
+ * plain "find me a tool" search — so room for it is always reserved.
  */
 export function OverflowColumn({
   className,
@@ -107,11 +108,10 @@ export function OverflowColumn({
       // sub-pixel rounding) is already in that number.
       const contentBottom =
         count > 0 ? boxes[count - 1].bottom : parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop);
+      // The More button is always pinned below the last visible slot, so its
+      // row is always part of the column's height.
       const height =
-        contentBottom +
-        (count < boxes.length ? gap + moreHeight : 0) +
-        parseFloat(style.paddingBottom) +
-        parseFloat(style.borderBottomWidth);
+        contentBottom + gap + moreHeight + parseFloat(style.paddingBottom) + parseFloat(style.borderBottomWidth);
       setFit((f) => (f && f.count === count && Math.abs(f.height - height) < 0.5 ? f : { count, height }));
     };
 
@@ -122,17 +122,12 @@ export function OverflowColumn({
 
   const closeMenu = () => setMenuQuery(null);
 
-  // "/" from the app: toggle the flyout. It opens even when everything fits
-  // (no More button then) — as a plain "find me a tool" search.
+  // "/" from the app: toggle the flyout. With nothing hidden it opens as a
+  // plain "find me a tool" search over the whole bar.
   useEffect(() => {
     if (!openRequest) return;
     setMenuQuery((q) => (q === null ? "" : null));
   }, [openRequest]);
-
-  // The window grew and everything fits again — nothing left to anchor to.
-  useEffect(() => {
-    if (!hasHidden && menuOpen) closeMenu();
-  }, [hasHidden]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -153,9 +148,9 @@ export function OverflowColumn({
   const hiddenRows = hasHidden ? hidden.flatMap((s) => s.rows) : allRows;
 
   return (
-    // The flyout is a SIBLING of the column, not a child: the column clips its
-    // overflowing slots, and a popup inside it would be clipped to the column's
-    // width too — landing on top of the visible tools instead of beside them.
+    // The flyout is a SIBLING of the column, not a child: it is wider than the
+    // column, and anchoring it inside would land it on top of the visible tools
+    // instead of beside them.
     <div className={`tbc-wrap ${className}-wrap`} ref={wrapRef}>
       <div className={className} ref={barRef} style={fit ? { height: fit.height } : undefined}>
         {/* The frosted panel, as a child layer — see .tb-blur in App.css for why
@@ -168,22 +163,24 @@ export function OverflowColumn({
             style: i < visibleCount ? slot.node.props.style : { ...slot.node.props.style, visibility: "hidden" },
           } as Partial<{ style?: CSSProperties }>),
         )}
-        {hasHidden && (
-          <div className="tbc-more" ref={moreRef}>
-            <button
-              className={"tbc-more-btn" + (menuOpen ? " expanded" : "")}
-              title={`${hiddenRows.length} more tool${hiddenRows.length === 1 ? "" : "s"} — click to search all tools`}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={() => (menuOpen ? closeMenu() : setMenuQuery(""))}
-            >
-              {/* ▸ = "opens to the right", the same affordance the rectangle /
-                  circle / pattern groups use for their variant flyouts. */}
-              More<span className="tbc-more-arrow">▸</span>
-              {showShortcuts ? <span className="kbd-hint">/</span> : null}
-            </button>
-          </div>
-        )}
+        <div className="tbc-more" ref={moreRef}>
+          <button
+            className={"tbc-more-btn" + (menuOpen ? " expanded" : "")}
+            title={
+              hasHidden
+                ? `${hiddenRows.length} more tool${hiddenRows.length === 1 ? "" : "s"} — click to search all tools`
+                : "Search all tools"
+            }
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => (menuOpen ? closeMenu() : setMenuQuery(""))}
+          >
+            {/* ▸ = "opens to the right", the same affordance the rectangle /
+                circle / pattern groups use for their variant flyouts. */}
+            More<span className="tbc-more-arrow">▸</span>
+            {showShortcuts ? <span className="kbd-hint">/</span> : null}
+          </button>
+        </div>
       </div>
       {menuOpen && (
         <MoreFlyout
