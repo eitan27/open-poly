@@ -828,6 +828,10 @@ type SketchGroupId = keyof typeof SKETCH_GROUPS;
 interface ShellDialogState {
   thickness: string;
   editId?: string;
+  /** Set once this dialog has put a feature in the timeline that the user has
+   *  not confirmed yet — see `createShell`. Cancelling removes it; pressing
+   *  Create again updates it rather than adding a second one. */
+  createdId?: string;
   targetId: string | null;
   faces: string[];
   faceRefs: FaceRef[];
@@ -835,6 +839,7 @@ interface ShellDialogState {
 }
 /** A Shell dialog with its body armed — the state a feature can be built from. */
 type ArmedShellDialog = ShellDialogState & { targetId: string };
+
 // Short display names for the variants shown in each group's vertical flyout.
 /** Below this (mm) a drawn segment/radius is nothing: a zero-size entity is
  *  invisible AND unpickable, so it can never be selected or deleted again — and
@@ -1615,6 +1620,12 @@ export default function App() {
   // builds cleanly. Set live as the user types and re-checked authoritatively
   // before commit, so an invalid thickness can't close it.
   const [shellError, setShellError] = useState<string | null>(null);
+  // True while Create is waiting on the kernel to finish the regeneration it
+  // just triggered. Shelling a loft is seconds of OCCT work, and with no
+  // pending state the dialog just sat there looking inert — so the click got
+  // repeated, and every repeat queued more work behind the first on the
+  // worker's single thread.
+  const [shellBusy, setShellBusy] = useState(false);
   // Revolve dialog. The user arms a profile (a sketch region or a planar body
   // face) and an axis (a sketch line, a plane, or a body face) by clicking in the
   // viewport — like the Boolean dialog — then sets the angle (Full 360° vs. a
@@ -1914,7 +1925,7 @@ export default function App() {
   const regenStartSeqRef = useRef(0);
   const regenWaitersRef = useRef<{ threshold: number; settle: (s: RegenSettle) => void }[]>([]);
   const waitForRegen = useCallback(
-    (): Promise<RegenSettle> =>
+    (timeoutMs = 8000): Promise<RegenSettle> =>
       new Promise((resolve) => {
         let done = false;
         const settle = (s: RegenSettle) => {
@@ -1928,7 +1939,7 @@ export default function App() {
         // edit cancelled it), resolve with whatever errors we last knew.
         setTimeout(
           () => settle({ errors: agentErrorsRef.current, warnings: agentWarningsRef.current, timedOut: true }),
-          8000,
+          timeoutMs,
         );
       }),
     [],
@@ -3691,13 +3702,23 @@ export default function App() {
     };
   };
 
+  // Open the Shell dialog. Always available: the body is armed inside the
+  // dialog by clicking the viewport, exactly as Revolve arms its profile. A
+  // pre-selected body still prefills the role — reaching for Shell with the
+  // thing already picked is the common case and shouldn't cost a second click —
+  // but nothing is required to get the dialog open.
   const openShell = () => {
-    if (!shellBody) return;
     setShellError(null);
+    setShellBusy(false);
     // Promote the pick to the whole body so what's highlighted matches what the
     // dialog says is armed.
-    selectFeature(shellBody);
-    setShellDialog({ thickness: "2", targetId: shellBody, ...NO_SHELL_FACES, arming: null });
+    if (shellBody) selectFeature(shellBody);
+    setShellDialog({
+      thickness: "2",
+      targetId: shellBody,
+      ...NO_SHELL_FACES,
+      arming: shellBody ? null : "body",
+    });
   };
 
   // Re-open the Shell dialog to edit in place. Seeds the body, the opened
@@ -3719,9 +3740,15 @@ export default function App() {
     });
   };
   const closeShellDialog = () => {
+    const pending = shellDialog?.createdId;
+    shellRunRef.current++; // a regen still in flight is no longer wanted
     setShellDialog(null);
     setShellError(null);
+    setShellBusy(false);
     cancelEdit();
+    // A feature this dialog added but never got to a working state goes with
+    // it — cancelling a Shell should not leave a broken one behind.
+    if (pending) setDoc((prev) => removeFeature(prev, pending));
   };
 
   // The dialog is armed once it has a body. It owns that state outright rather
@@ -3757,8 +3784,31 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shellDialog?.editId, shellDialog?.thickness, shellDialog?.targetId, shellDialog?.faces]);
 
+  /** How long the Shell dialog will wait for the kernel before falling back on
+   *  whatever it last knew. Well past the seconds a loft's cavity takes — the
+   *  agent's default of 8s would give up on exactly the geometry this is for. */
+  const SHELL_REGEN_TIMEOUT_MS = 120000;
+  /** Bumped whenever a Shell run is superseded (a second press, or the dialog
+   *  closing), so a regen that lands late can tell it is no longer wanted. */
+  const shellRunRef = useRef(0);
+
+  /** Build the shell by COMMITTING it and reading the result off the real
+   *  regeneration — no speculative rebuild, no cache.
+   *
+   *  This used to build the whole document a second time, in a throwaway copy,
+   *  purely to ask whether the feature would survive; on a lofted body that is
+   *  seconds of OCCT work paid twice, and the dialog sat there looking inert
+   *  for the first half of it. The regeneration that follows `setDoc` answers
+   *  the same question, so wait for THAT.
+   *
+   *  A feature that fails is LEFT IN THE TIMELINE, flagged with its error, and
+   *  the dialog stays open on top of it. That mirrors how editing an existing
+   *  shell already behaves (its live preview commits as you type), it needs no
+   *  reverting — so no stray undo entries — and the failure is visible where
+   *  every other feature's failure is. Cancelling removes it; pressing Create
+   *  again updates it in place, which is what `createdId` is for. */
   const createShell = async () => {
-    if (!shellArmed) return;
+    if (!shellArmed || shellBusy) return;
     // Synchronous gate first: an empty/garbage/≤0 thickness never reaches the
     // kernel. Empty is silently ignored (no error, just a no-op); anything
     // invalid keeps the dialog open with its message.
@@ -3768,78 +3818,36 @@ export default function App() {
       return;
     }
     const { doc: next, id } = applyShell(doc, shellArmed);
-    // Authoritative pre-commit check against the kernel: an unsatisfiable
-    // thickness keeps the dialog open with the error rather than committing a
-    // broken feature. Runs even if the live-validation effect hasn't caught up
-    // (e.g. Enter pressed immediately after typing).
-    const kernel = kernelRef.current;
-    if (ready && kernel) {
-      const resolvedNext = resolveDocument(next);
-      let err: string | null = resolvedNext.errors[id] ?? null;
-      if (!err) {
-        try {
-          const { results } = await kernel.regenerate(resolvedNext.features);
-          const hit = results.find((r) => r.id === id);
-          if (hit && !hit.ok) err = hit.error;
-        } catch (e) {
-          err = String((e as Error)?.message ?? e);
-        }
-      }
-      if (err) {
-        setShellError(mapShellKernelError(err));
-        return;
-      }
-    }
+    const run = ++shellRunRef.current;
+    setShellError(null);
+    setShellBusy(true);
     setDoc(next);
+    // Remember what we just put in the timeline, so a retry edits it and a
+    // cancel takes it away again.
+    setShellDialog((p) => (p ? { ...p, editId: id, createdId: p.createdId ?? id } : p));
+    const settle = await waitForRegen(SHELL_REGEN_TIMEOUT_MS);
+    if (shellRunRef.current !== run) return; // superseded, or the dialog closed
+    setShellBusy(false);
+    const err = settle.errors[id];
+    if (err) {
+      setShellError(mapShellKernelError(err));
+      return;
+    }
     selectFeature(id);
     commitEdit();
+    shellRunRef.current++;
     setShellDialog(null);
     setShellError(null);
   };
 
-  // Live geometry validation of the Shell dialog — mirrors the chamfer/fillet
-  // one above. The sync part (empty / unparseable / ≤ 0) is done in render off
-  // the raw thickness — instant, never touches the kernel. This effect covers
-  // only the case that NEEDS the kernel: a valid positive thickness OCCT still
-  // can't build. Debounced so each keystroke on a heavy body stays responsive.
+  // Drop a stale build error as soon as the dialog's spec changes: whatever the
+  // kernel said applies to what was asked for then, not to what is being asked
+  // for now. There is no speculative rebuild behind this any more — the error
+  // comes from the real regeneration in `createShell`, which is the only place
+  // the geometry is built at all.
   useEffect(() => {
-    if (!shellArmed) {
-      setShellError(null);
-      return;
-    }
-    const sv = validateShellThickness(shellArmed.thickness, resolved.scope);
-    if (sv.value === null) {
-      setShellError(null);
-      return;
-    }
-    const kernel = kernelRef.current;
-    if (!ready || !kernel) return;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      const { doc: next, id } = applyShell(doc, shellArmed);
-      const resolvedNext = resolveDocument(next);
-      const resolveErr = resolvedNext.errors[id];
-      if (resolveErr) {
-        if (!cancelled) setShellError(mapShellKernelError(resolveErr));
-        return;
-      }
-      kernel
-        .regenerate(resolvedNext.features)
-        .then(({ results }) => {
-          if (cancelled) return;
-          const hit = results.find((r) => r.id === id);
-          setShellError(hit && !hit.ok ? mapShellKernelError(hit.error) : null);
-        })
-        .catch((err) => {
-          if (!cancelled) setShellError(mapShellKernelError(String(err?.message ?? err)));
-        });
-    }, 250);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shellDialog, doc, ready, resolved.scope]);
+    setShellError(null);
+  }, [shellDialog?.targetId, shellDialog?.thickness, shellDialog?.faces]);
 
   // The single body a Transform would move, resolved from the selection: any
   // pick (feature / face / edge / vertex) on exactly one rendered body. In-place
@@ -4285,7 +4293,7 @@ export default function App() {
           if (dressUpTarget) openDressUp("fillet");
           break;
         case "g":
-          if (shellBody) openShell();
+          if (!shellDialog) openShell();
           break;
         case "b":
           if (bodyIds.size >= 2) openBooleanDialog();
@@ -6999,9 +7007,9 @@ export default function App() {
       icon: "▢",
       label: "Shell",
       shortcut: "G",
-      title: "Shell (G): hollow the selected body — sealed by default; open faces from the dialog",
+      title: "Shell (G): hollow a body — select it in the dialog; sealed by default, open faces from there too",
       keywords: ["hollow", "thickness", "wall", "enclosure", "thicken"],
-      disabled: !shellBody || !!editingSketch || picking,
+      disabled: !!editingSketch || picking || !!shellDialog,
       onSelect: openShell,
     },
     {
@@ -8412,7 +8420,11 @@ export default function App() {
                   baseTransform="translateX(-50%)"
                 >
                   <div className="ed-title" data-drag-handle>
-                    {d.editId ? "Edit " : ""}Shell
+                    {/* `editId` is set the moment a Create commits, so that a
+                        retry updates that feature instead of adding another —
+                        but until it BUILDS this is still the creation the user
+                        started, and saying "Edit" would be news to them. */}
+                    {d.editId && !d.createdId ? "Edit " : ""}Shell
                   </div>
                   <div className="bool-group-label">Body</div>
                   <PickSlot
@@ -8466,8 +8478,10 @@ export default function App() {
                   </label>
                   {message && <p className="ed-warning">{message}</p>}
                   <div className="ed-actions">
-                    <button className="ed-primary" onClick={createShell} disabled={disabled}>
-                      {d.editId ? "Done" : "Create"}
+                    {/* Hollowing a loft is seconds of OCCT work with nothing to
+                        see: say so, and refuse further clicks while it runs. */}
+                    <button className="ed-primary" onClick={createShell} disabled={disabled || shellBusy}>
+                      {shellBusy ? "Working…" : d.editId && !d.createdId ? "Done" : "Create"}
                     </button>
                     <button onClick={closeShellDialog}>Cancel</button>
                   </div>

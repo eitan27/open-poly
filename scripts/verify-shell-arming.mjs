@@ -23,7 +23,11 @@ const waitIdle = async () => {
   let stable = 0;
   for (let i = 0; i < 80; i++) {
     const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date/i.test(s) ? stable + 1 : 0;
+    // "N error(s)" is a SETTLED state too, not a stall: cases 6 and 7 build a
+    // wall the kernel refuses on purpose, and that feature stays in the
+    // timeline carrying its error — waiting only for "up to date" would spin
+    // out the timeout on exactly the cases under test.
+    stable = /up to date|error/i.test(s) ? stable + 1 : 0;
     if (stable >= 3) return;
     await page.waitForTimeout(300);
   }
@@ -101,7 +105,15 @@ await page.waitForTimeout(300);
 check("a stray viewport click does not arm a face", (await faceRowCount()) === 0, `faceRows=${await faceRowCount()}`);
 
 await dialog.getByRole("button", { name: /Select faces/ }).click();
-check("arming shows the active prompt", (await dialog.textContent()).includes("Click faces to open"));
+// "Selecting …" is the shared arming vocabulary (see PickSlot's pickLabel), and
+// the accumulating slots add how to stop. This assertion is on the COPY, so it
+// goes stale when the wording moves: it last read "Click faces to open", which
+// 31132fd replaced when every slot was put on the one three-state cycle.
+check(
+  "arming shows the active prompt",
+  (await dialog.textContent()).includes("Selecting faces…"),
+  await dialog.textContent(),
+);
 
 await page.mouse.click(...centre);
 await page.waitForTimeout(300);
@@ -156,11 +168,188 @@ const sealed = shells.find((f) => f.targetId === box2.createdId);
 check("the second shell was created", Boolean(sealed), JSON.stringify(shells.map((f) => f.targetId)));
 check("it opens NO faces — a sealed hollow shell", (sealed?.faces ?? []).length === 0, JSON.stringify(sealed?.faces));
 
+// --- 4. Shell opens with NOTHING selected, and arms its body from there ----
+// The tool used to be disabled until a body was already selected, which made it
+// the only body-consuming tool you couldn't reach by pressing its key. It now
+// follows Revolve: always available, and the role it needs is armed inside the
+// dialog. A pre-selected body still prefills it (cases 1 and 3 above) — this is
+// the empty-handed path.
+await apply({ op: "select", refs: [] });
+await page.waitForTimeout(200);
+await page.keyboard.press("g");
+await dialog.waitFor({ state: "visible", timeout: 5000 });
+check("Shell opens with nothing selected at all", await dialog.isVisible());
+const emptyText = await dialog.textContent();
+check("…with no body filled in", (await rows().count()) === 0, `rows=${await rows().count()}`);
+check("…and the body slot already listening for a click", emptyText.includes("Selecting a body…"), emptyText);
+check(
+  "…while the faces slot stays inert until there's a body",
+  await dialog.getByRole("button", { name: /Select faces/ }).isDisabled(),
+);
+
+await page.mouse.click(...centre);
+await page.waitForTimeout(400);
+check("clicking a body in the viewport arms it", (await rows().count()) === 1, await dialog.textContent());
+check("…and no face came along with it", (await faceRowCount()) === 0, `faceRows=${await faceRowCount()}`);
+check(
+  "…and the faces slot is live now that a body is armed",
+  !(await dialog.getByRole("button", { name: /Select faces/ }).isDisabled()),
+);
+
+// There is no speculative rebuild behind the dialog any more, so arming a body
+// says nothing about whether the wall will work — the answer comes from the
+// regeneration Create triggers. Nothing should be claimed before then.
+await page.waitForTimeout(1200);
+const armedText = await dialog.textContent();
+check(
+  "arming a body makes no claim about the wall before Create is pressed",
+  !armedText.includes("Shell failed on this geometry"),
+  armedText,
+);
+check(
+  "…and Create is offered, not pre-emptively disabled",
+  !(await dialog.getByRole("button", { name: "Create" }).isDisabled()),
+);
+
+await dialog.getByRole("button", { name: "Cancel" }).click();
+await page.waitForTimeout(200);
+check(
+  "Cancel closes it without adding a feature",
+  (await shellFeatures()).length === 2,
+  `${(await shellFeatures()).length} shells`,
+);
+
 const scene = await read({ read: "sceneSummary" });
 check(
   "neither shell errored in the kernel",
   !scene.errors || Object.keys(scene.errors).length === 0,
   JSON.stringify(scene.errors),
+);
+
+// --- 5. EDITING a shell to add a face to open ------------------------------
+// The flow that was reported broken: shell something sealed, then go back and
+// open a face. Creating a shell with faces is covered above; what this adds is
+// the EDIT path — reopening the dialog from the timeline, arming the faces slot
+// against a body that is already hollow, and having the pick stick through
+// Done. The kernel half of it is verify-shell-loft's business; this is the UI.
+// A fresh document, so the body under the cursor is unambiguous: three nested
+// boxes at the origin and a centre click lands on whichever is outermost, not
+// necessarily the one the dialog has armed.
+await apply({ op: "newDocument", name: "verify-shell-arming-edit" });
+await waitIdle();
+const box3 = await apply({ op: "addPrimitive", kind: "box", params: { width: 30, depth: 30, height: 30 } });
+await waitIdle();
+const sealed3 = await apply({ op: "shell", targetId: box3.createdId, faces: [], thickness: 3 });
+await waitIdle();
+check("a sealed shell to edit", sealed3.ok, JSON.stringify(sealed3).slice(0, 120));
+const shellId = (await shellFeatures()).find((f) => f.targetId === box3.createdId)?.id;
+check(
+  "…and it opens no faces to begin with",
+  (await shellFeatures()).find((f) => f.id === shellId)?.faces.length === 0,
+);
+
+// Reopen it the way a user does: double-click its timeline row.
+await page.locator(".tree-row, .feature-row").filter({ hasText: "Shell" }).first().dblclick();
+await dialog.waitFor({ state: "visible", timeout: 5000 });
+check("double-clicking the feature reopens it for editing", (await dialog.textContent()).includes("Edit Shell"));
+check("…with the shell's own body already filled in", (await rows().count()) === 1, `${await rows().count()} rows`);
+check("…and no faces, matching the feature", (await faceRowCount()) === 0, `faceRows=${await faceRowCount()}`);
+
+await dialog.getByRole("button", { name: /Select faces/ }).click();
+await page.waitForTimeout(300);
+// Off the centre: the box's near vertical edge runs right through it, and an
+// edge pick is not a face pick — this wants a clear patch of the left face.
+await page.mouse.click(centre[0] - 60, centre[1] + 20);
+await page.waitForTimeout(400);
+check("clicking a face of the hollow body arms it", (await faceRowCount()) === 1, `faceRows=${await faceRowCount()}`);
+
+await dialog.getByRole("button", { name: "Done" }).click();
+await waitIdle();
+const edited = (await shellFeatures()).find((f) => f.id === shellId);
+check(
+  "…and Done writes it to the feature — the edit sticks",
+  (edited?.faces ?? []).length === 1,
+  JSON.stringify(edited?.faces),
+);
+check("…without disturbing the thickness it already had", String(edited?.thickness) === "3", String(edited?.thickness));
+
+// --- 6. A Create the kernel refuses ----------------------------------------
+// The dialog commits the feature and reads the verdict off the real
+// regeneration rather than rehearsing it in a throwaway copy. So a wall the
+// geometry can't take has to leave the timeline in a coherent state: the
+// feature stays, carrying its error where every other failed feature carries
+// one, and the dialog stays open on top of it so the number can be fixed in
+// place. Pressing Create again must UPDATE that feature, never add a second.
+await apply({ op: "newDocument", name: "verify-shell-arming-refused" });
+await waitIdle();
+const box4 = await apply({ op: "addPrimitive", kind: "box", params: { width: 20, depth: 20, height: 20 } });
+await waitIdle();
+await apply({ op: "select", refs: [{ kind: "feature", id: box4.createdId }] });
+await page.waitForTimeout(200);
+await page.keyboard.press("g");
+await dialog.waitFor({ state: "visible", timeout: 5000 });
+const thickness = dialog.locator("input").first();
+await thickness.fill("40"); // twice the box — the walls cannot meet
+await dialog.getByRole("button", { name: "Create" }).click();
+await waitIdle();
+check("an impossible wall leaves the dialog open", await dialog.isVisible());
+check(
+  "…still presenting itself as the creation it is, not an edit",
+  (await dialog.textContent()).startsWith("Shell") &&
+    (await dialog.getByRole("button", { name: "Create" }).count()) === 1,
+  (await dialog.textContent()).slice(0, 60),
+);
+check(
+  "…with the kernel's reason shown in it",
+  /doesn't work for this body|thinner wall|too thick|walls may collide/i.test(await dialog.textContent()),
+  (await dialog.textContent()).slice(0, 220),
+);
+let shells4 = await shellFeatures();
+check("…and exactly one shell feature in the timeline", shells4.length === 1, `${shells4.length} shells`);
+check(
+  "…which is flagged as failed, like any other broken feature",
+  Boolean((await read({ read: "sceneSummary" })).errors?.[shells4[0]?.id]),
+  JSON.stringify((await read({ read: "sceneSummary" })).errors ?? {}).slice(0, 160),
+);
+
+// Fix it in place: the retry must edit that feature, not add another.
+await thickness.fill("2");
+await dialog.getByRole("button", { name: "Create" }).click();
+await waitIdle();
+check("fixing the wall closes the dialog", !(await dialog.isVisible().catch(() => false)));
+shells4 = await shellFeatures();
+check("…still exactly one shell, updated in place", shells4.length === 1, `${shells4.length} shells`);
+check("…carrying the corrected thickness", String(shells4[0]?.thickness) === "2", String(shells4[0]?.thickness));
+check(
+  "…and the document is clean again",
+  Object.keys((await read({ read: "sceneSummary" })).errors ?? {}).length === 0,
+  JSON.stringify((await read({ read: "sceneSummary" })).errors ?? {}),
+);
+
+// --- 7. Cancelling after a refused Create takes the feature with it --------
+await apply({ op: "newDocument", name: "verify-shell-arming-cancel" });
+await waitIdle();
+const box5 = await apply({ op: "addPrimitive", kind: "box", params: { width: 20, depth: 20, height: 20 } });
+await waitIdle();
+await apply({ op: "select", refs: [{ kind: "feature", id: box5.createdId }] });
+await page.waitForTimeout(200);
+await page.keyboard.press("g");
+await dialog.waitFor({ state: "visible", timeout: 5000 });
+await dialog.locator("input").first().fill("40");
+await dialog.getByRole("button", { name: "Create" }).click();
+await waitIdle();
+check("the refused feature is there to begin with", (await shellFeatures()).length === 1);
+await dialog.getByRole("button", { name: "Cancel" }).click();
+await waitIdle();
+check(
+  "cancelling removes the feature it never got working",
+  (await shellFeatures()).length === 0,
+  `${(await shellFeatures()).length} shells`,
+);
+check(
+  "…leaving no errors behind",
+  Object.keys((await read({ read: "sceneSummary" })).errors ?? {}).length === 0,
+  JSON.stringify((await read({ read: "sceneSummary" })).errors ?? {}),
 );
 
 await page.screenshot({ path: "/tmp/openpoly-shell-arming.png" });

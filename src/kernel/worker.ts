@@ -23,6 +23,8 @@ import {
   Blueprint,
   BlueprintSketcher,
   CompoundBlueprint,
+  DistanceQuery,
+  makeVertex,
 } from "replicad";
 import type { Shape3D, Face, Edge, Sketch } from "replicad";
 import type { Font as OpentypeFont } from "opentype.js";
@@ -68,6 +70,7 @@ import {
 } from "./topoMatch";
 import { clamp } from "../lib/clamp";
 import { vunit, vcross, vdot } from "../lib/vec3";
+import { insetOutline, padOutline, ringEscapes } from "../geom/loftInset";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -827,11 +830,11 @@ function sweepBody(
 /** Loft through 2+ profile regions (in order) into a solid. Built on raw OCCT
  *  `BRepOffsetAPI_ThruSections` so faces are named from history: one lateral
  *  face per section edge (`GeneratedFace`) + the start/end caps. */
-function loftBody(profiles: RegionProfile[], id: string): NamedShape {
+function loftBody(profiles: RegionProfile[], id: string, ruled = false): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   const wires = profiles.map((p) => (profileDrawing(p).sketchOnPlane(planeOf(p.frame)) as unknown as Sketch).wire);
-  const builder = new oc.BRepOffsetAPI_ThruSections(true, false, 1e-6); // solid, smooth
+  const builder = new oc.BRepOffsetAPI_ThruSections(true, ruled, 1e-6); // solid
   for (const w of wires) builder.AddWire(w.wrapped);
   const progress = new oc.Message_ProgressRange_1();
   builder.Build(progress);
@@ -2559,26 +2562,9 @@ const SHELL_BUILD_FAILED =
  *  replicad's `.shell()` wraps) directly, since the running-fold model needs
  *  the target's `NamedShape` history, which replicad's high-level API doesn't
  *  expose. Modifies geometry; returns a NamedShape. */
-function shellNamed(
-  target: Body,
-  faceNames: string[],
-  faceRefs: ResolvedFaceRef[] | undefined,
-  thickness: number,
-  warn?: Warn,
-): NamedShape {
+function shellByOffset(target: Body, hits: Face[], thickness: number): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
-  const { hits, lost } = resolveShellFaces(target, faceNames, faceRefs, warn);
-  if (faceNames.length > 0 && hits.length === 0) {
-    throw new Error(
-      "shell: none of the picked faces could be re-found on the body (an upstream edit changed its shape) — edit the feature to re-pick them",
-    );
-  }
-  if (lost.length > 0) {
-    warn?.(
-      `${lost.length} of ${faceNames.length} faces could not be re-found and were skipped: ${lost.join(", ")} — edit the feature to re-pick them`,
-    );
-  }
   const removedHashes = new Set(hits.map((f) => f.hashCode));
   const facesToRemove = new oc.TopTools_ListOfShape_1();
   for (const f of hits) facesToRemove.Append_1(f.wrapped);
@@ -2722,6 +2708,454 @@ function shellNamed(
   facesToRemove.delete();
   builder.delete();
   return { shape, names };
+}
+
+/** The loft a Shell target came from, when the body is still that loft and
+ *  nothing else — see `loftShellSource`. */
+type LoftShellSource = { id: string; profiles: RegionProfile[] };
+
+/** How far past an opening the cavity reaches, as a multiple of the wall. The
+ *  cut only has to CROSS the outer surface rather than touch it — a coincident
+ *  face is the boolean that comes back empty — and reaching too far is free,
+ *  since the excess is outside the body and removes nothing. */
+const OPENING_OVERSHOOT = 2;
+
+const SHELL_LOFT_FACE_UNSUPPORTED =
+  "Shell couldn't work out where one of the picked faces meets this loft's sections, so it can't " +
+  "open it. Pick a face of the loft itself — a cap or a side — rather than one of the inner faces " +
+  "a previous shell created.";
+
+/** Samples per section edge of the LOFT, when an opening is traced onto the
+ *  sections. Every section is subdivided to about this multiple of the largest
+ *  section's point count before tracing.
+ *
+ *  It has to be a multiple, not a match: `ThruSections` splits the sections
+ *  against each other, so the loft can carry more side faces than either
+ *  section has points — a square lofted to a hexagon has four and six, and
+ *  twelve faces. Sampling at the sections' own resolution left most of those
+ *  faces with no sample at all, and a pick on one of them traced to nothing. */
+const OPENING_TRACE_RESOLUTION = 3;
+
+/** Floor on points per traced section, so a coarse pair of sections still gets
+ *  enough samples to tell their loft's faces apart. */
+const MIN_TRACED_POINTS = 32;
+
+/** Ceiling on points per refined section, so tracing an opening onto a section
+ *  that is already dense can't explode the cavity's face count. */
+const MAX_TRACED_POINTS = 400;
+
+const SHELL_LOFT_OPENING_TOO_NARROW =
+  "That face is narrower than the wall, so opening it leaves nothing open — the wall closes over " +
+  "it from both sides. Use a thinner wall, or pick a larger face (a lofted circle's side is split " +
+  "into many narrow faces; its end caps are single faces).";
+
+/** The fallback's own, actionable failures — everything else it can throw is
+ *  OCCT internals and gets mapped to `SHELL_BUILD_FAILED`. */
+const SHELL_LOFT_DIAGNOSES = new Set<string>();
+
+const SHELL_LOFT_TOO_THICK =
+  "That wall is too thick for this loft — insetting a section by it leaves nothing, or breaks it " +
+  "into pieces. Try a thinner wall.";
+
+for (const m of [SHELL_LOFT_FACE_UNSUPPORTED, SHELL_LOFT_TOO_THICK, SHELL_LOFT_OPENING_TOO_NARROW]) {
+  SHELL_LOFT_DIAGNOSES.add(m);
+}
+
+/** The frame's own normal, taken the way `planeOf` takes it. A frame's stored
+ *  `normal` can be the NEGATIVE of `uAxis × vAxis` (the "front" datum is
+ *  left-handed), and everything built here has to agree with the plane the
+ *  sections are actually built on, not with the stored field. */
+function frameAxis(f: ResolvedFrame): V3 {
+  return vunit(vcross(f.uAxis as V3, f.vAxis as V3));
+}
+
+/** Whether a picked face is one of the loft's two end CAPS, which `loftBody`
+ *  names `<id>/start` and `<id>/end`.
+ *
+ *  Nothing else is decided by name. A side face's name carries the index of the
+ *  first section's edge it came from, but that index doesn't survive to the
+ *  other sections (see `traceOpenings`), so the side wall is matched by
+ *  geometry instead — which also covers the `f{n}` faces whose history
+ *  `loftBody` couldn't follow, and any name a boolean has since suffixed. */
+function loftFacePart(name: string | undefined, loftId: string): "start" | "end" | null {
+  const part = loftNamePart(name, loftId);
+  return part === "start" || part === "end" ? part : null;
+}
+
+function loftNamePart(name: string | undefined, loftId: string): string | null {
+  if (!name || !name.startsWith(`${loftId}/`)) return null;
+  // A boolean or re-match can suffix a name with "#n"; the part is unchanged.
+  return name.slice(loftId.length + 1).replace(/#\d+$/, "");
+}
+
+/** The first section's edge a `<id>/side{i}` face was generated from, or null
+ *  for anything else (a cap, an `f{n}` whose history was lost, a stale name). */
+function loftSideIndex(name: string | undefined, loftId: string): number | null {
+  const m = /^side(\d+)$/.exec(loftNamePart(name, loftId) ?? "");
+  return m ? Number(m[1]) : null;
+}
+
+/** A big planar face lying in `frame`'s plane, shifted `along` the frame axis
+ *  by `offset`, sized to cover `span` in every direction from the plane's
+ *  projection of `center`. Used as the tool face for the end trims. */
+function planeCoverFace(frame: ResolvedFrame, offset: number, center: V3, span: number): Face {
+  const axis = frameAxis(frame);
+  const origin: V3 = [
+    frame.origin[0] + axis[0] * offset,
+    frame.origin[1] + axis[1] * offset,
+    frame.origin[2] + axis[2] * offset,
+  ];
+  const d: V3 = [center[0] - origin[0], center[1] - origin[1], center[2] - origin[2]];
+  const cu = vdot(d, frame.uAxis as V3);
+  const cv = vdot(d, frame.vAxis as V3);
+  const plane = new Plane(origin, frame.uAxis, axis);
+  const drawing = draw()
+    .movePointerTo([cu - span, cv - span])
+    .lineTo([cu + span, cv - span])
+    .lineTo([cu + span, cv + span])
+    .lineTo([cu - span, cv + span])
+    .close();
+  return (drawing.sketchOnPlane(plane) as unknown as Sketch).face();
+}
+
+/** Subdivide a section's edges until none is longer than `maxLen`, inserting
+ *  points ON the existing edges — the polygon is geometrically identical, just
+ *  described more finely. Used before an opening is traced onto a section: a
+ *  6-point hexagon can't express which sixteenth of itself sits under a face
+ *  generated from a 96-point circle, but its subdivision can. */
+function refineOutline(outline: [number, number][], maxLen: number, cap: number): [number, number][] {
+  const n = outline.length;
+  if (!(maxLen > 0) || n < 3) return outline;
+  const out: [number, number][] = [];
+  for (let i = 0; i < n && out.length < cap; i++) {
+    const a = outline[i];
+    const b = outline[(i + 1) % n];
+    out.push(a);
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    // The epsilon keeps a section from splitting against ITSELF: `maxLen` comes
+    // from the finest section's AVERAGE edge, so that section's own edges divide
+    // out at 1.0000000001 and every one of them would split in two, leaving a
+    // ring of alternating long and short edges that is harder to erode than the
+    // regular one it started as.
+    const pieces = Math.min(Math.ceil(len / maxLen - 1e-9), Math.max(1, cap - out.length));
+    for (let k = 1; k < pieces; k++) {
+      const t = k / pieces;
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    }
+  }
+  return out;
+}
+
+/** Which edges of each section lie under `faces` — the opening, traced onto the
+ *  sections geometrically rather than by index.
+ *
+ *  `loftBody` names a side face after edge *i of the FIRST section's wire*, and
+ *  that index means nothing on the others: `ThruSections` splits the sections
+ *  against each other to make them compatible, so on a loft from a 96-point
+ *  circle to a 6-point hexagon, one named side face covers one chord at one end
+ *  and a sixteenth of an edge at the other. Matching by index needed every
+ *  section to have the same point count, which refused every loft between two
+ *  genuinely different profiles — the ordinary case.
+ *
+ *  So ask the geometry instead: a section edge belongs to an opening when its
+ *  midpoint lies ON the picked face. The sections lie exactly on the loft's
+ *  surface, so that distance is either ~0 or a whole edge away, and one
+ *  `DistanceQuery` per face answers it for every sample. */
+function traceOpenings(
+  faces: Face[],
+  sections: [number, number][][],
+  frames: ResolvedFrame[],
+  tol: number,
+): Set<number>[] {
+  const open: Set<number>[] = sections.map(() => new Set<number>());
+  for (const face of faces) {
+    const query = new DistanceQuery(face);
+    try {
+      sections.forEach((outline, k) => {
+        const n = outline.length;
+        for (let i = 0; i < n; i++) {
+          const a = outline[i];
+          const b = outline[(i + 1) % n];
+          const mid: [number, number] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+          const vertex = makeVertex(frameToWorld(frames[k], mid));
+          try {
+            if (query.distanceTo(vertex) <= tol) open[k].add(i);
+          } finally {
+            vertex.delete();
+          }
+        }
+      });
+    } finally {
+      query.delete();
+    }
+  }
+  return open;
+}
+
+/** Hollow a LOFTED body by re-lofting its own sections, inset.
+ *
+ *  OCCT cannot offset a loft's surface inward — `MakeThickSolidByJoin` hands
+ *  back a zero-volume solid, `MakeOffsetShape.PerformByJoin` throws on a null
+ *  shape, and `PerformBySimple` offsets the wrong way by √2 per side. All three
+ *  were measured, and none of them is coming back. What DOES work is building
+ *  the cavity where the shape came from: inset each of the loft's sections in
+ *  2D by the wall thickness (`insetOutline`), loft the inset sections into a
+ *  second body, and subtract it.
+ *
+ *  THE ENDS are where the interesting decisions are, because a section inset in
+ *  its own plane says nothing about the caps:
+ *
+ *  - A SEALED cap is made by trimming the finished cavity back with a plane
+ *    parallel to that end section, `thickness` inside it. Trimming is exact —
+ *    the material left between the cap and the cavity is `thickness` measured
+ *    along the cap's normal, which is what a wall thickness means there — and,
+ *    unlike moving the end section inward, it leaves the interpolated side
+ *    surface completely alone. Moving a section reparameterises the whole
+ *    B-spline through the sections; on a loft that tapers near an end that can
+ *    thin the wall, or turn it inside out.
+ *
+ *  - An OPEN cap is made by NOT trimming, and instead extending the cavity past
+ *    the end with a straight prism raised from the cavity's own end face, so
+ *    the subtraction crosses the cap transversally. Extending rather than
+ *    prism-cutting the cap outright is what keeps the side wall's rim: the
+ *    material to remove is what lies inside the cavity's cross-section, not the
+ *    whole footprint of the cap face.
+ *
+ *  - An OPEN SIDE face is the 2D case, handled inside `insetOutline`: its edge
+ *    contributes no wall, and the section is carried out past it.
+ *
+ *  Returns a NamedShape whose new inner faces all end in `/in`, so they can be
+ *  referenced by later features like any other face. */
+function shellLoftSections(target: Body, hits: Face[], thickness: number, loft: LoftShellSource): NamedShape {
+  const profiles = loft.profiles;
+  const overshoot = thickness * OPENING_OVERSHOOT;
+
+  // 1. Which of the loft's own faces are being opened. The two caps are known
+  //    by name; everything else is treated as part of the SIDE wall and traced
+  //    onto the sections geometrically — including the `f{n}` faces, whose
+  //    history `loftBody` couldn't follow and which used to be refused outright
+  //    even though they are ordinary side faces.
+  let openStart = false;
+  let openEnd = false;
+  const sideFaces: Face[] = [];
+  const sideIndices: number[] = [];
+  let allIndexed = true;
+  for (const f of hits) {
+    const name = target.names.get(f.hashCode);
+    const part = loftFacePart(name, loft.id);
+    if (part === "start") {
+      openStart = true;
+      continue;
+    }
+    if (part === "end") {
+      openEnd = true;
+      continue;
+    }
+    sideFaces.push(f);
+    const idx = loftSideIndex(name, loft.id);
+    if (idx === null) allIndexed = false;
+    else sideIndices.push(idx);
+  }
+
+  // 2. Trace those side faces onto the sections. The sections are refined
+  //    first, so a coarse one can still follow a face generated from a fine
+  //    one; refining inserts points on existing edges, so nothing moves.
+  let sections = profiles.map((p) => p.outline);
+  let openEdges: Set<number>[] = sections.map(() => new Set<number>());
+  // When every section has the same point count and every picked side face
+  // carries its `side{i}` name, edge i means the same thing on all of them and
+  // the index IS the answer — no sampling, no subdivision, and the sections go
+  // to the cavity exactly as the loft used them. That is the case the loft
+  // harness covers end to end, so it keeps its own path.
+  const n0 = profiles[0].outline.length;
+  const uniform = profiles.every((p) => p.outline.length === n0);
+  if (sideFaces.length > 0 && allIndexed && uniform && sideIndices.every((i) => i < n0)) {
+    openEdges = sections.map(() => new Set(sideIndices));
+  } else if (sideFaces.length > 0) {
+    const target_ = clamp(
+      OPENING_TRACE_RESOLUTION * Math.max(...sections.map((o) => o.length)),
+      MIN_TRACED_POINTS,
+      MAX_TRACED_POINTS,
+    );
+    sections = sections.map((o) => {
+      let perimeter = 0;
+      for (let i = 0; i < o.length; i++) {
+        const a = o[i];
+        const b = o[(i + 1) % o.length];
+        perimeter += Math.hypot(b[0] - a[0], b[1] - a[1]);
+      }
+      return refineOutline(o, perimeter / target_, MAX_TRACED_POINTS);
+    });
+    // The sections sit exactly on the loft's surface, so a midpoint is either
+    // on the face or a whole edge away from it — the tolerance only has to
+    // clear tessellation noise.
+    const tol = Math.max(bboxDiagonal(target.shape) * 1e-5, 1e-7);
+    openEdges = traceOpenings(
+      sideFaces,
+      sections,
+      profiles.map((p) => p.frame),
+      tol,
+    );
+    // A pick that lands on no section at all isn't a side face of this loft —
+    // most likely an inner face left by an earlier shell. Refuse rather than
+    // quietly building a sealed shell and looking like nothing happened.
+    if (openEdges.every((set) => set.size === 0)) throw new Error(SHELL_LOFT_FACE_UNSUPPORTED);
+  }
+
+  // 3. Inset every section in its own plane.
+  let escaped = false;
+  const insetProfiles: RegionProfile[] = profiles.map((p, k) => {
+    const ring = insetOutline(sections[k], thickness, { openEdges: openEdges[k], overshoot });
+    if (!ring) throw new Error(SHELL_LOFT_TOO_THICK);
+    if (openEdges[k].size > 0 && ringEscapes(ring, sections[k])) escaped = true;
+    // Only the inset OUTLINE survives: `segments`/`holes` describe the source
+    // boundary and no longer match it (and loft ignores holes regardless).
+    return { kind: "sketchRegion", outline: ring, frame: p.frame };
+  });
+  // Match the sections' point counts before they are lofted — see padOutline.
+  const widest = Math.max(...insetProfiles.map((p) => p.outline.length));
+  for (const p of insetProfiles) p.outline = padOutline(p.outline, widest);
+
+  // Asking to open a side face doesn't guarantee an opening: the walls either
+  // side of it carry on past the lip, and a face narrower than twice the wall
+  // is closed over again. Correct, but it builds a shell that looks sealed and
+  // reads as "the tool ignored my pick" — so say what happened instead.
+  if (sideFaces.length > 0 && !escaped) throw new Error(SHELL_LOFT_OPENING_TOO_NARROW);
+
+  const cavityId = `${loft.id}/cavity`;
+  // The cavity's sections can differ far more in point count than the loft's own
+  // did — an opening adds a lip and a fan of arc points to one section and
+  // nothing to another — and `ThruSections` throws a bare ConstructionError on
+  // some of those pairs when it is smoothing through them. RULED costs nothing
+  // to try: with two sections it is the same surface, and with more it only
+  // straightens the cavity's interpolation between them, which a subtraction
+  // tool can afford.
+  let cavity: NamedShape;
+  try {
+    cavity = loftBody(insetProfiles, cavityId);
+  } catch {
+    cavity = loftBody(insetProfiles, cavityId, true);
+  }
+  const span = bboxDiagonal(target.shape);
+  const bb = target.shape.boundingBox;
+  const center: V3 = [
+    (bb.bounds[0][0] + bb.bounds[1][0]) / 2,
+    (bb.bounds[0][1] + bb.bounds[1][1]) / 2,
+    (bb.bounds[0][2] + bb.bounds[1][2]) / 2,
+  ];
+  bb.delete();
+
+  // 4. The ends. `inward` is the frame axis turned to point at the far end, so
+  // the same code serves both caps whichever way their planes happen to face.
+  const ends: { frame: ResolvedFrame; ring: [number, number][]; open: boolean; away: V3 }[] = [];
+  const first = profiles[0].frame;
+  const last = profiles[profiles.length - 1].frame;
+  const spine: V3 = [
+    last.origin[0] - first.origin[0],
+    last.origin[1] - first.origin[1],
+    last.origin[2] - first.origin[2],
+  ];
+  for (const [frame, ring, open, sign] of [
+    [first, insetProfiles[0].outline, openStart, 1],
+    [last, insetProfiles[insetProfiles.length - 1].outline, openEnd, -1],
+  ] as const) {
+    const axis = frameAxis(frame);
+    const toward = vdot(axis, spine) * sign >= 0 ? axis : ([-axis[0], -axis[1], -axis[2]] as V3);
+    ends.push({ frame, ring, open, away: [-toward[0], -toward[1], -toward[2]] });
+  }
+
+  try {
+    for (const [i, end] of ends.entries()) {
+      if (end.open) {
+        // Raise a prism from the cavity's own end section, outward past the cap.
+        const face = regionFace({ kind: "sketchRegion", outline: end.ring, frame: end.frame }, planeOf(end.frame));
+        const lip = prismFromFace(face, new Vector(end.away), overshoot, `${cavityId}/lip${i}`);
+        face.delete();
+        const fused = booleanRetrying("fuse", cavity, lip);
+        cavity.shape.delete();
+        lip.shape.delete();
+        cavity = fused;
+      } else {
+        // Trim the cavity back to `thickness` inside the cap, leaving the wall.
+        const inward = -vdot(end.away, frameAxis(end.frame)) >= 0 ? thickness : -thickness;
+        const face = planeCoverFace(end.frame, inward, center, span);
+        const slab = prismFromFace(face, new Vector(end.away), span * 2, `${cavityId}/floor${i}`);
+        face.delete();
+        const trimmed = booleanRetrying("cut", cavity, slab);
+        cavity.shape.delete();
+        slab.shape.delete();
+        cavity = trimmed;
+      }
+    }
+    if (countSolids(cavity.shape) === 0) throw new Error(SHELL_LOFT_TOO_THICK);
+
+    // 5. Every face of the cavity becomes an inner face of the shell, so they
+    //    all take the `/in` suffix the offset path uses. They do NOT correspond
+    //    one-to-one with the outer `side{i}` faces — an inset ring has its own
+    //    edges, having picked up round joins and shed collapsed ones — so they
+    //    are named for the cavity, not for the outer face they face.
+    const inner = new Map<number, string>();
+    for (const [h, nm] of cavity.names) inner.set(h, `${nm}/in`);
+    const hollow = booleanRetrying(
+      "cut",
+      { shape: target.shape, names: target.names },
+      { shape: cavity.shape, names: inner },
+    );
+    if (!isHollowedSolid(hollow.shape, target.shape)) {
+      hollow.shape.delete();
+      throw new Error(SHELL_BUILD_FAILED);
+    }
+    return hollow;
+  } finally {
+    cavity.shape.delete();
+  }
+}
+
+/** Hollow out a body — see `shellByOffset` for the primary path.
+ *
+ *  The OCCT offset is tried first, always: on a box, a cylinder or an extrude
+ *  it is exact, and it handles openings this module's 2D fallback can't express.
+ *  Only when it fails does a LOFTED target fall back to re-lofting its own
+ *  sections (`shellLoftSections`), which is the one construction that hollows
+ *  freeform loft geometry at all. A failure there reports the fallback's own
+ *  message when it has something specific to say — too thick, or a face it
+ *  can't open — and otherwise the original build failure. */
+function shellNamed(
+  target: Body,
+  faceNames: string[],
+  faceRefs: ResolvedFaceRef[] | undefined,
+  thickness: number,
+  warn?: Warn,
+  loft?: LoftShellSource,
+): NamedShape {
+  const { hits, lost } = resolveShellFaces(target, faceNames, faceRefs, warn);
+  if (faceNames.length > 0 && hits.length === 0) {
+    throw new Error(
+      "shell: none of the picked faces could be re-found on the body (an upstream edit changed its shape) — edit the feature to re-pick them",
+    );
+  }
+  if (lost.length > 0) {
+    warn?.(
+      `${lost.length} of ${faceNames.length} faces could not be re-found and were skipped: ${lost.join(", ")} — edit the feature to re-pick them`,
+    );
+  }
+  try {
+    return shellByOffset(target, hits, thickness);
+  } catch (err) {
+    if (!loft) throw err;
+    try {
+      return shellLoftSections(target, hits, thickness, loft);
+    } catch (fallbackErr) {
+      // The fallback's own diagnoses say something the user can act on and are
+      // passed through. Anything else is OCCT giving up somewhere in the
+      // cavity build — a decoded exception name and a heap pointer, which
+      // means nothing to anyone — so report the same actionable failure the
+      // offset path does rather than leaking it.
+      const msg = errorMessage(fallbackErr);
+      if (SHELL_LOFT_DIAGNOSES.has(msg)) throw fallbackErr;
+      throw new Error(SHELL_BUILD_FAILED);
+    }
+  }
 }
 
 const AXIS_DIR: Record<"x" | "y" | "z", [number, number, number]> = {
@@ -3057,6 +3491,21 @@ function buildCached(key: string, used: Set<string>, build: () => NamedShape): N
 // place (preserving their ids). A body's id is the feature that produced (or
 // last started) it. Callers either tessellate the survivors (regenerate) or
 // export one (exportBody); both must delete the body shapes when done.
+/** The loft a Shell can fall back to re-lofting, or undefined.
+ *
+ *  This only ever applies when the target body IS that loft and nothing has
+ *  touched it since — the fallback rebuilds the cavity from the loft's SECTIONS,
+ *  so a transform, a dress-up or a boolean in between would put it in the wrong
+ *  place or the wrong shape. Comparing the body's content key against the loft's
+ *  own builder key is the exact test for that: every modifier re-keys the body
+ *  it changes, so a match means nothing has. */
+function loftShellSource(target: Body, features: ResolvedFeature[]): LoftShellSource | undefined {
+  const loft = features.find((f) => f.id === target.id && f.type === "loft");
+  if (loft?.type !== "loft" || target.key !== builderKey(loft)) return undefined;
+  const regions = loft.profiles.filter((p): p is RegionProfile => p.kind === "sketchRegion");
+  return regions.length >= 2 ? { id: loft.id, profiles: regions } : undefined;
+}
+
 function buildBodies(
   features: ResolvedFeature[],
   used: Set<string> = new Set(),
@@ -3377,7 +3826,14 @@ function buildBodies(
       } else if (feature.type === "shell") {
         // Hollow out the target body in place, keeping its id.
         const target = requireBody(bodies, feature.targetId);
-        const res = shellNamed(target, feature.faces, feature.faceRefs, feature.thickness, warn);
+        const res = shellNamed(
+          target,
+          feature.faces,
+          feature.faceRefs,
+          feature.thickness,
+          warn,
+          loftShellSource(target, features),
+        );
         target.shape.delete();
         target.shape = res.shape;
         target.names = res.names;
