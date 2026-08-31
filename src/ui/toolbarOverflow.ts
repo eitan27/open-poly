@@ -4,11 +4,18 @@
 // are unit-testable in node.
 import type { ReactNode } from "react";
 
-/** A choice behind a toolbar button's ▾ dropdown (New Body → Box/Cylinder/…). */
+/** A choice behind a toolbar button's ▾ dropdown (New Body → Box/Cylinder/…),
+ *  or — with `choicesSearchOnly` — a mode of a plain button (Transform → Move). */
 export interface ToolbarChoice {
   id: string;
   label: string;
   disabled?: boolean;
+  /** Search terms for this choice alone, on top of the parent's ("spin" finds
+   *  Rotate without also finding Move and Scale). */
+  keywords?: string[];
+  /** Tooltip for this choice's flyout row. Defaults to the parent's title with
+   *  the choice appended. */
+  title?: string;
   onSelect: () => void;
 }
 
@@ -34,6 +41,13 @@ export interface ToolbarItem {
    *  can toggle the same menu). */
   choicesOpen?: boolean;
   onChoicesOpenChange?: (open: boolean) => void;
+  /** Keep the bar button a plain one-click action (no ▾, no menu) and let the
+   *  `choices` exist only as flyout rows. For a tool with a natural default —
+   *  Transform opens the gizmo on Move — whose other modes still deserve their
+   *  own searchable rows. The flyout treats them like any other choice: the
+   *  rows replace the parent's row, and they list by default only when the
+   *  parent button is itself off the bar. */
+  choicesSearchOnly?: boolean;
 }
 
 /** A flattened, directly-invokable line in the More flyout. */
@@ -85,9 +99,9 @@ export function toRows(items: ToolbarItem[]): ToolbarRow[] {
           icon: item.icon,
           // Both words are searchable: "body" and "cylinder" each hit.
           label: `${item.label} ▸ ${choice.label}`,
-          title: `${item.title} — ${choice.label}`,
+          title: choice.title ?? `${item.title} — ${choice.label}`,
           disabled: !!(item.disabled || choice.disabled),
-          keywords: item.keywords ?? [],
+          keywords: [...(item.keywords ?? []), ...(choice.keywords ?? [])],
           onSelect: choice.onSelect,
         });
       }

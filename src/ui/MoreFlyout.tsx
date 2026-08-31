@@ -26,7 +26,7 @@ export function MoreFlyout({
   defaultRows,
   className,
   initialQuery = "",
-  placeholder = "Search tools…",
+  placeholder = "Search all tools…",
   onRun,
   onClose,
 }: Props) {
