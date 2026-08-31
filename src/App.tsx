@@ -5078,6 +5078,14 @@ export default function App() {
         if (!center) return;
         const faceName = m ? faceNameOf(m.mesh.faces, pick.faceId) : undefined;
         const normal = (m && faceNormal(m.mesh.faces, pick.faceId)) || undefined;
+        // A face is the axis only when the SURFACE has one (cylinder/cone). A
+        // planar face — faceNormal is non-null exactly for those — used to be
+        // taken here and then failed in the kernel, so the whole feature landed
+        // broken in the timeline instead of the click just not counting.
+        if (normal) {
+          flashMsg("A flat face has no axis of its own. Use World X/Y/Z, a sketch line, or a cylindrical face.");
+          return; // keep the pick armed for another try
+        }
         setPatternDialog((d) =>
           d && d.arming === "axis"
             ? {
@@ -5088,10 +5096,16 @@ export default function App() {
             : d,
         );
       } else {
+        // Answer the pick the user actually made. The old copy recited the whole
+        // rule ("a body edge only works for a revolve") whatever they clicked —
+        // so picking a PLANE got told about edges — and never mentioned the
+        // World X/Y/Z options sitting right above the slot.
         flashMsg(
           pickPurpose === "patternDir"
             ? "The direction must be a sketch line (or use World X/Y/Z)."
-            : "The axis must be a sketch line or a cylindrical face (a body edge only works for a revolve).",
+            : pick.kind === "plane"
+              ? "A plane doesn't fix a line on its own — a pattern has no profile plane to intersect it with. Use World X/Y/Z, a sketch line, or a cylindrical face."
+              : "A body edge is a revolve axis, not a pattern axis. Use World X/Y/Z, a sketch line, or a cylindrical face.",
         );
         return; // keep the pick armed for another try
       }
