@@ -122,9 +122,12 @@ await apply({ op: "select", refs: [] });
 await page.keyboard.press("r");
 await page.waitForTimeout(400);
 const dlg = page.locator(".extrude-dialog");
+// The label reads "Select a profile" armed or not — arming is the dashed-pulse
+// `.active` class, so that's what says which slot the next click fills.
 check(
   "the profile button is armed on open",
-  (await dlg.locator(".ed-pick-btn").allTextContents())[0] === "Selecting a profile…",
+  (await dlg.locator(".ed-pick-btn").allTextContents())[0] === "Select a profile" &&
+    (await dlg.locator(".ed-pick-btn").nth(0).getAttribute("class")).includes("active"),
   (await dlg.locator(".ed-pick-btn").allTextContents()).join(" | "),
 );
 const canvas = await page.locator("canvas").first().boundingBox();
@@ -139,11 +142,16 @@ check(
 );
 await page.screenshot({ path: "/tmp/revolve-face-armed.png" });
 
-// …and the dialog can finish the job: arm the axis, pick the Right datum plane,
-// Create. A face profile has no sketch to hide, which is the path createRevolve
-// used to take unconditionally.
-await dlg.locator(".ed-pick-btn").last().click();
-await page.waitForTimeout(300);
+// …and the dialog can finish the job: the axis armed itself the moment the
+// profile landed, so pick the Right datum plane and Create. A face profile has
+// no sketch to hide, which is the path createRevolve used to take
+// unconditionally.
+check(
+  "filling the profile hands the arming to the axis",
+  (await dlg.locator(".ed-pick-btn.active").count()) === 1 &&
+    (await dlg.locator(".ed-pick-btn.active").textContent()) === "Select an axis",
+  (await dlg.locator(".ed-pick-btn").allTextContents()).join(" | ") || "none",
+);
 // The +x side face: perpendicular to the profile's top face, so their planes
 // actually meet in a line (a parallel face is rejected, by design).
 const axisFacePt = await page.evaluate((p) => window.__openpoly.worldToScreen(p), [200, 0, 100]);

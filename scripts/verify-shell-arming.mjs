@@ -105,13 +105,15 @@ await page.waitForTimeout(300);
 check("a stray viewport click does not arm a face", (await faceRowCount()) === 0, `faceRows=${await faceRowCount()}`);
 
 await dialog.getByRole("button", { name: /Select faces/ }).click();
-// "Selecting …" is the shared arming vocabulary (see PickSlot's pickLabel), and
-// the accumulating slots add how to stop. This assertion is on the COPY, so it
-// goes stale when the wording moves: it last read "Click faces to open", which
-// 31132fd replaced when every slot was put on the one three-state cycle.
+// "Select …" is the shared arming vocabulary (see PickSlot's pickLabel) and it
+// does NOT change when the slot arms — the dashed-pulse `.active` class is what
+// says the click stream is live; an accumulating slot adds how to stop. This
+// assertion is on the COPY, so it goes stale when the wording moves: it last
+// read "Selecting faces…", before every slot settled on the imperative.
 check(
   "arming shows the active prompt",
-  (await dialog.textContent()).includes("Selecting faces…"),
+  (await dialog.textContent()).includes("Select faces (Esc to stop)") &&
+    (await dialog.locator(".ed-pick-btn.active").count()) === 1,
   await dialog.textContent(),
 );
 
@@ -181,7 +183,11 @@ await dialog.waitFor({ state: "visible", timeout: 5000 });
 check("Shell opens with nothing selected at all", await dialog.isVisible());
 const emptyText = await dialog.textContent();
 check("…with no body filled in", (await rows().count()) === 0, `rows=${await rows().count()}`);
-check("…and the body slot already listening for a click", emptyText.includes("Selecting a body…"), emptyText);
+check(
+  "…and the body slot already listening for a click",
+  emptyText.includes("Select a body") && (await dialog.locator(".ed-pick-btn.active").count()) === 1,
+  emptyText,
+);
 check(
   "…while the faces slot stays inert until there's a body",
   await dialog.getByRole("button", { name: /Select faces/ }).isDisabled(),

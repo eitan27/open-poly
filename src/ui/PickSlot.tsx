@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
  *  everywhere, since they mean the same thing everywhere:
  *
  *    UNARMED  `PickButton`            "Select a profile"     plain control
- *    ARMING   `PickButton armed`      "Selecting a profile…" dashed, pulsing
+ *    ARMING   `PickButton armed`      "Select a profile"     dashed, pulsing
  *    ARMED    `PickedRow`             "Sketch 1"      ✕      solid accent fill
  *
  *  (A slot inside a labelled `.ed-field` shows its value in the button itself
@@ -21,14 +21,15 @@ import type { ReactNode } from "react";
  *  drives the whole cycle from one `value` — and only drop to `PickButton` /
  *  `PickedRow` for a slot that accumulates several picks. */
 
-/** "Select a profile" ⇄ "Selecting a profile…".
+/** Always "Select a profile" — the imperative, in both the unarmed and the
+ *  arming state.
  *
- *  A narrow (field-aligned) slot drops the noun while arming — its field label
- *  already names what's being picked, and the full phrase doesn't fit the
- *  control width. */
-function pickLabel(noun: string, armed: boolean, wide: boolean): string {
-  if (!armed) return `Select ${noun}`;
-  return wide ? `Selecting ${noun}…` : "Selecting…";
+ *  The label says what the slot WANTS, so it must not change under the user
+ *  mid-pick: a button that re-words itself the instant it's clicked reads as if
+ *  something already happened. Arming is carried by the styling instead (the
+ *  dashed, pulsing `.ed-pick-btn.active`) plus the viewport's pick banner. */
+function pickLabel(noun: string): string {
+  return `Select ${noun}`;
 }
 
 export function PickButton({
@@ -61,7 +62,7 @@ export function PickButton({
       title={title}
       onClick={onClick}
     >
-      {children ?? pickLabel(noun, armed, wide)}
+      {children ?? pickLabel(noun)}
     </button>
   );
 }

@@ -2396,8 +2396,8 @@ button:disabled .kbd-hint {
 }
 
 /* Standalone slots — no field label beside them, replaced by a full-width
-   .bool-operand-row once filled. They carry the whole phrase ("Selecting a
-   profile…", "Select an axis (sketch line / cylindrical face)"), which doesn't
+   .bool-operand-row once filled. They carry the whole phrase ("Select a
+   profile", "Select an axis (sketch line / cylindrical face)"), which doesn't
    fit the 112px field width, so they take the dialog's full width and wrap
    instead of truncating. */
 .ed-pick-btn.ed-wide {
