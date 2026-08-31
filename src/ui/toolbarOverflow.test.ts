@@ -102,6 +102,15 @@ describe("toRows", () => {
     ];
     expect(toRows(disabledParent)[0].disabled).toBe(true);
   });
+
+  it("still produces a row for a searchOnly item (only bar rendering excludes it)", () => {
+    const withSearchOnly: ToolbarItem[] = [
+      { id: "move", icon: "✥", label: "Transform ▸ Move", title: "Move", onSelect: noop, searchOnly: true },
+    ];
+    const rows = toRows(withSearchOnly);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe("Transform ▸ Move");
+  });
 });
 
 describe("matchScore", () => {

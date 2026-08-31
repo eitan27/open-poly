@@ -34,6 +34,11 @@ export interface ToolbarItem {
    *  can toggle the same menu). */
   choicesOpen?: boolean;
   onChoicesOpenChange?: (open: boolean) => void;
+  /** Never rendered as a bar button (or measured for width) — reachable only
+   *  through the "/" flyout search. For a mode/variant of an existing tool
+   *  that deserves its own directly-searchable row without turning the main
+   *  button into a `choices` dropdown. */
+  searchOnly?: boolean;
 }
 
 /** A flattened, directly-invokable line in the More flyout. */

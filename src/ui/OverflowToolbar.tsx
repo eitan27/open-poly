@@ -33,7 +33,13 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
   /** The open ▾ dropdown, for its outside-click close. */
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const [visibleCount, setVisibleCount] = useState(items.length);
+  // Items that render as a bar button / count toward its width. A
+  // `searchOnly` item is reachable only through the flyout search below — it
+  // never occupies bar space and is always part of the flyout's default
+  // (nothing-typed-yet) listing, like any other overflowed tool.
+  const barItems = items.filter((i) => !i.searchOnly);
+
+  const [visibleCount, setVisibleCount] = useState(barItems.length);
   /** null = closed; otherwise the flyout's starting search text. */
   const [menuQuery, setMenuQuery] = useState<string | null>(null);
   const menuOpen = menuQuery !== null;
@@ -41,7 +47,8 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
   // Button widths depend on the labels and the shortcut hints, nothing else —
   // re-measure when those change (and on every resize, below).
   const layoutKey =
-    items.map((i) => `${i.icon}${i.label}${i.shortcut ?? ""}${i.choices ? "▾" : ""}`).join("|") + `#${showShortcuts}`;
+    barItems.map((i) => `${i.icon}${i.label}${i.shortcut ?? ""}${i.choices ? "▾" : ""}`).join("|") +
+    `#${showShortcuts}`;
 
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
@@ -72,7 +79,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
     return () => ro.disconnect();
   }, [layoutKey]);
 
-  const hidden = items.slice(visibleCount);
+  const hidden = barItems.slice(visibleCount).concat(items.filter((i) => i.searchOnly));
   const hiddenIds = new Set(hidden.map((i) => i.id));
   const allRows = toRows(items);
   // Closed-box default: the buttons you can't see. Typing searches the whole
@@ -190,7 +197,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
         {/* The frosted panel, as a child layer — see .tb-blur in App.css for why
             the blur can't sit on the bar itself. */}
         <div className="tb-blur" />
-        {items.slice(0, visibleCount).map((item) => renderButton(item, false))}
+        {barItems.slice(0, visibleCount).map((item) => renderButton(item, false))}
         <div className="tb-more" ref={moreRef}>
           <button
             className="tb-more-btn"
@@ -223,7 +230,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
         </div>
         {/* Measured, never seen: the full row at its natural width. */}
         <div className="tb-mirror" ref={mirrorRef} aria-hidden>
-          {items.map((item) => renderButton(item, true))}
+          {barItems.map((item) => renderButton(item, true))}
           <button className="tb-more-btn" tabIndex={-1}>
             …{showShortcuts ? <span className="kbd-hint">/</span> : null}
           </button>

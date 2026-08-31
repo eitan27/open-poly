@@ -1103,6 +1103,13 @@ export default function App() {
       }
       return;
     }
+    // Transform armed with no target yet: the next body click picks it and
+    // creates+opens the Transform feature directly on the requested mode.
+    if (transformArming) {
+      const id = picked ? featureIdOf(picked) : null;
+      if (id && bodyIds.has(id)) openTransformOn(id, transformArming.mode);
+      return;
+    }
     // Revolve dialog open: arming the PROFILE (a sketch region) happens here via
     // the normal selection raycaster. Arming the AXIS uses picking mode instead
     // (→ handleAxisPick), so one click stream can take a sketch line, a body
@@ -1693,6 +1700,11 @@ export default function App() {
     | { created: false; snapshot: Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis" | "scale" | "copy"> }
     | null
   >(null);
+  // Transform requested with no unambiguous single-body target (nothing
+  // selected, or a selection spanning more than one body): a small panel
+  // shows the requested mode and waits for the next viewport body click to
+  // arm it — see the click-router branch below and openTransform/openTransformOn.
+  const [transformArming, setTransformArming] = useState<{ mode: TransformMode } | null>(null);
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
   // Toggle (via the "?" button in the topbar, or the "?" key) that appends each
@@ -4139,6 +4151,7 @@ export default function App() {
         else if (shellDialog?.arming) setShellDialog((d) => (d ? { ...d, arming: null } : d));
         else if (shellDialog) closeShellDialog();
         else if (transformEditId) cancelTransform();
+        else if (transformArming) cancelTransformArming();
         else if (editParamsId) setEditParamsId(null);
         else if (picking) setPicking(false);
         // Esc finishes an in-progress draft: the spline commits its accumulated
@@ -4323,7 +4336,7 @@ export default function App() {
           if (bodyIds.size >= 2) openBooleanDialog();
           break;
         case "t":
-          if (transformTarget && !transformEditId) openTransform();
+          if (!transformEditId && !transformArming) openTransform();
           break;
         case "m":
           if (transformTarget) openMirror();
@@ -4592,19 +4605,40 @@ export default function App() {
     return { x: Math.max(12, Math.min(x, Math.max(12, vw - PANEL_W - 12))), y: 64 };
   };
 
-  // Create a Transform on the selected body and open the gizmo to edit it.
-  const openTransform = () => {
-    if (!transformTarget) return;
-    const m = rawMeshes.find((x) => x.id === transformTarget);
+  // Create a Transform on `targetId` and open the gizmo directly on `mode`.
+  const openTransformOn = (targetId: string, mode: TransformMode) => {
+    const m = rawMeshes.find((x) => x.id === targetId);
     const pivot = m ? bodyCenter(m.mesh.faces) : ([0, 0, 0] as [number, number, number]);
-    const { doc: next, id } = addTransform(doc, transformTarget, pivot);
+    const { doc: next, id } = addTransform(doc, targetId, pivot);
     setDoc(next);
     selectFeature(null);
-    setTransformMode("translate");
+    setTransformMode(mode);
     setTransformEditId(id);
     setTransformPanelXY(transformPanelPos(pivot));
     setTransformOrigin({ created: true });
+    setTransformArming(null);
   };
+
+  // Entry point for the toolbar button, the "T" shortcut, and the Move /
+  // Rotate / Scale search rows: with an unambiguous single-body target it
+  // creates+opens the Transform immediately on `mode`; otherwise (nothing
+  // selected, or a selection spanning more than one body) it clears the
+  // selection and arms a body pick for that mode instead — like Pattern's
+  // target arming, this doesn't touch `picking`/`pickPurpose` (those drive
+  // the separate axis/direction pick stream); the click-router branch above
+  // matches on `transformArming` directly.
+  const openTransform = (mode: TransformMode = "translate") => {
+    if (transformTarget) {
+      openTransformOn(transformTarget, mode);
+      return;
+    }
+    setSelection([]);
+    setTransformArming({ mode });
+  };
+
+  // Cancel an in-progress Transform arming (Esc, or the arming panel's own
+  // Cancel button) without creating a feature.
+  const cancelTransformArming = () => setTransformArming(null);
 
   // Re-open the gizmo for an existing Transform (from the parameter editor).
   // Snapshot its current values so Cancel can revert this edit (vs. delete).
@@ -7108,10 +7142,40 @@ export default function App() {
       icon: "✥",
       label: "Transform",
       shortcut: "T",
-      title: "Transform (T): move / rotate the selected body",
-      keywords: ["move", "rotate", "translate"],
-      disabled: !transformTarget || !!editingSketch || picking || !!transformEditId,
-      onSelect: openTransform,
+      title: "Transform (T): move / rotate / scale a body — pick one first, or arm and click it in the viewport",
+      keywords: ["translate"],
+      disabled: !!editingSketch || picking || !!transformEditId || !!transformArming,
+      onSelect: () => openTransform(),
+    },
+    {
+      id: "transform-move",
+      icon: "✥",
+      label: "Transform ▸ Move",
+      title: "Move (Transform): move a body",
+      keywords: ["move", "translate", "transform"],
+      disabled: !!editingSketch || picking || !!transformEditId || !!transformArming,
+      onSelect: () => openTransform("translate"),
+      searchOnly: true,
+    },
+    {
+      id: "transform-rotate",
+      icon: "✥",
+      label: "Transform ▸ Rotate",
+      title: "Rotate (Transform): rotate a body",
+      keywords: ["rotate", "spin", "transform"],
+      disabled: !!editingSketch || picking || !!transformEditId || !!transformArming,
+      onSelect: () => openTransform("rotate"),
+      searchOnly: true,
+    },
+    {
+      id: "transform-scale",
+      icon: "✥",
+      label: "Transform ▸ Scale",
+      title: "Scale (Transform): scale a body",
+      keywords: ["scale", "resize", "transform"],
+      disabled: !!editingSketch || picking || !!transformEditId || !!transformArming,
+      onSelect: () => openTransform("scale"),
+      searchOnly: true,
     },
     {
       id: "mirror",
@@ -8994,6 +9058,32 @@ export default function App() {
                   Done
                 </button>
                 <button onClick={cancelTransform}>Cancel</button>
+              </div>
+            </DraggableDialog>
+          )}
+          {transformArming && !editingTransform && (
+            <DraggableDialog
+              className="extrude-dialog"
+              style={{ left: transformPanelXY?.x ?? "50%", top: transformPanelXY?.y ?? 64 }}
+              baseTransform={transformPanelXY ? undefined : "translateX(-50%)"}
+            >
+              <div className="ed-title" data-drag-handle>
+                Transform
+              </div>
+              <div className="ed-modes">
+                {(["translate", "rotate", "scale"] as const).map((m) => (
+                  <button
+                    key={m}
+                    className={transformArming.mode === m ? "active" : ""}
+                    onClick={() => setTransformArming({ mode: m })}
+                  >
+                    {m === "translate" ? "Move" : m === "rotate" ? "Rotate" : "Scale"}
+                  </button>
+                ))}
+              </div>
+              <PickSlot noun="a body" armed value={null} wide onArm={() => {}} />
+              <div className="ed-actions">
+                <button onClick={cancelTransformArming}>Cancel</button>
               </div>
             </DraggableDialog>
           )}
