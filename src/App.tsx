@@ -1100,6 +1100,9 @@ export default function App() {
       const id = picked ? featureIdOf(picked) : null;
       if (id && bodyIds.has(id)) {
         setPatternDialog((d) => (d ? { ...d, targetId: id, arming: null } : d));
+        // A circular pattern still needs an axis (a linear one defaults to World
+        // X), so the body landing hands the arming straight to that slot.
+        if (patternDialog.kind === "circular" && !patternDialog.axis) armPatternPick("axis");
       }
       return;
     }
@@ -1115,9 +1118,15 @@ export default function App() {
     // (→ handleAxisPick), so one click stream can take a sketch line, a body
     // face, or a datum/reference plane.
     if (revolveDialog && revolveDialog.armed === "profile") {
+      // With the profile in hand the dialog's next empty slot takes over the
+      // arming, so the axis is already listening for the following click.
+      const advance = () => {
+        if (!revolveDialog.axis) armRevolveAxis();
+      };
       if (picked?.kind === "sketchFace") {
         const profile: RevolveProfile = { kind: "sketchRegion", sketchId: picked.sketchId, regionId: picked.regionId };
         setRevolveDialog((d) => (d ? { ...d, profile, armed: null } : d));
+        advance();
       } else if (picked?.kind === "face") {
         // A body face is a profile too (same reference as an extrude pulled off
         // a face). Only a PLANAR one: faceNormal is null for anything curved,
@@ -1138,9 +1147,10 @@ export default function App() {
           normal,
         };
         setRevolveDialog((d) => (d ? { ...d, profile, armed: null } : d));
+        advance();
       } else if (picked) {
         // Anything else keeps the arming live — but say why nothing happened,
-        // instead of leaving the button looking stuck on "Selecting a profile…".
+        // instead of leaving the profile button pulsing with nothing to show.
         flashMsg("Select a closed sketch region or a planar body face to revolve.");
       }
       return;
@@ -3974,6 +3984,15 @@ export default function App() {
     });
   };
 
+  /** Arm the Revolve dialog's AXIS slot. Shared by the dialog's own button and
+   *  by the auto-advance that follows a profile pick, so a two-slot tool costs
+   *  two viewport clicks rather than click-button-click-button-click. */
+  const armRevolveAxis = () => {
+    setRevolveDialog((d) => (d ? { ...d, armed: null } : d));
+    setPickPurpose("revolveAxis");
+    setPicking(true);
+  };
+
   const closeRevolveDialog = () => {
     setRevolveDialog(null);
     // Drop any in-flight "pick a plane for the axis" mode the dialog armed.
@@ -4523,6 +4542,25 @@ export default function App() {
     setPickPurpose(slot === "axis" ? "patternAxis" : "patternDir");
     setPicking(true);
   };
+  /** Switch the Pattern dialog between linear and circular. The two kinds want
+   *  different refs, so any in-flight direction/axis pick is dropped — but the
+   *  BODY arming outlives the switch (the body means the same thing to both, and
+   *  the slot's dashed pulse used to go out just for changing tab), and a
+   *  circular pattern that already HAS its body arms the axis it now needs, the
+   *  way the plane dialog arms the pick its method needs. */
+  const setPatternKind = (kind: "linear" | "circular") => {
+    if (picking && (pickPurpose === "patternAxis" || pickPurpose === "patternDir")) {
+      setPicking(false);
+      setPickPurpose("sketch");
+    }
+    if (kind === "circular" && patternDialog?.targetId && !patternDialog.axis) {
+      setPatternDialog((p) => (p ? { ...p, kind } : p));
+      armPatternPick("axis");
+      return;
+    }
+    setPatternDialog((p) => (p ? { ...p, kind, arming: p.arming === "target" ? "target" : null } : p));
+  };
+
   const createPattern = () => {
     const d = patternDialog;
     if (!d || !d.targetId || patternDialogWarning) return;
@@ -4987,10 +5025,20 @@ export default function App() {
   // dialog's base / second reference (whichever slot is armed).
   const handlePickRef = (ref: SketchPlaneRef, aim?: [number, number, number]) => {
     if (pickPurpose === "plane") {
-      setPicking(false);
-      if (planePick === "refB") setPlaneDialog((d) => (d ? { ...d, refB: ref } : d));
-      else setPlaneDialog((d) => (d ? { ...d, base: ref } : d));
-      setPlanePick(null);
+      if (planePick === "refB") {
+        setPlaneDialog((d) => (d ? { ...d, refB: ref } : d));
+        setPicking(false);
+        setPlanePick(null);
+      } else {
+        setPlaneDialog((d) => (d ? { ...d, base: ref } : d));
+        // A midplane needs two references, so the first one landing arms the
+        // second instead of leaving the dialog waiting on a button.
+        if (planeDialog?.method === "midplane" && !planeDialog.refB) armPlanePick("refB");
+        else {
+          setPicking(false);
+          setPlanePick(null);
+        }
+      }
     } else if (pickPurpose === "sectionPlane") {
       setPicking(false);
       setPickPurpose("sketch");
@@ -5094,6 +5142,9 @@ export default function App() {
     }
     setPicking(false);
     setPickPurpose("sketch");
+    // Same auto-advance the other way round: axis first, so the still-empty
+    // profile slot is what the next click fills.
+    if (!revolveDialog?.profile) setRevolveDialog((d) => (d ? { ...d, armed: "profile" } : d));
   };
 
   const createPlane = () => {
@@ -8247,9 +8298,9 @@ export default function App() {
                 ⇅ Flip
               </button>
               {/* The one arming affordance outside a dialog. It follows the same
-                  vocabulary as the pick slots: "Select …" while idle, a dashed
-                  pulse and "Selecting…" while it waits, and clicking again
-                  calls the pick off. */}
+                  vocabulary as the pick slots: the label stays "Select …" and a
+                  dashed pulse says it's waiting; clicking again calls the pick
+                  off. */}
               <button
                 className={picking && pickPurpose === "sectionPlane" ? "arming" : undefined}
                 title="Pick a different plane or face to cut through"
@@ -8263,7 +8314,7 @@ export default function App() {
                   setPicking(true);
                 }}
               >
-                {picking && pickPurpose === "sectionPlane" ? "⌖ Selecting…" : "⌖ Select plane"}
+                ⌖ Select plane
               </button>
             </div>
           )}
@@ -8598,7 +8649,7 @@ export default function App() {
                     {/* An accumulating slot: it keeps taking clicks after the
                         first, so it says how to stop and how to add more. */}
                     {d.arming === "faces"
-                      ? "Selecting faces… (Esc to stop)"
+                      ? "Select faces (Esc to stop)"
                       : d.faces.length
                         ? "Add more faces"
                         : undefined}
@@ -8654,11 +8705,6 @@ export default function App() {
                       ? (doc.features.find((f) => f.id === ax.edge.featureId)?.name ?? "Body") + " · edge"
                       : (doc.features.find((f) => f.id === ax.sketchId)?.name ?? "Sketch") + " · line";
               const axisArming = picking && pickPurpose === "revolveAxis";
-              const armAxis = () => {
-                setRevolveDialog((d) => (d ? { ...d, armed: null } : d));
-                setPickPurpose("revolveAxis");
-                setPicking(true);
-              };
               // Arming the profile has to CANCEL an armed axis: the two roles read
               // different click streams (profile = the selection raycaster, axis =
               // picking mode), so without this both stay live — the axis button
@@ -8694,10 +8740,10 @@ export default function App() {
                     armed={axisArming}
                     value={axisLabel}
                     wide
-                    onArm={armAxis}
+                    onArm={armRevolveAxis}
                     onClear={() => {
                       setRevolveDialog((d) => (d ? { ...d, axis: null } : d));
-                      armAxis();
+                      armRevolveAxis();
                     }}
                   />
                   <div className="ed-modes">
@@ -8909,9 +8955,9 @@ export default function App() {
                 <div className="ed-field">
                   <span>Points</span>
                   {/* A counting slot: it takes three clicks, so the button
-                      shows the tally in both states rather than a bare
-                      "Selecting…", and it only reads as FILLED at 3/3 — where
-                      it stops taking clicks and ✕ starts the three over. */}
+                      carries the tally alongside the imperative, and it only
+                      reads as FILLED at 3/3 — where it stops taking clicks and
+                      ✕ starts the three over. */}
                   <PickSlot
                     noun="points"
                     armed={planePick === "point" && planeDialog.points.length < 3}
@@ -8923,7 +8969,7 @@ export default function App() {
                       armPlanePick("point");
                     }}
                   >
-                    {`${planeDialog.points.length}/3` + (planePick === "point" ? " · selecting…" : " picked")}
+                    {`Select points (${planeDialog.points.length}/3)`}
                   </PickSlot>
                 </div>
               )}
@@ -9215,11 +9261,7 @@ export default function App() {
               </div>
               <div className="ed-modes">
                 {(["linear", "circular"] as const).map((k) => (
-                  <button
-                    key={k}
-                    className={d.kind === k ? "active" : ""}
-                    onClick={() => setPatternDialog((p) => (p ? { ...p, kind: k, arming: null } : p))}
-                  >
+                  <button key={k} className={d.kind === k ? "active" : ""} onClick={() => setPatternKind(k)}>
                     {k === "linear" ? "Linear" : "Circular"}
                   </button>
                 ))}
@@ -9288,7 +9330,9 @@ export default function App() {
                       type="checkbox"
                       checked={d.dir2on}
                       onChange={(e) =>
-                        setPatternDialog((p) => (p ? { ...p, dir2on: e.target.checked, arming: null } : p))
+                        setPatternDialog((p) =>
+                          p ? { ...p, dir2on: e.target.checked, arming: p.arming === "target" ? "target" : null } : p,
+                        )
                       }
                     />
                   </label>
@@ -9386,7 +9430,7 @@ export default function App() {
                   >
                     {/* The full "which kinds qualify" phrase is only useful
                         before the pick; while arming, the banner says it. */}
-                    {axisArming ? "Selecting an axis…" : undefined}
+                    {axisArming ? "Select an axis" : undefined}
                   </PickSlot>
                   <label className="ed-field">
                     <span>Count</span>

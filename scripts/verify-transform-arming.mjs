@@ -100,7 +100,7 @@ const slotText =
     .locator(".ed-actions")
     .first()
     .evaluate((n) => n.parentElement.textContent)) ?? "";
-check("panel asks for a body", /Selecting a body/i.test(slotText), slotText.replace(/\s+/g, " ").slice(0, 120));
+check("panel asks for a body", /Select a body/i.test(slotText), slotText.replace(/\s+/g, " ").slice(0, 120));
 await page.screenshot({ path: "/tmp/openshape-transform-arming-panel.png" });
 check("toolbar Transform is disabled while armed", await tbBtn.isDisabled());
 

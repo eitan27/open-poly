@@ -5,7 +5,8 @@
 //   2. a straight BODY EDGE is a valid revolve axis (it was advertised in the
 //      messages but never accepted), and it highlights on hover while arming;
 //   3. arming the profile cancels an armed axis — the two roles read different
-//      click streams, so the axis button used to stay lit "Selecting an axis…".
+//      click streams, so the axis button used to stay lit (its dashed pulse)
+//      and still swallow the next click.
 import { chromium } from "playwright";
 
 const URL = process.env.URL ?? "http://localhost:5173/";
@@ -69,10 +70,12 @@ const labels = () => dlg.locator(".ed-pick-btn").allTextContents();
 const classes = () => dlg.locator(".ed-pick-btn").evaluateAll((els) => els.map((e) => e.className));
 await dlg.locator(".ed-pick-btn").last().click(); // arm the axis
 await page.waitForTimeout(300);
+// Both states read "Select an axis" — the label says what the slot wants and
+// doesn't change under the user — so the ARMED state is the dashed-pulse class.
 check(
   "arming the axis lights the axis button",
-  (await labels())[1] === "Selecting an axis…",
-  (await labels()).join(" | "),
+  (await classes())[1].includes("active") && (await labels())[1] === "Select an axis",
+  `${(await labels()).join(" | ")} :: ${(await classes()).join(" | ")}`,
 );
 await dlg.locator(".ed-pick-btn").first().click(); // back to the profile
 await page.waitForTimeout(300);
@@ -100,8 +103,14 @@ check(
   (await dlg.locator(".bool-operand-name").allTextContents()).length === 1,
   (await dlg.locator(".bool-operand-name").allTextContents()).join(" | ") || "none",
 );
-await dlg.locator(".ed-pick-btn").last().click(); // arm the axis
-await page.waitForTimeout(300);
+// No second button press: a satisfied slot hands the arming to the next empty
+// one, so the axis is already listening for the clicks below.
+check(
+  "…and the axis armed itself once the profile landed",
+  (await dlg.locator(".ed-pick-btn.active").count()) === 1 &&
+    (await dlg.locator(".ed-pick-btn.active").textContent()) === "Select an axis",
+  (await dlg.locator(".ed-pick-btn").allTextContents()).join(" | ") || "none",
+);
 
 // 1a. The HIDDEN Front plane must not take the click. This point is ON that
 // plane (y = 0), inside its 72mm quad, and clear of every body/sketch — so
