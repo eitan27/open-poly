@@ -55,7 +55,11 @@ await waitIdle();
 const planeRow = page.locator(".tree-row", { hasText: "Plane 1" }).first();
 // row buttons: ▲ ▼ eye ✕ — the eye is the third
 const eye = planeRow.locator(".row-icon").nth(2);
-check("plane row has an eye titled Hide", (await eye.getAttribute("title")) === "Hide", await eye.getAttribute("title"));
+check(
+  "plane row has an eye titled Hide",
+  (await eye.getAttribute("title")) === "Hide",
+  await eye.getAttribute("title"),
+);
 
 const rowsBefore = await page.locator(".tree-row").count();
 const canvasBefore = await page.locator("canvas").count();
@@ -71,7 +75,11 @@ const d1 = await doc();
 const plane1 = d1.features.find((f) => f.type === "plane");
 check("plane stays in the model (not suppressed)", plane1?.suppressed === false, JSON.stringify(plane1?.suppressed));
 check("plane is flagged hidden", plane1?.hidden === true, String(plane1?.hidden));
-check("sketch on it survives", d1.features.some((f) => f.type === "sketch"), "");
+check(
+  "sketch on it survives",
+  d1.features.some((f) => f.type === "sketch"),
+  "",
+);
 check("timeline shows no error badge", (await page.locator(".tree-row .row-badge").count()) === 0);
 await page.screenshot({ path: process.env.SHOT ?? "/tmp/openshape-plane-hidden.png" });
 
