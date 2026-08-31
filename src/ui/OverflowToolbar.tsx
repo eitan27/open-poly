@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { MoreFlyout } from "./MoreFlyout";
-import { fitCount, toRows, type ToolbarItem, type ToolbarRow } from "./toolbarOverflow";
+import { fitCount, toRows, type ToolbarChoice, type ToolbarItem, type ToolbarRow } from "./toolbarOverflow";
 
 interface Props {
   /** Toolbar class (e.g. "model-toolbar"), so each bar keeps its own look. */
@@ -25,6 +25,12 @@ interface Props {
  * currently shown — otherwise hiding a button would free up space, which would
  * show it again, and the layout would oscillate.
  */
+/** Does this item render as a ▾ dropdown on the bar? Having `choices` is not
+ *  enough: `choicesSearchOnly` keeps the button a plain action and leaves the
+ *  choices to the flyout (see ToolbarItem). */
+const hasDropdown = (i: ToolbarItem): i is ToolbarItem & { choices: ToolbarChoice[] } =>
+  !!i.choices && !i.choicesSearchOnly;
+
 export function OverflowToolbar({ className, items, showShortcuts, openRequest }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -33,13 +39,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
   /** The open ▾ dropdown, for its outside-click close. */
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Items that render as a bar button / count toward its width. A
-  // `searchOnly` item is reachable only through the flyout search below — it
-  // never occupies bar space and is always part of the flyout's default
-  // (nothing-typed-yet) listing, like any other overflowed tool.
-  const barItems = items.filter((i) => !i.searchOnly);
-
-  const [visibleCount, setVisibleCount] = useState(barItems.length);
+  const [visibleCount, setVisibleCount] = useState(items.length);
   /** null = closed; otherwise the flyout's starting search text. */
   const [menuQuery, setMenuQuery] = useState<string | null>(null);
   const menuOpen = menuQuery !== null;
@@ -47,7 +47,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
   // Button widths depend on the labels and the shortcut hints, nothing else —
   // re-measure when those change (and on every resize, below).
   const layoutKey =
-    barItems.map((i) => `${i.icon}${i.label}${i.shortcut ?? ""}${i.choices ? "▾" : ""}`).join("|") +
+    items.map((i) => `${i.icon}${i.label}${i.shortcut ?? ""}${hasDropdown(i) ? "▾" : ""}`).join("|") +
     `#${showShortcuts}`;
 
   useLayoutEffect(() => {
@@ -79,7 +79,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
     return () => ro.disconnect();
   }, [layoutKey]);
 
-  const hidden = barItems.slice(visibleCount).concat(items.filter((i) => i.searchOnly));
+  const hidden = items.slice(visibleCount);
   const hiddenIds = new Set(hidden.map((i) => i.id));
   const allRows = toRows(items);
   // Closed-box default: the buttons you can't see. Typing searches the whole
@@ -111,7 +111,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
   // flyout pre-filtered to that button instead.
   const armedKey = hidden.map((i) => (i.choicesOpen ? i.id : "")).join(",");
   useEffect(() => {
-    const armed = hidden.find((i) => i.choices && i.choicesOpen);
+    const armed = hidden.find((i) => hasDropdown(i) && i.choicesOpen);
     if (!armed) return;
     armed.onChoicesOpenChange?.(false);
     openMenu(armed.label);
@@ -126,7 +126,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
     return () => window.removeEventListener("mousedown", onDown);
   }, [menuOpen]);
 
-  const openDropdown = items.find((i) => i.choices && i.choicesOpen);
+  const openDropdown = items.find((i) => hasDropdown(i) && i.choicesOpen);
   useEffect(() => {
     if (!openDropdown) return;
     const onDown = (e: MouseEvent) => {
@@ -140,11 +140,11 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
     const label = (
       <>
         {item.icon} {item.label}
-        {item.choices ? " ▾" : ""}
+        {hasDropdown(item) ? " ▾" : ""}
         {showShortcuts && item.shortcut ? <span className="kbd-hint">{item.shortcut}</span> : null}
       </>
     );
-    if (item.choices) {
+    if (hasDropdown(item)) {
       const open = !forMirror && !!item.choicesOpen;
       return (
         <div className="mt-dropdown" key={item.id} ref={open ? dropdownRef : undefined}>
@@ -197,13 +197,17 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
         {/* The frosted panel, as a child layer — see .tb-blur in App.css for why
             the blur can't sit on the bar itself. */}
         <div className="tb-blur" />
-        {barItems.slice(0, visibleCount).map((item) => renderButton(item, false))}
+        {items.slice(0, visibleCount).map((item) => renderButton(item, false))}
         <div className="tb-more" ref={moreRef}>
           <button
             className="tb-more-btn"
             title={
+              // Counted in rows, not items: a button with `choices` contributes
+              // one row per choice, and the count should match what the flyout
+              // actually lists. `hidden` still decides *whether* anything is
+              // hidden — with nothing hidden, hiddenRows is the whole bar.
               hidden.length > 0
-                ? `${hidden.length} more tool${hidden.length === 1 ? "" : "s"} — click to search all tools`
+                ? `${hiddenRows.length} more tool${hiddenRows.length === 1 ? "" : "s"} — click to search all tools`
                 : "Search all tools"
             }
             aria-label="More tools"
@@ -230,7 +234,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
         </div>
         {/* Measured, never seen: the full row at its natural width. */}
         <div className="tb-mirror" ref={mirrorRef} aria-hidden>
-          {barItems.map((item) => renderButton(item, true))}
+          {items.map((item) => renderButton(item, true))}
           <button className="tb-more-btn" tabIndex={-1}>
             …{showShortcuts ? <span className="kbd-hint">/</span> : null}
           </button>

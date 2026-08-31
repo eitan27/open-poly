@@ -7143,39 +7143,36 @@ export default function App() {
       label: "Transform",
       shortcut: "T",
       title: "Transform (T): move / rotate / scale a body — pick one first, or arm and click it in the viewport",
-      keywords: ["translate"],
       disabled: !!editingSketch || picking || !!transformEditId || !!transformArming,
+      // The button itself opens the gizmo on Move — its natural default — so it
+      // stays a plain one-click action (choicesSearchOnly). The modes exist as
+      // their own rows in the "/" flyout, where "rotate" or "resize" should land
+      // you straight in the right tab rather than on a generic "Transform".
       onSelect: () => openTransform(),
-    },
-    {
-      id: "transform-move",
-      icon: "✥",
-      label: "Transform ▸ Move",
-      title: "Move (Transform): move a body",
-      keywords: ["move", "translate", "transform"],
-      disabled: !!editingSketch || picking || !!transformEditId || !!transformArming,
-      onSelect: () => openTransform("translate"),
-      searchOnly: true,
-    },
-    {
-      id: "transform-rotate",
-      icon: "✥",
-      label: "Transform ▸ Rotate",
-      title: "Rotate (Transform): rotate a body",
-      keywords: ["rotate", "spin", "transform"],
-      disabled: !!editingSketch || picking || !!transformEditId || !!transformArming,
-      onSelect: () => openTransform("rotate"),
-      searchOnly: true,
-    },
-    {
-      id: "transform-scale",
-      icon: "✥",
-      label: "Transform ▸ Scale",
-      title: "Scale (Transform): scale a body",
-      keywords: ["scale", "resize", "transform"],
-      disabled: !!editingSketch || picking || !!transformEditId || !!transformArming,
-      onSelect: () => openTransform("scale"),
-      searchOnly: true,
+      choicesSearchOnly: true,
+      choices: [
+        {
+          id: "move",
+          label: "Move",
+          keywords: ["translate", "position"],
+          title: "Move (Transform): move a body",
+          onSelect: () => openTransform("translate"),
+        },
+        {
+          id: "rotate",
+          label: "Rotate",
+          keywords: ["spin", "orient"],
+          title: "Rotate (Transform): rotate a body about an axis",
+          onSelect: () => openTransform("rotate"),
+        },
+        {
+          id: "scale",
+          label: "Scale",
+          keywords: ["resize", "size"],
+          title: "Scale (Transform): scale a body uniformly",
+          onSelect: () => openTransform("scale"),
+        },
+      ],
     },
     {
       id: "mirror",

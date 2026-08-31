@@ -103,13 +103,66 @@ describe("toRows", () => {
     expect(toRows(disabledParent)[0].disabled).toBe(true);
   });
 
-  it("still produces a row for a searchOnly item (only bar rendering excludes it)", () => {
-    const withSearchOnly: ToolbarItem[] = [
-      { id: "move", icon: "✥", label: "Transform ▸ Move", title: "Move", onSelect: noop, searchOnly: true },
+  it("replaces the parent row for a choicesSearchOnly item, exactly like a dropdown", () => {
+    const transform: ToolbarItem[] = [
+      {
+        id: "transform",
+        icon: "✥",
+        label: "Transform",
+        title: "Transform a body",
+        onSelect: noop,
+        choicesSearchOnly: true,
+        choices: [
+          { id: "move", label: "Move", onSelect: noop },
+          { id: "rotate", label: "Rotate", onSelect: noop },
+        ],
+      },
     ];
-    const rows = toRows(withSearchOnly);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].label).toBe("Transform ▸ Move");
+    const rows = toRows(transform);
+    expect(rows.map((r) => r.label)).toEqual(["Transform ▸ Move", "Transform ▸ Rotate"]);
+    // Every row still points back at the button, so the flyout's default
+    // listing shows them only when Transform itself is off the bar.
+    expect(rows.every((r) => r.itemId === "transform")).toBe(true);
+  });
+
+  it("gives a choice the parent's keywords plus its own", () => {
+    const withKeywords: ToolbarItem[] = [
+      {
+        id: "transform",
+        icon: "✥",
+        label: "Transform",
+        title: "Transform a body",
+        keywords: ["place"],
+        onSelect: noop,
+        choices: [
+          { id: "rotate", label: "Rotate", keywords: ["spin"], onSelect: noop },
+          { id: "scale", label: "Scale", keywords: ["resize"], onSelect: noop },
+        ],
+      },
+    ];
+    const rows = toRows(withKeywords);
+    expect(rows[0].keywords).toEqual(["place", "spin"]);
+    // "spin" belongs to Rotate alone — it must not drag Scale along with it.
+    expect(rows[1].keywords).toEqual(["place", "resize"]);
+  });
+
+  it("lets a choice override the derived tooltip", () => {
+    const titled: ToolbarItem[] = [
+      {
+        id: "transform",
+        icon: "✥",
+        label: "Transform",
+        title: "Transform (T): move / rotate / scale a body",
+        onSelect: noop,
+        choices: [
+          { id: "move", label: "Move", title: "Move (Transform): move a body", onSelect: noop },
+          { id: "scale", label: "Scale", onSelect: noop },
+        ],
+      },
+    ];
+    const rows = toRows(titled);
+    expect(rows[0].title).toBe("Move (Transform): move a body");
+    expect(rows[1].title).toBe("Transform (T): move / rotate / scale a body — Scale");
   });
 });
 
