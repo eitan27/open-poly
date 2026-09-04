@@ -421,6 +421,45 @@ function faceNormal(faces: MeshedFaces, faceId: number): [number, number, number
   return n;
 }
 
+/** True when this face is one facet of a FACETED round wall rather than a plain
+ *  flat face. Round walls here are polygonal prisms (the kernel's
+ *  facetedCylinderShape, and extruded circles), so what looks and picks like a
+ *  cylindrical face is a strip whose tessellation is perfectly planar. The mesh
+ *  already groups the whole wall — `clusterId` is what makes one click select
+ *  the surface instead of a slice — so the test is that the cluster has several
+ *  facets whose normals all share a perpendicular, i.e. they wrap an axis. The
+ *  kernel then fits that axis exactly (facetedWallAxis); this is only the
+ *  pick-time filter that keeps a genuinely flat face out. */
+function isFacetedWall(faces: MeshedFaces, faceId: number): boolean {
+  const g = faces.faceGroups?.find((fg) => fg.faceId === faceId);
+  if (!g || g.clusterId === undefined) return false;
+  const normals: [number, number, number][] = [];
+  for (const fg of faces.faceGroups!) {
+    if (fg.clusterId !== g.clusterId) continue;
+    const n = faceNormal(faces, fg.faceId);
+    if (!n) return false; // a curved member: a blend, not a faceted wall
+    normals.push(n);
+  }
+  if (normals.length < 3) return false;
+  let axis: [number, number, number] | null = null;
+  let best = 0;
+  for (let i = 1; i < normals.length; i++) {
+    const [a, b] = [normals[0], normals[i]];
+    const x: [number, number, number] = [
+      a[1] * b[2] - a[2] * b[1],
+      a[2] * b[0] - a[0] * b[2],
+      a[0] * b[1] - a[1] * b[0],
+    ];
+    const m = Math.hypot(x[0], x[1], x[2]);
+    if (m > best) {
+      best = m;
+      axis = [x[0] / m, x[1] / m, x[2] / m];
+    }
+  }
+  if (!axis || best < 1e-3) return false;
+  return normals.every((n) => Math.abs(n[0] * axis![0] + n[1] * axis![1] + n[2] * axis![2]) < 1e-3);
+}
+
 /** Bounding-box centre of a tessellated body — the default rotation pivot for a
  *  Transform (intuitive: the body spins about its own middle). */
 function bodyCenter(faces: MeshedFaces): [number, number, number] {
@@ -5078,11 +5117,12 @@ export default function App() {
         if (!center) return;
         const faceName = m ? faceNameOf(m.mesh.faces, pick.faceId) : undefined;
         const normal = (m && faceNormal(m.mesh.faces, pick.faceId)) || undefined;
-        // A face is the axis only when the SURFACE has one (cylinder/cone). A
-        // planar face — faceNormal is non-null exactly for those — used to be
+        // A face is the axis only when it HAS one: a curved surface (faceNormal
+        // is null exactly for those) or a faceted round wall, whose strips are
+        // planar but wrap an axis all the same. A genuinely flat face used to be
         // taken here and then failed in the kernel, so the whole feature landed
         // broken in the timeline instead of the click just not counting.
-        if (normal) {
+        if (normal && !isFacetedWall(m!.mesh.faces, pick.faceId)) {
           flashMsg("A flat face has no axis of its own. Use World X/Y/Z, a sketch line, or a cylindrical face.");
           return; // keep the pick armed for another try
         }
