@@ -6736,15 +6736,19 @@ export default function App() {
     });
   };
 
-  // Per-operand viewport highlight while the dialog is open: union → all orange;
-  // subtract → base orange, tools cyan; intersect → all cyan (overlap reads
-  // through). Colors are the shared SELECT_COLOR / GHOST_COLOR refs in Viewport.
+  // Per-operand viewport highlight while the dialog is open, keyed by what the
+  // operation does to each body rather than by colour: union → every operand
+  // KEPT; subtract → the base kept, the tools CUT (they are about to be taken
+  // away, so they wear the same red as a Remove extrude's tool and a chamfer's
+  // bevel); intersect → every operand GHOSTED, since the result is none of them
+  // and the overlap has to read through. See Viewport's booleanHighlight.
   const booleanHighlight = useMemo(() => {
     const d = booleanDialog;
+    const none = () => new Set<string>();
     if (!d) return null;
-    if (d.op === "subtract") return { orange: new Set(d.base ? [d.base] : []), cyan: new Set(d.tools) };
-    if (d.op === "intersect") return { orange: new Set<string>(), cyan: new Set(d.operandIds) };
-    return { orange: new Set(d.operandIds), cyan: new Set<string>() };
+    if (d.op === "subtract") return { keep: new Set(d.base ? [d.base] : []), ghost: none(), cut: new Set(d.tools) };
+    if (d.op === "intersect") return { keep: none(), ghost: new Set(d.operandIds), cut: none() };
+    return { keep: new Set(d.operandIds), ghost: none(), cut: none() };
   }, [booleanDialog]);
 
   const handleDelete = (id: string) => {
