@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { SearchIcon } from "./icons";
 import { MoreFlyout } from "./MoreFlyout";
 import { fitCount, toRows, type ToolbarChoice, type ToolbarItem, type ToolbarRow } from "./toolbarOverflow";
 
@@ -14,8 +15,8 @@ interface Props {
 
 /**
  * A floating toolbar that never runs off the viewport: buttons that don't fit
- * collapse into a "…" flyout listing the hidden ones, with a search box that
- * (once you type) searches every tool in the bar, arrow-navigable. The "…"
+ * collapse into a magnifier flyout listing the hidden ones, with a search box
+ * that (once you type) searches every tool in the bar, arrow-navigable. The
  * button is always on the bar — with nothing hidden it still opens as the
  * "find me a tool" search over every tool — so the room for it is reserved
  * before any button is placed (see fitCount).
@@ -216,7 +217,8 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
             disabled={allDisabled}
             onClick={() => (menuOpen ? closeMenu() : openMenu())}
           >
-            …{showShortcuts ? <span className="kbd-hint">/</span> : null}
+            <SearchIcon />
+            {showShortcuts ? <span className="kbd-hint">/</span> : null}
           </button>
           {menuOpen && (
             // Keyed by the starting query so re-opening it pre-filtered (the
@@ -236,7 +238,8 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
         <div className="tb-mirror" ref={mirrorRef} aria-hidden>
           {items.map((item) => renderButton(item, true))}
           <button className="tb-more-btn" tabIndex={-1}>
-            …{showShortcuts ? <span className="kbd-hint">/</span> : null}
+            <SearchIcon />
+            {showShortcuts ? <span className="kbd-hint">/</span> : null}
           </button>
         </div>
       </div>

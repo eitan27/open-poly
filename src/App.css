@@ -970,13 +970,16 @@ button:disabled .kbd-hint {
   left: 289px;
   transform: translateY(-50%);
   z-index: 46;
-  width: 20px;
+  /* Narrow enough to clear the viewport's left-hand toolbars (the sketch
+     column starts 11px right of the viewport edge), so the tab protrudes
+     without clipping a corner off it. Height carries the hit area. */
+  width: 11px;
   height: 46px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1;
   color: var(--text-5);
   background: var(--bg-panel-3);
@@ -1068,6 +1071,11 @@ button:disabled .kbd-hint {
 }
 .parts-header .params-heading {
   margin-bottom: 0;
+}
+/* In the Parts header the collapsible heading shares the row with Import, so it
+   hugs its text instead of taking the full width. */
+.parts-header .params-heading.collapsible {
+  width: auto;
 }
 .parts-import {
   position: relative;
@@ -1165,6 +1173,8 @@ button:disabled .kbd-hint {
   flex: none;
   width: 100%;
   margin-top: 3px;
+  /* A touch of air before the Timeline heading that follows. */
+  margin-bottom: 4px;
 }
 
 /* --- Feature tree --- */
@@ -1872,9 +1882,14 @@ button:disabled .kbd-hint {
 }
 
 /* Always on the bar, even with nothing hidden — it doubles as the "find me a
-   tool" search. Labelled "…" rather than a word so a control that isn't a tool
+   tool" search. A magnifier rather than a word so a control that isn't a tool
    doesn't outweigh the tools beside it; the min-width keeps it a comfortable
-   target at that short a label. */
+   target at that small a label. */
+.tb-more-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .model-toolbar .tb-more-btn {
   flex: 1;
   min-width: 34px;
@@ -2019,9 +2034,8 @@ button:disabled .kbd-hint {
   flex: 0 0 auto;
 }
 
-/* The overflow button, pinned to the bottom of the visible column. Labelled
-   "More" in words rather than the modelling bar's "…": every button around it in
-   this column is a bare glyph, so a glyph here would read as one more tool. */
+/* The overflow button, pinned to the bottom of the visible column. A magnifier,
+   like the modelling bar's — it's a search box, not another tool. */
 .tbc-more {
   position: absolute;
   left: 5px;
@@ -2030,8 +2044,8 @@ button:disabled .kbd-hint {
   display: flex;
 }
 
-/* "More ▸" has to fit one line inside the ~50px icon column: smaller than the
-   16px tool glyphs, tight padding, and no wrapping. */
+/* The magnifier has to fit inside the ~50px icon column: tight padding and no
+   wrapping. */
 .sketch-toolbar .tbc-more-btn {
   flex: 1;
   gap: 2px;
@@ -2040,10 +2054,6 @@ button:disabled .kbd-hint {
   letter-spacing: 0;
   white-space: nowrap;
   color: var(--text-6);
-}
-
-.tbc-more-arrow {
-  font-size: 10px;
 }
 
 /* Open state matches the group arrows' expanded look. */

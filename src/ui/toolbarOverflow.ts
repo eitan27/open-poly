@@ -1,5 +1,5 @@
 // Overflow logic for the floating viewport toolbars: which buttons fit in the
-// space available, and how the "…" flyout's search ranks tools. Kept free
+// space available, and how the search flyout's search ranks tools. Kept free
 // of React/DOM (the one React import is a type, erased at build) so both halves
 // are unit-testable in node.
 import type { ReactNode } from "react";
