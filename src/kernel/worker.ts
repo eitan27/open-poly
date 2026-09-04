@@ -3282,9 +3282,130 @@ function patternNamed(
   return compoundOf(copies);
 }
 
+/** The axis of a FACETED round wall — the wall a user actually clicks in this
+ *  build. Cylinders here are 48-gon prisms (facetedCylinderShape) and extruded
+ *  circles are polygonal for the same reason, so the "cylindrical face" under
+ *  the cursor is ONE flat strip whose geomType is PLANE: there is no analytic
+ *  axis to read off it, and the pattern used to refuse it after the fact, with
+ *  the feature already in the timeline.
+ *
+ *  The strip alone can't answer: its plane is parallel to the axis, but every
+ *  direction in that plane is. Its smooth CLUSTER can — the same grouping the
+ *  viewport shades and picks as one surface (faceClustersFrom), which is the
+ *  whole wall. A prism wall pins its axis exactly: each facet plane is parallel
+ *  to the axis and the same distance (the apothem) from it, so
+ *
+ *      n_i · x + a = n_i · p_i        for every facet i
+ *
+ *  is three unknowns — the axis point x in the cross-section, plus the apothem
+ *  a — over as many equations as there are facets. Least squares, so a wall a
+ *  boolean has cut down to a few facets still answers, and the residual is the
+ *  test of whether this was a round wall at all. No radius needed, and none
+ *  assumed: an elliptical or irregular prism fails the residual instead of
+ *  quietly patterning about the wrong line.
+ *
+ *  Returns null for anything that isn't a prism wall (a lone flat face, a
+ *  fillet blend, facets that share no perpendicular), leaving the caller to
+ *  raise its own error. */
+function facetedWallAxis(body: Body, face: Face): { origin: V3; dir: V3 } | null {
+  // The cluster walk is over every face of the body; skip it on the same huge
+  // bodies the meshing pass skips clustering for.
+  if (body.shape.faces.length > PER_FACE_MESH_THRESHOLD) return null;
+  const clusterOf = faceClustersFrom(body.shape);
+  const rep = clusterOf.get(face.hashCode);
+  if (rep === undefined) return null;
+  const facets: { n: V3; p: V3 }[] = [];
+  for (const f of body.shape.faces) {
+    if (clusterOf.get(f.hashCode) !== rep) continue;
+    if (f.geomType !== "PLANE") return null; // a blend or a real surface, not facets
+    const n = faceOutwardNormal(f);
+    if (!n) return null;
+    facets.push({ n, p: f.center.toTuple() as V3 });
+  }
+  if (facets.length < 3) return null; // 3 unknowns; 2 facets can't pin the apothem
+
+  // Direction: perpendicular to every facet normal, so the cross product of the
+  // two most independent ones. A cluster whose normals are all parallel (a flat
+  // face split in two) collapses here.
+  let dir: V3 | null = null;
+  let best = 0;
+  for (let i = 1; i < facets.length; i++) {
+    const x = vcross(facets[0].n, facets[i].n);
+    const m = Math.hypot(x[0], x[1], x[2]);
+    if (m > best) {
+      best = m;
+      dir = x;
+    }
+  }
+  if (!dir || best < 1e-3) return null;
+  dir = vunit(dir);
+  // Every facet must be PARALLEL to that direction, or this is a dome/cone soup
+  // rather than a prism wall.
+  if (facets.some((f) => Math.abs(vdot(f.n, dir!)) > 1e-4)) return null;
+
+  // Cross-section basis, then the 3x3 normal equations of the least squares.
+  const e1 = vunit(facets[0].n);
+  const e2 = vunit(vcross(dir, e1));
+  let a11 = 0,
+    a12 = 0,
+    a13 = 0,
+    a22 = 0,
+    a23 = 0,
+    a33 = 0,
+    b1 = 0,
+    b2 = 0,
+    b3 = 0;
+  const rows: { m1: number; m2: number; c: number }[] = [];
+  for (const f of facets) {
+    const m1 = vdot(f.n, e1);
+    const m2 = vdot(f.n, e2);
+    const c = vdot(f.n, f.p);
+    rows.push({ m1, m2, c });
+    a11 += m1 * m1;
+    a12 += m1 * m2;
+    a13 += m1;
+    a22 += m2 * m2;
+    a23 += m2;
+    a33 += 1;
+    b1 += m1 * c;
+    b2 += m2 * c;
+    b3 += c;
+  }
+  const det = a11 * (a22 * a33 - a23 * a23) - a12 * (a12 * a33 - a23 * a13) + a13 * (a12 * a23 - a22 * a13);
+  if (Math.abs(det) < 1e-9) return null; // facets don't span the cross-section
+  const solve = (r1: number, r2: number, r3: number) =>
+    (r1 * (a22 * a33 - a23 * a23) - a12 * (r2 * a33 - a23 * r3) + a13 * (r2 * a23 - a22 * r3)) / det;
+  const q1 = solve(b1, b2, b3);
+  const q2 = (a11 * (b2 * a33 - a23 * b3) - b1 * (a12 * a33 - a23 * a13) + a13 * (a12 * b3 - b2 * a13)) / det;
+  const apothem = (a11 * (a22 * b3 - b2 * a23) - a12 * (a12 * b3 - b2 * a13) + b1 * (a12 * a23 - a22 * a13)) / det;
+  if (!Number.isFinite(q1) || !Number.isFinite(q2) || !Number.isFinite(apothem)) return null;
+  if (Math.abs(apothem) < 1e-6) return null; // the "axis" would lie in the wall
+
+  // The residual IS the "is this a round wall" test: a regular prism fits to
+  // machine precision, an irregular one does not fit at all.
+  const tol = Math.max(1e-4, Math.abs(apothem) * 1e-3);
+  if (rows.some((r) => Math.abs(r.m1 * q1 + r.m2 * q2 + apothem - r.c) > tol)) return null;
+
+  // Any point of the line will do; put it at the wall's mid-height so it reads
+  // sensibly in a debug dump. The direction's SIGN is arbitrary for a rotation
+  // axis (as it is for OCCT's own), so fix it deterministically.
+  let t = 0;
+  for (const f of facets) t += vdot(f.p, dir);
+  t /= facets.length;
+  const origin: V3 = [
+    q1 * e1[0] + q2 * e2[0] + t * dir[0],
+    q1 * e1[1] + q2 * e2[1] + t * dir[1],
+    q1 * e1[2] + q2 * e2[2] + t * dir[2],
+  ];
+  const k = dir.reduce((bi, v, i, arr) => (Math.abs(v) > Math.abs(arr[bi]) ? i : bi), 0);
+  if (dir[k] < 0) dir = [-dir[0], -dir[1], -dir[2]];
+  return { origin, dir };
+}
+
 /** Resolve a body face armed as a circular-pattern axis: a cylindrical/conical
- *  face → that surface's own central axis. Planar faces are rejected — unlike
- *  revolve there is no profile plane to intersect with. */
+ *  face → that surface's own central axis, or a FACETED round wall's fitted one
+ *  (facetedWallAxis). A genuinely flat face is rejected — unlike revolve there
+ *  is no profile plane to intersect with. */
 function facePatternAxis(
   body: Body,
   faceName: string | undefined,
@@ -3295,7 +3416,14 @@ function facePatternAxis(
   const { face } = bodyProfileFace(body, faceName, center, refNormal, warn, "pattern axis face");
   const gt = face.geomType;
   if (gt !== "CYLINDRE" && gt !== "CONE") {
-    throw new Error("pattern: the axis face must be cylindrical or conical (its own axis is the pattern axis)");
+    // Nothing analytic to read — but a round wall HERE is a polygonal prism, so
+    // the flat strip that was clicked may still carry an axis. See
+    // facetedWallAxis; it returns null for a face that is merely flat.
+    const fitted = facetedWallAxis(body, face);
+    if (fitted) return fitted;
+    throw new Error(
+      "pattern: the axis face must be cylindrical or conical, or a faceted round wall (its own axis is the pattern axis)",
+    );
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
