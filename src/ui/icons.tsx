@@ -21,6 +21,28 @@ export function EyeIcon({ size = 14 }: { size?: number }) {
   );
 }
 
+/** A magnifying glass — the toolbars' "search all tools" button. Drawn rather
+ *  than set as a glyph so it carries the same stroke weight as the other line
+ *  icons instead of an emoji's colour and metrics. */
+export function SearchIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="7" cy="7" r="4.3" />
+      <line x1="10.2" y1="10.2" x2="13.5" y2="13.5" />
+    </svg>
+  );
+}
+
 /** Two slanted parallel lines (the ∥ symbol), drawn with a comfortable gap so
  *  they don't read as a single line — used for the sketch Parallel constraint. */
 export function ParallelIcon({ size = 16 }: { size?: number }) {

@@ -7,6 +7,7 @@ import {
   type CSSProperties,
   type ReactElement,
 } from "react";
+import { SearchIcon } from "./icons";
 import { MoreFlyout } from "./MoreFlyout";
 import { fitCount, type ToolbarRow } from "./toolbarOverflow";
 
@@ -175,9 +176,9 @@ export function OverflowColumn({
             aria-expanded={menuOpen}
             onClick={() => (menuOpen ? closeMenu() : setMenuQuery(""))}
           >
-            {/* ▸ = "opens to the right", the same affordance the rectangle /
-                circle / pattern groups use for their variant flyouts. */}
-            More<span className="tbc-more-arrow">▸</span>
+            {/* Just the magnifier: this opens a search box, not one of the
+                variant flyouts the ▸ arrows mark. */}
+            <SearchIcon size={15} />
             {showShortcuts ? <span className="kbd-hint">/</span> : null}
           </button>
         </div>

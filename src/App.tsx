@@ -1819,6 +1819,10 @@ export default function App() {
   // so bursts of edits collapse into one rebuild (see the regen effect).
   const REGEN_DEBOUNCE_MS = 60;
   const [variablesOpen, setVariablesOpen] = useState(() => doc.variables.length < VARS_OPEN_THRESHOLD);
+  // Timeline and Parts collapse the same way Variables does — open by default,
+  // since they're the panel's main content.
+  const [timelineOpen, setTimelineOpen] = useState(true);
+  const [partsOpen, setPartsOpen] = useState(true);
   // Height of the timeline's own scroll box, dragged via the splitter below it.
   const [timelineHeight, setTimelineHeight] = useState(260);
   const startTimelineResize = (e: PointerEvent<HTMLDivElement>) => {
@@ -7575,29 +7579,47 @@ export default function App() {
               onDelete={(id) => setDoc(removeVariable(doc, id))}
             />
           )}
-          <h2 className="params-heading">Timeline</h2>
-          <FeatureTree
-            doc={doc}
-            height={timelineHeight}
-            datums={DATUM_ROWS}
-            datumVisibility={datumVisibility}
-            onToggleDatum={(id) => setDatumVisibility((v) => ({ ...v, [id]: !v[id] }))}
-            selectedIds={selectedFeatureIds}
-            errors={errors}
-            warnings={warnings}
-            onSelect={selectFeature}
-            onDoubleClick={handleTreeDoubleClick}
-            onDelete={handleDelete}
-            onToggleSuppress={(id) =>
-              setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
-            }
-            onToggleHidden={(id, hidden) => setDoc(setFeatureHidden(doc, id, hidden))}
-            onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
-            onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
-          />
-          <div className="panel-splitter" title="Drag to resize the timeline" onPointerDown={startTimelineResize} />
+          <button
+            className="params-heading collapsible"
+            aria-expanded={timelineOpen}
+            onClick={() => setTimelineOpen((o) => !o)}
+          >
+            <span className={"collapse-caret" + (timelineOpen ? " open" : "")}>▶</span>
+            Timeline
+          </button>
+          {timelineOpen && (
+            <>
+              <FeatureTree
+                doc={doc}
+                height={timelineHeight}
+                datums={DATUM_ROWS}
+                datumVisibility={datumVisibility}
+                onToggleDatum={(id) => setDatumVisibility((v) => ({ ...v, [id]: !v[id] }))}
+                selectedIds={selectedFeatureIds}
+                errors={errors}
+                warnings={warnings}
+                onSelect={selectFeature}
+                onDoubleClick={handleTreeDoubleClick}
+                onDelete={handleDelete}
+                onToggleSuppress={(id) =>
+                  setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
+                }
+                onToggleHidden={(id, hidden) => setDoc(setFeatureHidden(doc, id, hidden))}
+                onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
+                onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
+              />
+              <div className="panel-splitter" title="Drag to resize the timeline" onPointerDown={startTimelineResize} />
+            </>
+          )}
           <div className="parts-header">
-            <h2 className="params-heading">Parts</h2>
+            <button
+              className="params-heading collapsible"
+              aria-expanded={partsOpen}
+              onClick={() => setPartsOpen((o) => !o)}
+            >
+              <span className={"collapse-caret" + (partsOpen ? " open" : "")}>▶</span>
+              Parts
+            </button>
             <div className="parts-import" ref={importMenuRef}>
               <button
                 type="button"
@@ -7646,21 +7668,23 @@ export default function App() {
               onChange={handleDxfFile}
             />
           </div>
-          <SolidsList
-            doc={doc}
-            bodyIds={bodyIds}
-            selectedIds={selectedFeatureIds}
-            onSelect={selectFeature}
-            onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}
-            onDelete={handleDelete}
-            onColorChange={handleSolidColor}
-            onOpacityChange={handleSolidOpacity}
-            onToggleHidden={handleSolidHidden}
-            onExportStep={handleExportStep}
-            onExportStl={handleExportStl}
-            isolatedId={isolatedBodyId}
-            onIsolate={handleIsolate}
-          />
+          {partsOpen && (
+            <SolidsList
+              doc={doc}
+              bodyIds={bodyIds}
+              selectedIds={selectedFeatureIds}
+              onSelect={selectFeature}
+              onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}
+              onDelete={handleDelete}
+              onColorChange={handleSolidColor}
+              onOpacityChange={handleSolidOpacity}
+              onToggleHidden={handleSolidHidden}
+              onExportStep={handleExportStep}
+              onExportStl={handleExportStl}
+              isolatedId={isolatedBodyId}
+              onIsolate={handleIsolate}
+            />
+          )}
           {/* Constraints + Parameters used to live here, below Parts, where the
               thing you were editing was easy to miss. They're now the floating
               EditPanel over the viewport (see below). */}
