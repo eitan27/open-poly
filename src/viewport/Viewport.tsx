@@ -351,6 +351,9 @@ interface SceneState {
   ghostFillLineMaterial: THREE.LineBasicMaterial;
   ghostCutMaterial: THREE.MeshStandardMaterial;
   ghostCutLineMaterial: THREE.LineBasicMaterial;
+  /** A whole body a Boolean subtract will consume — the removal red as an
+   *  ordinary, occluded ghost (see the material's own comment). */
+  ghostCutBodyMaterial: THREE.MeshStandardMaterial;
   // The translate/rotate gizmo and the invisible proxy object it drives. The
   // proxy's position/rotation are read back as the Transform feature's values.
   transformControls: TransformControls;
@@ -1139,10 +1142,16 @@ export function Viewport({
   /** Body ids whose whole body should highlight (modifier features resolve to
    *  the body they affect — see App). */
   highlightBodyIds: Set<string>;
-  /** Boolean-dialog operand highlight (null when the dialog is closed): `orange`
-   *  bodies render in the standard selection color, `cyan` bodies render as a
-   *  translucent ghost. See SELECT_COLOR / GHOST_COLOR. */
-  booleanHighlight: { orange: Set<string>; cyan: Set<string> } | null;
+  /** Boolean-dialog operand highlight (null when the dialog is closed), by what
+   *  the operation will DO to each body rather than by colour:
+   *    • `keep`  — survives as itself (union's operands, subtract's base):
+   *      the standard selection accent, SELECT_COLOR.
+   *    • `ghost` — folded into a result that is none of them (intersect's
+   *      operands): the translucent "not committed yet" GHOST_COLOR.
+   *    • `cut`   — the material about to be TAKEN AWAY (subtract's tools):
+   *      GHOST_CUT_COLOR, the same removal red a Remove extrude's tool and a
+   *      chamfer's bevel wear. One vocabulary for "this goes away". */
+  booleanHighlight: { keep: Set<string>; ghost: Set<string>; cut: Set<string> } | null;
   /** `sketchUv` rides along when a sketch is being edited: the click's SNAPPED
    *  uv on the active plane (endpoints/origin/grid, same stack as drawing
    *  tools), so pick-tool flows that need a coordinate — the circular pattern's
@@ -1502,55 +1511,48 @@ export function Viewport({
     const ghostGroup = new THREE.Group();
     scene.add(group, sketchGroup, planeGroup, ghostPlaneGroup, ghostGroup);
 
-    // Ghost-preview materials: a fixed accent colour (not the body's own
-    // colour) so a preview always reads as "not committed yet," regardless of
-    // what it's standing in for.
-    const ghostMaterial = new THREE.MeshStandardMaterial({
-      color: GHOST_COLOR,
-      metalness: 0.1,
-      roughness: 0.55,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.35,
-      depthWrite: false,
-      clippingPlanes: sectionClipPlanes,
-    });
-    const ghostLineMaterial = new THREE.LineBasicMaterial({
-      color: GHOST_COLOR,
-      transparent: true,
-      opacity: 0.7,
-      clippingPlanes: sectionClipPlanes,
-    });
-    // Dress-up delta ghosts (see GhostMesh.variant). `depthTest: false` is the
-    // point of these: the delta is flush with — or inside — the body it changes,
-    // so a depth-tested ghost would z-fight along its coplanar faces and vanish
-    // everywhere else. `renderOrder` keeps the pair above the model, and cut
-    // above fill where one feature does both. Slightly more opaque than the
-    // additive ghost: these wedges are thin, and read weakly at 0.35.
-    const deltaFaceMat = (color: number) =>
+    // Ghost-preview materials. ONE definition, three accents: a preview always
+    // reads as "not committed yet" in a fixed accent rather than the body's own
+    // colour, whatever it stands in for, so a chamfer's bevel and a Remove
+    // extrude's tool are the same red by construction and not by coincidence.
+    //
+    // `inside` is the treatment for a ghost that lies WITHIN the body it
+    // changes — the dress-up delta, and a cut's tool. Depth testing would hide
+    // exactly those (a chamfer's wedge is buried in the un-chamfered solid, two
+    // of its faces coplanar with it; a cut's prism is inside the material it
+    // removes), so they draw on top instead, and a little more opaquely: these
+    // volumes are thin and read weakly at the additive ghost's 0.35.
+    const ghostFaceMat = (color: number, inside = false) =>
       new THREE.MeshStandardMaterial({
         color,
         metalness: 0.1,
         roughness: 0.55,
         side: THREE.DoubleSide,
         transparent: true,
-        opacity: 0.5,
+        opacity: inside ? 0.5 : 0.35,
         depthWrite: false,
-        depthTest: false,
+        depthTest: !inside,
         clippingPlanes: sectionClipPlanes,
       });
-    const deltaLineMat = (color: number) =>
+    const ghostLineMat = (color: number, inside = false) =>
       new THREE.LineBasicMaterial({
         color,
         transparent: true,
-        opacity: 0.9,
-        depthTest: false,
+        opacity: inside ? 0.9 : 0.7,
+        depthTest: !inside,
         clippingPlanes: sectionClipPlanes,
       });
-    const ghostFillMaterial = deltaFaceMat(GHOST_FILL_COLOR);
-    const ghostFillLineMaterial = deltaLineMat(GHOST_FILL_COLOR);
-    const ghostCutMaterial = deltaFaceMat(GHOST_CUT_COLOR);
-    const ghostCutLineMaterial = deltaLineMat(GHOST_CUT_COLOR);
+    const ghostMaterial = ghostFaceMat(GHOST_COLOR);
+    const ghostLineMaterial = ghostLineMat(GHOST_COLOR);
+    const ghostFillMaterial = ghostFaceMat(GHOST_FILL_COLOR, true);
+    const ghostFillLineMaterial = ghostLineMat(GHOST_FILL_COLOR, true);
+    const ghostCutMaterial = ghostFaceMat(GHOST_CUT_COLOR, true);
+    const ghostCutLineMaterial = ghostLineMat(GHOST_CUT_COLOR, true);
+    // A whole BODY about to be subtracted away wears the removal red too — but
+    // as an ordinary depth-tested ghost, not the drawn-on-top `inside` one: a
+    // subtract tool is a solid standing in the scene, not a sliver buried in
+    // one, so it has to be occluded like the body it is.
+    const ghostCutBodyMaterial = ghostFaceMat(GHOST_CUT_COLOR);
 
     // Section view: a translucent quad hinting the plane's extent (always shown
     // while enabled, everywhere — independent of the stencil cap below, which
@@ -1986,6 +1988,7 @@ export function Viewport({
       ghostFillLineMaterial,
       ghostCutMaterial,
       ghostCutLineMaterial,
+      ghostCutBodyMaterial,
       previewLine,
       snapMarker,
       snapEdgeLine,
@@ -2025,11 +2028,14 @@ export function Viewport({
         if (!fg) continue;
         const wholeSel = highlightBodyIdsRef.current.has(fid);
         const wholeHov = hovered?.kind === "feature" && hovered.id === fid;
-        // Boolean-dialog operand highlight overrides normal selection: cyan
-        // (ghost, index 3) wins over orange (selected, index 2).
+        // Boolean-dialog operand highlight overrides normal selection: a body
+        // being consumed (cut, index 5; ghost, index 3) wins over "selected"
+        // (index 2), since what the operation does to it is the more useful
+        // fact while the dialog is open.
         const bh = booleanHighlightRef.current;
-        const wholeGhost = bh?.cyan.has(fid) ?? false;
-        const wholeOrange = bh?.orange.has(fid) ?? false;
+        const wholeCut = bh?.cut.has(fid) ?? false;
+        const wholeGhost = bh?.ghost.has(fid) ?? false;
+        const wholeKeep = bh?.keep.has(fid) ?? false;
         const asf = activeSketchFaceRef.current;
         const asfFaces = asf?.bodyId === fid ? asf.faceIds : null;
         // Logical-face selection: a click on any facet of a faceted cylinder
@@ -2050,7 +2056,7 @@ export function Viewport({
           const selF = wholeSel || selClusters.has(fc);
           const hovF = wholeHov || (hovCluster !== undefined && fc === hovCluster);
           const sketchF = asfFaces?.has(faceId as number) ?? false;
-          const idx = wholeGhost ? 3 : selF || wholeOrange ? 2 : hovF ? 1 : sketchF ? 4 : 0;
+          const idx = wholeCut ? 5 : wholeGhost ? 3 : selF || wholeKeep ? 2 : hovF ? 1 : sketchF ? 4 : 0;
           if (g.materialIndex !== idx) {
             g.materialIndex = idx;
             dirty = true;
@@ -2250,7 +2256,7 @@ export function Viewport({
           const isHov = hovered?.kind === "sketchFace" && hovered.sketchId === sid && hovered.regionId === rid;
           const mat = child.material as THREE.MeshBasicMaterial;
           mat.opacity = isSel ? 0.32 : isHov ? 0.16 : 0;
-          mat.color.set(isSel ? 0xff9d3c : 0x36d6c3);
+          mat.color.set(isSel ? SELECT_COLOR : EDGE_HOV_COLOR);
         }
       }
 
@@ -3938,6 +3944,7 @@ export function Viewport({
       ghostFillLineMaterial.dispose();
       ghostCutMaterial.dispose();
       ghostCutLineMaterial.dispose();
+      ghostCutBodyMaterial.dispose();
       previewLine.geometry.dispose();
       (previewLine.material as THREE.Material).dispose();
       snapMarker.geometry.dispose();
@@ -4044,8 +4051,9 @@ export function Viewport({
         baseMaterial,
         state.hoverMaterial,
         selectedMaterial,
-        state.ghostMaterial, // index 3 = boolean tool / intersect (translucent cyan)
+        state.ghostMaterial, // index 3 = boolean intersect operand (translucent cyan)
         sketchFaceMaterial, // index 4 = the active sketch's own face (opaque, body colour)
+        state.ghostCutBodyMaterial, // index 5 = boolean SUBTRACT tool (removal red)
       ]);
       faceMesh.userData.featureId = id;
       // The body's own opacity (pre-dim), so the sketch-dim effect can restore

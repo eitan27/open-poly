@@ -1636,6 +1636,11 @@ export default function App() {
   // meshes out for the translucent previews while the dialog is open.
   const [extrudePreview, setExtrudePreview] = useState<{ bodyId: string; mesh: FeatureMesh["mesh"] }[] | null>(null);
   const [extrudePreviewError, setExtrudePreviewError] = useState<string | null>(null);
+  /** The extrude on the table takes material away, so its ghost reads as a
+   *  removal rather than an arrival (see ghostMeshes). Only the create-time
+   *  ghost is at stake: editing a committed extrude applies to the real model
+   *  instead of ghosting. */
+  const extrudeCutting = extrudeDialog?.mode === "remove";
   // Live ghost of the revolve dialog's currently-armed inputs (translucent solid
   // of the would-be result), and its build/resolve error if any.
   const [revolvePreview, setRevolvePreview] = useState<FeatureMesh["mesh"] | null>(null);
@@ -2816,7 +2821,16 @@ export default function App() {
 
   const ghostMeshes = useMemo<GhostMesh[]>(
     () => [
-      ...(extrudePreview ? extrudePreview.map((p) => ({ mesh: p.mesh })) : []),
+      // An extrude previews the swept TOOL, and in Remove mode that tool is the
+      // material about to be carved out — the same thing a chamfer's bevel is,
+      // so it wears the same "cut" variant rather than the cyan that means new
+      // material is arriving. That also gets it drawn without depth testing,
+      // which it needs for the same reason the dress-up delta does: a cut's tool
+      // lies INSIDE the body it cuts, so a depth-tested ghost of it is invisible
+      // exactly when it matters. See GhostMesh.variant.
+      ...(extrudePreview
+        ? extrudePreview.map((p) => ({ mesh: p.mesh, ...(extrudeCutting ? { variant: "cut" as const } : {}) }))
+        : []),
       ...(revolvePreview ? [{ mesh: revolvePreview }] : []),
       ...patternGhosts,
       // The chamfer/fillet delta: what the operation fills in and what it carves
@@ -2824,7 +2838,7 @@ export default function App() {
       ...(dressUpPreview?.added ? [{ mesh: dressUpPreview.added, variant: "fill" as const }] : []),
       ...(dressUpPreview?.removed ? [{ mesh: dressUpPreview.removed, variant: "cut" as const }] : []),
     ],
-    [extrudePreview, revolvePreview, patternGhosts, dressUpPreview],
+    [extrudePreview, extrudeCutting, revolvePreview, patternGhosts, dressUpPreview],
   );
 
   // Feature ids that produced an actual rendered body — what the Solids list
@@ -6722,15 +6736,19 @@ export default function App() {
     });
   };
 
-  // Per-operand viewport highlight while the dialog is open: union → all orange;
-  // subtract → base orange, tools cyan; intersect → all cyan (overlap reads
-  // through). Colors are the shared SELECT_COLOR / GHOST_COLOR refs in Viewport.
+  // Per-operand viewport highlight while the dialog is open, keyed by what the
+  // operation does to each body rather than by colour: union → every operand
+  // KEPT; subtract → the base kept, the tools CUT (they are about to be taken
+  // away, so they wear the same red as a Remove extrude's tool and a chamfer's
+  // bevel); intersect → every operand GHOSTED, since the result is none of them
+  // and the overlap has to read through. See Viewport's booleanHighlight.
   const booleanHighlight = useMemo(() => {
     const d = booleanDialog;
+    const none = () => new Set<string>();
     if (!d) return null;
-    if (d.op === "subtract") return { orange: new Set(d.base ? [d.base] : []), cyan: new Set(d.tools) };
-    if (d.op === "intersect") return { orange: new Set<string>(), cyan: new Set(d.operandIds) };
-    return { orange: new Set(d.operandIds), cyan: new Set<string>() };
+    if (d.op === "subtract") return { keep: new Set(d.base ? [d.base] : []), ghost: none(), cut: new Set(d.tools) };
+    if (d.op === "intersect") return { keep: none(), ghost: new Set(d.operandIds), cut: none() };
+    return { keep: new Set(d.operandIds), ghost: none(), cut: none() };
   }, [booleanDialog]);
 
   const handleDelete = (id: string) => {
