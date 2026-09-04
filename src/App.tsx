@@ -1636,6 +1636,11 @@ export default function App() {
   // meshes out for the translucent previews while the dialog is open.
   const [extrudePreview, setExtrudePreview] = useState<{ bodyId: string; mesh: FeatureMesh["mesh"] }[] | null>(null);
   const [extrudePreviewError, setExtrudePreviewError] = useState<string | null>(null);
+  /** The extrude on the table takes material away, so its ghost reads as a
+   *  removal rather than an arrival (see ghostMeshes). Only the create-time
+   *  ghost is at stake: editing a committed extrude applies to the real model
+   *  instead of ghosting. */
+  const extrudeCutting = extrudeDialog?.mode === "remove";
   // Live ghost of the revolve dialog's currently-armed inputs (translucent solid
   // of the would-be result), and its build/resolve error if any.
   const [revolvePreview, setRevolvePreview] = useState<FeatureMesh["mesh"] | null>(null);
@@ -2816,7 +2821,16 @@ export default function App() {
 
   const ghostMeshes = useMemo<GhostMesh[]>(
     () => [
-      ...(extrudePreview ? extrudePreview.map((p) => ({ mesh: p.mesh })) : []),
+      // An extrude previews the swept TOOL, and in Remove mode that tool is the
+      // material about to be carved out — the same thing a chamfer's bevel is,
+      // so it wears the same "cut" variant rather than the cyan that means new
+      // material is arriving. That also gets it drawn without depth testing,
+      // which it needs for the same reason the dress-up delta does: a cut's tool
+      // lies INSIDE the body it cuts, so a depth-tested ghost of it is invisible
+      // exactly when it matters. See GhostMesh.variant.
+      ...(extrudePreview
+        ? extrudePreview.map((p) => ({ mesh: p.mesh, ...(extrudeCutting ? { variant: "cut" as const } : {}) }))
+        : []),
       ...(revolvePreview ? [{ mesh: revolvePreview }] : []),
       ...patternGhosts,
       // The chamfer/fillet delta: what the operation fills in and what it carves
@@ -2824,7 +2838,7 @@ export default function App() {
       ...(dressUpPreview?.added ? [{ mesh: dressUpPreview.added, variant: "fill" as const }] : []),
       ...(dressUpPreview?.removed ? [{ mesh: dressUpPreview.removed, variant: "cut" as const }] : []),
     ],
-    [extrudePreview, revolvePreview, patternGhosts, dressUpPreview],
+    [extrudePreview, extrudeCutting, revolvePreview, patternGhosts, dressUpPreview],
   );
 
   // Feature ids that produced an actual rendered body — what the Solids list

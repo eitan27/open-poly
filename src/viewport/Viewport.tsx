@@ -1502,55 +1502,43 @@ export function Viewport({
     const ghostGroup = new THREE.Group();
     scene.add(group, sketchGroup, planeGroup, ghostPlaneGroup, ghostGroup);
 
-    // Ghost-preview materials: a fixed accent colour (not the body's own
-    // colour) so a preview always reads as "not committed yet," regardless of
-    // what it's standing in for.
-    const ghostMaterial = new THREE.MeshStandardMaterial({
-      color: GHOST_COLOR,
-      metalness: 0.1,
-      roughness: 0.55,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.35,
-      depthWrite: false,
-      clippingPlanes: sectionClipPlanes,
-    });
-    const ghostLineMaterial = new THREE.LineBasicMaterial({
-      color: GHOST_COLOR,
-      transparent: true,
-      opacity: 0.7,
-      clippingPlanes: sectionClipPlanes,
-    });
-    // Dress-up delta ghosts (see GhostMesh.variant). `depthTest: false` is the
-    // point of these: the delta is flush with — or inside — the body it changes,
-    // so a depth-tested ghost would z-fight along its coplanar faces and vanish
-    // everywhere else. `renderOrder` keeps the pair above the model, and cut
-    // above fill where one feature does both. Slightly more opaque than the
-    // additive ghost: these wedges are thin, and read weakly at 0.35.
-    const deltaFaceMat = (color: number) =>
+    // Ghost-preview materials. ONE definition, three accents: a preview always
+    // reads as "not committed yet" in a fixed accent rather than the body's own
+    // colour, whatever it stands in for, so a chamfer's bevel and a Remove
+    // extrude's tool are the same red by construction and not by coincidence.
+    //
+    // `inside` is the treatment for a ghost that lies WITHIN the body it
+    // changes — the dress-up delta, and a cut's tool. Depth testing would hide
+    // exactly those (a chamfer's wedge is buried in the un-chamfered solid, two
+    // of its faces coplanar with it; a cut's prism is inside the material it
+    // removes), so they draw on top instead, and a little more opaquely: these
+    // volumes are thin and read weakly at the additive ghost's 0.35.
+    const ghostFaceMat = (color: number, inside = false) =>
       new THREE.MeshStandardMaterial({
         color,
         metalness: 0.1,
         roughness: 0.55,
         side: THREE.DoubleSide,
         transparent: true,
-        opacity: 0.5,
+        opacity: inside ? 0.5 : 0.35,
         depthWrite: false,
-        depthTest: false,
+        depthTest: !inside,
         clippingPlanes: sectionClipPlanes,
       });
-    const deltaLineMat = (color: number) =>
+    const ghostLineMat = (color: number, inside = false) =>
       new THREE.LineBasicMaterial({
         color,
         transparent: true,
-        opacity: 0.9,
-        depthTest: false,
+        opacity: inside ? 0.9 : 0.7,
+        depthTest: !inside,
         clippingPlanes: sectionClipPlanes,
       });
-    const ghostFillMaterial = deltaFaceMat(GHOST_FILL_COLOR);
-    const ghostFillLineMaterial = deltaLineMat(GHOST_FILL_COLOR);
-    const ghostCutMaterial = deltaFaceMat(GHOST_CUT_COLOR);
-    const ghostCutLineMaterial = deltaLineMat(GHOST_CUT_COLOR);
+    const ghostMaterial = ghostFaceMat(GHOST_COLOR);
+    const ghostLineMaterial = ghostLineMat(GHOST_COLOR);
+    const ghostFillMaterial = ghostFaceMat(GHOST_FILL_COLOR, true);
+    const ghostFillLineMaterial = ghostLineMat(GHOST_FILL_COLOR, true);
+    const ghostCutMaterial = ghostFaceMat(GHOST_CUT_COLOR, true);
+    const ghostCutLineMaterial = ghostLineMat(GHOST_CUT_COLOR, true);
 
     // Section view: a translucent quad hinting the plane's extent (always shown
     // while enabled, everywhere — independent of the stencil cap below, which
@@ -2250,7 +2238,7 @@ export function Viewport({
           const isHov = hovered?.kind === "sketchFace" && hovered.sketchId === sid && hovered.regionId === rid;
           const mat = child.material as THREE.MeshBasicMaterial;
           mat.opacity = isSel ? 0.32 : isHov ? 0.16 : 0;
-          mat.color.set(isSel ? 0xff9d3c : 0x36d6c3);
+          mat.color.set(isSel ? SELECT_COLOR : EDGE_HOV_COLOR);
         }
       }
 
