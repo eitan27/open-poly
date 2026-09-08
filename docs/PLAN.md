@@ -483,8 +483,17 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   like Extrude, the dialog owns an accumulating list of edge/face picks
   (`dressUpDialog.picks`, resolved by `document/dressUpTarget.ts` — which also
   does the tangent-chain expansion, a property of the whole set), armed on open
-  when nothing is pre-selected. A pick on a second body is refused with a
-  message rather than silently re-targeting. _(Chamfer two-distance/angle
+  when nothing is pre-selected. **Multi-body — ✅ DONE (2026-09-08):** a
+  `DressUpFeature` dresses ONE body (its edges resolve against that body's own
+  name table), so picks spanning several bodies **fan out into one feature per
+  body** — `dressUpTargetsFromPicks` groups them, `applyDressUp` threads one
+  document through every `addDressUp` so the whole fan-out is a **single undo
+  step**, and the commit is all-or-nothing (one body that can't take the size
+  fails the lot, never a half-dressed timeline). The dialog groups its rows
+  under each body's name, titles itself "(2 bodies)", ghosts every body at once,
+  and each feature is named after what it dresses — **"Chamfer on Box 1"** —
+  since "Chamfer 1 / Chamfer 2" would say nothing about which is which. Same
+  shape as the multi-profile Extrude fan-out. _(Chamfer two-distance/angle
   variants: TODO; currently single distance / single radius.)_
 - **Shell (2026-07-24) — ✅ DONE.** A `ShellFeature` hollows a body: pick the
   face(s) to remove (they become openings, referenced by **persistent name** +

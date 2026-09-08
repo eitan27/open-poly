@@ -243,6 +243,50 @@ check("Mirror prefills from a selected body", (await rows().count()) === 1, awai
 check("…and nothing is left armed", (await armedButtons().count()) === 0, await dlg.textContent());
 await cancel();
 
+// --- 9. A dress-up fans out across bodies -----------------------------------
+// A chamfer/fillet feature dresses ONE body (its edge names are resolved in that
+// body's own name table), so picks spanning several bodies commit as one feature
+// each — named after the body, and folded into a single undo step, the way a
+// multi-profile Extrude already behaves.
+await apply({ op: "newDocument" });
+await waitIdle();
+const boxA = await apply({ op: "addPrimitive", kind: "box", params: { width: 30, depth: 30, height: 30 } });
+await waitIdle();
+const boxB = await apply({ op: "addPrimitive", kind: "box", params: { width: 30, depth: 30, height: 30 } });
+await waitIdle();
+await apply({ op: "transform", targetId: boxB.createdId, tx: 80 });
+await waitIdle();
+canvas = await page.locator("canvas").first().boundingBox();
+
+await pressTool("f");
+await clickWorld([0, 0, 30]);
+await clickWorld([80, 0, 30]);
+const fanText = await dlg.textContent();
+check("a dress-up takes picks on a second body", (await rows().count()) === 2, fanText);
+check("…the title says how many bodies", fanText.includes("(2 bodies)"), fanText);
+check("…the picks are grouped under each body's name", fanText.includes("Box 1") && fanText.includes("Box 2"), fanText);
+check("…and it says it will commit as two features", fanText.includes("commits as 2 features"), fanText);
+
+await dlg.getByRole("button", { name: "Create" }).click();
+await waitIdle();
+const fanned = await features("dressup");
+check("one dress-up per body was created", fanned.length === 2, JSON.stringify(fanned.map((f) => f.name)));
+check(
+  "…each named after the body it dresses",
+  fanned.map((f) => f.name).join(" | ") === "Fillet on Box 1 | Fillet on Box 2",
+  JSON.stringify(fanned.map((f) => f.name)),
+);
+check(
+  "…and each targets its own body",
+  fanned[0]?.targetId === boxA.createdId && fanned[1]?.targetId === boxB.createdId,
+  JSON.stringify(fanned.map((f) => f.targetId)),
+);
+
+await blur();
+await page.keyboard.press("Meta+z");
+await waitIdle();
+check("one undo takes the whole fan-out back", (await features("dressup")).length === 0);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nall checks passed");
 await browser.close();
 process.exit(failures ? 1 : 0);

@@ -98,6 +98,40 @@ export function dressUpTargetFromPicks(
   return { targetId, edges: names, edgeRefs, faces: faceNames, faceRefs, anchor };
 }
 
+/** The dress-up targets a set of picks describes — **one per body**, ordered by
+ *  when each body was first picked.
+ *
+ *  A dress-up feature dresses a single body: its `targetId`, whose edges are
+ *  resolved against that body's own name table (an edge name from another body
+ *  means nothing there). So picks spanning several bodies aren't a single
+ *  feature — they fan out into one feature per body, sharing the dialog's size
+ *  and angle, exactly as a multi-profile Extrude fans out into one extrude per
+ *  profile.
+ *
+ *  All-or-nothing: if any body's picks can't be resolved (an unnamed edge, a
+ *  missing mesh), the whole list is empty rather than quietly dressing fewer
+ *  bodies than were picked. */
+export function dressUpTargetsFromPicks(
+  picks: readonly DressUpPick[],
+  meshes: readonly DressUpMesh[],
+): DressUpTarget[] {
+  const byBody = new Map<string, DressUpPick[]>();
+  for (const p of picks) {
+    const id = dressUpPickBody(p);
+    if (id === null) return []; // something that isn't an edge or a face
+    const group = byBody.get(id);
+    if (group) group.push(p);
+    else byBody.set(id, [p]);
+  }
+  const targets: DressUpTarget[] = [];
+  for (const group of byBody.values()) {
+    const t = dressUpTargetFromPicks(group, meshes);
+    if (!t) return [];
+    targets.push(t);
+  }
+  return targets;
+}
+
 /** The body a dress-up pick belongs to, or null if it isn't an edge/face pick.
  *  Used by the dialog's click router to refuse a pick on a second body. */
 export function dressUpPickBody(pick: DressUpPick): string | null {

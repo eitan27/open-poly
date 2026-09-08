@@ -235,11 +235,22 @@ export function addDressUp(
 ): { doc: Document; id: string } {
   const label = op === "chamfer" ? "Chamfer" : "Fillet";
   const ordinal = doc.features.filter((f) => f.type === "dressup" && f.op === op).length + 1;
+  // Named after the body it dresses — "Chamfer on Box 1". One gesture can fan
+  // out into several dress-ups (a dress-up feature acts on ONE body, so picks
+  // spanning three bodies become three features), and a timeline of "Chamfer 1
+  // / Chamfer 2 / Chamfer 3" would say nothing about which is which. Falls back
+  // to the ordinal when the target isn't a feature in this document, and a
+  // suffix keeps a second chamfer on the same body distinct.
+  const target = doc.features.find((f) => f.id === targetId);
+  const base = target ? `${label} on ${target.name}` : `${label} ${ordinal}`;
+  const taken = new Set(doc.features.map((f) => f.name));
+  let name = base;
+  for (let n = 2; taken.has(name); n++) name = `${base} (${n})`;
   const feature: DressUpFeature = {
     id: uid(),
     type: "dressup",
     op,
-    name: `${label} ${ordinal}`,
+    name,
     suppressed: false,
     targetId,
     edges,

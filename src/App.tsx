@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -127,7 +128,12 @@ import { validateShellThickness, mapShellKernelError } from "./document/shellVal
 import { shellBodyFromSelection, toggleShellFace, retargetShell, NO_SHELL_FACES } from "./document/shellTarget";
 import { detectSketchRegions } from "./document/regions";
 import { extrudeProfilesFromPicks, isExtrudePick, toggleExtrudePick } from "./document/extrudeProfiles";
-import { dressUpPickBody, dressUpTargetFromPicks, toggleDressUpPick } from "./document/dressUpTarget";
+import {
+  dressUpPickBody,
+  dressUpTargetsFromPicks,
+  toggleDressUpPick,
+  type DressUpTarget,
+} from "./document/dressUpTarget";
 import { FEATURE_DEFS, FEATURE_KINDS, featureTypeLabel } from "./document/featureDefs";
 import {
   deleteDoc,
@@ -1080,21 +1086,9 @@ export default function App() {
         if (picked) flashMsg(`Select the body edges or faces to ${op} — nothing else can be dressed.`);
         return;
       }
-      // A pick on a second body is refused rather than treated as a re-target:
-      // the size/angle already typed belong to the body being dressed, and the
-      // arming stays live so the next click can correct the slip. Both bodies
-      // are named, because "one body" on its own leaves the user guessing which
-      // one is already in the list and what to do about it.
-      const bodyName = (id: string | null) => (id && doc.features.find((f) => f.id === id)?.name) || "another body";
-      const current = dressUpDialog.picks[0] ? dressUpPickBody(dressUpDialog.picks[0]) : null;
-      const clicked = dressUpPickBody(picked);
-      if (current && clicked !== current) {
-        flashMsg(
-          `A single ${op} acts on one body at a time. ${bodyName(current)} is already listed — clear the list to ` +
-            `${op} ${bodyName(clicked)} instead.`,
-        );
-        return;
-      }
+      // Edges on several bodies are fine: the dialog groups them by body and
+      // commits one dress-up each (dressUpTargetsFromPicks), so a chamfer across
+      // three parts is one gesture and one undo step.
       setDressUpDialog((d) => (d ? { ...d, picks: toggleDressUpPick(d.picks, picked) } : d));
       return;
     }
@@ -1654,9 +1648,11 @@ export default function App() {
   // may be absent — a feature whose edges are all convex only removes. Produced
   // by the same debounced regen that validates the dialog, so previewing costs
   // no extra kernel round trip.
+  // One entry per fanned-out feature: a multi-body dress-up ghosts on every
+  // body it touches, not just the first.
   const [dressUpPreview, setDressUpPreview] = useState<{
-    removed?: FeatureMesh["mesh"];
-    added?: FeatureMesh["mesh"];
+    removed: FeatureMesh["mesh"][];
+    added: FeatureMesh["mesh"][];
   } | null>(null);
   // Shell dialog. The body is armed when the tool opens (from whatever was
   // selected — a face pick resolves to its owning body) and shown in the
@@ -2883,8 +2879,8 @@ export default function App() {
       ...patternGhosts,
       // The chamfer/fillet delta: what the operation fills in and what it carves
       // off, ghosted over the model (see GhostMesh.variant).
-      ...(dressUpPreview?.added ? [{ mesh: dressUpPreview.added, variant: "fill" as const }] : []),
-      ...(dressUpPreview?.removed ? [{ mesh: dressUpPreview.removed, variant: "cut" as const }] : []),
+      ...(dressUpPreview?.added ?? []).map((mesh) => ({ mesh, variant: "fill" as const })),
+      ...(dressUpPreview?.removed ?? []).map((mesh) => ({ mesh, variant: "cut" as const })),
     ],
     [extrudePreview, extrudeCutting, revolvePreview, patternGhosts, dressUpPreview],
   );
@@ -3545,10 +3541,11 @@ export default function App() {
   // armed and waiting for the first click.
   const openDressUp = (op: "chamfer" | "fillet") => {
     const picks = selection.filter((s) => s.kind === "edge" || s.kind === "face");
-    const target = dressUpTargetFromPicks(picks, meshes);
-    const s = (target?.anchor && viewApiRef.current?.worldToScreen(target.anchor)) || { x: 240, y: 160 };
+    const targets = dressUpTargetsFromPicks(picks, meshes);
+    const anchor = targets[0]?.anchor;
+    const s = (anchor && viewApiRef.current?.worldToScreen(anchor)) || { x: 240, y: 160 };
     setDressUpError(null);
-    setDressUpDialog({ op, size: "2", angle: "45", flip: false, picks, arming: !target, x: s.x, y: s.y });
+    setDressUpDialog({ op, size: "2", angle: "45", flip: false, picks, arming: targets.length === 0, x: s.x, y: s.y });
   };
 
   // Re-open the chamfer/fillet dialog to edit in place. Seeds op + size + angle
@@ -3580,28 +3577,31 @@ export default function App() {
     cancelEdit();
   };
 
-  // Which edges/body the dialog dresses: its own accumulated picks, else
-  // (editing) the feature's own referenced edges.
-  const dressUpDialogTarget = useMemo(() => {
-    if (!dressUpDialog) return null;
-    const picked = dressUpTargetFromPicks(dressUpDialog.picks, meshes);
-    if (picked || !dressUpDialog.editId) return picked;
+  // What the dialog dresses: its own accumulated picks, grouped into ONE TARGET
+  // PER BODY (see dressUpTargetsFromPicks — picks spanning three bodies commit
+  // as three features), else (editing) the feature's own referenced edges.
+  const dressUpDialogTargets = useMemo((): DressUpTarget[] => {
+    if (!dressUpDialog) return [];
+    const picked = dressUpTargetsFromPicks(dressUpDialog.picks, meshes);
+    if (picked.length > 0 || !dressUpDialog.editId) return picked;
     const f = doc.features.find((x) => x.id === dressUpDialog.editId);
     return f?.type === "dressup"
-      ? {
-          targetId: f.targetId,
-          edges: f.edges,
-          edgeRefs: f.edgeRefs ?? [],
-          faces: f.faces ?? [],
-          faceRefs: f.faceRefs ?? [],
-          anchor: null as [number, number, number] | null,
-        }
-      : null;
+      ? [
+          {
+            targetId: f.targetId,
+            edges: f.edges,
+            edgeRefs: f.edgeRefs ?? [],
+            faces: f.faces ?? [],
+            faceRefs: f.faceRefs ?? [],
+            anchor: null,
+          },
+        ]
+      : [];
   }, [dressUpDialog, meshes, doc]);
 
   // The document-level spec the dialog's current inputs describe. Angle/flip
   // ride along for chamfers only — a fillet has no bevel to tilt.
-  const dressUpSpec = (t: NonNullable<typeof dressUpDialogTarget>, d: NonNullable<typeof dressUpDialog>) => ({
+  const dressUpSpec = (t: DressUpTarget, d: NonNullable<typeof dressUpDialog>) => ({
     op: d.op,
     targetId: t.targetId,
     edges: t.edges,
@@ -3621,27 +3621,38 @@ export default function App() {
     return av.value === null ? av : sv;
   };
 
-  // Add a new dress-up, or (editing) update the existing one in place — shared by
-  // the commit and the live-validation effect so both build the same doc.
+  // Add a dress-up per target body, or (editing) update the existing one in
+  // place — shared by the commit and the live-validation effect so both build
+  // the same doc. Creating threads `base` through every addDressUp, so the fan-
+  // out lands as ONE document change (and one undo step), the way a
+  // multi-profile Extrude does. Editing never splits: it updates its own
+  // feature from the first target, like Extrude's edit path.
   const applyDressUp = (
     base: Document,
-    t: NonNullable<typeof dressUpDialogTarget>,
+    targets: DressUpTarget[],
     d: NonNullable<typeof dressUpDialog>,
-  ) =>
-    d.editId
-      ? { doc: updateDressUp(base, d.editId, dressUpSpec(t, d)), id: d.editId }
-      : addDressUp(
-          base,
-          d.op,
-          t.targetId,
-          t.edges,
-          d.size,
-          t.edgeRefs,
-          d.op === "chamfer" ? d.angle : undefined,
-          d.op === "chamfer" && d.flip,
-          t.faces,
-          t.faceRefs,
-        );
+  ): { doc: Document; ids: string[] } => {
+    if (d.editId) return { doc: updateDressUp(base, d.editId, dressUpSpec(targets[0], d)), ids: [d.editId] };
+    let next = base;
+    const ids: string[] = [];
+    for (const t of targets) {
+      const res = addDressUp(
+        next,
+        d.op,
+        t.targetId,
+        t.edges,
+        d.size,
+        t.edgeRefs,
+        d.op === "chamfer" ? d.angle : undefined,
+        d.op === "chamfer" && d.flip,
+        t.faces,
+        t.faceRefs,
+      );
+      next = res.doc;
+      ids.push(res.id);
+    }
+    return { doc: next, ids };
+  };
 
   // Live-preview a chamfer/fillet edit: apply the new size/angle/edges to the
   // real feature as they change (skipping empty/invalid inputs). The existing
@@ -3649,7 +3660,7 @@ export default function App() {
   // `dressUpError`.
   useEffect(() => {
     const d = dressUpDialog;
-    const t = dressUpDialogTarget;
+    const t = dressUpDialogTargets[0];
     if (!d?.editId || !t) return;
     if (validateDressUpDialog(d).value === null) return;
     const spec = dressUpSpec(t, d);
@@ -3662,11 +3673,11 @@ export default function App() {
     dressUpDialog?.angle,
     dressUpDialog?.flip,
     dressUpDialog?.op,
-    dressUpDialogTarget,
+    dressUpDialogTargets,
   ]);
 
   const createDressUp = async () => {
-    if (!dressUpDialogTarget || !dressUpDialog) return;
+    if (dressUpDialogTargets.length === 0 || !dressUpDialog) return;
     // Synchronous gate first: an empty/garbage/≤0 size (or an out-of-range
     // chamfer angle) never reaches the kernel. Empty is silently ignored (no
     // error, just a no-op); anything invalid keeps the dialog open with its
@@ -3676,19 +3687,21 @@ export default function App() {
       setDressUpError(null);
       return;
     }
-    const { doc: next, id } = applyDressUp(doc, dressUpDialogTarget, dressUpDialog);
+    const { doc: next, ids } = applyDressUp(doc, dressUpDialogTargets, dressUpDialog);
     // Authoritative pre-commit check against the kernel: an unsatisfiable size
     // (radius too big, degenerate edge) keeps the dialog open with the error
     // rather than committing a broken feature. Runs even if the live-validation
     // effect hasn't caught up (e.g. Enter pressed immediately after typing).
+    // With a fan-out this is all-or-nothing: one body that can't take the size
+    // fails the whole commit, so the timeline never ends up half dressed.
     const kernel = kernelRef.current;
     if (ready && kernel) {
       const resolvedNext = resolveDocument(next);
-      let err: string | null = resolvedNext.errors[id] ?? null;
+      let err: string | null = ids.map((i) => resolvedNext.errors[i]).find(Boolean) ?? null;
       if (!err) {
         try {
           const { results } = await kernel.regenerate(resolvedNext.features);
-          const hit = results.find((r) => r.id === id);
+          const hit = results.find((r) => ids.includes(r.id) && !r.ok);
           if (hit && !hit.ok) err = hit.error;
         } catch (e) {
           err = String((e as Error)?.message ?? e);
@@ -3719,7 +3732,7 @@ export default function App() {
   // below. Validation and preview therefore always agree, and a preview never
   // costs a second round trip.
   useEffect(() => {
-    if (!dressUpDialog || !dressUpDialogTarget) {
+    if (!dressUpDialog || dressUpDialogTargets.length === 0) {
       setDressUpError(null);
       setDressUpPreview(null);
       return;
@@ -3737,9 +3750,9 @@ export default function App() {
     if (!ready || !kernel) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      const { doc: next, id } = applyDressUp(doc, dressUpDialogTarget, dressUpDialog);
+      const { doc: next, ids } = applyDressUp(doc, dressUpDialogTargets, dressUpDialog);
       const resolvedNext = resolveDocument(next);
-      const resolveErr = resolvedNext.errors[id];
+      const resolveErr = ids.map((i) => resolvedNext.errors[i]).find(Boolean);
       if (resolveErr) {
         if (!cancelled) {
           setDressUpError(mapDressUpKernelError(resolveErr, dressUpDialog.op));
@@ -3747,14 +3760,16 @@ export default function App() {
         }
         return;
       }
+      // Every fanned-out feature ghosts, so a multi-body dress-up previews on
+      // all of its bodies at once rather than just the first.
       const features = resolvedNext.features.map((rf) =>
-        rf.type === "dressup" && rf.id === id ? { ...rf, previewDelta: true } : rf,
+        rf.type === "dressup" && ids.includes(rf.id) ? { ...rf, previewDelta: true } : rf,
       );
       kernel
         .regenerate(features)
         .then(({ results }) => {
           if (cancelled) return;
-          const hit = results.find((r) => r.id === id);
+          const hit = results.find((r) => ids.includes(r.id) && !r.ok);
           const err = hit && !hit.ok ? mapDressUpKernelError(hit.error, dressUpDialog.op) : null;
           setDressUpError(err);
           if (err) {
@@ -3765,9 +3780,9 @@ export default function App() {
             const r = results.find((x) => x.id === deltaId);
             return r?.ok ? r.mesh : undefined;
           };
-          const removed = delta(DRESSUP_DELTA_IDS.removed(id));
-          const added = delta(DRESSUP_DELTA_IDS.added(id));
-          setDressUpPreview(removed || added ? { removed, added } : null);
+          const removed = ids.map((i) => delta(DRESSUP_DELTA_IDS.removed(i))).filter((m) => !!m);
+          const added = ids.map((i) => delta(DRESSUP_DELTA_IDS.added(i))).filter((m) => !!m);
+          setDressUpPreview(removed.length || added.length ? { removed, added } : null);
         })
         .catch((err) => {
           if (!cancelled) {
@@ -3781,7 +3796,7 @@ export default function App() {
       clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dressUpDialog, dressUpDialogTarget, doc, ready, resolved.scope]);
+  }, [dressUpDialog, dressUpDialogTargets, doc, ready, resolved.scope]);
 
   // The single body a Shell would hollow, resolved from the selection. Any pick
   // on a rendered body — the body, or one of its faces/edges/vertices — arms
@@ -8747,31 +8762,37 @@ export default function App() {
               const message = sv.value === null ? sv.error : dressUpError;
               // Nothing picked yet is not an ERROR — the dialog opened that way
               // on purpose — so it only holds the primary button, silently.
-              const disabled = sv.value === null || !!dressUpError || !dressUpDialogTarget;
+              const targets = dressUpDialogTargets;
+              const disabled = sv.value === null || !!dressUpError || targets.length === 0;
               const picks = dressUpDialog.picks;
               const armPicks = () => setDressUpDialog((d) => (d ? { ...d, arming: !d.arming } : d));
               const dropPick = (i: number) =>
                 setDressUpDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== i) } : d));
-              // "Edge 2" counts within its own kind, so the rows read the way the
-              // user picked them rather than as one undifferentiated run.
-              const pickLabel = (i: number) => {
-                const p = picks[i];
-                const n = picks.slice(0, i + 1).filter((q) => q.kind === p.kind).length;
-                return `${p.kind === "edge" ? "Edge" : "Face"} ${n}`;
-              };
+              // Picks grouped the way they'll commit — one dress-up per body —
+              // each carrying its index in the flat list so ✕ still removes the
+              // right one. "Edge 2" counts within its own kind and its own body,
+              // so the rows read the way they were picked.
+              const groups: { bodyId: string; items: { label: string; index: number }[] }[] = [];
+              picks.forEach((p, index) => {
+                const bodyId = dressUpPickBody(p) ?? "";
+                let g = groups.find((x) => x.bodyId === bodyId);
+                if (!g) groups.push((g = { bodyId, items: [] }));
+                const n = g.items.filter((q) => q.label.startsWith(p.kind === "edge" ? "Edge" : "Face")).length + 1;
+                g.items.push({ label: `${p.kind === "edge" ? "Edge" : "Face"} ${n}`, index });
+              });
+              const bodyLabel = (id: string) => doc.features.find((f) => f.id === id)?.name ?? "Body";
               // What the picks actually RESOLVE to, which is the interesting
               // number: one click on a faceted rim stands for its whole tangent
               // chain, so three picks can be ninety-odd edges. Zeros are left
-              // out — "0 edges + 1 face" says nothing the row below doesn't.
-              const t = dressUpDialogTarget;
+              // out — "0 edges + 1 face" says nothing the rows below don't.
               const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-              const summary =
-                [
-                  t?.edges.length ? plural(t.edges.length, "edge") : null,
-                  t?.faces.length ? plural(t.faces.length, "face") : null,
-                ]
-                  .filter(Boolean)
-                  .join(" + ") || null;
+              const countOf = (ts: DressUpTarget[]) =>
+                [ts.reduce((n, x) => n + x.edges.length, 0), ts.reduce((n, x) => n + x.faces.length, 0)] as const;
+              const countLabel = (ts: DressUpTarget[]) => {
+                const [e, f] = countOf(ts);
+                return [e ? plural(e, "edge") : null, f ? plural(f, "face") : null].filter(Boolean).join(" + ") || null;
+              };
+              const summary = countLabel(targets);
               const escapeDressUp = () => {
                 if (dressUpDialog.arming) setDressUpDialog((d) => (d ? { ...d, arming: false } : d));
                 else closeDressUpDialog();
@@ -8781,18 +8802,26 @@ export default function App() {
                   <div className="ed-title" data-drag-handle>
                     {dressUpDialog.editId ? "Edit " : ""}
                     {dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}
+                    {!dressUpDialog.editId && targets.length > 1 ? ` (${targets.length} bodies)` : ""}
                   </div>
                   {/* An accumulating slot (see PickSlot.tsx): one PickedRow per
                       pick, and a button that keeps the arming live for the next
-                      one. Clicking a listed edge/face in the viewport removes it. */}
+                      one. Clicking a listed edge/face in the viewport removes it.
+                      Picks on several bodies are grouped by body, because that is
+                      how they commit — one dress-up each. */}
                   <div className="bool-group-label">Edges / faces{summary ? ` — ${summary}` : ""}</div>
-                  {picks.map((p, i) => (
-                    <PickedRow
-                      key={`${p.kind}:${i}`}
-                      label={pickLabel(i)}
-                      clearTitle="Remove"
-                      onClear={() => dropPick(i)}
-                    />
+                  {groups.map((g) => (
+                    <Fragment key={g.bodyId}>
+                      {groups.length > 1 && <div className="bool-group-label ed-subgroup">{bodyLabel(g.bodyId)}</div>}
+                      {g.items.map((item) => (
+                        <PickedRow
+                          key={item.index}
+                          label={item.label}
+                          clearTitle="Remove"
+                          onClear={() => dropPick(item.index)}
+                        />
+                      ))}
+                    </Fragment>
                   ))}
                   <PickButton noun="edges or faces" armed={dressUpDialog.arming} wide onClick={armPicks}>
                     {dressUpDialog.arming
@@ -8804,6 +8833,11 @@ export default function App() {
                   {dressUpDialog.editId && !picks.length && (
                     <p className="ed-hint">
                       Dressing the edges this feature already references — pick to replace them.
+                    </p>
+                  )}
+                  {!dressUpDialog.editId && targets.length > 1 && (
+                    <p className="ed-hint">
+                      One {dressUpDialog.op} per body — commits as {targets.length} features, in a single undo.
                     </p>
                   )}
                   <label className="ed-field">
