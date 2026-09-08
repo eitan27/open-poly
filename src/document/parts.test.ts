@@ -40,12 +40,24 @@ describe("partAppearance", () => {
     expect(partAppearance(doc, "ext#2", GREY).name).toBe("Extrude 1 (3)");
   });
 
-  it("gives a sub-part the feature's colour until it's given one of its own", () => {
-    expect(partAppearance(doc, "ext#1", GREY).color).toBe(0x112233);
+  it("gives each sibling its own colour — three lumps painted alike read as one object", () => {
+    const first = partAppearance(doc, "ext", GREY).color;
+    const second = partAppearance(doc, "ext#1", GREY).color;
+    const third = partAppearance(doc, "ext#2", GREY).color;
+    expect(new Set([first, second, third]).size).toBe(3);
+    expect(first).toBe(0x112233); // the feature's own colour is the first part's
+  });
+
+  it("picks the same sibling colours on every rebuild", () => {
+    expect(partAppearance(doc, "ext#1", GREY).color).toBe(partAppearance(doc, "ext#1", GREY).color);
+    expect(partAppearance(doc, "ext#2", GREY).color).not.toBe(partAppearance(doc, "ext#1", GREY).color);
+  });
+
+  it("lets a sub-part be painted, without touching its siblings", () => {
     const painted = setPartAppearance(doc, "ext#1", { color: 0xff0000 });
     expect(partAppearance(painted, "ext#1", GREY).color).toBe(0xff0000);
-    // …and its sibling is untouched.
     expect(partAppearance(painted, "ext", GREY).color).toBe(0x112233);
+    expect(partAppearance(painted, "ext#2", GREY).color).toBe(partAppearance(doc, "ext#2", GREY).color);
   });
 
   it("falls back to the default look for a body whose feature owns no appearance", () => {

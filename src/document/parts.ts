@@ -20,6 +20,7 @@
 // fields (unchanged behaviour, unchanged serialisation), and the sub-parts live
 // in `doc.parts`, an optional map that old documents simply don't have.
 
+import { siblingBodyColor } from "./colors";
 import type {
   BooleanFeature,
   Document,
@@ -112,12 +113,14 @@ export function partAppearance(doc: Document, partId: string, defaultColor: numb
   };
   if (!isSubPart(partId)) return base;
   // A sub-part is named after its feature with its ordinal — "Extrude 1 (2)" —
-  // and inherits the feature's colour until it's given one of its own, so a
-  // freshly split result reads as one thing in several pieces.
+  // and takes the next palette colour along, so a split result reads as the
+  // several bodies it is.
   const o: PartOverride | undefined = doc.parts?.[partId];
   return {
     name: o?.name ?? `${base.name} (${partIndex(partId) + 1})`,
-    color: o?.color ?? base.color,
+    // Siblings get their own colour rather than the feature's — three lumps
+    // painted alike read as one object (see siblingBodyColor).
+    color: o?.color ?? siblingBodyColor(base.color, partIndex(partId)),
     opacity: o?.opacity ?? base.opacity,
     hidden: o?.hidden ?? base.hidden,
     owned,

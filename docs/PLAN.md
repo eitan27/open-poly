@@ -779,9 +779,12 @@ face` button, like up-to-face); the picked face's plane is derived via
     document — still names the first lump.
   - **Appearance** follows the same split: the first part reads/writes the
     feature's own `color`/`opacity`/`hidden`/`name` (unchanged serialisation),
-    sub-parts live in `doc.parts` (an optional map, absent on old documents) and
-    inherit the feature's colour until given one of their own. A sub-part is
-    named `"Extrude 1 (2)"` until renamed.
+    and sub-parts live in `doc.parts` (an optional map, absent on old
+    documents). A sub-part is named `"Extrude 1 (2)"` and takes the next colour
+    along the palette (`siblingBodyColor`) until either is overridden — three
+    lumps painted alike read as one object, and deriving the colour from the
+    part index keeps it stable across rebuilds without storing anything. A fixed
+    "new body colour" preference still wins.
   - **Scope today:** parts are keyed by LUMP INDEX, so an upstream edit that
     removes a lump slides the ones after it (colours/names shift by one).
     Fingerprint matching would fix that behind the same ids. Deleting a part
