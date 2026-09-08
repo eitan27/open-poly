@@ -65,7 +65,7 @@ await waitIdle();
 // spread across the chain now.
 const docAfterFillet = await read({ read: "document" });
 const filFeature = docAfterFillet.features.find((f) => f.id === fil.createdId);
-const refs = filFeature?.edgeRefs ?? [];
+const refs = filFeature?.targets?.[0]?.edgeRefs ?? [];
 const totalLen = refs.reduce((s, r) => s + (r.length ?? 0), 0);
 check(
   "agent dress-up expanded one named chord to the whole rim",

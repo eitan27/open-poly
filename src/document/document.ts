@@ -22,7 +22,7 @@ import type {
   DerivedOp,
   Document,
   DressUpFeature,
-  EdgeRef,
+  DressUpTargetSpec,
   FaceRef,
   ExtrudeFeature,
   ExtrudeProfile,
@@ -100,6 +100,32 @@ export function migrateDocument(doc: Document): Document {
     }
     // Revolve profiles used to be an untagged {sketchId, regionId}; they became a
     // tagged union when planar body faces joined sketch regions as profiles.
+    // A dress-up used to hold ONE target inline; picks spanning several bodies
+    // meant several features. They're now one feature with a target list.
+    if (feat.type === "dressup" && !f.targets && f.targetId) {
+      f.targets = [
+        {
+          targetId: f.targetId,
+          edges: f.edges ?? [],
+          ...(f.edgeRefs ? { edgeRefs: f.edgeRefs } : {}),
+          ...(f.faces?.length ? { faces: f.faces, faceRefs: f.faceRefs } : {}),
+        },
+      ];
+      delete f.targetId;
+      delete f.edges;
+      delete f.edgeRefs;
+      delete f.faces;
+      delete f.faceRefs;
+      changed = true;
+    }
+    // An extrude used to hold ONE profile; several profiles meant several
+    // features. They're now one feature with a list, so a stored `profile`
+    // becomes a one-element `profiles`.
+    if (feat.type === "extrude" && !f.profiles && f.profile) {
+      f.profiles = [f.profile];
+      delete f.profile;
+      changed = true;
+    }
     if (feat.type === "revolve" && (f.profile as { kind?: string } | undefined)?.kind === undefined) {
       changed = true;
       const prof = f.profile as { sketchId: string; regionId: string };
@@ -157,7 +183,7 @@ export function addSketch(doc: Document, plane: SketchPlaneRef): { doc: Document
 
 export function addExtrude(
   doc: Document,
-  profile: ExtrudeProfile,
+  profiles: ExtrudeProfile | ExtrudeProfile[],
   opts: {
     distance?: string;
     flip?: boolean;
@@ -173,7 +199,7 @@ export function addExtrude(
     type: "extrude",
     name: `Extrude ${ordinal}`,
     suppressed: false,
-    profile,
+    profiles: Array.isArray(profiles) ? profiles : [profiles],
     distance: opts.distance ?? "10",
     flip: opts.flip ?? false,
     extent: opts.extent ?? "blind",
@@ -224,25 +250,26 @@ export function addBoolean(doc: Document, op: BooleanOp, operands: string[]): { 
 export function addDressUp(
   doc: Document,
   op: "chamfer" | "fillet",
-  targetId: string,
-  edges: string[],
+  targets: DressUpTargetSpec[],
   size = "2",
-  edgeRefs?: EdgeRef[],
   angle?: string,
   flip?: boolean,
-  faces?: string[],
-  faceRefs?: FaceRef[],
 ): { doc: Document; id: string } {
+  const targetId = targets[0]?.targetId ?? "";
   const label = op === "chamfer" ? "Chamfer" : "Fillet";
   const ordinal = doc.features.filter((f) => f.type === "dressup" && f.op === op).length + 1;
-  // Named after the body it dresses — "Chamfer on Box 1". One gesture can fan
-  // out into several dress-ups (a dress-up feature acts on ONE body, so picks
-  // spanning three bodies become three features), and a timeline of "Chamfer 1
-  // / Chamfer 2 / Chamfer 3" would say nothing about which is which. Falls back
-  // to the ordinal when the target isn't a feature in this document, and a
-  // suffix keeps a second chamfer on the same body distinct.
+  // Named after what it dresses — "Chamfer on Box 1", or "Chamfer on 3 parts"
+  // when one dress-up spans several — because "Chamfer 1 / Chamfer 2" says
+  // nothing about which is which. Falls back to the ordinal when the target
+  // isn't a feature in this document, and a suffix keeps a second chamfer on
+  // the same body distinct.
   const target = doc.features.find((f) => f.id === targetId);
-  const base = target ? `${label} on ${target.name}` : `${label} ${ordinal}`;
+  const base =
+    targets.length > 1
+      ? `${label} on ${targets.length} parts`
+      : target
+        ? `${label} on ${target.name}`
+        : `${label} ${ordinal}`;
   const taken = new Set(doc.features.map((f) => f.name));
   let name = base;
   for (let n = 2; taken.has(name); n++) name = `${base} (${n})`;
@@ -252,12 +279,7 @@ export function addDressUp(
     op,
     name,
     suppressed: false,
-    targetId,
-    edges,
-    edgeRefs,
-    // Stored only when a face was actually picked, so an edge-only dress-up
-    // serialises exactly as it did before faces were selectable.
-    ...(faces?.length ? { faces, faceRefs } : {}),
+    targets,
     size,
     // Angle/flip are chamfer-only; a fillet never carries them, and `flip` is
     // stored only when set so the common case stays field-free.
@@ -490,7 +512,7 @@ export function addImport(doc: Document, source: string, name?: string): { doc: 
 export function updateExtrude(
   doc: Document,
   id: string,
-  profile: ExtrudeProfile,
+  profiles: ExtrudeProfile | ExtrudeProfile[],
   opts: {
     distance?: string;
     flip?: boolean;
@@ -504,7 +526,7 @@ export function updateExtrude(
     f.type === "extrude"
       ? {
           ...f,
-          profile,
+          profiles: Array.isArray(profiles) ? profiles : [profiles],
           distance: opts.distance ?? f.distance,
           flip: opts.flip ?? f.flip,
           extent: opts.extent ?? f.extent,
@@ -525,14 +547,10 @@ export function updateDressUp(
   id: string,
   spec: {
     op: "chamfer" | "fillet";
-    targetId: string;
-    edges: string[];
+    targets: DressUpTargetSpec[];
     size: string;
-    edgeRefs?: EdgeRef[];
     angle?: string;
     flip?: boolean;
-    faces?: string[];
-    faceRefs?: FaceRef[];
   },
 ): Document {
   return mapFeature(doc, id, (f) =>
@@ -540,13 +558,10 @@ export function updateDressUp(
       ? {
           ...f,
           op: spec.op,
-          targetId: spec.targetId,
-          edges: spec.edges,
-          edgeRefs: spec.edgeRefs,
-          // Re-picking replaces the whole selection, so an empty face list must
-          // clear a stored one rather than leave the old faces dressed.
-          faces: spec.faces?.length ? spec.faces : undefined,
-          faceRefs: spec.faces?.length ? spec.faceRefs : undefined,
+          // Re-picking replaces the whole selection, so this must REPLACE the
+          // target list rather than merge into it — an edge (or a whole body)
+          // dropped in the dialog has to stop being dressed.
+          targets: spec.targets,
           size: spec.size,
           // Switching to a fillet drops the chamfer-only angle rather than
           // leaving a stale one to reappear if it's switched back.
@@ -1065,48 +1080,52 @@ export function resolveDocument(doc: Document): ResolveResult {
         features.push({ id: f.id, type: "primitive", kind: f.kind, params });
       } else if (f.type === "extrude") {
         const distance = evaluateExpression(f.distance, scope);
-        const prof = f.profile;
-        let profile;
-        if (prof.kind === "sketchRegion") {
-          // Bake the sketch region's outline + plane frame so the kernel sees
-          // only numbers.
-          const sketch = dDoc.features.find((x) => x.id === prof.sketchId);
-          if (sketch?.type !== "sketch") throw new Error("extrude: profile sketch not found");
-          const region = detectSketchRegions(sketch.entities).find((r) => r.id === prof.regionId);
-          if (!region) throw new Error("extrude: profile region not found");
-          profile = {
-            kind: "sketchRegion" as const,
-            outline: region.outline,
-            holes: region.holes,
-            frame: frameOf(sketch.plane, planeFrames),
-          };
-        } else if (prof.kind === "sketchText") {
-          // Bake the text entity's value/height/rotation/anchor + plane frame; the
-          // worker re-builds the glyph wires (with counters/holes) and extrudes.
-          const sketch = dDoc.features.find((x) => x.id === prof.sketchId);
-          if (sketch?.type !== "sketch") throw new Error("extrude: text sketch not found");
-          const ent = sketch.entities.find((e) => e.id === prof.textId);
-          if (ent?.type !== "text") throw new Error("extrude: text entity not found");
-          if (!ent.value.trim()) throw new Error("extrude: text is empty");
-          profile = {
-            kind: "sketchText" as const,
-            value: ent.value,
-            height: ent.height,
-            rotation: ent.rotation ?? 0,
-            anchor: ent.p,
-            frame: frameOf(sketch.plane, planeFrames),
-          };
-        } else {
-          // A body face: pass the source + persistent name (+ geometric
-          // fingerprint); the worker re-finds the face against the running set.
-          profile = {
-            kind: "bodyFace" as const,
-            sourceId: prof.featureId,
-            faceName: prof.faceName,
-            center: prof.center,
-            normal: prof.normal,
-          };
-        }
+        // Every profile is lowered; the worker builds one tool per profile and,
+        // for add/remove, sends each into the body it came from.
+        const profiles = f.profiles.map((prof) => {
+          let profile;
+          if (prof.kind === "sketchRegion") {
+            // Bake the sketch region's outline + plane frame so the kernel sees
+            // only numbers.
+            const sketch = dDoc.features.find((x) => x.id === prof.sketchId);
+            if (sketch?.type !== "sketch") throw new Error("extrude: profile sketch not found");
+            const region = detectSketchRegions(sketch.entities).find((r) => r.id === prof.regionId);
+            if (!region) throw new Error("extrude: profile region not found");
+            profile = {
+              kind: "sketchRegion" as const,
+              outline: region.outline,
+              holes: region.holes,
+              frame: frameOf(sketch.plane, planeFrames),
+            };
+          } else if (prof.kind === "sketchText") {
+            // Bake the text entity's value/height/rotation/anchor + plane frame; the
+            // worker re-builds the glyph wires (with counters/holes) and extrudes.
+            const sketch = dDoc.features.find((x) => x.id === prof.sketchId);
+            if (sketch?.type !== "sketch") throw new Error("extrude: text sketch not found");
+            const ent = sketch.entities.find((e) => e.id === prof.textId);
+            if (ent?.type !== "text") throw new Error("extrude: text entity not found");
+            if (!ent.value.trim()) throw new Error("extrude: text is empty");
+            profile = {
+              kind: "sketchText" as const,
+              value: ent.value,
+              height: ent.height,
+              rotation: ent.rotation ?? 0,
+              anchor: ent.p,
+              frame: frameOf(sketch.plane, planeFrames),
+            };
+          } else {
+            // A body face: pass the source + persistent name (+ geometric
+            // fingerprint); the worker re-finds the face against the running set.
+            profile = {
+              kind: "bodyFace" as const,
+              sourceId: prof.featureId,
+              faceName: prof.faceName,
+              center: prof.center,
+              normal: prof.normal,
+            };
+          }
+          return profile;
+        });
         // `?? "blind"` guards documents persisted before this field existed.
         // For "up to face", pass the target face reference (source body id +
         // persistent name + centroid fallback); the worker re-finds it.
@@ -1117,7 +1136,7 @@ export function resolveDocument(doc: Document): ResolveResult {
         features.push({
           id: f.id,
           type: "extrude",
-          profile,
+          profiles,
           distance,
           flip: f.flip,
           extent: f.extent ?? "blind",
@@ -1139,12 +1158,14 @@ export function resolveDocument(doc: Document): ResolveResult {
           id: f.id,
           type: "dressup",
           op: f.op,
-          targetId: f.targetId,
-          edges: f.edges,
-          edgeRefs: f.edgeRefs,
-          // Omitted entirely when unused, so an edge-only dress-up keeps the
-          // same kernel content key it had before faces were selectable.
-          ...(f.faces?.length ? { faces: f.faces, faceRefs: f.faceRefs } : {}),
+          targets: f.targets.map((t) => ({
+            targetId: t.targetId,
+            edges: t.edges,
+            edgeRefs: t.edgeRefs,
+            // Omitted entirely when unused, so an edge-only dress-up keeps the
+            // same kernel content key it had before faces were selectable.
+            ...(t.faces?.length ? { faces: t.faces, faceRefs: t.faceRefs } : {}),
+          })),
           size: evaluateExpression(f.size, scope),
           ...(angle !== undefined ? { angle } : {}),
           ...(angle !== undefined && f.flip ? { flip: true } : {}),

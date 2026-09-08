@@ -243,11 +243,10 @@ check("Mirror prefills from a selected body", (await rows().count()) === 1, awai
 check("…and nothing is left armed", (await armedButtons().count()) === 0, await dlg.textContent());
 await cancel();
 
-// --- 9. A dress-up fans out across bodies -----------------------------------
-// A chamfer/fillet feature dresses ONE body (its edge names are resolved in that
-// body's own name table), so picks spanning several bodies commit as one feature
-// each — named after the body, and folded into a single undo step, the way a
-// multi-profile Extrude already behaves.
+// --- 9. A dress-up dresses several bodies, as ONE feature -------------------
+// Picks spanning several parts commit as a single feature holding one target
+// per body (each with its own edge names, since a name only means something on
+// the body it came from). Re-opening it must bring back every one of them.
 await apply({ op: "newDocument" });
 await waitIdle();
 const boxA = await apply({ op: "addPrimitive", kind: "box", params: { width: 30, depth: 30, height: 30 } });
@@ -265,27 +264,68 @@ const fanText = await dlg.textContent();
 check("a dress-up takes picks on a second body", (await rows().count()) === 2, fanText);
 check("…the title says how many bodies", fanText.includes("(2 bodies)"), fanText);
 check("…the picks are grouped under each body's name", fanText.includes("Box 1") && fanText.includes("Box 2"), fanText);
-check("…and it says it will commit as two features", fanText.includes("commits as 2 features"), fanText);
+check("…and it says it commits as one feature", fanText.includes("a single feature"), fanText);
 
 await dlg.getByRole("button", { name: "Create" }).click();
 await waitIdle();
 const fanned = await features("dressup");
-check("one dress-up per body was created", fanned.length === 2, JSON.stringify(fanned.map((f) => f.name)));
+check("ONE feature was created, not one per body", fanned.length === 1, JSON.stringify(fanned.map((f) => f.name)));
+check("…named for what it dresses", fanned[0]?.name === "Fillet on 2 parts", String(fanned[0]?.name));
 check(
-  "…each named after the body it dresses",
-  fanned.map((f) => f.name).join(" | ") === "Fillet on Box 1 | Fillet on Box 2",
-  JSON.stringify(fanned.map((f) => f.name)),
-);
-check(
-  "…and each targets its own body",
-  fanned[0]?.targetId === boxA.createdId && fanned[1]?.targetId === boxB.createdId,
-  JSON.stringify(fanned.map((f) => f.targetId)),
+  "…holding one target per body, each with its own edges",
+  fanned[0]?.targets?.length === 2 &&
+    fanned[0].targets[0].targetId === boxA.createdId &&
+    fanned[0].targets[1].targetId === boxB.createdId,
+  JSON.stringify(fanned[0]?.targets?.map((t) => ({ id: t.targetId, edges: t.edges.length }))),
 );
 
+// One feature means one undo step, however many bodies it dressed.
 await blur();
 await page.keyboard.press("Meta+z");
 await waitIdle();
-check("one undo takes the whole fan-out back", (await features("dressup")).length === 0);
+check("one undo takes the whole dress-up back", (await features("dressup")).length === 0);
+await page.keyboard.press("Meta+Shift+z");
+await waitIdle();
+check("…and one redo brings it back", (await features("dressup")).length === 1);
+
+// Re-opening it must bring back BOTH bodies — the whole point of one feature.
+await page.locator(".tree-row", { hasText: "Fillet on 2 parts" }).first().dblclick();
+await page.waitForTimeout(700);
+const reopened = await dlg.textContent();
+check("re-opening shows both bodies again", (await rows().count()) === 2, reopened);
+check("…grouped under their names", reopened.includes("Box 1") && reopened.includes("Box 2"), reopened);
+await blur();
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+await waitIdle();
+check("…and closing it changes nothing", (await features("dressup")).length === 1);
+
+// --- 10. An extrude is one feature too, and adds to the part it grew from ---
+// Two faces on two different parts: each extrusion belongs to its own body. A
+// single shared target used to send both into whichever part was picked first.
+await apply({ op: "select", refs: [] });
+await blur();
+await page.waitForTimeout(300);
+await pressTool("e");
+await clickWorld([0, 0, 30]);
+await clickWorld([80, 0, 30]);
+const exText = await dlg.textContent();
+check("the extrude groups its profiles by part", exText.includes("Box 1") && exText.includes("Box 2"), exText);
+check("…and says each face acts on its own part", exText.includes("the part each face belongs to"), exText);
+await dlg.getByRole("button", { name: "Create" }).click();
+await waitIdle();
+const extrudes = await features("extrude");
+check(
+  "ONE extrude feature holds both profiles",
+  extrudes.length === 1 && extrudes[0].profiles.length === 2,
+  JSON.stringify(extrudes.map((f) => f.profiles?.length)),
+);
+const grown = (await read({ read: "sceneSummary" })).bodies.filter((b) => b.bbox && b.bbox.max[2] > 35);
+check(
+  "…and BOTH parts grew, not just the first",
+  grown.length === 2,
+  JSON.stringify(grown.map((b) => [b.name, b.bbox.max[2]])),
+);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nall checks passed");
 await browser.close();

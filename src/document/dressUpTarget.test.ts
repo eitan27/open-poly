@@ -26,13 +26,7 @@ function mesh(id = "body1", opts: { nameEdges?: boolean; nameFaces?: boolean } =
       edges: {
         // Two points per edge, laid end to end: the i-th edge runs (i,0,0) → (i+1,0,0).
         lines: new Float32Array([0, 1, 2, 3, 4].flatMap((i) => [i, 0, 0, i + 1, 0, 0])),
-        edgeGroups: [
-          edge(10, 10, 0),
-          edge(11, 10, 2),
-          edge(12, 10, 4),
-          edge(30, undefined, 6),
-          edge(31, undefined, 8),
-        ],
+        edgeGroups: [edge(10, 10, 0), edge(11, 10, 2), edge(12, 10, 4), edge(30, undefined, 6), edge(31, undefined, 8)],
       },
       faces: {
         vertices: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1]),

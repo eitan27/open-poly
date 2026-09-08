@@ -20,7 +20,7 @@ describe("text extrude lowering", () => {
     type: "extrude",
     name: "Extrude 1",
     suppressed: false,
-    profile: { kind: "sketchText", sketchId: "sk", textId: "t1" },
+    profiles: [{ kind: "sketchText", sketchId: "sk", textId: "t1" }],
     distance: "10",
     flip: false,
     extent: "blind",
@@ -36,13 +36,13 @@ describe("text extrude lowering", () => {
     const rex = res.features.find((f) => f.id === "ex");
     expect(rex?.type).toBe("extrude");
     if (rex?.type !== "extrude") throw new Error("unreachable");
-    expect(rex.profile.kind).toBe("sketchText");
-    if (rex.profile.kind !== "sketchText") throw new Error("unreachable");
-    expect(rex.profile.value).toBe("AB");
-    expect(rex.profile.height).toBe(12);
-    expect(rex.profile.rotation).toBe(0);
-    expect(rex.profile.anchor).toEqual([5, 7]);
-    expect(rex.profile.frame.normal).toHaveLength(3);
+    expect(rex.profiles[0].kind).toBe("sketchText");
+    if (rex.profiles[0].kind !== "sketchText") throw new Error("unreachable");
+    expect(rex.profiles[0].value).toBe("AB");
+    expect(rex.profiles[0].height).toBe(12);
+    expect(rex.profiles[0].rotation).toBe(0);
+    expect(rex.profiles[0].anchor).toEqual([5, 7]);
+    expect(rex.profiles[0].frame.normal).toHaveLength(3);
   });
 
   it("errors when the text entity is empty (nothing to bake)", () => {

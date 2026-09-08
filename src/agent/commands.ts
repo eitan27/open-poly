@@ -44,6 +44,8 @@ import {
 } from "../document/document";
 import { expandPickToChains } from "../geom/edgeChains";
 import { detectSketchRegions } from "../document/regions";
+import { DEFAULT_SOLID_COLOR } from "../document/colors";
+import { featureIdOfPart, partAppearance } from "../document/parts";
 import { parseDxfToEntities } from "../document/dxfImport";
 import { applyDerived, applyDerivedToSketch } from "../document/derived";
 import { evaluateExpression } from "../document/expression";
@@ -959,17 +961,22 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
                 return g ? { name: nm, center: g.center, normal: g.normal } : { name: nm };
               })
             : undefined;
+        // The agent dresses one body per call; the feature can hold several
+        // (the UI picks across parts), so it goes in as a one-target list.
         const r = addDressUp(
           doc,
           op.kind,
-          op.targetId,
-          expanded,
+          [
+            {
+              targetId: op.targetId,
+              edges: expanded,
+              edgeRefs,
+              ...(op.faces?.length ? { faces: op.faces, faceRefs } : {}),
+            },
+          ],
           op.size,
-          edgeRefs,
           op.angle,
           op.flip,
-          op.faces,
-          faceRefs,
         );
         next = r.doc;
         createdId = r.id;
@@ -1228,29 +1235,20 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
   const resolved = resolveDocument(doc);
 
   const featureById = new Map(doc.features.map((f) => [f.id, f]));
-  // Bodies that own appearance carry a color; in-place modifiers inherit it.
-  const hasColor = (f: Feature | undefined): f is Extract<Feature, { color: number }> =>
-    !!f &&
-    (f.type === "primitive" ||
-      f.type === "extrude" ||
-      f.type === "boolean" ||
-      f.type === "transform" ||
-      f.type === "mirror" ||
-      f.type === "pattern" ||
-      f.type === "revolve" ||
-      f.type === "sweep" ||
-      f.type === "loft" ||
-      f.type === "import");
   const bodies: SceneSummary["bodies"] = meshes.map((m) => {
-    const f = featureById.get(m.id);
+    // A body is a PART: usually the feature that made it, but a feature whose
+    // result came out disconnected owns several (`<featureId>#n`), each with
+    // its own name and colour (see document/parts.ts).
+    const f = featureById.get(featureIdOfPart(m.id));
+    const look = partAppearance(doc, m.id, DEFAULT_SOLID_COLOR);
     const mesh: ShapeMeshPayload = m.mesh;
     return {
       id: m.id,
-      name: f?.name ?? m.id,
+      name: look.name,
       kind: f ? (f.type === "primitive" ? f.kind : f.type) : "body",
       bbox: bbox(mesh.faces),
-      color: hasColor(f) ? f.color : undefined,
-      hidden: f && "hidden" in f ? f.hidden : undefined,
+      color: look.owned ? look.color : undefined,
+      hidden: look.hidden || undefined,
       faces: uniqueNames(mesh.faces.faceGroups),
       edges: uniqueNames(mesh.edges.edgeGroups),
     };

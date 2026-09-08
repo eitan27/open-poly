@@ -112,7 +112,7 @@ function circleExtrudeDoc(entity: SketchEntity, vars: { name: string; value: num
   return {
     features: [
       { id: "sk", type: "sketch", plane: { datum: "top" }, entities: [entity] },
-      { id: "ext", type: "extrude", profile: { kind: "sketchRegion", sketchId: "sk", regionId } },
+      { id: "ext", type: "extrude", profiles: [{ kind: "sketchRegion", sketchId: "sk", regionId }] },
     ],
     variables: vars,
   } as unknown as Document;
@@ -153,7 +153,7 @@ describe("faceted extruded-circle diameter (traced to the sketch)", () => {
         {
           id: "ext",
           type: "extrude",
-          profile: { kind: "sketchRegion", sketchId: "sk", regionId: detectSketchRegions(rect)[0].id },
+          profiles: [{ kind: "sketchRegion", sketchId: "sk", regionId: detectSketchRegions(rect)[0].id }],
         },
       ],
     } as unknown as Document;

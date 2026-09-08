@@ -155,3 +155,38 @@ export function toggleDressUpPick<T extends DressUpPick>(picks: readonly T[], pi
   const at = picks.findIndex((p) => same(p, pick));
   return at === -1 ? [...picks, pick] : picks.filter((_, i) => i !== at);
 }
+
+/** Fold a list of targets so each body appears once, its edges and faces
+ *  unioned in order. Re-opening a dress-up carries its stored targets, and a
+ *  fresh pick on a body it already dresses should ADD to that body's list, not
+ *  dress it twice (the kernel would then chamfer an edge that no longer
+ *  exists). Names are deduped alongside their fingerprints. */
+export function mergeDressUpTargets(targets: readonly DressUpTarget[]): DressUpTarget[] {
+  const out: DressUpTarget[] = [];
+  for (const t of targets) {
+    const at = out.findIndex((x) => x.targetId === t.targetId);
+    if (at === -1) {
+      out.push({
+        ...t,
+        edges: [...t.edges],
+        edgeRefs: [...t.edgeRefs],
+        faces: [...t.faces],
+        faceRefs: [...t.faceRefs],
+      });
+      continue;
+    }
+    const acc = out[at];
+    for (let i = 0; i < t.edges.length; i++) {
+      if (acc.edges.includes(t.edges[i])) continue;
+      acc.edges.push(t.edges[i]);
+      if (t.edgeRefs[i]) acc.edgeRefs.push(t.edgeRefs[i]);
+    }
+    for (let i = 0; i < t.faces.length; i++) {
+      if (acc.faces.includes(t.faces[i])) continue;
+      acc.faces.push(t.faces[i]);
+      if (t.faceRefs[i]) acc.faceRefs.push(t.faceRefs[i]);
+    }
+    acc.anchor = acc.anchor ?? t.anchor;
+  }
+  return out;
+}

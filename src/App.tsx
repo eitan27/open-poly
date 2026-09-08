@@ -40,11 +40,8 @@ import {
   removeSketchConstraint,
   removeSketchEntity,
   removeVariable,
-  renameFeature,
   resolveDocument,
-  setFeatureColor,
   setFeatureHidden,
-  setFeatureOpacity,
   addShell,
   setRollbackIndex,
   setSketchConstraints,
@@ -75,8 +72,10 @@ import {
   sameProjectedEntities,
 } from "./document/derived";
 import { DEFAULT_SOLID_COLOR, hexToColor, setNewBodyColorPreference } from "./document/colors";
+import { featureIdOfPart, isSubPart, partAppearance, setPartAppearance } from "./document/parts";
 import type {
   DerivedOp,
+  DressUpTargetSpec,
   ProjectRef,
   Document,
   FaceRef,
@@ -103,7 +102,7 @@ import { measureBetween, resolveSide } from "./sketch/distanceDim";
 import { planCoincident, coincidentEnabled as coincidentIsEnabled } from "./sketch/coincidentSelection";
 import { pinConstraints } from "./sketch/snapPins";
 import type { BooleanOp, MeshedFaces, ShapeMeshPayload } from "./kernel/types";
-import { DRESSUP_DELTA_IDS } from "./kernel/types";
+import { DRESSUP_DELTA_IDS, dressUpDeltaBase } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
 import {
@@ -131,6 +130,7 @@ import { extrudeProfilesFromPicks, isExtrudePick, toggleExtrudePick } from "./do
 import {
   dressUpPickBody,
   dressUpTargetsFromPicks,
+  mergeDressUpTargets,
   toggleDressUpPick,
   type DressUpTarget,
 } from "./document/dressUpTarget";
@@ -894,7 +894,7 @@ export default function App() {
       if (s.kind !== "feature") continue;
       const f = doc.features.find((x) => x.id === s.id);
       if (f?.type === "extrude" && (f.mode === "add" || f.mode === "remove") && f.targetId) ids.add(f.targetId);
-      else if (f?.type === "dressup") ids.add(f.targetId);
+      else if (f?.type === "dressup") for (const t of f.targets) ids.add(t.targetId);
       else if (f?.type === "shell") ids.add(f.targetId);
       else if (f?.type === "transform") ids.add(f.copy ? f.id : f.targetId);
       else ids.add(s.id);
@@ -1591,6 +1591,12 @@ export default function App() {
     /** True while the next viewport click adds to (or removes from) `picks`.
      *  Stays live across picks: several profiles extrude in one go. */
     arming: boolean;
+    /** Profiles the dialog carries from the feature it is EDITING that no pick
+     *  can stand for. An Add extrude consumes the face it grew from, so once
+     *  committed that face isn't in the model to be re-picked — but the extrude
+     *  still references it, and re-opening must show it as a row you can drop.
+     *  Empty while creating. */
+    stored: ExtrudeProfile[];
     /** Set once the user picks a Mode or Target by hand, so the host-body
      *  inference that runs when the first profile lands can't overrule them. */
     modeTouched?: boolean;
@@ -1632,6 +1638,11 @@ export default function App() {
        *  Unlike a single-value slot, arming PERSISTS across picks: a five-edge
        *  fillet is five clicks, not click-button-click-button. */
       arming: boolean;
+      /** What the feature being EDITED already dresses. A chamfer replaces the
+       *  edge it bevels, so once committed those edges aren't in the model to be
+       *  re-picked — but the feature still references them, and re-opening must
+       *  show them as rows you can drop. Empty while creating. */
+      stored: DressUpTargetSpec[];
       x: number;
       y: number;
       editId?: string;
@@ -2707,25 +2718,13 @@ export default function App() {
     () =>
       rawMeshes.flatMap((m) => {
         if (isolatedBodyId && m.id !== isolatedBodyId) return []; // isolate mode
-        const feature = doc.features.find((f) => f.id === m.id);
-        // Primitives, "new" extrusions, booleans, and copy-transforms own a
-        // color/opacity/hidden; a body modified in place (add/remove/dressup, or
-        // a non-copy transform) keeps the id — and appearance — of its source.
-        const owns =
-          feature?.type === "primitive" ||
-          feature?.type === "extrude" ||
-          feature?.type === "boolean" ||
-          feature?.type === "transform" ||
-          feature?.type === "mirror" ||
-          feature?.type === "pattern" ||
-          feature?.type === "revolve" ||
-          feature?.type === "sweep" ||
-          feature?.type === "loft" ||
-          feature?.type === "import";
-        if (owns && feature.hidden) return []; // hidden part — don't render or pick
-        const color = owns ? feature.color : DEFAULT_SOLID_COLOR;
-        const opacity = owns ? feature.opacity : 1;
-        return [{ id: m.id, mesh: m.mesh, color, opacity }];
+        // Resolved per PART: a feature's first body reads the feature's own
+        // color/opacity/hidden (as it always did), its 2nd/3rd read `doc.parts`.
+        // A body modified in place (add/remove/dressup, or a non-copy transform)
+        // keeps the id — and appearance — of its source.
+        const look = partAppearance(doc, m.id, DEFAULT_SOLID_COLOR);
+        if (look.hidden) return []; // hidden part — don't render or pick
+        return [{ id: m.id, mesh: m.mesh, color: look.color, opacity: look.opacity }];
       }),
     [rawMeshes, doc, isolatedBodyId],
   );
@@ -2889,6 +2888,10 @@ export default function App() {
   // shows and what a Boolean can combine (primitives, "new" extrusions,
   // booleans, and add/dressup-targets that kept their id).
   const bodyIds = useMemo(() => new Set(rawMeshes.map((m) => m.id)), [rawMeshes]);
+  // Every rendered part, in build order — what the Parts panel lists. A feature
+  // that produced several disjoint solids contributes several (see
+  // document/parts.ts); most contribute one, whose id IS the feature's.
+  const partIds = useMemo(() => rawMeshes.map((m) => m.id), [rawMeshes]);
 
   // Agent command layer (Phase 9): exposes window.__openpoly for console testing
   // and runs the WebSocket bridge to the local MCP hub. `agentStatus` drives the
@@ -2931,10 +2934,11 @@ export default function App() {
   }, [bodyIds, isolatedBodyId]);
   const handleIsolate = (id: string) => setIsolatedBodyId((cur) => (cur === id ? null : id));
 
-  // Bodies available as Boolean operands: features with a rendered body.
+  // Every rendered PART, not every feature: a feature that split into three
+  // solids offers three operands, each combinable on its own.
   const booleanCandidates = useMemo(
-    () => doc.features.filter((f) => bodyIds.has(f.id)).map((f) => ({ id: f.id, name: f.name })),
-    [doc, bodyIds],
+    () => partIds.map((id) => ({ id, name: partAppearance(doc, id, DEFAULT_SOLID_COLOR).name })),
+    [doc, partIds],
   );
 
   const editingSketch = useMemo(() => {
@@ -3124,11 +3128,24 @@ export default function App() {
   // replaces what it references.
   const extrudeDialogProfiles = useMemo((): ExtrudeProfile[] => {
     if (!extrudeDialog) return [];
-    const picked = extrudeProfilesFromPicks(extrudeDialog.picks, doc, meshes);
-    if (picked.length > 0 || !extrudeDialog.editId) return picked;
-    const f = doc.features.find((x) => x.id === extrudeDialog.editId);
-    return f?.type === "extrude" ? [f.profile] : [];
+    return [...extrudeDialog.stored, ...extrudeProfilesFromPicks(extrudeDialog.picks, doc, meshes)];
   }, [extrudeDialog, doc, meshes]);
+
+  /** True for a sketch-entity pick that names a text run (which extrudes on its
+   *  own) rather than an edge. */
+  const sketchEntityIsText = (p: Extract<Selection, { kind: "sketchEntity" }>): boolean => {
+    const sk = doc.features.find((f) => f.id === p.sketchId);
+    return sk?.type === "sketch" && sk.entities.find((e) => e.id === p.entityId)?.type === "text";
+  };
+
+  // Add/Remove need a body per profile — but a body-face profile brings its own
+  // (the part it grew from), so the dialog's Target only matters when a profile
+  // has no body of its own: a sketch region, or sketch text.
+  const extrudeNeedsTarget = useMemo(
+    () => extrudeDialogProfiles.some((p) => p.kind !== "bodyFace"),
+    [extrudeDialogProfiles],
+  );
+  const extrudeTargetSatisfied = !extrudeNeedsTarget || !!extrudeDialog?.targetId;
 
   // World-space anchor for the extrude dialog + gizmo: a body face's centroid,
   // or a sketch region's centroid mapped to 3D. Defaults to the first selected
@@ -3251,19 +3268,41 @@ export default function App() {
     };
   };
 
-  /** How a picked profile reads in the dialog's list: the sketch or body it came
-   *  from, plus what kind of thing it is. */
-  const extrudePickLabel = (p: Selection): string => {
-    const name = (id: string, fallback: string) => doc.features.find((f) => f.id === id)?.name ?? fallback;
-    if (p.kind === "sketchFace") return `${name(p.sketchId, "Sketch")} · region`;
-    if (p.kind === "face") return `${name(p.featureId, "Body")} · face`;
-    if (p.kind === "sketchEntity") {
-      const sk = doc.features.find((f) => f.id === p.sketchId);
-      const ent = sk?.type === "sketch" ? sk.entities.find((e) => e.id === p.entityId) : undefined;
-      return `${name(p.sketchId, "Sketch")} · ${ent?.type === "text" ? "text" : "edge"}`;
-    }
-    return "Profile";
-  };
+  /** The dialog's profile picks, grouped by where they came from: one group per
+   *  PART for face profiles — which is the body each one acts on in Add/Remove —
+   *  and one per sketch for regions and text. Each item keeps its index in the
+   *  flat pick list so ✕ still removes the right one. */
+  const extrudeProfileGroups = useMemo(() => {
+    const nameOf = (id: string, fallback: string) =>
+      isSubPart(id)
+        ? partAppearance(doc, id, DEFAULT_SOLID_COLOR).name
+        : (doc.features.find((f) => f.id === id)?.name ?? fallback);
+    const groups: { key: string; label: string; items: { label: string; remove: () => void }[] }[] = [];
+    const add = (key: string, label: string, kind: string, remove: () => void) => {
+      let g = groups.find((x) => x.key === key);
+      if (!g) groups.push((g = { key, label, items: [] }));
+      const n = g.items.filter((q) => q.label.startsWith(kind)).length + 1;
+      g.items.push({ label: `${kind} ${n}`, remove });
+    };
+    // The stored rows come first — they're the profiles the edited feature
+    // already had — then the live picks, matching extrudeDialogProfiles.
+    (extrudeDialog?.stored ?? []).forEach((p, i) => {
+      const drop = () => setExtrudeDialog((d) => (d ? { ...d, stored: d.stored.filter((_, k) => k !== i) } : d));
+      if (p.kind === "bodyFace") add(p.featureId, nameOf(p.featureId, "Body"), "Face", drop);
+      else if (p.kind === "sketchRegion") add(p.sketchId, nameOf(p.sketchId, "Sketch"), "Region", drop);
+      else add(p.sketchId, nameOf(p.sketchId, "Sketch"), "Text", drop);
+    });
+    (extrudeDialog?.picks ?? []).forEach((p, i) => {
+      const drop = () => setExtrudeDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== i) } : d));
+      if (p.kind === "face") add(p.featureId, nameOf(p.featureId, "Body"), "Face", drop);
+      else if (p.kind === "sketchFace") add(p.sketchId, nameOf(p.sketchId, "Sketch"), "Region", drop);
+      else if (p.kind === "sketchEntity") {
+        add(p.sketchId, nameOf(p.sketchId, "Sketch"), sketchEntityIsText(p) ? "Text" : "Edges", drop);
+      }
+    });
+    return groups;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extrudeDialog?.picks, extrudeDialog?.stored, doc]);
 
   // Open the Extrude dialog. Always available: the profiles are armed inside it.
   // Anything already selected that an extrude can consume prefills the list (and
@@ -3280,6 +3319,7 @@ export default function App() {
       extent: "blind",
       upTo: null,
       picks,
+      stored: [],
       arming: profiles.length === 0,
       x: s.x,
       y: s.y,
@@ -3288,8 +3328,9 @@ export default function App() {
 
   const createExtrude = () => {
     if (extrudeDialogProfiles.length === 0 || !extrudeDialog) return;
-    // Add/Remove require a target body to affect.
-    if (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) return;
+    // Add/Remove need a body to affect. A body-face profile brings its own (the
+    // part it grew from), so only a sketch profile needs the chosen target.
+    if (extrudeDialog.mode !== "new" && !extrudeTargetSatisfied) return;
     // Up to face requires a chosen target face.
     if (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) return;
     const opts = {
@@ -3300,35 +3341,25 @@ export default function App() {
       targetId: extrudeDialog.mode === "new" ? undefined : (extrudeDialog.targetId ?? undefined),
       upTo: extrudeDialog.extent === "upToFace" ? (extrudeDialog.upTo ?? undefined) : undefined,
     };
-    // Editing: update the one feature in place with the (possibly re-picked)
-    // first profile — an edit doesn't split into several features.
+    // Hide each source sketch once it's been consumed by an extrude. It stays in
+    // place and editable — toggle the timeline eye (or edit it) to bring it back.
+    const hideSources = (base: Document) =>
+      extrudeDialogProfiles.reduce(
+        (d, p) => (p.kind === "sketchRegion" || p.kind === "sketchText" ? setSuppressed(d, p.sketchId, true) : d),
+        base,
+      );
+    // ONE feature, however many profiles: the dialog that made it reopens with
+    // all of them, and a "new" extrude whose profiles are disjoint simply lands
+    // as several parts (see document/parts.ts).
     if (extrudeDialog.editId) {
-      const profile = extrudeDialogProfiles[0];
-      let next = updateExtrude(doc, extrudeDialog.editId, profile, opts);
-      if (profile.kind === "sketchRegion" || profile.kind === "sketchText") {
-        next = setSuppressed(next, profile.sketchId, true);
-      }
-      setDoc(next);
+      setDoc(hideSources(updateExtrude(doc, extrudeDialog.editId, extrudeDialogProfiles, opts)));
       selectFeature(extrudeDialog.editId);
       commitEdit();
       closeExtrudeDialog();
       return;
     }
-    // One Extrude feature per selected profile, sharing the dialog's settings —
-    // folded into a single undo step by threading `next` through every
-    // addExtrude/setSuppressed call before the one setDoc at the end.
-    let next = doc;
-    for (const profile of extrudeDialogProfiles) {
-      const res = addExtrude(next, profile, opts);
-      // Hide the source sketch once it's been consumed by an extrude. It stays
-      // in place and editable — toggle the timeline eye (or edit it) to bring
-      // it back.
-      next =
-        profile.kind === "sketchRegion" || profile.kind === "sketchText"
-          ? setSuppressed(res.doc, profile.sketchId, true)
-          : res.doc;
-    }
-    setDoc(next);
+    const { doc: created } = addExtrude(doc, extrudeDialogProfiles, opts);
+    setDoc(hideSources(created));
     selectFeature(null);
     closeExtrudeDialog();
   };
@@ -3370,10 +3401,37 @@ export default function App() {
     extrudeDialogProfiles,
   ]);
 
+  /** The viewport picks that stand for a stored profile list — so re-opening an
+   *  extrude shows every profile as its own row, droppable like any other pick,
+   *  rather than a note that it references something. A body-face profile only
+   *  stores the face's persistent NAME, so its build-local faceId is looked up
+   *  on the current mesh; if any profile can't be resolved the whole list is
+   *  dropped and the dialog falls back to the feature's own profiles (which are
+   *  still what it builds). */
+  const picksFromProfiles = (profiles: ExtrudeProfile[]): { picks: Selection[]; stored: ExtrudeProfile[] } => {
+    const picks: Selection[] = [];
+    const stored: ExtrudeProfile[] = [];
+    for (const p of profiles) {
+      if (p.kind === "sketchRegion") {
+        picks.push({ kind: "sketchFace", sketchId: p.sketchId, regionId: p.regionId });
+      } else if (p.kind === "sketchText") {
+        picks.push({ kind: "sketchEntity", sketchId: p.sketchId, entityId: p.textId });
+      } else {
+        const m = rawMeshes.find((x) => x.id === p.featureId);
+        const faceId = p.faceName ? m?.mesh.faces.faceGroups?.find((g) => g.name === p.faceName)?.faceId : undefined;
+        // The face is gone (an Add extrude consumed it) — keep the profile as a
+        // stored row instead of a live pick.
+        if (faceId === undefined) stored.push(p);
+        else picks.push({ kind: "face", featureId: p.featureId, faceId });
+      }
+    }
+    return { picks, stored };
+  };
+
   // Re-open the extrude dialog to edit an existing extrude in place. Seeds the
-  // dialog from the feature's own profile (so it's never empty even though the
-  // source sketch is suppressed); re-picking to any visible region/face/text
-  // works through the normal selection.
+  // dialog from the feature's own profiles — every one of them, as pick rows —
+  // so the dialog comes back the way it was left; re-picking to any visible
+  // region/face/text works through the normal selection.
   const editExtrude = (id: string) => {
     const f = doc.features.find((x) => x.id === id);
     if (f?.type !== "extrude") return;
@@ -3388,9 +3446,7 @@ export default function App() {
       extent: f.extent,
       targetId: f.targetId ?? null,
       upTo: f.upTo ?? null,
-      // Editing starts from the feature's own profile (see
-      // extrudeDialogProfiles); picking re-arms the list from scratch.
-      picks: [],
+      ...picksFromProfiles(f.profiles),
       arming: false,
       modeTouched: true,
       x: s.x,
@@ -3411,7 +3467,7 @@ export default function App() {
       // would double the body); the create-only ghost is for new extrudes.
       extrudeDialog.editId ||
       extrudeDialogProfiles.length === 0 ||
-      (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) ||
+      (extrudeDialog.mode !== "new" && !extrudeTargetSatisfied) ||
       (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo)
     ) {
       setExtrudePreview(null);
@@ -3427,20 +3483,15 @@ export default function App() {
     // in `previewTool` mode so the kernel emits only the swept tool (the
     // changing portion) — the existing bodies are left untouched and keep their
     // own colour, so only the new material reads as cyan.
-    let previewDoc = doc;
-    const createdIds: string[] = [];
-    for (const profile of extrudeDialogProfiles) {
-      const res = addExtrude(previewDoc, profile, {
-        distance: extrudeDialog.distance,
-        flip: extrudeDialog.flip,
-        extent: extrudeDialog.extent,
-        mode: extrudeDialog.mode,
-        targetId: extrudeDialog.mode === "new" ? undefined : (extrudeDialog.targetId ?? undefined),
-        upTo: extrudeDialog.extent === "upToFace" ? (extrudeDialog.upTo ?? undefined) : undefined,
-      });
-      previewDoc = res.doc;
-      createdIds.push(res.id);
-    }
+    const { doc: previewDoc, id: previewId } = addExtrude(doc, extrudeDialogProfiles, {
+      distance: extrudeDialog.distance,
+      flip: extrudeDialog.flip,
+      extent: extrudeDialog.extent,
+      mode: extrudeDialog.mode,
+      targetId: extrudeDialog.mode === "new" ? undefined : (extrudeDialog.targetId ?? undefined),
+      upTo: extrudeDialog.extent === "upToFace" ? (extrudeDialog.upTo ?? undefined) : undefined,
+    });
+    const createdIds = [previewId];
     const created = new Set(createdIds);
     const previewResolved = resolveDocument(previewDoc);
     const resolveErr = createdIds.map((id) => previewResolved.errors[id]).find(Boolean);
@@ -3481,7 +3532,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [extrudeDialog, extrudeDialogProfiles, doc, ready]);
+  }, [extrudeDialog, extrudeDialogProfiles, extrudeTargetSatisfied, doc, ready]);
 
   // Live ghost preview of the revolve dialog: once a profile + axis are armed,
   // build a throwaway doc with that revolve (mirrors createRevolve, minus the
@@ -3545,7 +3596,17 @@ export default function App() {
     const anchor = targets[0]?.anchor;
     const s = (anchor && viewApiRef.current?.worldToScreen(anchor)) || { x: 240, y: 160 };
     setDressUpError(null);
-    setDressUpDialog({ op, size: "2", angle: "45", flip: false, picks, arming: targets.length === 0, x: s.x, y: s.y });
+    setDressUpDialog({
+      op,
+      size: "2",
+      angle: "45",
+      flip: false,
+      picks,
+      stored: [],
+      arming: targets.length === 0,
+      x: s.x,
+      y: s.y,
+    });
   };
 
   // Re-open the chamfer/fillet dialog to edit in place. Seeds op + size + angle
@@ -3562,9 +3623,10 @@ export default function App() {
       size: f.size,
       angle: f.angle ?? "45",
       flip: f.flip ?? false,
-      // Editing starts from the feature's stored edges (below); picking any
-      // edge/face re-arms the list from scratch.
+      // Editing starts from what the feature already dresses; picking adds to
+      // it (a pick on a body it already dresses joins that body's list).
       picks: [],
+      stored: f.targets,
       arming: false,
       x: 240,
       y: 160,
@@ -3582,33 +3644,29 @@ export default function App() {
   // as three features), else (editing) the feature's own referenced edges.
   const dressUpDialogTargets = useMemo((): DressUpTarget[] => {
     if (!dressUpDialog) return [];
-    const picked = dressUpTargetsFromPicks(dressUpDialog.picks, meshes);
-    if (picked.length > 0 || !dressUpDialog.editId) return picked;
-    const f = doc.features.find((x) => x.id === dressUpDialog.editId);
-    return f?.type === "dressup"
-      ? [
-          {
-            targetId: f.targetId,
-            edges: f.edges,
-            edgeRefs: f.edgeRefs ?? [],
-            faces: f.faces ?? [],
-            faceRefs: f.faceRefs ?? [],
-            anchor: null,
-          },
-        ]
-      : [];
-  }, [dressUpDialog, meshes, doc]);
+    const stored: DressUpTarget[] = dressUpDialog.stored.map((t) => ({
+      targetId: t.targetId,
+      edges: t.edges,
+      edgeRefs: t.edgeRefs ?? [],
+      faces: t.faces ?? [],
+      faceRefs: t.faceRefs ?? [],
+      anchor: null,
+    }));
+    return mergeDressUpTargets([...stored, ...dressUpTargetsFromPicks(dressUpDialog.picks, meshes)]);
+  }, [dressUpDialog, meshes]);
 
   // The document-level spec the dialog's current inputs describe. Angle/flip
   // ride along for chamfers only — a fillet has no bevel to tilt.
-  const dressUpSpec = (t: DressUpTarget, d: NonNullable<typeof dressUpDialog>) => ({
+  const dressUpSpec = (targets: DressUpTarget[], d: NonNullable<typeof dressUpDialog>) => ({
     op: d.op,
-    targetId: t.targetId,
-    edges: t.edges,
+    targets: targets.map((t) => ({
+      targetId: t.targetId,
+      edges: t.edges,
+      edgeRefs: t.edgeRefs,
+      faces: t.faces,
+      faceRefs: t.faceRefs,
+    })),
     size: d.size,
-    edgeRefs: t.edgeRefs,
-    faces: t.faces,
-    faceRefs: t.faceRefs,
     ...(d.op === "chamfer" ? { angle: d.angle, flip: d.flip } : {}),
   });
 
@@ -3621,37 +3679,25 @@ export default function App() {
     return av.value === null ? av : sv;
   };
 
-  // Add a dress-up per target body, or (editing) update the existing one in
-  // place — shared by the commit and the live-validation effect so both build
-  // the same doc. Creating threads `base` through every addDressUp, so the fan-
-  // out lands as ONE document change (and one undo step), the way a
-  // multi-profile Extrude does. Editing never splits: it updates its own
-  // feature from the first target, like Extrude's edit path.
+  // Add the dress-up, or (editing) update it in place — shared by the commit and
+  // the live-validation effect so both build the same doc. However many bodies
+  // it dresses, it is ONE feature: the dialog that made it reopens with all of
+  // them, and undo takes the whole thing back.
   const applyDressUp = (
     base: Document,
     targets: DressUpTarget[],
     d: NonNullable<typeof dressUpDialog>,
-  ): { doc: Document; ids: string[] } => {
-    if (d.editId) return { doc: updateDressUp(base, d.editId, dressUpSpec(targets[0], d)), ids: [d.editId] };
-    let next = base;
-    const ids: string[] = [];
-    for (const t of targets) {
-      const res = addDressUp(
-        next,
-        d.op,
-        t.targetId,
-        t.edges,
-        d.size,
-        t.edgeRefs,
-        d.op === "chamfer" ? d.angle : undefined,
-        d.op === "chamfer" && d.flip,
-        t.faces,
-        t.faceRefs,
-      );
-      next = res.doc;
-      ids.push(res.id);
-    }
-    return { doc: next, ids };
+  ): { doc: Document; id: string } => {
+    const spec = dressUpSpec(targets, d);
+    if (d.editId) return { doc: updateDressUp(base, d.editId, spec), id: d.editId };
+    return addDressUp(
+      base,
+      d.op,
+      spec.targets,
+      d.size,
+      d.op === "chamfer" ? d.angle : undefined,
+      d.op === "chamfer" && d.flip,
+    );
   };
 
   // Live-preview a chamfer/fillet edit: apply the new size/angle/edges to the
@@ -3660,10 +3706,9 @@ export default function App() {
   // `dressUpError`.
   useEffect(() => {
     const d = dressUpDialog;
-    const t = dressUpDialogTargets[0];
-    if (!d?.editId || !t) return;
+    if (!d?.editId || dressUpDialogTargets.length === 0) return;
     if (validateDressUpDialog(d).value === null) return;
-    const spec = dressUpSpec(t, d);
+    const spec = dressUpSpec(dressUpDialogTargets, d);
     if (!shouldLiveApply(JSON.stringify({ e: d.editId, spec }))) return;
     setDoc((prev) => updateDressUp(prev, d.editId!, spec), `edit:${d.editId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3687,7 +3732,7 @@ export default function App() {
       setDressUpError(null);
       return;
     }
-    const { doc: next, ids } = applyDressUp(doc, dressUpDialogTargets, dressUpDialog);
+    const { doc: next, id } = applyDressUp(doc, dressUpDialogTargets, dressUpDialog);
     // Authoritative pre-commit check against the kernel: an unsatisfiable size
     // (radius too big, degenerate edge) keeps the dialog open with the error
     // rather than committing a broken feature. Runs even if the live-validation
@@ -3697,11 +3742,11 @@ export default function App() {
     const kernel = kernelRef.current;
     if (ready && kernel) {
       const resolvedNext = resolveDocument(next);
-      let err: string | null = ids.map((i) => resolvedNext.errors[i]).find(Boolean) ?? null;
+      let err: string | null = resolvedNext.errors[id] ?? null;
       if (!err) {
         try {
           const { results } = await kernel.regenerate(resolvedNext.features);
-          const hit = results.find((r) => ids.includes(r.id) && !r.ok);
+          const hit = results.find((r) => r.id === id && !r.ok);
           if (hit && !hit.ok) err = hit.error;
         } catch (e) {
           err = String((e as Error)?.message ?? e);
@@ -3750,9 +3795,9 @@ export default function App() {
     if (!ready || !kernel) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      const { doc: next, ids } = applyDressUp(doc, dressUpDialogTargets, dressUpDialog);
+      const { doc: next, id } = applyDressUp(doc, dressUpDialogTargets, dressUpDialog);
       const resolvedNext = resolveDocument(next);
-      const resolveErr = ids.map((i) => resolvedNext.errors[i]).find(Boolean);
+      const resolveErr = resolvedNext.errors[id];
       if (resolveErr) {
         if (!cancelled) {
           setDressUpError(mapDressUpKernelError(resolveErr, dressUpDialog.op));
@@ -3763,13 +3808,13 @@ export default function App() {
       // Every fanned-out feature ghosts, so a multi-body dress-up previews on
       // all of its bodies at once rather than just the first.
       const features = resolvedNext.features.map((rf) =>
-        rf.type === "dressup" && ids.includes(rf.id) ? { ...rf, previewDelta: true } : rf,
+        rf.type === "dressup" && rf.id === id ? { ...rf, previewDelta: true } : rf,
       );
       kernel
         .regenerate(features)
         .then(({ results }) => {
           if (cancelled) return;
-          const hit = results.find((r) => ids.includes(r.id) && !r.ok);
+          const hit = results.find((r) => r.id === id && !r.ok);
           const err = hit && !hit.ok ? mapDressUpKernelError(hit.error, dressUpDialog.op) : null;
           setDressUpError(err);
           if (err) {
@@ -3780,8 +3825,11 @@ export default function App() {
             const r = results.find((x) => x.id === deltaId);
             return r?.ok ? r.mesh : undefined;
           };
-          const removed = ids.map((i) => delta(DRESSUP_DELTA_IDS.removed(i))).filter((m) => !!m);
-          const added = ids.map((i) => delta(DRESSUP_DELTA_IDS.added(i))).filter((m) => !!m);
+          // One delta pair per dressed body (see dressUpDeltaBase), so a
+          // multi-body dress-up ghosts on all of them.
+          const bases = dressUpDialogTargets.map((_, ti) => dressUpDeltaBase(id, ti));
+          const removed = bases.map((b) => delta(DRESSUP_DELTA_IDS.removed(b))).filter((m) => !!m);
+          const added = bases.map((b) => delta(DRESSUP_DELTA_IDS.added(b))).filter((m) => !!m);
           setDressUpPreview(removed.length || added.length ? { removed, added } : null);
         })
         .catch((err) => {
@@ -3976,7 +4024,7 @@ export default function App() {
       let id = featureIdOf(s);
       const f = doc.features.find((x) => x.id === id);
       if (f?.type === "extrude" && (f.mode === "add" || f.mode === "remove") && f.targetId) id = f.targetId;
-      else if (f?.type === "dressup") id = f.targetId;
+      else if (f?.type === "dressup" && f.targets.length === 1) id = f.targets[0].targetId;
       else if (f?.type === "shell") id = f.targetId;
       else if (f?.type === "transform" && !f.copy) id = f.targetId;
       ids.add(id);
@@ -6858,21 +6906,30 @@ export default function App() {
     return { keep: new Set(d.operandIds), ghost: none(), cut: none() };
   }, [booleanDialog]);
 
-  const handleDelete = (id: string) => {
+  const handleDelete = (partOrFeatureId: string) => {
+    // From the Parts panel this can be a sub-part id; a part isn't a thing the
+    // timeline can remove on its own, so it deletes the feature that made it.
+    const id = featureIdOfPart(partOrFeatureId);
     setDoc(removeFeature(doc, id));
     setSelection((prev) => prev.filter((s) => featureIdOf(s) !== id));
     if (editingSketchId === id) setEditingSketchId(null);
   };
 
+  // Appearance is written per PART: the feature's own fields for its first body,
+  // `doc.parts` for the 2nd/3rd (see document/parts.ts). Same for the name.
   const handleSolidColor = (id: string, color: number) => {
-    setDoc(setFeatureColor(doc, id, color), `color:${id}`);
+    setDoc(setPartAppearance(doc, id, { color }), `color:${id}`);
     setSelection([]); // deselect so the new color isn't masked by the highlight
   };
 
   const handleSolidOpacity = (id: string, opacity: number) =>
-    setDoc(setFeatureOpacity(doc, id, opacity), `opacity:${id}`);
+    setDoc(setPartAppearance(doc, id, { opacity }), `opacity:${id}`);
 
-  const handleSolidHidden = (id: string, hidden: boolean) => setDoc(setFeatureHidden(doc, id, hidden));
+  const handleSolidHidden = (id: string, hidden: boolean) => setDoc(setPartAppearance(doc, id, { hidden }));
+
+  /** Rename from the Parts panel. A sub-part's name is its own; the first part
+   *  renames the feature, which is what the timeline row shows too. */
+  const handleSolidRename = (id: string, name: string) => setDoc(setPartAppearance(doc, id, { name }), `rename:${id}`);
 
   const exportSolid = (id: string, format: "step" | "stl") => {
     const kernel = kernelRef.current;
@@ -6882,7 +6939,7 @@ export default function App() {
       setFatal("Can't export: this solid has no resolved geometry right now.");
       return;
     }
-    const name = doc.features.find((f) => f.id === id)?.name ?? id;
+    const name = partAppearance(doc, id, DEFAULT_SOLID_COLOR).name;
     kernel
       .exportBody(resolved.features, id, format)
       .then((blob) => downloadBlob(blob, `${safeFilename(name)}.${format}`))
@@ -7774,10 +7831,10 @@ export default function App() {
           {partsOpen && (
             <SolidsList
               doc={doc}
-              bodyIds={bodyIds}
+              partIds={partIds}
               selectedIds={selectedFeatureIds}
               onSelect={selectFeature}
-              onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}
+              onRename={handleSolidRename}
               onDelete={handleDelete}
               onColorChange={handleSolidColor}
               onOpacityChange={handleSolidOpacity}
@@ -7905,7 +7962,7 @@ export default function App() {
                     onChangeParam={(id, name, value) =>
                       setDoc(updateParam(doc, id, name, value), `param:${id}:${name}`)
                     }
-                    onRename={(id, name) => setDoc(renameFeature(doc, id, name), `rename:${id}`)}
+                    onRename={handleSolidRename}
                     onEditSketch={editSketch}
                     onFinishSketch={finishSketch}
                     onEditTransform={editTransform}
@@ -8594,15 +8651,17 @@ export default function App() {
               </div>
               {/* An accumulating slot (see PickSlot.tsx): one row per picked
                   profile, and a button that keeps the arming live for the next.
-                  Clicking a listed profile in the viewport removes it. */}
+                  Clicking a listed profile in the viewport removes it. Profiles
+                  taken off a part are grouped under it, because in Add/Remove
+                  that is the body each one acts on. */}
               <div className="bool-group-label">Profiles</div>
-              {extrudeDialog.picks.map((p, i) => (
-                <PickedRow
-                  key={`${p.kind}:${i}`}
-                  label={extrudePickLabel(p)}
-                  clearTitle="Remove"
-                  onClear={() => setExtrudeDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== i) } : d))}
-                />
+              {extrudeProfileGroups.map((g) => (
+                <Fragment key={g.key}>
+                  {extrudeProfileGroups.length > 1 && <div className="bool-group-label ed-subgroup">{g.label}</div>}
+                  {g.items.map((item) => (
+                    <PickedRow key={item.label} label={item.label} clearTitle="Remove" onClear={item.remove} />
+                  ))}
+                </Fragment>
               ))}
               <PickButton
                 noun="a profile"
@@ -8616,9 +8675,6 @@ export default function App() {
                     ? "Add more profiles"
                     : undefined}
               </PickButton>
-              {extrudeDialog.editId && extrudeDialog.picks.length === 0 && (
-                <p className="ed-hint">Extruding the profile this feature already references — pick to replace it.</p>
-              )}
               <div className="ed-modes">
                 {(["new", "add", "remove"] as const).map((m) => (
                   <button
@@ -8643,7 +8699,7 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              {extrudeDialog.mode !== "new" && (
+              {extrudeDialog.mode !== "new" && extrudeNeedsTarget && (
                 <label className="ed-field">
                   <span>Target</span>
                   <select
@@ -8662,6 +8718,11 @@ export default function App() {
                     ))}
                   </select>
                 </label>
+              )}
+              {extrudeDialog.mode !== "new" && !extrudeNeedsTarget && extrudeDialogProfiles.length > 0 && (
+                <p className="ed-hint">
+                  {extrudeDialog.mode === "add" ? "Added to" : "Cut from"} the part each face belongs to.
+                </p>
               )}
               <label className="ed-field">
                 <span>Extent</span>
@@ -8742,7 +8803,7 @@ export default function App() {
                   className="ed-primary"
                   disabled={
                     extrudeDialogProfiles.length === 0 ||
-                    (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) ||
+                    (extrudeDialog.mode !== "new" && !extrudeTargetSatisfied) ||
                     (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo)
                   }
                   onClick={createExtrude}
@@ -8765,27 +8826,49 @@ export default function App() {
               const targets = dressUpDialogTargets;
               const disabled = sv.value === null || !!dressUpError || targets.length === 0;
               const picks = dressUpDialog.picks;
+              const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
               const armPicks = () => setDressUpDialog((d) => (d ? { ...d, arming: !d.arming } : d));
-              const dropPick = (i: number) =>
-                setDressUpDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== i) } : d));
-              // Picks grouped the way they'll commit — one dress-up per body —
-              // each carrying its index in the flat list so ✕ still removes the
-              // right one. "Edge 2" counts within its own kind and its own body,
-              // so the rows read the way they were picked.
-              const groups: { bodyId: string; items: { label: string; index: number }[] }[] = [];
-              picks.forEach((p, index) => {
-                const bodyId = dressUpPickBody(p) ?? "";
+              // Rows grouped by the body they dress, which is how they commit.
+              // Two sources: what the feature being edited already references
+              // (`stored` — a chamfer replaces the edge it bevels, so those
+              // can't be re-picked, only dropped), then the live picks. "Edge 2"
+              // counts within its own kind and its own body, so the rows read
+              // the way they were picked.
+              const groups: { bodyId: string; items: { label: string; remove: () => void }[] }[] = [];
+              // `kind` numbers within its own body ("Edge 1", "Edge 2"); a
+              // stored row passes its own finished label instead, since it
+              // stands for a whole list of names rather than one click.
+              const addRow = (bodyId: string, kind: string, remove: () => void, exact = false) => {
                 let g = groups.find((x) => x.bodyId === bodyId);
                 if (!g) groups.push((g = { bodyId, items: [] }));
-                const n = g.items.filter((q) => q.label.startsWith(p.kind === "edge" ? "Edge" : "Face")).length + 1;
-                g.items.push({ label: `${p.kind === "edge" ? "Edge" : "Face"} ${n}`, index });
+                const n = g.items.filter((q) => q.label.startsWith(kind)).length + 1;
+                g.items.push({ label: exact ? kind : `${kind} ${n}`, remove });
+              };
+              dressUpDialog.stored.forEach((t, i) => {
+                const drop = () =>
+                  setDressUpDialog((d) => (d ? { ...d, stored: d.stored.filter((_, k) => k !== i) } : d));
+                // One row for the whole stored target: it's a list of names, not
+                // a sequence of clicks, so there's nothing finer to remove.
+                const counts = [
+                  t.edges.length ? plural(t.edges.length, "edge") : null,
+                  t.faces?.length ? plural(t.faces.length, "face") : null,
+                ].filter(Boolean);
+                addRow(t.targetId, counts.join(" + ") || "Nothing", drop, true);
               });
-              const bodyLabel = (id: string) => doc.features.find((f) => f.id === id)?.name ?? "Body";
+              picks.forEach((p, index) => {
+                const drop = () =>
+                  setDressUpDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== index) } : d));
+                addRow(dressUpPickBody(p) ?? "", p.kind === "edge" ? "Edge" : "Face", drop);
+              });
+              const bodyLabel = (id: string) =>
+                isSubPart(id)
+                  ? partAppearance(doc, id, DEFAULT_SOLID_COLOR).name
+                  : (doc.features.find((f) => f.id === id)?.name ?? "Body");
               // What the picks actually RESOLVE to, which is the interesting
               // number: one click on a faceted rim stands for its whole tangent
               // chain, so three picks can be ninety-odd edges. Zeros are left
               // out — "0 edges + 1 face" says nothing the rows below don't.
-              const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+
               const countOf = (ts: DressUpTarget[]) =>
                 [ts.reduce((n, x) => n + x.edges.length, 0), ts.reduce((n, x) => n + x.faces.length, 0)] as const;
               const countLabel = (ts: DressUpTarget[]) => {
@@ -8814,12 +8897,7 @@ export default function App() {
                     <Fragment key={g.bodyId}>
                       {groups.length > 1 && <div className="bool-group-label ed-subgroup">{bodyLabel(g.bodyId)}</div>}
                       {g.items.map((item) => (
-                        <PickedRow
-                          key={item.index}
-                          label={item.label}
-                          clearTitle="Remove"
-                          onClear={() => dropPick(item.index)}
-                        />
+                        <PickedRow key={item.label} label={item.label} clearTitle="Remove" onClear={item.remove} />
                       ))}
                     </Fragment>
                   ))}
@@ -8830,14 +8908,10 @@ export default function App() {
                         ? "Add more edges"
                         : undefined}
                   </PickButton>
-                  {dressUpDialog.editId && !picks.length && (
+                  {targets.length > 1 && (
                     <p className="ed-hint">
-                      Dressing the edges this feature already references — pick to replace them.
-                    </p>
-                  )}
-                  {!dressUpDialog.editId && targets.length > 1 && (
-                    <p className="ed-hint">
-                      One {dressUpDialog.op} per body — commits as {targets.length} features, in a single undo.
+                      One {dressUpDialog.op} across {targets.length} parts — a single feature, dressing each body from
+                      its own edges.
                     </p>
                   )}
                   <label className="ed-field">

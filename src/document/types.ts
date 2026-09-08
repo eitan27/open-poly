@@ -302,7 +302,12 @@ export type ExtrudeProfile =
 /** Extrude a sketch region or a body face into a solid. (Phase 3.) */
 export interface ExtrudeFeature extends FeatureBase {
   type: "extrude";
-  profile: ExtrudeProfile;
+  /** Everything this extrude pulls, in pick order. Several profiles are ONE
+   *  feature — the dialog that made them reopens with all of them, and a "new"
+   *  extrude whose profiles are disjoint simply lands as several parts (see
+   *  document/parts.ts). Documents written when an extrude held a single
+   *  `profile` are lifted to a one-element list on load (migrateDocument). */
+  profiles: ExtrudeProfile[];
   /** Blind/symmetric distance, as an expression string (e.g. "10" or "height/2").
    *  Ignored by "throughAll" once it resolves a target. */
   distance: string;
@@ -311,7 +316,11 @@ export interface ExtrudeFeature extends FeatureBase {
   flip: boolean;
   extent: ExtrudeExtent;
   mode: ExtrudeMode;
-  /** For add/remove: the body (by feature id) to fuse into / cut from. */
+  /** For add/remove: which body a profile that has none of its own — a sketch
+   *  region or text — fuses into / cuts from. A profile taken from a BODY FACE
+   *  ignores this and acts on the part it grew from, so extruding faces of two
+   *  different parts in one go modifies each of them rather than dumping both
+   *  into whichever body happened to be picked first. */
   targetId?: string;
   /** For extent "upToFace": the target face the extrude reaches up to. */
   upTo?: UpToFaceRef;
@@ -335,10 +344,12 @@ export interface BooleanFeature extends FeatureBase {
 }
 
 /** Chamfer/fillet a set of edges of a body (referenced by persistent name). */
-export interface DressUpFeature extends FeatureBase {
-  type: "dressup";
-  op: "chamfer" | "fillet";
-  /** The body whose edges are dressed (the feature id that produced it). */
+/** Everything one dress-up does to ONE body. A chamfer picked across three
+ *  parts is a single feature with three of these — the dialog that made it
+ *  reopens with all of them, and a rebuild dresses each body from its own
+ *  reference list (edge names only mean anything on the body they came from). */
+export interface DressUpTargetSpec {
+  /** The body whose edges are dressed (the part id that produced it). */
   targetId: string;
   /** Persistent names of the edges to chamfer/fillet. */
   edges: string[];
@@ -346,16 +357,21 @@ export interface DressUpFeature extends FeatureBase {
    *  edge whose name churned after an upstream edit. Absent on legacy docs. */
   edgeRefs?: EdgeRef[];
   /** Persistent names of whole FACES to dress: every boundary edge of the face
-   *  is chamfered/filleted. Picking a face is how you dress a circular rim
-   *  without having to hit a millimetre-long chord with the cursor — select the
-   *  cylinder's flat top and its whole rim rounds. A face resolves to the smooth
-   *  SURFACE it belongs to (all 96 facets of a faceted wall are one surface), so
-   *  its boundary is the two rims rather than a facet's four sides. */
+   *  is chamfered/filleted. */
   faces?: string[];
-  /** Geometric fingerprints for `faces` (parallel array), same role as
-   *  `edgeRefs`. Absent on legacy docs. */
+  /** Geometric fingerprints for `faces` (parallel array). */
   faceRefs?: FaceRef[];
-  /** Chamfer distance / fillet radius, as an expression string. */
+}
+
+export interface DressUpFeature extends FeatureBase {
+  type: "dressup";
+  op: "chamfer" | "fillet";
+  /** The bodies this dress-up acts on, one entry each. Documents written when a
+   *  dress-up held a single target (`targetId`/`edges`/`faces` at the top level)
+   *  are lifted to a one-element list on load (migrateDocument). */
+  targets: DressUpTargetSpec[];
+  /** Chamfer distance / fillet radius, as an expression string — one size for
+   *  every target. */
   size: string;
   /** Chamfer only: the bevel angle in degrees, measured from the reference face
    *  (the face `size` runs along). 45 is the symmetric chamfer; absent ⇒ 45,
@@ -635,9 +651,23 @@ export interface Variable {
   expression: string;
 }
 
+/** Per-part appearance for the 2nd, 3rd… part of a feature — the ones that
+ *  can't use the feature's own fields because a sibling already does. Every
+ *  field is optional: a part with none of them simply looks like its feature
+ *  (see document/parts.ts). */
+export interface PartOverride {
+  name?: string;
+  color?: number;
+  opacity?: number;
+  hidden?: boolean;
+}
+
 export interface Document {
   features: Feature[];
   variables: Variable[];
+  /** Appearance overrides keyed by PART id (`<featureId>#<n>`). Absent on every
+   *  document written before a feature could produce more than one part. */
+  parts?: Record<string, PartOverride>;
   /** Number of features evaluated, 0..features.length. Features at index >=
    *  rollbackIndex are "rolled back" (not regenerated). */
   rollbackIndex: number;

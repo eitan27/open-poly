@@ -169,7 +169,11 @@ export type ResolvedFeature =
   | {
       id: string;
       type: "extrude";
-      profile: ResolvedProfile;
+      /** One tool per profile. In "new" they gather into a single body, which
+       *  the fold then splits into one part per disjoint solid; in add/remove
+       *  each goes into its own target (a body-face profile's own body, else
+       *  `targetId`). */
+      profiles: ResolvedProfile[];
       distance: number;
       flip: boolean;
       extent: ExtrudeExtent;
@@ -192,11 +196,15 @@ export type ResolvedFeature =
       id: string;
       type: "dressup";
       op: "chamfer" | "fillet";
-      targetId: string;
-      edges: string[];
-      edgeRefs?: ResolvedEdgeRef[];
-      faces?: string[];
-      faceRefs?: ResolvedFaceRef[];
+      /** One entry per body dressed. Edge names only mean something on the body
+       *  they came from, so each target carries its own reference list. */
+      targets: {
+        targetId: string;
+        edges: string[];
+        edgeRefs?: ResolvedEdgeRef[];
+        faces?: string[];
+        faceRefs?: ResolvedFaceRef[];
+      }[];
       size: number;
       angle?: number;
       flip?: boolean;
@@ -303,6 +311,12 @@ export type ResolvedFeature =
  *  the solid it cuts away (before − after) and the solid it fills in
  *  (after − before). A chamfer/fillet on a convex edge produces only `removed`,
  *  on a concave edge only `added`; a feature spanning both produces both. */
+/** The id a dress-up's preview deltas hang off for its n-th target. The first
+ *  keeps the plain feature id, so a single-target dress-up's delta ids are
+ *  exactly what they were before one feature could dress several bodies. */
+export const dressUpDeltaBase = (featureId: string, targetIndex: number): string =>
+  targetIndex === 0 ? featureId : `${featureId}#${targetIndex}`;
+
 export const DRESSUP_DELTA_IDS = {
   removed: (featureId: string) => `${featureId}::removed`,
   added: (featureId: string) => `${featureId}::added`,

@@ -48,7 +48,11 @@ describe("extrudeProfilesFromPicks", () => {
   });
 
   it("turns the EDGES that enclose a region into that region — the whole point of resolving the set at once", () => {
-    const picks = ["l1", "l2", "l3", "l4"].map((entityId) => ({ kind: "sketchEntity" as const, sketchId: "sk", entityId }));
+    const picks = ["l1", "l2", "l3", "l4"].map((entityId) => ({
+      kind: "sketchEntity" as const,
+      sketchId: "sk",
+      entityId,
+    }));
     expect(extrudeProfilesFromPicks(picks, doc, meshes)).toEqual([{ kind: "sketchRegion", sketchId: "sk", regionId }]);
   });
 
@@ -78,10 +82,7 @@ describe("extrudeProfilesFromPicks", () => {
   });
 
   it("ignores picks it can't use, rather than failing the whole list", () => {
-    const picks = [
-      { kind: "vertex" as const },
-      { kind: "sketchFace" as const, sketchId: "sk", regionId },
-    ];
+    const picks = [{ kind: "vertex" as const }, { kind: "sketchFace" as const, sketchId: "sk", regionId }];
     expect(extrudeProfilesFromPicks(picks, doc, meshes)).toHaveLength(1);
   });
 

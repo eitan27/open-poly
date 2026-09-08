@@ -1,25 +1,14 @@
-import type {
-  BooleanFeature,
-  Document,
-  ExtrudeFeature,
-  Feature,
-  ImportFeature,
-  LoftFeature,
-  MirrorFeature,
-  PatternFeature,
-  PrimitiveFeature,
-  RevolveFeature,
-  SweepFeature,
-  TransformFeature,
-} from "../document/types";
-import { colorToHex } from "../document/colors";
+import type { Document } from "../document/types";
+import { colorToHex, DEFAULT_SOLID_COLOR } from "../document/colors";
+import { featureIdOfPart, partAppearance } from "../document/parts";
 import { EyeIcon } from "./icons";
 
 interface Props {
   doc: Document;
-  /** Feature ids that produced an actual rendered body (primitives, "new"
-   *  extrusions, add-targets that kept their id). */
-  bodyIds: Set<string>;
+  /** Every rendered part, in build order. A part id is the id of the feature
+   *  that produced it, or `<featureId>#<n>` for the 2nd, 3rd… disjoint solid of
+   *  that feature's result (see document/parts.ts). */
+  partIds: string[];
   selectedIds: Set<string>;
   onSelect: (id: string) => void;
   onRename: (id: string, name: string) => void;
@@ -34,38 +23,9 @@ interface Props {
   onIsolate: (id: string) => void;
 }
 
-/** A feature that owns a body's appearance (color/opacity). A copy-transform
- *  produces a body keyed by its own id; an in-place transform doesn't (its body
- *  keeps the target's id), so the bodyIds filter naturally excludes it. */
-type SolidFeature =
-  | PrimitiveFeature
-  | ExtrudeFeature
-  | BooleanFeature
-  | TransformFeature
-  | MirrorFeature
-  | PatternFeature
-  | RevolveFeature
-  | SweepFeature
-  | LoftFeature
-  | ImportFeature;
-function isSolidFeature(f: Feature): f is SolidFeature {
-  return (
-    f.type === "primitive" ||
-    f.type === "extrude" ||
-    f.type === "boolean" ||
-    f.type === "transform" ||
-    f.type === "mirror" ||
-    f.type === "pattern" ||
-    f.type === "revolve" ||
-    f.type === "sweep" ||
-    f.type === "loft" ||
-    f.type === "import"
-  );
-}
-
 export function SolidsList({
   doc,
-  bodyIds,
+  partIds,
   selectedIds,
   onSelect,
   onRename,
@@ -77,10 +37,19 @@ export function SolidsList({
   isolatedId,
   onIsolate,
 }: Props) {
-  // List the features that have a rendered body and own its appearance. A body
-  // consumed by a boolean isn't in `bodyIds` (the fold removed it), so this also
-  // excludes operands.
-  const solids = doc.features.filter((f): f is SolidFeature => bodyIds.has(f.id) && isSolidFeature(f));
+  // One row per rendered PART, not per feature: a feature that produced three
+  // disjoint solids has three rows, each with its own colour, name and eye. A
+  // body consumed by a boolean isn't in `partIds` (the fold removed it), so this
+  // also excludes operands. Parts whose feature doesn't own an appearance are
+  // dropped, as they always were — an in-place modifier's body is listed under
+  // the feature that created it, not the one that last touched it.
+  const solids = partIds
+    .map((id) => ({ id, ...partAppearance(doc, id, DEFAULT_SOLID_COLOR) }))
+    .filter((p) => p.owned)
+    .map((p) => ({
+      ...p,
+      suppressed: !!doc.features.find((f) => f.id === featureIdOfPart(p.id))?.suppressed,
+    }));
 
   if (solids.length === 0) {
     return <p className="hint">No parts yet — add a primitive or extrude above.</p>;
