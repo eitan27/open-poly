@@ -62,9 +62,9 @@ const R = Number(cylF?.params?.radius ?? 18);
 const chord = 2 * R * Math.sin(Math.PI / 96);
 console.log(`cylinder r=${R}  96-gon facet chord = ${chord.toFixed(4)} mm`);
 console.log(
-  `chamfer edges (${cham.edges.length}):`,
+  `chamfer edges (${cham.targets[0].edges.length}):`,
   JSON.stringify(
-    cham.edges.map((e) =>
+    cham.targets[0].edges.map((e) =>
       e
         .split("∩")
         .map((p) => p.split("/").pop())

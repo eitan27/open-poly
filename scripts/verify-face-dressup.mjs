@@ -198,10 +198,11 @@ await waitIdle();
 // --- 5. A face selection survives a size edit (it's stored, not one-shot) -----
 {
   const f = (await read({ read: "document" })).features.find((x) => x.type === "dressup");
+  const t0 = f?.targets?.[0];
   check(
     "the feature stores the FACE reference, not expanded edges",
-    Array.isArray(f?.faces) && f.faces.length === 1 && (f.edges?.length ?? 0) === 0,
-    JSON.stringify({ faces: f?.faces, edges: f?.edges }),
+    Array.isArray(t0?.faces) && t0.faces.length === 1 && (t0.edges?.length ?? 0) === 0,
+    JSON.stringify({ faces: t0?.faces, edges: t0?.edges }),
   );
   await apply({ op: "setParam", featureId: f.id, name: "size", value: "2" });
   const st = await waitIdle();

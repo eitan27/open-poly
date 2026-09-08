@@ -27,8 +27,7 @@ const mkDoc = (dress: Partial<DressUpFeature>, variables: Document["variables"] 
       name: "Chamfer 1",
       suppressed: false,
       op: "chamfer",
-      targetId: "box",
-      edges: ["box/+x∩box/+z"],
+      targets: [{ targetId: "box", edges: ["box/+x∩box/+z"] }],
       size: "2",
       ...dress,
     } as DressUpFeature,
@@ -52,9 +51,7 @@ describe("resolveDocument — chamfer angle", () => {
       id: "ch",
       type: "dressup",
       op: "chamfer",
-      targetId: "box",
-      edges: ["box/+x∩box/+z"],
-      edgeRefs: undefined,
+      targets: [{ targetId: "box", edges: ["box/+x∩box/+z"], edgeRefs: undefined }],
       size: 2,
     });
     expect("angle" in f!).toBe(false);

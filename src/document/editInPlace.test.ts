@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   addBoolean,
   addDressUp,
+  addFeature,
   addExtrude,
   addPattern,
   addPlane,
@@ -53,7 +54,7 @@ describe("in-place feature edits preserve identity + timeline position", () => {
     expect(after.distance).toBe("25");
     expect(after.flip).toBe(true);
     expect(after.extent).toBe("symmetric");
-    expect((after.profile as { regionId: string }).regionId).toBe("r2");
+    expect((after.profiles[0] as { regionId: string }).regionId).toBe("r2");
     // timeline index unchanged
     expect(doc.features.findIndex((f) => f.id === id)).toBe(d2.features.findIndex((f) => f.id === id));
   });
@@ -100,30 +101,86 @@ describe("in-place feature edits preserve identity + timeline position", () => {
     expect(b.operands).toEqual(["a", "c", "d"]);
   });
 
+  it("names a dress-up after the body it dresses, so a fan-out reads in the timeline", () => {
+    const { doc: base } = addFeature(createDocument(), "box");
+    const bodyId = base.features[0].id;
+    const { doc: d1, id } = addDressUp(base, "chamfer", [{ targetId: bodyId, edges: ["e1"] }], "2");
+    expect(feat<DressUpFeature>(d1, id).name).toBe(`Chamfer on ${base.features[0].name}`);
+  });
+
+  it("keeps a second dress-up on the same body distinct", () => {
+    const { doc: base } = addFeature(createDocument(), "box");
+    const bodyId = base.features[0].id;
+    const { doc: d1 } = addDressUp(base, "fillet", [{ targetId: bodyId, edges: ["e1"] }], "2");
+    const { doc: d2, id } = addDressUp(d1, "fillet", [{ targetId: bodyId, edges: ["e2"] }], "2");
+    expect(feat<DressUpFeature>(d2, id).name).toBe(`Fillet on ${base.features[0].name} (2)`);
+  });
+
+  it("falls back to the ordinal name when the target isn't a feature in the document", () => {
+    const { doc, id } = addDressUp(createDocument(), "chamfer", [{ targetId: "gone", edges: ["e1"] }], "2");
+    expect(feat<DressUpFeature>(doc, id).name).toBe("Chamfer 1");
+  });
+
   it("updateDressUp changes size + edges", () => {
-    const { doc: d1, id } = addDressUp(createDocument(), "fillet", "body", ["e1"], "2");
-    const doc = updateDressUp(d1, id, { op: "fillet", targetId: "body", edges: ["e1", "e2"], size: "5" });
+    const { doc: d1, id } = addDressUp(createDocument(), "fillet", [{ targetId: "body", edges: ["e1"] }], "2");
+    const doc = updateDressUp(d1, id, {
+      op: "fillet",
+      targets: [{ targetId: "body", edges: ["e1", "e2"] }],
+      size: "5",
+    });
     const f = feat<DressUpFeature>(doc, id);
     expect(f.size).toBe("5");
-    expect(f.edges).toEqual(["e1", "e2"]);
+    expect(f.targets[0].edges).toEqual(["e1", "e2"]);
+  });
+
+  it("updateDressUp replaces the whole target list — a body dropped in the dialog stops being dressed", () => {
+    const { doc: d1, id } = addDressUp(
+      createDocument(),
+      "fillet",
+      [
+        { targetId: "a", edges: ["e1"] },
+        { targetId: "b", edges: ["e2"] },
+      ],
+      "2",
+    );
+    expect(feat<DressUpFeature>(d1, id).name).toBe("Fillet on 2 parts");
+    const doc = updateDressUp(d1, id, { op: "fillet", targets: [{ targetId: "a", edges: ["e1"] }], size: "2" });
+    expect(feat<DressUpFeature>(doc, id).targets).toHaveLength(1);
   });
 
   it("updateDressUp sets the chamfer angle, and drops it when switched to a fillet", () => {
-    const { doc: d1, id } = addDressUp(createDocument(), "chamfer", "body", ["e1"], "2", undefined, "30", true);
+    const { doc: d1, id } = addDressUp(
+      createDocument(),
+      "chamfer",
+      [{ targetId: "body", edges: ["e1"] }],
+      "2",
+      "30",
+      true,
+    );
     expect(feat<DressUpFeature>(d1, id).angle).toBe("30");
     expect(feat<DressUpFeature>(d1, id).flip).toBe(true);
 
-    const d2 = updateDressUp(d1, id, { op: "chamfer", targetId: "body", edges: ["e1"], size: "2", angle: "60" });
+    const d2 = updateDressUp(d1, id, {
+      op: "chamfer",
+      targets: [{ targetId: "body", edges: ["e1"] }],
+      size: "2",
+      angle: "60",
+    });
     expect(feat<DressUpFeature>(d2, id).angle).toBe("60");
     // `flip` isn't carried by the new spec, so it clears with it.
     expect(feat<DressUpFeature>(d2, id).flip).toBeUndefined();
 
-    const d3 = updateDressUp(d2, id, { op: "fillet", targetId: "body", edges: ["e1"], size: "2", angle: "60" });
+    const d3 = updateDressUp(d2, id, {
+      op: "fillet",
+      targets: [{ targetId: "body", edges: ["e1"] }],
+      size: "2",
+      angle: "60",
+    });
     expect(feat<DressUpFeature>(d3, id).angle).toBeUndefined();
   });
 
   it("a fillet never stores an angle, even if one is passed", () => {
-    const { doc, id } = addDressUp(createDocument(), "fillet", "body", ["e1"], "2", undefined, "30", true);
+    const { doc, id } = addDressUp(createDocument(), "fillet", [{ targetId: "body", edges: ["e1"] }], "2", "30", true);
     expect(feat<DressUpFeature>(doc, id).angle).toBeUndefined();
     expect(feat<DressUpFeature>(doc, id).flip).toBeUndefined();
   });

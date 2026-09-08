@@ -90,7 +90,8 @@ export function ParamEditor({
         <div className="sketch-params">
           <div className="param-field">
             <span className="param-label">Edges</span>
-            <span className="param-static">{feature.edges.length}</span>
+            {/* Summed across every body this dress-up acts on. */}
+            <span className="param-static">{feature.targets.reduce((n, t) => n + t.edges.length, 0)}</span>
           </div>
           <label className="param-field">
             <span className="param-label">{feature.op === "chamfer" ? "Distance" : "Radius"}</span>

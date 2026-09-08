@@ -115,7 +115,10 @@ check("extrude dialog opened from the 2-cell selection", dialogVisible === 1);
 await page.keyboard.press("Enter");
 await waitIdle();
 
-// One Extrude feature (and body) per selected cell, each a 20×10 quarter.
+// ONE Extrude feature holding both cells, and one body (part) per cell — each a
+// 20×10 quarter. The feature used to be split one-per-profile; profiles now live
+// together in a single feature, and the kernel splits the disjoint result into
+// parts (see splitPartsPass / document/parts.ts).
 const scene2 = await read({ read: "sceneSummary" });
 const bodies = scene2.bodies ?? [];
 check("extrude produced two bodies (one per cell)", bodies.length === 2, `bodies: ${bodies.length}`);
@@ -132,7 +135,11 @@ check(
 );
 const doc = await read({ read: "document" });
 const extrudes = doc.features.filter((f) => f.type === "extrude");
-check("one extrude per selected cell (2 features)", extrudes.length === 2, `extrudes: ${extrudes.length}`);
+check(
+  "both cells landed in ONE extrude feature",
+  extrudes.length === 1 && extrudes[0].profiles.length === 2,
+  `extrudes: ${extrudes.length}, profiles: ${extrudes[0]?.profiles?.length}`,
+);
 
 // --- 4. A circle crossed by a line → two half-disks --------------------------
 const sk2 = await apply({

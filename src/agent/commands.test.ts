@@ -704,7 +704,7 @@ describe("applyOperation — revolve options, text, offset, mirror", () => {
     });
     expect(ex.ok).toBe(true);
     const f = doc().features.find((x) => x.id === ex.createdId);
-    expect(f && f.type === "extrude" && f.profile.kind).toBe("sketchText");
+    expect(f && f.type === "extrude" && f.profiles[0].kind).toBe("sketchText");
   });
 
   it("addOffset appends an associative offset op and the output shows up", async () => {
@@ -1036,9 +1036,9 @@ describe("applyOperation — dressUp edge fingerprints", () => {
     const f = d.features.find((x) => x.id === r.createdId);
     expect(f?.type).toBe("dressup");
     if (f?.type !== "dressup") return;
-    expect(f.edgeRefs).toHaveLength(2);
-    expect(f.edgeRefs![0]).toMatchObject({ name: known, mid: [5, 0, 10], length: 10 });
-    expect(f.edgeRefs![1]).toEqual({ name: "bogus/name" }); // no polyline → name-only
+    expect(f.targets[0].edgeRefs).toHaveLength(2);
+    expect(f.targets[0].edgeRefs![0]).toMatchObject({ name: known, mid: [5, 0, 10], length: 10 });
+    expect(f.targets[0].edgeRefs![1]).toEqual({ name: "bogus/name" }); // no polyline → name-only
   });
 });
 

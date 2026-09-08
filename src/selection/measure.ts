@@ -196,8 +196,11 @@ function extrudedCircleRadius(doc: Document, faceName: string | undefined, scope
     return Number.isFinite(r) && r > 0 ? r : null;
   }
   if (feat?.type !== "extrude") return null;
-  const profile = feat.profile;
-  if (profile.kind !== "sketchRegion") return null;
+  // With several profiles in one extrude, the face name says which one made it
+  // (`<featureId>/p<n>/…`); a lone profile keeps the bare feature id as prefix.
+  const seg = /^p(\d+)$/.exec(faceName.split("/")[1] ?? "");
+  const profile = feat.profiles[seg ? Number(seg[1]) : 0];
+  if (profile?.kind !== "sketchRegion") return null;
   const sk = doc.features.find((f) => f.id === profile.sketchId);
   if (sk?.type !== "sketch") return null;
   const region = detectSketchRegions(sk.entities).find((r) => r.id === profile.regionId);

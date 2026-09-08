@@ -2976,6 +2976,19 @@ button:disabled .kbd-hint {
   margin-top: 2px;
 }
 
+/* A body's heading inside an accumulating list that spans several of them (a
+   chamfer picked across three parts commits as three features, so its picks are
+   shown grouped the way they'll commit). Set in from the rows it heads, and not
+   shouting: it's a divider, not a second section. */
+.ed-subgroup {
+  margin-top: 6px;
+  padding-left: 2px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  color: var(--text-6);
+}
+
 /* ARMED — the third pick-slot state (see the .ed-pick-btn block above, which
    sets the metrics both share): a solid accent fill, the one look that means
    "this slot is filled". Padded 4px shorter on the right for the ✕ that sits

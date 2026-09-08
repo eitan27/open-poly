@@ -43,6 +43,25 @@ export function newBodyColor(): number {
   return preferredNewBodyColor ?? randomSolidColor();
 }
 
+/** The colour a feature's n-th part takes when nothing has overridden it.
+ *
+ *  A feature that comes out as several disjoint parts (see document/parts.ts)
+ *  must not paint them all alike: to everyone but the timeline they are
+ *  separate bodies, and three identically-coloured lumps from one extrude read
+ *  as one object. Siblings therefore step on through the palette from the
+ *  feature's own colour — deterministic, so a rebuild repaints them identically
+ *  and no colour has to be stored to stay put.
+ *
+ *  A fixed "new body colour" preference wins: it means "make bodies THIS
+ *  colour", and these are bodies. */
+export function siblingBodyColor(featureColor: number, index: number): number {
+  if (index === 0 || preferredNewBodyColor !== null) return featureColor;
+  // A hand-picked colour that isn't in the palette still yields a stable,
+  // distinct series — it just starts the walk at the top.
+  const at = SOLID_COLORS.indexOf(featureColor);
+  return SOLID_COLORS[((at === -1 ? 0 : at) + index) % SOLID_COLORS.length];
+}
+
 /** `0x66b5d6` ⇄ `"#66b5d6"` — the form `<input type="color">` and stored
  *  settings both speak. */
 export const colorToHex = (color: number): string => `#${color.toString(16).padStart(6, "0")}`;

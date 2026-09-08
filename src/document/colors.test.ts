@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { colorToHex, hexToColor, newBodyColor, setNewBodyColorPreference, SOLID_COLORS } from "./colors";
+import {
+  colorToHex,
+  hexToColor,
+  newBodyColor,
+  setNewBodyColorPreference,
+  siblingBodyColor,
+  SOLID_COLORS,
+} from "./colors";
 import { addPlane, makeFeature, migrateDocument } from "./document";
 import type { Document, PlaneFeature, TransformFeature } from "./types";
 
@@ -82,5 +89,31 @@ describe("which colours the preference reaches", () => {
     const migrated = migrateDocument(legacy).features[0] as TransformFeature;
     expect(migrated.color).not.toBe(0x123456);
     expect(SOLID_COLORS).toContain(migrated.color);
+  });
+});
+
+describe("siblingBodyColor", () => {
+  it("leaves a feature's first part on the feature's own colour", () => {
+    expect(siblingBodyColor(SOLID_COLORS[3], 0)).toBe(SOLID_COLORS[3]);
+  });
+
+  it("steps siblings on through the palette, so they're told apart at a glance", () => {
+    expect(siblingBodyColor(SOLID_COLORS[3], 1)).toBe(SOLID_COLORS[4]);
+    expect(siblingBodyColor(SOLID_COLORS[3], 2)).toBe(SOLID_COLORS[5]);
+  });
+
+  it("wraps round the palette", () => {
+    expect(siblingBodyColor(SOLID_COLORS[SOLID_COLORS.length - 1], 1)).toBe(SOLID_COLORS[0]);
+  });
+
+  it("still gives a distinct series for a hand-picked colour outside the palette", () => {
+    expect(siblingBodyColor(0x123456, 1)).toBe(SOLID_COLORS[1]);
+    expect(siblingBodyColor(0x123456, 2)).toBe(SOLID_COLORS[2]);
+  });
+
+  it("honours a fixed new-body-colour preference — that means every body, siblings included", () => {
+    setNewBodyColorPreference(0xabcdef);
+    expect(siblingBodyColor(0xabcdef, 2)).toBe(0xabcdef);
+    setNewBodyColorPreference(null);
   });
 });

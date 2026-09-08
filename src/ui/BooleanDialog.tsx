@@ -47,6 +47,9 @@ export function BooleanDialog({
 }: Props) {
   const nameOf = (id: string) => candidates.find((c) => c.id === id)?.name ?? id;
   const canConfirm = op === "subtract" ? !!base && tools.length >= 1 : operandIds.length >= 2;
+  // The tool opens whatever the document holds (every modeling button does), so
+  // it has to say why there is nothing to pick rather than arriving inert.
+  const tooFewBodies = candidates.length < 2;
 
   const row = (id: string, onRemove: () => void) => (
     <PickedRow key={id} label={nameOf(id)} clearTitle="Remove" onClear={onRemove} />
@@ -68,6 +71,9 @@ export function BooleanDialog({
           </button>
         ))}
       </div>
+      {tooFewBodies && (
+        <p className="ed-warning">A boolean combines two solid bodies — this document has {candidates.length}.</p>
+      )}
 
       {op === "subtract" ? (
         <>

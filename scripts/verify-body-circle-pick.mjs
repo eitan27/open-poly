@@ -241,8 +241,8 @@ await setView("7");
   const feat = (await read({ read: "document" })).features.find((f) => f.type === "dressup");
   check(
     "a picked rim stores its whole chain, so no stale-selection notice fires",
-    (feat?.edges?.length ?? 0) === FACETS,
-    `stored ${feat?.edges?.length} of ${FACETS} chords`,
+    (feat?.targets?.[0]?.edges?.length ?? 0) === FACETS,
+    `stored ${feat?.targets?.[0]?.edges?.length} of ${FACETS} chords`,
   );
   check(
     "…and dresses the WHOLE circle, as one swept round",
