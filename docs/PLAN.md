@@ -465,14 +465,27 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     face's plane via an oriented half-space box), so a target that isn't
     perpendicular to the extrude axis yields an angled/matching top rather than a
     flat approximation.
-  - **Dialog:** ✅ anchored mini-dialog (mode + target + extent + distance +
-    flip). **Live ghost preview — ✅ DONE:** the dialog regenerates a throwaway
+  - **Dialog:** ✅ anchored mini-dialog (profiles + mode + target + extent +
+    distance + flip). **Always enabled (2026-09-08) — ✅ DONE:** the button no
+    longer waits for a selection. The dialog holds its OWN accumulating list of
+    profile picks (`extrudeDialog.picks`, resolved by
+    `document/extrudeProfiles.ts`), armed on open when nothing is pre-selected;
+    a viewport click adds a profile, clicking a listed one drops it, and an
+    empty-space click can't wipe the list the way a selection-driven one was.
+    The Add-onto-host-body inference (below) runs again the moment the first
+    profile lands, unless the user has already set Mode or Target by hand.
+    **Live ghost preview — ✅ DONE:** the dialog regenerates a throwaway
     doc and renders the **swept tool only** (the changing portion) as a
     translucent cyan ghost (`previewTool` in the kernel) while existing bodies
     keep their own colour; one ghost per profile, updates live with the params.
 - **Chamfer + Fillet** — ✅ DONE: edge dress-up via `BRepFilletAPI`, edges
-  referenced by **persistent name**. _(Chamfer two-distance/angle variants:
-  TODO; currently single distance / single radius.)_
+  referenced by **persistent name**. **Always enabled (2026-09-08) — ✅ DONE:**
+  like Extrude, the dialog owns an accumulating list of edge/face picks
+  (`dressUpDialog.picks`, resolved by `document/dressUpTarget.ts` — which also
+  does the tangent-chain expansion, a property of the whole set), armed on open
+  when nothing is pre-selected. A pick on a second body is refused with a
+  message rather than silently re-targeting. _(Chamfer two-distance/angle
+  variants: TODO; currently single distance / single radius.)_
 - **Shell (2026-07-24) — ✅ DONE.** A `ShellFeature` hollows a body: pick the
   face(s) to remove (they become openings, referenced by **persistent name** +
   a `FaceRef` geometric fingerprint for the same topo-naming fallback as
@@ -558,7 +571,10 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 ### Phase 5 — Boolean + Reference planes + Pattern + Mirror _(Boolean + offset planes ✅; rest TODO)_
 
 - Boolean between separate bodies: union / subtract / intersect — **done**
-  (`BooleanFeature`, name propagation). The dialog is **click-to-populate** —
+  (`BooleanFeature`, name propagation). The button is **always enabled**
+  (2026-09-08): with fewer than two bodies the dialog opens and says so, rather
+  than sitting inert with no way to find out why. The dialog is
+  **click-to-populate** —
   operands fill in as bodies are clicked in the viewport (click to add in order,
   click again or ✕ to remove). Union accepts bodies that merely **touch / share
   a face** (validated by **solid count**, since touching bodies share no volume
@@ -615,7 +631,11 @@ behind the `Kernel` facade. Item-by-item status is inline below.
 - **Mirror across a plane/planar face — ✅ DONE.** A `MirrorFeature` reflects a
   body across a datum / reference plane into a **new** body (original kept) via
   `gp_Trsf.SetMirror` (reuses `applyTrsf`; names re-key 1:1). `⇋ Mirror` button
-  - plane-pick dialog. **Mirror about a planar body face ✅ DONE:** the dialog's
+  - plane-pick dialog. **Always enabled (2026-09-08) — ✅ DONE:** the **body** is
+    a `PickSlot` inside the dialog, armed on open when no single body is
+    pre-selected (the Pattern-target rule: any click resolving to a rendered body
+    fills it). Arming the body cancels an in-flight face pick, since the two
+    slots read different click streams. **Mirror about a planar body face ✅ DONE:** the dialog's
     plane dropdown has a **"Body face…"** option that arms a face pick (`Select a
 face` button, like up-to-face); the picked face's plane is derived via
     `deriveFaceFrame` (centroid + `faceNormal`) and stored as a `kind:"face"` ref
@@ -670,8 +690,11 @@ face` button, like up-to-face); the picked face's plane is derived via
 ### Phase 6 — Sweep + Loft + Revolve — ✅ DONE
 
 - **Sweep — ✅ DONE.** A `SweepFeature` sweeps a **sketch region** along a **path
-  entity** (line / arc / **spline**, possibly in a different sketch) — `⊃ Sweep`
-  enables when a region + a path entity are selected. Kernel `sweepBody` uses raw
+  entity** (line / arc / **spline**, possibly in a different sketch). `⊃ Sweep`
+  is **always enabled** (2026-09-08) and opens an **arming dialog** like
+  Revolve's: arm the **profile**, and picking it hands the arming straight to
+  the **path**, so two clicks fill both slots. A pre-selected region + path
+  still prefills them. Kernel `sweepBody` uses raw
   OCCT `BRepOffsetAPI_MakePipeShell` (profile placed perpendicular to the spine
   start). The **profile is rebuilt from exact curve segments** (so a circular/arc
   cross-section sweeps as a smooth tube, not a 48-facet polygon) and a **spline
@@ -680,8 +703,12 @@ face` button, like up-to-face); the picked face's plane is derived via
   follows the drawn curve exactly. **History-based naming** (one side face per
   profile edge via `Generated`, + `start`/`end` caps).
   _(Twist / multiple profiles along the path: future.)_
-- **Loft — ✅ DONE.** A `LoftFeature` lofts through **2+ sketch regions** (ordered
-  by timeline position) — `⌧ Loft` enables when ≥2 regions are selected. Kernel
+- **Loft — ✅ DONE.** A `LoftFeature` lofts through **2+ sketch regions**. `⌧ Loft`
+  is **always enabled** (2026-09-08) and opens a dialog whose **sections** are an
+  accumulating slot: the arming stays live between picks, sections list in the
+  order they were picked (which is the order the loft blends them), and clicking
+  a listed section drops it. A pre-selected set of regions prefills them in
+  **timeline order**, as it always did. Kernel
   `loftBody` uses raw OCCT `BRepOffsetAPI_ThruSections` (solid) with
   **history-based naming** (lateral faces via `GeneratedFace` per section edge, +
   caps). _(Ruled option / guide rails / point-capped ends: future.)_

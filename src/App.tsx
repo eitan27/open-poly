@@ -61,7 +61,7 @@ import {
   updateRevolve,
   updateVariable,
 } from "./document/document";
-import { expandPickToChains } from "./geom/edgeChains";
+import { edgeFingerprint, edgeNameOf, faceCentroid, faceNameOf, faceNormal } from "./geom/meshQuery";
 import { parseDxfToEntities, sketchEntitiesBounds } from "./document/dxfImport";
 import {
   applyDerivedToSketch,
@@ -78,7 +78,6 @@ import type {
   DerivedOp,
   ProjectRef,
   Document,
-  EdgeRef,
   FaceRef,
   Feature,
   ExtrudeExtent,
@@ -102,7 +101,7 @@ import type {
 import { measureBetween, resolveSide } from "./sketch/distanceDim";
 import { planCoincident, coincidentEnabled as coincidentIsEnabled } from "./sketch/coincidentSelection";
 import { pinConstraints } from "./sketch/snapPins";
-import type { BooleanOp, MeshedEdges, MeshedFaces, ShapeMeshPayload } from "./kernel/types";
+import type { BooleanOp, MeshedFaces, ShapeMeshPayload } from "./kernel/types";
 import { DRESSUP_DELTA_IDS } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { measureSelection } from "./selection/measure";
@@ -126,7 +125,9 @@ import { evaluateExpression } from "./document/expression";
 import { validateDressUpSize, validateDressUpAngle, mapDressUpKernelError } from "./document/dressUpValidation";
 import { validateShellThickness, mapShellKernelError } from "./document/shellValidation";
 import { shellBodyFromSelection, toggleShellFace, retargetShell, NO_SHELL_FACES } from "./document/shellTarget";
-import { detectSketchRegions, regionsEnclosedBy } from "./document/regions";
+import { detectSketchRegions } from "./document/regions";
+import { extrudeProfilesFromPicks, isExtrudePick, toggleExtrudePick } from "./document/extrudeProfiles";
+import { dressUpPickBody, dressUpTargetFromPicks, toggleDressUpPick } from "./document/dressUpTarget";
 import { FEATURE_DEFS, FEATURE_KINDS, featureTypeLabel } from "./document/featureDefs";
 import {
   deleteDoc,
@@ -344,83 +345,6 @@ const constraintSelections = (sketchId: string, entities: SketchEntity[], c: Ske
   }
 };
 
-/** Average position of a tessellated body face — the centroid fallback used to
- *  re-find a face that has no persistent name yet. */
-function faceCentroid(faces: MeshedFaces, faceId: number): [number, number, number] | null {
-  const g = faces.faceGroups?.find((fg) => fg.faceId === faceId);
-  if (!g) return null;
-  const { triangles, vertices } = faces;
-  let sx = 0,
-    sy = 0,
-    sz = 0,
-    n = 0;
-  for (let k = g.start; k < g.start + g.count; k++) {
-    const vi = triangles[k] * 3;
-    sx += vertices[vi];
-    sy += vertices[vi + 1];
-    sz += vertices[vi + 2];
-    n++;
-  }
-  return n ? [sx / n, sy / n, sz / n] : null;
-}
-
-/** Unit normal of a tessellated body face, or null if the face is non-planar
- *  (vertices not coplanar within tolerance — e.g. a cylinder side). Prefers the
- *  meshed per-vertex normals, falling back to the first non-degenerate triangle's
- *  geometric normal. Used to derive a mirror plane from a picked planar face. */
-function faceNormal(faces: MeshedFaces, faceId: number): [number, number, number] | null {
-  const g = faces.faceGroups?.find((fg) => fg.faceId === faceId);
-  if (!g) return null;
-  const { triangles, vertices, normals } = faces;
-  let n: [number, number, number] | null = null;
-  if (normals && normals.length) {
-    let nx = 0,
-      ny = 0,
-      nz = 0;
-    for (let k = g.start; k < g.start + g.count; k++) {
-      const vi = triangles[k] * 3;
-      nx += normals[vi];
-      ny += normals[vi + 1];
-      nz += normals[vi + 2];
-    }
-    const l = Math.hypot(nx, ny, nz);
-    if (l > 1e-9) n = [nx / l, ny / l, nz / l];
-  }
-  if (!n) {
-    for (let k = g.start; k + 2 < g.start + g.count; k += 3) {
-      const a = triangles[k] * 3,
-        b = triangles[k + 1] * 3,
-        c = triangles[k + 2] * 3;
-      const ux = vertices[b] - vertices[a],
-        uy = vertices[b + 1] - vertices[a + 1],
-        uz = vertices[b + 2] - vertices[a + 2];
-      const vx = vertices[c] - vertices[a],
-        vy = vertices[c + 1] - vertices[a + 1],
-        vz = vertices[c + 2] - vertices[a + 2];
-      const nx = uy * vz - uz * vy,
-        ny = uz * vx - ux * vz,
-        nz = ux * vy - uy * vx;
-      const l = Math.hypot(nx, ny, nz);
-      if (l > 1e-9) {
-        n = [nx / l, ny / l, nz / l];
-        break;
-      }
-    }
-  }
-  if (!n) return null;
-  // Reject a non-planar face: every vertex must lie on the plane (point + n).
-  const a0 = triangles[g.start] * 3;
-  const px = vertices[a0],
-    py = vertices[a0 + 1],
-    pz = vertices[a0 + 2];
-  for (let k = g.start; k < g.start + g.count; k++) {
-    const vi = triangles[k] * 3;
-    const d = (vertices[vi] - px) * n[0] + (vertices[vi + 1] - py) * n[1] + (vertices[vi + 2] - pz) * n[2];
-    if (Math.abs(d) > 0.05) return null; // mm tolerance
-  }
-  return n;
-}
-
 /** True when this face is one facet of a FACETED round wall rather than a plain
  *  flat face. Round walls here are polygonal prisms (the kernel's
  *  facetedCylinderShape, and extruded circles), so what looks and picks like a
@@ -630,67 +554,6 @@ function bodyUnderRegion(frame: PlaneFrameData, outline: Vec2[], meshes: Feature
     }
   }
   return null;
-}
-
-/** The persistent topological name of a tessellated face (if it has one). */
-function faceNameOf(faces: MeshedFaces, faceId: number): string | undefined {
-  return faces.faceGroups?.find((fg) => fg.faceId === faceId)?.name;
-}
-
-/** The persistent topological name of a tessellated edge (if it has one). */
-function edgeNameOf(edges: MeshedEdges, edgeId: number): string | undefined {
-  return edges.edgeGroups?.find((eg) => eg.edgeId === edgeId)?.name;
-}
-
-/** Midpoint of a tessellated edge (world space) — anchors the dress-up dialog. */
-function edgeMidpoint(edges: MeshedEdges, edgeId: number): [number, number, number] | null {
-  const g = edges.edgeGroups?.find((eg) => eg.edgeId === edgeId);
-  if (!g) return null;
-  const { lines } = edges;
-  let sx = 0,
-    sy = 0,
-    sz = 0,
-    n = 0;
-  for (let v = g.start; v < g.start + g.count; v++) {
-    sx += lines[v * 3];
-    sy += lines[v * 3 + 1];
-    sz += lines[v * 3 + 2];
-    n++;
-  }
-  return n ? [sx / n, sy / n, sz / n] : null;
-}
-
-/** Geometric fingerprint of a tessellated edge, stored with a dress-up so the
- *  kernel can re-match the edge if an upstream edit renames it. `mid` is the
- *  polyline's bounding-box centre (matches the kernel's edge-bbox centre — and
- *  is robust for closed edges, where an endpoint average lands on the seam);
- *  `length` is the polyline arc length. */
-function edgeFingerprint(edges: MeshedEdges, edgeId: number): { mid: [number, number, number]; length: number } | null {
-  const g = edges.edgeGroups?.find((eg) => eg.edgeId === edgeId);
-  if (!g || g.count === 0) return null;
-  const { lines } = edges;
-  let minX = Infinity,
-    minY = Infinity,
-    minZ = Infinity;
-  let maxX = -Infinity,
-    maxY = -Infinity,
-    maxZ = -Infinity;
-  let length = 0;
-  for (let v = g.start; v < g.start + g.count; v++) {
-    const x = lines[v * 3],
-      y = lines[v * 3 + 1],
-      z = lines[v * 3 + 2];
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    minZ = Math.min(minZ, z);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-    maxZ = Math.max(maxZ, z);
-    if (v > g.start) {
-      length += Math.hypot(x - lines[(v - 1) * 3], y - lines[(v - 1) * 3 + 1], z - lines[(v - 1) * 3 + 2]);
-    }
-  }
-  return { mid: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2], length };
 }
 
 /** Apply a rigid motion to a tessellated mesh payload for the Pattern dialog's
@@ -1145,6 +1008,96 @@ export default function App() {
       }
       return;
     }
+    // Sweep dialog: the profile takes a sketch region, the path a sketch line /
+    // arc / spline. Both read the normal selection raycaster, so one click
+    // stream fills either slot depending on which is armed; filling the profile
+    // hands the arming straight to the path (two clicks, not four).
+    if (sweepDialog?.armed) {
+      if (sweepDialog.armed === "profile") {
+        if (picked?.kind === "sketchFace") {
+          const profile = { sketchId: picked.sketchId, regionId: picked.regionId };
+          setSweepDialog((d) => (d ? { ...d, profile, armed: d.path ? null : "path" } : d));
+        } else if (picked) {
+          flashMsg("Select a closed sketch region to sweep.");
+        }
+        return;
+      }
+      if (picked?.kind === "sketchEntity") {
+        const sk = doc.features.find((f) => f.id === picked.sketchId);
+        const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === picked.entityId) : undefined;
+        if (e && (e.type === "line" || e.type === "arc" || e.type === "spline")) {
+          const path = { sketchId: picked.sketchId, entityId: picked.entityId };
+          setSweepDialog((d) => (d ? { ...d, path, armed: null } : d));
+          return;
+        }
+      }
+      if (picked) flashMsg("A sweep path is a single sketch line, arc, or spline.");
+      return;
+    }
+    // Loft dialog: an accumulating slot of sketch regions, in pick order.
+    // Clicking a section already in the list removes it.
+    if (loftDialog?.arming) {
+      if (picked?.kind !== "sketchFace") {
+        if (picked) flashMsg("Select the closed sketch regions to loft through.");
+        return;
+      }
+      const { sketchId, regionId } = picked;
+      setLoftDialog((d) => {
+        if (!d) return d;
+        const at = d.sections.findIndex((s) => s.sketchId === sketchId && s.regionId === regionId);
+        return {
+          ...d,
+          sections: at === -1 ? [...d.sections, { sketchId, regionId }] : d.sections.filter((_, i) => i !== at),
+        };
+      });
+      return;
+    }
+    // Extrude dialog with its profile list armed. Like the dress-up list below,
+    // clicks accumulate into the DIALOG rather than the selection, and clicking
+    // a listed profile again removes it.
+    if (extrudeDialog?.arming) {
+      if (!picked || !isExtrudePick(picked)) {
+        if (picked) flashMsg("Select a closed sketch region, the edges enclosing one, sketch text, or a planar face.");
+        return;
+      }
+      const picks = toggleExtrudePick(extrudeDialog.picks, picked);
+      // Only now is there a profile to infer Mode and Target from — the dialog
+      // opened before anything was picked (see extrudeDefaults). A mode or
+      // target the user set by hand is never overruled.
+      const profiles = extrudeProfilesFromPicks(picks, doc, meshes);
+      const defaults = extrudeDialog.modeTouched || profiles.length === 0 ? null : extrudeDefaults(profiles);
+      setExtrudeDialog((d) => (d ? { ...d, picks, ...(defaults ?? {}) } : d));
+      return;
+    }
+    // Chamfer/fillet dialog with its edge/face list armed. Clicks accumulate
+    // into the DIALOG's list rather than the selection (so empty space can't
+    // wipe what's been picked), and clicking a listed edge/face removes it —
+    // the toggle rule shared with the boolean tools and the shell's open faces.
+    // The arming stays live throughout: dressing a rim is many clicks.
+    if (dressUpDialog?.arming) {
+      if (!picked || (picked.kind !== "edge" && picked.kind !== "face")) {
+        if (picked) flashMsg("Select body edges or faces to dress — a chamfer/fillet needs edges of one body.");
+        return;
+      }
+      // A pick on a second body is refused rather than treated as a re-target:
+      // the size/angle already typed belong to the body being dressed, and the
+      // arming stays live so the next click can correct the slip.
+      const current = dressUpDialog.picks[0] ? dressUpPickBody(dressUpDialog.picks[0]) : null;
+      if (current && dressUpPickBody(picked) !== current) {
+        flashMsg("A chamfer or fillet dresses one body — clear the list to dress a different one.");
+        return;
+      }
+      setDressUpDialog((d) => (d ? { ...d, picks: toggleDressUpPick(d.picks, picked) } : d));
+      return;
+    }
+    // Mirror dialog open, BODY not yet picked: same rule as Pattern's target —
+    // any click that resolves to a rendered body fills the slot, so clicking a
+    // face of the body works as well as clicking the body in the tree.
+    if (mirrorDialog && mirrorDialog.arming === "target") {
+      const id = picked ? featureIdOf(picked) : null;
+      if (id && bodyIds.has(id)) setMirrorDialog((d) => (d ? { ...d, targetId: id, arming: null } : d));
+      return;
+    }
     // Transform armed with no target yet: the next body click picks it and
     // creates+opens the Transform feature directly on the requested mode.
     if (transformArming) {
@@ -1372,9 +1325,14 @@ export default function App() {
   // `plane === "face"` mirrors across a picked planar body face, stored in
   // `faceRef` (a frozen frame snapshot, like a sketch-on-face placement).
   const [mirrorDialog, setMirrorDialog] = useState<{
-    targetId: string;
+    /** Null until a body is armed + clicked (see `arming: "target"`) — the
+     *  dialog opens immediately like Pattern, no pre-selection required. */
+    targetId: string | null;
     plane: string;
     faceRef: { featureId: string; frame: PlaneFrameData } | null;
+    /** Which slot the next viewport click fills (the plane's FACE pick rides
+     *  `pickingMirrorFace` instead — a different click stream). */
+    arming: "target" | null;
     editId?: string;
   } | null>(null);
   // Armed by the Mirror dialog: the next clicked planar body face is the plane.
@@ -1623,6 +1581,17 @@ export default function App() {
     extent: ExtrudeExtent;
     targetId: string | null;
     upTo: UpToFaceRef | null;
+    /** The profiles this dialog extrudes — its OWN accumulated picks, not the
+     *  viewport selection, so an empty-space click can't wipe them. Resolved by
+     *  extrudeProfilesFromPicks (sketch edges only become a profile when,
+     *  together, they enclose a region — a property of the whole list). */
+    picks: Selection[];
+    /** True while the next viewport click adds to (or removes from) `picks`.
+     *  Stays live across picks: several profiles extrude in one go. */
+    arming: boolean;
+    /** Set once the user picks a Mode or Target by hand, so the host-body
+     *  inference that runs when the first profile lands can't overrule them. */
+    modeTouched?: boolean;
     x: number;
     y: number;
     editId?: string;
@@ -1653,6 +1622,14 @@ export default function App() {
       size: string;
       angle: string;
       flip: boolean;
+      /** The edges/faces this dialog dresses — its OWN accumulated picks, not
+       *  the viewport selection, so an empty-space click can't wipe them.
+       *  Resolved to names/fingerprints by dressUpTargetFromPicks. */
+      picks: Selection[];
+      /** True while the next viewport click adds to (or removes from) `picks`.
+       *  Unlike a single-value slot, arming PERSISTS across picks: a five-edge
+       *  fillet is five clicks, not click-button-click-button. */
+      arming: boolean;
       x: number;
       y: number;
       editId?: string;
@@ -1707,29 +1684,88 @@ export default function App() {
     y: number;
     editId?: string;
   } | null>(null);
-  // True while the Revolve dialog is waiting for a profile to be clicked (a
-  // sketch region or a planar body face). It unlocks two things the plain
-  // selection path can't offer: hidden sketches are drawn (a sketch consumed by
-  // an earlier feature is hidden, and was therefore unpickable — the arming could
-  // never be satisfied), and a region outranks the body geometry in front of it
-  // in the picker, so a profile behind a solid stays reachable.
+  // The Sweep dialog: a profile region + the path to sweep it along. Both are
+  // armed by clicking the viewport (like Revolve); `armed` says which slot the
+  // next click fills, and filling the profile hands the arming to the path.
+  const [sweepDialog, setSweepDialog] = useState<{
+    profile: { sketchId: string; regionId: string } | null;
+    path: { sketchId: string; entityId: string } | null;
+    armed: "profile" | "path" | null;
+  } | null>(null);
+  // The Loft dialog: the sections to blend through, in order. An accumulating
+  // slot — the arming stays live so sections are picked one after another, and
+  // clicking a listed section removes it.
+  const [loftDialog, setLoftDialog] = useState<{
+    sections: { sketchId: string; regionId: string }[];
+    arming: boolean;
+  } | null>(null);
+  // True while a dialog is waiting for a sketch REGION (or the geometry around
+  // one) to be clicked. It unlocks two things the plain selection path can't
+  // offer: hidden sketches are drawn (a sketch consumed by an earlier feature is
+  // hidden, and was therefore unpickable — the arming could never be satisfied),
+  // and a region outranks the body geometry in front of it in the picker, so a
+  // profile behind a solid stays reachable.
   const armingRevolveProfile = revolveDialog?.armed === "profile";
+  const armingSketchProfile =
+    armingRevolveProfile || !!extrudeDialog?.arming || !!sweepDialog?.armed || !!loftDialog?.arming;
   // Arming that rides the NORMAL selection raycaster rather than `picking` mode
   // (which has a banner of its own further down). Each of these still needs the
   // banner — without it the only sign the app is waiting on a click is a small
-  // highlighted button inside a dialog — so they share one, keyed by whichever
-  // is live. Only one can be, since each belongs to a different dialog.
-  const selectionArming = armingRevolveProfile
-    ? {
+  // highlighted button inside a dialog.
+  //
+  // The order below mirrors the click router's own precedence in handlePick, so
+  // the banner always names the slot that will actually take the next click.
+  // Normally only one can be live (each belongs to a different dialog), but
+  // nothing stops a second dialog being opened over the first, and then the two
+  // orders must not disagree about who wins.
+  const selectionArming = ((): { message: string; cancel: () => void } | null => {
+    if (pickingUpFace)
+      return { message: "Select the body face to extrude up to", cancel: () => setPickingUpFace(false) };
+    if (pickingMirrorFace) {
+      return { message: "Select the planar body face to mirror across", cancel: () => setPickingMirrorFace(false) };
+    }
+    if (sweepDialog?.armed) {
+      return {
+        message:
+          sweepDialog.armed === "profile"
+            ? "Select the closed sketch region to sweep"
+            : "Select the path to sweep along — a sketch line, arc, or spline",
+        cancel: () => setSweepDialog((d) => (d ? { ...d, armed: null } : d)),
+      };
+    }
+    if (loftDialog?.arming) {
+      return {
+        message: "Select the sketch regions to loft through, in order — click a picked one again to drop it",
+        cancel: () => setLoftDialog((d) => (d ? { ...d, arming: false } : d)),
+      };
+    }
+    if (extrudeDialog?.arming) {
+      return {
+        message: "Select the sketch regions and/or planar faces to extrude — click a picked one again to drop it",
+        cancel: () => setExtrudeDialog((d) => (d ? { ...d, arming: false } : d)),
+      };
+    }
+    if (dressUpDialog?.arming) {
+      return {
+        message: `Select the edges and faces to ${dressUpDialog.op} — click a picked one again to drop it`,
+        cancel: () => setDressUpDialog((d) => (d ? { ...d, arming: false } : d)),
+      };
+    }
+    if (mirrorDialog?.arming === "target") {
+      return {
+        message: "Select the body to mirror",
+        cancel: () => setMirrorDialog((d) => (d ? { ...d, arming: null } : d)),
+      };
+    }
+    if (armingRevolveProfile) {
+      return {
         message:
           "Select a closed sketch region or a planar body face to revolve — hidden sketches are shown while you pick",
         cancel: () => setRevolveDialog((d) => (d ? { ...d, armed: null } : d)),
-      }
-    : pickingUpFace
-      ? { message: "Select the body face to extrude up to", cancel: () => setPickingUpFace(false) }
-      : pickingMirrorFace
-        ? { message: "Select the planar body face to mirror across", cancel: () => setPickingMirrorFace(false) }
-        : null;
+      };
+    }
+    return null;
+  })();
   // The Transform feature currently being edited with the gizmo (a floating
   // panel + viewport gizmo are shown while this is set), and which gizmo to show.
   const [transformEditId, setTransformEditId] = useState<string | null>(null);
@@ -3069,63 +3105,26 @@ export default function App() {
     [selection, doc, meshes, resolved.scope],
   );
 
-  // Every selected profile an Extrude could consume: sketch regions, planar
-  // faces of existing bodies, or sketch edges that fully enclose a region (so
-  // a tiny/fiddly-to-click face can be picked by its boundary instead) —
-  // picked one at a time and accumulated by the normal multi-select (see
-  // handlePick) — one dialog fill-in extrudes or cuts all of them at once.
-  const extrudeProfiles = useMemo((): ExtrudeProfile[] => {
-    const profiles: ExtrudeProfile[] = [];
-    const regionKeys = new Set<string>(); // dedupe sketchId/regionId across selection kinds
-    const addRegion = (sketchId: string, regionId: string) => {
-      const key = `${sketchId}/${regionId}`;
-      if (regionKeys.has(key)) return;
-      regionKeys.add(key);
-      profiles.push({ kind: "sketchRegion", sketchId, regionId });
-    };
-    const selectedEntitiesBySketch = new Map<string, Set<string>>();
-    for (const s of selection) {
-      if (s.kind !== "sketchEntity") continue;
-      let ids = selectedEntitiesBySketch.get(s.sketchId);
-      if (!ids) selectedEntitiesBySketch.set(s.sketchId, (ids = new Set()));
-      ids.add(s.entityId);
-    }
-    for (const [sketchId, ids] of selectedEntitiesBySketch) {
-      const sk = doc.features.find((f) => f.id === sketchId);
-      if (sk?.type !== "sketch") continue;
-      for (const region of regionsEnclosedBy(sk.entities, ids)) addRegion(sketchId, region.id);
-      // A selected text entity extrudes on its own (the kernel bakes its glyph
-      // wires with counters/holes) — no enclosing region needed.
-      for (const id of ids) {
-        const ent = sk.entities.find((e) => e.id === id);
-        if (ent?.type === "text" && ent.value.trim()) profiles.push({ kind: "sketchText", sketchId, textId: id });
-      }
-    }
-    for (const s of selection) {
-      if (s.kind === "sketchFace") {
-        addRegion(s.sketchId, s.regionId);
-      } else if (s.kind === "face") {
-        const m = meshes.find((x) => x.id === s.featureId);
-        const center = m ? faceCentroid(m.mesh.faces, s.faceId) : null;
-        if (!center) continue;
-        const faceName = m ? faceNameOf(m.mesh.faces, s.faceId) : undefined;
-        const normal = (m && faceNormal(m.mesh.faces, s.faceId)) || undefined;
-        profiles.push({ kind: "bodyFace", featureId: s.featureId, faceId: s.faceId, faceName, center, normal });
-      }
-    }
-    return profiles;
-  }, [selection, meshes, doc]);
+  // Every profile an Extrude could consume from the live selection. The
+  // resolution itself lives in document/extrudeProfiles.ts — the extrude dialog
+  // runs the same function over its OWN accumulated picks, so what the toolbar
+  // offers and what the dialog holds can never drift.
+  const extrudeProfiles = useMemo(
+    (): ExtrudeProfile[] => extrudeProfilesFromPicks(selection, doc, meshes),
+    [selection, meshes, doc],
+  );
 
-  // What the extrude dialog operates on. Creating: the selected profiles above.
-  // Editing (editId set): a re-picked profile from the selection if there is one,
-  // else the feature's own current profile — so the dialog is never empty and
-  // re-picking a region/face just works through the normal selection.
+  // What the extrude dialog operates on: its own accumulated picks. Editing
+  // (editId set) falls back to the feature's current profile while nothing has
+  // been re-picked, so the dialog is never empty and re-picking a region/face
+  // replaces what it references.
   const extrudeDialogProfiles = useMemo((): ExtrudeProfile[] => {
-    if (!extrudeDialog?.editId) return extrudeProfiles;
-    if (extrudeProfiles.length > 0) return extrudeProfiles;
+    if (!extrudeDialog) return [];
+    const picked = extrudeProfilesFromPicks(extrudeDialog.picks, doc, meshes);
+    if (picked.length > 0 || !extrudeDialog.editId) return picked;
     const f = doc.features.find((x) => x.id === extrudeDialog.editId);
     return f?.type === "extrude" ? [f.profile] : [];
-  }, [extrudeDialog, extrudeProfiles, doc]);
+  }, [extrudeDialog, doc, meshes]);
 
   // World-space anchor for the extrude dialog + gizmo: a body face's centroid,
   // or a sketch region's centroid mapped to 3D. Defaults to the first selected
@@ -3212,8 +3211,7 @@ export default function App() {
 
   // The solid a sketch-region profile sits on (drawn on its face, or coplanar +
   // overlapping it), if any — so the extrude can default to adding onto it.
-  const extrudeHostBody = (): string | null => {
-    const p = extrudeProfiles[0];
+  const extrudeHostBody = (p: ExtrudeProfile | undefined): string | null => {
     if (!p || p.kind !== "sketchRegion") return null;
     const sk = doc.features.find((f) => f.id === p.sketchId);
     if (sk?.type !== "sketch") return null;
@@ -3225,25 +3223,60 @@ export default function App() {
     return bodyUnderRegion(frameOf(sk.plane, resolved.planeFrames), region.outline, meshes);
   };
 
+  // Default mode + target for a set of profiles: add onto the host solid when
+  // the profile sits on one —
+  //  - a body face -> that face's own body,
+  //  - a sketch region drawn on / coplanar+overlapping a solid's face -> that solid.
+  // Otherwise a new body (target = first available, for if the user switches mode).
+  //
+  // Split out of openExtrudeDialog because the dialog now opens with nothing
+  // picked: with no profile there is nothing to infer from, so the same
+  // inference runs again the moment the first one lands.
+  const extrudeDefaults = (profiles: ExtrudeProfile[]) => {
+    const first = profiles[0];
+    const addTarget = !first
+      ? null
+      : first.kind === "bodyFace"
+        ? bodyIds.has(first.featureId)
+          ? first.featureId
+          : null
+        : extrudeHostBody(first);
+    return {
+      mode: (addTarget ? "add" : "new") as "new" | "add" | "remove",
+      targetId: addTarget ?? booleanCandidates[0]?.id ?? null,
+    };
+  };
+
+  /** How a picked profile reads in the dialog's list: the sketch or body it came
+   *  from, plus what kind of thing it is. */
+  const extrudePickLabel = (p: Selection): string => {
+    const name = (id: string, fallback: string) => doc.features.find((f) => f.id === id)?.name ?? fallback;
+    if (p.kind === "sketchFace") return `${name(p.sketchId, "Sketch")} · region`;
+    if (p.kind === "face") return `${name(p.featureId, "Body")} · face`;
+    if (p.kind === "sketchEntity") {
+      const sk = doc.features.find((f) => f.id === p.sketchId);
+      const ent = sk?.type === "sketch" ? sk.entities.find((e) => e.id === p.entityId) : undefined;
+      return `${name(p.sketchId, "Sketch")} · ${ent?.type === "text" ? "text" : "edge"}`;
+    }
+    return "Profile";
+  };
+
+  // Open the Extrude dialog. Always available: the profiles are armed inside it.
+  // Anything already selected that an extrude can consume prefills the list (and
+  // anchors the dialog beside it); with nothing selected it opens armed.
   const openExtrudeDialog = () => {
-    if (extrudeProfiles.length === 0) return;
-    const first = extrudeProfiles[0];
-    const world = profileAnchorWorld();
+    const picks = selection.filter(isExtrudePick);
+    const profiles = extrudeProfilesFromPicks(picks, doc, meshes);
+    const world = profileAnchorWorld(profiles[0]);
     const s = (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
-    // Default to adding onto the host solid when the profile sits on one:
-    //  - a body face -> that face's own body,
-    //  - a sketch region drawn on / coplanar+overlapping a solid's face -> that solid.
-    // Otherwise a new body (target = first available, for if the user switches mode).
-    const addTarget =
-      first.kind === "bodyFace" ? (bodyIds.has(first.featureId) ? first.featureId : null) : extrudeHostBody();
-    const defaultTarget = addTarget ?? booleanCandidates[0]?.id ?? null;
     setExtrudeDialog({
-      mode: addTarget ? "add" : "new",
+      ...extrudeDefaults(profiles),
       distance: "10",
       flip: false,
       extent: "blind",
-      targetId: defaultTarget,
       upTo: null,
+      picks,
+      arming: profiles.length === 0,
       x: s.x,
       y: s.y,
     });
@@ -3351,6 +3384,11 @@ export default function App() {
       extent: f.extent,
       targetId: f.targetId ?? null,
       upTo: f.upTo ?? null,
+      // Editing starts from the feature's own profile (see
+      // extrudeDialogProfiles); picking re-arms the list from scratch.
+      picks: [],
+      arming: false,
+      modeTouched: true,
       x: s.x,
       y: s.y,
       editId: id,
@@ -3368,7 +3406,7 @@ export default function App() {
       // Editing shows the committed feature live (no throwaway ghost — that
       // would double the body); the create-only ghost is for new extrudes.
       extrudeDialog.editId ||
-      extrudeProfiles.length === 0 ||
+      extrudeDialogProfiles.length === 0 ||
       (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) ||
       (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo)
     ) {
@@ -3387,7 +3425,7 @@ export default function App() {
     // own colour, so only the new material reads as cyan.
     let previewDoc = doc;
     const createdIds: string[] = [];
-    for (const profile of extrudeProfiles) {
+    for (const profile of extrudeDialogProfiles) {
       const res = addExtrude(previewDoc, profile, {
         distance: extrudeDialog.distance,
         flip: extrudeDialog.flip,
@@ -3439,7 +3477,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [extrudeDialog, extrudeProfiles, doc, ready]);
+  }, [extrudeDialog, extrudeDialogProfiles, doc, ready]);
 
   // Live ghost preview of the revolve dialog: once a profile + axis are armed,
   // build a throwaway doc with that revolve (mirrors createRevolve, minus the
@@ -3493,67 +3531,16 @@ export default function App() {
     };
   }, [revolveDialog, doc, ready]);
 
-  // One or more selected body edges and/or FACES, all on the same body — what a
-  // chamfer or fillet would dress. Resolves each to its persistent name. A face
-  // stands for all its boundary edges (the kernel expands it, where the topology
-  // is); that is the practical way to round a circular rim, which is otherwise a
-  // 96-chord chain you have to hit exactly with the cursor.
-  const dressUpTarget = useMemo(() => {
-    const edges = selection.filter((s): s is Extract<Selection, { kind: "edge" }> => s.kind === "edge");
-    const faces = selection.filter((s): s is Extract<Selection, { kind: "face" }> => s.kind === "face");
-    if (edges.length + faces.length === 0 || edges.length + faces.length !== selection.length) return null;
-    const targetId = (edges[0] ?? faces[0]).featureId;
-    if (!edges.every((e) => e.featureId === targetId) || !faces.every((f) => f.featureId === targetId)) return null;
-    const m = meshes.find((x) => x.id === targetId);
-    if (!m) return null;
-    // Clicking a rim selects ONE of its 96 chords, but dressing it means the
-    // whole curve — so store the picked edge's entire tangent chain. The kernel
-    // expands a partial chain anyway and warns that it did ("re-pick the edge to
-    // store it afresh"), which fired on every freshly-picked rim; that notice is
-    // meant for a STORED selection gone stale after an upstream edit, not for a
-    // pick made a moment ago. Storing the chain up front is exactly what it asks
-    // for. `chainId` comes from the same mesh data the viewport highlights with,
-    // so what gets dressed is what was lit up under the cursor.
-    const wanted = expandPickToChains(
-      m.mesh.edges.edgeGroups ?? [],
-      edges.map((e) => e.edgeId),
-    );
-    const names: string[] = [];
-    const edgeRefs: EdgeRef[] = [];
-    for (const edgeId of wanted) {
-      const nm = edgeNameOf(m.mesh.edges, edgeId);
-      if (!nm) return null; // unnamed edge — can't reference it stably
-      names.push(nm);
-      // Geometric fingerprint stored alongside the name, so the kernel can
-      // re-match the edge if an upstream edit renames it.
-      const fp = edgeFingerprint(m.mesh.edges, edgeId);
-      edgeRefs.push(fp ? { name: nm, mid: fp.mid, length: fp.length } : { name: nm });
-    }
-    const faceNames: string[] = [];
-    const faceRefs: FaceRef[] = [];
-    for (const f of faces) {
-      const nm = faceNameOf(m.mesh.faces, f.faceId);
-      if (!nm) return null; // unnamed face — same rule as edges
-      faceNames.push(nm);
-      faceRefs.push({
-        name: nm,
-        center: faceCentroid(m.mesh.faces, f.faceId) ?? undefined,
-        normal: faceNormal(m.mesh.faces, f.faceId) ?? undefined,
-      });
-    }
-    // Where the dialog pops up: by the edge actually clicked (not the chain's
-    // first chord, which can be on the far side of the body), else the face.
-    const anchor = edges.length
-      ? edgeMidpoint(m.mesh.edges, edges[0].edgeId)
-      : faceCentroid(m.mesh.faces, faces[0].faceId);
-    return { targetId, edges: names, edgeRefs, faces: faceNames, faceRefs, anchor };
-  }, [selection, meshes]);
-
+  // Open the chamfer/fillet dialog. Always available: the edges and faces to
+  // dress are armed inside it. Whatever edges/faces are already selected prefill
+  // the list (and place the dialog beside them); with nothing selected it opens
+  // armed and waiting for the first click.
   const openDressUp = (op: "chamfer" | "fillet") => {
-    if (!dressUpTarget) return;
-    const s = (dressUpTarget.anchor && viewApiRef.current?.worldToScreen(dressUpTarget.anchor)) || { x: 240, y: 160 };
+    const picks = selection.filter((s) => s.kind === "edge" || s.kind === "face");
+    const target = dressUpTargetFromPicks(picks, meshes);
+    const s = (target?.anchor && viewApiRef.current?.worldToScreen(target.anchor)) || { x: 240, y: 160 };
     setDressUpError(null);
-    setDressUpDialog({ op, size: "2", angle: "45", flip: false, x: s.x, y: s.y });
+    setDressUpDialog({ op, size: "2", angle: "45", flip: false, picks, arming: !target, x: s.x, y: s.y });
   };
 
   // Re-open the chamfer/fillet dialog to edit in place. Seeds op + size + angle
@@ -3570,6 +3557,10 @@ export default function App() {
       size: f.size,
       angle: f.angle ?? "45",
       flip: f.flip ?? false,
+      // Editing starts from the feature's stored edges (below); picking any
+      // edge/face re-arms the list from scratch.
+      picks: [],
+      arming: false,
       x: 240,
       y: 160,
       editId: id,
@@ -3581,11 +3572,12 @@ export default function App() {
     cancelEdit();
   };
 
-  // Which edges/body the dialog dresses: a re-picked edge selection if present,
-  // else (editing) the feature's own referenced edges.
+  // Which edges/body the dialog dresses: its own accumulated picks, else
+  // (editing) the feature's own referenced edges.
   const dressUpDialogTarget = useMemo(() => {
-    if (!dressUpDialog?.editId) return dressUpTarget;
-    if (dressUpTarget) return dressUpTarget;
+    if (!dressUpDialog) return null;
+    const picked = dressUpTargetFromPicks(dressUpDialog.picks, meshes);
+    if (picked || !dressUpDialog.editId) return picked;
     const f = doc.features.find((x) => x.id === dressUpDialog.editId);
     return f?.type === "dressup"
       ? {
@@ -3597,7 +3589,7 @@ export default function App() {
           anchor: null as [number, number, number] | null,
         }
       : null;
-  }, [dressUpDialog, dressUpTarget, doc]);
+  }, [dressUpDialog, meshes, doc]);
 
   // The document-level spec the dialog's current inputs describe. Angle/flip
   // ride along for chamfers only — a fillet has no bevel to tilt.
@@ -4142,10 +4134,25 @@ export default function App() {
     return profile && path ? { profile, path } : null;
   }, [selection, doc]);
 
+  // Open the Sweep dialog. Always available: profile and path are armed inside
+  // it by clicking the viewport, exactly as Revolve arms its profile and axis. A
+  // selection that already describes both prefills them, so the common
+  // "pick both, press W" gesture still costs one extra click at most.
   const openSweep = () => {
-    if (!sweepInputs) return;
-    const { doc: next } = addSweep(doc, sweepInputs.profile, sweepInputs.path);
+    const pre = sweepInputs;
+    setSweepDialog({
+      profile: pre?.profile ?? null,
+      path: pre?.path ?? null,
+      armed: pre ? null : "profile",
+    });
+  };
+  const closeSweep = () => setSweepDialog(null);
+  const createSweep = () => {
+    const d = sweepDialog;
+    if (!d?.profile || !d.path) return;
+    const { doc: next } = addSweep(doc, d.profile, d.path);
     setDoc(next);
+    setSweepDialog(null);
     selectFeature(null);
   };
 
@@ -4215,6 +4222,7 @@ export default function App() {
         // Mirror dialog: like Revolve, Esc first cancels an in-progress face
         // pick (keeping the dialog), then a second Esc closes the dialog.
         else if (mirrorDialog && pickingMirrorFace) setPickingMirrorFace(false);
+        else if (mirrorDialog?.arming) setMirrorDialog((d) => (d ? { ...d, arming: null } : d));
         else if (mirrorDialog) closeMirror();
         // Pattern dialog: Esc first cancels an in-progress direction/axis pick
         // (keeping the dialog), then a second Esc closes the dialog.
@@ -4226,6 +4234,21 @@ export default function App() {
         // the dialog and everything picked so far), then a second Esc closes it.
         else if (shellDialog?.arming) setShellDialog((d) => (d ? { ...d, arming: null } : d));
         else if (shellDialog) closeShellDialog();
+        // Sweep / Loft: Esc disarms the slot still listening, keeping what has
+        // been picked; a second Esc closes the dialog.
+        else if (sweepDialog?.armed) setSweepDialog((d) => (d ? { ...d, armed: null } : d));
+        else if (sweepDialog) closeSweep();
+        else if (loftDialog?.arming) setLoftDialog((d) => (d ? { ...d, arming: false } : d));
+        else if (loftDialog) closeLoft();
+        // Extrude: Esc stops whichever pick is in flight — the up-to-face slot
+        // first, then the profile list — before closing the dialog.
+        else if (extrudeDialog && pickingUpFace) setPickingUpFace(false);
+        else if (extrudeDialog?.arming) setExtrudeDialog((d) => (d ? { ...d, arming: false } : d));
+        else if (extrudeDialog) closeExtrudeDialog();
+        // Chamfer/fillet: Esc stops the edge pick first, keeping everything
+        // picked so far; a second Esc closes the dialog.
+        else if (dressUpDialog?.arming) setDressUpDialog((d) => (d ? { ...d, arming: false } : d));
+        else if (dressUpDialog) closeDressUpDialog();
         else if (transformEditId) cancelTransform();
         else if (transformArming) cancelTransformArming();
         else if (editParamsId) setEditParamsId(null);
@@ -4388,34 +4411,34 @@ export default function App() {
           openPlaneDialog();
           break;
         case "e":
-          if (extrudeProfiles.length > 0 && !extrudeDialog) openExtrudeDialog();
+          if (!extrudeDialog) openExtrudeDialog();
           break;
         case "r":
           if (!revolveDialog) openRevolve();
           break;
         case "w":
-          if (sweepInputs) openSweep();
+          if (!sweepDialog) openSweep();
           break;
         case "l":
-          if (loftInputs) openLoft();
+          if (!loftDialog) openLoft();
           break;
         case "c":
-          if (dressUpTarget) openDressUp("chamfer");
+          if (!dressUpDialog) openDressUp("chamfer");
           break;
         case "f":
-          if (dressUpTarget) openDressUp("fillet");
+          if (!dressUpDialog) openDressUp("fillet");
           break;
         case "g":
           if (!shellDialog) openShell();
           break;
         case "b":
-          if (bodyIds.size >= 2) openBooleanDialog();
+          if (!booleanDialog) openBooleanDialog();
           break;
         case "t":
           if (!transformEditId && !transformArming) openTransform();
           break;
         case "m":
-          if (transformTarget) openMirror();
+          if (!mirrorDialog) openMirror();
           break;
         case "x":
           if (!patternDialog) openPattern();
@@ -4439,22 +4462,25 @@ export default function App() {
     doc,
     sketchTool,
     constructionMode,
-    extrudeProfiles,
     extrudeDialog,
+    pickingUpFace,
     revolveInputs,
     revolveDialog,
     mirrorDialog,
     pickingMirrorFace,
     patternDialog,
     sweepInputs,
+    sweepDialog,
     loftInputs,
-    dressUpTarget,
+    loftDialog,
     shellBody,
     // The dialog itself, not just `shellBody`: arming a face pick returns early
     // from handlePick without touching the selection, so nothing else in this
     // list changes and Esc would run against a closure that still thought
     // nothing was armed — closing the whole dialog instead of disarming.
     shellDialog,
+    dressUpDialog,
+    booleanDialog,
     bodyIds,
     transformTarget,
     twoSelectedLines,
@@ -4465,16 +4491,42 @@ export default function App() {
     editParamsId,
   ]);
 
+  // Open the Loft dialog. Always available: the sections are armed inside it.
+  // A selection of 2+ regions prefills them in timeline order (see loftInputs);
+  // sections picked in the dialog append in click order instead, which is the
+  // order the loft is built in.
   const openLoft = () => {
-    if (!loftInputs) return;
-    const { doc: next } = addLoft(doc, loftInputs);
+    setLoftDialog({ sections: loftInputs ?? [], arming: !loftInputs });
+  };
+  const closeLoft = () => setLoftDialog(null);
+  const createLoft = () => {
+    const d = loftDialog;
+    if (!d || d.sections.length < 2) return;
+    const { doc: next } = addLoft(doc, d.sections);
     setDoc(next);
+    setLoftDialog(null);
     selectFeature(null);
   };
 
+  // Open the Mirror dialog. Always available: like Pattern, the body is armed
+  // inside the dialog by clicking one in the viewport. A single pre-selected
+  // body still prefills the role — reaching for Mirror with the thing already
+  // picked shouldn't cost a second click.
   const openMirror = () => {
-    if (!transformTarget) return;
-    setMirrorDialog({ targetId: transformTarget, plane: "datum:plane-front", faceRef: null });
+    setMirrorDialog({
+      targetId: transformTarget,
+      plane: "datum:plane-front",
+      faceRef: null,
+      arming: transformTarget ? null : "target",
+    });
+  };
+  /** Arm the Mirror dialog's BODY slot (optionally clearing what it holds, so ✕
+   *  means "pick a different one" rather than stranding the slot empty). Arming
+   *  the body cancels an in-flight face pick: the two slots read different click
+   *  streams, so without this both stay live and the face takes the click. */
+  const armMirrorTarget = (clear = false) => {
+    setPickingMirrorFace(false);
+    setMirrorDialog((d) => (d ? { ...d, ...(clear ? { targetId: null } : {}), arming: "target" } : d));
   };
   const closeMirror = () => {
     setMirrorDialog(null);
@@ -4484,7 +4536,7 @@ export default function App() {
   // Live-preview a mirror edit as the plane choice changes.
   useEffect(() => {
     const d = mirrorDialog;
-    if (!d?.editId) return;
+    if (!d?.editId || !d.targetId) return;
     const ref: SketchPlaneRef | null =
       d.plane === "face"
         ? d.faceRef
@@ -4493,11 +4545,11 @@ export default function App() {
         : planeKeyToRef(d.plane);
     if (!ref) return;
     if (!shouldLiveApply(JSON.stringify({ e: d.editId, t: d.targetId, ref }))) return;
-    setDoc((prev) => updateMirror(prev, d.editId!, d.targetId, ref), `edit:${d.editId}`);
+    setDoc((prev) => updateMirror(prev, d.editId!, d.targetId!, ref), `edit:${d.editId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mirrorDialog?.editId, mirrorDialog?.plane, mirrorDialog?.faceRef, mirrorDialog?.targetId]);
   const createMirror = () => {
-    if (!mirrorDialog) return;
+    if (!mirrorDialog?.targetId) return;
     const ref: SketchPlaneRef | null =
       mirrorDialog.plane === "face"
         ? mirrorDialog.faceRef
@@ -4528,7 +4580,7 @@ export default function App() {
     const planeKey =
       f.plane.kind === "datum" ? `datum:${f.plane.id}` : f.plane.kind === "plane" ? `plane:${f.plane.planeId}` : "face";
     const faceRef = f.plane.kind === "face" ? { featureId: f.plane.featureId, frame: f.plane.frame } : null;
-    setMirrorDialog({ targetId: f.targetId, plane: planeKey, faceRef, editId: id });
+    setMirrorDialog({ targetId: f.targetId, plane: planeKey, faceRef, arming: null, editId: id });
   };
 
   // Open the Pattern dialog. Always available: like Revolve, a body is armed
@@ -4860,7 +4912,7 @@ export default function App() {
         // on screen at all.
         .filter(
           (f): f is SketchFeature =>
-            f.type === "sketch" && (!f.suppressed || f.id === editingSketchId || armingRevolveProfile),
+            f.type === "sketch" && (!f.suppressed || f.id === editingSketchId || armingSketchProfile),
         )
         // Reflow expression-driven coordinates so the on-canvas sketch tracks its
         // variables, matching the solids built from it.
@@ -4875,7 +4927,7 @@ export default function App() {
           entities: f.entities,
           regions: detectSketchRegions(f.entities),
         })),
-    [doc, editingSketchId, armingRevolveProfile, resolved.planeFrames, resolved.scope],
+    [doc, editingSketchId, armingSketchProfile, resolved.planeFrames, resolved.scope],
   );
 
   // Live dashed preview of the in-progress offset, rebuilt as the distance
@@ -6740,6 +6792,34 @@ export default function App() {
     });
   };
 
+  // What the viewport should highlight while a creation dialog owns the click
+  // stream. These dialogs keep their own pick lists (so an empty-space click
+  // can't wipe them), which means those picks never enter `selection` — and
+  // without this they'd be invisible in the viewport, the one place the user is
+  // looking. An empty list falls back to the real selection: an edit dialog
+  // opens holding nothing and still wants its feature lit up.
+  // (Boolean is the exception: whole bodies, coloured by role — booleanHighlight.)
+  const dialogPicks = useMemo((): Selection[] | null => {
+    const region = (s: { sketchId: string; regionId: string }): Selection => ({
+      kind: "sketchFace",
+      sketchId: s.sketchId,
+      regionId: s.regionId,
+    });
+    if (extrudeDialog?.picks.length) return extrudeDialog.picks;
+    if (dressUpDialog?.picks.length) return dressUpDialog.picks;
+    if (loftDialog?.sections.length) return loftDialog.sections.map(region);
+    if (sweepDialog) {
+      const out: Selection[] = [];
+      if (sweepDialog.profile) out.push(region(sweepDialog.profile));
+      if (sweepDialog.path) {
+        out.push({ kind: "sketchEntity", sketchId: sweepDialog.path.sketchId, entityId: sweepDialog.path.entityId });
+      }
+      return out.length ? out : null;
+    }
+    if (mirrorDialog?.targetId) return [{ kind: "feature", id: mirrorDialog.targetId }];
+    return null;
+  }, [extrudeDialog, dressUpDialog, loftDialog, sweepDialog, mirrorDialog]);
+
   // Per-operand viewport highlight while the dialog is open, keyed by what the
   // operation does to each body rather than by colour: union → every operand
   // KEPT; subtract → the base kept, the tools CUT (they are about to be taken
@@ -7189,9 +7269,9 @@ export default function App() {
       icon: "⬆",
       label: "Extrude",
       shortcut: "E",
-      title: "Extrude (E): extrude the selected sketch region(s) and/or face(s)",
+      title: "Extrude (E): pull sketch regions and/or planar faces into a solid — pick them in the dialog",
       keywords: ["pad", "boss", "pocket", "cut", "hole"],
-      disabled: extrudeProfiles.length === 0 || !!editingSketch || picking || !!extrudeDialog,
+      disabled: !!editingSketch || picking || !!extrudeDialog,
       onSelect: openExtrudeDialog,
     },
     {
@@ -7209,9 +7289,9 @@ export default function App() {
       icon: "⊃",
       label: "Sweep",
       shortcut: "W",
-      title: "Sweep (W): sweep a sketch region along a path — line / arc / spline (select both)",
+      title: "Sweep (W): sweep a sketch region along a path — pick the profile and the path in the dialog",
       keywords: ["path", "rail"],
-      disabled: !sweepInputs || !!editingSketch || picking,
+      disabled: !!editingSketch || picking || !!sweepDialog,
       onSelect: openSweep,
     },
     {
@@ -7219,9 +7299,9 @@ export default function App() {
       icon: "⌧",
       label: "Loft",
       shortcut: "L",
-      title: "Loft (L): loft through 2+ sketch regions (select the sections)",
+      title: "Loft (L): blend through 2+ sketch regions — pick the sections in the dialog",
       keywords: ["blend", "sections"],
-      disabled: !loftInputs || !!editingSketch || picking,
+      disabled: !!editingSketch || picking || !!loftDialog,
       onSelect: openLoft,
     },
     {
@@ -7229,9 +7309,9 @@ export default function App() {
       icon: "◣",
       label: "Chamfer",
       shortcut: "C",
-      title: "Chamfer (C): chamfer the selected edge(s) or face(s)",
+      title: "Chamfer (C): bevel body edges or faces — pick them in the dialog",
       keywords: ["bevel", "edge", "face"],
-      disabled: !dressUpTarget || !!editingSketch || picking,
+      disabled: !!editingSketch || picking || !!dressUpDialog,
       onSelect: () => openDressUp("chamfer"),
     },
     {
@@ -7239,9 +7319,9 @@ export default function App() {
       icon: "◖",
       label: "Fillet",
       shortcut: "F",
-      title: "Fillet (F): round the selected edge(s) or face(s)",
+      title: "Fillet (F): round body edges or faces — pick them in the dialog",
       keywords: ["round", "radius", "edge", "face"],
-      disabled: !dressUpTarget || !!editingSketch || picking,
+      disabled: !!editingSketch || picking || !!dressUpDialog,
       onSelect: () => openDressUp("fillet"),
     },
     {
@@ -7259,9 +7339,9 @@ export default function App() {
       icon: "⊕",
       label: "Boolean",
       shortcut: "B",
-      title: "Boolean (B): union / subtract / intersect",
+      title: "Boolean (B): union / subtract / intersect — pick the parts in the dialog",
       keywords: ["union", "subtract", "intersect", "combine", "cut"],
-      disabled: bodyIds.size < 2 || !!editingSketch || picking,
+      disabled: !!editingSketch || picking || !!booleanDialog,
       onSelect: openBooleanDialog,
     },
     {
@@ -7306,9 +7386,9 @@ export default function App() {
       icon: "⇋",
       label: "Mirror",
       shortcut: "M",
-      title: "Mirror (M): mirror the selected body across a plane",
+      title: "Mirror (M): arm a body, then mirror it across a datum, a reference plane, or a body face",
       keywords: ["reflect", "symmetry"],
-      disabled: !transformTarget || !!editingSketch || picking,
+      disabled: !!editingSketch || picking || !!mirrorDialog,
       onSelect: openMirror,
     },
     {
@@ -7693,7 +7773,7 @@ export default function App() {
           <Viewport
             meshes={viewportMeshes}
             ghostMeshes={ghostMeshes}
-            selection={selection}
+            selection={dialogPicks ?? selection}
             emphasize={constraintEmphasis}
             highlightBodyIds={highlightBodyIds}
             booleanHighlight={booleanHighlight}
@@ -7733,7 +7813,7 @@ export default function App() {
             onSketchDragMove={handleSketchDragMove}
             onSketchDragEnd={handleSketchDragEnd}
             selectionFilter={selFilter}
-            regionPickPriority={armingRevolveProfile}
+            regionPickPriority={armingSketchProfile}
             sectionView={{
               enabled: sectionView.enabled,
               frame: sectionFrame,
@@ -8489,6 +8569,33 @@ export default function App() {
                   ? ` (${extrudeDialogProfiles.length} profiles)`
                   : ""}
               </div>
+              {/* An accumulating slot (see PickSlot.tsx): one row per picked
+                  profile, and a button that keeps the arming live for the next.
+                  Clicking a listed profile in the viewport removes it. */}
+              <div className="bool-group-label">Profiles</div>
+              {extrudeDialog.picks.map((p, i) => (
+                <PickedRow
+                  key={`${p.kind}:${i}`}
+                  label={extrudePickLabel(p)}
+                  clearTitle="Remove"
+                  onClear={() => setExtrudeDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== i) } : d))}
+                />
+              ))}
+              <PickButton
+                noun="a profile"
+                armed={extrudeDialog.arming}
+                wide
+                onClick={() => setExtrudeDialog((d) => (d ? { ...d, arming: !d.arming } : d))}
+              >
+                {extrudeDialog.arming
+                  ? "Select profiles (Esc to stop)"
+                  : extrudeDialog.picks.length
+                    ? "Add more profiles"
+                    : undefined}
+              </PickButton>
+              {extrudeDialog.editId && extrudeDialog.picks.length === 0 && (
+                <p className="ed-hint">Extruding the profile this feature already references — pick to replace it.</p>
+              )}
               <div className="ed-modes">
                 {(["new", "add", "remove"] as const).map((m) => (
                   <button
@@ -8499,7 +8606,12 @@ export default function App() {
                         // Through All is only meaningful for a cut (Remove); switching
                         // to New or Add drops it back to Blind.
                         d
-                          ? { ...d, mode: m, extent: m !== "remove" && d.extent === "throughAll" ? "blind" : d.extent }
+                          ? {
+                              ...d,
+                              mode: m,
+                              modeTouched: true,
+                              extent: m !== "remove" && d.extent === "throughAll" ? "blind" : d.extent,
+                            }
                           : d,
                       )
                     }
@@ -8513,7 +8625,9 @@ export default function App() {
                   <span>Target</span>
                   <select
                     value={extrudeDialog.targetId ?? ""}
-                    onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, targetId: e.target.value || null } : d))}
+                    onChange={(e) =>
+                      setExtrudeDialog((d) => (d ? { ...d, targetId: e.target.value || null, modeTouched: true } : d))
+                    }
                   >
                     <option value="" disabled>
                       Select a part…
@@ -8578,7 +8692,13 @@ export default function App() {
                     onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, distance: e.target.value } : d))}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") createExtrude();
-                      else if (e.key === "Escape") closeExtrudeDialog();
+                      // Same disarm-then-close order as the global handler: the
+                      // field has autoFocus, so Escape almost always lands here.
+                      else if (e.key === "Escape") {
+                        if (pickingUpFace) setPickingUpFace(false);
+                        else if (extrudeDialog.arming) setExtrudeDialog((d) => (d ? { ...d, arming: false } : d));
+                        else closeExtrudeDialog();
+                      }
                     }}
                   />
                 </label>
@@ -8598,6 +8718,7 @@ export default function App() {
                 <button
                   className="ed-primary"
                   disabled={
+                    extrudeDialogProfiles.length === 0 ||
                     (extrudeDialog.mode !== "new" && !extrudeDialog.targetId) ||
                     (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo)
                   }
@@ -8616,13 +8737,67 @@ export default function App() {
               // `dressUpError`. Show whichever applies; empty stays silent.
               const sv = validateDressUpDialog(dressUpDialog);
               const message = sv.value === null ? sv.error : dressUpError;
-              const disabled = sv.value === null || !!dressUpError;
+              // Nothing picked yet is not an ERROR — the dialog opened that way
+              // on purpose — so it only holds the primary button, silently.
+              const disabled = sv.value === null || !!dressUpError || !dressUpDialogTarget;
+              const picks = dressUpDialog.picks;
+              const armPicks = () => setDressUpDialog((d) => (d ? { ...d, arming: !d.arming } : d));
+              const dropPick = (i: number) =>
+                setDressUpDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== i) } : d));
+              // "Edge 2" counts within its own kind, so the rows read the way the
+              // user picked them rather than as one undifferentiated run.
+              const pickLabel = (i: number) => {
+                const p = picks[i];
+                const n = picks.slice(0, i + 1).filter((q) => q.kind === p.kind).length;
+                return `${p.kind === "edge" ? "Edge" : "Face"} ${n}`;
+              };
+              // What the picks actually RESOLVE to, which is the interesting
+              // number: one click on a faceted rim stands for its whole tangent
+              // chain, so three picks can be ninety-odd edges. Zeros are left
+              // out — "0 edges + 1 face" says nothing the row below doesn't.
+              const t = dressUpDialogTarget;
+              const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+              const summary =
+                [
+                  t?.edges.length ? plural(t.edges.length, "edge") : null,
+                  t?.faces.length ? plural(t.faces.length, "face") : null,
+                ]
+                  .filter(Boolean)
+                  .join(" + ") || null;
+              const escapeDressUp = () => {
+                if (dressUpDialog.arming) setDressUpDialog((d) => (d ? { ...d, arming: false } : d));
+                else closeDressUpDialog();
+              };
               return (
                 <DraggableDialog className="extrude-dialog" style={{ left: dressUpDialog.x, top: dressUpDialog.y }}>
                   <div className="ed-title" data-drag-handle>
                     {dressUpDialog.editId ? "Edit " : ""}
                     {dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}
                   </div>
+                  {/* An accumulating slot (see PickSlot.tsx): one PickedRow per
+                      pick, and a button that keeps the arming live for the next
+                      one. Clicking a listed edge/face in the viewport removes it. */}
+                  <div className="bool-group-label">Edges / faces{summary ? ` — ${summary}` : ""}</div>
+                  {picks.map((p, i) => (
+                    <PickedRow
+                      key={`${p.kind}:${i}`}
+                      label={pickLabel(i)}
+                      clearTitle="Remove"
+                      onClear={() => dropPick(i)}
+                    />
+                  ))}
+                  <PickButton noun="edges or faces" armed={dressUpDialog.arming} wide onClick={armPicks}>
+                    {dressUpDialog.arming
+                      ? "Select edges or faces (Esc to stop)"
+                      : picks.length
+                        ? "Add more edges"
+                        : undefined}
+                  </PickButton>
+                  {dressUpDialog.editId && !picks.length && (
+                    <p className="ed-hint">
+                      Dressing the edges this feature already references — pick to replace them.
+                    </p>
+                  )}
                   <label className="ed-field">
                     <span>{dressUpDialog.op === "chamfer" ? "Distance" : "Radius"}</span>
                     <input
@@ -8632,7 +8807,7 @@ export default function App() {
                       onChange={(e) => setDressUpDialog((d) => (d ? { ...d, size: e.target.value } : d))}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") createDressUp();
-                        else if (e.key === "Escape") closeDressUpDialog();
+                        else if (e.key === "Escape") escapeDressUp();
                       }}
                     />
                   </label>
@@ -8649,7 +8824,7 @@ export default function App() {
                           onChange={(e) => setDressUpDialog((d) => (d ? { ...d, angle: e.target.value } : d))}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") createDressUp();
-                            else if (e.key === "Escape") closeDressUpDialog();
+                            else if (e.key === "Escape") escapeDressUp();
                           }}
                         />
                       </label>
@@ -8887,6 +9062,100 @@ export default function App() {
                       {revolveDialog.editId ? "Done" : "Create"}
                     </button>
                     <button onClick={closeRevolveDialog}>Cancel</button>
+                  </div>
+                </DraggableDialog>
+              );
+            })()}
+          {sweepDialog &&
+            (() => {
+              const d = sweepDialog;
+              const nameOf = (id: string, fallback: string) => doc.features.find((f) => f.id === id)?.name ?? fallback;
+              const arm = (slot: "profile" | "path", clear = false) =>
+                setSweepDialog((p) => (p ? { ...p, ...(clear ? { [slot]: null } : {}), armed: slot } : p));
+              return (
+                <DraggableDialog
+                  className="extrude-dialog"
+                  style={{ left: "50%", top: 70 }}
+                  baseTransform="translateX(-50%)"
+                >
+                  <div className="ed-title" data-drag-handle>
+                    Sweep
+                  </div>
+                  <div className="ed-hint">
+                    Profile: a closed sketch region. Path: a sketch line, arc, or spline — it may live in another
+                    sketch.
+                  </div>
+                  <div className="bool-group-label">Profile</div>
+                  <PickSlot
+                    noun="a profile"
+                    armed={d.armed === "profile"}
+                    value={d.profile ? `${nameOf(d.profile.sketchId, "Sketch")} · region` : null}
+                    wide
+                    onArm={() => arm("profile")}
+                    onClear={() => arm("profile", true)}
+                  />
+                  <div className="bool-group-label">Path</div>
+                  <PickSlot
+                    noun="a path"
+                    armed={d.armed === "path"}
+                    value={d.path ? `${nameOf(d.path.sketchId, "Sketch")} · path` : null}
+                    wide
+                    onArm={() => arm("path")}
+                    onClear={() => arm("path", true)}
+                  />
+                  <div className="ed-actions">
+                    <button className="ed-primary" disabled={!d.profile || !d.path} onClick={createSweep}>
+                      Create
+                    </button>
+                    <button onClick={closeSweep}>Cancel</button>
+                  </div>
+                </DraggableDialog>
+              );
+            })()}
+          {loftDialog &&
+            (() => {
+              const d = loftDialog;
+              const nameOf = (id: string) => doc.features.find((f) => f.id === id)?.name ?? "Sketch";
+              return (
+                <DraggableDialog
+                  className="extrude-dialog"
+                  style={{ left: "50%", top: 70 }}
+                  baseTransform="translateX(-50%)"
+                >
+                  <div className="ed-title" data-drag-handle>
+                    Loft
+                  </div>
+                  <div className="ed-hint">
+                    Blends through the sections in the order below — the order you pick them in.
+                  </div>
+                  {/* An accumulating slot (see PickSlot.tsx): the arming stays
+                      live between picks, and clicking a listed section in the
+                      viewport removes it. */}
+                  <div className="bool-group-label">Sections</div>
+                  {d.sections.map((s, i) => (
+                    <PickedRow
+                      key={`${s.sketchId}/${s.regionId}`}
+                      label={`${i + 1}. ${nameOf(s.sketchId)} · region`}
+                      clearTitle="Remove"
+                      onClear={() =>
+                        setLoftDialog((p) => (p ? { ...p, sections: p.sections.filter((_, k) => k !== i) } : p))
+                      }
+                    />
+                  ))}
+                  <PickButton
+                    noun="sections"
+                    armed={d.arming}
+                    wide
+                    onClick={() => setLoftDialog((p) => (p ? { ...p, arming: !p.arming } : p))}
+                  >
+                    {d.arming ? "Select sections (Esc to stop)" : d.sections.length ? "Add more sections" : undefined}
+                  </PickButton>
+                  {d.sections.length === 1 && <p className="ed-hint">A loft needs at least two sections.</p>}
+                  <div className="ed-actions">
+                    <button className="ed-primary" disabled={d.sections.length < 2} onClick={createLoft}>
+                      Create
+                    </button>
+                    <button onClick={closeLoft}>Cancel</button>
                   </div>
                 </DraggableDialog>
               );
@@ -9262,16 +9531,30 @@ export default function App() {
       {mirrorDialog && (
         <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
           <div className="ed-title" data-drag-handle>
-            Mirror across plane
+            {mirrorDialog.editId ? "Edit mirror" : "Mirror across plane"}
           </div>
+          <div className="bool-group-label">Body</div>
+          <PickSlot
+            noun="a body"
+            armed={mirrorDialog.arming === "target"}
+            value={
+              mirrorDialog.targetId ? (doc.features.find((f) => f.id === mirrorDialog.targetId)?.name ?? "Body") : null
+            }
+            wide
+            onArm={armMirrorTarget}
+            onClear={() => armMirrorTarget(true)}
+          />
           <label className="ed-field">
             <span>Plane</span>
             <select
               value={mirrorDialog.plane}
               onChange={(e) => {
                 const plane = e.target.value;
-                setMirrorDialog((d) => (d ? { ...d, plane } : d));
-                setPickingMirrorFace(plane === "face" && !mirrorDialog.faceRef);
+                const pickFace = plane === "face" && !mirrorDialog.faceRef;
+                // The two slots read different click streams, so arming one has
+                // to disarm the other (see armMirrorTarget).
+                setMirrorDialog((d) => (d ? { ...d, plane, arming: pickFace ? null : d.arming } : d));
+                setPickingMirrorFace(pickFace);
               }}
             >
               {mirrorPlaneOptions.map((o) => (
@@ -9304,9 +9587,9 @@ export default function App() {
             <button
               className="ed-primary"
               onClick={createMirror}
-              disabled={mirrorDialog.plane === "face" && !mirrorDialog.faceRef}
+              disabled={!mirrorDialog.targetId || (mirrorDialog.plane === "face" && !mirrorDialog.faceRef)}
             >
-              Create
+              {mirrorDialog.editId ? "Done" : "Create"}
             </button>
             <button onClick={closeMirror}>Cancel</button>
           </div>

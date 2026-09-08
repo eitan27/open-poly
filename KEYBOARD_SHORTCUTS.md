@@ -23,21 +23,28 @@ Spline tool shipped (none of which had shortcuts in the prior revision).
 
 ## Modeling toolbar (available whenever you're not editing a sketch)
 
+Every key below opens its tool whatever is selected — none of them waits for a
+selection first. A tool that needs geometry arms it inside its own dialog: press
+the key, then click what it asks for (a pre-existing selection still prefills the
+slots, so the pick-first habit costs nothing). `Esc` disarms the slot that's
+listening and keeps what has already been picked; a second `Esc` closes the
+dialog.
+
 | Action    | Key | Notes                                                                                                                                                                                                                                        |
 | --------- | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Sketch    | `S` | Pick a plane/face to start a sketch.                                                                                                                                                                                                         |
 | New Body  | `N` | Opens the Box/Cylinder/Sphere menu (item itself stays mouse-only — 3-item pick isn't worth 3 more bindings). Ignores `picking`, same as the button.                                                                                          |
 | Plane     | `P` | Reuses `P` from Polygon (sketch mode) — mutually exclusive, safe.                                                                                                                                                                            |
-| Extrude   | `E` |                                                                                                                                                                                                                                              |
+| Extrude   | `E` | Profiles are armed in the dialog — sketch regions, the edges enclosing one, sketch text, or planar body faces; click a picked one again to drop it.                                                                                          |
 | Revolve   | `R` | Reuses `R` from Rectangle (sketch mode) — mutually exclusive, safe.                                                                                                                                                                          |
-| Sweep     | `W` | `S` was already taken by Sketch, so this uses the next distinctive letter in "s**w**eep" — weakest mnemonic in this table.                                                                                                                   |
-| Loft      | `L` | Reuses `L` from Line (sketch mode) — mutually exclusive, safe.                                                                                                                                                                               |
-| Chamfer   | `C` | Reuses `C` from Circle-center (sketch mode) — mutually exclusive, safe.                                                                                                                                                                      |
-| Fillet    | `F` |                                                                                                                                                                                                                                              |
+| Sweep     | `W` | Arms the profile, then hands the arming to the path. `S` was already taken by Sketch, so this uses the next distinctive letter in "s**w**eep" — weakest mnemonic in this table.                                                              |
+| Loft      | `L` | Sections are armed in the dialog, in the order you pick them. Reuses `L` from Line (sketch mode) — mutually exclusive, safe.                                                                                                                 |
+| Chamfer   | `C` | Edges/faces are armed in the dialog (one body at a time). Reuses `C` from Circle-center (sketch mode) — mutually exclusive, safe.                                                                                                            |
+| Fillet    | `F` | Same arming as Chamfer.                                                                                                                                                                                                                      |
 | Shell     | `G` | Hollow the selected body — a click anywhere on it (body or face) arms the body, giving a sealed shell; faces to open are picked from the dialog. No strong mnemonic available (S/H/O all taken) — picked arbitrarily, like construction `Q`. |
-| Boolean   | `B` | Resolves conflict #1 (below).                                                                                                                                                                                                                |
+| Boolean   | `B` | Opens even with fewer than two bodies — the dialog says so rather than the button sitting inert. Resolves conflict #1 (below).                                                                                                               |
 | Transform | `T` |                                                                                                                                                                                                                                              |
-| Mirror    | `M` |                                                                                                                                                                                                                                              |
+| Mirror    | `M` | The body is armed in the dialog; the plane is a dropdown (datum / reference plane / picked body face).                                                                                                                                       |
 | Pattern   | `X` | Repeat the selected body — linear run/grid or circular ring. Same letter as the sketch pattern tools (mutually exclusive contexts, safe).                                                                                                    |
 
 ## Sketch toolbar (only available while editing a sketch)
