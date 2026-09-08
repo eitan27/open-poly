@@ -1075,16 +1075,24 @@ export default function App() {
     // the toggle rule shared with the boolean tools and the shell's open faces.
     // The arming stays live throughout: dressing a rim is many clicks.
     if (dressUpDialog?.arming) {
+      const op = dressUpDialog.op;
       if (!picked || (picked.kind !== "edge" && picked.kind !== "face")) {
-        if (picked) flashMsg("Select body edges or faces to dress — a chamfer/fillet needs edges of one body.");
+        if (picked) flashMsg(`Select the body edges or faces to ${op} — nothing else can be dressed.`);
         return;
       }
       // A pick on a second body is refused rather than treated as a re-target:
       // the size/angle already typed belong to the body being dressed, and the
-      // arming stays live so the next click can correct the slip.
+      // arming stays live so the next click can correct the slip. Both bodies
+      // are named, because "one body" on its own leaves the user guessing which
+      // one is already in the list and what to do about it.
+      const bodyName = (id: string | null) => (id && doc.features.find((f) => f.id === id)?.name) || "another body";
       const current = dressUpDialog.picks[0] ? dressUpPickBody(dressUpDialog.picks[0]) : null;
-      if (current && dressUpPickBody(picked) !== current) {
-        flashMsg("A chamfer or fillet dresses one body — clear the list to dress a different one.");
+      const clicked = dressUpPickBody(picked);
+      if (current && clicked !== current) {
+        flashMsg(
+          `A single ${op} acts on one body at a time. ${bodyName(current)} is already listed — clear the list to ` +
+            `${op} ${bodyName(clicked)} instead.`,
+        );
         return;
       }
       setDressUpDialog((d) => (d ? { ...d, picks: toggleDressUpPick(d.picks, picked) } : d));
