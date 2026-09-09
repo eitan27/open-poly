@@ -253,6 +253,112 @@ await setView("7");
   );
 }
 
+// --- 6. BOTH rims of a REVOLVED cylinder -------------------------------------
+// A revolve whose profile touches the axis can't be lofted as facets, so it is
+// built by analytic MakeRevol: one true gp_Cyl wall, two true circular rims. A
+// closed face like that has its centre of mass on its own AXIS — off the
+// surface — so `normalAt(centre)` has no unique projection and throws, and the
+// wall's normal used to come from Newell over its boundary. That boundary is
+// two opposed rim circles which nearly cancel, leaving an AXIS-aligned normal:
+// parallel to one end cap, so that rim tested as a facet seam and was filtered
+// out of the edge mesh entirely. Exactly one of the two rims was clickable.
+await apply({ op: "newDocument", name: "revolved-cylinder-rims" });
+await waitIdle();
+{
+  // A rectangle with one side ON the axis, revolved 360° about that side.
+  await apply({
+    op: "addSketch",
+    plane: { datum: "front" },
+    entities: [
+      { shape: "line", a: [0, 0], b: [String(R), 0] },
+      { shape: "line", a: [String(R), 0], b: [String(R), String(H)] },
+      { shape: "line", a: [String(R), String(H)], b: [0, String(H)] },
+      { shape: "line", a: [0, String(H)], b: [0, 0] },
+    ],
+  });
+  await waitIdle();
+  const sk = (await read({ read: "sceneSummary" })).sketches[0];
+  // Symmetric, so the revolve STARTS half a turn from the profile plane and its
+  // seam lands at −R on u — the far side from the sketch, which is coplanar with
+  // the profile and would otherwise answer every pick along the seam itself.
+  const rev = await apply({
+    op: "addRevolve",
+    profile: { sketchId: sk.id, regionId: sk.regions[0].id },
+    axis: { sketchId: sk.id, entityId: sk.entities[3].id },
+    angle: 360,
+    symmetric: true,
+  });
+  const st = await waitIdle();
+  check("the revolved cylinder built", /up to date/i.test(st) && rev.ok, st);
+  const body = (await read({ read: "sceneSummary" })).bodies[0];
+  const rims = body.edges.filter((e) => e.includes("side"));
+  check("both of its rims survive into the edge mesh, named", rims.length === 2, `${rims.length}: ${rims.join(" ")}`);
+
+  await setView("7");
+  // The TOP rim is unoccluded all the way round from iso; the bottom one is
+  // only visible on the arc facing the camera — the far half is correctly
+  // rejected by the depth gate, so sampling it would fail for the wrong reason.
+  for (const [label, z, angles] of [
+    ["top", H, [10, 45, 100, 190, 260, 320]],
+    ["bottom", 0, [10, 45, 260, 320]],
+  ]) {
+    const got = [];
+    for (const a of angles) {
+      const rad = (a * Math.PI) / 180;
+      const k = await pickAt([R * Math.cos(rad), R * Math.sin(rad), z]);
+      got.push(k === "edge" ? "•" : `✗${a}°(${k})`);
+    }
+    check(
+      `the revolved cylinder's ${label} rim picks as an edge`,
+      got.every((g) => g === "•"),
+      got.join(" "),
+    );
+  }
+  // …and the wall between them is seamless. A periodic surface closes back on
+  // itself along a SEAM edge, which belongs to ONE face on both sides — so the
+  // two-face crease test never saw it (the topology explorer yields each edge
+  // once) and it drew as a stray line down an otherwise seamless wall. Seen from
+  // the left the seam is the nearest surface point, dead centre, and the sketch
+  // behind it is rejected by the depth gate — so a pick there is the wall face
+  // when the seam is suppressed and the seam edge when it is not.
+  await setView("5");
+  const seam = await pickAt([-R, 0, H / 2]);
+  check("its wall has no seam edge where the revolve closed", seam === "face", seam);
+
+  // --- 7. …and extruding its cap leaves no ring where the extrude started -----
+  // Extruding a body face rebuilds a curved profile as facets, so this fuses a
+  // faceted prism onto an analytic wall of the same radius: tangent all the way
+  // round, and the join should not be drawn at all. It was — but only for an
+  // ARC of the ring, because the crease test compared each facet with ONE normal
+  // sampled at the analytic wall's parametric middle. Facets within the crease
+  // angle of that sample counted as tangent and the rest as a crease, so a wall
+  // that is smooth the whole way round drew part of the join and hid the rest.
+  const top = (await read({ read: "sceneSummary" })).bodies[0].faces.find((f) => f.endsWith("/f1"));
+  await apply({
+    op: "addExtrude",
+    profile: { bodyId: rev.createdId, faceName: top },
+    distance: "15",
+    mode: "add",
+    targetId: rev.createdId,
+  });
+  const exSt = await waitIdle();
+  check("the cap extrudes", /up to date/i.test(exSt), exSt);
+  // H = iso, zoomed to fit: the body just grew, and an unfitted view can push
+  // the ring under the on-canvas view cube, where a click never reaches it.
+  await setView("h");
+  const join = [];
+  for (const a of [260, 300, 340, 20]) {
+    const rad = (a * Math.PI) / 180;
+    const k = await pickAt([R * Math.cos(rad), R * Math.sin(rad), H]);
+    join.push(k === "face" ? "•" : `✗${a}°(${k})`);
+  }
+  check(
+    "…and the join to the extrusion is not drawn — the wall is tangent through it",
+    join.every((g) => g === "•"),
+    join.join(" "),
+  );
+}
+
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);
 await browser.close();
 process.exit(failures === 0 ? 0 : 1);

@@ -4388,12 +4388,26 @@ type FaceNormalStats = { fallback: number; unknown: number };
  *  of a trimmed face need not lie on it, and a face with inconsistent 2D curves
  *  can't be evaluated at all. Those faces then vanish from every adjacency walk
  *  that skips what it can't evaluate, and their seams get drawn as hard creases:
- *  a black line down an otherwise smooth wall. So fall back to Newell's normal
- *  over the boundary ring, which needs only the 3D edges. Null when even that is
- *  degenerate. */
+ *  a black line down an otherwise smooth wall. So fall back first to the
+ *  surface's parametric middle (always ON the face's surface), then to Newell's
+ *  normal over the boundary ring, which needs only the 3D edges. Null when even
+ *  that is degenerate. */
 function faceOutwardNormal(f: Face, stats?: FaceNormalStats): V3 | null {
   try {
     return vunit(f.normalAt(f.center).normalized().toTuple() as V3);
+  } catch {
+    /* fall through to the parametric middle */
+  }
+  // A CLOSED analytic face has its centre of mass OFF the surface — an analytic
+  // revolve's cylinder is centred on its own axis — so projecting that centre
+  // back onto the surface has no unique solution and `normalAt(center)` throws.
+  // The parametric middle is always on the surface, and for such a face it is a
+  // faithful sample (a cylinder's normal there is radial, ⟂ to its end caps).
+  // Newell over the boundary of a closed face is NOT: its two rim circles are
+  // opposed rings that nearly cancel, leaving an axis-aligned normal that reads
+  // as tangent to one end cap — which hid that whole rim edge as a facet seam.
+  try {
+    return vunit(f.normalAt().normalized().toTuple() as V3);
   } catch {
     /* fall through to the boundary */
   }
@@ -4819,22 +4833,117 @@ function patchMissingFaces(shape: Shape3D, meshed: MeshedFaces): { recovered: nu
 // extruded circle) DISPLAY as round while the kernel still booleans the facets.
 const CREASE_DOT = Math.cos((22 * Math.PI) / 180);
 
-/** Edge hashCodes whose two adjacent faces meet below the crease angle (a facet
- *  seam / tangent blend). Same face-adjacency walk as edgeNamesFrom. */
-function smoothEdgeHashes(shape: Shape3D, stats?: FaceNormalStats): Set<number> {
-  const adj = new Map<number, V3[]>();
-  for (const f of shape.faces) {
-    const n = faceOutwardNormal(f, stats);
-    if (!n) continue;
-    for (const e of f.edges) {
-      const arr = adj.get(e.hashCode);
-      if (arr) arr.push(n);
-      else adj.set(e.hashCode, [n]);
-    }
+/** A curved face's outward normal WHERE IT MEETS `e`: the face's own 2D curve
+ *  for that edge, sampled mid-span, evaluated on `props` (a BRepGProp_Face
+ *  loaded with the face, which orients the normal outward). Null when the edge
+ *  carries no such curve on this face. */
+function faceNormalAtEdge(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  props: any,
+  f: Face,
+  e: Edge,
+): V3 | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let c2d: any = null,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    uv: any = null,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    p: any = null,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vn: any = null;
+  try {
+    c2d = new oc.BRepAdaptor_Curve2d_2(e.wrapped, f.wrapped);
+    const t = 0.5 * (c2d.FirstParameter() + c2d.LastParameter());
+    if (!Number.isFinite(t)) return null;
+    uv = c2d.Value(t);
+    p = new oc.gp_Pnt_1();
+    vn = new oc.gp_Vec_1();
+    props.Normal(uv.X(), uv.Y(), p, vn);
+    const n: V3 = [vn.X(), vn.Y(), vn.Z()];
+    return Math.hypot(n[0], n[1], n[2]) > 1e-12 ? vunit(n) : null;
+  } catch {
+    return null;
+  } finally {
+    vn?.delete();
+    p?.delete();
+    uv?.delete();
+    c2d?.delete();
   }
-  const smooth = new Set<number>();
-  for (const [h, ns] of adj) {
-    if (ns.length === 2 && vdot(ns[0], ns[1]) > CREASE_DOT) smooth.add(h);
+}
+
+/** One side of an edge: the face meeting it, and that face's outward normal
+ *  THERE (not at the face's centre — see faceEdgeAdjacency). */
+type EdgeSide = { h: number; n: V3 };
+
+/** The (≤2) faces meeting along each edge with their outward normals there,
+ *  plus every periodic SEAM and the hash of every face walked. The shared input
+ *  to both the crease test (smoothEdgeHashes) and the logical-surface clustering
+ *  (faceClustersFrom), so the two always agree.
+ *
+ *  The normals are sampled ON each edge because a CURVED face has no single
+ *  normal to speak for it. Sampling one — a cylinder's, at its parametric middle
+ *  — and comparing that with each neighbour around a ring puts the junction
+ *  inside the crease angle for the arc facing that sample and outside it for the
+ *  rest: extruding a cylinder's cap left an arc of the join drawn and the rest
+ *  hidden, on a wall that is tangent the whole way round. A PLANE is exempt: its
+ *  normal is the same everywhere, so its centre normal is already exact. */
+function faceEdgeAdjacency(
+  shape: Shape3D,
+  stats?: FaceNormalStats,
+): { adj: Map<number, EdgeSide[]>; seams: Set<number>; faceHashes: number[] } {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const adj = new Map<number, EdgeSide[]>();
+  const seams = new Set<number>();
+  const faceHashes: number[] = [];
+  for (const f of shape.faces) {
+    const fh = f.hashCode;
+    faceHashes.push(fh);
+    const centre = faceOutwardNormal(f, stats);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let props: any = null;
+    if (f.geomType !== "PLANE") {
+      try {
+        props = new oc.BRepGProp_Face_2(f.wrapped, false);
+      } catch {
+        props = null; // fall back to the face's centre normal below
+      }
+    }
+    for (const e of f.edges) {
+      // A seam is where a periodic surface wraps round and meets itself: an
+      // analytic revolve's cylinder, a sphere, a cylindrical hole. It is ONE
+      // face on both sides, so the crease test can never see two normals for it
+      // (the topology explorer yields each edge once) and it drew as a hard line
+      // down an otherwise seamless wall — an "extra edge" back where the revolve
+      // started. The surface is continuous through it by construction, and
+      // nothing can reference it: an edge is only named when BOTH its faces are.
+      try {
+        if (oc.BRep_Tool.IsClosed_2(e.wrapped, f.wrapped)) seams.add(e.hashCode);
+      } catch {
+        /* not a seam (or no curve on the face to ask about) */
+      }
+      const n = (props ? faceNormalAtEdge(props, f, e) : null) ?? centre;
+      if (!n) continue;
+      const arr = adj.get(e.hashCode);
+      if (arr) arr.push({ h: fh, n });
+      else adj.set(e.hashCode, [{ h: fh, n }]);
+    }
+    props?.delete();
+  }
+  return { adj, seams, faceHashes };
+}
+
+type FaceEdgeAdjacency = ReturnType<typeof faceEdgeAdjacency>;
+
+/** Edge hashCodes whose two adjacent faces meet below the crease angle (a facet
+ *  seam / tangent blend) — plus every periodic seam. */
+function smoothEdgeHashes(shape: Shape3D, stats?: FaceNormalStats, walked?: FaceEdgeAdjacency): Set<number> {
+  const { adj, seams } = walked ?? faceEdgeAdjacency(shape, stats);
+  const smooth = new Set<number>(seams);
+  for (const [h, fs] of adj) {
+    if (fs.length === 2 && vdot(fs[0].n, fs[1].n) > CREASE_DOT) smooth.add(h);
   }
   return smooth;
 }
@@ -4846,7 +4955,7 @@ function smoothEdgeHashes(shape: Shape3D, stats?: FaceNormalStats): Set<number> 
  *  Returns faceHash -> a stable representative faceHash for its cluster. Same
  *  crease test + adjacency walk as smoothEdgeHashes, so clusters == exactly the
  *  regions the display already shades as one smooth surface. */
-function faceClustersFrom(shape: Shape3D): Map<number, number> {
+function faceClustersFrom(shape: Shape3D, walked?: FaceEdgeAdjacency): Map<number, number> {
   const parent = new Map<number, number>();
   const find = (x: number): number => {
     let r = x;
@@ -4863,19 +4972,8 @@ function faceClustersFrom(shape: Shape3D): Map<number, number> {
       rb = find(b);
     if (ra !== rb) parent.set(ra, rb);
   };
-  // edge hash -> the (≤2) adjacent faces, each with its outward normal at centre.
-  const adj = new Map<number, { h: number; n: V3 }[]>();
-  for (const f of shape.faces) {
-    const n = faceOutwardNormal(f);
-    if (!n) continue;
-    const fh = f.hashCode;
-    if (!parent.has(fh)) parent.set(fh, fh);
-    for (const e of f.edges) {
-      const arr = adj.get(e.hashCode);
-      if (arr) arr.push({ h: fh, n });
-      else adj.set(e.hashCode, [{ h: fh, n }]);
-    }
-  }
+  const { adj, faceHashes } = walked ?? faceEdgeAdjacency(shape);
+  for (const fh of faceHashes) if (!parent.has(fh)) parent.set(fh, fh);
   for (const fs of adj.values()) {
     if (fs.length === 2 && vdot(fs[0].n, fs[1].n) > CREASE_DOT) union(fs[0].h, fs[1].h);
   }
@@ -5046,6 +5144,11 @@ function regenerate(
         // stays bounded — replicad's whole-shape mesh holds every triangulation at
         // once and exhausts the heap. Normal bodies use the faster one-shot path.
         let faces: MeshedFaces, edges: MeshedEdges;
+        // The face/edge adjacency walk, shared by the crease test and the
+        // logical-surface clustering below so they can't disagree — and so the
+        // walk (an OCCT adaptor per face, another per curved face's edge) is
+        // paid for once per body rather than twice.
+        let walked: FaceEdgeAdjacency | undefined;
         if (b.names.size > PER_FACE_MESH_THRESHOLD) {
           // Large imported assembly: mesh per-face so peak memory stays bounded
           // (replicad's whole-shape mesh holds every triangulation at once and
@@ -5085,7 +5188,8 @@ function regenerate(
             // crease — a black line down an otherwise smooth wall. Reported for
             // the same reason as a hole: otherwise it's silent.
             const nstats: FaceNormalStats = { fallback: 0, unknown: 0 };
-            edges = filterSmoothEdges(edges, smoothEdgeHashes(b.shape, nstats));
+            walked = faceEdgeAdjacency(b.shape, nstats);
+            edges = filterSmoothEdges(edges, smoothEdgeHashes(b.shape, nstats, walked));
             if (nstats.fallback)
               console.warn(`mesh: ${nstats.fallback} face normal(s) via boundary fallback on ${b.id}`);
             if (nstats.unknown)
@@ -5105,7 +5209,7 @@ function regenerate(
           const surfaces = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceSurfacesFrom(b.shape);
           // Logical-surface clustering (whole-cylinder selection). Skipped for huge
           // reference bodies alongside surface classification — same O(faces) walk.
-          const clusters = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceClustersFrom(b.shape);
+          const clusters = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceClustersFrom(b.shape, walked);
           faces.faceGroups = faces.faceGroups.map((g) => ({
             ...g,
             name: b.names.get(g.faceId),
