@@ -228,10 +228,11 @@ at}` (`at` 'a'/'b' = line/arc ends, 'c' = circle/arc/point center) or
     Both re-solve immediately and are **rejected (with a message)** if they
     conflict with, or are already implied by, the existing constraints — the sketch
     is left unchanged. Constraint ids appear in `get_scene_summary`; clear one with
-    `remove_constraint`. Note the _value_ is captured as a number at apply time (a
-    live re-link on later variable changes is still a gap — `report_issue` if that
-    blocks you). Derived (offset/mirror/project) and `text` entities aren't
-    constrainable.
+    `remove_constraint`. A value that NAMES a variable stays **linked**: change
+    the variable later and the dimension — and the geometry built on it — moves
+    with it. (A value that would collapse or invert the geometry, e.g. a length
+    variable at 0, is refused and the last good value stands.) Derived
+    (offset/mirror/project) and `text` entities aren't constrainable.
 - **Parameterize sketch coordinates too.** Any sketch coordinate, radius or
   angle in `add_sketch` accepts a **variable expression string** in place of a
   number (`{shape:"circle", c:[0,0], r:"innerRad"}`,
@@ -259,7 +260,7 @@ You are also the project's feedback loop. When something blocks or surprises you
 
 - `kind: "missing_feature"` — the operation you need isn't expressible with the
   available tools (e.g. variable-radius fillet, trim/extend, projecting model
-  edges into a sketch, a live dimension→variable re-link). _(Revolve — incl.
+  edges into a sketch, a diameter dimension). _(Revolve — incl.
   symmetric + plane/face axes, 3D mirror, sweep, loft, the spline tool, **text** +
   text-extrude, **offset** and **sketch-mirror** (driven), linear/circular
   **pattern**, **sketch constraints + dimensions** (`add_constraint` /

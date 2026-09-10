@@ -168,21 +168,29 @@ export type DistanceRef =
   { on: "point"; ref: PointRef } | { on: "line"; entity: string } | { on: "rim"; entity: string };
 
 /** Dimensional/geometric constraints over sketch entities (solved by planegcs).
- *  `entity`/`a`/`b` reference SketchEntity ids. */
+ *  `entity`/`a`/`b` reference SketchEntity ids.
+ *
+ *  Every dimensional constraint carries a numeric `value` — what the solver
+ *  reads — and, when the user typed something that names a variable, the `expr`
+ *  it came from. `expr` is the LINK: `value` is re-evaluated from it whenever
+ *  the variables change (see document/dimensionExpr.ts), so a dimension typed as
+ *  `w` follows `w` instead of freezing at whatever `w` happened to be. Absent on
+ *  a plainly-numeric dimension (and on every document written before this
+ *  existed), which simply never moves on its own. */
 export type SketchConstraint =
   | { id: string; type: "horizontal"; entity: string }
   | { id: string; type: "vertical"; entity: string }
   | { id: string; type: "parallel"; a: string; b: string }
   | { id: string; type: "perpendicular"; a: string; b: string }
   | { id: string; type: "equal"; a: string; b: string }
-  | { id: string; type: "distance"; entity: string; value: number }
+  | { id: string; type: "distance"; entity: string; value: number; expr?: string }
   // A linear distance between two elements (point/line/rim on each side) — see
   // DistanceRef. `value` is the natural measure for the pair (straight,
   // perpendicular, or rim gap). This is the general dimension the single-entity
   // `distance` (a line's own length) is a special case of.
-  | { id: string; type: "distanceBetween"; a: DistanceRef; b: DistanceRef; value: number }
-  | { id: string; type: "radius"; entity: string; value: number }
-  | { id: string; type: "angle"; a: string; b: string; value: number }
+  | { id: string; type: "distanceBetween"; a: DistanceRef; b: DistanceRef; value: number; expr?: string }
+  | { id: string; type: "radius"; entity: string; value: number; expr?: string }
+  | { id: string; type: "angle"; a: string; b: string; value: number; expr?: string }
   // Tangent between a line+circle or two circles (entity ids).
   | { id: string; type: "tangent"; a: string; b: string }
   // Two points made coincident (one may be the sketch origin, which anchors

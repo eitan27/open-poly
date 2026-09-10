@@ -234,9 +234,7 @@ place. Roughly ordered by how often a user meets them.
   by rounded position, so a "coincidence" silently breaks once a solve moves them
   apart. A real point-based sketch model is wanted before heavy constraint
   editing; it also blocks robust coincident editing.
-- **Dimensions don't re-link to variables** — a dimension typed as an expression
-  is evaluated to a number at apply time; changing the variable later doesn't move
-  the geometry. Also missing: the **diameter** variant.
+- **Dimensions have no diameter variant** — only radius.
 - **Cancel a sketch edit** — edits to an existing sketch apply live; there's no
   discard-on-Esc (snapshot-on-entry + restore).
 - **Constraints not mapped:** concentric, symmetric, collinear, fix/lock.
