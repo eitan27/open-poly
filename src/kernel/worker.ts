@@ -3797,6 +3797,23 @@ function buildBodies(
           const targetId =
             mode !== "new" ? (profile.kind === "bodyFace" ? profile.sourceId : feature.targetId) : undefined;
           const targets = targetId ? bodies.filter((b) => b.id === targetId) : [];
+          // Both of these used to end at the same silent `built.shape.delete()`
+          // below — no error, no visible effect — so a cut whose target had gone
+          // simply vanished. Fail the feature instead, the way every other
+          // missing-body reference does (`requireBody`). A given targetId that
+          // names nothing is a DANGLING reference: the target was deleted,
+          // suppressed, moved after this extrude, or merged into another body by
+          // an earlier boolean. `add` with NO target at all stays the documented
+          // fallback (the tool becomes a new body of its own), and the dialog's
+          // ghost is exempt — it only ever shows the tool.
+          if (!feature.previewTool && targets.length === 0) {
+            if (targetId) {
+              throw new Error(
+                "extrude: the target body no longer exists — it was deleted, suppressed, moved after this extrude, or merged into another body. Re-pick the target.",
+              );
+            }
+            if (mode === "remove") throw new Error("extrude: a Remove needs a target body to cut from.");
+          }
 
           // One profile face for region/body-face; many (one per glyph) for text.
           let faces: Face[];
@@ -3923,8 +3940,9 @@ function buildBodies(
           if (feature.previewTool || mode === "new" || targets.length === 0) {
             // previewTool: the live ghost is just the swept tool, leaving every
             // existing body untouched so they keep their own colour.
-            // targets.length === 0: nothing to combine with — add becomes a new
-            // body, remove is a no-op.
+            // targets.length === 0: only "add" with no target reaches this now
+            // (checked just above) — nothing to fuse into, so it becomes a body
+            // of its own.
             if (feature.previewTool || mode !== "remove") {
               newSolids.push(built);
               newKeys.push(toolKey);
