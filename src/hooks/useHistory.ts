@@ -52,6 +52,18 @@ export function useHistory<T>(initial: T | (() => T)) {
     });
   }, []);
 
+  // Swap the present WITHOUT touching the undo stack — for a DERIVED value
+  // catching up with the state already in play (a dimension re-evaluating after
+  // its variable changed), not for a user edit. The edit that caused it is
+  // already a step, and undoing that step restores the pre-derivation snapshot,
+  // so the recomputation must not add a second step of its own.
+  const replace = useCallback((next: T | ((prev: T) => T)) => {
+    setHist((h) => {
+      const value = typeof next === "function" ? (next as (prev: T) => T)(h.present) : next;
+      return value === h.present ? h : { ...h, present: value };
+    });
+  }, []);
+
   // Replace the whole state and clear undo/redo — e.g. loading a saved document
   // shouldn't leave an undo path back to the placeholder it replaced.
   const reset = useCallback((value: T) => {
@@ -61,6 +73,7 @@ export function useHistory<T>(initial: T | (() => T)) {
   return {
     state: hist.present,
     set,
+    replace,
     reset,
     undo,
     redo,

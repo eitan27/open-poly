@@ -104,6 +104,7 @@ import { pinConstraints } from "./sketch/snapPins";
 import type { BooleanOp, MeshedFaces, ShapeMeshPayload } from "./kernel/types";
 import { DRESSUP_DELTA_IDS, dressUpDeltaBase } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
+import { isVariableExpression, relinkDimensions, sketchesNeedingRelink } from "./document/dimensionExpr";
 import { measureSelection } from "./selection/measure";
 import {
   angledFrame,
@@ -824,6 +825,7 @@ export default function App() {
   const {
     state: doc,
     set: setDoc,
+    replace: replaceDoc,
     reset: resetDoc,
     undo,
     redo,
@@ -5890,6 +5892,60 @@ export default function App() {
     return finishSketchEdit(seq, solved) ? solved : null;
   };
 
+  // --- Dimensions follow their variables ------------------------------------
+  // A dimension typed as an expression keeps that text beside its number (see
+  // document/dimensionExpr.ts). When the variables move, those numbers are
+  // stale: re-evaluate them, re-solve the sketches that actually changed, and
+  // publish through `replaceDoc` — WITHOUT a new undo step, because this is the
+  // variable edit's own consequence and undoing that edit restores the geometry
+  // it had before. Runs for every sketch, open or not: a dimension in a closed
+  // sketch has to follow its variable too, or the solid built on it won't.
+  useEffect(() => {
+    const scope = resolvedRef.current.scope;
+    const ids = sketchesNeedingRelink(docRef.current.features, scope);
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const updates: { id: string; constraints: SketchConstraint[]; entities: SketchEntity[] }[] = [];
+      for (const id of ids) {
+        const sk = docRef.current.features.find((f) => f.id === id);
+        if (sk?.type !== "sketch") continue;
+        const constraints = relinkDimensions(sk.constraints, scope);
+        if (!constraints) continue;
+        try {
+          const res = await solveSketch(sk.entities, constraints);
+          updates.push({ id, constraints, entities: res.entities });
+        } catch {
+          // An intermediate the solver can't satisfy (a variable being retyped
+          // through an impossible value) leaves that sketch as it was; the next
+          // keystroke gets its own pass.
+        }
+      }
+      if (cancelled || updates.length === 0) return;
+      replaceDoc((prev) => {
+        let next = prev;
+        for (const u of updates) {
+          // Written through the id, not the captured feature: the solve is async,
+          // so anything else the user changed meanwhile survives (and a sketch
+          // deleted in the meantime simply isn't found).
+          next = setSketchEntities(setSketchConstraints(next, u.id, u.constraints), u.id, u.entities);
+          next = applyDerivedToSketch(next, u.id, scope);
+        }
+        // The sketch-edit machinery builds each commit on this snapshot, so it
+        // has to see the relink too — otherwise the next dimension edit would
+        // rebuild from the pre-relink values and quietly undo it.
+        sketchBaseDocRef.current = next;
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Variables are the only thing that can move an expression-backed dimension;
+    // `scope` is a pure function of them, and both are read through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc.variables]);
+
   // --- Live sketch dragging -------------------------------------------------
   // Every frame solves from a snapshot of the geometry taken when the drag began
   // (so repeated frames don't accumulate) with the grabbed points relocated to
@@ -6225,6 +6281,9 @@ export default function App() {
     entity: Extract<SketchEntity, { type: "line" | "circle" | "arc" }>,
     editId?: string,
     prefill?: number,
+    /** The expression the dimension was typed as, when it has one — shown in
+     *  preference to its evaluation so editing keeps the link. */
+    prefillExpr?: string,
   ) => {
     if (!editingSketch) return;
     const [uv, kind, measured]: [Vec2, "length" | "radius", number] =
@@ -6238,7 +6297,14 @@ export default function App() {
     const s = screenOf(uv);
     setDimPending(false);
     setSelection([{ kind: "sketchEntity", sketchId: editingSketch.id, entityId: entity.id }]);
-    setDimInput({ entityId: entity.id, kind, editId, value: fmt(prefill ?? measured), x: s.x, y: s.y });
+    setDimInput({
+      entityId: entity.id,
+      kind,
+      editId,
+      value: prefillExpr ?? fmt(prefill ?? measured),
+      x: s.x,
+      y: s.y,
+    });
   };
 
   // Open the angle input between two lines, anchored between their midpoints.
@@ -6250,6 +6316,7 @@ export default function App() {
     lb: Extract<SketchEntity, { type: "line" }>,
     editId?: string,
     prefill?: number,
+    prefillExpr?: string,
   ) => {
     if (!editingSketch) return;
     const mid = (l: typeof la): Vec2 => [(l.a[0] + l.b[0]) / 2, (l.a[1] + l.b[1]) / 2];
@@ -6277,13 +6344,21 @@ export default function App() {
     const mb = mid(lb);
     const s = screenOf([(ma[0] + mb[0]) / 2, (ma[1] + mb[1]) / 2]);
     setDimPending(false);
-    setDimInput({ entityId: la.id, entityId2: lb.id, kind: "angle", editId, value: fmt(deg), x: s.x, y: s.y });
+    setDimInput({
+      entityId: la.id,
+      entityId2: lb.id,
+      kind: "angle",
+      editId,
+      value: prefillExpr ?? fmt(deg),
+      x: s.x,
+      y: s.y,
+    });
   };
 
   // Open the linear-distance input for a pair of sides (point/line/rim each),
   // anchored at the midpoint of the dimension it would draw. `prefill` supplies
   // the stored value when reopening an existing dimension.
-  const openDistanceFor = (a: DistanceRef, b: DistanceRef, editId?: string, prefill?: number) => {
+  const openDistanceFor = (a: DistanceRef, b: DistanceRef, editId?: string, prefill?: number, prefillExpr?: string) => {
     if (!editingSketch) return;
     const ra = resolveSide(a, editingSketch.entities);
     const rb = resolveSide(b, editingSketch.entities);
@@ -6297,7 +6372,7 @@ export default function App() {
       kind: "distance",
       refs: [a, b],
       editId,
-      value: fmt(prefill ?? Math.abs(m.value)),
+      value: prefillExpr ?? fmt(prefill ?? Math.abs(m.value)),
       x: s.x,
       y: s.y,
     });
@@ -6640,15 +6715,18 @@ export default function App() {
     if (!editingSketch) return;
     const c = editingSketch.constraints.find((x) => x.id === constraintId);
     if (!c) return;
+    // Seeded with the EXPRESSION where there is one: reopening a dimension typed
+    // as `w` should offer `w` to edit, not the 40 it currently works out to —
+    // otherwise editing anything about it silently cuts the link.
     if (c.type === "distance" || c.type === "radius") {
       const e = ent(c.entity);
-      if (e?.type === "line" || e?.type === "circle" || e?.type === "arc") openDimensionFor(e, c.id, c.value);
+      if (e?.type === "line" || e?.type === "circle" || e?.type === "arc") openDimensionFor(e, c.id, c.value, c.expr);
     } else if (c.type === "distanceBetween") {
-      openDistanceFor(c.a, c.b, c.id, c.value);
+      openDistanceFor(c.a, c.b, c.id, c.value, c.expr);
     } else if (c.type === "angle") {
       const la = ent(c.a);
       const lb = ent(c.b);
-      if (la?.type === "line" && lb?.type === "line") openAngleFor(la, lb, c.id, c.value);
+      if (la?.type === "line" && lb?.type === "line") openAngleFor(la, lb, c.id, c.value, c.expr);
     }
   };
 
@@ -6660,8 +6738,8 @@ export default function App() {
     const sketchId = editingSketch.id;
     const { kind, entityId, entityId2 } = dimInput;
     // Evaluate against the variable scope so a number, expression, or variable
-    // name all work. (Note: this resolves to a number now; a live expression
-    // link that re-evaluates on variable change is a deferred Phase-2 gap.)
+    // name all work. The number is what the solver takes; the TEXT is kept too
+    // (below) when it names a variable, which is what keeps the dimension linked.
     let value = NaN;
     try {
       value = evaluateExpression(dimInput.value, resolved.scope);
@@ -6698,12 +6776,16 @@ export default function App() {
       const ctype = kind === "radius" ? "radius" : "distance";
       return !(c.type === ctype && c.entity === entityId);
     });
+    // Keep the typed text when it names a variable, so the dimension can be
+    // re-evaluated when that variable moves. A plainly-numeric dimension stores
+    // nothing extra — it could never change.
+    const expr = isVariableExpression(dimInput.value) ? { expr: dimInput.value.trim() } : {};
     const added: SketchConstraint =
       kind === "distance"
-        ? { id: genId(), type: "distanceBetween", a: dimInput.refs![0], b: dimInput.refs![1], value }
+        ? { id: genId(), type: "distanceBetween", a: dimInput.refs![0], b: dimInput.refs![1], value, ...expr }
         : kind === "angle"
-          ? { id: genId(), type: "angle", a: entityId, b: entityId2!, value }
-          : { id: genId(), type: kind === "radius" ? "radius" : "distance", entity: entityId, value };
+          ? { id: genId(), type: "angle", a: entityId, b: entityId2!, value, ...expr }
+          : { id: genId(), type: kind === "radius" ? "radius" : "distance", entity: entityId, value, ...expr };
     const candidate = setSketchConstraints(previous, sketchId, [...kept, added]);
     const candidateSk = candidate.features.find((f) => f.id === sketchId);
     if (candidateSk?.type !== "sketch") return;

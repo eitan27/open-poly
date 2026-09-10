@@ -50,6 +50,7 @@ import { parseDxfToEntities } from "../document/dxfImport";
 import { applyDerived, applyDerivedToSketch } from "../document/derived";
 import { evaluateExpression } from "../document/expression";
 import { solveSketch } from "../sketch/solver";
+import { isVariableExpression } from "../document/dimensionExpr";
 import { deriveFaceFrame, planeRefLabel, type SketchPlaneId, type SketchPlaneRef } from "../document/planes";
 import type {
   DistanceRef,
@@ -472,6 +473,11 @@ function buildDimension(sk: SketchFeature, spec: DimensionSpec, scope: Record<st
   } catch (e) {
     throw new OpError("invalid_op", `Couldn't evaluate value "${spec.value}": ${(e as Error).message}`);
   }
+  // A value that NAMES a variable keeps its text, so the dimension re-evaluates
+  // when that variable moves — the same link the dimension input records. A
+  // plain number stores nothing extra (see document/dimensionExpr.ts).
+  const text = String(spec.value);
+  const expr = isVariableExpression(text) ? { expr: text.trim() } : {};
   if (!Number.isFinite(value)) throw new OpError("invalid_op", `Value "${spec.value}" isn't a finite number.`);
   const requirePositive = () => {
     if (value <= 0) throw new OpError("invalid_op", `${spec.kind} must be > 0 (got ${value}).`);
@@ -480,22 +486,22 @@ function buildDimension(sk: SketchFeature, spec: DimensionSpec, scope: Record<st
     case "length":
       requireLine(sk, spec.entity, "entity");
       requirePositive();
-      return { id, type: "distance", entity: spec.entity, value };
+      return { id, type: "distance", entity: spec.entity, value, ...expr };
     case "radius":
       requireCircular(sk, spec.entity, "entity");
       requirePositive();
-      return { id, type: "radius", entity: spec.entity, value };
+      return { id, type: "radius", entity: spec.entity, value, ...expr };
     case "angle":
       requireLine(sk, spec.a, "a");
       requireLine(sk, spec.b, "b");
       if (value < 0 || value >= 180)
         throw new OpError("invalid_op", `angle must be in [0, 180) degrees (got ${value}).`);
-      return { id, type: "angle", a: spec.a, b: spec.b, value };
+      return { id, type: "angle", a: spec.a, b: spec.b, value, ...expr };
     case "distance": {
       const a = resolveDistanceRef(sk, spec.a);
       const b = resolveDistanceRef(sk, spec.b);
       requirePositive();
-      return { id, type: "distanceBetween", a, b, value };
+      return { id, type: "distanceBetween", a, b, value, ...expr };
     }
   }
 }
