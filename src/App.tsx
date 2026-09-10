@@ -6281,13 +6281,14 @@ export default function App() {
   commitProjectRef.current = commitProject;
 
   // Open the dimension input anchored next to the given entity: a line → length
-  // (input next to its midpoint); a circle → diameter and an arc → radius (input
-  // next to the centre), which is how drafting calls each of them out — the Ø/R
-  // toggle in the input switches either way. `editId`/`prefill` are supplied when
-  // reopening an existing constraint (its label hides while the input is open,
-  // and the input shows the stored value); for a fresh dimension the value is
-  // computed from the geometry. `kindOverride` reopens a circular dimension as
-  // the kind it was stored as, and is what the Ø/R toggle re-opens with.
+  // (input next to its midpoint); a circle → whichever measure the "Dimension
+  // circles as" setting names (diameter by default, the way a drawing calls out
+  // a hole) and an arc → radius, which is the convention for arcs. `editId`/
+  // `prefill` are supplied when reopening an existing constraint (its label hides
+  // while the input is open, and the input shows the stored value); for a fresh
+  // dimension the value is computed from the geometry. `kindOverride` reopens a
+  // circular dimension as the kind it was STORED as — the setting is only ever
+  // the default for a new one, so changing it never rewrites existing work.
   const openDimensionFor = (
     entity: Extract<SketchEntity, { type: "line" | "circle" | "arc" }>,
     editId?: string,
@@ -6298,7 +6299,7 @@ export default function App() {
     kindOverride?: "radius" | "diameter",
   ) => {
     if (!editingSketch) return;
-    const circular = kindOverride ?? (entity.type === "circle" ? "diameter" : "radius");
+    const circular = kindOverride ?? (entity.type === "circle" ? settings.circleDimension : "radius");
     const [uv, kind, measured]: [Vec2, "length" | "radius" | "diameter", number] =
       entity.type === "line"
         ? [
@@ -8120,32 +8121,6 @@ export default function App() {
                         ? "Distance"
                         : "Length"}
               </label>
-              {/* Ø/R: the same size stated the other way. A plain number converts
-                  so the circle doesn't jump; an expression is left as typed —
-                  it now drives the other measure, which is what asking for it
-                  means. */}
-              {(dimInput.kind === "radius" || dimInput.kind === "diameter") && (
-                <button
-                  className="dim-kind-toggle"
-                  title={
-                    dimInput.kind === "diameter" ? "Dimension the radius instead" : "Dimension the diameter instead"
-                  }
-                  // Never take focus on click: the value field keeps it, so Enter
-                  // still commits the dimension instead of re-pressing this button.
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() =>
-                    setDimInput((d) => {
-                      if (!d) return d;
-                      const next = d.kind === "diameter" ? "radius" : "diameter";
-                      const n = Number(d.value);
-                      const value = Number.isFinite(n) ? fmt(next === "diameter" ? n * 2 : n / 2) : d.value;
-                      return { ...d, kind: next, value };
-                    })
-                  }
-                >
-                  {dimInput.kind === "diameter" ? "R" : "\u00d8"}
-                </button>
-              )}
               <DimValueInput
                 value={dimInput.value}
                 variables={dimVarOptions}

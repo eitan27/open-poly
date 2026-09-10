@@ -3,7 +3,7 @@
 // and applies the instant it's changed — there is no Save button, and nothing
 // here touches the document or the undo stack.
 import type { CSSProperties } from "react";
-import type { MouseDragAction, Settings, ThemeChoice } from "../settings/settings";
+import type { CircleDimension, MouseDragAction, Settings, ThemeChoice } from "../settings/settings";
 import { colorToHex, SOLID_COLORS } from "../document/colors";
 import { Modal, ModalHeader } from "./Modal";
 
@@ -90,6 +90,11 @@ const MOUSE_ACTIONS: { value: MouseDragAction; label: string }[] = [
   { value: "pan", label: "Pan" },
   { value: "orbit", label: "Orbit" },
   { value: "zoom", label: "Zoom" },
+];
+
+const CIRCLE_DIMENSIONS: { value: CircleDimension; label: string }[] = [
+  { value: "diameter", label: "Diameter (\u00d8)" },
+  { value: "radius", label: "Radius (R)" },
 ];
 
 /** One row: a label + description on the left, a `<select>` on the right. */
@@ -220,6 +225,21 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
           </label>
         </div>
         <p className="set-note">Only the starting color — any body can be recolored from the Parts list afterwards.</p>
+      </section>
+
+      <section className="set-section">
+        <h3>Sketch</h3>
+        <Choice
+          label="Dimension circles as"
+          hint="Default: diameter — what a drawing calls a hole"
+          value={settings.circleDimension}
+          options={CIRCLE_DIMENSIONS}
+          onChange={(circleDimension) => onChange({ circleDimension })}
+        />
+        <p className="set-note">
+          The starting measure for a new circle dimension — an existing one keeps whichever it was made with, and arcs
+          are always dimensioned by radius.
+        </p>
       </section>
 
       <section className="set-section">

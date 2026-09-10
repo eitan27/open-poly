@@ -7,8 +7,9 @@
 //
 // Now a `diameter` constraint stores what the user typed (the diameter) and the
 // solver is the only place it's halved; the dimension box opens as Ø for a
-// circle and R for an arc, with a toggle to switch, and the on-canvas label
-// spans the circle instead of reaching out from its centre.
+// circle and R for an arc — which measure a circle gets is a Settings choice
+// ("Dimension circles as", diameter by default) — and the on-canvas label spans
+// the circle instead of reaching out from its centre.
 //
 // Checks:
 //   1. a diameter dimension sizes the circle to half of it, and stores the
@@ -19,9 +20,9 @@
 //   5. the geometry built on the sketch (an extrude) picks it up
 //   6. through the UI: D on a circle opens as "Diameter" and prefills the
 //      measured diameter, and the label reads Ø
-//   7. the Ø/R toggle switches the box and converts the value, and applying it
-//      leaves the circle the size it already was
-//   8. an arc opens as "Radius", not "Diameter"
+//   7. the Settings choice governs which measure a NEW dimension states, and
+//      survives a reload — while an existing dimension reopens as the kind it
+//      was made with, so changing the setting never rewrites finished work
 import { chromium } from "playwright";
 const URL = process.env.URL ?? "http://localhost:5175/";
 const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
@@ -169,51 +170,94 @@ check(
       `showed "${await box.inputValue()}"`,
     );
 
-    // The Ø/R toggle: same circle, other statement of the same size.
-    await page.locator(".dim-kind-toggle").click();
-    await page.waitForTimeout(200);
-    const label2 = (await page.locator(".dim-input label").first().textContent())?.trim();
-    check("the toggle switches the box to Radius", label2 === "Radius", `label="${label2}"`);
-    check(
-      "and converts the value so the circle doesn't jump",
-      (await box.inputValue()) === "9",
-      `showed "${await box.inputValue()}"`,
-    );
+    await box.fill("30");
     await page.keyboard.press("Enter");
     await settle();
+    const sizes = (await consOf(ui.id)).filter((x) => x.type === "radius" || x.type === "diameter");
     check(
-      "applying the toggled dimension leaves the circle its size",
-      (await radiusOf(ui.id, ui.entId)) === 9,
+      "typing 30 stores a DIAMETER of 30",
+      sizes.length === 1 && sizes[0].type === "diameter" && sizes[0].value === 30,
+      `constraints=${JSON.stringify(sizes)}`,
+    );
+    check(
+      "and resizes the circle to Ø30",
+      (await radiusOf(ui.id, ui.entId)) === 15,
       `r=${await radiusOf(ui.id, ui.entId)}`,
     );
-    const c = (await consOf(ui.id)).find((x) => x.type === "radius" || x.type === "diameter");
-    check("and stores it as the kind the box was showing", c?.type === "radius", `constraint=${JSON.stringify(c)}`);
+    const text = (await page.locator(".dim-text, .dim-label").allTextContents()).join(" ");
+    check("the on-canvas label reads Ø", /Ø30/.test(text), `labels="${text}"`);
 
-    // Re-dimension the SAME circle as Ø: it must replace the R, not join it.
-    await clickWorld([9, 60, 0]);
+    // --- the Settings choice ---------------------------------------------
+    // Switch the preference to Radius; it governs the NEXT dimension, not the
+    // one already made.
+    await page.keyboard.press("Escape"); // leave sketch edit so the topbar is reachable
+    await page.waitForTimeout(400);
+    await page.locator(".settings-btn").click();
+    await page.waitForTimeout(400);
+    const select = page.locator(".settings-dialog .set-select").first();
+    const isCircleChoice = (await page.locator(".settings-dialog .set-toggle-label").first().textContent())?.includes(
+      "circles",
+    );
+    check("Settings offers the circle-dimension choice", isCircleChoice === true);
+    check(
+      "and it starts on Diameter",
+      (await select.inputValue()) === "diameter",
+      `value="${await select.inputValue()}"`,
+    );
+    await select.selectOption("radius");
+    await page.waitForTimeout(200);
+    await page.locator(".settings-dialog").press("Escape");
+    await page.waitForTimeout(400);
+
+    // A NEW circle now opens as Radius.
+    const ui2 = await shapeSketch("top", { shape: "circle", c: [30, 60], r: 7 });
+    await page.locator(".tree-row", { hasText: "Sketch" }).last().dblclick();
+    await page.waitForTimeout(800);
+    await clickWorld([37, 60, 0]);
     await page.evaluate(() => document.activeElement?.blur());
     await page.keyboard.press("d");
     await page.waitForTimeout(400);
-    if ((await page.locator(".dim-value input").count()) === 1) {
-      await page.locator(".dim-value input").fill("30");
+    const box2 = page.locator(".dim-value input");
+    if ((await box2.count()) === 1) {
+      const l2 = (await page.locator(".dim-input label").first().textContent())?.trim();
+      check("with the setting on Radius, a new circle opens as Radius", l2 === "Radius", `label="${l2}"`);
+      check(
+        "prefilled with the radius, not the diameter",
+        (await box2.inputValue()) === "7",
+        `showed "${await box2.inputValue()}"`,
+      );
       await page.keyboard.press("Enter");
       await settle();
-      const sizes = (await consOf(ui.id)).filter((x) => x.type === "radius" || x.type === "diameter");
-      check(
-        "re-dimensioning as Ø REPLACES the R (one size constraint, not two)",
-        sizes.length === 1 && sizes[0].type === "diameter" && sizes[0].value === 30,
-        `constraints=${JSON.stringify(sizes)}`,
-      );
-      check(
-        "and resizes the circle to Ø30",
-        (await radiusOf(ui.id, ui.entId)) === 15,
-        `r=${await radiusOf(ui.id, ui.entId)}`,
-      );
-      const text = (await page.locator(".dim-text, .dim-label").allTextContents()).join(" ");
-      check("the on-canvas label reads Ø", /Ø30/.test(text), `labels="${text}"`);
+      const c2 = (await consOf(ui2.id)).find((x) => x.type === "radius" || x.type === "diameter");
+      check("and stores a radius", c2?.type === "radius", `constraint=${JSON.stringify(c2)}`);
     } else {
-      check("re-dimensioning as Ø REPLACES the R (one size constraint, not two)", false, "box didn't reopen");
+      check("with the setting on Radius, a new circle opens as Radius", false, "box didn't open");
     }
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+
+    // The setting is the user's, so it survives a reload — and the EXISTING Ø
+    // dimension still reopens as Ø.
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
+    await settle();
+    await page.locator(".settings-btn").click();
+    await page.waitForTimeout(400);
+    check(
+      "the choice survives a reload",
+      (await page.locator(".settings-dialog .set-select").first().inputValue()) === "radius",
+    );
+    await page.locator(".settings-dialog .set-select").first().selectOption("diameter");
+    await page.waitForTimeout(200);
+    await page.locator(".settings-dialog").press("Escape");
+    await page.waitForTimeout(300);
+
+    const still = (await consOf(ui.id)).filter((x) => x.type === "radius" || x.type === "diameter");
+    check(
+      "changing the setting never rewrites a dimension already made",
+      still.length === 1 && still[0].type === "diameter" && still[0].value === 30,
+      `constraints=${JSON.stringify(still)}`,
+    );
   }
 }
 
