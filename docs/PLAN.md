@@ -234,7 +234,6 @@ place. Roughly ordered by how often a user meets them.
   by rounded position, so a "coincidence" silently breaks once a solve moves them
   apart. A real point-based sketch model is wanted before heavy constraint
   editing; it also blocks robust coincident editing.
-- **Dimensions have no diameter variant** — only radius.
 - **Cancel a sketch edit** — edits to an existing sketch apply live; there's no
   discard-on-Esc (snapshot-on-entry + restore).
 - **Constraints not mapped:** concentric, symmetric, collinear, fix/lock.
@@ -402,9 +401,6 @@ driving variable changes — is **met**.
   `setDoc`, and only a brand-new _empty_ sketch cancels on exit; backing out of
   edits to an _existing_ sketch needs snapshot-on-entry + restore on Esc (Finish
   keeps changes).
-- **Dimensions:** point-to-point / point-to-line distance, the **diameter**
-  variant, and **live expression-linked** values (a value is stored as a resolved
-  number, not a link that re-evaluates when its variable changes).
 - **Geometric constraints not yet mapped:** concentric, symmetric, collinear, and
   a general fix/lock of an arbitrary entity.
 - **Splines** still pass through the solver **unconstrained** (only line / arc /

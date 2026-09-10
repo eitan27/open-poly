@@ -9,7 +9,7 @@
 // Lines, circles, and arcs are all mapped (a circle's/arc's centre + radius are
 // solvable; an arc also has solvable endpoints + start/end angles tied by
 // arc_rules). Constraints mapped: horizontal/vertical/parallel/perpendicular/
-// equal/distance/radius/angle/tangent/coincident/point-on-line/midpoint, across
+// equal/distance/radius/diameter/angle/tangent/coincident/point-on-line/midpoint, across
 // lines, circles, and arcs where meaningful.
 
 import { make_gcs_wrapper, type GcsWrapper } from "@salusoft89/planegcs";
@@ -242,10 +242,15 @@ export async function solveSketch(
           prims.push({ id, type: "c2cdistance", c1_id: x.id, c2_id: y.id, dist: v });
         }
       }
-    } else if (c.type === "radius" && circleIdByEntity.has(c.entity)) {
-      prims.push({ id, type: "circle_radius", c_id: circleIdByEntity.get(c.entity), radius: c.value });
-    } else if (c.type === "radius" && arcIdByEntity.has(c.entity)) {
-      prims.push({ id, type: "arc_radius", a_id: arcIdByEntity.get(c.entity), radius: c.value });
+    } else if ((c.type === "radius" || c.type === "diameter") && circleIdByEntity.has(c.entity)) {
+      // A diameter is the same constraint stated at twice the size — planegcs
+      // only knows radii, so halve it on the way in (App/agent halve nothing:
+      // `value` stays the diameter the user typed, all the way to the label).
+      const radius = c.type === "diameter" ? c.value / 2 : c.value;
+      prims.push({ id, type: "circle_radius", c_id: circleIdByEntity.get(c.entity), radius });
+    } else if ((c.type === "radius" || c.type === "diameter") && arcIdByEntity.has(c.entity)) {
+      const radius = c.type === "diameter" ? c.value / 2 : c.value;
+      prims.push({ id, type: "arc_radius", a_id: arcIdByEntity.get(c.entity), radius });
     } else if (c.type === "equal") {
       // Equal applies to two lines (equal length) or two of {circle, arc} (equal
       // radius, any mix).

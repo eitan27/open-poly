@@ -45,6 +45,14 @@ describe("isDimension — only constraints with a value can be driven", () => {
     ).toBe(true);
   });
 
+  it("accepts a diameter — it carries a typed value like any other", () => {
+    expect(isDimension({ id: "c", type: "diameter", entity: "e", value: 40 })).toBe(true);
+    // And it follows a variable the same way, with the length range (not the angle one).
+    const dia = { id: "c", type: "diameter", entity: "e", value: 40, expr: "bore" } as SketchConstraint;
+    expect(relinkedValue(dia, { bore: 12 })).toBe(12);
+    expect(relinkedValue(dia, { bore: 0 })).toBeNull();
+  });
+
   it("rejects the geometric ones", () => {
     expect(isDimension({ id: "c", type: "parallel", a: "a", b: "b" })).toBe(false);
     expect(isDimension({ id: "c", type: "horizontal", entity: "l" })).toBe(false);

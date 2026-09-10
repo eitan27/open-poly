@@ -491,3 +491,59 @@ describe("solveSketch derived geometry", () => {
     expect(d).toEqual(derived); // identical content — solver left it alone
   });
 });
+
+describe("solveSketch diameter", () => {
+  // Ø and R are the same constraint stated at two scales: the stored `value` is
+  // what the user typed, and the solver is the only place the halving happens.
+  it("drives a circle to HALF the diameter", async () => {
+    const c: SketchEntity = { type: "circle", id: "C", c: [0, 0], r: 3 };
+    const res = await solveSketch([c], [{ id: "d", type: "diameter", entity: "C", value: 40 }]);
+    const solved = res.entities[0];
+    if (solved.type !== "circle") throw new Error("expected circle");
+    expect(solved.r).toBeCloseTo(20, 4);
+    expect(res.hasConflicts).toBe(false);
+  });
+
+  it("drives an arc the same way", async () => {
+    const a: SketchEntity = { type: "arc", id: "A", c: [0, 0], r: 3, start: 0, end: Math.PI / 2 };
+    const res = await solveSketch([a], [{ id: "d", type: "diameter", entity: "A", value: 12 }]);
+    const solved = res.entities[0];
+    if (solved.type !== "arc") throw new Error("expected arc");
+    expect(solved.r).toBeCloseTo(6, 4);
+  });
+
+  it("removes the same degree of freedom a radius does", async () => {
+    const c: SketchEntity = { type: "circle", id: "C", c: [0, 0], r: 3 };
+    const byR = await solveSketch([c], [{ id: "r", type: "radius", entity: "C", value: 20 }]);
+    const byD = await solveSketch([c], [{ id: "d", type: "diameter", entity: "C", value: 40 }]);
+    expect(byD.dof).toBe(byR.dof);
+    expect(byD.hasRedundant).toBe(false);
+  });
+
+  it("conflicts with a radius that says something different", async () => {
+    // Ø40 and R5 on one circle can't both hold — the pair must be flagged, not
+    // silently resolved to whichever the solver reached last.
+    const c: SketchEntity = { type: "circle", id: "C", c: [0, 0], r: 3 };
+    const res = await solveSketch(
+      [c],
+      [
+        { id: "r", type: "radius", entity: "C", value: 5 },
+        { id: "d", type: "diameter", entity: "C", value: 40 },
+      ],
+    );
+    expect(res.hasConflicts || res.status >= 2).toBe(true);
+  });
+
+  it("agrees with a radius that says the same thing (redundant, not conflicting)", async () => {
+    const c: SketchEntity = { type: "circle", id: "C", c: [0, 0], r: 3 };
+    const res = await solveSketch(
+      [c],
+      [
+        { id: "r", type: "radius", entity: "C", value: 20 },
+        { id: "d", type: "diameter", entity: "C", value: 40 },
+      ],
+    );
+    expect(res.hasConflicts).toBe(false);
+    expect(res.hasRedundant).toBe(true);
+  });
+});

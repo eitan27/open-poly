@@ -190,6 +190,12 @@ export type SketchConstraint =
   // `distance` (a line's own length) is a special case of.
   | { id: string; type: "distanceBetween"; a: DistanceRef; b: DistanceRef; value: number; expr?: string }
   | { id: string; type: "radius"; entity: string; value: number; expr?: string }
+  // The same size as `radius`, called out the way drafting calls it out: `value`
+  // is the DIAMETER the user typed and sees (the solver halves it). A separate
+  // type rather than a display flag on `radius`, so `value` keeps meaning "what
+  // was typed" — which is what `expr` re-evaluation relies on. A circle carries
+  // one or the other, never both.
+  | { id: string; type: "diameter"; entity: string; value: number; expr?: string }
   | { id: string; type: "angle"; a: string; b: string; value: number; expr?: string }
   // Tangent between a line+circle or two circles (entity ids).
   | { id: string; type: "tangent"; a: string; b: string }

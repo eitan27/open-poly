@@ -352,6 +352,47 @@ describe("applyOperation — sketch constraints & dimensions", () => {
     expect(getSceneSummary(ctx).sketches[0].constraints).toHaveLength(0);
   });
 
+  it("add_dimension diameter sizes the circle to half of it", async () => {
+    // The agent states Ø like a drawing does; the stored value is the diameter
+    // and only the solver sees the radius.
+    const { ctx, sketchId, ids } = await sketchWith([{ shape: "circle", c: [0, 0], r: 3 }]);
+    const r = await apply(ctx, {
+      op: "addDimension",
+      sketchId,
+      dimension: { kind: "diameter", entity: ids[0], value: 40 },
+    });
+    expect(r.ok).toBe(true);
+    expect(getSceneSummary(ctx).sketches[0].constraints[0]).toMatchObject({ type: "diameter", value: 40 });
+    const sk = ctx.getDoc().features.find((f) => f.id === sketchId);
+    if (sk?.type !== "sketch" || sk.entities[0].type !== "circle") throw new Error("no circle");
+    expect(sk.entities[0].r).toBeCloseTo(20, 4);
+  });
+
+  it("a diameter typed as a variable follows it", async () => {
+    const { ctx, sketchId, ids } = await sketchWith([{ shape: "circle", c: [0, 0], r: 3 }]);
+    await apply(ctx, { op: "setVariable", name: "bore", expression: 12 });
+    await apply(ctx, {
+      op: "addDimension",
+      sketchId,
+      dimension: { kind: "diameter", entity: ids[0], value: "bore" },
+    });
+    expect(getSceneSummary(ctx).sketches[0].constraints[0]).toMatchObject({ type: "diameter", value: 12 });
+    const sk = ctx.getDoc().features.find((f) => f.id === sketchId);
+    if (sk?.type !== "sketch" || sk.entities[0].type !== "circle") throw new Error("no circle");
+    expect(sk.entities[0].r).toBeCloseTo(6, 4);
+  });
+
+  it("errors on a wrong-kind entity (diameter on a line)", async () => {
+    const { ctx, sketchId, ids } = await sketchWith([{ shape: "line", a: [0, 0], b: [10, 0] }]);
+    const r = await apply(ctx, {
+      op: "addDimension",
+      sketchId,
+      dimension: { kind: "diameter", entity: ids[0], value: 5 },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.errorKind).toBe("invalid_op");
+  });
+
   it("errors on a wrong-kind entity (radius on a line)", async () => {
     const { ctx, sketchId, ids } = await sketchWith([{ shape: "line", a: [0, 0], b: [10, 0] }]);
     const r = await apply(ctx, {

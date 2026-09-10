@@ -2641,6 +2641,25 @@ button:disabled .kbd-hint {
   color: var(--text-7);
 }
 
+/* Ø/R switch inside the dimension input: a quiet square glyph button, sized to
+   sit between the label and the value field without competing with Set. */
+.dim-kind-toggle {
+  min-width: 22px;
+  padding: 2px 5px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-7);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.dim-kind-toggle:hover {
+  color: var(--text-3);
+  border-color: var(--accent);
+}
+
 /* Instructional status text inside a .dim-input floater (Mirror/Pattern/
    Project sessions — "Click entities to pattern", "N in pattern — click
    entities to add", …). Without an explicit size these plain <span>s fell

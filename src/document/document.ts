@@ -733,6 +733,7 @@ function constraintRefsEntity(c: SketchConstraint, entityId: string): boolean {
     case "vertical":
     case "distance":
     case "radius":
+    case "diameter":
       return c.entity === entityId;
   }
 }

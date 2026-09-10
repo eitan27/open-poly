@@ -281,6 +281,8 @@ const constraintLabel = (c: SketchConstraint): string => {
       return `Distance ${fmt(c.value)}`;
     case "radius":
       return `Radius ${fmt(c.value)}`;
+    case "diameter":
+      return `Diameter ${fmt(c.value)}`;
     case "angle":
       return `Angle ${fmt(c.value)}°`;
     case "tangent":
@@ -333,6 +335,7 @@ const constraintSelections = (sketchId: string, entities: SketchEntity[], c: Ske
     case "vertical":
     case "distance":
     case "radius":
+    case "diameter":
       return [ent(c.entity)];
     case "parallel":
     case "perpendicular":
@@ -1518,7 +1521,7 @@ export default function App() {
     entityId: string;
     /** Second line, for an angle dimension between two lines. */
     entityId2?: string;
-    kind: "length" | "radius" | "angle" | "distance";
+    kind: "length" | "radius" | "diameter" | "angle" | "distance";
     /** The two sides of a `distance` dimension (point/line/rim each). */
     refs?: [DistanceRef, DistanceRef];
     /** The constraint being edited (if reopening an existing one), so its
@@ -3078,6 +3081,11 @@ export default function App() {
         const e = ent(c.entity);
         if (e?.type === "circle" || e?.type === "arc")
           return [{ id: c.id, kind: "radius", text: `R${fmt(c.value)}`, c: e.c, r: e.r }];
+      } else if (c.type === "diameter") {
+        // `e.r` is the geometry's radius; the label carries the typed diameter.
+        const e = ent(c.entity);
+        if (e?.type === "circle" || e?.type === "arc")
+          return [{ id: c.id, kind: "diameter", text: `\u00d8${fmt(c.value)}`, c: e.c, r: e.r }];
       } else if (c.type === "angle") {
         const la = ent(c.a);
         const lb = ent(c.b);
@@ -6273,10 +6281,13 @@ export default function App() {
   commitProjectRef.current = commitProject;
 
   // Open the dimension input anchored next to the given entity: a line → length
-  // (input next to its midpoint); a circle or arc → radius (input next to its
-  // centre). `editId`/`prefill` are supplied when reopening an existing
-  // constraint (its label hides while the input is open, and the input shows the
-  // stored value); for a fresh dimension the value is computed from the geometry.
+  // (input next to its midpoint); a circle → diameter and an arc → radius (input
+  // next to the centre), which is how drafting calls each of them out — the Ø/R
+  // toggle in the input switches either way. `editId`/`prefill` are supplied when
+  // reopening an existing constraint (its label hides while the input is open,
+  // and the input shows the stored value); for a fresh dimension the value is
+  // computed from the geometry. `kindOverride` reopens a circular dimension as
+  // the kind it was stored as, and is what the Ø/R toggle re-opens with.
   const openDimensionFor = (
     entity: Extract<SketchEntity, { type: "line" | "circle" | "arc" }>,
     editId?: string,
@@ -6284,16 +6295,18 @@ export default function App() {
     /** The expression the dimension was typed as, when it has one — shown in
      *  preference to its evaluation so editing keeps the link. */
     prefillExpr?: string,
+    kindOverride?: "radius" | "diameter",
   ) => {
     if (!editingSketch) return;
-    const [uv, kind, measured]: [Vec2, "length" | "radius", number] =
+    const circular = kindOverride ?? (entity.type === "circle" ? "diameter" : "radius");
+    const [uv, kind, measured]: [Vec2, "length" | "radius" | "diameter", number] =
       entity.type === "line"
         ? [
             [(entity.a[0] + entity.b[0]) / 2, (entity.a[1] + entity.b[1]) / 2],
             "length",
             Math.hypot(entity.b[0] - entity.a[0], entity.b[1] - entity.a[1]),
           ]
-        : [entity.c, "radius", entity.r];
+        : [entity.c, circular, circular === "diameter" ? entity.r * 2 : entity.r];
     const s = screenOf(uv);
     setDimPending(false);
     setSelection([{ kind: "sketchEntity", sketchId: editingSketch.id, entityId: entity.id }]);
@@ -6718,9 +6731,10 @@ export default function App() {
     // Seeded with the EXPRESSION where there is one: reopening a dimension typed
     // as `w` should offer `w` to edit, not the 40 it currently works out to —
     // otherwise editing anything about it silently cuts the link.
-    if (c.type === "distance" || c.type === "radius") {
+    if (c.type === "distance" || c.type === "radius" || c.type === "diameter") {
       const e = ent(c.entity);
-      if (e?.type === "line" || e?.type === "circle" || e?.type === "arc") openDimensionFor(e, c.id, c.value, c.expr);
+      if (e?.type === "line" || e?.type === "circle" || e?.type === "arc")
+        openDimensionFor(e, c.id, c.value, c.expr, c.type === "diameter" ? "diameter" : "radius");
     } else if (c.type === "distanceBetween") {
       openDistanceFor(c.a, c.b, c.id, c.value, c.expr);
     } else if (c.type === "angle") {
@@ -6730,9 +6744,9 @@ export default function App() {
     }
   };
 
-  // Apply the entered value as a `distance` (line), `radius` (circle), or `angle`
-  // (line–line) constraint and immediately re-solve. Replaces any prior dimension
-  // of the same kind on the same entity/pair.
+  // Apply the entered value as a `distance` (line), `radius`/`diameter` (circle
+  // or arc), or `angle` (line–line) constraint and immediately re-solve. Replaces
+  // any prior dimension of the same kind on the same entity/pair.
   const applyDimension = async () => {
     if (!dimInput || !editingSketch) return;
     const sketchId = editingSketch.id;
@@ -6773,8 +6787,11 @@ export default function App() {
       if (kind === "distance")
         return !(c.type === "distanceBetween" && dimInput.refs != null && samePairRefs([c.a, c.b], dimInput.refs));
       if (kind === "angle") return !(c.type === "angle" && samePair(c.a, c.b));
-      const ctype = kind === "radius" ? "radius" : "distance";
-      return !(c.type === ctype && c.entity === entityId);
+      // A circle carries ONE size dimension: re-dimensioning it as Ø replaces
+      // an existing R (and vice versa) rather than stacking two that fight.
+      if (kind === "radius" || kind === "diameter")
+        return !((c.type === "radius" || c.type === "diameter") && c.entity === entityId);
+      return !(c.type === "distance" && c.entity === entityId);
     });
     // Keep the typed text when it names a variable, so the dimension can be
     // re-evaluated when that variable moves. A plainly-numeric dimension stores
@@ -6785,7 +6802,7 @@ export default function App() {
         ? { id: genId(), type: "distanceBetween", a: dimInput.refs![0], b: dimInput.refs![1], value, ...expr }
         : kind === "angle"
           ? { id: genId(), type: "angle", a: entityId, b: entityId2!, value, ...expr }
-          : { id: genId(), type: kind === "radius" ? "radius" : "distance", entity: entityId, value, ...expr };
+          : { id: genId(), type: kind === "length" ? "distance" : kind, entity: entityId, value, ...expr };
     const candidate = setSketchConstraints(previous, sketchId, [...kept, added]);
     const candidateSk = candidate.features.find((f) => f.id === sketchId);
     if (candidateSk?.type !== "sketch") return;
@@ -8095,12 +8112,40 @@ export default function App() {
               <label data-drag-handle>
                 {dimInput.kind === "radius"
                   ? "Radius"
-                  : dimInput.kind === "angle"
-                    ? "Angle °"
-                    : dimInput.kind === "distance"
-                      ? "Distance"
-                      : "Length"}
+                  : dimInput.kind === "diameter"
+                    ? "Diameter"
+                    : dimInput.kind === "angle"
+                      ? "Angle \u00b0"
+                      : dimInput.kind === "distance"
+                        ? "Distance"
+                        : "Length"}
               </label>
+              {/* Ø/R: the same size stated the other way. A plain number converts
+                  so the circle doesn't jump; an expression is left as typed —
+                  it now drives the other measure, which is what asking for it
+                  means. */}
+              {(dimInput.kind === "radius" || dimInput.kind === "diameter") && (
+                <button
+                  className="dim-kind-toggle"
+                  title={
+                    dimInput.kind === "diameter" ? "Dimension the radius instead" : "Dimension the diameter instead"
+                  }
+                  // Never take focus on click: the value field keeps it, so Enter
+                  // still commits the dimension instead of re-pressing this button.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() =>
+                    setDimInput((d) => {
+                      if (!d) return d;
+                      const next = d.kind === "diameter" ? "radius" : "diameter";
+                      const n = Number(d.value);
+                      const value = Number.isFinite(n) ? fmt(next === "diameter" ? n * 2 : n / 2) : d.value;
+                      return { ...d, kind: next, value };
+                    })
+                  }
+                >
+                  {dimInput.kind === "diameter" ? "R" : "\u00d8"}
+                </button>
+              )}
               <DimValueInput
                 value={dimInput.value}
                 variables={dimVarOptions}
