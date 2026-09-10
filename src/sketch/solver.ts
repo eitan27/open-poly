@@ -2,10 +2,15 @@
 // compiled to WASM). It maps our 2D sketch entities + constraints to planegcs
 // primitives, solves, and reads the updated coordinates back.
 //
-// NOTE (for the reviewing agent): point identity is currently derived by
-// coordinate key, so coincident endpoints (chained lines, snapped points) merge
-// into one solver point. This is correct immediately after drawing; a proper
-// point-based sketch model would make coincidence robust across repeated solves.
+// Point identity is REFERENTIAL: one solver point per entity VERTEX (`L:a` — the
+// `a` end of line L), named by the vertex it is rather than by where it happens
+// to sit. Two vertices at the same coordinates are two points unless a
+// `coincident` constraint says otherwise, so a joint is something the document
+// records, not an accident of position that the next solve can undo. (Geometry
+// that arrives already joined gets those constraints written for it — see
+// document/joints.ts.) The sketch ORIGIN is the one exception: it is immovable
+// ground, so a vertex sitting exactly on it is pinned there positionally, and
+// released as soon as the user moves it off.
 // Lines, circles, and arcs are all mapped (a circle's/arc's centre + radius are
 // solvable; an arc also has solvable endpoints + start/end angles tied by
 // arc_rules). Constraints mapped: horizontal/vertical/parallel/perpendicular/
@@ -62,8 +67,11 @@ export async function solveSketch(
   wrapper.clear_data();
 
   const prims: Prim[] = [];
-  const pointIdByKey = new Map<string, string>();
-  const keyToCoord = new Map<string, Vec2>();
+  // Solver point per entity vertex ("L:a"), per external fixed coordinate, and
+  // one for the origin — the three kinds of point the problem can contain.
+  const pointIdByVertex = new Map<string, string>();
+  const pointIdByFixed = new Map<string, string>();
+  let originPointId: string | null = null;
   const lineIdByEntity = new Map<string, string>();
   const circleIdByEntity = new Map<string, string>();
   const arcIdByEntity = new Map<string, string>();
@@ -94,30 +102,61 @@ export async function solveSketch(
   // Resolve a PointRef to live coordinates: the origin is the sketch origin
   // (0,0); a fixed point is its stored uv (a projected body vertex); otherwise
   // the named vertex of the referenced entity.
+  const vertexCoord = (e: SketchEntity, at: "a" | "b" | "c"): Vec2 | null => {
+    if (e.type === "line") return at === "b" ? e.b : e.a;
+    if (e.type === "circle") return e.c;
+    if (e.type === "arc") {
+      if (at === "c") return e.c;
+      const ends = arcEnds(e);
+      return at === "a" ? ends.start : ends.end;
+    }
+    return null;
+  };
   const refCoord = (ref: PointRef): Vec2 | null => {
     if ("origin" in ref) return [0, 0];
     if ("fixed" in ref) return ref.fixed;
     const e = entities.find((x) => x.id === ref.entity);
-    if (!e) return null;
-    if (e.type === "line") return ref.at === "a" ? e.a : e.b;
-    if (e.type === "circle") return e.c;
-    if (e.type === "arc") {
-      if (ref.at === "c") return e.c;
-      const ends = arcEnds(e);
-      return ref.at === "a" ? ends.start : ends.end;
-    }
-    return null;
+    return e ? vertexCoord(e, ref.at) : null;
   };
-  const ensurePoint = (p: Vec2, forceFixed = false): string => {
+  const addPoint = (p: Vec2, fixed: boolean): string => {
+    const id = `pt${pc++}`;
+    prims.push({ id, type: "point", x: p[0], y: p[1], fixed });
+    return id;
+  };
+  /** The solver point for one vertex of one entity, created on first use. Only
+   *  entities that entered the problem have vertices (a derived or missing one
+   *  resolves to null, and the constraint naming it is skipped). A vertex is
+   *  pinned when it sits on the origin or is the grabbed point of a drag. */
+  const vertexPoint = (entityId: string, at: "a" | "b" | "c"): string | null => {
+    const vk = `${entityId}:${at}`;
+    const existing = pointIdByVertex.get(vk);
+    if (existing) return existing;
+    const e = entities.find((x) => x.id === entityId);
+    if (!e || e.derivedFrom) return null;
+    const p = vertexCoord(e, at);
+    if (!p) return null;
     const k = key(p);
-    let id = pointIdByKey.get(k);
+    const id = addPoint(p, k === ORIGIN_KEY || lockedKeys.has(k));
+    pointIdByVertex.set(vk, id);
+    return id;
+  };
+  /** An external point (a projected body vertex) — genuinely positional: it has
+   *  no vertex identity in this sketch, and never moves. */
+  const fixedPoint = (p: Vec2): string => {
+    const k = key(p);
+    let id = pointIdByFixed.get(k);
     if (!id) {
-      id = `pt${pc++}`;
-      pointIdByKey.set(k, id);
-      keyToCoord.set(k, p);
-      prims.push({ id, type: "point", x: p[0], y: p[1], fixed: forceFixed || k === ORIGIN_KEY || lockedKeys.has(k) });
+      id = addPoint(p, true);
+      pointIdByFixed.set(k, id);
     }
     return id;
+  };
+  const originPoint = (): string => (originPointId ??= addPoint([0, 0], true));
+  /** Resolve a PointRef to the solver point it names. */
+  const refPoint = (ref: PointRef): string | null => {
+    if ("origin" in ref) return originPoint();
+    if ("fixed" in ref) return fixedPoint(ref.fixed);
+    return vertexPoint(ref.entity, ref.at ?? "a");
   };
 
   for (const e of entities) {
@@ -126,28 +165,28 @@ export async function solveSketch(
     // GCS problem (no points/prims, no DOF, not constrainable).
     if (e.derivedFrom) continue;
     if (e.type === "line") {
-      const p1 = ensurePoint(e.a);
-      const p2 = ensurePoint(e.b);
+      const p1 = vertexPoint(e.id, "a")!;
+      const p2 = vertexPoint(e.id, "b")!;
       const id = `ln_${e.id}`;
       lineIdByEntity.set(e.id, id);
       prims.push({ id, type: "line", p1_id: p1, p2_id: p2 });
     } else if (e.type === "circle") {
-      // A circle's centre is a solver point (so it merges with a coincident
-      // endpoint), and its radius is a free parameter until a radius constraint
-      // drives it.
-      const cId = ensurePoint(e.c);
+      // A circle's centre is a solver point (a coincident constraint can join it
+      // to another vertex), and its radius is a free parameter until a radius
+      // constraint drives it.
+      const cId = vertexPoint(e.id, "c")!;
       const id = `ci_${e.id}`;
       circleIdByEntity.set(e.id, id);
       prims.push({ id, type: "circle", c_id: cId, radius: e.r });
     } else if (e.type === "arc") {
       // An arc maps to a planegcs arc: centre + two endpoint points + radius +
       // start/end angles, tied together by `arc_rules` (so the endpoints stay on
-      // the circle at those angles). The endpoints are solver points, so they
-      // merge with coincident line/arc ends and the arc moves as a real curve.
-      const ends = arcEnds(e);
-      const cId = ensurePoint(e.c);
-      const sId = ensurePoint(ends.start);
-      const eId = ensurePoint(ends.end);
+      // the circle at those angles). The endpoints are solver points, so a
+      // coincident constraint joins them to line/arc ends and the arc moves as a
+      // real curve.
+      const cId = vertexPoint(e.id, "c")!;
+      const sId = vertexPoint(e.id, "a")!;
+      const eId = vertexPoint(e.id, "b")!;
       const id = `ar_${e.id}`;
       arcIdByEntity.set(e.id, id);
       prims.push({
@@ -180,7 +219,13 @@ export async function solveSketch(
     } else if (c.type === "distance") {
       const e = entities.find((x) => x.id === c.entity);
       if (e && e.type === "line") {
-        prims.push({ id, type: "p2p_distance", p1_id: ensurePoint(e.a), p2_id: ensurePoint(e.b), distance: c.value });
+        prims.push({
+          id,
+          type: "p2p_distance",
+          p1_id: vertexPoint(e.id, "a"),
+          p2_id: vertexPoint(e.id, "b"),
+          distance: c.value,
+        });
       }
     } else if (c.type === "distanceBetween") {
       // A linear distance between two sides, each a point / line / circle-arc rim.
@@ -190,8 +235,8 @@ export async function solveSketch(
       type Side = { k: "point"; id: string } | { k: "line"; id: string } | { k: "rim"; id: string };
       const side = (ref: typeof c.a): Side | null => {
         if (ref.on === "point") {
-          const p = refCoord(ref.ref);
-          return p ? { k: "point", id: ensurePoint(p) } : null;
+          const p = refPoint(ref.ref);
+          return p ? { k: "point", id: p } : null;
         }
         if (ref.on === "line") {
           const id = lineIdByEntity.get(ref.entity);
@@ -232,9 +277,15 @@ export async function solveSketch(
             (has("vertical", eA) && has("vertical", eB));
           const ln = entities.find((e) => e.id === eA);
           if (ln?.type === "line") {
-            prims.push({ id, type: "p2l_distance", p_id: ensurePoint(ln.a), l_id: y.id, distance: v });
+            prims.push({ id, type: "p2l_distance", p_id: vertexPoint(ln.id, "a"), l_id: y.id, distance: v });
             if (!forcedParallel)
-              prims.push({ id: `${id}~b`, type: "p2l_distance", p_id: ensurePoint(ln.b), l_id: y.id, distance: v });
+              prims.push({
+                id: `${id}~b`,
+                type: "p2l_distance",
+                p_id: vertexPoint(ln.id, "b"),
+                l_id: y.id,
+                distance: v,
+              });
           }
         } else if (x.k === "line" && y.k === "rim") {
           prims.push({ id, type: "c2ldistance", c_id: y.id, l_id: x.id, dist: v });
@@ -319,15 +370,17 @@ export async function solveSketch(
           // both of its coordinates so re-solves (e.g. a length dimension) can't
           // drag it away. Origin anchors to (0,0); a fixed body vertex to its uv.
           const target = aAnchored ? pa : pb;
-          const p = ensurePoint(aAnchored ? pb : pa);
-          prims.push({ id, type: "coordinate_x", p_id: p, x: target[0] });
-          prims.push({ id: `${id}~y`, type: "coordinate_y", p_id: p, y: target[1] });
+          const p = refPoint(aAnchored ? c.b : c.a);
+          if (p) {
+            prims.push({ id, type: "coordinate_x", p_id: p, x: target[0] });
+            prims.push({ id: `${id}~y`, type: "coordinate_y", p_id: p, y: target[1] });
+          }
         } else {
-          const p1 = ensurePoint(pa);
-          const p2 = ensurePoint(pb);
-          // Distinct coordinates today; if they already share a key they're the
-          // same solver point (implicitly coincident), so the constraint is moot.
-          if (p1 !== p2) prims.push({ id, type: "p2p_coincident", p1_id: p1, p2_id: p2 });
+          // Two distinct vertices, whether or not they currently sit at the same
+          // coordinates — THIS is what holds them together from here on.
+          const p1 = refPoint(c.a);
+          const p2 = refPoint(c.b);
+          if (p1 && p2 && p1 !== p2) prims.push({ id, type: "p2p_coincident", p1_id: p1, p2_id: p2 });
         }
       }
     } else if (c.type === "pointOnLine") {
@@ -337,32 +390,22 @@ export async function solveSketch(
       const p = refCoord(c.point);
       if (p && lineIdByEntity.has(c.line)) {
         // A fixed external point must stay put so the line adjusts to it, not the
-        // reverse (the origin is already pinned via ORIGIN_KEY).
-        const pid = ensurePoint(p, "fixed" in c.point);
-        prims.push({ id, type: "point_on_line_pl", p_id: pid, l_id: lineIdByEntity.get(c.line) });
+        // reverse (fixed points and the origin are created pinned).
+        const pid = refPoint(c.point);
+        if (pid) prims.push({ id, type: "point_on_line_pl", p_id: pid, l_id: lineIdByEntity.get(c.line) });
       }
     } else if (c.type === "pointOnCircle") {
       // A point lies on a circle's (or arc's) rim: parametric in the circle's
       // centre AND radius, so the point tracks it as it moves or resizes —
       // unlike the positional snap this replaces, which just placed the point.
-      const p = refCoord(c.point);
+      const p = refPoint(c.point);
       if (p && circleIdByEntity.has(c.circle)) {
-        prims.push({
-          id,
-          type: "point_on_circle",
-          p_id: ensurePoint(p, "fixed" in c.point),
-          c_id: circleIdByEntity.get(c.circle),
-        });
+        prims.push({ id, type: "point_on_circle", p_id: p, c_id: circleIdByEntity.get(c.circle) });
       } else if (p && arcIdByEntity.has(c.circle)) {
-        prims.push({
-          id,
-          type: "point_on_arc",
-          p_id: ensurePoint(p, "fixed" in c.point),
-          a_id: arcIdByEntity.get(c.circle),
-        });
+        prims.push({ id, type: "point_on_arc", p_id: p, a_id: arcIdByEntity.get(c.circle) });
       }
     } else if (c.type === "midpoint") {
-      const p = refCoord(c.point);
+      const p = refPoint(c.point);
       const target = entities.find((x) => x.id === c.target);
       if (p && target?.type === "line") {
         // The point is the midpoint of the line's two ends (p1, p2 symmetric
@@ -370,23 +413,21 @@ export async function solveSketch(
         prims.push({
           id,
           type: "p2p_symmetric_ppp",
-          p1_id: ensurePoint(target.a),
-          p2_id: ensurePoint(target.b),
-          p_id: ensurePoint(p),
+          p1_id: vertexPoint(target.id, "a"),
+          p2_id: vertexPoint(target.id, "b"),
+          p_id: p,
         });
       } else if (p && target?.type === "arc" && arcIdByEntity.has(target.id)) {
         // Mid-arc point: on the arc, and on the perpendicular bisector of the
         // chord (= equidistant from the two ends ⇒ the angular midpoint). Both are
         // arc-relative, so the point tracks the arc as it moves/resizes.
-        const ends = arcEnds(target);
-        const pid = ensurePoint(p);
-        prims.push({ id, type: "point_on_arc", p_id: pid, a_id: arcIdByEntity.get(target.id) });
+        prims.push({ id, type: "point_on_arc", p_id: p, a_id: arcIdByEntity.get(target.id) });
         prims.push({
           id: `${id}~b`,
           type: "point_on_perp_bisector_ppp",
-          p_id: pid,
-          lp1_id: ensurePoint(ends.start),
-          lp2_id: ensurePoint(ends.end),
+          p_id: p,
+          lp1_id: vertexPoint(target.id, "a"),
+          lp2_id: vertexPoint(target.id, "b"),
         });
       }
     }
@@ -413,31 +454,33 @@ export async function solveSketch(
     ...wrapper.get_gcs_partially_redundant_constraints(),
   ]);
 
-  // Read solved point coordinates back per key.
-  const solvedByKey = new Map<string, Vec2>();
-  for (const [k, id] of pointIdByKey) {
+  // Read each vertex back from ITS OWN solver point — the same referential
+  // identity that went in, so a vertex can't pick up a neighbour's solved
+  // position just because the two started out at the same coordinates.
+  const solvedVertex = (entityId: string, at: "a" | "b" | "c", fallback: Vec2): Vec2 => {
+    const id = pointIdByVertex.get(`${entityId}:${at}`);
+    if (!id) return fallback;
     const pt = wrapper.sketch_index.get_sketch_point(id);
-    solvedByKey.set(k, [pt.x, pt.y]);
-  }
-  const movePoint = (p: Vec2): Vec2 => solvedByKey.get(key(p)) ?? p;
+    return [pt.x, pt.y];
+  };
 
   const updated: SketchEntity[] = entities.map((e) => {
     if (e.derivedFrom) return e; // untouched here; regenerated by applyDerived
-    if (e.type === "line") return { ...e, a: movePoint(e.a), b: movePoint(e.b) };
+    if (e.type === "line") return { ...e, a: solvedVertex(e.id, "a", e.a), b: solvedVertex(e.id, "b", e.b) };
     if (e.type === "circle") {
       const cid = circleIdByEntity.get(e.id);
       if (!cid) return e;
       const ci = wrapper.sketch_index.get_sketch_circle(cid);
-      return { ...e, c: movePoint(e.c), r: ci.radius };
+      return { ...e, c: solvedVertex(e.id, "c", e.c), r: ci.radius };
     }
     if (e.type === "arc" && arcIdByEntity.has(e.id)) {
       // Rebuild centre/radius/angles from the solved centre + endpoints (which
       // also carry any coincidence with connected geometry). Keep the sweep close
       // to the original so a minor arc never flips to its major complement.
       const ends = arcEnds(e);
-      const c = movePoint(e.c);
-      const sp = movePoint(ends.start);
-      const ep = movePoint(ends.end);
+      const c = solvedVertex(e.id, "c", e.c);
+      const sp = solvedVertex(e.id, "a", ends.start);
+      const ep = solvedVertex(e.id, "b", ends.end);
       const r = (Math.hypot(sp[0] - c[0], sp[1] - c[1]) + Math.hypot(ep[0] - c[0], ep[1] - c[1])) / 2;
       const start = Math.atan2(sp[1] - c[1], sp[0] - c[0]);
       const origSweep = e.end - e.start;

@@ -230,10 +230,6 @@ place. Roughly ordered by how often a user meets them.
 **Sketching (Phase 2 backlog)**
 
 - **Trim / extend** — not built. The most conspicuous missing sketch tool.
-- **Point identity is by coordinate key** (`solver.ts`) — coincident points merge
-  by rounded position, so a "coincidence" silently breaks once a solve moves them
-  apart. A real point-based sketch model is wanted before heavy constraint
-  editing; it also blocks robust coincident editing.
 - **Cancel a sketch edit** — edits to an existing sketch apply live; there's no
   discard-on-Esc (snapshot-on-entry + restore).
 - **Constraints not mapped:** concentric, symmetric, collinear, fix/lock.
@@ -405,10 +401,6 @@ driving variable changes — is **met**.
   a general fix/lock of an arbitrary entity.
 - **Splines** still pass through the solver **unconstrained** (only line / arc /
   circle are mapped).
-- **Point identity is by coordinate key** (`solver.ts`): coincident endpoints
-  merge by rounded position, robust only until a solve moves them — a real
-  point-based sketch model is wanted before heavy constraint editing (it blocks
-  p2p distance + robust coincident editing).
 - **Project tool gaps:** **vertex** projection is **best-effort** — vertices have
   no stable cross-rebuild identity, so a projected vertex re-projects its stored
   world point (tracks the sketch plane, **not** changes to the source body),

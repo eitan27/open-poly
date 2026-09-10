@@ -17,6 +17,7 @@ import {
 } from "./planes";
 import { extrudeUsesDistance } from "./extrudeValidation";
 import { detectSketchRegions, regionProfileSegments } from "./regions";
+import { missingJoints } from "./joints";
 import { applyDerived, circularPatternAngles, resolvePatternCount } from "./derived";
 import type {
   BooleanFeature,
@@ -131,6 +132,18 @@ export function migrateDocument(doc: Document): Document {
       changed = true;
       const prof = f.profile as { sketchId: string; regionId: string };
       return { ...feat, profile: { kind: "sketchRegion" as const, sketchId: prof.sketchId, regionId: prof.regionId } };
+    }
+    // Sketches drawn before point identity became referential held their corners
+    // by coordinate alone — the solver merged whatever sat on the same spot. It
+    // no longer does, so those joints are written down now, exactly where the old
+    // merge would have made them. (Nothing to do for sketches that already carry
+    // them: missingJoints only ever adds what isn't there.)
+    if (feat.type === "sketch") {
+      const joints = missingJoints(feat.entities, feat.constraints, genId);
+      if (joints.length) {
+        changed = true;
+        return { ...feat, constraints: [...feat.constraints, ...joints] };
+      }
     }
     return feat;
   });
@@ -679,8 +692,19 @@ export function addSketchEntity(doc: Document, sketchId: string, entity: SketchE
   return mapSketch(doc, sketchId, (s) => ({ ...s, entities: [...s.entities, entity] }));
 }
 
+/** Append entities to a sketch, recording the joints they arrive with.
+ *
+ *  New geometry usually lands ON existing geometry — the next segment of a
+ *  polyline, a rectangle's four corners, an arc drawn off a line's end. The
+ *  solver identifies points by which vertex they ARE, not where they sit, so
+ *  those joints have to be constraints or the shape comes apart on the next
+ *  solve. Deriving them here covers every producer at once, including the
+ *  agent's `add_sketch`. (See document/joints.ts.) */
 export function addSketchEntities(doc: Document, sketchId: string, entities: SketchEntity[]): Document {
-  return mapSketch(doc, sketchId, (s) => ({ ...s, entities: [...s.entities, ...entities] }));
+  return mapSketch(doc, sketchId, (s) => {
+    const all = [...s.entities, ...entities];
+    return { ...s, entities: all, constraints: [...s.constraints, ...missingJoints(all, s.constraints, genId)] };
+  });
 }
 
 export function setSketchEntities(doc: Document, sketchId: string, entities: SketchEntity[]): Document {
