@@ -939,7 +939,10 @@ export function setFeatureHidden(doc: Document, id: string, hidden: boolean): Do
 }
 
 export function setRollbackIndex(doc: Document, index: number): Document {
-  return { ...doc, rollbackIndex: clamp(index, 0, doc.features.length) };
+  const next = clamp(index, 0, doc.features.length);
+  // Same place ⇒ the same document, so scrubbing the bar across a position it
+  // already sits at (or releasing a drag where it started) adds no undo step.
+  return next === doc.rollbackIndex ? doc : { ...doc, rollbackIndex: next };
 }
 
 // --- Variables ------------------------------------------------------------
