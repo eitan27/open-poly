@@ -212,12 +212,13 @@ Each feature stores **references** (to sketches, faces, edges, axes, planes), it
 Ordered so each phase produces something runnable and demoable. Estimates are
 rough relative sizing, not calendar promises.
 
-> **Where things stand (2026-07-28).** Phases 0–8.7 are shipped and on `main`;
+> **Where things stand (2026-09-10).** Phases 0–8.7 are shipped and on `main`;
 > the app is a working parametric modeler — constrained sketching, extrude /
 > revolve / sweep / loft / boolean / pattern / mirror / transform / chamfer /
 > fillet, reference planes, multi-body parts, STEP+STL export, STEP+DXF import,
-> multi-document storage, section view, sketch inference guides, and an MCP agent
-> bridge (Phase 9, L0–L3). The per-phase sections below are kept for their design
+> multi-document storage, section view, sketch inference guides, shell, and an
+> MCP agent bridge (Phase 9, L0–L3). The per-phase sections below are kept for
+> their design
 > rationale and gotchas, not as a status ledger — **git is the record of what
 > shipped when.** What is NOT built is collected under _What's left_, next.
 
@@ -256,28 +257,26 @@ place. Roughly ordered by how often a user meets them.
 
 **Rough edges that fail silently** (each small and localized)
 
-- Extrude `remove` that resolves to zero target bodies deletes the tool silently
-  (EXTRUDE_IMPROVEMENTS #6).
-- Extrude distance isn't validated as > 0; a degenerate value surfaces as a raw
-  OCCT exception (#7).
 - A failed autosave only `console.warn`s — no banner (Phase 8.7 open items).
 
 **Features with obvious next increments**
 
-- **Extrude:** taper/draft angle + thin/shell walls; a viewport drag handle for
-  distance (the Transform gizmo proved the pattern).
-- **Transform:** scale; rotation about a datum axis / body edge.
+- **Extrude:** taper/draft angle + thin/shell walls.
+- **Transform:** rotation about a datum axis / body edge (the axis is world
+  X/Y/Z today).
 - **Pattern:** per-instance skip, fuse-with-seed, multi-seed, body-edge directions.
 - **Planes:** hinge on a picked edge; line+point and two-parallel-edges methods.
 - **Sweep/loft:** twist, multiple profiles, guide rails, ruled option.
-- **STEP import:** drag-and-drop a file; one body per solid (assembly split is
-  shelved on `feat/step-assembly-split` — blocked on a wasm build with XCAF).
+- **STEP import:** drag-and-drop a file (the picker is the only route in).
+  Disjoint solids already split into parts; what's still missing is their
+  **names** — shelved on `feat/step-assembly-split`, blocked on a wasm build
+  with XCAF.
 
 **Agent (Phase 9)**
 
-- **L4 — robustness:** token auth, multi-tab handling, error taxonomy, queue
-  ordering, reconnection, timeouts. The tab currently dials the hub in prod too,
-  logging WS errors when no hub runs.
+- **L4 — robustness:** token auth (the client sends one, the hub never checks
+  it) and multi-tab handling (`wsHub` is last-connected-wins). Reconnection,
+  timeouts, queue ordering and the error taxonomy are in.
 
 **Housekeeping**
 
@@ -589,7 +588,7 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     onto the viewport; one-body-per-solid (multi-solid STEP still comes in as
     one compound).
 
-### Phase 5 — Boolean + Reference planes + Pattern + Mirror _(Boolean + offset planes ✅; rest TODO)_
+### Phase 5 — Boolean + Reference planes + Pattern + Mirror — ✅ DONE
 
 - Boolean between separate bodies: union / subtract / intersect — **done**
   (`BooleanFeature`, name propagation). The button is **always enabled**

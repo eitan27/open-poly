@@ -15,6 +15,7 @@ import {
   type PlaneFrameData,
   type SketchPlaneRef,
 } from "./planes";
+import { extrudeUsesDistance } from "./extrudeValidation";
 import { detectSketchRegions, regionProfileSegments } from "./regions";
 import { applyDerived, circularPatternAngles, resolvePatternCount } from "./derived";
 import type {
@@ -1079,7 +1080,15 @@ export function resolveDocument(doc: Document): ResolveResult {
         }
         features.push({ id: f.id, type: "primitive", kind: f.kind, params });
       } else if (f.type === "extrude") {
+        const extent = f.extent ?? "blind";
         const distance = evaluateExpression(f.distance, scope);
+        // A zero or negative distance builds a degenerate prism (OCCT surfaces
+        // that as a raw exception, which means nothing to a user), so it's
+        // rejected here — on the resolve path every route into the document
+        // shares: the dialog, an agent op, and a param edit. Extents that
+        // derive their own length ignore the field and aren't checked.
+        if (extrudeUsesDistance(extent) && !(distance > 0))
+          throw new Error("extrude: distance must be greater than zero.");
         // Every profile is lowered; the worker builds one tool per profile and,
         // for add/remove, sends each into the body it came from.
         const profiles = f.profiles.map((prof) => {
@@ -1139,7 +1148,7 @@ export function resolveDocument(doc: Document): ResolveResult {
           profiles,
           distance,
           flip: f.flip,
-          extent: f.extent ?? "blind",
+          extent,
           mode: f.mode,
           targetId: f.targetId,
           upTo,

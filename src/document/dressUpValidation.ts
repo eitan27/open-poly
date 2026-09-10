@@ -1,7 +1,8 @@
 // Validation + error copy for the chamfer/fillet (dress-up) size field. Split
 // out of App.tsx so the per-scenario behavior can be unit-tested directly.
 
-import { evaluateExpression, type Scope } from "./expression";
+import { type Scope } from "./expression";
+import { parseNumericField, validatePositiveField, type FieldResult } from "./numericField";
 
 /** Synchronous, kernel-free validation of a chamfer/fillet size field. Returns a
  *  human-readable `error` to show (or null) and the resolved `value` when it's a
@@ -9,24 +10,8 @@ import { evaluateExpression, type Scope } from "./expression";
  *  build (empty, unparseable, or ≤ 0), so a blank/garbage size never reaches OCCT.
  *  An empty field is intentionally errorless (value null, error null): the button
  *  is disabled but nothing is flagged as wrong. */
-export function validateDressUpSize(
-  size: string,
-  scope: Scope,
-  op: "chamfer" | "fillet",
-): { error: string | null; value: number | null } {
-  const label = op === "chamfer" ? "Distance" : "Radius";
-  if (size.trim() === "") return { error: null, value: null };
-  let value: number;
-  try {
-    value = evaluateExpression(size, scope);
-  } catch (e) {
-    // Surface the parser's message, keeping its specific token/character, but
-    // reword "name" → "variable" (what an unknown identifier means to a user).
-    const msg = String((e as Error)?.message ?? e).replace(/^Unknown name /, "Unknown variable ");
-    return { error: msg, value: null };
-  }
-  if (value <= 0) return { error: `${label} must be greater than 0.`, value: null };
-  return { error: null, value };
+export function validateDressUpSize(size: string, scope: Scope, op: "chamfer" | "fillet"): FieldResult {
+  return validatePositiveField(size, scope, op === "chamfer" ? "Distance" : "Radius");
 }
 
 /** Synchronous, kernel-free validation of the chamfer angle field (degrees from
@@ -34,17 +19,11 @@ export function validateDressUpSize(
  *  errorless with a null value (the button is disabled, nothing is built), and a
  *  parse failure keeps the parser's wording. OCCT can only build a bevel that
  *  actually leaves both faces, so the angle must be strictly between 0 and 90. */
-export function validateDressUpAngle(angle: string, scope: Scope): { error: string | null; value: number | null } {
-  if (angle.trim() === "") return { error: null, value: null };
-  let value: number;
-  try {
-    value = evaluateExpression(angle, scope);
-  } catch (e) {
-    const msg = String((e as Error)?.message ?? e).replace(/^Unknown name /, "Unknown variable ");
-    return { error: msg, value: null };
-  }
-  if (value <= 0 || value >= 90) return { error: "Angle must be between 0 and 90°.", value: null };
-  return { error: null, value };
+export function validateDressUpAngle(angle: string, scope: Scope): FieldResult {
+  const parsed = parseNumericField(angle, scope);
+  if (parsed.value === null) return parsed;
+  if (parsed.value <= 0 || parsed.value >= 90) return { error: "Angle must be between 0 and 90°.", value: null };
+  return parsed;
 }
 
 /** Translate a kernel/OCCT build failure for a *valid positive* chamfer/fillet

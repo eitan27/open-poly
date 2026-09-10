@@ -54,7 +54,6 @@ when there's nothing to constrain.
 
 - **Hysteresis** — the one deferred MVP item. Snap stickiness so competing guides
   don't flicker; best judged by real use.
-- Guides can render while the **Select** tool is active, not only while drawing.
 - The multi-click preview polyline shows no marker at the in-progress vertex
   unless a guide/snap is active.
 

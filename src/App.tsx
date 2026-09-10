@@ -124,6 +124,7 @@ import { DEFAULT_SECTION_VIEW, type SectionViewState } from "./document/sectionV
 import { evaluateExpression } from "./document/expression";
 import { validateDressUpSize, validateDressUpAngle, mapDressUpKernelError } from "./document/dressUpValidation";
 import { validateShellThickness, mapShellKernelError } from "./document/shellValidation";
+import { validateExtrudeDistance, extrudeUsesDistance } from "./document/extrudeValidation";
 import { shellBodyFromSelection, toggleShellFace, retargetShell, NO_SHELL_FACES } from "./document/shellTarget";
 import { detectSketchRegions } from "./document/regions";
 import { extrudeProfilesFromPicks, isExtrudePick, toggleExtrudePick } from "./document/extrudeProfiles";
@@ -1858,9 +1859,6 @@ export default function App() {
     window.addEventListener("pointerdown", onDown);
     return () => window.removeEventListener("pointerdown", onDown);
   }, [constraintFlyoutOpen]);
-  // The camera projection toggle (orthographic ⇄ perspective) is TODO: it moves
-  // into a future settings menu. The viewport API (viewApiRef.setProjection) is
-  // still wired, so the menu can drive it; the default stays orthographic.
   // The Variables section is collapsible (to reclaim panel space). Default:
   // open for a short list (< 5 variables), collapsed for a long one so it
   // doesn't dominate the panel. Set from the loaded doc (see the restore effect)
@@ -3147,6 +3145,20 @@ export default function App() {
   );
   const extrudeTargetSatisfied = !extrudeNeedsTarget || !!extrudeDialog?.targetId;
 
+  // The distance field, validated synchronously (empty / unparseable / ≤ 0) the
+  // way the dress-up and Shell dialogs validate theirs. `value === null` is the
+  // "don't build" signal — it gates Create and the ghost, so a degenerate prism
+  // never reaches OCCT (which would surface it as a raw exception).
+  const extrudeDistanceCheck = useMemo(
+    () =>
+      extrudeDialog
+        ? validateExtrudeDistance(extrudeDialog.distance, extrudeDialog.extent, resolved.scope)
+        : { error: null, value: null },
+    [extrudeDialog, resolved.scope],
+  );
+  const extrudeDistanceSatisfied =
+    !extrudeDialog || !extrudeUsesDistance(extrudeDialog.extent) || extrudeDistanceCheck.value !== null;
+
   // World-space anchor for the extrude dialog + gizmo: a body face's centroid,
   // or a sketch region's centroid mapped to 3D. Defaults to the first selected
   // profile; the gizmo passes the dialog's own profile (which falls back to the
@@ -3333,6 +3345,8 @@ export default function App() {
     if (extrudeDialog.mode !== "new" && !extrudeTargetSatisfied) return;
     // Up to face requires a chosen target face.
     if (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) return;
+    // A blank/garbage/≤ 0 distance is never built (the button is disabled too).
+    if (!extrudeDistanceSatisfied) return;
     const opts = {
       distance: extrudeDialog.distance,
       flip: extrudeDialog.flip,
@@ -3468,7 +3482,8 @@ export default function App() {
       extrudeDialog.editId ||
       extrudeDialogProfiles.length === 0 ||
       (extrudeDialog.mode !== "new" && !extrudeTargetSatisfied) ||
-      (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo)
+      (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) ||
+      !extrudeDistanceSatisfied
     ) {
       setExtrudePreview(null);
       setExtrudePreviewError(null);
@@ -3532,7 +3547,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [extrudeDialog, extrudeDialogProfiles, extrudeTargetSatisfied, doc, ready]);
+  }, [extrudeDialog, extrudeDialogProfiles, extrudeTargetSatisfied, extrudeDistanceSatisfied, doc, ready]);
 
   // Live ghost preview of the revolve dialog: once a profile + axis are armed,
   // build a throwaway doc with that revolve (mirrors createRevolve, minus the
@@ -8797,14 +8812,21 @@ export default function App() {
                   />
                 </label>
               )}
-              {extrudePreviewError && <p className="ed-warning">{extrudePreviewError}</p>}
+              {/* Synchronous distance validation first (instant, kernel-free);
+                  the async ghost-build failure only shows once the field is
+                  sane. An empty field stays silent — the button is disabled
+                  but nothing is flagged as wrong. */}
+              {(extrudeDistanceCheck.error ?? extrudePreviewError) && (
+                <p className="ed-warning">{extrudeDistanceCheck.error ?? extrudePreviewError}</p>
+              )}
               <div className="ed-actions">
                 <button
                   className="ed-primary"
                   disabled={
                     extrudeDialogProfiles.length === 0 ||
                     (extrudeDialog.mode !== "new" && !extrudeTargetSatisfied) ||
-                    (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo)
+                    (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) ||
+                    !extrudeDistanceSatisfied
                   }
                   onClick={createExtrude}
                 >

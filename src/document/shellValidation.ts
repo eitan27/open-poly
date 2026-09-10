@@ -2,7 +2,8 @@
 // so the per-scenario behavior can be unit-tested directly — mirrors
 // dressUpValidation.ts for chamfer/fillet.
 
-import { evaluateExpression, type Scope } from "./expression";
+import { type Scope } from "./expression";
+import { validatePositiveField, type FieldResult } from "./numericField";
 
 /** Synchronous, kernel-free validation of a Shell thickness field. Returns a
  *  human-readable `error` to show (or null) and the resolved `value` when it's
@@ -10,20 +11,8 @@ import { evaluateExpression, type Scope } from "./expression";
  *  NOT build (empty, unparseable, or ≤ 0), so a blank/garbage thickness never
  *  reaches OCCT. An empty field is intentionally errorless (value null, error
  *  null): the button is disabled but nothing is flagged as wrong. */
-export function validateShellThickness(
-  thickness: string,
-  scope: Scope,
-): { error: string | null; value: number | null } {
-  if (thickness.trim() === "") return { error: null, value: null };
-  let value: number;
-  try {
-    value = evaluateExpression(thickness, scope);
-  } catch (e) {
-    const msg = String((e as Error)?.message ?? e).replace(/^Unknown name /, "Unknown variable ");
-    return { error: msg, value: null };
-  }
-  if (value <= 0) return { error: "Thickness must be greater than 0.", value: null };
-  return { error: null, value };
+export function validateShellThickness(thickness: string, scope: Scope): FieldResult {
+  return validatePositiveField(thickness, scope, "Thickness");
 }
 
 /** Translate a kernel/OCCT build failure for a *valid positive* Shell
