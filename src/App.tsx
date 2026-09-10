@@ -7767,6 +7767,7 @@ export default function App() {
               <FeatureTree
                 doc={doc}
                 height={timelineHeight}
+                busy={busy}
                 datums={DATUM_ROWS}
                 datumVisibility={datumVisibility}
                 onToggleDatum={(id) => setDatumVisibility((v) => ({ ...v, [id]: !v[id] }))}
@@ -7780,7 +7781,14 @@ export default function App() {
                   setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
                 }
                 onToggleHidden={(id, hidden) => setDoc(setFeatureHidden(doc, id, hidden))}
-                onSetRollback={(index) => setDoc(setRollbackIndex(doc, index))}
+                // A scrub commits at every position it passes (so the model
+                // rolls with the bar) but coalesces into ONE undo step; a plain
+                // click on a gutter is its own step, as before. Functional form:
+                // the drag captures this callback once, so it must not close
+                // over a `doc` that goes stale under it.
+                onSetRollback={(index, draggingBar) =>
+                  setDoc((prev) => setRollbackIndex(prev, index), draggingBar ? "rollback-drag" : undefined)
+                }
                 onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
               />
               <div className="panel-splitter" title="Drag to resize the timeline" onPointerDown={startTimelineResize} />

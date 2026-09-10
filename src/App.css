@@ -1400,7 +1400,11 @@ button:disabled .kbd-hint {
 
 /* --- Rollback bar --- */
 
+/* The rollback bar sits BETWEEN rows, so its band stays thin (8px) and keeps the
+   timeline's rhythm; the grip and the count chip are positioned out of flow and
+   allowed to overhang it, which is what lets them be big enough to grab. */
 .rollback-gutter {
+  position: relative;
   height: 8px;
   display: flex;
   align-items: center;
@@ -1419,9 +1423,129 @@ button:disabled .kbd-hint {
   background: var(--accent-surface-7);
 }
 
+/* Neutral grey at rest: the bar is a persistent piece of furniture, not an
+   alert, so it shouldn't shout over the rows it sits between. It brightens
+   (below) only while it's actually being dragged. `--text-8` is nearly the same
+   hex in both themes, which is what a neutral this size wants. */
 .rollback-gutter.active .rollback-line {
-  background: var(--warn-dot);
-  box-shadow: 0 0 6px var(--warn-dot-glow);
+  background: var(--text-8);
+}
+
+/* The handle: the affordance that the bar is a thing you pick up, rather than a
+   line you can only click past. Left-aligned, where no row icon competes. */
+.rollback-grip {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 28px;
+  height: 9px;
+  border-radius: 5px;
+  background: var(--text-8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden; /* clips the loading sweep to the handle */
+  cursor: grab;
+  touch-action: none; /* the pointer drag owns the gesture, not the scroller */
+}
+
+.rollback-gutter.active:hover .rollback-line,
+.rollback-grip:hover {
+  background: var(--text-5);
+}
+
+.rollback-grip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Two dark rules across the handle — the conventional "draggable" texture. */
+.rollback-grip-bars {
+  width: 11px;
+  height: 3px;
+  border-top: 1px solid var(--bg-panel);
+  border-bottom: 1px solid var(--bg-panel);
+  opacity: 0.9;
+}
+
+/* While a scrub is live: the grip follows the hand, and EVERY insertion point
+   lights up faintly so the positions the bar can land on are visible instead of
+   guessed at. The one under the pointer is the solid amber line above. */
+.tree.rollback-dragging {
+  cursor: grabbing;
+}
+
+/* Under the hand, the bar earns the brighter amber — it's the thing being
+   acted on, and it has to stay findable against the dashed stops. */
+.tree.rollback-dragging .rollback-grip {
+  cursor: grabbing;
+  background: var(--text-4);
+  transform: translate(-50%, -50%) scale(1.1);
+}
+
+.tree.rollback-dragging .rollback-gutter.active .rollback-line {
+  background: var(--text-4);
+}
+
+.tree.rollback-dragging .rollback-gutter:not(.active) .rollback-line {
+  background: repeating-linear-gradient(to right, var(--text-9) 0 4px, transparent 4px 8px);
+  opacity: 0.7;
+}
+
+/* How far the model is wound back, right where the eye already is. Shown only
+   during a drag: at rest the dimmed rows below the bar say the same thing. */
+/* Rebuilding: the two rules give way to a sweep across the handle, so a scrub
+   that kicked off a slow regen says so where the hand is. Motion-sensitive
+   users get a steady dim instead of a moving highlight. */
+.rollback-grip.busy .rollback-grip-bars {
+  opacity: 0;
+}
+
+.rollback-grip.busy::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  /* A band travelling through an oversized gradient rather than an element
+     sliding across: the highlight is ON the handle at every instant, so there's
+     no point in the cycle where a busy grip looks like an idle one. */
+  background: linear-gradient(90deg, var(--text-8) 0%, var(--text-2) 50%, var(--text-8) 100%);
+  background-size: 220% 100%;
+  animation: rollback-sweep 1.1s linear infinite;
+}
+
+@keyframes rollback-sweep {
+  from {
+    background-position: 220% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rollback-grip.busy::after {
+    animation: none;
+    background: var(--text-4);
+    opacity: 0.4;
+  }
+}
+
+.rollback-count {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 1px 6px;
+  border-radius: 7px;
+  background: var(--bg-control);
+  border: 1px solid var(--border-strong);
+  color: var(--text-4);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 /* --- Parameter editor --- */

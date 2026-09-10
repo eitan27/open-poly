@@ -280,7 +280,6 @@ place. Roughly ordered by how often a user meets them.
 
 **Housekeeping**
 
-- Phase 8.5 **#5** (timeline formatting) — the last item of that batch.
 - Landing-page auto-deploy is disabled (private repo on the Free plan).
 - Kernel builder/mesh caches evict on document switch (A→B→A re-solves A).
 - Sketch inference **hysteresis** (the one deferred MVP item) — snap stickiness.
@@ -1068,9 +1067,7 @@ recovery`).** Fixed an atomicity bug (`adoptRecord`/boot-restore validated
 > multi-document for both the human (dialog, title, thumbnails, .json files)
 > and the agent (list/open/new/rename/duplicate + document identity in reads).
 
-### Phase 8.5 — UI/UX backlog (next polish pass) — IN PROGRESS (7/8 done)
-
-> Remaining: **#5** (timeline formatting). Items #1, #2, #3, #4, #6, #7, #8 are ✅ DONE.
+### Phase 8.5 — UI/UX backlog (next polish pass) — ✅ DONE
 
 A focused pass on layout, discoverability, and the two interactions that still
 feel rough (extrude extents, boolean operand picking), plus shortcuts and the
@@ -1197,11 +1194,38 @@ center}`; re-clickable to re-pick). The kernel computes the signed prism
    (subtract notes "first = base, rest = tools"). (`ui/BooleanDialog.tsx`,
    `openBooleanDialog`/`handlePick` boolean branch in `App.tsx`.)
 
-5. **Timeline formatting.** Re-evaluate the bordered **box** around the timeline
-   — is it needed for the drag-resize affordance, or can the splitter work
-   without the frame? Tighten **spacing to be consistent with the datums** now
-   that datums live inside the timeline. (`FeatureTree` `.tree`/`.panel-splitter`
-   - `.tree-row`/`.datum-row` spacing in `App.css`.)
+5. **Timeline formatting — ✅ DONE.** The frame and the datum spacing were left
+   as they are (they read well once datums moved inside), and the item closed on
+   what was actually rough: the **rollback bar**. It was a 2px line in an 8px
+   gutter with a click handler — nothing said it could be dragged, and nothing
+   during a drag said which point between features you were about to land on. It
+   now carries a **grip** — a slim neutral-grey pill centred on the bar, out of
+   flow so the row rhythm is unchanged (`--text-8` is near-identical in both
+   themes, which is what a neutral this size wants); a **scrub commits at every
+   stop it passes**, so the model rolls
+   with the bar, coalesced under one `rollback-drag` undo key so the whole drag
+   is a single step; **every insertion point lights up dashed while dragging**,
+   with the target the one solid line (brightening rather than changing hue, so
+   nothing in the timeline reads as an alert) and a **`n / total` chip**; and
+   the grip is a
+   `role="slider"` reachable by ↑/↓/Home/End. A keyboard move renders the grip
+   into a different gutter, so it re-takes focus — without that the bar could be
+   nudged exactly once. `setRollbackIndex` returns the same document for the
+   same index, so scrubbing across a position adds no undo step.
+
+   **The panel follows the bar** rather than waiting to be scrolled: on mount,
+   and whenever the bar moves or the timeline grows, it scrolls so the bar sits
+   at the middle of the panel — which clamps to a fully-scrolled list when the
+   model is up to date, and to the top when the bar is too high to centre, so
+   one line covers all three cases. Held near an edge, a drag scrolls the list
+   under itself (ramped by depth into the band) and re-measures its stops. Two
+   gotchas worth keeping: the reveal must measure through **rects, not
+   `offsetTop`** (the gutter is positioned, so its offsetParent isn't the
+   scroller), and the effect must sit out a drag, which owns the scroll while it
+   runs. While the kernel rebuilds, the grip's two rules give way to a
+   **shimmer** — a band travelling through an oversized gradient, so the
+   highlight is on the handle at every instant rather than sliding off it.
+   Verified by `scripts/verify-rollback-drag.mjs` (14 checks).
 
 6. **Less space above the Variables title — ✅ DONE.** Tightened the
    `.params-heading.collapsible` top margin from 22px to 10px.
