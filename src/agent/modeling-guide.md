@@ -222,7 +222,7 @@ entityId}` (get the id from `get_scene_summary`); a plane `{plane: …}` (the ax
     `tangent`, `coincident`, `pointOnLine`, `midpoint`. Points are `{entityId,
 at}` (`at` 'a'/'b' = line/arc ends, 'c' = circle/arc/point center) or
     `{origin:true}`.
-  - `add_dimension` — `length`/`radius`/`angle`/`distance`; its `value` takes a
+  - `add_dimension` — `length`/`radius`/`diameter`/`angle`/`distance`; its `value` takes a
     number or a **variable expression** (`"width/2"`), so define the variable
     first and the dimension drives the geometry from it.
     Both re-solve immediately and are **rejected (with a message)** if they

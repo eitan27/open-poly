@@ -17,6 +17,10 @@ export type DimSpec =
   // A circle's radius: a leader from the centre to just past the rim, an
   // arrowhead touching the rim, and the value beyond it.
   | { id: string; kind: "radius"; text: string; c: Vec2; r: number }
+  // A circle's diameter: the same leader continued THROUGH the centre to the far
+  // rim, with an arrowhead at each rim — the drafting distinction between R and
+  // Ø is the span the leader covers, not just the prefix on the value.
+  | { id: string; kind: "diameter"; text: string; c: Vec2; r: number }
   // The angle between two lines: an arc between them centred on their corner
   // (`p`), swept from `dir1` to `dir2`, with the value at its midpoint — or,
   // when the constraint pins a right angle, a small corner box instead (the
@@ -159,18 +163,23 @@ export function DimensionOverlay({
             setArrow(g, "arrow1", d1, scale(u, -1));
             setArrow(g, "arrow2", d2, u);
             placeLabel(label, scale(add(d1, d2), 0.5));
-          } else if (spec.kind === "radius") {
+          } else if (spec.kind === "radius" || spec.kind === "diameter") {
             const dir: Vec2 = [Math.SQRT1_2, Math.SQRT1_2];
             const rim: Vec2 = [spec.c[0] + spec.r * dir[0], spec.c[1] + spec.r * dir[1]];
             const far: Vec2 = [
               spec.c[0] + spec.r * RADIUS_LEADER_REACH * dir[0],
               spec.c[1] + spec.r * RADIUS_LEADER_REACH * dir[1],
             ];
+            // Radius: centre → out past the rim. Diameter: the far rim → out past
+            // the near one, so the leader spans the whole circle.
+            const back: Vec2 = [spec.c[0] - spec.r * dir[0], spec.c[1] - spec.r * dir[1]];
             const sc = toScreen(spec.c);
             const sRim = toScreen(rim);
             const sFar = toScreen(far);
-            setLine(g, "leader", sc, sFar);
+            const sBack = toScreen(back);
+            setLine(g, "leader", spec.kind === "diameter" ? sBack : sc, sFar);
             setArrow(g, "arrow1", sRim, unit(sub(sc, sRim)));
+            if (spec.kind === "diameter") setArrow(g, "arrow2", sBack, unit(sub(sc, sBack)));
             placeLabel(label, sFar);
           } else if (spec.kind === "angle") {
             const sp = toScreen(spec.p);
@@ -236,10 +245,11 @@ export function DimensionOverlay({
                   <polygon data-role="arrow2" className="dim-arrow" />
                 </>
               )}
-              {s.kind === "radius" && (
+              {(s.kind === "radius" || s.kind === "diameter") && (
                 <>
                   <line data-role="leader" className="dim-line" />
                   <polygon data-role="arrow1" className="dim-arrow" />
+                  {s.kind === "diameter" && <polygon data-role="arrow2" className="dim-arrow" />}
                 </>
               )}
               {s.kind === "angle" && !s.isRight && (

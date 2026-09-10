@@ -54,6 +54,9 @@ describe("solveSketch pointOnLine", () => {
     const constraints: SketchConstraint[] = [
       { id: "ch", type: "horizontal", entity: "C" },
       { id: "cd", type: "distance", entity: "C", value: 20 }, // corner sits at x=20 (origin auto-fixed)
+      // The corner where C ends and S begins: a recorded joint, not two vertices
+      // that merely start out at the same coordinates.
+      { id: "cs", type: "coincident", a: { entity: "C", at: "b" }, b: { entity: "S", at: "a" } },
       { id: "sv", type: "vertical", entity: "S" }, // edge S is vertical through the corner ⇒ x=20
       { id: "p", type: "pointOnLine", point: { entity: "D", at: "b" }, line: "S" },
       { id: "d", type: "distance", entity: "D", value: 50 }, // lengthen the drawn line
@@ -345,15 +348,16 @@ describe("solveSketch arcs (solver-aware)", () => {
   });
 
   it("keeps a line connected to an arc endpoint as the line is lengthened", async () => {
-    // Line from the origin to [10,0]; an arc whose start endpoint is also [10,0]
-    // (coincident via shared coordinate). Growing the line drags the shared point,
-    // and the arc reshapes to keep its endpoint attached.
+    // Line from the origin to [10,0]; an arc whose start endpoint is joined to
+    // the line's free end. Growing the line drags the joint, and the arc
+    // reshapes to keep its endpoint attached.
     const line: SketchEntity = { type: "line", id: "L", a: [0, 0], b: [10, 0] };
     const arc: SketchEntity = { type: "arc", id: "A", c: [10, 5], r: 5, start: -Math.PI / 2, end: 0 };
     const res = await solveSketch(
       [line, arc],
       [
         { id: "h", type: "horizontal", entity: "L" },
+        { id: "j", type: "coincident", a: { entity: "L", at: "b" }, b: { entity: "A", at: "a" } },
         { id: "d", type: "distance", entity: "L", value: 20 },
       ],
     );
@@ -431,11 +435,18 @@ describe("solveSketch redundant/conflicting diagnostics (square legs)", () => {
     { type: "line", id: "T", a: [10, 10], b: [0, 10] },
     { type: "line", id: "L", a: [0, 10], b: [0, 0] },
   ];
+  // The four corners, recorded — what makes these four lines a square rather
+  // than four lines that happen to touch (see document/joints.ts, which writes
+  // exactly these when a rectangle is drawn).
   const hv: SketchConstraint[] = [
     { id: "hb", type: "horizontal", entity: "B" },
     { id: "vr", type: "vertical", entity: "R" },
     { id: "ht", type: "horizontal", entity: "T" },
     { id: "vl", type: "vertical", entity: "L" },
+    { id: "k1", type: "coincident", a: { entity: "B", at: "b" }, b: { entity: "R", at: "a" } },
+    { id: "k2", type: "coincident", a: { entity: "R", at: "b" }, b: { entity: "T", at: "a" } },
+    { id: "k3", type: "coincident", a: { entity: "T", at: "b" }, b: { entity: "L", at: "a" } },
+    { id: "k4", type: "coincident", a: { entity: "L", at: "b" }, b: { entity: "B", at: "a" } },
   ];
   const len = (e: SketchEntity) => {
     if (e.type !== "line") throw new Error("line");
@@ -489,5 +500,61 @@ describe("solveSketch derived geometry", () => {
     expect(res.dof).toBe(0); // only L's DOF; D contributes none
     const d = res.entities.find((e) => e.id === "D");
     expect(d).toEqual(derived); // identical content — solver left it alone
+  });
+});
+
+describe("solveSketch diameter", () => {
+  // Ø and R are the same constraint stated at two scales: the stored `value` is
+  // what the user typed, and the solver is the only place the halving happens.
+  it("drives a circle to HALF the diameter", async () => {
+    const c: SketchEntity = { type: "circle", id: "C", c: [0, 0], r: 3 };
+    const res = await solveSketch([c], [{ id: "d", type: "diameter", entity: "C", value: 40 }]);
+    const solved = res.entities[0];
+    if (solved.type !== "circle") throw new Error("expected circle");
+    expect(solved.r).toBeCloseTo(20, 4);
+    expect(res.hasConflicts).toBe(false);
+  });
+
+  it("drives an arc the same way", async () => {
+    const a: SketchEntity = { type: "arc", id: "A", c: [0, 0], r: 3, start: 0, end: Math.PI / 2 };
+    const res = await solveSketch([a], [{ id: "d", type: "diameter", entity: "A", value: 12 }]);
+    const solved = res.entities[0];
+    if (solved.type !== "arc") throw new Error("expected arc");
+    expect(solved.r).toBeCloseTo(6, 4);
+  });
+
+  it("removes the same degree of freedom a radius does", async () => {
+    const c: SketchEntity = { type: "circle", id: "C", c: [0, 0], r: 3 };
+    const byR = await solveSketch([c], [{ id: "r", type: "radius", entity: "C", value: 20 }]);
+    const byD = await solveSketch([c], [{ id: "d", type: "diameter", entity: "C", value: 40 }]);
+    expect(byD.dof).toBe(byR.dof);
+    expect(byD.hasRedundant).toBe(false);
+  });
+
+  it("conflicts with a radius that says something different", async () => {
+    // Ø40 and R5 on one circle can't both hold — the pair must be flagged, not
+    // silently resolved to whichever the solver reached last.
+    const c: SketchEntity = { type: "circle", id: "C", c: [0, 0], r: 3 };
+    const res = await solveSketch(
+      [c],
+      [
+        { id: "r", type: "radius", entity: "C", value: 5 },
+        { id: "d", type: "diameter", entity: "C", value: 40 },
+      ],
+    );
+    expect(res.hasConflicts || res.status >= 2).toBe(true);
+  });
+
+  it("agrees with a radius that says the same thing (redundant, not conflicting)", async () => {
+    const c: SketchEntity = { type: "circle", id: "C", c: [0, 0], r: 3 };
+    const res = await solveSketch(
+      [c],
+      [
+        { id: "r", type: "radius", entity: "C", value: 20 },
+        { id: "d", type: "diameter", entity: "C", value: 40 },
+      ],
+    );
+    expect(res.hasConflicts).toBe(false);
+    expect(res.hasRedundant).toBe(true);
   });
 });

@@ -68,6 +68,21 @@ describe("loadSettings", () => {
     expect(loadSettings().mouseRight).toBe(DEFAULT_SETTINGS.mouseRight);
   });
 
+  it("dimensions circles as their diameter unless told otherwise", () => {
+    expect(DEFAULT_SETTINGS.circleDimension).toBe("diameter");
+    installStorage(JSON.stringify({ circleDimension: "radius" }));
+    expect(loadSettings().circleDimension).toBe("radius");
+    installStorage(JSON.stringify({ circleDimension: "circumference" }));
+    expect(loadSettings().circleDimension).toBe(DEFAULT_SETTINGS.circleDimension);
+  });
+
+  it("keeps the setting a document written by an older build never had", () => {
+    // An older settings blob has no circleDimension at all — it must land on the
+    // default rather than undefined, which would read as "radius" downstream.
+    installStorage(JSON.stringify({ theme: "light" }));
+    expect(loadSettings().circleDimension).toBe("diameter");
+  });
+
   it("falls back to the defaults on unparseable JSON", () => {
     installStorage("{not json");
     expect(loadSettings()).toEqual(DEFAULT_SETTINGS);

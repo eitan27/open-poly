@@ -491,6 +491,10 @@ function buildDimension(sk: SketchFeature, spec: DimensionSpec, scope: Record<st
       requireCircular(sk, spec.entity, "entity");
       requirePositive();
       return { id, type: "radius", entity: spec.entity, value, ...expr };
+    case "diameter":
+      requireCircular(sk, spec.entity, "entity");
+      requirePositive();
+      return { id, type: "diameter", entity: spec.entity, value, ...expr };
     case "angle":
       requireLine(sk, spec.a, "a");
       requireLine(sk, spec.b, "b");
@@ -1214,6 +1218,7 @@ function constraintRefIds(c: SketchConstraint): string[] {
     case "vertical":
     case "distance":
     case "radius":
+    case "diameter":
       return [c.entity];
     case "parallel":
     case "perpendicular":

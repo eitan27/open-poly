@@ -27,7 +27,15 @@ export interface Settings {
    *  and entity dragging as well as orbit, so rebinding it would break them. */
   mouseMiddle: MouseDragAction;
   mouseRight: MouseDragAction;
+  /** How a CIRCLE is dimensioned: as its diameter (the drafting convention, and
+   *  the default) or its radius. Only the default for a NEW dimension — an
+   *  existing one keeps, and reopens as, whichever it was created with. Arcs are
+   *  always dimensioned by radius, which is the convention for them. */
+  circleDimension: CircleDimension;
 }
+
+/** Which measure a new circle dimension states. */
+export type CircleDimension = "diameter" | "radius";
 
 export type MouseDragAction = "pan" | "orbit" | "zoom";
 const MOUSE_ACTIONS: MouseDragAction[] = ["pan", "orbit", "zoom"];
@@ -38,6 +46,7 @@ export const DEFAULT_SETTINGS: Settings = {
   newBodyColor: "random",
   mouseMiddle: "pan",
   mouseRight: "pan",
+  circleDimension: "diameter",
 };
 
 const KEY = "openpoly.settings";
@@ -59,6 +68,7 @@ function coerce(raw: unknown): Settings {
   for (const k of ["mouseMiddle", "mouseRight"] as const) {
     if (MOUSE_ACTIONS.includes(o[k] as MouseDragAction)) out[k] = o[k] as MouseDragAction;
   }
+  if (o.circleDimension === "diameter" || o.circleDimension === "radius") out.circleDimension = o.circleDimension;
   return out;
 }
 

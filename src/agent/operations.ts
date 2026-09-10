@@ -138,13 +138,15 @@ const constraintSpec = z.discriminatedUnion("kind", [
 export type ConstraintSpec = z.infer<typeof constraintSpec>;
 
 /** A dimensional constraint. `value` accepts a number OR a variable expression
- *  ("width/2") — evaluated to a length/angle NOW against the document's
- *  variables (like the UI; a live link that re-evaluates when the variable
- *  changes is a known gap). Lengths/radii/distances must be > 0; angles are in
- *  DEGREES, 0–180. */
+ *  ("width/2") — evaluated against the document's variables and, when the text
+ *  names one, kept so the dimension follows that variable (like the UI; see
+ *  document/dimensionExpr.ts). Lengths/radii/diameters/distances must be > 0;
+ *  angles are in DEGREES, 0–180. A circle takes `radius` OR `diameter` — the
+ *  same size stated either way. */
 const dimensionSpec = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("length"), entity: z.string(), value: sketchNum }),
   z.object({ kind: z.literal("radius"), entity: z.string(), value: sketchNum }),
+  z.object({ kind: z.literal("diameter"), entity: z.string(), value: sketchNum }),
   z.object({ kind: z.literal("angle"), a: z.string(), b: z.string(), value: sketchNum }),
   z.object({ kind: z.literal("distance"), a: distanceRefSpec, b: distanceRefSpec, value: sketchNum }),
 ]);

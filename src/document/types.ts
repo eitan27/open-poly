@@ -190,11 +190,19 @@ export type SketchConstraint =
   // `distance` (a line's own length) is a special case of.
   | { id: string; type: "distanceBetween"; a: DistanceRef; b: DistanceRef; value: number; expr?: string }
   | { id: string; type: "radius"; entity: string; value: number; expr?: string }
+  // The same size as `radius`, called out the way drafting calls it out: `value`
+  // is the DIAMETER the user typed and sees (the solver halves it). A separate
+  // type rather than a display flag on `radius`, so `value` keeps meaning "what
+  // was typed" — which is what `expr` re-evaluation relies on. A circle carries
+  // one or the other, never both.
+  | { id: string; type: "diameter"; entity: string; value: number; expr?: string }
   | { id: string; type: "angle"; a: string; b: string; value: number; expr?: string }
   // Tangent between a line+circle or two circles (entity ids).
   | { id: string; type: "tangent"; a: string; b: string }
-  // Two points made coincident (one may be the sketch origin, which anchors
-  // the other point there).
+  // Two points made coincident (one may be the sketch origin, which anchors the
+  // other point there). This is the ONLY thing that joins two vertices: the
+  // solver identifies points by which vertex they are, not by where they sit, so
+  // geometry drawn already-touching gets these written for it (document/joints.ts).
   | { id: string; type: "coincident"; a: PointRef; b: PointRef }
   // A point (entity vertex or origin) constrained to lie on a line entity.
   | { id: string; type: "pointOnLine"; point: PointRef; line: string }
