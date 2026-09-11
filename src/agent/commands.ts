@@ -43,6 +43,7 @@ import {
   validateVariableNames,
 } from "../document/document";
 import { expandPickToChains } from "../geom/edgeChains";
+import { applyExtend, applyTrim, planExtend, planTrim } from "../document/trimOps";
 import { detectSketchRegions } from "../document/regions";
 import { DEFAULT_SOLID_COLOR } from "../document/colors";
 import { featureIdOfPart, partAppearance } from "../document/parts";
@@ -515,6 +516,22 @@ function buildDimension(sk: SketchFeature, spec: DimensionSpec, scope: Record<st
  *  guardrails so the agent gets the same behaviour: reject a solve throw, a
  *  conflict / failed solve, a collapsed (near-zero) line, or a constraint the
  *  solver flags as already-implied (redundant). */
+/** Re-solve a sketch after an edit that changed its geometry (rather than adding
+ *  a constraint), and regenerate anything derived from it. Unlike
+ *  `addConstraintSolved` there's nothing to reject: a trim removes constraints
+ *  rather than adding one, so it can't conflict. */
+async function resolvedSketch(doc: Document, sketchId: string, label: string): Promise<Document> {
+  const scope = resolveDocument(doc).scope;
+  const sk = doc.features.find((f) => f.id === sketchId);
+  if (sk?.type !== "sketch") throw new OpError("not_found", `No sketch "${sketchId}".`);
+  try {
+    const res = await solveSketch(sk.entities, sk.constraints);
+    return applyDerivedToSketch(setSketchEntities(doc, sketchId, res.entities), sketchId, scope);
+  } catch {
+    throw new OpError("invalid_op", `${label} left the sketch unsolvable — not applied.`);
+  }
+}
+
 async function addConstraintSolved(
   doc: Document,
   sketchId: string,
@@ -612,6 +629,26 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         const constraint = buildDimension(sk, op.dimension, resolveDocument(doc).scope);
         next = await addConstraintSolved(doc, op.sketchId, constraint, op.dimension.kind);
         createdId = constraint.id;
+        break;
+      }
+      case "trimEntity": {
+        const sk = requireSketch(doc, op.sketchId);
+        if (!sk.entities.some((e) => e.id === op.entityId))
+          throw new OpError("not_found", `No entity "${op.entityId}" in sketch "${op.sketchId}".`);
+        const plan = planTrim(doc, op.sketchId, op.entityId, op.at);
+        if (!plan) throw new OpError("invalid_op", "Trim works on lines, arcs and circles.");
+        next = await resolvedSketch(applyTrim(doc, op.sketchId, op.entityId, plan), op.sketchId, "trim");
+        createdId = op.entityId;
+        break;
+      }
+      case "extendEntity": {
+        const sk = requireSketch(doc, op.sketchId);
+        if (!sk.entities.some((e) => e.id === op.entityId))
+          throw new OpError("not_found", `No entity "${op.entityId}" in sketch "${op.sketchId}".`);
+        const plan = planExtend(doc, op.sketchId, op.entityId, op.at);
+        if (!plan) throw new OpError("invalid_op", "Nothing lies ahead of that end to extend to.");
+        next = await resolvedSketch(applyExtend(doc, op.sketchId, op.entityId, plan), op.sketchId, "extend");
+        createdId = op.entityId;
         break;
       }
       case "removeConstraint": {

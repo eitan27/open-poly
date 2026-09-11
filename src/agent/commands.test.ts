@@ -405,6 +405,58 @@ describe("applyOperation — sketch constraints & dimensions", () => {
   });
 });
 
+describe("applyOperation — trim & extend", () => {
+  const sketchWith2 = async (entities: { shape: string; [k: string]: unknown }[]) => {
+    const { ctx } = makeCtx();
+    const sk = await apply(ctx, { op: "addSketch", plane: { datum: "top" }, entities: entities as never });
+    const ids = getSceneSummary(ctx).sketches[0].entities.map((e) => e.id);
+    return { ctx, sketchId: sk.createdId!, ids };
+  };
+  const lineOf = (ctx: ReturnType<typeof makeCtx>["ctx"], sketchId: string, id: string) => {
+    const sk = ctx.getDoc().features.find((f) => f.id === sketchId);
+    if (sk?.type !== "sketch") throw new Error("no sketch");
+    const e = sk.entities.find((x) => x.id === id);
+    if (e?.type !== "line") throw new Error("not a line");
+    return e;
+  };
+
+  it("trims the piece under the given point", async () => {
+    const { ctx, sketchId, ids } = await sketchWith2([
+      { shape: "line", a: [0, 0], b: [40, 0] },
+      { shape: "line", a: [25, -10], b: [25, 10] },
+    ]);
+    const r = await apply(ctx, { op: "trimEntity", sketchId, entityId: ids[0], at: [34, 0] });
+    expect(r.ok).toBe(true);
+    expect(lineOf(ctx, sketchId, ids[0]).b[0]).toBeCloseTo(25, 3);
+  });
+
+  it("errors on an entity that isn't there", async () => {
+    const { ctx, sketchId } = await sketchWith2([{ shape: "line", a: [0, 0], b: [10, 0] }]);
+    const r = await apply(ctx, { op: "trimEntity", sketchId, entityId: "nope", at: [5, 0] });
+    expect(r.ok).toBe(false);
+    expect(r.errorKind).toBe("not_found");
+  });
+
+  it("extends an end out to what's ahead and records the meeting", async () => {
+    const { ctx, sketchId, ids } = await sketchWith2([
+      { shape: "line", a: [0, 0], b: [15, 0] },
+      { shape: "line", a: [30, -10], b: [30, 10] },
+    ]);
+    const r = await apply(ctx, { op: "extendEntity", sketchId, entityId: ids[0], at: [14, 0] });
+    expect(r.ok).toBe(true);
+    expect(lineOf(ctx, sketchId, ids[0]).b[0]).toBeCloseTo(30, 3);
+    const sk = getSceneSummary(ctx).sketches[0];
+    expect(sk.constraints.some((c) => c.type === "pointOnLine")).toBe(true);
+  });
+
+  it("says so when there's nothing ahead to extend to", async () => {
+    const { ctx, sketchId, ids } = await sketchWith2([{ shape: "line", a: [0, 0], b: [15, 0] }]);
+    const r = await apply(ctx, { op: "extendEntity", sketchId, entityId: ids[0], at: [14, 0] });
+    expect(r.ok).toBe(false);
+    expect(r.errorKind).toBe("invalid_op");
+  });
+});
+
 describe("applyOperation — delete & rollback", () => {
   it("deletes a feature", async () => {
     const { ctx, doc } = makeCtx();

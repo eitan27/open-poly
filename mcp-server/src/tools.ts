@@ -54,6 +54,10 @@ const OP_DESCRIPTIONS: Record<string, string> = {
     "Add a dimensional constraint to a sketch, then re-solve. dimension.kind is length (a line, value>0), radius or diameter (a circle/arc, value>0 — the same size stated either way; a circle carries one or the other), angle (two lines, value 0..180 DEGREES), or distance (between two elements a/b — each {on:'point',point} | {on:'line',entity} | {on:'rim',entity}). value accepts a number OR a variable expression ('width/2') — evaluated against the document's variables and, when it names one, the dimension keeps following it (define them with set_variable first for a parametric model). Same conflict/redundancy rejection as add_constraint.",
   removeConstraint:
     "Remove a sketch constraint/dimension by id (from get_scene_summary's sketch constraints) — e.g. to clear an over-constraint before adding a different one.",
+  trimEntity:
+    "Trim a sketch edge: removes the PIECE of it lying under `at` (a [u,v] point in the sketch plane, projected onto the edge like a click), bounded by where that edge crosses other edges. A piece at one end shortens the edge; a piece in the middle splits it in two; an edge nothing crosses is removed whole; a trimmed circle becomes the arc that's left. Constraints naming a vertex that was cut away are dropped, as is a length dimension the trim invalidated. The idiomatic way to turn rough overlapping construction into a clean closed profile.",
+  extendEntity:
+    "Extend a sketch edge: grows it from the end nearest `at` ([u,v] in the sketch plane) along its own path until it meets another edge, and RECORDS that meeting (coincident if it lands on the other edge's own end, else point-on) so it survives later solves. Errors when nothing lies ahead of that end. Circles have no end to extend.",
   setParam: 'Set a feature parameter to a number or expression (e.g. width = "plate/2").',
   setVariable: "Create or update a named variable (drive dimensions with variables, then reference them in params).",
   setAppearance: "Set a body's color (0xRRGGBB), opacity (0..1), and/or hidden flag.",

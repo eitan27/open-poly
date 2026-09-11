@@ -222,6 +222,12 @@ entityId}` (get the id from `get_scene_summary`); a plane `{plane: …}` (the ax
     `tangent`, `coincident`, `pointOnLine`, `midpoint`. Points are `{entityId,
 at}` (`at` 'a'/'b' = line/arc ends, 'c' = circle/arc/point center) or
     `{origin:true}`.
+  - `trim_entity` / `extend_entity` — clean up rough geometry: trim removes the
+    piece of an edge under a `[u,v]` point (bounded by where it crosses other
+    edges; an uncrossed edge goes whole, a crossed circle becomes an arc), and
+    extend grows an edge's nearest end out to the first thing ahead, recording
+    the meeting so it survives later solves. Draw overlapping and trim back
+    rather than computing every endpoint exactly.
   - `add_dimension` — `length`/`radius`/`diameter`/`angle`/`distance`; its `value` takes a
     number or a **variable expression** (`"width/2"`), so define the variable
     first and the dimension drives the geometry from it.
@@ -259,8 +265,8 @@ You are also the project's feedback loop. When something blocks or surprises you
 **do not fake geometry or silently work around it** — call **`report_issue`**:
 
 - `kind: "missing_feature"` — the operation you need isn't expressible with the
-  available tools (e.g. variable-radius fillet, trim/extend, projecting model
-  edges into a sketch, a diameter dimension). _(Revolve — incl.
+  available tools (e.g. variable-radius fillet, projecting model edges into a
+  sketch). _(Revolve — incl.
   symmetric + plane/face axes, 3D mirror, sweep, loft, the spline tool, **text** +
   text-extrude, **offset** and **sketch-mirror** (driven), linear/circular
   **pattern**, **sketch constraints + dimensions** (`add_constraint` /

@@ -525,6 +525,25 @@ export const operationSchema = z.discriminatedUnion("op", [
   // model: opening/creating/duplicating switches the working document (undo
   // history resets — a document boundary). Ids come from list_documents.
   z.object({ op: z.literal("openDocument"), id: z.string() }),
+  /** Trim the piece of a sketch edge that lies under `at` — the span between
+   *  where that edge crosses other edges. An edge nothing crosses is removed
+   *  whole. `at` is a point in the sketch's own u/v, and only has to be near the
+   *  edge: it's projected onto it, the way a click is. */
+  z.object({
+    op: z.literal("trimEntity"),
+    sketchId: z.string(),
+    entityId: z.string(),
+    at: z.tuple([z.number(), z.number()]),
+  }),
+  /** Grow a sketch edge from the end nearest `at` until it meets another edge,
+   *  and record that meeting as a constraint so it survives later solves.
+   *  Errors when nothing lies ahead of that end. */
+  z.object({
+    op: z.literal("extendEntity"),
+    sketchId: z.string(),
+    entityId: z.string(),
+    at: z.tuple([z.number(), z.number()]),
+  }),
   z.object({ op: z.literal("newDocument"), name: z.string().optional() }),
   /** id defaults to the active document. Rename is not an undoable model edit. */
   z.object({ op: z.literal("renameDocument"), id: z.string().optional(), name: z.string().min(1) }),
