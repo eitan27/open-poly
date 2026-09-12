@@ -3204,12 +3204,6 @@ function shellNamed(
   }
 }
 
-const AXIS_DIR: Record<"x" | "y" | "z", [number, number, number]> = {
-  x: [1, 0, 0],
-  y: [0, 1, 0],
-  z: [0, 0, 1],
-};
-
 /** Apply a single rigid gp_Trsf to a named shape, propagating face names through
  *  the transform's ModifiedShape map. A rigid motion preserves topology 1:1 —
  *  only hashCodes change — so we re-key the name map by each face's image. */
@@ -3229,11 +3223,15 @@ function applyTrsf(target: NamedShape, trsf: Topo): NamedShape {
 }
 
 /** Scale + rotate + translate a body in place, composed in that order (the
- *  uniform scale and the rotation both about `pivot`, then the translation).
- *  Returns a FRESH NamedShape distinct from `target` (the caller disposes the
- *  original); names pass through unchanged since topology doesn't — a similarity
- *  transform is as topology-preserving as a rigid one. */
-function transformNamed(target: Body, t: Extract<ResolvedFeature, { type: "transform" }>): NamedShape {
+ *  uniform scale about `pivot`, the rotation about the axis LINE `axis`, then
+ *  the translation). Returns a FRESH NamedShape distinct from `target` (the
+ *  caller disposes the original); names pass through unchanged since topology
+ *  doesn't — a similarity transform is as topology-preserving as a rigid one. */
+function transformNamed(
+  target: Body,
+  t: Extract<ResolvedFeature, { type: "transform" }>,
+  axis: { origin: V3; dir: V3 },
+): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   let cur: NamedShape = target;
@@ -3257,8 +3255,8 @@ function transformNamed(target: Body, t: Extract<ResolvedFeature, { type: "trans
   }
 
   if (t.angle !== 0) {
-    const [dx, dy, dz] = AXIS_DIR[t.axis];
-    const origin = new oc.gp_Pnt_3(t.pivot[0], t.pivot[1], t.pivot[2]);
+    const [dx, dy, dz] = axis.dir;
+    const origin = new oc.gp_Pnt_3(axis.origin[0], axis.origin[1], axis.origin[2]);
     const dir = new oc.gp_Dir_4(dx, dy, dz);
     const ax1 = new oc.gp_Ax1_2(origin, dir);
     const rot = new oc.gp_Trsf_1();
@@ -4138,8 +4136,27 @@ function buildBodies(
         bodies.push(...remaining, { id: feature.id, key, ...result });
       } else if (feature.type === "transform") {
         const target = requireBody(bodies, feature.targetId);
-        const key = contentKey(feature, [target.key]);
-        const res = transformNamed(target, feature);
+        // The axis arrives baked unless it is a body EDGE, which only the B-rep
+        // can answer — resolved here (by persistent name, with the dress-up
+        // fingerprint fallback) and folded into the content key, so moving the
+        // edge's own body re-runs this transform instead of serving a stale one.
+        const depKeys = [target.key];
+        let axis: { origin: V3; dir: V3 };
+        if (feature.axisEdge) {
+          const axBody = requireBody(bodies, feature.axisEdge.sourceId);
+          depKeys.push(axBody.key);
+          axis = edgeRevolveAxis(
+            axBody,
+            feature.axisEdge.edgeName,
+            { mid: feature.axisEdge.mid, length: feature.axisEdge.length },
+            warn,
+          );
+        } else {
+          if (!feature.axisOrigin || !feature.axisDir) throw new Error("transform: missing rotation axis");
+          axis = { origin: feature.axisOrigin, dir: feature.axisDir };
+        }
+        const key = contentKey(feature, depKeys);
+        const res = transformNamed(target, feature, axis);
         if (feature.copy) {
           // Keep the original; add the transformed copy as a NEW body keyed by
           // this feature (transformNamed builds a fresh shape, never consuming

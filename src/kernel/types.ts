@@ -216,10 +216,14 @@ export type ResolvedFeature =
   | { id: string; type: "shell"; targetId: string; faces: string[]; faceRefs?: ResolvedFaceRef[]; thickness: number }
   // A boolean combines existing bodies (by id) from the running set.
   | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
-  // A transform moves a body (by id) — uniform scale, then rotate, then
-  // translate (scale and rotation both about `pivot`). `scale` is always > 0
-  // (validated when resolving). `copy` keeps the original and emits the moved
-  // body as a NEW body (keyed by this feature).
+  // A transform moves a body (by id) — uniform scale about `pivot`, then rotate
+  // about the axis LINE, then translate. `scale` is always > 0 (validated when
+  // resolving). `copy` keeps the original and emits the moved body as a NEW body
+  // (keyed by this feature). The axis arrives baked as `axisOrigin`+`axisDir`
+  // (a world axis bakes to the pivot + that direction, so it still spins the
+  // body on the spot) — EXCEPT a body-edge axis, which lives in the B-rep and
+  // comes through as `axisEdge` for the worker to resolve, exactly like
+  // revolve's. Exactly one of the two is present.
   | {
       id: string;
       type: "transform";
@@ -228,7 +232,9 @@ export type ResolvedFeature =
       ty: number;
       tz: number;
       angle: number;
-      axis: "x" | "y" | "z";
+      axisOrigin?: [number, number, number];
+      axisDir?: [number, number, number];
+      axisEdge?: { sourceId: string; edgeName?: string; mid?: [number, number, number]; length?: number };
       scale: number;
       pivot: [number, number, number];
       copy: boolean;

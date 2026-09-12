@@ -59,7 +59,7 @@ import {
   updateRevolve,
   updateVariable,
 } from "./document/document";
-import { edgeFingerprint, edgeNameOf, faceCentroid, faceNameOf, faceNormal } from "./geom/meshQuery";
+import { edgeFingerprint, edgeLine, edgeNameOf, faceCentroid, faceNameOf, faceNormal } from "./geom/meshQuery";
 import { parseDxfToEntities, sketchEntitiesBounds } from "./document/dxfImport";
 import {
   applyDerivedToSketch,
@@ -112,7 +112,6 @@ import { isVariableExpression, relinkDimensions, sketchesNeedingRelink } from ".
 import { measureSelection } from "./selection/measure";
 import {
   angledFrame,
-  deriveFaceFrame,
   frameOf,
   midplaneFrame,
   offsetFrame,
@@ -131,6 +130,7 @@ import { validateDressUpSize, validateDressUpAngle, mapDressUpKernelError } from
 import { validateShellThickness, mapShellKernelError } from "./document/shellValidation";
 import { validateExtrudeDistance, extrudeUsesDistance } from "./document/extrudeValidation";
 import { shellBodyFromSelection, toggleShellFace, retargetShell, NO_SHELL_FACES } from "./document/shellTarget";
+import { transformAxisLabel, transformAxisLine } from "./document/transformAxis";
 import { detectSketchRegions } from "./document/regions";
 import { applyExtend, applyTrim, planExtend, planTrim } from "./document/trimOps";
 import { extrudeProfilesFromPicks, isExtrudePick, toggleExtrudePick } from "./document/extrudeProfiles";
@@ -572,14 +572,21 @@ function bodyUnderRegion(frame: PlaneFrameData, outline: Vec2[], meshes: Feature
   return null;
 }
 
-/** Apply a rigid motion to a tessellated mesh payload for the Pattern dialog's
- *  ghost preview — no kernel round trip: positions map through `mapPt`, normals
+/** Apply a rigid motion to a tessellated mesh payload for a dialog's ghost
+ *  preview — no kernel round trip: positions map through `mapPt`, normals
  *  through `mapVec` (identity for a pure translation). Face/edge groups are
- *  dropped (ghosts are never picked). */
+ *  dropped (ghosts are never picked).
+ *
+ *  `flipWinding` is for a REFLECTION, which reverses orientation: the mapped
+ *  normals come out correct, but the triangle winding they were paired with does
+ *  not, and the ghost material is double-sided — so the shader would take the
+ *  now-backfacing triangles and flip those correct normals back, lighting the
+ *  mirrored body inside-out. Reversing each triangle restores the pairing. */
 function transformMeshPayload(
   mesh: ShapeMeshPayload,
   mapPt: (p: [number, number, number]) => [number, number, number],
   mapVec: (v: [number, number, number]) => [number, number, number],
+  flipWinding = false,
 ): ShapeMeshPayload {
   const mapFlat = (src: ArrayLike<number>, fn: (p: [number, number, number]) => [number, number, number]) => {
     const out = new Array<number>(src.length);
@@ -591,15 +598,58 @@ function transformMeshPayload(
     }
     return out;
   };
+  const triangles = flipWinding ? reverseWinding(mesh.faces.triangles) : mesh.faces.triangles;
   return {
     name: mesh.name,
     faces: {
       vertices: mapFlat(mesh.faces.vertices, mapPt),
-      triangles: mesh.faces.triangles,
+      triangles,
       ...(mesh.faces.normals ? { normals: mapFlat(mesh.faces.normals, mapVec) } : {}),
     },
     edges: { lines: mapFlat(mesh.edges.lines, mapPt) },
   };
+}
+
+/** Swap two corners of every triangle, reversing its facing. */
+function reverseWinding(triangles: ArrayLike<number>): number[] {
+  const out = new Array<number>(triangles.length);
+  for (let i = 0; i + 2 < triangles.length; i += 3) {
+    out[i] = triangles[i];
+    out[i + 1] = triangles[i + 2];
+    out[i + 2] = triangles[i + 1];
+  }
+  return out;
+}
+
+/** How a picked mirror plane reads in its slot: datums and reference planes by
+ *  name, a body face by the body it belongs to (`planeRefLabel` says only
+ *  "Face", which is no help when several bodies are on screen). */
+function mirrorPlaneLabel(ref: SketchPlaneRef, doc: Document): string {
+  if (ref.kind === "face") return `${doc.features.find((f) => f.id === ref.featureId)?.name ?? "Body"} · face`;
+  if (ref.kind === "plane") return doc.features.find((f) => f.id === ref.planeId)?.name ?? "Reference plane";
+  return planeRefLabel(ref);
+}
+
+/** A `"datum:<id>"` / `"plane:<featureId>"` dropdown key as a plane reference.
+ *  Module scope on purpose: it is pure, and as a `const` inside the component it
+ *  sat in the temporal dead zone of the render-time memos that need it. */
+const planeKeyToRef = (key: string): SketchPlaneRef =>
+  key.startsWith("plane:")
+    ? { kind: "plane", planeId: key.slice(6) }
+    : { kind: "datum", id: key.slice(6) as SketchPlaneId };
+
+/** Point/vector mappers for a reflection in the plane through `origin` with unit
+ *  normal `n`. Orientation-reversing — see transformMeshPayload's flipWinding. */
+function reflectionMappers(origin: [number, number, number], n: [number, number, number]) {
+  const mapVec = (v: [number, number, number]): [number, number, number] => {
+    const d = 2 * (v[0] * n[0] + v[1] * n[1] + v[2] * n[2]);
+    return [v[0] - d * n[0], v[1] - d * n[1], v[2] - d * n[2]];
+  };
+  const mapPt = (p: [number, number, number]): [number, number, number] => {
+    const r = mapVec([p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]]);
+    return [r[0] + origin[0], r[1] + origin[1], r[2] + origin[2]];
+  };
+  return { mapPt, mapVec };
 }
 
 /** Point/vector mappers for a rotation of `angle` radians about the axis line
@@ -788,6 +838,18 @@ type ArmedShellDialog = ShellDialogState & { targetId: string };
  *  easy slip (a double-click, or a second click the snap pulls back onto the
  *  first), so the draw tools refuse instead of committing it. */
 const MIN_SEGMENT = 1e-3;
+
+/** Drop keyboard focus from whatever dialog control just armed a viewport pick.
+ *
+ *  From the moment a pick is armed the VIEWPORT is the input surface, so nothing
+ *  in the dialog should still be holding focus — and a focused native control is
+ *  worse than untidy: on macOS a `<select>`'s popup is a native menu running its
+ *  own event loop, and after choosing from it the first click on the canvas is
+ *  swallowed, so the pick appears to need two clicks with the first doing
+ *  nothing. The arming controls are plain buttons now (which is the real fix —
+ *  see the Transform and Pattern dialogs), and this is the belt to that pair of
+ *  braces. */
+const releaseFocus = () => (document.activeElement as HTMLElement | null)?.blur?.();
 
 const SKETCH_VARIANT_NAME: Partial<Record<SketchTool, string>> = {
   "rect-corner": "2 corners",
@@ -983,22 +1045,6 @@ export default function App() {
       }
       return;
     }
-    // Mirror-face pick armed (from the Mirror dialog): the next clicked planar
-    // body face becomes the mirror plane. A non-planar face (faceNormal → null)
-    // is ignored so the arming stays active for another try.
-    if (pickingMirrorFace) {
-      if (picked?.kind === "face") {
-        const m = meshes.find((x) => x.id === picked.featureId);
-        const center = m ? faceCentroid(m.mesh.faces, picked.faceId) : null;
-        const normal = m ? faceNormal(m.mesh.faces, picked.faceId) : null;
-        if (center && normal) {
-          const frame = deriveFaceFrame(center, normal);
-          setMirrorDialog((d) => (d ? { ...d, plane: "face", faceRef: { featureId: picked.featureId, frame } } : d));
-          setPickingMirrorFace(false);
-        }
-      }
-      return;
-    }
     // Through-3-points plane pick armed: read a world point from the clicked
     // vertex or sketch point and append it (up to 3); ignore anything else.
     if (planePick === "point") {
@@ -1156,7 +1202,14 @@ export default function App() {
     // face of the body works as well as clicking the body in the tree.
     if (mirrorDialog && mirrorDialog.arming === "target") {
       const id = picked ? featureIdOf(picked) : null;
-      if (id && bodyIds.has(id)) setMirrorDialog((d) => (d ? { ...d, targetId: id, arming: null } : d));
+      if (id && bodyIds.has(id)) {
+        setMirrorDialog((d) => (d ? { ...d, targetId: id, arming: null } : d));
+        // With the body in hand the plane is the only thing left to say, so arm
+        // it — the same auto-advance Revolve does, and the same one openMirror
+        // does when a body was already selected. Without it, filling the body by
+        // click leaves the dialog waiting on a button the user has to find.
+        if (!mirrorDialog.plane) armMirrorPlane();
+      }
       return;
     }
     // Transform armed with no target yet: the next body click picks it and
@@ -1364,7 +1417,7 @@ export default function App() {
   // What the plane/face pick flow is for: starting a sketch, or the base of a
   // new reference plane.
   const [pickPurpose, setPickPurpose] = useState<
-    "sketch" | "plane" | "revolveAxis" | "patternAxis" | "patternDir" | "sectionPlane"
+    "sketch" | "plane" | "revolveAxis" | "patternAxis" | "patternDir" | "transformAxis" | "mirrorPlane" | "sectionPlane"
   >("sketch");
   // The reference-plane dialog. `method` chooses the placement; the relevant
   // fields are filled by picks (base/refB planes-or-faces; points) or text inputs.
@@ -1383,21 +1436,26 @@ export default function App() {
   // sketch point from a normal click.
   const [planePick, setPlanePick] = useState<"base" | "refB" | "point" | null>(null);
   // The Mirror dialog: the body to mirror + the chosen plane key (see plane keys).
-  // `plane === "face"` mirrors across a picked planar body face, stored in
-  // `faceRef` (a frozen frame snapshot, like a sketch-on-face placement).
+  // Two slots, two picks: the body to mirror, and the plane to mirror it across.
+  // The plane is ONE reference covering all three kinds a mirror can use — a
+  // datum, a reference plane, or a planar body face — because the viewport's
+  // plane-pick stream already resolves all three to a `SketchPlaneRef` (it is
+  // what the reference-plane dialog's own slots read). That is why there is no
+  // dropdown here: a list of named planes would be a second control for the same
+  // job, and an option that armed a pick is the shape whose first canvas click
+  // gets swallowed (see the Transform dialog's axis control).
   const [mirrorDialog, setMirrorDialog] = useState<{
     /** Null until a body is armed + clicked (see `arming: "target"`) — the
      *  dialog opens immediately like Pattern, no pre-selection required. */
     targetId: string | null;
-    plane: string;
-    faceRef: { featureId: string; frame: PlaneFrameData } | null;
-    /** Which slot the next viewport click fills (the plane's FACE pick rides
-     *  `pickingMirrorFace` instead — a different click stream). */
+    /** A face ref carries a frozen frame snapshot, like a sketch-on-face. */
+    plane: SketchPlaneRef | null;
+    /** Which slot the next viewport click fills. The plane rides the shared
+     *  plane-pick stream (`pickPurpose: "mirrorPlane"`), so it shows as armed
+     *  through `picking` rather than through this. */
     arming: "target" | null;
     editId?: string;
   } | null>(null);
-  // Armed by the Mirror dialog: the next clicked planar body face is the plane.
-  const [pickingMirrorFace, setPickingMirrorFace] = useState(false);
   // The body Pattern dialog: repeat `targetId` as a linear run/grid or a
   // circular ring (the copies land in ONE compound body; the seed is kept).
   // Direction/axis references arm the shared axis-pick stream (pickPurpose
@@ -1795,9 +1853,6 @@ export default function App() {
   const selectionArming = ((): { message: string; cancel: () => void } | null => {
     if (pickingUpFace)
       return { message: "Select the body face to extrude up to", cancel: () => setPickingUpFace(false) };
-    if (pickingMirrorFace) {
-      return { message: "Select the planar body face to mirror across", cancel: () => setPickingMirrorFace(false) };
-    }
     if (sweepDialog?.armed) {
       return {
         message:
@@ -2925,6 +2980,24 @@ export default function App() {
     });
   }, [patternDialog, patternDialogWarning, meshes, doc, resolved.planeFrames, resolved.scope]);
 
+  // The mirrored body, previewed before Create — the same trick as the pattern
+  // ghosts: reflect the target's own tessellation in place, no kernel round
+  // trip, exact (a reflection is rigid up to handedness) and instant on every
+  // plane change. A face plane resolves here too, since the dialog already holds
+  // the picked face's frame.
+  const mirrorGhost = useMemo<GhostMesh[]>(() => {
+    const d = mirrorDialog;
+    if (!d?.targetId) return [];
+    const m = meshes.find((x) => x.id === d.targetId);
+    if (!m) return [];
+    // Asked, not caught: a try/catch around frameOf here would also swallow a
+    // real bug — and did once, leaving the ghost silently missing.
+    if (!d.plane || !planeResolves(d.plane, resolved.planeFrames)) return [];
+    const frame = frameOf(d.plane, resolved.planeFrames);
+    const { mapPt, mapVec } = reflectionMappers(frame.origin, frame.normal);
+    return [{ mesh: transformMeshPayload(m.mesh, mapPt, mapVec, true) }];
+  }, [mirrorDialog, meshes, resolved.planeFrames]);
+
   const ghostMeshes = useMemo<GhostMesh[]>(
     () => [
       // An extrude previews the swept TOOL, and in Remove mode that tool is the
@@ -2939,12 +3012,13 @@ export default function App() {
         : []),
       ...(revolvePreview ? [{ mesh: revolvePreview }] : []),
       ...patternGhosts,
+      ...mirrorGhost,
       // The chamfer/fillet delta: what the operation fills in and what it carves
       // off, ghosted over the model (see GhostMesh.variant).
       ...(dressUpPreview?.added ?? []).map((mesh) => ({ mesh, variant: "fill" as const })),
       ...(dressUpPreview?.removed ?? []).map((mesh) => ({ mesh, variant: "cut" as const })),
     ],
-    [extrudePreview, extrudeCutting, revolvePreview, patternGhosts, dressUpPreview],
+    [extrudePreview, extrudeCutting, revolvePreview, patternGhosts, mirrorGhost, dressUpPreview],
   );
 
   // Feature ids that produced an actual rendered body — what the Solids list
@@ -4127,20 +4201,6 @@ export default function App() {
 
   // Mirror plane options for the dialog: the three datums + any reference planes.
   // Keys are "datum:<id>" or "plane:<id>"; parsed back to a SketchPlaneRef.
-  const mirrorPlaneOptions = useMemo(
-    () => [
-      { key: "datum:plane-top", label: "Top" },
-      { key: "datum:plane-front", label: "Front" },
-      { key: "datum:plane-right", label: "Right" },
-      ...userPlanes.map((p) => ({ key: `plane:${p.id}`, label: p.name })),
-      { key: "face", label: "Body face…" },
-    ],
-    [userPlanes],
-  );
-  const planeKeyToRef = (key: string): SketchPlaneRef =>
-    key.startsWith("plane:")
-      ? { kind: "plane", planeId: key.slice(6) }
-      : { kind: "datum", id: key.slice(6) as SketchPlaneId };
 
   // Revolve prefills from a selection of a profile + an axis line: a sketch
   // region (which must share its sketch with the axis line — the same-sketch rule
@@ -4389,7 +4449,7 @@ export default function App() {
         } else if (revolveDialog) closeRevolveDialog();
         // Mirror dialog: like Revolve, Esc first cancels an in-progress face
         // pick (keeping the dialog), then a second Esc closes the dialog.
-        else if (mirrorDialog && pickingMirrorFace) setPickingMirrorFace(false);
+        else if (mirrorDialog && picking && pickPurpose === "mirrorPlane") cancelMirrorPlanePick();
         else if (mirrorDialog?.arming) setMirrorDialog((d) => (d ? { ...d, arming: null } : d));
         else if (mirrorDialog) closeMirror();
         // Pattern dialog: Esc first cancels an in-progress direction/axis pick
@@ -4417,6 +4477,9 @@ export default function App() {
         // picked so far; a second Esc closes the dialog.
         else if (dressUpDialog?.arming) setDressUpDialog((d) => (d ? { ...d, arming: false } : d));
         else if (dressUpDialog) closeDressUpDialog();
+        // While the Transform dialog is arming a rotation axis, Esc cancels just
+        // that pick (keeping the dialog); a second Esc then cancels the edit.
+        else if (transformEditId && picking && pickPurpose === "transformAxis") cancelTransformAxisPick();
         else if (transformEditId) cancelTransform();
         else if (transformArming) cancelTransformArming();
         else if (editParamsId) setEditParamsId(null);
@@ -4635,7 +4698,6 @@ export default function App() {
     revolveInputs,
     revolveDialog,
     mirrorDialog,
-    pickingMirrorFace,
     patternDialog,
     sweepInputs,
     sweepDialog,
@@ -4681,50 +4743,52 @@ export default function App() {
   // body still prefills the role — reaching for Mirror with the thing already
   // picked shouldn't cost a second click.
   const openMirror = () => {
-    setMirrorDialog({
-      targetId: transformTarget,
-      plane: "datum:plane-front",
-      faceRef: null,
-      arming: transformTarget ? null : "target",
-    });
+    setMirrorDialog({ targetId: transformTarget, plane: null, arming: transformTarget ? null : "target" });
+    // With the body already in hand, the plane is the only thing left to say —
+    // so arm it, the way Revolve advances to its next empty slot.
+    if (transformTarget) armMirrorPlane();
+  };
+  /** Arm the Mirror dialog's PLANE slot: the next datum, reference plane or
+   *  planar body face clicked becomes the mirror plane. */
+  const armMirrorPlane = () => {
+    setMirrorDialog((d) => (d ? { ...d, arming: null } : d));
+    setPickPurpose("mirrorPlane");
+    setPicking(true);
+    releaseFocus();
+  };
+  /** Drop an armed mirror-plane pick (arming the body, or closing the dialog). */
+  const cancelMirrorPlanePick = () => {
+    if (pickPurpose !== "mirrorPlane") return;
+    setPicking(false);
+    setPickPurpose("sketch");
   };
   /** Arm the Mirror dialog's BODY slot (optionally clearing what it holds, so ✕
    *  means "pick a different one" rather than stranding the slot empty). Arming
    *  the body cancels an in-flight face pick: the two slots read different click
    *  streams, so without this both stay live and the face takes the click. */
   const armMirrorTarget = (clear = false) => {
-    setPickingMirrorFace(false);
+    cancelMirrorPlanePick();
     setMirrorDialog((d) => (d ? { ...d, ...(clear ? { targetId: null } : {}), arming: "target" } : d));
   };
   const closeMirror = () => {
     setMirrorDialog(null);
-    setPickingMirrorFace(false);
+    cancelMirrorPlanePick();
     cancelEdit();
   };
   // Live-preview a mirror edit as the plane choice changes.
   useEffect(() => {
     const d = mirrorDialog;
     if (!d?.editId || !d.targetId) return;
-    const ref: SketchPlaneRef | null =
-      d.plane === "face"
-        ? d.faceRef
-          ? { kind: "face", featureId: d.faceRef.featureId, frame: d.faceRef.frame }
-          : null
-        : planeKeyToRef(d.plane);
+    const ref = d.plane;
     if (!ref) return;
     if (!shouldLiveApply(JSON.stringify({ e: d.editId, t: d.targetId, ref }))) return;
     setDoc((prev) => updateMirror(prev, d.editId!, d.targetId!, ref), `edit:${d.editId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mirrorDialog?.editId, mirrorDialog?.plane, mirrorDialog?.faceRef, mirrorDialog?.targetId]);
+  }, [mirrorDialog?.editId, mirrorDialog?.plane, mirrorDialog?.targetId]);
   const createMirror = () => {
     if (!mirrorDialog?.targetId) return;
-    const ref: SketchPlaneRef | null =
-      mirrorDialog.plane === "face"
-        ? mirrorDialog.faceRef
-          ? { kind: "face", featureId: mirrorDialog.faceRef.featureId, frame: mirrorDialog.faceRef.frame }
-          : null
-        : planeKeyToRef(mirrorDialog.plane);
-    if (!ref) return; // a face plane was chosen but none picked yet
+    const ref = mirrorDialog.plane;
+    if (!ref) return; // no plane picked yet
     if (mirrorDialog.editId) {
       setDoc(updateMirror(doc, mirrorDialog.editId, mirrorDialog.targetId, ref));
       selectFeature(mirrorDialog.editId);
@@ -4745,10 +4809,7 @@ export default function App() {
     if (f?.type !== "mirror") return;
     beginEdit(f);
     selectFeature(id);
-    const planeKey =
-      f.plane.kind === "datum" ? `datum:${f.plane.id}` : f.plane.kind === "plane" ? `plane:${f.plane.planeId}` : "face";
-    const faceRef = f.plane.kind === "face" ? { featureId: f.plane.featureId, frame: f.plane.frame } : null;
-    setMirrorDialog({ targetId: f.targetId, plane: planeKey, faceRef, arming: null, editId: id });
+    setMirrorDialog({ targetId: f.targetId, plane: f.plane, arming: null, editId: id });
   };
 
   // Open the Pattern dialog. Always available: like Revolve, a body is armed
@@ -4818,6 +4879,7 @@ export default function App() {
     setPatternDialog((d) => (d ? { ...d, arming: slot } : d));
     setPickPurpose(slot === "axis" ? "patternAxis" : "patternDir");
     setPicking(true);
+    releaseFocus();
   };
   /** Switch the Pattern dialog between linear and circular. The two kinds want
    *  different refs, so any in-flight direction/axis pick is dropped — but the
@@ -4955,6 +5017,28 @@ export default function App() {
   // Cancel button) without creating a feature.
   const cancelTransformArming = () => setTransformArming(null);
 
+  // Arm the rotation-axis pick: the next click on a straight body edge or a
+  // sketch line becomes the line the body swings around. Rides the same
+  // axis-pick stream as Revolve's and Pattern's axis slots.
+  const armTransformAxis = () => {
+    setPickPurpose("transformAxis");
+    setPicking(true);
+    releaseFocus();
+  };
+  /** True while the next viewport click fills the transform's rotation axis. */
+  const transformAxisPicking = picking && pickPurpose === "transformAxis";
+  /** Is the transform's axis a picked reference (or about to be)? Drives which
+   *  half of the axis control the dialog shows. */
+  const pickedTransformAxis =
+    transformAxisPicking ||
+    doc.features.some((f) => f.id === transformEditId && f.type === "transform" && typeof f.axis !== "string");
+  /** Drop an armed axis pick (choosing a world axis, or closing the dialog). */
+  const cancelTransformAxisPick = () => {
+    if (pickPurpose !== "transformAxis") return;
+    setPicking(false);
+    setPickPurpose("sketch");
+  };
+
   // Re-open the gizmo for an existing Transform (from the parameter editor).
   // Snapshot its current values so Cancel can revert this edit (vs. delete).
   const editTransform = (id: string) => {
@@ -4998,12 +5082,19 @@ export default function App() {
       ty: num(f.ty),
       tz: num(f.tz),
       angle: num(f.angle),
-      axis: f.axis,
+      // The gizmo needs the axis as a world line. A reference that can't be
+      // resolved right now (its sketch deleted, its edge renamed away) falls
+      // back to world Z through the pivot so the gizmo still stands up — the
+      // kernel reports the real error against the feature.
+      axis: transformAxisLine(f.axis, f.pivot, doc, resolved.planeFrames, meshes) ?? {
+        origin: f.pivot,
+        dir: [0, 0, 1],
+      },
       // A half-typed / non-positive factor would collapse the gizmo's proxy;
       // fall back to 1 until the field resolves to something buildable.
       scale: num(f.scale) > 0 ? num(f.scale) : 1,
     };
-  }, [transformEditId, doc, resolved.scope]);
+  }, [transformEditId, doc, resolved.scope, resolved.planeFrames, meshes]);
 
   // The transform feature being edited (drives the floating panel's fields).
   const editingTransform = useMemo(
@@ -5045,6 +5136,7 @@ export default function App() {
 
   // Close the gizmo, keeping the Transform feature as-is.
   const finishTransform = () => {
+    cancelTransformAxisPick(); // an axis arming outlives the dialog otherwise
     setTransformEditId(null);
     setTransformOrigin(null);
     setTransformPanelXY(null);
@@ -5054,6 +5146,7 @@ export default function App() {
   // Cancel (panel Cancel / Esc): a just-created transform is dropped entirely;
   // an existing one being re-edited reverts to its pre-edit snapshot.
   const cancelTransform = () => {
+    cancelTransformAxisPick();
     if (transformEditId) {
       if (transformOrigin && !transformOrigin.created) {
         setDoc(setTransform(doc, transformEditId, transformOrigin.snapshot));
@@ -5316,7 +5409,7 @@ export default function App() {
 
   // The plane/face pick resolved: start a sketch on it, or fill the plane
   // dialog's base / second reference (whichever slot is armed).
-  const handlePickRef = (ref: SketchPlaneRef, aim?: [number, number, number]) => {
+  const handlePickRef = (ref: SketchPlaneRef, aim?: [number, number, number], faceId?: number) => {
     if (pickPurpose === "plane") {
       if (planePick === "refB") {
         setPlaneDialog((d) => (d ? { ...d, refB: ref } : d));
@@ -5332,6 +5425,21 @@ export default function App() {
           setPlanePick(null);
         }
       }
+    } else if (pickPurpose === "mirrorPlane") {
+      // A curved face has no plane of its own: what arrives here is the tangent
+      // at wherever the pointer landed, which would mirror across something the
+      // user never chose. faceNormal is null for exactly those, so the arming
+      // stays live for another try — the same guard the old face-only pick had.
+      if (ref.kind === "face" && faceId !== undefined) {
+        const m = meshes.find((x) => x.id === ref.featureId);
+        if (!m || !faceNormal(m.mesh.faces, faceId)) {
+          flashMsg("That face isn't flat — a mirror plane needs a planar face, a datum, or a reference plane.");
+          return;
+        }
+      }
+      setMirrorDialog((d) => (d ? { ...d, plane: ref } : d));
+      setPicking(false);
+      setPickPurpose("sketch");
     } else if (pickPurpose === "sectionPlane") {
       setPicking(false);
       setPickPurpose("sketch");
@@ -5347,6 +5455,55 @@ export default function App() {
   // only; "patternAxis" a sketch line or a body face (planes are rejected — a
   // pattern has no profile plane to intersect one with).
   const handleAxisPick = (pick: RevolveAxisPick) => {
+    if (pickPurpose === "transformAxis") {
+      // A transform turns about a LINE, so only the two references that are one
+      // count: a sketch line, or a straight body edge. A plane or a face would
+      // need a second reference to pin a line down (revolve has the profile
+      // plane to intersect with; a transform has nothing), so they're refused
+      // with the options that do work rather than silently ignored.
+      const id = transformEditId;
+      if (!id) return;
+      if (pick.kind === "line") {
+        const sk = doc.features.find((f) => f.id === pick.sketchId);
+        const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === pick.entityId) : undefined;
+        if (e?.type !== "line") {
+          flashMsg("The axis must be a straight sketch line (or switch the axis back to Body center).");
+          return; // keep the pick armed for another try
+        }
+        setDoc(setTransform(doc, id, { axis: { sketchId: pick.sketchId, entityId: pick.entityId } }));
+      } else if (pick.kind === "bodyEdge") {
+        const m = meshes.find((x) => x.id === pick.featureId);
+        const edgeName = m ? edgeNameOf(m.mesh.edges, pick.edgeId) : undefined;
+        if (!edgeName) {
+          flashMsg("That edge can't be referenced — pick another edge or a sketch line.");
+          return;
+        }
+        // Only a straight edge is an axis, and rejecting a curved one HERE (not
+        // in the kernel) keeps a bad pick from landing as a broken feature.
+        if (!m || !edgeLine(m.mesh.edges, pick.edgeId)) {
+          flashMsg("A curved edge isn't an axis. Pick a straight edge or a sketch line.");
+          return;
+        }
+        const fp = edgeFingerprint(m.mesh.edges, pick.edgeId);
+        setDoc(
+          setTransform(doc, id, {
+            axis: {
+              edge: { featureId: pick.featureId, edgeId: pick.edgeId, edgeName, mid: fp?.mid, length: fp?.length },
+            },
+          }),
+        );
+      } else {
+        flashMsg(
+          pick.kind === "plane"
+            ? "A plane doesn't fix a line on its own — a transform has no profile plane to intersect it with. Pick a sketch line or a straight body edge."
+            : "A face has no single axis to swing a body around. Pick a sketch line or a straight body edge.",
+        );
+        return; // keep the pick armed for another try
+      }
+      setPicking(false);
+      setPickPurpose("sketch");
+      return;
+    }
     if (pickPurpose === "patternDir" || pickPurpose === "patternAxis") {
       if (pick.kind === "line") {
         const sk = doc.features.find((f) => f.id === pick.sketchId);
@@ -8075,7 +8232,10 @@ export default function App() {
             onPick={handlePickRef}
             axisPick={
               picking &&
-              (pickPurpose === "revolveAxis" || pickPurpose === "patternAxis" || pickPurpose === "patternDir")
+              (pickPurpose === "revolveAxis" ||
+                pickPurpose === "patternAxis" ||
+                pickPurpose === "patternDir" ||
+                pickPurpose === "transformAxis")
             }
             onAxisPick={handleAxisPick}
             activeSketch={
@@ -8821,15 +8981,19 @@ export default function App() {
                     ? "Select a sketch line or a cylindrical face to pattern around"
                     : pickPurpose === "patternDir"
                       ? "Select a sketch line for the pattern direction"
-                      : pickPurpose === "sectionPlane"
-                        ? "Select a plane or planar face to cut the section through"
-                        : pickPurpose === "plane"
-                          ? // The wording only fits the offset method — the others
-                            // build off their reference rather than offsetting it.
-                            planeDialog?.method === "offset"
-                            ? "Select a plane or planar face to offset the new plane from"
-                            : "Select a plane or planar face for the new plane"
-                          : "Select a plane or planar face for the sketch"}
+                      : pickPurpose === "transformAxis"
+                        ? "Select a sketch line or a straight body edge to rotate around"
+                        : pickPurpose === "mirrorPlane"
+                          ? "Select a datum, a reference plane, or a flat body face to mirror across"
+                          : pickPurpose === "sectionPlane"
+                            ? "Select a plane or planar face to cut the section through"
+                            : pickPurpose === "plane"
+                              ? // The wording only fits the offset method — the others
+                                // build off their reference rather than offsetting it.
+                                planeDialog?.method === "offset"
+                                ? "Select a plane or planar face to offset the new plane from"
+                                : "Select a plane or planar face for the new plane"
+                              : "Select a plane or planar face for the sketch"}
               </span>
               <button
                 onClick={() => {
@@ -8874,7 +9038,14 @@ export default function App() {
                 noun="a profile"
                 armed={extrudeDialog.arming}
                 wide
-                onClick={() => setExtrudeDialog((d) => (d ? { ...d, arming: !d.arming } : d))}
+                onClick={() => {
+                  // The two slots read the same click stream and the face is
+                  // checked first, so asking for profiles has to take the stream
+                  // back — otherwise the button lights up and the clicks still
+                  // go to the face.
+                  if (pickingUpFace) setPickingUpFace(false);
+                  setExtrudeDialog((d) => (d ? { ...d, arming: !d.arming } : d));
+                }}
               >
                 {extrudeDialog.arming
                   ? "Select profiles (Esc to stop)"
@@ -8937,11 +9108,26 @@ export default function App() {
                   value={extrudeDialog.extent}
                   onChange={(e) => {
                     const extent = e.target.value as ExtrudeExtent;
-                    setExtrudeDialog((d) => (d ? { ...d, extent } : d));
-                    // Arm (or disarm) the face pick with the extent that needs
-                    // it, the way the plane dialog arms the pick its method
-                    // needs — choosing "Up to face" IS asking to pick a face.
-                    setPickingUpFace(extent === "upToFace");
+                    // Arming the face pick takes the click stream away from the
+                    // profile list (handlePick checks pickingUpFace FIRST), so it
+                    // must not happen while the profile slot is still the one
+                    // with a job to do: with no profile picked, both slots glowed
+                    // and the face silently won every click. The profile comes
+                    // first, always; the face arms when the extent asks for it
+                    // AND there is something to extrude — and then the profile
+                    // list stands down so only one slot is ever live.
+                    const armFace = extent === "upToFace" && extrudeDialogProfiles.length > 0;
+                    setExtrudeDialog((d) => (d ? { ...d, extent, ...(armFace ? { arming: false } : {}) } : d));
+                    setPickingUpFace(armFace);
+                    // This is still a <select> arming a viewport pick — the shape
+                    // whose first canvas click gets swallowed on macOS (see the
+                    // Transform dialog's axis control). It no longer bites on the
+                    // path people actually hit, because with no profile yet the
+                    // dropdown arms nothing at all; the remaining path is
+                    // switching the extent AFTER picking a profile. If it ever
+                    // resurfaces, this control has to stop being a <select> the
+                    // way Transform's, Pattern's and Mirror's did.
+                    if (extent === "upToFace") releaseFocus();
                   }}
                 >
                   <option value="blind">Blind</option>
@@ -8966,9 +9152,14 @@ export default function App() {
                         ? `On ${doc.features.find((f) => f.id === extrudeDialog.upTo!.featureId)?.name ?? "body"}`
                         : null
                     }
-                    onArm={() => setPickingUpFace((v) => !v)}
+                    onArm={() =>
+                      setPickingUpFace((v) => {
+                        if (!v) setExtrudeDialog((d) => (d ? { ...d, arming: false } : d));
+                        return !v;
+                      })
+                    }
                     onClear={() => {
-                      setExtrudeDialog((d) => (d ? { ...d, upTo: null } : d));
+                      setExtrudeDialog((d) => (d ? { ...d, upTo: null, arming: false } : d));
                       setPickingUpFace(true);
                     }}
                   />
@@ -9741,25 +9932,83 @@ export default function App() {
                 </label>
               ) : (
                 <>
-                  <div className="ed-field">
-                    <span>Axis</span>
-                    <div className="ed-modes" style={{ width: 112 }}>
-                      {(["x", "y", "z"] as const).map((ax) => (
-                        <button
-                          key={ax}
-                          className={editingTransform.axis === ax ? "active" : ""}
-                          onClick={() =>
-                            setDoc(
-                              updateParam(doc, editingTransform.id, "axis", ax),
-                              `param:${editingTransform.id}:axis`,
-                            )
-                          }
-                        >
-                          {ax.toUpperCase()}
-                        </button>
-                      ))}
-                    </div>
+                  {/* ONE axis control, in two levels. The two KINDS of axis are
+                      alternatives, so they're one segmented choice rather than
+                      two controls that both say "axis"; whichever is chosen then
+                      reveals its own detail below (X/Y/Z, or the pick slot).
+                      "Body center" rather than "World X/Y/Z" because the world
+                      wording reads as "through the origin" — which is what it
+                      means in the Pattern dialog, and is NOT what happens here:
+                      the direction is world-aligned but the axis runs through the
+                      body's own center, so the body spins on the spot.
+
+                      Buttons, NOT a <select>, and that part is load-bearing: on
+                      macOS a select's popup is a native menu running its own
+                      event loop, and after choosing from it the first click on
+                      the canvas is swallowed — so the pick this option arms
+                      needs two clicks, the first appearing to do nothing. (It
+                      reproduces only in a real browser; neither headless nor
+                      headed Chromium under automation shows it, with or without
+                      the select focused.) Buttons have no popup, and they match
+                      the Move/Rotate/Scale row above. NB the Pattern dialog arms
+                      its picks from a <select> the same way and is likely to
+                      have the same fault. */}
+                  <div className="bool-group-label">Axis</div>
+                  <div className="ed-modes">
+                    <button
+                      className={pickedTransformAxis ? "" : "active"}
+                      onClick={() => {
+                        cancelTransformAxisPick();
+                        // Falling back to a world direction: keep the one the
+                        // feature already held, or Z for a feature coming off a
+                        // picked line (which has no direction of its own).
+                        if (typeof editingTransform.axis !== "string") {
+                          setDoc(setTransform(doc, editingTransform.id, { axis: "z" }));
+                        }
+                      }}
+                    >
+                      Body center
+                    </button>
+                    <button className={pickedTransformAxis ? "active" : ""} onClick={armTransformAxis}>
+                      Line or edge
+                    </button>
                   </div>
+                  {pickedTransformAxis ? (
+                    <PickSlot
+                      noun="an axis"
+                      armed={transformAxisPicking}
+                      value={transformAxisLabel(editingTransform.axis, doc)}
+                      wide
+                      title="A straight body edge or a sketch line to swing the body around"
+                      onArm={armTransformAxis}
+                      onClear={() => {
+                        // Back to a world direction, then straight into
+                        // re-picking — an empty slot would leave no rotation.
+                        setDoc(setTransform(doc, editingTransform.id, { axis: "z" }));
+                        armTransformAxis();
+                      }}
+                    />
+                  ) : (
+                    <div className="ed-field">
+                      <span>Along</span>
+                      <div className="ed-modes" style={{ width: 112 }}>
+                        {(["x", "y", "z"] as const).map((ax) => (
+                          <button
+                            key={ax}
+                            className={editingTransform.axis === ax ? "active" : ""}
+                            onClick={() =>
+                              setDoc(
+                                updateParam(doc, editingTransform.id, "axis", ax),
+                                `param:${editingTransform.id}:axis`,
+                              )
+                            }
+                          >
+                            {ax.toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <label className="ed-field">
                     <span>Angle°</span>
                     <input
@@ -9788,8 +10037,10 @@ export default function App() {
               </label>
               <div className="ed-hint">
                 {transformMode === "scale"
-                  ? "Uniform scale about the body's centre — drag a corner of the box out to grow, in to shrink."
-                  : "Drag the gizmo, or type exact values."}
+                  ? "Uniform scale about the body's center — drag a corner of the box out to grow, in to shrink."
+                  : transformMode === "rotate"
+                    ? "An axis through the body's center spins it on the spot; a picked line or edge hinges it around that line. Drag the ring, or type an angle."
+                    : "Drag the gizmo, or type exact values."}
               </div>
               <div className="ed-actions">
                 <button className="ed-primary" onClick={finishTransform}>
@@ -9861,7 +10112,7 @@ export default function App() {
       {mirrorDialog && (
         <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
           <div className="ed-title" data-drag-handle>
-            {mirrorDialog.editId ? "Edit mirror" : "Mirror across plane"}
+            {mirrorDialog.editId ? "Edit mirror" : "Mirror a body"}
           </div>
           <div className="bool-group-label">Body</div>
           <PickSlot
@@ -9874,50 +10125,31 @@ export default function App() {
             onArm={armMirrorTarget}
             onClear={() => armMirrorTarget(true)}
           />
-          <label className="ed-field">
-            <span>Plane</span>
-            <select
-              value={mirrorDialog.plane}
-              onChange={(e) => {
-                const plane = e.target.value;
-                const pickFace = plane === "face" && !mirrorDialog.faceRef;
-                // The two slots read different click streams, so arming one has
-                // to disarm the other (see armMirrorTarget).
-                setMirrorDialog((d) => (d ? { ...d, plane, arming: pickFace ? null : d.arming } : d));
-                setPickingMirrorFace(pickFace);
-              }}
-            >
-              {mirrorPlaneOptions.map((o) => (
-                <option key={o.key} value={o.key}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {mirrorDialog.plane === "face" && (
-            <div className="ed-field">
-              <span>Face</span>
-              <PickSlot
-                noun="a face"
-                armed={pickingMirrorFace}
-                value={
-                  mirrorDialog.faceRef
-                    ? `On ${doc.features.find((f) => f.id === mirrorDialog.faceRef!.featureId)?.name ?? "body"}`
-                    : null
-                }
-                onArm={() => setPickingMirrorFace((v) => !v)}
-                onClear={() => {
-                  setMirrorDialog((d) => (d ? { ...d, faceRef: null } : d));
-                  setPickingMirrorFace(true);
-                }}
-              />
-            </div>
-          )}
+          <div className="bool-group-label">Plane or face</div>
+          {/* ONE slot for all three kinds of mirror plane — a datum, a reference
+              plane, or a planar body face — because the viewport's plane-pick
+              stream already resolves all three to a SketchPlaneRef (it is what
+              the reference-plane dialog's own slots read). A dropdown of named
+              planes would be a second control for the same job, and an option
+              that armed a pick is the shape whose first canvas click gets
+              swallowed on macOS (see the Transform dialog's axis control). */}
+          <PickSlot
+            noun="a plane or face"
+            armed={picking && pickPurpose === "mirrorPlane"}
+            value={mirrorDialog.plane ? mirrorPlaneLabel(mirrorDialog.plane, doc) : null}
+            wide
+            title="A datum plane, a reference plane, or a flat face of a body"
+            onArm={armMirrorPlane}
+            onClear={() => {
+              setMirrorDialog((d) => (d ? { ...d, plane: null } : d));
+              armMirrorPlane();
+            }}
+          />
           <div className="ed-actions">
             <button
               className="ed-primary"
               onClick={createMirror}
-              disabled={!mirrorDialog.targetId || (mirrorDialog.plane === "face" && !mirrorDialog.faceRef)}
+              disabled={!mirrorDialog.targetId || !mirrorDialog.plane}
             >
               {mirrorDialog.editId ? "Done" : "Create"}
             </button>
@@ -9931,32 +10163,100 @@ export default function App() {
           const targetName = doc.features.find((f) => f.id === d.targetId)?.name ?? "Body";
           const lineLabel = (ref: { sketchId: string }) =>
             (doc.features.find((f) => f.id === ref.sketchId)?.name ?? "Sketch") + " · line";
-          const axis = d.axis;
-          const axisLabel = !axis
-            ? null
-            : "world" in axis
-              ? `World ${axis.world.toUpperCase()}`
-              : "face" in axis
-                ? (doc.features.find((f) => f.id === axis.face.featureId)?.name ?? "Body") + " · face"
-                : lineLabel(axis);
-          // The direction dropdowns show "line" while a sketch-line ref is set OR
-          // its pick is being armed; picking a world option cancels the arming.
-          const dirValue = (slot: "dir1" | "dir2", ref: PatternDirRef | null) =>
-            d.arming === slot || (ref && !("world" in ref)) ? "line" : ref ? ref.world : "";
-          const setDir = (slot: "dir1" | "dir2") => (v: string) => {
-            if (v === "line") {
-              armPatternPick(slot);
-              return;
-            }
-            if (v !== "x" && v !== "y" && v !== "z") return;
+          /** How a PICKED reference reads in its slot (a world one never gets
+           *  here — the X/Y/Z row says which axis it is). */
+          const refLabel = (ref: PatternDirRef | PatternAxisRef) =>
+            "face" in ref
+              ? (doc.features.find((f) => f.id === ref.face.featureId)?.name ?? "Body") + " · face"
+              : "world" in ref
+                ? `World ${ref.world.toUpperCase()}`
+                : lineLabel(ref);
+          // Which KIND of reference a slot currently holds — a world axis, a
+          // picked one, or nothing yet. A slot reads as "picked" while its pick
+          // is merely ARMED too, so the control shows what you're in the middle
+          // of choosing rather than snapping back the moment you arm it.
+          const refKind = (slot: "dir1" | "dir2" | "axis", ref: PatternDirRef | PatternAxisRef | null) =>
+            d.arming === slot || (ref && !("world" in ref)) ? "picked" : ref ? "world" : null;
+          /** Put a slot on a world axis: the one given, else the one it already
+           *  held, else X — so switching back from a picked reference lands
+           *  somewhere valid instead of empty. Cancels the slot's arming. */
+          const setWorldRef = (
+            slot: "dir1" | "dir2" | "axis",
+            ref: PatternDirRef | PatternAxisRef | null,
+            ax?: "x" | "y" | "z",
+          ) => {
             if (picking && d.arming === slot) {
               setPicking(false);
               setPickPurpose("sketch");
             }
-            setPatternDialog((p) => (p ? { ...p, [slot]: { world: v }, arming: null } : p));
+            const world = ax ?? (ref && "world" in ref ? ref.world : "x");
+            setPatternDialog((p) => (p ? { ...p, [slot]: { world }, arming: null } : p));
           };
-          const dirPicking = (slot: "dir1" | "dir2") => picking && pickPurpose === "patternDir" && d.arming === slot;
-          const axisArming = picking && pickPurpose === "patternAxis";
+          /** The X/Y/Z row under a slot that's on a world axis. */
+          const worldAxisRow = (
+            slot: "dir1" | "dir2" | "axis",
+            ref: PatternDirRef | PatternAxisRef | null,
+            label: string,
+          ) => (
+            <div className="ed-field">
+              <span>{label}</span>
+              <div className="ed-modes" style={{ width: 112 }}>
+                {(["x", "y", "z"] as const).map((ax) => (
+                  <button
+                    key={ax}
+                    className={ref && "world" in ref && ref.world === ax ? "active" : ""}
+                    onClick={() => setWorldRef(slot, ref, ax)}
+                  >
+                    {ax.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+          /** The two-level reference control both directions and the circular
+           *  axis use: a segmented pair choosing the KIND, then that kind's own
+           *  detail. Buttons rather than a `<select>`, and that is load-bearing —
+           *  see the Transform dialog's axis control for the whole story: a
+           *  native popup menu swallows the first click of the pick an option
+           *  arms, so the pick appears to need two. */
+          const refControl = (
+            slot: "dir1" | "dir2" | "axis",
+            ref: PatternDirRef | PatternAxisRef | null,
+            opts: { pickLabel: string; pickNoun: string; alongLabel: string; worldTitle?: string },
+          ) => {
+            const kind = refKind(slot, ref);
+            return (
+              <>
+                <div className="ed-modes">
+                  <button
+                    className={kind === "world" ? "active" : ""}
+                    title={opts.worldTitle}
+                    onClick={() => setWorldRef(slot, ref)}
+                  >
+                    World axis
+                  </button>
+                  <button className={kind === "picked" ? "active" : ""} onClick={() => armPatternPick(slot)}>
+                    {opts.pickLabel}
+                  </button>
+                </div>
+                {kind === "picked" ? (
+                  <PickSlot
+                    noun={opts.pickNoun}
+                    armed={picking && d.arming === slot}
+                    value={ref && !("world" in ref) ? refLabel(ref) : null}
+                    wide
+                    onArm={() => armPatternPick(slot)}
+                    onClear={() => {
+                      setPatternDialog((p) => (p ? { ...p, [slot]: null } : p));
+                      armPatternPick(slot);
+                    }}
+                  />
+                ) : kind === "world" ? (
+                  worldAxisRow(slot, ref, opts.alongLabel)
+                ) : null}
+              </>
+            );
+          };
           const targetArming = patternDialog.arming === "target";
           const armTarget = () => setPatternDialog((p) => (p ? { ...p, targetId: null, arming: "target" } : p));
           return (
@@ -9986,24 +10286,11 @@ export default function App() {
               {d.kind === "linear" ? (
                 <>
                   <div className="bool-group-label">Direction</div>
-                  <label className="ed-field">
-                    <span>Along</span>
-                    <select value={dirValue("dir1", d.dir1)} onChange={(e) => setDir("dir1")(e.target.value)}>
-                      <option value="x">World X</option>
-                      <option value="y">World Y</option>
-                      <option value="z">World Z</option>
-                      <option value="line">Sketch line…</option>
-                    </select>
-                  </label>
-                  {(dirPicking("dir1") || !("world" in d.dir1)) && (
-                    <PickSlot
-                      noun="a sketch line"
-                      armed={dirPicking("dir1")}
-                      value={"world" in d.dir1 ? null : lineLabel(d.dir1)}
-                      wide
-                      onArm={() => armPatternPick("dir1")}
-                    />
-                  )}
+                  {refControl("dir1", d.dir1, {
+                    pickLabel: "Sketch line",
+                    pickNoun: "a sketch line",
+                    alongLabel: "Along",
+                  })}
                   <label className="ed-field">
                     <span>Count</span>
                     <input
@@ -10047,27 +10334,11 @@ export default function App() {
                   </label>
                   {d.dir2on && (
                     <>
-                      <label className="ed-field">
-                        <span>Along</span>
-                        <select value={dirValue("dir2", d.dir2)} onChange={(e) => setDir("dir2")(e.target.value)}>
-                          <option value="" disabled>
-                            Choose…
-                          </option>
-                          <option value="x">World X</option>
-                          <option value="y">World Y</option>
-                          <option value="z">World Z</option>
-                          <option value="line">Sketch line…</option>
-                        </select>
-                      </label>
-                      {(dirPicking("dir2") || (d.dir2 && !("world" in d.dir2))) && (
-                        <PickSlot
-                          noun="a sketch line"
-                          armed={dirPicking("dir2")}
-                          value={d.dir2 && !("world" in d.dir2) ? lineLabel(d.dir2) : null}
-                          wide
-                          onArm={() => armPatternPick("dir2")}
-                        />
-                      )}
+                      {refControl("dir2", d.dir2, {
+                        pickLabel: "Sketch line",
+                        pickNoun: "a sketch line",
+                        alongLabel: "Along",
+                      })}
                       <label className="ed-field">
                         <span>Count</span>
                         <input
@@ -10102,45 +10373,15 @@ export default function App() {
               ) : (
                 <>
                   <div className="bool-group-label">Axis</div>
-                  {/* The world-axis shortcut only shows while the slot is empty —
-                      once an axis is set, ✕ is the way back to choosing one. */}
-                  {!axisLabel && (
-                    <label className="ed-field">
-                      <span>World</span>
-                      <select
-                        value=""
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v !== "x" && v !== "y" && v !== "z") return;
-                          if (picking && d.arming === "axis") {
-                            setPicking(false);
-                            setPickPurpose("sketch");
-                          }
-                          setPatternDialog((p) => (p ? { ...p, axis: { world: v }, arming: null } : p));
-                        }}
-                      >
-                        <option value="">Choose…</option>
-                        <option value="x">World X (through the origin)</option>
-                        <option value="y">World Y (through the origin)</option>
-                        <option value="z">World Z (through the origin)</option>
-                      </select>
-                    </label>
-                  )}
-                  <PickSlot
-                    noun="an axis (sketch line / cylindrical face)"
-                    armed={axisArming}
-                    value={axisLabel}
-                    wide
-                    onArm={() => armPatternPick("axis")}
-                    onClear={() => {
-                      setPatternDialog((p) => (p ? { ...p, axis: null } : p));
-                      armPatternPick("axis");
-                    }}
-                  >
-                    {/* The full "which kinds qualify" phrase is only useful
-                        before the pick; while arming, the banner says it. */}
-                    {axisArming ? "Select an axis" : undefined}
-                  </PickSlot>
+                  {refControl("axis", d.axis, {
+                    pickLabel: "Line or face",
+                    pickNoun: "an axis",
+                    alongLabel: "Around",
+                    // Unlike a linear DIRECTION (a vector, positionless), a
+                    // circular axis is a line — and the world one runs through
+                    // the origin, which is not where the body is.
+                    worldTitle: "A world axis through the origin",
+                  })}
                   <label className="ed-field">
                     <span>Count</span>
                     <input
@@ -10185,7 +10426,7 @@ export default function App() {
                       </label>
                     </>
                   )}
-                  {axis && "face" in axis && (
+                  {d.axis && "face" in d.axis && (
                     <div className="ed-hint">
                       A face axis resolves in the kernel — the preview appears after Create.
                     </div>

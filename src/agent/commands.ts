@@ -43,6 +43,7 @@ import {
   validateVariableNames,
 } from "../document/document";
 import { expandPickToChains } from "../geom/edgeChains";
+import { edgeLine } from "../geom/meshQuery";
 import { applyExtend, applyTrim, planExtend, planTrim } from "../document/trimOps";
 import { detectSketchRegions } from "../document/regions";
 import { DEFAULT_SOLID_COLOR } from "../document/colors";
@@ -68,6 +69,7 @@ import type {
   SketchConstraint,
   SketchEntity,
   SketchFeature,
+  TransformAxis,
   Variable,
   Vec2,
 } from "../document/types";
@@ -953,12 +955,40 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         requireFeature(doc, op.targetId);
         const mesh = ctx.getMeshes().find((m) => m.id === op.targetId);
         const pivot = mesh ? bboxCenter(mesh.mesh.faces) : ([0, 0, 0] as [number, number, number]);
+        // A world axis is taken as-is; the two reference axes are validated here
+        // (sketch line present and straight, edge present and straight) so a bad
+        // reference is an error the agent can act on rather than a broken
+        // feature sitting in the timeline.
+        let axis: TransformAxis | undefined;
+        const tax = op.axis;
+        if (typeof tax === "string" || tax === undefined) {
+          axis = tax;
+        } else if ("entityId" in tax) {
+          const axisSketch = requireFeature(doc, tax.sketchId);
+          if (axisSketch.type !== "sketch") throw new OpError("not_found", `Axis "${tax.sketchId}" is not a sketch.`);
+          const axisEnt = axisSketch.entities.find((e) => e.id === tax.entityId);
+          if (!axisEnt) throw new OpError("not_found", `No entity "${tax.entityId}" in sketch "${tax.sketchId}".`);
+          if (axisEnt.type !== "line") throw new OpError("invalid_op", "transform axis must be a line entity.");
+          axis = { sketchId: tax.sketchId, entityId: tax.entityId };
+        } else {
+          const axMesh = ctx.getMeshes().find((m) => m.id === tax.bodyId);
+          if (!axMesh) throw new OpError("not_found", `No body "${tax.bodyId}" for the rotation axis.`);
+          const g = axMesh.mesh.edges.edgeGroups?.find((eg) => eg.name === tax.edgeName);
+          if (!g) throw new OpError("not_found", `Edge "${tax.edgeName}" not found on body "${tax.bodyId}".`);
+          if (!edgeLine(axMesh.mesh.edges, g.edgeId)) {
+            throw new OpError("invalid_op", `Edge "${tax.edgeName}" is curved — a rotation axis must be straight.`);
+          }
+          const fp = edgeFingerprintByName(axMesh.mesh.edges, tax.edgeName);
+          axis = {
+            edge: { featureId: tax.bodyId, edgeName: tax.edgeName, edgeId: g.edgeId, mid: fp.mid, length: fp.length },
+          };
+        }
         const r = addTransform(doc, op.targetId, pivot, {
           tx: op.tx,
           ty: op.ty,
           tz: op.tz,
           angle: op.angle,
-          axis: op.axis,
+          axis,
           copy: op.copy,
         });
         next = r.doc;

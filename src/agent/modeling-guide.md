@@ -194,8 +194,13 @@ entityId}` (get the id from `get_scene_summary`); a plane `{plane: …}` (the ax
   opening. The new inner-wall faces are named `"<kept-face-name>/in"` for
   later reference (e.g. filleting an inside corner).
 - **Combine two bodies:** `boolean` (union/subtract/intersect) by body ids.
-- **Place/duplicate a body:** `transform` (translate + single-axis rotate). Set
+- **Place/duplicate a body:** `transform` (translate + rotate). Set
   `copy: true` to keep the original and emit a moved copy as a new part.
+  `axis` picks what the rotation turns about: a world axis (`"x"|"y"|"z"`,
+  through the body's own center — a spin on the spot), a sketch line
+  `{sketchId, entityId}`, or a straight body edge `{bodyId, edgeName}`. An edge
+  axis **hinges** the body around that edge instead of spinning it in place,
+  which is what folds a lid, a flap or a bracket leg.
 - **Sketch off the base planes:** `add_plane` → sketch on it. Methods: `offset`
   (parallel to a datum/face at a distance — the default), `midplane` (halfway
   between `base` and `refB`), `angle` (base hinged on its `u`/`v` axis by `angle`

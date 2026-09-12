@@ -254,11 +254,14 @@ place. Roughly ordered by how often a user meets them.
 **Features with obvious next increments**
 
 - **Extrude:** taper/draft angle + thin/shell walls.
-- **Transform:** rotation about a datum axis / body edge (the axis is world
-  X/Y/Z today).
+- **Transform:** a pivot that re-derives when the body changes upstream (it is
+  baked at creation). The rotation axis now takes a sketch line or a straight
+  body edge as well as world X/Y/Z.
 - **Pattern:** per-instance skip, fuse-with-seed, multi-seed, body-edge directions.
 - **Planes:** hinge on a picked edge; line+point and two-parallel-edges methods.
 - **Sweep/loft:** twist, multiple profiles, guide rails, ruled option.
+- **Measure:** the info pane reads whatever is selected; there's no pick-two
+  measure tool (point-to-point, face-to-face, angle).
 - **STEP import:** drag-and-drop a file (the picker is the only route in).
   Disjoint solids already split into parts; what's still missing is their
   **names** — shelved on `feat/step-assembly-split`, blocked on a wasm build
@@ -487,8 +490,8 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   once (one delta pair per target — `dressUpDeltaBase`), and the feature is
   named for what it dresses: **"Chamfer on Box 1"**, or "Chamfer on 3 parts".
   Older documents' single inline target is lifted to a one-element list by
-  `migrateDocument`. _(Chamfer two-distance/angle variants: TODO; currently
-  single distance / single radius.)_
+  `migrateDocument`. _(An asymmetric chamfer is spelled distance + angle; there
+  is no two-distance form.)_
 - **Shell (2026-07-24) — ✅ DONE.** A `ShellFeature` hollows a body: pick the
   face(s) to remove (they become openings, referenced by **persistent name** +
   a `FaceRef` geometric fingerprint for the same topo-naming fallback as
@@ -555,8 +558,8 @@ behind the `Kernel` facade. Item-by-item status is inline below.
   - **Kernel:** `importStepNamed` reads it via OCCT `STEPControl_Reader` (sync —
     writes the text straight to the in-memory FS), `cast(OneShape())` → a body
     keyed by the feature id (random colour like other new bodies). Folds in via
-    `buildBodies`. (Multi-solid STEP comes in as one body/compound for now;
-    one-body-per-solid is a future refinement.)
+    `buildBodies`, where `splitPartsPass` breaks disjoint solids into one part
+    each (like any other multi-solid result).
   - **Topological names seeded on import:** axis-aligned planar faces get an axis
     name (`id/+z`) via `axisFaceName`, the rest a stable unique index name
     (`id/fN`) — so downstream extrude-on-face / chamfer / the agent can reference
@@ -568,8 +571,7 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     incremental-regen work: `import` goes through the same content-hash-keyed
     `buildCached`/`builderKey` as every other builder, so an unchanged STEP
     source isn't re-parsed every regen). **Still TODO:** drag-and-drop a file
-    onto the viewport; one-body-per-solid (multi-solid STEP still comes in as
-    one compound).
+    onto the viewport.
 
 ### Phase 5 — Boolean + Reference planes + Pattern + Mirror — ✅ DONE
 
@@ -629,12 +631,61 @@ behind the `Kernel` facade. Item-by-item status is inline below.
     compounded into ONE body keyed by the feature (seed kept, like Mirror).
     Live ghost preview clones the seed's tessellated mesh — no kernel round
     trip. Agent parity: `add_sketch_pattern` + `add_pattern` MCP tools.
+  - **Reference controls — buttons, not dropdowns (2026-09-12).** Each
+    direction and the circular axis is now one two-level chooser (`refControl`
+    in `App.tsx`): a segmented **World axis / Sketch line** (or **Line or face**)
+    pair, revealing either an X/Y/Z row or a `PickSlot` — never both. They were
+    `<select>`s whose last option armed a viewport pick, which is the shape that
+    breaks: on macOS a select's popup is a native menu running its own event
+    loop, and after choosing from it the first click on the canvas is swallowed,
+    so the pick took two clicks with the first appearing to do nothing (the same
+    fault fixed in Transform, and confirmed by the user here). Arming also drops
+    focus (`releaseFocus`). **Mirror is fixed the same way (below). Extrude
+    (Extent → "Up to face") and the reference-plane dialog (Method) still arm a
+    pick from a `<select>`.** Extrude stopped showing the fault once its own
+    arming bug was fixed (see Phase 3) — with no profile picked the dropdown now
+    arms nothing, which is the path people hit; switching the extent AFTER a
+    profile still goes through a popup and would be the place it resurfaces.
+    `scripts/verify-pattern-refs.mjs` (18 checks).
   - _Still open:_ per-instance skip, fuse-with-seed option, multi-seed, and
     body-edge direction references.
 - **Mirror across a plane/planar face — ✅ DONE.** A `MirrorFeature` reflects a
   body across a datum / reference plane into a **new** body (original kept) via
-  `gp_Trsf.SetMirror` (reuses `applyTrsf`; names re-key 1:1). `⇋ Mirror` button
-  - plane-pick dialog. **Always enabled (2026-09-08) — ✅ DONE:** the **body** is
+  `gp_Trsf.SetMirror` (reuses `applyTrsf`; names re-key 1:1).
+  - **Two pickers + ghost (2026-09-12).** The dialog is now just that: a body
+    slot and a **plane** slot. The plane is ONE `SketchPlaneRef` covering all
+    three kinds a mirror can use — datum, reference plane, planar body face —
+    because the viewport's plane-pick stream (`pickPurpose: "mirrorPlane"` →
+    `handlePickRef`) already resolves all three, which is what the
+    reference-plane dialog's own slots read. The dropdown of named planes is
+    gone: it was a second control for the same job, and its "Body face…" option
+    armed a viewport pick, the shape that breaks (see Transform). `pick()` now
+    passes its `faceId` through `onPick`, so the slot keeps the old planarity
+    guard — a curved face's "plane" is only the tangent where the pointer landed.
+    (NB almost nothing in this build is actually curved: cylinders are faceted
+    48-gon prisms, so the guard fires on spheres, fillets and B-spline faces.)
+    A **live ghost**
+    previews the mirrored body before Create (`mirrorGhost`), reflecting the
+    target's own tessellation: no kernel round trip, instant on every plane
+    change, and wearing the same material as the pattern ghosts. It appears only
+    once a plane is PICKED — the old dialog defaulted to the Front plane and so
+    ghosted across a plane nobody chose, which for a body straddling it landed
+    the preview on top of the original and read as a rendering fault. NB a reflection REVERSES orientation, so it passes `flipWinding` to
+    `transformMeshPayload` — the mapped normals are right but the winding they
+    were paired with is not, and against a double-sided material the shader
+    flips those normals back and lights the body inside-out. Also hoisted
+    `planeKeyToRef` to module scope: as a component `const` it sat in the
+    temporal dead zone of this render-time memo, and a `try/catch` meant for
+    unresolvable planes swallowed the ReferenceError so the ghost simply never
+    appeared. The body slot auto-advances to the plane
+    slot when a click fills it, the same way opening with a body already selected
+    arms the plane straight away — a dialog that fills one slot and then waits on
+    a button is a dead end the user has to notice.
+    Titled **"Mirror a body"** over slots headed **Body** and
+    **Plane or face**: it was "Mirror across plane", which stopped being true
+    once a face became a first-class choice.
+    `scripts/verify-mirror-dialog.mjs` (21 checks).
+  - `⇋ Mirror` button + plane-pick dialog. **Always enabled (2026-09-08) — ✅ DONE:** the **body** is
     a `PickSlot` inside the dialog, armed on open when no single body is
     pre-selected (the Pattern-target rule: any click resolving to a rendered body
     fills it). Arming the body cancels an in-flight face pick, since the two
@@ -675,9 +726,56 @@ face` button, like up-to-face); the picked face's plane is derived via
   geometry), so there's no flash back to the origin. The panel's numeric readout
   stays live via a display-only state that never feeds the kernel. Verified on a
   40-body doc: 0 regens during the drag, 1 on release; no flash-back.
-- **TODO:** scale; rotation about a datum axis / body edge / arbitrary
-  point+direction (today: world axis through the bbox-centre pivot); a pivot
-  that re-derives if the body changes upstream (today it's baked at creation).
+- **Rotation axis — ✅ DONE (2026-09-12).** `TransformFeature.axis` widened from
+  `"x"|"y"|"z"` to a `TransformAxis`: still those three (each through the
+  feature's `pivot`, so the body spins on the spot — and a bare string is what
+  legacy documents already hold, so nothing needed migrating), plus a **sketch
+  line** entity and a **straight body edge**, each of which is its own line in
+  space. That difference is the feature: an edge axis **hinges** the body around
+  that edge rather than spinning it in place, which is what folds a lid or a
+  bracket leg. Baked to `axisOrigin`+`axisDir` in `document.ts` (sharing the new
+  `sketchLineAxis` helper with revolve and pattern, which each had their own
+  copy); a body edge is carried through as `axisEdge` and resolved in the worker
+  by `edgeRevolveAxis` — revolve's resolver, so a renamed edge re-matches by
+  fingerprint the same way — with the axis body's key folded into the transform's
+  content key. The gizmo: rotate mode switches TransformControls to **local**
+  space showing only the Z ring, with the proxy turned so its local Z lies on the
+  axis and the dragged angle read back as the rotation relative to that frame
+  (`axisFrameQuaternionOf` / `proxyDelta`); the ring is centred on the point of
+  the axis nearest the body, since a hinge edge can run far past it. It also
+  carries two tangential arrowheads (`addRotationArrowheads`) circulating the
+  same way, so the ring reads as something to turn rather than as decoration —
+  heads pointing AT each other would be collinear on screen and read as a
+  translate pair. UI: **one** control in two levels — a select choosing the KIND
+  of axis (**"Body center"** / **"Line or edge…"**), which reveals either the
+  X/Y/Z buttons or a `PickSlot`, never both. Two wordings were tried and rejected
+  on the way: X/Y/Z buttons _beside_ a permanent pick slot (reads as two
+  independent axis choices), then "World X/Y/Z" as the select's options —
+  "world" reads as _through the origin_, which is exactly what it means one
+  dialog over in Pattern and exactly what this is not: the direction is
+  world-aligned but the axis runs through the body's own centre. The pick rides
+  the shared axis stream (`pickPurpose: "transformAxis"`), and arming blurs
+  whatever control armed it — the viewport is the input surface from then on.
+  **The kind chooser is BUTTONS, not a `<select>`, and that is load-bearing:** on
+  macOS a select's popup is a native menu running its own event loop, and after
+  choosing from it the first click on the canvas is swallowed, so the pick it
+  arms takes two clicks with the first appearing to do nothing. It reproduces
+  only in a real browser — neither headless nor headed Chromium under automation
+  shows it, focused select or not — which is why the first two attempts at this
+  (disabling the gizmo during picks; leaving the select in place) did not fix it.
+  NB **the Pattern dialog arms its picks from a `<select>` the same way** and is
+  likely to carry the same fault. A curved edge is
+  refused at pick time, not in the kernel.
+  **The gizmo stands down (`tc.enabled = !picking`) for the duration of any
+  viewport pick** — its handles are invisible donuts and cones far fatter than
+  what they draw (the rotate picker is a full torus around the pivot), so a live
+  gizmo covers the geometry the user was just asked to click and swallows the
+  press into a zero-distance drag: the click looks like it did nothing, and only
+  a second one, nudged clear of the handle, gets through. The scale gizmo already
+  did this via `scaleGizmoActive`; TransformControls didn't. `scripts/verify-transform-axis.mjs`
+  (34 checks) + `document/transformAxis.test.ts` + `viewport/gizmoShape.test.ts`.
+- **TODO:** an arbitrary point+direction axis; a pivot that re-derives if the
+  body changes upstream (today it's baked at creation).
 - **Perf follow-up — ✅ DONE** (`perf/regen-caching`, merged): the worker now
   caches unchanged bodies' OCCT shapes (`builderCache`, keyed by a content
   hash of the resolved feature + its inputs) and their tessellations
@@ -802,7 +900,10 @@ face` button, like up-to-face); the picked face's plane is derived via
   manager"** below: documents dialog, editable title, thumbnails, `.json`
   import/export, corrupt-record recovery, and the agent's
   `list/open/new/rename/duplicate_document` tools.
-- Measurement tools, section view — still TODO. _(Appearance — ✅ DONE, Phase 7:
+- **Measure — partial:** the selection info pane (`selection/measure.ts`) reads
+  length / radius / diameter / area / coords and the gap between two parallel
+  edges; a pick-two-things measure tool (point-to-point, face-to-face, angle) is
+  still TODO. _(Section view — ✅ DONE, see BACKLOG. Appearance — ✅ DONE, Phase 7:
   color/opacity/hide per part. Keyboard shortcuts — ✅ DONE, see
   `KEYBOARD_SHORTCUTS.md`.)_
 - **Performance — incremental regen ✅ DONE** (worker-side `builderCache`/
@@ -1167,6 +1268,16 @@ center}`; re-clickable to re-pick). The kernel computes the signed prism
    pillar top lands exactly on the target face's plane. (`ExtrudeExtent` +
    `UpToFaceRef` in `document/types.ts`; resolve in `document.ts`; `upToFaceLength`
    in `kernel/worker.ts`; dialog + `pickingUpFace` arming in `App.tsx`.)
+   **Arming order fixed (2026-09-12):** the profile slot and the face slot read
+   the SAME click stream (the ordinary selection raycaster, not `picking`) and
+   `handlePick` checks the face FIRST — so while both were armed the face
+   silently ate every click meant for the profile list, and choosing "Up to
+   face" armed it unconditionally, including with nothing picked yet. The
+   profile now always comes first: the extent arms the face only when there is
+   already a profile, and whichever slot takes the stream stands the other down.
+   No auto-advance after the first profile, unlike Mirror — extrude's profile
+   slot ACCUMULATES, so advancing would cut off the second pick.
+   `scripts/verify-extrude-arming.mjs` (11 checks).
    _Remaining:_ trim to the actual (possibly non-planar) face surface rather than
    its plane; up-front client validation of face eligibility.
 

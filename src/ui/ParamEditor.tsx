@@ -226,15 +226,22 @@ export function ParamEditor({
           ))}
           <label className="param-field">
             <span className="param-label">Axis</span>
-            <select
-              className="param-input"
-              value={feature.axis}
-              onChange={(e) => onChangeParam(feature.id, "axis", e.target.value)}
-            >
-              <option value="x">X</option>
-              <option value="y">Y</option>
-              <option value="z">Z</option>
-            </select>
+            {typeof feature.axis === "string" ? (
+              <select
+                className="param-input"
+                value={feature.axis}
+                onChange={(e) => onChangeParam(feature.id, "axis", e.target.value)}
+              >
+                <option value="x">X</option>
+                <option value="y">Y</option>
+                <option value="z">Z</option>
+              </select>
+            ) : (
+              // A picked axis (sketch line / body edge) is a reference, not a
+              // value — re-pick it in the Transform dialog (double-click the
+              // feature), the way every other picked reference is edited.
+              <span className="param-static">{"edge" in feature.axis ? "Body edge" : "Sketch line"}</span>
+            )}
           </label>
           <label className="param-field">
             <span className="param-label">Angle°</span>

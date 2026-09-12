@@ -42,7 +42,8 @@ const OP_DESCRIPTIONS: Record<string, string> = {
     "Loft through 2+ sketch regions (sections, in the given order) into a solid. Put the sections on different planes (e.g. a base datum + an offset plane).",
   addPlane:
     "Add a reference plane. method (default 'offset'): 'offset' = parallel to base at a signed distance; 'midplane' = halfway between base and refB; 'angle' = base hinged on its u/v axis (angleAxis) by angle degrees; 'through' = through exactly 3 world points. base/refB are datum/plane/face refs; 'through' uses points and ignores base.",
-  transform: "Rigid-move a body (translate + single-axis rotate). copy:true keeps the original and emits a moved copy.",
+  transform:
+    "Rigid-move a body (translate + rotate). axis = a world axis 'x'|'y'|'z' (through the body's center), a sketch line {sketchId,entityId}, or a straight body edge {bodyId,edgeName} — an edge axis HINGES the body around it. copy:true keeps the original and emits a moved copy.",
   boolean: "Combine two or more bodies (union/subtract/intersect) by id. For subtract, the first operand is the base.",
   dressUp:
     "Chamfer or fillet edges of a body, referencing edges by their persistent names from the summary. Pass `faces` instead of (or alongside) `edges` to dress every boundary edge of those faces — the reliable way to round a circular rim, since naming a cylinder's flat top beats listing its 96 rim chords. A chamfer takes an optional angle in degrees (0..90, default 45 = symmetric): size is measured along the reference face and the bevel leaves it at that angle; flip:true measures from the edge's other adjacent face instead.",

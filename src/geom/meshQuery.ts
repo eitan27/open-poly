@@ -145,3 +145,40 @@ export function edgeFingerprint(
   }
   return { mid: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2], length };
 }
+
+/** The edgeId carrying a persistent edge name, or undefined if no edge does.
+ *  Names outlive ids across a rebuild, so a stored reference resolves by name
+ *  first and only falls back to the id it was picked with. */
+export function edgeIdByName(edges: MeshedEdges, name: string): number | undefined {
+  return edges.edgeGroups?.find((eg) => eg.name === name)?.edgeId;
+}
+
+/** The world line a STRAIGHT tessellated edge lies on: a point on it and a unit
+ *  direction. Null for a missing, degenerate or curved edge — a circle or spline
+ *  has no single direction, so it can't be an axis. Straightness is measured
+ *  against the chord rather than assumed from the vertex count: a line meshes to
+ *  two points today, but an edge that merely LOOKS straight at this tessellation
+ *  must not pass as one. */
+export function edgeLine(
+  edges: MeshedEdges,
+  edgeId: number,
+): { origin: [number, number, number]; dir: [number, number, number] } | null {
+  const g = edges.edgeGroups?.find((eg) => eg.edgeId === edgeId);
+  if (!g || g.count < 2) return null;
+  const { lines } = edges;
+  const at = (v: number): [number, number, number] => [lines[v * 3], lines[v * 3 + 1], lines[v * 3 + 2]];
+  const a = at(g.start);
+  const b = at(g.start + g.count - 1);
+  const d: [number, number, number] = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const len = Math.hypot(d[0], d[1], d[2]);
+  if (len < 1e-9) return null; // closed (a full circle) or degenerate
+  const dir: [number, number, number] = [d[0] / len, d[1] / len, d[2] / len];
+  for (let v = g.start + 1; v < g.start + g.count - 1; v++) {
+    const p = at(v);
+    const w: [number, number, number] = [p[0] - a[0], p[1] - a[1], p[2] - a[2]];
+    const along = w[0] * dir[0] + w[1] * dir[1] + w[2] * dir[2];
+    const off = Math.hypot(w[0] - along * dir[0], w[1] - along * dir[1], w[2] - along * dir[2]);
+    if (off > 1e-6 * len + 1e-9) return null; // bows away from the chord: curved
+  }
+  return { origin: a, dir };
+}
