@@ -94,7 +94,11 @@ Roughly ordered by how often a user meets them.
   face-eligibility check.
 - **Transform:** arbitrary point+direction axis; a pivot that re-derives when the
   body changes upstream (baked at creation today).
-- **Pattern:** per-instance skip, fuse-with-seed, multi-seed, body-edge directions.
+- **Pattern:** per-instance skip, fuse-with-seed, multi-seed, body-edge
+  directions, pattern-of-pattern; drag-to-set spacing in the viewport (both
+  levels type it today); re-open a sketch pattern by clicking a generated
+  entity (delete + redo today). Sketch patterns cover line/circle/arc/point —
+  splines and text are excluded, matching mirror.
 - **Planes:** hinge on a picked edge; line+point and two-parallel-edges methods.
 - **Sweep/loft:** twist, multiple profiles, guide rails, ruled option.
 - **Measure:** the info pane reads a selection; no pick-two measure tool.
@@ -216,6 +220,25 @@ Things that cost real time to learn and are not obvious from the code.
 - A fat `LineGeometry` **does not grow its instance count** via `setPositions` —
   rebuild it fresh when the point count changes, or only the first segment draws.
 - Browsers reserve **Cmd/Ctrl+O**; a shortcut bound to it never fires.
+
+**Patterns**
+
+- **Count includes the seed** (6 ⇒ seed + 5 copies), matching Onshape/SolidWorks.
+- **There is no radius input**, at either level: instances are rotations of the
+  seed about the axis, so the radius is wherever the seed already sits. An
+  explicit radius would have to move the seed, which no mainstream CAD does.
+- A body circular pattern takes an **axis, not a center point** — a point alone
+  doesn't orient a rotation in 3D. (A sketch pattern takes a point, because its
+  plane supplies the rest.)
+- A pattern feature produces **ONE body — a compound of the copies, seed left
+  untouched** (delete it ⇒ back to the seed, like mirror). The pipeline assumes
+  one body per feature id, so synthetic per-instance ids would leak everywhere.
+  Each copy's names are suffixed `~p{i}` so downstream picks stay unambiguous.
+- **Sketch and body patterns don't substitute for each other.** Repeating a CUT
+  is a sketch pattern plus one extrude-remove (there is no "pattern this
+  feature" here); repeating a filleted part is a body pattern. 40 holes as
+  bodies would be 40 solids and 40 booleans.
+- Both previews are **mesh clones** — a rigid motion needs no kernel round trip.
 
 **Document / storage**
 
