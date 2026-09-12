@@ -447,6 +447,21 @@ export interface PlaneFeature extends FeatureBase {
   hidden?: boolean;
 }
 
+/** What a transform's rotation turns about. One of:
+ *  - a world axis `"x"|"y"|"z"`, running through the feature's own `pivot` (the
+ *    body's centroid) — the original shape, and still what a bare string means,
+ *    so documents written before the other two load unchanged;
+ *  - a sketch line entity — the line ITSELF in world space, not a direction
+ *    through the pivot, so a body swings around wherever the line is drawn;
+ *  - a straight body edge — likewise the edge's own line, referenced by
+ *    persistent name + fingerprint (`RevolveAxisEdge`, shared with revolve) so
+ *    it survives the upstream edits that churn edge names.
+ *
+ *  The distinction matters: "rotate 90° about Z" turns a body on the spot, while
+ *  "rotate 90° about that edge" hinges it, which is what a lid or a folded
+ *  bracket actually does. */
+export type TransformAxis = "x" | "y" | "z" | { sketchId: string; entityId: string } | { edge: RevolveAxisEdge };
+
 /** A transform (translate + rotate + uniform scale) applied to a body in place.
  *  Like a rigid motion, a similarity (uniform scale) doesn't alter topology, so
  *  the body keeps its identity AND its persistent topological names — downstream
@@ -460,10 +475,11 @@ export interface TransformFeature extends FeatureBase {
   tx: string;
   ty: string;
   tz: string;
-  /** Rotation angle in degrees (expression), about `axis` through `pivot`. */
+  /** Rotation angle in degrees (expression), about `axis`. */
   angle: string;
-  /** World axis the rotation turns about. */
-  axis: "x" | "y" | "z";
+  /** What the rotation turns about — see TransformAxis. A world axis passes
+   *  through `pivot`; a sketch line or body edge IS the axis line. */
+  axis: TransformAxis;
   /** Uniform scale factor (expression) about `pivot`, applied BEFORE the
    *  rotation and translation. 1 = unscaled. Uniform only: OCCT's non-uniform
    *  BRepBuilderAPI_GTransform isn't bound in this wasm build, and a similarity

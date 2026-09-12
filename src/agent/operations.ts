@@ -401,7 +401,20 @@ export const operationSchema = z.discriminatedUnion("op", [
     ty: expr.optional(),
     tz: expr.optional(),
     angle: expr.optional(),
-    axis: z.enum(["x", "y", "z"]).optional(),
+    /** What the rotation turns about. Defaults to world "z". One of:
+     *  - a world axis `"x"|"y"|"z"` — through the body's own centre, so the body
+     *    spins on the spot;
+     *  - a sketch **line** entity `{sketchId, entityId}`;
+     *  - a straight body **edge** `{bodyId, edgeName}` (a curved edge is
+     *    rejected) — the edge IS the axis, so the body HINGES around it rather
+     *    than spinning in place. That is how you fold a lid or a bracket. */
+    axis: z
+      .union([
+        z.enum(["x", "y", "z"]),
+        z.object({ sketchId: z.string(), entityId: z.string() }),
+        z.object({ bodyId: z.string(), edgeName: z.string() }),
+      ])
+      .optional(),
     /** Keep the original and emit a moved copy as a new body. */
     copy: z.boolean().optional(),
   }),

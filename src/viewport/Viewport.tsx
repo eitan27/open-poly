@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import {
+  addRotationArrowheads,
+  closeRotationRings,
+  dropBackwardArrow,
+  joinShaftsToBothArrows,
+  softenGizmo,
+} from "./gizmoShape";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
@@ -104,9 +111,6 @@ export interface RenderPlane {
 
 export type TransformMode = "translate" | "rotate" | "scale";
 
-/** The muted grey every gizmo is toned toward, so none of them read as the
- *  default pure-RGB three.js widget (see softenGizmo). */
-const GIZMO_NEUTRAL = 0xc2cad8;
 /** The yellow a gizmo handle lights up in when it's hovered or being dragged.
  *  TransformControls paints its own active handle with `materialLib.active`
  *  (`matYellow`), and softenGizmo never reaches that material — no handle mesh
@@ -125,6 +129,21 @@ const SCALE_MIN_GRAB_PX = 10;
 /** Scratch vector for the scale gizmo's per-frame bounds loop (one allocation,
  *  not one per mesh vertex). */
 const _scaleTmp = new THREE.Vector3();
+/** Scratch vector for moving highlight vertices with a dragged body (same
+ *  reason: this runs once per highlighted vertex, every drag frame). */
+const _highlightTmp = new THREE.Vector3();
+/** The proxy's local rotate axis, and a scratch for aligning it to a world one. */
+const _unitZ = new THREE.Vector3(0, 0, 1);
+const _axisTmp = new THREE.Vector3();
+
+/** The quaternion that carries the rotate proxy's local +Z onto a rotation axis.
+ *  The rotate gizmo runs in LOCAL space with only the Z ring shown, so the ring
+ *  lies across the axis whatever direction it points — which is the whole reason
+ *  an arbitrary (edge / sketch-line) axis can be dragged at all, and the frame
+ *  the dragged angle is read back against (see proxyDelta). */
+function axisFrameQuaternionOf(dir: [number, number, number]): THREE.Quaternion {
+  return new THREE.Quaternion().setFromUnitVectors(_unitZ, _axisTmp.set(dir[0], dir[1], dir[2]).normalize());
+}
 /** The eight corners of a unit box, as sign triples. */
 const BOX_CORNERS: [number, number, number][] = [
   [-1, -1, -1],
@@ -150,9 +169,14 @@ export interface TransformEdit {
   tx: number;
   ty: number;
   tz: number;
-  /** Rotation angle in degrees about `axis` (a world axis). */
+  /** Rotation angle in degrees about `axis`. */
   angle: number;
-  axis: "x" | "y" | "z";
+  /** The rotation axis as a world LINE — `dir` is what the body turns about and
+   *  `origin` a point it passes through. A world-axis transform resolves to the
+   *  pivot plus a unit direction (so it still spins the body on the spot); a
+   *  picked sketch line or body edge to its own line, which is what makes the
+   *  body hinge around it instead. Always unit-length `dir`. */
+  axis: { origin: [number, number, number]; dir: [number, number, number] };
   /** Uniform scale factor about `pivot` (> 0; 1 = unscaled). */
   scale: number;
 }
@@ -377,7 +401,17 @@ interface SceneState {
    *  so the body's geometry is just its committed mesh moved by a matrix, and we
    *  skip the kernel entirely until the drag is released (one regenerate, not one
    *  per frame — the difference between instant and stuck in a many-body doc). */
-  liveDrag: { objects: THREE.Object3D[]; m0Inverse: THREE.Matrix4 } | null;
+  liveDrag: {
+    /** The body being dragged — `delta` applies to ITS geometry and nothing else. */
+    bodyId: string;
+    objects: THREE.Object3D[];
+    m0Inverse: THREE.Matrix4;
+    /** The motion the drag has applied so far (current matrix · m0⁻¹). Highlight
+     *  overlays copy vertices straight out of the body's baked-world geometry,
+     *  which the drag never touches, so they have to be moved by this to travel
+     *  with the body instead of hanging in the air where it started. */
+    delta: THREE.Matrix4;
+  } | null;
   /** A just-released drag whose kernel regenerate is still in flight. The commit
    *  changes the document immediately, which rebuilds the body's objects from the
    *  STILL-STALE meshes (original position) before the new geometry lands — so we
@@ -425,8 +459,8 @@ interface SceneState {
 }
 
 /** Build the world matrix for a transform feature's values, matching the kernel's
- *  composition exactly: uniformly scale about the pivot, then rotate about
- *  (pivot, axis), then translate (M = T·R·S). Keeps the live drag preview
+ *  composition exactly: uniformly scale about the pivot, then rotate about the
+ *  axis LINE, then translate (M = T·R·S). Keeps the live drag preview
  *  pixel-aligned with what regenerate will bake. */
 function transformMatrix(
   pivot: [number, number, number],
@@ -434,16 +468,21 @@ function transformMatrix(
   ty: number,
   tz: number,
   angle: number,
-  axis: "x" | "y" | "z",
+  axis: TransformEdit["axis"],
   scale: number,
 ): THREE.Matrix4 {
   const toPivot = new THREE.Matrix4().makeTranslation(-pivot[0], -pivot[1], -pivot[2]);
   const fromPivot = new THREE.Matrix4().makeTranslation(pivot[0], pivot[1], pivot[2]);
   const m = new THREE.Matrix4(); // identity = no rotation, no scale
   if (angle !== 0) {
-    const axisVec = new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
+    // About the axis LINE, not the pivot: for a world axis the two coincide
+    // (axis.origin IS the pivot), for a picked edge they are metres apart.
+    const [ox, oy, oz] = axis.origin;
+    const toAxis = new THREE.Matrix4().makeTranslation(-ox, -oy, -oz);
+    const fromAxis = new THREE.Matrix4().makeTranslation(ox, oy, oz);
+    const axisVec = new THREE.Vector3(...axis.dir).normalize();
     const rot = new THREE.Matrix4().makeRotationAxis(axisVec, THREE.MathUtils.degToRad(angle));
-    m.multiply(fromPivot).multiply(rot).multiply(toPivot); // rotation about the pivot
+    m.multiply(fromAxis).multiply(rot).multiply(toAxis);
   }
   if (scale !== 1) {
     const sc = new THREE.Matrix4().makeScale(scale, scale, scale);
@@ -1205,7 +1244,7 @@ export function Viewport({
   picking: boolean;
   /** `aim` is the clicked world point (face picks only) so the sketch view can
    *  orient onto the face the user actually clicked, not the plane origin. */
-  onPick: (ref: SketchPlaneRef, aim?: [number, number, number]) => void;
+  onPick: (ref: SketchPlaneRef, aim?: [number, number, number], faceId?: number) => void;
   /** When true (during a revolve "Select axis" arming), a pick in `picking` mode
    *  is routed to `onAxisPick` instead of `onPick`, accepting a sketch line, a
    *  body face, or a datum/reference plane from one click stream. */
@@ -1625,7 +1664,7 @@ export function Viewport({
       const helper = tc.getHelper();
       helper.visible = false;
       if (oneWay) dropBackwardArrow(helper);
-      if (joinShaft) joinShaftToBothArrows(helper);
+      if (joinShaft) joinShaftsToBothArrows(helper);
       softenGizmo(helper); // mute the default pure-RGB arrow to fit the UI
       scene.add(helper);
       return { proxy, tc, helper };
@@ -1785,6 +1824,12 @@ export function Viewport({
     transformControls.setSize(0.85);
     const gizmoHelper = transformControls.getHelper();
     gizmoHelper.visible = false;
+    // Both arrows of every axis get a shaft, the rotate ring is a whole circle,
+    // and it carries arrowheads saying it turns — see gizmoShape.ts for what
+    // stock TransformControls draws instead.
+    joinShaftsToBothArrows(gizmoHelper);
+    closeRotationRings(gizmoHelper);
+    addRotationArrowheads(gizmoHelper);
     softenGizmo(gizmoHelper); // mute the default pure-RGB arrows to fit the UI
     scene.add(gizmoHelper);
     // Scale gizmo: a wireframe box wrapping the target body, with a grab cube at
@@ -1840,19 +1885,32 @@ export function Viewport({
     } | null = null;
 
     // Suspend orbiting while a gizmo handle is being dragged.
-    // The gizmo's current translate/rotate, read off the proxy relative to pivot.
-    // Scale is NOT part of this: TransformControls only drives move and rotate
-    // here, and the scale gizmo below is its own thing — so the factor is passed
-    // straight back out untouched.
-    const proxyDelta = (te: TransformEdit): TransformDelta => {
+    // The gizmo's current translate/rotate, read off the proxy. Each MODE reads
+    // the one thing its gizmo writes and passes the other through untouched:
+    // TransformControls' translate only moves the proxy and its rotate only
+    // turns it, and in rotate mode the proxy sits on the AXIS line rather than
+    // at pivot+translation, so reading a translation off it there would invent
+    // a move the user never made. Scale is passed through in both cases: the
+    // controls never drive it (the box gizmo below is its own thing).
+    const proxyDelta = (te: TransformEdit, mode: TransformMode): TransformDelta => {
+      if (mode === "rotate") {
+        // How far the proxy has turned about the axis, as a signed angle: undo
+        // the axis frame and what is left is a pure rotation about local Z.
+        const rel = axisFrameQuaternionOf(te.axis.dir).invert().multiply(gizmoProxy.quaternion);
+        return {
+          tx: te.tx,
+          ty: te.ty,
+          tz: te.tz,
+          angle: THREE.MathUtils.radToDeg(2 * Math.atan2(rel.z, rel.w)),
+          scale: te.scale,
+        };
+      }
       const p = gizmoProxy.position;
-      const r = gizmoProxy.rotation;
-      const rad = te.axis === "x" ? r.x : te.axis === "y" ? r.y : r.z;
       return {
         tx: p.x - te.pivot[0],
         ty: p.y - te.pivot[1],
         tz: p.z - te.pivot[2],
-        angle: THREE.MathUtils.radToDeg(rad),
+        angle: te.angle,
         scale: te.scale,
       };
     };
@@ -1868,13 +1926,13 @@ export function Viewport({
         const m0 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, te.scale);
         const objects = state.group.children.filter((c) => c.userData.featureId === te.bodyId);
         for (const o of objects) o.matrixAutoUpdate = false;
-        state.liveDrag = { objects, m0Inverse: m0.clone().invert() };
+        state.liveDrag = { bodyId: te.bodyId, objects, m0Inverse: m0.clone().invert(), delta: new THREE.Matrix4() };
       } else {
         // Drag end: commit the final values once — that is the only regenerate.
         const ld = state.liveDrag;
         state.liveDrag = null;
         if (!te) return;
-        const d = proxyDelta(te);
+        const d = proxyDelta(te, transformModeRef.current);
         if (ld) {
           // Pin the dragged matrix across the stale rebuild that the commit
           // triggers, until the body's real (re-baked) geometry arrives. Keyed
@@ -1894,16 +1952,9 @@ export function Viewport({
       if (!transformControls.dragging) return;
       const te = transformEditRef.current;
       if (!te) return;
-      const d = proxyDelta(te);
+      const d = proxyDelta(te, transformModeRef.current);
       const ld = state.liveDrag;
-      if (ld) {
-        const m1 = transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, d.scale);
-        const delta = m1.multiply(ld.m0Inverse); // current · committed⁻¹
-        for (const o of ld.objects) {
-          o.matrix.copy(delta);
-          o.matrixWorldNeedsUpdate = true; // matrixAutoUpdate is off; force the world recompute
-        }
-      }
+      if (ld) poseDraggedBody(ld, transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, d.scale));
       onTransformPreviewRef.current(d);
     });
 
@@ -2050,6 +2101,22 @@ export function Viewport({
     stateRef.current = state;
     applyDatumAppearance(state, null);
 
+    /** Pose the dragged body at `m1` and redraw what hangs off it. The body's
+     *  own faces follow for free (its meshes carry the matrix), but the
+     *  selection/hover overlays are rebuilt world-space buffers, so they have to
+     *  be regenerated against the new motion — otherwise a face lit up under the
+     *  cursor when the drag started floats in place while the body slides out
+     *  from under it. Cheap: the rebuild only walks the ranges actually
+     *  highlighted, which is one face or edge. */
+    const poseDraggedBody = (ld: NonNullable<SceneState["liveDrag"]>, m1: THREE.Matrix4) => {
+      ld.delta.copy(m1).multiply(ld.m0Inverse); // current · committed⁻¹
+      for (const o of ld.objects) {
+        o.matrix.copy(ld.delta);
+        o.matrixWorldNeedsUpdate = true; // matrixAutoUpdate is off; force the world recompute
+      }
+      applyHighlights();
+    };
+
     // Apply selection (a SET) + hover highlighting. Faces use per-face material
     // index; edges/sketch entities use the fat-line overlay; vertices/points use
     // the point markers; sketches keep their per-sketch base colour.
@@ -2111,12 +2178,31 @@ export function Viewport({
       const overlayCol: number[] = [];
       const overlayPosDash: number[] = [];
       const overlayColDash: number[] = [];
-      const pushRange = (geom: THREE.BufferGeometry, start: number, count: number, c: THREE.Color, dashed = false) => {
+      // A body under an active gizmo drag is posed by a matrix its geometry does
+      // not carry (see SceneState.liveDrag), so anything copied out of that
+      // geometry has to be moved by the same matrix — otherwise the outline of a
+      // hovered or selected face hangs in the air where the body used to be. The
+      // same holds for the released-but-not-yet-rebuilt window that pendingCommit
+      // pins, which is why it answers here too.
+      const ld = state.liveDrag;
+      const pc = state.pendingCommit;
+      const dragMotion = (featureId: string): THREE.Matrix4 | null =>
+        ld?.bodyId === featureId ? ld.delta : pc?.bodyId === featureId ? pc.delta : null;
+      const pushRange = (
+        geom: THREE.BufferGeometry,
+        start: number,
+        count: number,
+        c: THREE.Color,
+        dashed = false,
+        motion: THREE.Matrix4 | null = null,
+      ) => {
         const pos = geom.getAttribute("position");
         const tp = dashed ? overlayPosDash : overlayPos;
         const tc = dashed ? overlayColDash : overlayCol;
         for (let v = start; v < start + count; v++) {
-          tp.push(pos.getX(v), pos.getY(v), pos.getZ(v));
+          _highlightTmp.set(pos.getX(v), pos.getY(v), pos.getZ(v));
+          if (motion) _highlightTmp.applyMatrix4(motion);
+          tp.push(_highlightTmp.x, _highlightTmp.y, _highlightTmp.z);
           tc.push(c.r, c.g, c.b);
         }
       };
@@ -2136,9 +2222,10 @@ export function Viewport({
             // Logical-edge selection: highlight every chord of the picked edge's
             // chain (the whole faceted circle), not just the one segment.
             const chain = eg.find((x) => x.edgeId === s.edgeId)?.chainId;
+            const motion = dragMotion(s.featureId);
             for (const g of eg)
               if (g.edgeId === s.edgeId || (chain !== undefined && g.chainId === chain))
-                pushRange(child.geometry, g.start, g.count, c);
+                pushRange(child.geometry, g.start, g.count, c, false, motion);
           }
         } else if (s.kind === "sketchEntity") {
           const child = sketchChild(s.sketchId);
@@ -2178,8 +2265,9 @@ export function Viewport({
                 ? fgm.filter((g) => g.clusterId === selCluster).map((g) => g.faceId)
                 : [s.faceId],
             );
+            const motion = dragMotion(s.featureId);
             for (const [start, count] of faceBoundaryEdges(faceMesh.geometry, edgeMesh.geometry, clusterIds)) {
-              pushRange(edgeMesh.geometry, start, count, c);
+              pushRange(edgeMesh.geometry, start, count, c, false, motion);
             }
           }
         } else if (s.kind === "sketchFace") {
@@ -2231,7 +2319,12 @@ export function Viewport({
       const ptPos: number[] = [];
       const ptCol: number[] = [];
       const ptWorld = (s: Selection): [number, number, number] | null => {
-        if (s.kind === "vertex") return s.point;
+        if (s.kind === "vertex") {
+          const motion = dragMotion(s.featureId);
+          if (!motion) return s.point;
+          _highlightTmp.set(s.point[0], s.point[1], s.point[2]).applyMatrix4(motion);
+          return [_highlightTmp.x, _highlightTmp.y, _highlightTmp.z];
+        }
         if (s.kind === "sketchPoint") {
           const child = sketchChild(s.sketchId);
           const frame = child?.userData.frame as PlaneFrameData | undefined;
@@ -3160,14 +3253,7 @@ export function Viewport({
         scaleDrag.moved = true;
         scaleDrag.live = next;
         const ld = state.liveDrag;
-        if (ld) {
-          const m1 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, next);
-          const delta = m1.multiply(ld.m0Inverse); // current · committed⁻¹
-          for (const o of ld.objects) {
-            o.matrix.copy(delta);
-            o.matrixWorldNeedsUpdate = true; // matrixAutoUpdate is off; force the world recompute
-          }
-        }
+        if (ld) poseDraggedBody(ld, transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, next));
         onTransformPreviewRef.current({ tx: te.tx, ty: te.ty, tz: te.tz, angle: te.angle, scale: next });
         return;
       }
@@ -3581,7 +3667,11 @@ export function Viewport({
         } else {
           const featureId = (p.mesh.userData.featureId as string) ?? "";
           const frame = deriveFaceFrame([p.point.x, p.point.y, p.point.z], [p.normal.x, p.normal.y, p.normal.z]);
-          onPickRef.current({ kind: "face", featureId, frame }, [p.point.x, p.point.y, p.point.z]);
+          // `faceId` rides along so a caller that needs the face ITSELF (rather
+          // than the plane derived at the click point) can ask about it — the
+          // Mirror dialog uses it to refuse a curved face, whose "plane" here is
+          // only a tangent at wherever the pointer happened to land.
+          onPickRef.current({ kind: "face", featureId, frame }, [p.point.x, p.point.y, p.point.z], p.faceId);
         }
         return;
       }
@@ -3635,7 +3725,7 @@ export function Viewport({
           const m0 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, te.scale);
           const objects = state.group.children.filter((c) => c.userData.featureId === te.bodyId);
           for (const o of objects) o.matrixAutoUpdate = false;
-          state.liveDrag = { objects, m0Inverse: m0.clone().invert() };
+          state.liveDrag = { bodyId: te.bodyId, objects, m0Inverse: m0.clone().invert(), delta: new THREE.Matrix4() };
           e.stopImmediatePropagation();
           return;
         }
@@ -4348,22 +4438,49 @@ export function Viewport({
       helper.visible = false;
       return;
     }
-    tc.enabled = true;
+    // A gizmo that still answers the mouse while the dialog is asking for a
+    // pick will eat the pick. Its handles are invisible donuts and cones several
+    // times fatter than what they draw — the rotate picker is a full torus
+    // around the pivot — so they cover exactly the geometry the user has been
+    // asked to click, and a press that lands on one starts a zero-distance drag
+    // instead: the click appears to do nothing, and only a second one, nudged
+    // clear of the handle, gets through. So the controls stand down for the
+    // duration, staying VISIBLE for context but inert — the same thing the scale
+    // gizmo already does via `scaleGizmoActive`.
+    tc.enabled = !picking;
     helper.visible = true;
     tc.setMode(transformMode);
-    // Translate shows all three arrows; rotate shows only the chosen axis ring,
-    // so the drag maps cleanly onto a single (axis, angle).
-    tc.showX = transformMode === "translate" || transformEdit.axis === "x";
-    tc.showY = transformMode === "translate" || transformEdit.axis === "y";
-    tc.showZ = transformMode === "translate" || transformEdit.axis === "z";
+    // Translate drags along the WORLD axes, all three arrows shown. Rotate turns
+    // about ONE axis that can point anywhere (a picked edge, a sketch line), so
+    // it runs in LOCAL space with only the Z ring shown and the proxy turned to
+    // put its local Z on that axis — the drag then maps cleanly onto the single
+    // (axis, angle) the feature stores, whatever direction the axis points.
+    const rotating = transformMode === "rotate";
+    tc.setSpace(rotating ? "local" : "world");
+    tc.showX = !rotating;
+    tc.showY = !rotating;
+    tc.showZ = true;
     if (!tc.dragging) {
       const { pivot, tx, ty, tz, angle, axis } = transformEdit;
-      proxy.position.set(pivot[0] + tx, pivot[1] + ty, pivot[2] + tz);
-      const a = THREE.MathUtils.degToRad(angle);
-      proxy.rotation.set(axis === "x" ? a : 0, axis === "y" ? a : 0, axis === "z" ? a : 0);
+      if (rotating) {
+        // Centre the ring on the axis line, at the point nearest the body — a
+        // hinge edge can run far past the body, and a ring stranded at the
+        // edge's own origin would read as belonging to nothing.
+        const dir = new THREE.Vector3(...axis.dir).normalize();
+        const origin = new THREE.Vector3(...axis.origin);
+        const centre = new THREE.Vector3(pivot[0] + tx, pivot[1] + ty, pivot[2] + tz);
+        const along = centre.clone().sub(origin).dot(dir);
+        proxy.position.copy(origin).addScaledVector(dir, along);
+        proxy.quaternion
+          .copy(axisFrameQuaternionOf(axis.dir))
+          .multiply(new THREE.Quaternion().setFromAxisAngle(_unitZ, THREE.MathUtils.degToRad(angle)));
+      } else {
+        proxy.position.set(pivot[0] + tx, pivot[1] + ty, pivot[2] + tz);
+        proxy.quaternion.identity(); // translate is world-space; the pose is irrelevant
+      }
     }
     tc.attach(proxy);
-  }, [transformEdit, transformMode]);
+  }, [transformEdit, transformMode, picking]);
 
   // Load the sketch font once; bumping `fontTick` re-runs the sketch render so
   // any text entities (which render nothing until the font is ready) appear.
@@ -4963,96 +5080,6 @@ function collectBodyCircles(group: THREE.Group): { center: THREE.Vector3; radius
     }
   }
   return out;
-}
-
-/** Mute TransformControls' default pure-RGB arrows so the gizmo fits the muted
- *  UI. TransformControls restores each handle's cached base colour/opacity every
- *  frame, so we override that cache (`_color`/`_opacity`) too — not just the live
- *  material — or the softening would be reset on the next render. The invisible
- *  picker handles (already near-zero opacity) just get fainter; hover-highlight
- *  still brightens the active axis from this softened base. */
-function softenGizmo(helper: THREE.Object3D): void {
-  const neutral = new THREE.Color(GIZMO_NEUTRAL);
-  helper.traverse((o) => {
-    const mat = (o as THREE.Mesh).material;
-    if (!mat) return;
-    for (const raw of Array.isArray(mat) ? mat : [mat]) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const m = raw as any;
-      if (!m.color) continue;
-      m.transparent = true;
-      m.color.lerp(neutral, 0.3);
-      m.opacity = m.opacity * 0.82;
-      m._color = m.color.clone();
-      m._opacity = m.opacity;
-    }
-  });
-}
-
-/** Delete the translate gizmo's backward-pointing Z arrow (and its pick
- *  target), leaving one arrow and the line it grows out of.
- *
- *  TransformControls draws every translate axis twice — an arrow at +0.5 and a
- *  mirrored one at -0.5, with the shaft only spanning the middle. With X and Y
- *  hidden, what's left reads as one arrow on a stick plus a second arrow
- *  stranded on the far side of the handle with nothing joining it, which on an
- *  extrude off a top face is a downward arrow floating under the profile. It
- *  says nothing the forward arrow doesn't: dragging the forward arrow back
- *  through the profile already reaches the other side (as a direction flip with
- *  a positive distance — see emitExtrudeDistance), which is what
- *  verify-extrude-gizmo.mjs pins down.
- *
- *  Removed rather than hidden, because TransformControls re-asserts `visible`
- *  on every handle each frame (the same reason softenGizmo has to stash its
- *  colours) — a one-time `visible = false` would be undone on the next render.
- *
- *  Identified by GEOMETRY, not by `position`: setupGizmo bakes each handle's
- *  offset into its geometry and then resets the object's transform to identity,
- *  so every child reports position (0,0,0) and only the baked bounds say which
- *  side of the origin it sits on. The shaft runs from the origin outwards, so a
- *  centre well below zero is the backward arrow and its picker, nothing else. */
-function dropBackwardArrow(helper: THREE.Object3D): void {
-  const doomed: THREE.Object3D[] = [];
-  const centre = new THREE.Vector3();
-  helper.traverse((o) => {
-    const geom = (o as THREE.Mesh).geometry;
-    if (o.name !== "Z" || !geom) return;
-    if (!geom.boundingBox) geom.computeBoundingBox();
-    geom.boundingBox?.getCenter(centre);
-    if (centre.z < -0.1) doomed.push(o);
-  });
-  for (const o of doomed) o.removeFromParent();
-}
-
-/** Stretch the translate gizmo's shaft so it reaches BOTH arrows.
- *
- *  TransformControls builds the shaft as `lineGeometry2` — a cylinder half the
- *  axis long, pushed out to span [0, +0.5]. So it meets the forward arrow at
- *  +0.5 and stops dead at the origin, leaving the backward arrow at -0.5
- *  floating with nothing joining it. On a handle that keeps both arrows (the
- *  section plane, which straddles the body and reads as meaningful in either
- *  direction) that gap looks like a rendering fault rather than a design.
- *
- *  Doubling the shaft and re-centring it spans [-0.5, +0.5]; both arrow bases
- *  sit exactly at ±0.5 (arrowGeometry runs 0 -> 0.1 from there, pointing out),
- *  so the join is exact rather than approximately closed. Safe to mutate the
- *  geometry in place: setupGizmo clones per handle, so this touches only this
- *  gizmo instance. */
-function joinShaftToBothArrows(helper: THREE.Object3D): void {
-  const size = new THREE.Vector3();
-  const stretch = new THREE.Matrix4().makeScale(1, 1, 2).premultiply(new THREE.Matrix4().makeTranslation(0, 0, -0.5));
-  helper.traverse((o) => {
-    const geom = (o as THREE.Mesh).geometry;
-    if (o.name !== "Z" || !geom) return;
-    if (!geom.boundingBox) geom.computeBoundingBox();
-    geom.boundingBox?.getSize(size);
-    // The shaft is the only long, hair-thin handle on the axis — the arrows are
-    // short and wide, and the invisible pick cones are wide.
-    if (size.x > 0.05 || size.z < 0.3) return;
-    geom.applyMatrix4(stretch);
-    geom.computeBoundingBox();
-    geom.computeBoundingSphere();
-  });
 }
 
 // --- Ground grid ----------------------------------------------------------

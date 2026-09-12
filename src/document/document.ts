@@ -45,6 +45,7 @@ import type {
   SketchEntity,
   SketchFeature,
   SweepFeature,
+  TransformAxis,
   TransformFeature,
   Variable,
 } from "./types";
@@ -366,7 +367,7 @@ export function addTransform(
     ty?: string;
     tz?: string;
     angle?: string;
-    axis?: "x" | "y" | "z";
+    axis?: TransformAxis;
     scale?: string;
     copy?: boolean;
   } = {},
@@ -390,6 +391,34 @@ export function addTransform(
     opacity: 1,
   };
   return insertFeature(doc, feature);
+}
+
+/** Unit direction of a world axis name. */
+function worldAxisDir(a: "x" | "y" | "z"): [number, number, number] {
+  return a === "x" ? [1, 0, 0] : a === "y" ? [0, 1, 0] : [0, 0, 1];
+}
+
+/** The world line a sketch LINE entity draws — the reference revolve, pattern
+ *  and transform all accept for an axis (and pattern for a direction). `label`
+ *  is the feature-and-role prefix its errors read with ("pattern: direction"),
+ *  so a bad reference names the slot the user actually filled. */
+function sketchLineAxis(
+  doc: Document,
+  planeFrames: Map<string, ResolvedFrame>,
+  sketchId: string,
+  entityId: string,
+  label: string,
+): { axisOrigin: [number, number, number]; axisDir: [number, number, number] } {
+  const sketch = doc.features.find((x) => x.id === sketchId);
+  if (sketch?.type !== "sketch") throw new Error(`${label} sketch not found`);
+  const ent = sketch.entities.find((e) => e.id === entityId);
+  if (ent?.type !== "line") throw new Error(`${label} must be a line`);
+  const frame = frameOf(sketch.plane, planeFrames);
+  const a = uvToWorld(frame, ent.a[0], ent.a[1]);
+  const b = uvToWorld(frame, ent.b[0], ent.b[1]);
+  const dir: [number, number, number] = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  if (Math.hypot(dir[0], dir[1], dir[2]) < 1e-9) throw new Error(`${label} line is degenerate`);
+  return { axisOrigin: a, axisDir: dir };
 }
 
 /** Patch a transform feature's fields (the gizmo writes numeric drags back here
@@ -1224,6 +1253,30 @@ export function resolveDocument(doc: Document): ResolveResult {
         // happily builds either), so it's rejected here rather than baked.
         const scale = evaluateExpression(f.scale, scope);
         if (!(scale > 0)) throw new Error("transform: scale must be greater than zero.");
+        // Bake the rotation axis to a world line. A world axis runs through the
+        // pivot (so "rotate about Z" still spins the body on the spot); a sketch
+        // line is its own line; a body edge lives in the B-rep, so it's carried
+        // through for the worker exactly as revolve carries its edge axis.
+        const ax = f.axis;
+        let axisPart:
+          | { axisOrigin: [number, number, number]; axisDir: [number, number, number] }
+          | {
+              axisEdge: { sourceId: string; edgeName?: string; mid?: [number, number, number]; length?: number };
+            };
+        if (typeof ax === "string") {
+          axisPart = { axisOrigin: f.pivot, axisDir: worldAxisDir(ax) };
+        } else if ("edge" in ax) {
+          axisPart = {
+            axisEdge: {
+              sourceId: ax.edge.featureId,
+              edgeName: ax.edge.edgeName,
+              mid: ax.edge.mid,
+              length: ax.edge.length,
+            },
+          };
+        } else {
+          axisPart = sketchLineAxis(dDoc, planeFrames, ax.sketchId, ax.entityId, "transform");
+        }
         features.push({
           id: f.id,
           type: "transform",
@@ -1232,7 +1285,7 @@ export function resolveDocument(doc: Document): ResolveResult {
           ty: evaluateExpression(f.ty, scope),
           tz: evaluateExpression(f.tz, scope),
           angle: evaluateExpression(f.angle, scope),
-          axis: f.axis,
+          ...axisPart,
           scale,
           pivot: f.pivot,
           copy: f.copy,
@@ -1248,17 +1301,10 @@ export function resolveDocument(doc: Document): ResolveResult {
         // carried through for the worker to resolve). Counts/angles share the
         // sketch pattern's helpers so the two levels can't disagree.
         const worldDir = (d: PatternDirRef): [number, number, number] => {
-          if ("world" in d) return d.world === "x" ? [1, 0, 0] : d.world === "y" ? [0, 1, 0] : [0, 0, 1];
-          const dirSketch = dDoc.features.find((x) => x.id === d.sketchId);
-          if (dirSketch?.type !== "sketch") throw new Error("pattern: direction sketch not found");
-          const ent = dirSketch.entities.find((e) => e.id === d.entityId);
-          if (ent?.type !== "line") throw new Error("pattern: direction must be a line");
-          const dirFrame = frameOf(dirSketch.plane, planeFrames);
-          const a = uvToWorld(dirFrame, ent.a[0], ent.a[1]);
-          const b = uvToWorld(dirFrame, ent.b[0], ent.b[1]);
-          const v: [number, number, number] = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+          if ("world" in d) return worldAxisDir(d.world);
+          // Spacing is measured along this, so unlike an axis it has to be unit.
+          const v = sketchLineAxis(dDoc, planeFrames, d.sketchId, d.entityId, "pattern: direction").axisDir;
           const len = Math.hypot(v[0], v[1], v[2]);
-          if (len < 1e-9) throw new Error("pattern: direction line is degenerate");
           return [v[0] / len, v[1] / len, v[2] / len];
         };
         if (f.kind === "linear") {
@@ -1325,20 +1371,12 @@ export function resolveDocument(doc: Document): ResolveResult {
               axisDir: worldDir({ world: axis.world }),
             });
           } else {
-            const axisSketch = dDoc.features.find((x) => x.id === axis.sketchId);
-            if (axisSketch?.type !== "sketch") throw new Error("pattern: axis sketch not found");
-            const axisEnt = axisSketch.entities.find((e) => e.id === axis.entityId);
-            if (axisEnt?.type !== "line") throw new Error("pattern: axis must be a line");
-            const axisFrame = frameOf(axisSketch.plane, planeFrames);
-            const a = uvToWorld(axisFrame, axisEnt.a[0], axisEnt.a[1]);
-            const b = uvToWorld(axisFrame, axisEnt.b[0], axisEnt.b[1]);
             features.push({
               id: f.id,
               type: "pattern",
               targetId: f.targetId,
               angles,
-              axisOrigin: a,
-              axisDir: [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+              ...sketchLineAxis(dDoc, planeFrames, axis.sketchId, axis.entityId, "pattern: axis"),
             });
           }
         }
@@ -1417,14 +1455,7 @@ export function resolveDocument(doc: Document): ResolveResult {
             axisPart = { axisOrigin: line.origin, axisDir: line.dir };
           }
         } else {
-          const axisSketch = dDoc.features.find((x) => x.id === axis.sketchId);
-          if (axisSketch?.type !== "sketch") throw new Error("revolve: axis sketch not found");
-          const axisEnt = axisSketch.entities.find((e) => e.id === axis.entityId);
-          if (axisEnt?.type !== "line") throw new Error("revolve: axis must be a line");
-          const axisFrame = frameOf(axisSketch.plane, planeFrames);
-          const a = uvToWorld(axisFrame, axisEnt.a[0], axisEnt.a[1]);
-          const b = uvToWorld(axisFrame, axisEnt.b[0], axisEnt.b[1]);
-          axisPart = { axisOrigin: a, axisDir: [b[0] - a[0], b[1] - a[1], b[2] - a[2]] };
+          axisPart = sketchLineAxis(dDoc, planeFrames, axis.sketchId, axis.entityId, "revolve: axis");
         }
         features.push({
           id: f.id,
