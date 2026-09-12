@@ -99,7 +99,11 @@ import type {
   Vec2,
 } from "./document/types";
 import { measureBetween, resolveSide } from "./sketch/distanceDim";
-import { planCoincident, coincidentEnabled as coincidentIsEnabled } from "./sketch/coincidentSelection";
+import {
+  planCoincident,
+  coincidentEnabled as coincidentIsEnabled,
+  type CoincidentCurve,
+} from "./sketch/coincidentSelection";
 import { pinConstraints } from "./sketch/snapPins";
 import type { BooleanOp, MeshedFaces, ShapeMeshPayload } from "./kernel/types";
 import { DRESSUP_DELTA_IDS, dressUpDeltaBase } from "./kernel/types";
@@ -3093,8 +3097,15 @@ export default function App() {
   }, [editingSketch, selection]);
 
   // Selected line entities in this sketch (for the point-on-line coincidence).
-  const selectedSketchLines = useMemo(
-    () => selectedSketchEntities.filter((e): e is Extract<SketchEntity, { type: "line" }> => e.type === "line"),
+  // The selected edges a point can be made coincident WITH — a line, or a
+  // circle/arc (its rim). Derived geometry isn't constrainable, so it's not one.
+  const selectedCoincidentCurves = useMemo<CoincidentCurve[]>(
+    () =>
+      selectedSketchEntities.flatMap((e) =>
+        e.derivedFrom || (e.type !== "line" && e.type !== "circle" && e.type !== "arc")
+          ? []
+          : [{ id: e.id, kind: e.type === "line" ? ("line" as const) : ("circle" as const) }],
+      ),
     [selectedSketchEntities],
   );
 
@@ -6653,17 +6664,15 @@ export default function App() {
   };
 
   // Coincident, dispatched on the selection (see planCoincident):
-  //  • one point + one line → the point lies ON the line (point-on-line). Covers
-  //    "square's edge + origin" (origin pulled onto it), "point + edge" (point
-  //    attached), and "solid vertex + edge" (the edge moves onto the vertex).
+  //  • one point + one edge → the point lies ON that edge: point-on-line for a
+  //    line, point-on-circle for a circle/arc rim. Covers "square's edge +
+  //    origin" (origin pulled onto it), "point + edge" (point attached), and
+  //    "solid vertex + edge" (the edge moves onto the vertex).
   //  • two points → make them coincident — INCLUDING a sketch vertex + a solid
   //    face vertex (the sketch vertex snaps onto the solid's projected vertex).
   //  • one movable sketch vertex → anchor it to the origin.
   const addCoincident = async () => {
-    const plan = planCoincident(
-      selectedPointRefs,
-      selectedSketchLines.map((l) => l.id),
-    );
+    const plan = planCoincident(selectedPointRefs, selectedCoincidentCurves);
     if (!plan) return;
     if (plan.kind === "pointOnLine") {
       const exists = editingSketch?.constraints.some(
@@ -6673,6 +6682,17 @@ export default function App() {
       await commitConstraint(
         { id: genId(), type: "pointOnLine", point: plan.point, line: plan.lineId },
         "Point on line",
+      );
+      return;
+    }
+    if (plan.kind === "pointOnCircle") {
+      const exists = editingSketch?.constraints.some(
+        (c) => c.type === "pointOnCircle" && c.circle === plan.circleId && samePointRef(c.point, plan.point),
+      );
+      if (exists) return;
+      await commitConstraint(
+        { id: genId(), type: "pointOnCircle", point: plan.point, circle: plan.circleId },
+        "Point on circle",
       );
       return;
     }
@@ -6708,10 +6728,7 @@ export default function App() {
   // The seven geometric constraints, keyed for the grouped toolbar button: the
   // icon/kbd node, tooltip, whether the current selection makes it applicable,
   // and the action. `enabled` mirrors each constraint's own selection rule.
-  const coincidentEnabled = coincidentIsEnabled(
-    selectedPointRefs,
-    selectedSketchLines.map((l) => l.id),
-  );
+  const coincidentEnabled = coincidentIsEnabled(selectedPointRefs, selectedCoincidentCurves);
   // `icon` is the bare glyph (what the More flyout's icon column shows); `node`
   // is the toolbar button's content — the same glyph plus the "?" shortcut hint.
   const constraintDefs: Record<
@@ -6781,7 +6798,7 @@ export default function App() {
       icon: <>⌖</>,
       node: <>⌖</>,
       title:
-        "Coincident — two points make them coincident (a sketch vertex snaps onto a solid/body vertex too); a point + a line puts the point on the line; one point anchors it to the origin",
+        "Coincident — two points make them coincident (a sketch vertex snaps onto a solid/body vertex too); a point + an edge puts the point on that edge (a line, or a circle/arc's rim); one point anchors it to the origin",
       enabled: coincidentEnabled,
       apply: addCoincident,
     },

@@ -6,7 +6,8 @@
 //  • A point is a sketch vertex (an entity endpoint / centre, or the origin) —
 //    which the solver may MOVE — or a body/solid vertex, projected onto the
 //    sketch plane as a fixed uv it may NOT move (`editable: false`).
-//  • Lines are selected sketch line entities.
+//  • Curves are the selected sketch edges: a line, or a circle/arc (whose RIM
+//    is what a point sits on — never its centre).
 //
 // Prior bugs this encodes the fix for:
 //  1. Selecting a sketch vertex + a solid-face vertex used to be seen as "one
@@ -15,6 +16,11 @@
 //     (fixed) point and the two are made coincident.
 //  2. In the same selection the button was sometimes disabled outright. The
 //     enable rule now counts body vertices as points too.
+//  3. A point + a CIRCLE was seen as "one point and no edges", so coincident
+//     anchored the point to the ORIGIN — a circle simply wasn't a thing a point
+//     could be coincident with, which is most of what coincident is for on a
+//     circle. It now resolves to point-on-circle, the same relationship the
+//     drawing tool records when an endpoint is snapped onto a rim.
 
 import type { PointRef } from "../document/types";
 
@@ -31,22 +37,34 @@ export interface CoincidentPoint {
 export type CoincidentPlan =
   | { kind: "coincident"; a: PointRef; b: PointRef }
   | { kind: "pointOnLine"; point: PointRef; lineId: string }
+  | { kind: "pointOnCircle"; point: PointRef; circleId: string }
   | { kind: "originAnchor"; point: PointRef }
   | null;
 
-export function planCoincident(points: CoincidentPoint[], lineIds: string[]): CoincidentPlan {
-  // One point + one line → point-on-line. The point may be a sketch vertex
-  // (attached to the line) or a fixed body vertex (the line moves to reach it).
-  if (points.length === 1 && lineIds.length === 1) {
+/** A selected sketch edge a point can be made coincident WITH. */
+export interface CoincidentCurve {
+  id: string;
+  /** "circle" covers arcs too — both are a rim the point lands on. */
+  kind: "line" | "circle";
+}
+
+export function planCoincident(points: CoincidentPoint[], curves: CoincidentCurve[]): CoincidentPlan {
+  // One point + one edge → the point lies ON that edge. The point may be a
+  // sketch vertex (attached to the edge) or a fixed body vertex (the edge moves
+  // to reach it).
+  if (points.length === 1 && curves.length === 1) {
     const point = points[0].ref;
-    const lineId = lineIds[0];
-    // A sketch vertex that's already an endpoint of the very line it's snapping
-    // to is moot — nothing to constrain.
-    if ("entity" in point && point.entity === lineId) return null;
-    return { kind: "pointOnLine", point, lineId };
+    const curve = curves[0];
+    // A sketch vertex that's already a vertex of the very edge it's snapping to
+    // is moot — nothing to constrain. (For a circle that's its centre, which a
+    // point-on-rim would fight rather than describe.)
+    if ("entity" in point && point.entity === curve.id) return null;
+    return curve.kind === "line"
+      ? { kind: "pointOnLine", point, lineId: curve.id }
+      : { kind: "pointOnCircle", point, circleId: curve.id };
   }
-  // Any other selection involving lines isn't a coincidence.
-  if (lineIds.length > 0) return null;
+  // Any other selection involving edges isn't a coincidence.
+  if (curves.length > 0) return null;
   // Two points → make them coincident, provided at least one can move (two fixed
   // body vertices can't be reconciled — neither is free to move).
   if (points.length === 2) {
@@ -62,6 +80,6 @@ export function planCoincident(points: CoincidentPoint[], lineIds: string[]): Co
 }
 
 /** Whether the Coincident button is applicable to the current selection. */
-export function coincidentEnabled(points: CoincidentPoint[], lineIds: string[]): boolean {
-  return planCoincident(points, lineIds) !== null;
+export function coincidentEnabled(points: CoincidentPoint[], curves: CoincidentCurve[]): boolean {
+  return planCoincident(points, curves) !== null;
 }

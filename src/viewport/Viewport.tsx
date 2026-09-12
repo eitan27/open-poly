@@ -2972,22 +2972,32 @@ export function Viewport({
         if (sid) {
           const sketch = sketchesRef.current.find((s) => s.id === sid);
           const frame = obj.userData.frame as PlaneFrameData | undefined;
-          // Sketch point (endpoint / centre) takes priority over the entity —
-          // but only when it's the NEARER of the two. It used to win on being
-          // within SNAP_PX at all, which made a small circle unselectable: any
-          // click on a rim closer than 12px to the centre returned the centre
-          // point, so the circle could only be picked by zooming until its
-          // radius exceeded the snap radius.
-          if (sketch && frame) {
+          // Sketch point takes priority over the entity, under a gate that
+          // differs by kind:
+          //  • a VERTEX wins within VERTEX_PICK_PX, the same target a body
+          //    vertex gets. It can't be asked to also be nearer than the
+          //    entity: an endpoint lies ON its own line, so the line is ~0px
+          //    away and the endpoint could only ever win by a hair — which is
+          //    what made grabbing a line's end to constrain it so fiddly.
+          //  • a CENTRE or the ORIGIN must still be nearer than the entity.
+          //    Without that a small circle was unselectable (every click on a
+          //    rim within 12px of the centre returned the centre), and a line
+          //    through the origin couldn't be clicked at its middle.
+          // Trim/Extend act on EDGES, never on points — and extend is used by
+          // clicking right next to an end, precisely where a vertex would win.
+          // Skipping the point candidates keeps those tools (and their hover
+          // preview) resolving the edge the cursor is actually on.
+          if (sketch && frame && !isTrimTool(sketchToolRef.current)) {
             let best: Vec2 | null = null;
-            let bestD = Math.min(SNAP_PX, sketchPx);
-            for (const uv of sketchPointCandidates(sketch)) {
-              const w = uvToWorld(frame, uv[0], uv[1]);
+            let bestD = Infinity;
+            for (const c of sketchPointCandidates(sketch)) {
+              const gate = c.kind === "vertex" ? VERTEX_PICK_PX : Math.min(SNAP_PX, sketchPx);
+              const w = uvToWorld(frame, c.uv[0], c.uv[1]);
               const px = projectToPx(new THREE.Vector3(w[0], w[1], w[2]));
               const d = Math.hypot(px.x - clientX, px.y - clientY);
-              if (d < bestD) {
+              if (d < gate && d < bestD) {
                 bestD = d;
-                best = uv;
+                best = c.uv;
               }
             }
             if (best) return { kind: "sketchPoint", sketchId: sid, point: best };
@@ -4513,7 +4523,7 @@ export function Viewport({
         const verts = sketchPointCandidates(s).slice(1);
         if (verts.length > 0) {
           const dotPos = new Float32Array(verts.length * 3);
-          verts.forEach((uv, i) => {
+          verts.forEach(({ uv }, i) => {
             const w = uvToWorld(s.frame, uv[0], uv[1]);
             dotPos[i * 3] = w[0];
             dotPos[i * 3 + 1] = w[1];
@@ -4813,20 +4823,31 @@ function previewPolyline(tool: SketchTool, draft: Vec2[], cursor: Vec2, sides: n
 }
 
 /** Selectable points of a sketch: line endpoints, circle centres, arc ends. */
-function sketchPointCandidates(sketch: RenderSketch): Vec2[] {
+/** A pickable sketch point, tagged by what kind it is. The distinction decides
+ *  how hard it competes with the entity under the cursor:
+ *   • VERTEX — an endpoint, which lies ON the entity you're clicking, so it has
+ *     to be able to win against it outright or it's unreachable.
+ *   • CENTRE — sits away from its own rim. Letting it win freely is what once
+ *     made a small circle unselectable (every click on the rim hit the centre).
+ *   • ORIGIN — always a candidate, entity or not. It isn't a vertex of anything,
+ *     so it has no reason to beat a line that merely passes through it. */
+function sketchPointCandidates(sketch: RenderSketch): { uv: Vec2; kind: "vertex" | "center" | "origin" }[] {
   // The sketch origin (0,0) is always selectable — so it can be picked as the
   // anchor for a coincident / point-on-line constraint even when no entity
   // vertex sits there.
-  const out: Vec2[] = [[0, 0]];
+  const out: { uv: Vec2; kind: "vertex" | "center" | "origin" }[] = [{ uv: [0, 0], kind: "origin" }];
+  const vertex = (uv: Vec2) => out.push({ uv, kind: "vertex" });
   for (const e of sketch.entities) {
-    if (e.type === "line") out.push(e.a, e.b);
-    else if (e.type === "circle") out.push(e.c);
+    if (e.type === "line") {
+      vertex(e.a);
+      vertex(e.b);
+    } else if (e.type === "circle") out.push({ uv: e.c, kind: "center" });
     else if (e.type === "arc") {
-      out.push(e.c);
-      out.push([e.c[0] + e.r * Math.cos(e.start), e.c[1] + e.r * Math.sin(e.start)]);
-      out.push([e.c[0] + e.r * Math.cos(e.end), e.c[1] + e.r * Math.sin(e.end)]);
-    } else if (e.type === "spline") out.push(...e.points);
-    else if (e.type === "point") out.push(e.p);
+      out.push({ uv: e.c, kind: "center" });
+      vertex([e.c[0] + e.r * Math.cos(e.start), e.c[1] + e.r * Math.sin(e.start)]);
+      vertex([e.c[0] + e.r * Math.cos(e.end), e.c[1] + e.r * Math.sin(e.end)]);
+    } else if (e.type === "spline") e.points.forEach(vertex);
+    else if (e.type === "point") vertex(e.p);
   }
   return out;
 }
