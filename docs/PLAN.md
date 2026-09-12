@@ -88,8 +88,10 @@ Roughly ordered by how often a user meets them.
 
 **Features with obvious next increments**
 
-- **Extrude:** taper/draft angle, thin/shell walls; trim up-to-face to a
-  non-planar surface rather than its plane; client-side face-eligibility check.
+- **Extrude:** taper/draft angle and thin/shell walls — `prismFromFace` builds a
+  straight `MakePrism`, so both need new OCCT calls and new params; trim
+  up-to-face to a non-planar surface rather than its plane; client-side
+  face-eligibility check.
 - **Transform:** arbitrary point+direction axis; a pivot that re-derives when the
   body changes upstream (baked at creation today).
 - **Pattern:** per-instance skip, fuse-with-seed, multi-seed, body-edge directions.
