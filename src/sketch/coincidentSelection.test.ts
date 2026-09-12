@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coincidentEnabled, planCoincident, type CoincidentPoint } from "./coincidentSelection";
+import { coincidentEnabled, planCoincident, type CoincidentCurve, type CoincidentPoint } from "./coincidentSelection";
 import type { PointRef } from "../document/types";
 
 // A sketch vertex (editable — the solver may move it).
@@ -11,6 +11,9 @@ const sketchVertex = (entity: string, at: "a" | "b" | "c" = "a"): CoincidentPoin
 const bodyVertex = (uv: [number, number]): CoincidentPoint => ({ ref: { fixed: uv }, editable: false });
 // The sketch origin, reached by clicking it (editable ref, but it's ground).
 const originPoint: CoincidentPoint = { ref: { origin: true }, editable: true };
+// The selected edges a point can land on.
+const line = (id: string): CoincidentCurve => ({ id, kind: "line" });
+const circle = (id: string): CoincidentCurve => ({ id, kind: "circle" });
 
 describe("planCoincident — sketch vertex + solid-face vertex (the reported bug)", () => {
   it("makes the two coincident instead of anchoring the sketch vertex to the origin", () => {
@@ -68,7 +71,7 @@ describe("planCoincident — anchoring rules", () => {
 
 describe("planCoincident — point-on-line", () => {
   it("puts a sketch vertex on a selected line", () => {
-    expect(planCoincident([sketchVertex("p", "a")], ["target"])).toEqual({
+    expect(planCoincident([sketchVertex("p", "a")], [line("target")])).toEqual({
       kind: "pointOnLine",
       point: { entity: "p", at: "a" },
       lineId: "target",
@@ -76,7 +79,7 @@ describe("planCoincident — point-on-line", () => {
   });
 
   it("puts a solid-face vertex on a selected line (the line moves to it)", () => {
-    expect(planCoincident([bodyVertex([15, 25])], ["edge"])).toEqual({
+    expect(planCoincident([bodyVertex([15, 25])], [line("edge")])).toEqual({
       kind: "pointOnLine",
       point: { fixed: [15, 25] },
       lineId: "edge",
@@ -84,7 +87,7 @@ describe("planCoincident — point-on-line", () => {
   });
 
   it("pulls the origin onto a selected line", () => {
-    expect(planCoincident([originPoint], ["edge"])).toEqual({
+    expect(planCoincident([originPoint], [line("edge")])).toEqual({
       kind: "pointOnLine",
       point: { origin: true },
       lineId: "edge",
@@ -93,9 +96,9 @@ describe("planCoincident — point-on-line", () => {
 
   it("is a no-op (disabled) when the point is an endpoint of that same line", () => {
     // Constraining a line's own endpoint onto itself is meaningless.
-    const plan = planCoincident([sketchVertex("edge", "a")], ["edge"]);
+    const plan = planCoincident([sketchVertex("edge", "a")], [line("edge")]);
     expect(plan).toBeNull();
-    expect(coincidentEnabled([sketchVertex("edge", "a")], ["edge"])).toBe(false);
+    expect(coincidentEnabled([sketchVertex("edge", "a")], [line("edge")])).toBe(false);
   });
 });
 
@@ -104,28 +107,74 @@ describe("planCoincident — invalid selections are disabled", () => {
     expect(coincidentEnabled([], [])).toBe(false);
   });
   it("two lines (no points)", () => {
-    expect(coincidentEnabled([], ["l1", "l2"])).toBe(false);
+    expect(coincidentEnabled([], [line("l1"), line("l2")])).toBe(false);
   });
   it("three points", () => {
     const pts: CoincidentPoint[] = [sketchVertex("a"), sketchVertex("b"), sketchVertex("c")];
     expect(coincidentEnabled(pts, [])).toBe(false);
   });
   it("two points and a line", () => {
-    expect(coincidentEnabled([sketchVertex("a"), sketchVertex("b")], ["l"])).toBe(false);
+    expect(coincidentEnabled([sketchVertex("a"), sketchVertex("b")], [line("l")])).toBe(false);
+  });
+});
+
+describe("planCoincident — point-on-circle (the reported bug)", () => {
+  it("puts a line's endpoint on a selected circle instead of anchoring it to the ORIGIN", () => {
+    // Bug #3: a circle wasn't a thing a point could be coincident with, so the
+    // selection looked like "one lone point" and the point jumped to (0,0).
+    const plan = planCoincident([sketchVertex("edge", "b")], [circle("hole")]);
+    expect(plan).toEqual({ kind: "pointOnCircle", point: { entity: "edge", at: "b" }, circleId: "hole" });
+    expect(plan?.kind).not.toBe("originAnchor");
+  });
+
+  it("does the same for an arc (its rim is a rim)", () => {
+    expect(planCoincident([sketchVertex("edge", "a")], [circle("arc1")])).toMatchObject({
+      kind: "pointOnCircle",
+      circleId: "arc1",
+    });
+  });
+
+  it("pulls the origin onto a circle, and a fixed body vertex too", () => {
+    expect(planCoincident([originPoint], [circle("c")])).toEqual({
+      kind: "pointOnCircle",
+      point: { origin: true },
+      circleId: "c",
+    });
+    expect(planCoincident([bodyVertex([4, 5])], [circle("c")])).toEqual({
+      kind: "pointOnCircle",
+      point: { fixed: [4, 5] },
+      circleId: "c",
+    });
+  });
+
+  it("enables the button for a point + a circle", () => {
+    expect(coincidentEnabled([sketchVertex("edge", "b")], [circle("hole")])).toBe(true);
+  });
+
+  it("is a no-op when the point is that circle's own centre", () => {
+    // Putting a circle's centre on its own rim is a contradiction, not a wish.
+    expect(planCoincident([sketchVertex("hole", "c")], [circle("hole")])).toBeNull();
+  });
+
+  it("still refuses a point with TWO edges, whatever they are", () => {
+    expect(planCoincident([sketchVertex("p")], [circle("c"), line("l")])).toBeNull();
+    expect(planCoincident([sketchVertex("p")], [circle("c1"), circle("c2")])).toBeNull();
   });
 });
 
 describe("coincidentEnabled mirrors planCoincident", () => {
   it("is true exactly when a plan exists", () => {
-    const cases: [CoincidentPoint[], string[]][] = [
+    const cases: [CoincidentPoint[], CoincidentCurve[]][] = [
       [[sketchVertex("a"), bodyVertex([1, 1])], []],
       [[sketchVertex("a")], []],
       [[bodyVertex([1, 1])], []],
       [[], []],
-      [[sketchVertex("a")], ["l"]],
+      [[sketchVertex("a")], [line("l")]],
+      [[sketchVertex("a")], [circle("c")]],
+      [[sketchVertex("c", "c")], [circle("c")]],
     ];
-    for (const [pts, lines] of cases) {
-      expect(coincidentEnabled(pts, lines)).toBe(planCoincident(pts, lines) !== null);
+    for (const [pts, curves] of cases) {
+      expect(coincidentEnabled(pts, curves)).toBe(planCoincident(pts, curves) !== null);
     }
   });
 });
