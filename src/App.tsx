@@ -128,6 +128,7 @@ import { validateShellThickness, mapShellKernelError } from "./document/shellVal
 import { validateExtrudeDistance, extrudeUsesDistance } from "./document/extrudeValidation";
 import { shellBodyFromSelection, toggleShellFace, retargetShell, NO_SHELL_FACES } from "./document/shellTarget";
 import { detectSketchRegions } from "./document/regions";
+import { applyExtend, applyTrim, planExtend, planTrim } from "./document/trimOps";
 import { extrudeProfilesFromPicks, isExtrudePick, toggleExtrudePick } from "./document/extrudeProfiles";
 import {
   dressUpPickBody,
@@ -707,6 +708,20 @@ const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; name: string; title: s
     title: "Text (T): click to place, then type the text & height; Enter commits, Esc cancels",
     sc: "T",
   },
+  {
+    tool: "trim",
+    label: "\u2702",
+    name: "Trim",
+    title: "Trim (K): click the piece of an edge to remove — it goes as far as the nearest crossings",
+    sc: "K",
+  },
+  {
+    tool: "extend",
+    label: "\u21e5",
+    name: "Extend",
+    title: "Extend (Shift+K): click near the end of an edge to grow it out to the first thing it meets",
+    sc: "\u21e7K",
+  },
 ];
 const sketchToolMeta = (t: SketchTool) => SKETCH_TOOLS.find((x) => x.tool === t)!;
 
@@ -730,6 +745,11 @@ const SKETCH_GROUPS = {
     name: "Pattern",
     title: "Pattern (X = linear, Shift+X = circular)",
     variants: ["pattern-linear", "pattern-circular"] as const,
+  },
+  trim: {
+    name: "Trim",
+    title: "Trim (K = remove a piece, Shift+K = extend to the next edge)",
+    variants: ["trim", "extend"] as const,
   },
 };
 type SketchGroupId = keyof typeof SKETCH_GROUPS;
@@ -772,6 +792,8 @@ const SKETCH_VARIANT_NAME: Partial<Record<SketchTool, string>> = {
   "circle-3p": "3 points",
   "pattern-linear": "Linear",
   "pattern-circular": "Circular",
+  trim: "Trim",
+  extend: "Extend",
 };
 // Left-to-right (top-to-bottom in the vertical bar) order, with the two tool
 // pairs replaced by their group flyouts.
@@ -783,6 +805,7 @@ const SKETCH_LAYOUT: ({ kind: "tool"; tool: SketchTool } | { kind: "group"; grou
   { kind: "tool", tool: "polygon" },
   { kind: "tool", tool: "arc-3p" },
   { kind: "tool", tool: "spline" },
+  { kind: "group", group: "trim" },
   { kind: "tool", tool: "offset" },
   { kind: "tool", tool: "mirror" },
   { kind: "group", group: "pattern" },
@@ -912,6 +935,32 @@ export default function App() {
   // Regular clicks accumulate into the set; clicking a selected element removes
   // it; clicking empty space clears.
   const handlePick = (picked: Selection | null, sketchUv?: Vec2) => {
+    // Trim / Extend act on the entity under the cursor rather than selecting it.
+    // Both re-solve afterwards: trimming drops the constraints that referred to
+    // what went (see document/trimOps.ts), and extending adds the joint that
+    // makes the new meeting last.
+    if (editingSketchId && (sketchTool === "trim" || sketchTool === "extend")) {
+      if (picked?.kind !== "sketchEntity" || picked.sketchId !== editingSketchId || !sketchUv) return;
+      const base = sketchBaseDocRef.current;
+      if (sketchTool === "trim") {
+        const plan = planTrim(base, editingSketchId, picked.entityId, sketchUv);
+        if (!plan) {
+          flashMsg("Trim works on lines, arcs and circles.");
+          return;
+        }
+        void commitSketchEdit(applyTrim(base, editingSketchId, picked.entityId, plan), editingSketchId);
+      } else {
+        const plan = planExtend(base, editingSketchId, picked.entityId, sketchUv);
+        if (!plan) {
+          flashMsg("Nothing ahead of that end to extend to.");
+          return;
+        }
+        void commitSketchEdit(applyExtend(base, editingSketchId, picked.entityId, plan), editingSketchId);
+      }
+      setTrimHover(null);
+      setSelection([]);
+      return;
+    }
     // Up-to-face pick armed (from the extrude dialog): the next clicked body
     // face becomes the extrude's target face. Anything else is ignored and the
     // arming stays live for another try — a miss is a misclick, not a decision
@@ -1834,6 +1883,10 @@ export default function App() {
   const [circleVariant, setCircleVariant] = useState<SketchTool>("circle-center");
   const [rectVariant, setRectVariant] = useState<SketchTool>("rect-corner");
   const [patternVariant, setPatternVariant] = useState<SketchTool>("pattern-linear");
+  const [trimVariant, setTrimVariant] = useState<SketchTool>("trim");
+  // Trim/Extend: the entity under the cursor and where, reported by the viewport
+  // so the preview can show the exact piece the click would take (or add).
+  const [trimHover, setTrimHover] = useState<{ entityId: string; uv: Vec2 } | null>(null);
   // The grouped geometric-constraint button: which constraint the always-visible
   // primary button represents (last one used, like the drawing-tool variants),
   // and whether the ▸ flyout of the others is open.
@@ -1843,6 +1896,9 @@ export default function App() {
     if (sketchTool === "circle-center" || sketchTool === "circle-3p") setCircleVariant(sketchTool);
     else if (sketchTool === "rect-corner" || sketchTool === "rect-center") setRectVariant(sketchTool);
     else if (sketchTool === "pattern-linear" || sketchTool === "pattern-circular") setPatternVariant(sketchTool);
+    else if (sketchTool === "trim" || sketchTool === "extend") setTrimVariant(sketchTool);
+    // A stale hover would keep previewing a piece of a tool that's no longer on.
+    setTrimHover(null);
     setExpandedSketchGroup(null);
   }, [sketchTool]);
   // Dismiss an open flyout when clicking anything outside a sketch group (the
@@ -4279,6 +4335,7 @@ export default function App() {
       m: "mirror", // M = sketch Mirror (modeling-mode M = body Mirror feature)
       u: "project", // U = "Use" (Project/Convert existing geometry into the sketch)
       t: "text", // T = Text (sketch-mode only; modeling-mode T = Transform)
+      k: "trim", // K = Trim (T, its own initial, is Text) — Shift+K = Extend
       x: "pattern-linear", // X = linear pattern (Shift+X = circular)
     };
     // Shift-modified variants of an existing tool key (Shift+R/Shift+C/Shift+S).
@@ -4287,6 +4344,7 @@ export default function App() {
       c: "circle-3p",
       s: "spline", // Shift+S = Spline (bare S now selects the Select tool)
       x: "pattern-circular",
+      k: "extend",
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -4303,6 +4361,9 @@ export default function App() {
           setSketchToolState("select");
         } else if (projectSessionRef.current) {
           setProjectSession(null);
+          setSketchToolState("select");
+        } else if (sketchTool === "trim" || sketchTool === "extend") {
+          setTrimHover(null);
           setSketchToolState("select");
         } else if (textDraftRef.current) setTextDraft(null);
         else if (dimInputRef.current) setDimInput(null);
@@ -5025,6 +5086,22 @@ export default function App() {
         })),
     [doc, editingSketchId, armingSketchProfile, resolved.planeFrames, resolved.scope],
   );
+
+  // Trim/Extend: the piece the click would remove (or the stretch it would add),
+  // drawn by the viewport in its own "this is going" colour. Recomputed from the
+  // LAST COMMITTED sketch so a still-solving edit can't make the preview lie.
+  const trimPreview = useMemo<Vec2[] | null>(() => {
+    if (!editingSketchId || !trimHover) return null;
+    if (sketchTool !== "trim" && sketchTool !== "extend") return null;
+    const base = sketchBaseDocRef.current;
+    if (sketchTool === "trim") return planTrim(base, editingSketchId, trimHover.entityId, trimHover.uv)?.span ?? null;
+    return planExtend(base, editingSketchId, trimHover.entityId, trimHover.uv)?.span ?? null;
+    // `doc` isn't read directly — sketchBaseDocRef is, and it isn't reactive. It's
+    // here as the signal that the sketch changed, so the preview is recomputed
+    // against the geometry as it now stands (a trim moves the very edges this
+    // measures against).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingSketchId, trimHover, sketchTool, doc]);
 
   // Live dashed preview of the in-progress offset, rebuilt as the distance
   // changes. Marked construction so it routes to the dashed overlay for free.
@@ -7213,7 +7290,13 @@ export default function App() {
           }
           const g = SKETCH_GROUPS[slot.group];
           const variant =
-            slot.group === "circle" ? circleVariant : slot.group === "rect" ? rectVariant : patternVariant;
+            slot.group === "circle"
+              ? circleVariant
+              : slot.group === "rect"
+                ? rectVariant
+                : slot.group === "trim"
+                  ? trimVariant
+                  : patternVariant;
           const groupActive = (g.variants as readonly SketchTool[]).includes(sketchTool);
           const expanded = expandedSketchGroup === slot.group;
           const vm = sketchToolMeta(variant);
@@ -8013,6 +8096,8 @@ export default function App() {
             draft={draft}
             polygonSides={polygonSides}
             onSketchClick={handleSketchClick}
+            onSketchToolHover={setTrimHover}
+            trimPreview={trimPreview}
             onSketchDragMove={handleSketchDragMove}
             onSketchDragEnd={handleSketchDragEnd}
             selectionFilter={selFilter}

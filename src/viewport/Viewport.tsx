@@ -244,6 +244,8 @@ export type SketchTool =
   | "offset"
   | "mirror"
   | "project"
+  | "trim"
+  | "extend"
   | "pattern-linear"
   | "pattern-circular"
   | "text";
@@ -255,8 +257,19 @@ export type SketchTool =
  *  pull into the sketch). Routes clicks to onSelect, not onSketchClick, and
  *  keeps selection-hover highlighting live. */
 function isPickTool(t: SketchTool): boolean {
-  return t === "select" || t === "mirror" || t === "project" || t === "pattern-linear" || t === "pattern-circular";
+  return (
+    t === "select" ||
+    t === "mirror" ||
+    t === "project" ||
+    t === "pattern-linear" ||
+    t === "pattern-circular" ||
+    t === "trim" ||
+    t === "extend"
+  );
 }
+/** Tools that act on the entity under the cursor and want to show what they'd
+ *  do to it before the click lands. */
+const isTrimTool = (t: SketchTool): boolean => t === "trim" || t === "extend";
 export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
 
 export interface ViewportApi {
@@ -374,6 +387,7 @@ interface SceneState {
   // The rubber-band preview while drawing (line/rect/arc/polygon), as a fat line
   // so it reads as clearly as a committed sketch line.
   previewLine: Line2;
+  trimLine: Line2;
   snapMarker: THREE.Mesh;
   // Lights up the WHOLE edge being snapped to (not just the marker dot), so you
   // can see it's a real in-plane edge and its extent. Fat line (screen-px width).
@@ -1120,6 +1134,8 @@ export function Viewport({
   draft,
   polygonSides,
   onSketchClick,
+  onSketchToolHover,
+  trimPreview,
   onSketchDragMove,
   onSketchDragEnd,
   selectionFilter,
@@ -1220,6 +1236,13 @@ export function Viewport({
   onSketchDragMove: (points: { from: Vec2; to: Vec2 }[]) => void;
   /** Drag released — App finalizes the move (drops the pre-drag snapshot). */
   onSketchDragEnd: () => void;
+  /** While the Trim/Extend tool is active: which sketch entity is under the
+   *  cursor and where, so App can work out the piece that would go. Fires with
+   *  null when the cursor is over nothing. */
+  onSketchToolHover?: (hit: { entityId: string; uv: Vec2 } | null) => void;
+  /** The span Trim would remove (or the stretch Extend would add), in sketch uv
+   *  — drawn on the active sketch plane in the "this is going" colour. */
+  trimPreview?: Vec2[] | null;
   selectionFilter: SelectionFilter;
   /** True while a dialog is waiting for a sketch REGION to be clicked (Revolve's
    *  profile). A region is normally the loser of every depth tie — it's a
@@ -1318,6 +1341,8 @@ export function Viewport({
   onSketchClickRef.current = onSketchClick;
   const onSketchDragMoveRef = useRef(onSketchDragMove);
   onSketchDragMoveRef.current = onSketchDragMove;
+  const onSketchToolHoverRef = useRef(onSketchToolHover);
+  onSketchToolHoverRef.current = onSketchToolHover;
   const onSketchDragEndRef = useRef(onSketchDragEnd);
   onSketchDragEndRef.current = onSketchDragEnd;
   // derived from sketches + activeSketchId in the render effect
@@ -1889,6 +1914,20 @@ export function Viewport({
       depthTest: false,
       transparent: true,
     });
+    // Trim/Extend: what the click would take away (or add), drawn thicker and in
+    // a colour used nowhere else, so it never reads as sketch geometry, as
+    // construction, or as a snap guide.
+    const trimMaterial = new LineMaterial({
+      color: 0xff5c5c,
+      linewidth: 5,
+      worldUnits: false,
+      depthTest: false,
+      transparent: true,
+    });
+    const trimLine = new Line2(new LineGeometry(), trimMaterial);
+    trimLine.frustumCulled = false;
+    trimLine.visible = false;
+    trimLine.renderOrder = 10.6; // just above the drawing preview
     const previewLine = new Line2(new LineGeometry(), previewMaterial);
     previewLine.frustumCulled = false;
     previewLine.visible = false;
@@ -1949,7 +1988,7 @@ export function Viewport({
     anchorOverlay.renderOrder = 10;
     anchorOverlay.frustumCulled = false;
     anchorOverlay.visible = false;
-    scene.add(previewLine, snapMarker, snapEdgeLine, guideOverlay, anchorOverlay);
+    scene.add(trimLine, previewLine, snapMarker, snapEdgeLine, guideOverlay, anchorOverlay);
     // Appended to <body> (not the canvas container) so it can't be clipped, and
     // styled from App.css rather than inline so it picks up the colour theme
     // like every other chip — only `display` and the cursor-following position
@@ -1990,6 +2029,7 @@ export function Viewport({
       ghostCutLineMaterial,
       ghostCutBodyMaterial,
       previewLine,
+      trimLine,
       snapMarker,
       snapEdgeLine,
       guideOverlay,
@@ -3171,6 +3211,22 @@ export function Viewport({
         hoverSelRef.current = null;
         applyHighlights();
       }
+      // Trim/Extend hover: resolve the same entity + point the CLICK would, so
+      // the preview and the edit can never disagree about which piece is meant.
+      // Deliberately the raw plane hit, not the snapped one — snapping to a
+      // nearby vertex would choose the piece on the other side of it.
+      if (activeFrameRef.current && isTrimTool(sketchToolRef.current) && !pickingRef.current) {
+        const sel = pickSelection(e.clientX, e.clientY);
+        const uv = planeHitUv(e.clientX, e.clientY);
+        const hit = sel && sel.kind === "sketchEntity" && uv ? { entityId: sel.entityId, uv } : null;
+        renderer.domElement.style.cursor = hit ? "pointer" : "default";
+        if (!sameSelection(sel && sel.kind === "sketchEntity" ? sel : null, hoverSelRef.current)) {
+          hoverSelRef.current = sel && sel.kind === "sketchEntity" ? sel : null;
+          applyHighlights();
+        }
+        onSketchToolHoverRef.current?.(hit);
+        return;
+      }
       if (pickingRef.current) {
         // An AXIS pick resolves the same way its click does — the selection
         // raycaster first (sketch line / body edge / face), planes only as the
@@ -4311,6 +4367,31 @@ export function Viewport({
       live = false;
     };
   }, []);
+
+  // Draw what Trim would take away / Extend would add, on the active sketch
+  // plane. Cleared whenever there's nothing to show, which is most of the time.
+  useEffect(() => {
+    const state = stateRef.current;
+    if (!state) return;
+    const frame = activeFrameRef.current;
+    if (!trimPreview || trimPreview.length < 2 || !frame) {
+      state.trimLine.visible = false;
+      return;
+    }
+    const flat: number[] = [];
+    for (const p of trimPreview) {
+      const w = uvToWorld(frame, p[0], p[1]);
+      flat.push(w[0], w[1], w[2]);
+    }
+    // Fresh geometry rather than setPositions: a fat LineGeometry doesn't grow
+    // its instance count when the point count rises (same gotcha as the drawing
+    // preview), so a longer span would otherwise draw only its first segment.
+    const g = new LineGeometry();
+    g.setPositions(flat);
+    state.trimLine.geometry.dispose();
+    state.trimLine.geometry = g;
+    state.trimLine.visible = true;
+  }, [trimPreview]);
 
   // Render every sketch (so finished sketches stay visible); set the active
   // frame/entities used for drawing.

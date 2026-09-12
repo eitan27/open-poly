@@ -229,7 +229,6 @@ place. Roughly ordered by how often a user meets them.
 
 **Sketching (Phase 2 backlog)**
 
-- **Trim / extend** — not built. The most conspicuous missing sketch tool.
 - **Cancel a sketch edit** — edits to an existing sketch apply live; there's no
   discard-on-Esc (snapshot-on-entry + restore).
 - **Constraints not mapped:** concentric, symmetric, collinear, fix/lock.
@@ -392,7 +391,6 @@ driving variable changes — is **met**.
 
 **Backlog (deferred)**
 
-- **Trim / extend.**
 - **Cancel a sketch edit (discard changes)** — re-editing applies live via
   `setDoc`, and only a brand-new _empty_ sketch cancels on exit; backing out of
   edits to an _existing_ sketch needs snapshot-on-entry + restore on Esc (Finish
