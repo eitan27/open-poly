@@ -7246,8 +7246,8 @@ export default function App() {
 
   // The sketch toolbar as slots: <OverflowColumn> shows as many as fit down the
   // window and moves the rest into its "⋯" flyout. Each slot carries the rows
-  // the flyout lists for it — a separator or the constraint-count badge carries
-  // none, so it simply drops out when there's no room.
+  // the flyout lists for it — a separator carries none, so it simply drops out
+  // when there's no room.
   const sketchToolRow = (tool: SketchTool, extra?: Partial<ToolbarRow>): ToolbarRow => {
     const t = sketchToolMeta(tool);
     return {
@@ -7476,26 +7476,6 @@ export default function App() {
             </button>
           ),
         },
-        ...(editingSketch.constraints.length > 0
-          ? [
-              {
-                id: "constraint-count",
-                rows: [],
-                node: (
-                  <span
-                    className={`constraint-count${solveConflict ? " conflict" : ""}`}
-                    title={
-                      solveConflict
-                        ? "Over-constrained / conflicting constraints"
-                        : `${editingSketch.constraints.length} constraints${fullyConstrained ? " · fully constrained" : ""}`
-                    }
-                  >
-                    {solveConflict ? "⚠" : fullyConstrained ? "✓" : editingSketch.constraints.length}
-                  </span>
-                ),
-              } satisfies ColumnSlot,
-            ]
-          : []),
       ];
 
   // The modeling toolbar as data: <OverflowToolbar> renders as many of these as

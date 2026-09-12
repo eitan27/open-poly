@@ -2804,17 +2804,6 @@ button:disabled .kbd-hint {
   background: rgba(var(--accent-rgb), 0.12);
 }
 
-.constraint-count {
-  text-align: center;
-  font-size: 12px;
-  color: var(--ok);
-  padding: 2px 0;
-}
-
-.constraint-count.conflict {
-  color: var(--danger);
-}
-
 /* Constraints list (sketch editing): each row is a constraint + delete. */
 .constraint-list {
   list-style: none;
