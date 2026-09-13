@@ -553,6 +553,19 @@
   text-shadow: 0 0 3px var(--on-user-color-shade);
 }
 
+/* The licensing footnote — the last line in the dialog, as quiet as the notes
+   under each setting. The link needs its own colour: no global rule styles
+   anchors, so without this it would render in the UA's blue. */
+.set-legal {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-8);
+}
+.set-legal a {
+  color: var(--accent-pale-2);
+}
+
 .docs-header {
   display: flex;
   align-items: center;

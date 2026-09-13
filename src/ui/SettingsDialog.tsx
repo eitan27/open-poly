@@ -267,6 +267,19 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
       <p className="report-note">
         Settings are saved in this browser only — they travel with neither your documents nor your account.
       </p>
+
+      {/* The notices the download is required to carry. A plain link to the
+          generated text file, not a viewer: the file is emitted into `dist/`
+          beside the bundles it describes (see scripts/third-party-licenses.ts),
+          so it is served from the same origin at the site root. Absolute
+          because the app is served from `/` and this dialog can be open over
+          any route. */}
+      <p className="set-legal">
+        Open Poly is free software under the GNU GPL, version 3 or later.{" "}
+        <a href="/third-party-licenses.txt" target="_blank" rel="noreferrer">
+          Third-party licenses
+        </a>
+      </p>
     </Modal>
   );
 }
