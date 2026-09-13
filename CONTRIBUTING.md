@@ -43,23 +43,23 @@ a single line. Keep the blank line.
 
 ## Codebase layout
 
-| Path             | What lives there                                                                                                                                                             |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/document/`  | The document model — features, sketch tools, DXF import, expressions, planes, regions. Pure logic, no React/DOM.                                                             |
-| `src/lib/`       | Dependency-free primitives shared by everything else — number formatting, `clamp`, 2D/3D vector math.                                                                        |
-| `src/geom/`      | Small standalone geometry algorithms (circle faceting, edge chains, chamfer wedges, ring fitting).                                                                           |
-| `src/kernel/`    | The web worker that drives the OpenCascade/replicad geometry kernel — feature regeneration, meshing, topological naming.                                                     |
-| `src/sketch/`    | The 2D constraint solver integration and sketch-specific geometry (inference, snapping, dimensions).                                                                         |
-| `src/selection/` | Measurement and selection-derived computations.                                                                                                                              |
-| `src/storage/`   | IndexedDB document persistence.                                                                                                                                              |
-| `src/settings/`  | User settings/preferences.                                                                                                                                                   |
-| `src/agent/`     | The in-app side of the MCP agent bridge (commands, operations, protocol). Should call into `src/document/` rather than reimplement its logic.                                |
-| `src/ui/`        | Dialogs and panels.                                                                                                                                                          |
-| `src/viewport/`  | The three.js viewport — rendering, camera, picking, highlighting.                                                                                                            |
-| `src/App.tsx`    | Top-level orchestration: state, wiring, dialog lifecycle. Currently oversized and mid-refactor into smaller hooks — see open issues.                                         |
-| `mcp-server/`    | The standalone MCP server package that external agent clients (Claude Desktop, Cursor, etc.) connect to. Imports types/logic from `src/agent/` rather than duplicating them. |
-| `functions/`     | Cloudflare Pages functions (currently: the bug-report endpoint).                                                                                                             |
-| `scripts/`       | Manual Playwright-based verification scripts, run ad hoc against a local `npm run dev` instance — not part of CI.                                                            |
+| Path             | What lives there                                                                                                                                                                          |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/document/`  | The document model — features, sketch tools, DXF import, expressions, planes, regions. Pure logic, no React/DOM.                                                                          |
+| `src/lib/`       | Dependency-free primitives shared by everything else — number formatting, `clamp`, 2D/3D vector math.                                                                                     |
+| `src/geom/`      | Small standalone geometry algorithms (circle faceting, edge chains, chamfer wedges, ring fitting).                                                                                        |
+| `src/kernel/`    | The web worker that drives the OpenCascade/replicad geometry kernel — feature regeneration, meshing, topological naming.                                                                  |
+| `src/sketch/`    | The 2D constraint solver integration and sketch-specific geometry (inference, snapping, dimensions).                                                                                      |
+| `src/selection/` | Measurement and selection-derived computations.                                                                                                                                           |
+| `src/storage/`   | IndexedDB document persistence.                                                                                                                                                           |
+| `src/settings/`  | User settings/preferences, and `shortcuts.ts` — the one table every keyboard shortcut is declared in (the key handler and the toolbar hints both read it; its test fails on a collision). |
+| `src/agent/`     | The in-app side of the MCP agent bridge (commands, operations, protocol). Should call into `src/document/` rather than reimplement its logic.                                             |
+| `src/ui/`        | Dialogs and panels.                                                                                                                                                                       |
+| `src/viewport/`  | The three.js viewport — rendering, camera, picking, highlighting.                                                                                                                         |
+| `src/App.tsx`    | Top-level orchestration: state, wiring, dialog lifecycle. Currently oversized and mid-refactor into smaller hooks — see open issues.                                                      |
+| `mcp-server/`    | The standalone MCP server package that external agent clients (Claude Desktop, Cursor, etc.) connect to. Imports types/logic from `src/agent/` rather than duplicating them.              |
+| `functions/`     | Cloudflare Pages functions (currently: the bug-report endpoint).                                                                                                                          |
+| `scripts/`       | Manual Playwright-based verification scripts, run ad hoc against a local `npm run dev` instance — not part of CI.                                                                         |
 
 ## Code style
 

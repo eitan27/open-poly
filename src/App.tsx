@@ -161,6 +161,8 @@ import { DocumentsDialog } from "./ui/DocumentsDialog";
 import { ReportDialog } from "./ui/ReportDialog";
 import { SettingsDialog } from "./ui/SettingsDialog";
 import { useSettings } from "./settings/useSettings";
+import { isShortcut, matchShortcut, shortcutHint, shortcutName } from "./settings/shortcuts";
+import type { ShortcutId } from "./settings/shortcuts";
 import {
   arcFrom3,
   circleFrom3,
@@ -699,36 +701,105 @@ const DATUM_ROWS: { id: DatumId; kind: string; label: string }[] = [
 
 // `name` is the plain-text name the More flyout lists and searches on (the
 // label is an icon, the title a full sentence).
-const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; name: string; title: string; sc: string }[] = [
-  { tool: "select", label: "↖", name: "Select", title: "Select (S)", sc: "S" },
-  { tool: "line", label: "╱", name: "Line", title: "Line (L)", sc: "L" },
-  { tool: "rect-corner", label: "▭", name: "Rectangle: 2 corners", title: "Rectangle: 2 corners (R)", sc: "R" },
+// `shortcut` names this tool's row in the shortcut table (src/settings/
+// shortcuts.ts) — the keyboard binding and the `sc` hint both come from there,
+// so a letter is never typed twice. The `title` sentences still spell their key
+// out in prose, which reads better than a glyph mid-sentence.
+const SKETCH_TOOLS: {
+  tool: SketchTool;
+  label: ReactNode;
+  name: string;
+  title: string;
+  shortcut: ShortcutId;
+  sc: string;
+}[] = [
+  {
+    tool: "select",
+    label: "↖",
+    name: "Select",
+    title: `Select (${shortcutName("sketch.select")})`,
+    shortcut: "sketch.select",
+    sc: shortcutHint("sketch.select"),
+  },
+  {
+    tool: "line",
+    label: "╱",
+    name: "Line",
+    title: `Line (${shortcutName("sketch.line")})`,
+    shortcut: "sketch.line",
+    sc: shortcutHint("sketch.line"),
+  },
+  {
+    tool: "rect-corner",
+    label: "▭",
+    name: "Rectangle: 2 corners",
+    title: `Rectangle: 2 corners (${shortcutName("sketch.rectCorner")})`,
+    shortcut: "sketch.rectCorner",
+    sc: shortcutHint("sketch.rectCorner"),
+  },
   {
     tool: "rect-center",
     label: "⊞",
     name: "Rectangle: center",
-    title: "Rectangle: center + corner (Shift+R)",
-    sc: "⇧R",
+    title: `Rectangle: center + corner (${shortcutName("sketch.rectCenter")})`,
+    shortcut: "sketch.rectCenter",
+    sc: shortcutHint("sketch.rectCenter"),
   },
-  { tool: "circle-center", label: "○", name: "Circle: center + radius", title: "Circle: center + radius (C)", sc: "C" },
-  { tool: "circle-3p", label: "◔", name: "Circle: 3 points", title: "Circle: 3 points (Shift+C)", sc: "⇧C" },
-  { tool: "polygon", label: "⬢", name: "Polygon", title: "Regular polygon (P)", sc: "P" },
-  { tool: "arc-3p", label: "⌒", name: "Arc", title: "Arc: 3 points (A)", sc: "A" },
-  { tool: "spline", label: "∿", name: "Spline", title: "Spline (Shift+S): click points, Esc to finish", sc: "⇧S" },
+  {
+    tool: "circle-center",
+    label: "○",
+    name: "Circle: center + radius",
+    title: `Circle: center + radius (${shortcutName("sketch.circleCenter")})`,
+    shortcut: "sketch.circleCenter",
+    sc: shortcutHint("sketch.circleCenter"),
+  },
+  {
+    tool: "circle-3p",
+    label: "◔",
+    name: "Circle: 3 points",
+    title: `Circle: 3 points (${shortcutName("sketch.circle3p")})`,
+    shortcut: "sketch.circle3p",
+    sc: shortcutHint("sketch.circle3p"),
+  },
+  {
+    tool: "polygon",
+    label: "⬢",
+    name: "Polygon",
+    title: `Regular polygon (${shortcutName("sketch.polygon")})`,
+    shortcut: "sketch.polygon",
+    sc: shortcutHint("sketch.polygon"),
+  },
+  {
+    tool: "arc-3p",
+    label: "⌒",
+    name: "Arc",
+    title: `Arc: 3 points (${shortcutName("sketch.arc")})`,
+    shortcut: "sketch.arc",
+    sc: shortcutHint("sketch.arc"),
+  },
+  {
+    tool: "spline",
+    label: "∿",
+    name: "Spline",
+    title: `Spline (${shortcutName("sketch.spline")}): click points, Esc to finish`,
+    shortcut: "sketch.spline",
+    sc: shortcutHint("sketch.spline"),
+  },
   {
     tool: "offset",
     label: <OffsetIcon />,
     name: "Offset",
-    title: "Offset (O): select a single chain of edges, then drag / type the distance",
-    sc: "O",
+    title: `Offset (${shortcutName("sketch.offset")}): select a single chain of edges, then drag / type the distance`,
+    shortcut: "sketch.offset",
+    sc: shortcutHint("sketch.offset"),
   },
   {
     tool: "mirror",
     label: "◫",
     name: "Mirror",
-    title:
-      "Mirror (M): select a line to arm the mirror axis, then select entities to mirror; Enter commits, Esc cancels",
-    sc: "M",
+    title: `Mirror (${shortcutName("sketch.mirror")}): select a line to arm the mirror axis, then select entities to mirror; Enter commits, Esc cancels`,
+    shortcut: "sketch.mirror",
+    sc: shortcutHint("sketch.mirror"),
   },
   {
     tool: "pattern-linear",
@@ -737,47 +808,60 @@ const SKETCH_TOOLS: { tool: SketchTool; label: ReactNode; name: string; title: s
     // a body or a sketch entity.
     label: "⁙",
     name: "Linear pattern",
-    title: "Linear pattern (X): select entities to repeat, set count + step; Enter commits, Esc cancels",
-    sc: "X",
+    title: `Linear pattern (${shortcutName("sketch.patternLinear")}): select entities to repeat, set count + step; Enter commits, Esc cancels`,
+    shortcut: "sketch.patternLinear",
+    sc: shortcutHint("sketch.patternLinear"),
   },
   {
     tool: "pattern-circular",
     label: "⊛",
     name: "Circular pattern",
-    title: "Circular pattern (Shift+X): select the center point, then entities to repeat; Enter commits, Esc cancels",
-    sc: "⇧X",
+    title: `Circular pattern (${shortcutName("sketch.patternCircular")}): select the center point, then entities to repeat; Enter commits, Esc cancels`,
+    shortcut: "sketch.patternCircular",
+    sc: shortcutHint("sketch.patternCircular"),
   },
   {
     tool: "project",
     label: "⧉",
     name: "Project / Convert",
-    title:
-      "Project / Convert (U): click body edges & vertices to project them onto the sketch; Enter commits, Esc cancels",
-    sc: "U",
+    title: `Project / Convert (${shortcutName("sketch.project")}): click body edges & vertices to project them onto the sketch; Enter commits, Esc cancels`,
+    shortcut: "sketch.project",
+    sc: shortcutHint("sketch.project"),
   },
   {
     tool: "text",
     label: "T",
     name: "Text",
-    title: "Text (T): click to place, then type the text & height; Enter commits, Esc cancels",
-    sc: "T",
+    title: `Text (${shortcutName("sketch.text")}): click to place, then type the text & height; Enter commits, Esc cancels`,
+    shortcut: "sketch.text",
+    sc: shortcutHint("sketch.text"),
   },
   {
     tool: "trim",
     label: "\u2702",
     name: "Trim",
-    title: "Trim (K): click the piece of an edge to remove — it goes as far as the nearest crossings",
-    sc: "K",
+    title: `Trim (${shortcutName("sketch.trim")}): click the piece of an edge to remove — it goes as far as the nearest crossings`,
+    shortcut: "sketch.trim",
+    sc: shortcutHint("sketch.trim"),
   },
   {
     tool: "extend",
     label: "\u21e5",
     name: "Extend",
-    title: "Extend (Shift+K): click near the end of an edge to grow it out to the first thing it meets",
-    sc: "\u21e7K",
+    title: `Extend (${shortcutName("sketch.extend")}): click near the end of an edge to grow it out to the first thing it meets`,
+    shortcut: "sketch.extend",
+    sc: shortcutHint("sketch.extend"),
   },
 ];
 const sketchToolMeta = (t: SketchTool) => SKETCH_TOOLS.find((x) => x.tool === t)!;
+// The keydown handler's side of the list above: which tool each sketch-tool
+// shortcut selects. Derived from `SKETCH_TOOLS`, so a tool's key is declared in
+// exactly one place (the shortcut table) and claimed in exactly one place (the
+// row above), and the two can't drift apart.
+const SKETCH_TOOL_BY_SHORTCUT = new Map<ShortcutId, SketchTool>(SKETCH_TOOLS.map((t) => [t.shortcut, t.tool]));
+
+// The Dimension button's tooltip, shared by the button and its More-flyout row.
+const DIMENSION_TITLE = `Dimension (${shortcutName("sketch.dimension")}): a line (length), circle (radius), or two lines (angle) — pick one if none selected`;
 
 // The two circle tools and the two rectangle tools each collapse into a single
 // primary button (the last-used variant, clickable to select it) plus a ▸ arrow
@@ -901,9 +985,18 @@ function fittedToEntity(f: FittedProjection, id = genId()): SketchEntity {
   }
 }
 
-// Order backs the 1-7 keyboard shortcuts for named views (the on-canvas
-// gizmo handles mouse clicks — see Viewport.tsx).
-const VIEW_KEYS: ViewName[] = ["top", "front", "right", "back", "left", "bottom", "iso"];
+// Which standard view each of the seven view shortcuts snaps to. The digits
+// themselves live in the shortcut table (the on-canvas gizmo handles mouse
+// clicks — see Viewport.tsx).
+const VIEW_BY_SHORTCUT: Partial<Record<ShortcutId, ViewName>> = {
+  "view.top": "top",
+  "view.front": "front",
+  "view.right": "right",
+  "view.back": "back",
+  "view.left": "left",
+  "view.bottom": "bottom",
+  "view.iso": "iso",
+};
 
 function initialDocument(): Document {
   // Seed with one box so there is something on screen on first load.
@@ -4390,35 +4483,19 @@ export default function App() {
       .map((s) => ({ sketchId: s.sketchId, regionId: s.regionId }));
   }, [selection, doc]);
 
-  // Global keyboard shortcuts. The modeling toolbar and the sketch toolbar are
-  // mutually exclusive (one is only usable while NOT editing a sketch, the
-  // other only while editing one), so some letters are intentionally reused
-  // across the two branches below — see KEYBOARD_SHORTCUTS.md.
+  // Global keyboard shortcuts. Every binding — which key, which modifier, and
+  // which of the two mutually exclusive toolbars it belongs to — lives in the
+  // table in src/settings/shortcuts.ts; this handler only says what each id
+  // *does*. No key letter is written here.
+  //
+  // The order of the branches is still load-bearing, and still mirrors what
+  // shipped: Escape is matched above the don't-fire-while-typing guard (it has
+  // to back you out of a dialog whose input has the focus), and the
+  // stray-⌘/Ctrl bail-out sits exactly where the old switch had it, so the
+  // handful of bindings above it keep firing with ⌘ held.
   useEffect(() => {
-    const SKETCH_KEYS: Record<string, SketchTool> = {
-      s: "select", // S = Select (the sketch-mode pointer; modeling-mode S = Sketch)
-      l: "line",
-      r: "rect-corner",
-      c: "circle-center",
-      p: "polygon",
-      a: "arc-3p",
-      o: "offset",
-      m: "mirror", // M = sketch Mirror (modeling-mode M = body Mirror feature)
-      u: "project", // U = "Use" (Project/Convert existing geometry into the sketch)
-      t: "text", // T = Text (sketch-mode only; modeling-mode T = Transform)
-      k: "trim", // K = Trim (T, its own initial, is Text) — Shift+K = Extend
-      x: "pattern-linear", // X = linear pattern (Shift+X = circular)
-    };
-    // Shift-modified variants of an existing tool key (Shift+R/Shift+C/Shift+S).
-    const SKETCH_SHIFT_KEYS: Record<string, SketchTool> = {
-      r: "rect-center",
-      c: "circle-3p",
-      s: "spline", // Shift+S = Spline (bare S now selects the Select tool)
-      x: "pattern-circular",
-      k: "extend",
-    };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (isShortcut(e, "app.cancel")) {
         if (offsetSessionRef.current) {
           setOffsetSession(null);
           setSketchToolState("select");
@@ -4495,183 +4572,190 @@ export default function App() {
       }
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
-      // "?" toggles the keyboard-shortcut hints appended to toolbar labels.
-      if (e.key === "?") {
-        e.preventDefault();
-        toggleShortcuts();
-        return;
-      }
-      // "/" opens (or closes) the More flyout of whichever toolbar is live, so
-      // every tool — including the ones that didn't fit — is a search away.
-      if (e.key === "/") {
-        e.preventDefault();
-        if (editingSketchId) setSketchMoreRequest((n) => n + 1);
-        else setModelMoreRequest((n) => n + 1);
-        return;
-      }
-      // Enter commits the in-progress sketch Mirror (its previews → real entities).
-      if (e.key === "Enter" && mirrorSessionRef.current) {
-        e.preventDefault();
-        commitMirrorRef.current();
-        return;
-      }
-      // Enter commits the in-progress Project/Convert previews.
-      if (e.key === "Enter" && projectSessionRef.current) {
-        e.preventDefault();
-        commitProjectRef.current();
-        return;
-      }
-      // Enter commits the in-progress sketch Pattern as a DerivedOp.
-      if (e.key === "Enter" && patternSessionRef.current) {
-        e.preventDefault();
-        commitPatternRef.current();
-        return;
-      }
-      if ((e.key === "Delete" || e.key === "Backspace") && selection.length > 0) {
-        e.preventDefault();
-        handleDeleteSelection();
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "i") {
-        e.preventDefault();
-        importInputRef.current?.click();
-        return;
+
+      const id = matchShortcut(e, editingSketchId ? "sketch" : "modeling")?.id;
+
+      switch (id) {
+        case "app.toggleHints":
+          // Toggles the keyboard-shortcut hints appended to toolbar labels.
+          e.preventDefault();
+          toggleShortcuts();
+          return;
+        case "app.toolSearch":
+          // Opens (or closes) the More flyout of whichever toolbar is live, so
+          // every tool — including the ones that didn't fit — is a search away.
+          e.preventDefault();
+          if (editingSketchId) setSketchMoreRequest((n) => n + 1);
+          else setModelMoreRequest((n) => n + 1);
+          return;
+        case "sketch.commitSession":
+          // Turns whichever preview session is running into real entities: the
+          // sketch Mirror, the Project/Convert previews, or the Pattern (which
+          // commits as a DerivedOp). With none running this falls through.
+          if (mirrorSessionRef.current) {
+            e.preventDefault();
+            commitMirrorRef.current();
+            return;
+          }
+          if (projectSessionRef.current) {
+            e.preventDefault();
+            commitProjectRef.current();
+            return;
+          }
+          if (patternSessionRef.current) {
+            e.preventDefault();
+            commitPatternRef.current();
+            return;
+          }
+          break;
+        case "app.delete":
+        case "app.deleteBack":
+          if (selection.length > 0) {
+            e.preventDefault();
+            handleDeleteSelection();
+            return;
+          }
+          break;
+        case "app.undo":
+          e.preventDefault();
+          undo();
+          return;
+        case "app.redo":
+          e.preventDefault();
+          redo();
+          return;
+        case "app.importStep":
+          e.preventDefault();
+          importInputRef.current?.click();
+          return;
+        default:
+          break;
       }
       if (e.metaKey || e.ctrlKey) return; // leave other OS/browser chords alone
 
-      // Standard views: the on-canvas gizmo covers these by click, but digits
-      // 1-7 remain a keyboard shortcut in both modeling and sketch mode —
-      // letters were deliberately avoided here (they'd collide with
-      // modeling-toolbar actions live in the same context: T-op/T-ransform,
-      // F-ront/F-illet...).
-      if (/^[1-7]$/.test(e.key)) {
-        const v = VIEW_KEYS[Number(e.key) - 1];
-        if (v) viewApiRef.current?.setView(v);
+      // Standard views: the on-canvas gizmo covers these by click, but the
+      // digits remain a keyboard shortcut in both modeling and sketch mode —
+      // letters were deliberately avoided here (see the shortcut table's
+      // header for why).
+      const view = id && VIEW_BY_SHORTCUT[id];
+      if (view) {
+        viewApiRef.current?.setView(view);
         return;
       }
 
-      const key = e.key.toLowerCase();
-
       if (editingSketchId) {
         // ---- Sketch toolbar ----
-        // D dimensions the selected line (the standard dimension shortcut).
-        // preventDefault so the keystroke can't leak into the input that
-        // opening the dialog autofocuses synchronously.
-        if (key === "d") {
+        // preventDefault on the tool keys: tools like Offset/Text open an input
+        // that autofocuses synchronously, and without this the same keystroke
+        // leaks into that input (e.g. "o" → offset distance "o", which used to
+        // throw in the expression parser and crash the app).
+        const tool = id && SKETCH_TOOL_BY_SHORTCUT.get(id);
+        if (tool) {
           e.preventDefault();
-          startDimensionRef.current();
+          setSketchTool(tool);
           return;
         }
-        // preventDefault on the tool keys too: tools like Offset/Text open an
-        // input that autofocuses synchronously, and without this the same
-        // keystroke leaks into that input (e.g. "o" → offset distance "o",
-        // which used to throw in the expression parser and crash the app).
-        if (e.shiftKey && SKETCH_SHIFT_KEYS[key]) {
-          e.preventDefault();
-          setSketchTool(SKETCH_SHIFT_KEYS[key]);
-          return;
-        }
-        if (!e.shiftKey && SKETCH_KEYS[key]) {
-          e.preventDefault();
-          setSketchTool(SKETCH_KEYS[key]);
-          return;
-        }
-        if (!e.shiftKey && key === "q") {
-          toggleConstruction();
-          return;
-        }
-        if (!e.shiftKey && key === "n" && twoSelectedLines) {
-          addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id);
-          return;
-        }
-        if (!e.shiftKey && key === "h" && oneSelectedLine) {
-          addHVConstraint("horizontal", oneSelectedLine.id);
-          return;
-        }
-        if (!e.shiftKey && key === "v" && oneSelectedLine) {
-          addHVConstraint("vertical", oneSelectedLine.id);
-          return;
-        }
-        if (e.shiftKey && key === "p" && twoSelectedLines) {
-          addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id);
-          return;
-        }
-        if (e.key === "=") {
-          const pair = twoSelectedLines ?? twoRadiusEntities;
-          if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
+        switch (id) {
+          case "sketch.dimension":
+            // preventDefault for the same reason: the dimension dialog
+            // autofocuses its input synchronously.
+            e.preventDefault();
+            startDimensionRef.current();
+            break;
+          case "sketch.construction":
+            toggleConstruction();
+            break;
+          case "sketch.perpendicular":
+            if (twoSelectedLines) addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id);
+            break;
+          case "sketch.horizontal":
+            if (oneSelectedLine) addHVConstraint("horizontal", oneSelectedLine.id);
+            break;
+          case "sketch.vertical":
+            if (oneSelectedLine) addHVConstraint("vertical", oneSelectedLine.id);
+            break;
+          case "sketch.parallel":
+            if (twoSelectedLines) addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id);
+            break;
+          case "sketch.equal": {
+            const pair = twoSelectedLines ?? twoRadiusEntities;
+            if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
+            break;
+          }
+          default:
+            break;
         }
         return;
       }
 
       // ---- Modeling toolbar ----
-      // Home: iso view zoomed to fit all bodies + visible sketches. (This key
-      // used to Hide/suppress the selected feature — that now lives only on the
-      // timeline's per-feature eye toggle.)
-      if (key === "h") {
-        viewApiRef.current?.homeView();
-        return;
-      }
-      if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && primaryFeatureId) {
-        e.preventDefault();
-        setDoc(moveFeature(doc, primaryFeatureId, e.key === "ArrowUp" ? -1 : 1));
-        return;
-      }
-      if (key === "n") {
-        // New Body ignores `picking`, matching the toolbar button itself.
-        setNewSolidOpen((o) => !o);
-        return;
+      switch (id) {
+        case "view.home":
+          // Iso view zoomed to fit all bodies + visible sketches. (This key
+          // used to Hide/suppress the selected feature — that now lives only on
+          // the timeline's per-feature eye toggle.)
+          viewApiRef.current?.homeView();
+          return;
+        case "feature.moveUp":
+        case "feature.moveDown":
+          if (primaryFeatureId) {
+            e.preventDefault();
+            setDoc(moveFeature(doc, primaryFeatureId, id === "feature.moveUp" ? -1 : 1));
+            return;
+          }
+          break;
+        case "model.newBody":
+          // New Body ignores `picking`, matching the toolbar button itself.
+          setNewSolidOpen((o) => !o);
+          return;
+        default:
+          break;
       }
       if (picking) return;
-      // preventDefault before acting: several cases below (e/c/f) synchronously
-      // mount a dialog with an autoFocus text input, and without this the same
-      // keystroke leaks into that input right after it mounts (e.g. "e" turning
-      // the Extrude distance default "10" into "10e").
+      // preventDefault before acting: several cases below (Extrude/Chamfer/
+      // Fillet) synchronously mount a dialog with an autoFocus text input, and
+      // without this the same keystroke leaks into that input right after it
+      // mounts (e.g. "e" turning the Extrude distance default "10" into "10e").
       e.preventDefault();
-      switch (key) {
-        case "s":
+      switch (id) {
+        case "model.sketch":
           setPickPurpose("sketch");
           setPicking(true);
           break;
-        case "p":
+        case "model.plane":
           openPlaneDialog();
           break;
-        case "e":
+        case "model.extrude":
           if (!extrudeDialog) openExtrudeDialog();
           break;
-        case "r":
+        case "model.revolve":
           if (!revolveDialog) openRevolve();
           break;
-        case "w":
+        case "model.sweep":
           if (!sweepDialog) openSweep();
           break;
-        case "l":
+        case "model.loft":
           if (!loftDialog) openLoft();
           break;
-        case "c":
+        case "model.chamfer":
           if (!dressUpDialog) openDressUp("chamfer");
           break;
-        case "f":
+        case "model.fillet":
           if (!dressUpDialog) openDressUp("fillet");
           break;
-        case "g":
+        case "model.shell":
           if (!shellDialog) openShell();
           break;
-        case "b":
+        case "model.boolean":
           if (!booleanDialog) openBooleanDialog();
           break;
-        case "t":
+        case "model.transform":
           if (!transformEditId && !transformArming) openTransform();
           break;
-        case "m":
+        case "model.mirror":
           if (!mirrorDialog) openMirror();
           break;
-        case "x":
+        case "model.pattern":
           if (!patternDialog) openPattern();
           break;
         default:
@@ -6897,11 +6981,11 @@ export default function App() {
       node: (
         <>
           <HorizontalIcon />
-          {kbd("H")}
+          {kbd(shortcutHint("sketch.horizontal"))}
         </>
       ),
-      sc: "H",
-      title: "Horizontal (H) — select a line",
+      sc: shortcutHint("sketch.horizontal"),
+      title: `Horizontal (${shortcutName("sketch.horizontal")}) — select a line`,
       enabled: !!oneSelectedLine,
       apply: () => oneSelectedLine && addHVConstraint("horizontal", oneSelectedLine.id),
     },
@@ -6910,11 +6994,11 @@ export default function App() {
       node: (
         <>
           <VerticalIcon />
-          {kbd("V")}
+          {kbd(shortcutHint("sketch.vertical"))}
         </>
       ),
-      sc: "V",
-      title: "Vertical (V) — select a line",
+      sc: shortcutHint("sketch.vertical"),
+      title: `Vertical (${shortcutName("sketch.vertical")}) — select a line`,
       enabled: !!oneSelectedLine,
       apply: () => oneSelectedLine && addHVConstraint("vertical", oneSelectedLine.id),
     },
@@ -6923,28 +7007,28 @@ export default function App() {
       node: (
         <>
           <ParallelIcon />
-          {kbd("⇧P")}
+          {kbd(shortcutHint("sketch.parallel"))}
         </>
       ),
-      sc: "⇧P",
-      title: "Parallel (Shift+P) — select two lines",
+      sc: shortcutHint("sketch.parallel"),
+      title: `Parallel (${shortcutName("sketch.parallel")}) — select two lines`,
       enabled: !!twoSelectedLines,
       apply: () => twoSelectedLines && addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id),
     },
     perpendicular: {
       icon: <>⊥</>,
-      node: <>⊥{kbd("N")}</>,
-      sc: "N",
-      title: "Perpendicular (N) — select two lines",
+      node: <>⊥{kbd(shortcutHint("sketch.perpendicular"))}</>,
+      sc: shortcutHint("sketch.perpendicular"),
+      title: `Perpendicular (${shortcutName("sketch.perpendicular")}) — select two lines`,
       enabled: !!twoSelectedLines,
       apply: () =>
         twoSelectedLines && addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id),
     },
     equal: {
       icon: <>＝</>,
-      node: <>＝{kbd("=")}</>,
-      sc: "=",
-      title: "Equal (=) — select two lines (equal length) or two circles/arcs (equal radius)",
+      node: <>＝{kbd(shortcutHint("sketch.equal"))}</>,
+      sc: shortcutHint("sketch.equal"),
+      title: `Equal (${shortcutName("sketch.equal")}) — select two lines (equal length) or two circles/arcs (equal radius)`,
       enabled: !!(twoSelectedLines || twoRadiusEntities),
       apply: () => {
         const pair = twoSelectedLines ?? twoRadiusEntities;
@@ -7536,21 +7620,16 @@ export default function App() {
               itemId: "dimension",
               icon: "↔",
               label: "Dimension",
-              shortcut: "D",
-              title:
-                "Dimension (D): a line (length), circle (radius), or two lines (angle) — pick one if none selected",
+              shortcut: shortcutHint("sketch.dimension"),
+              title: DIMENSION_TITLE,
               disabled: false,
               keywords: ["length", "radius", "angle", "distance"],
               onSelect: () => startDimension(),
             },
           ],
           node: (
-            <button
-              title="Dimension (D): a line (length), circle (radius), or two lines (angle) — pick one if none selected"
-              className={dimPending ? "active" : ""}
-              onClick={startDimension}
-            >
-              ↔{kbd("D")}
+            <button title={DIMENSION_TITLE} className={dimPending ? "active" : ""} onClick={startDimension}>
+              ↔{kbd(shortcutHint("sketch.dimension"))}
             </button>
           ),
         },
@@ -7628,8 +7707,8 @@ export default function App() {
               itemId: "construction",
               icon: <ConstructionIcon />,
               label: "Construction",
-              shortcut: "Q",
-              title: "Construction (Q): reference geometry — toggle the draw mode, or convert the selection",
+              shortcut: shortcutHint("sketch.construction"),
+              title: `Construction (${shortcutName("sketch.construction")}): reference geometry — toggle the draw mode, or convert the selection`,
               disabled: false,
               keywords: ["reference", "guide"],
               onSelect: () => toggleConstruction(),
@@ -7639,14 +7718,14 @@ export default function App() {
             <button
               title={
                 selectedSketchEntities.length > 0
-                  ? "Construction (Q): toggle construction (reference) geometry on the selection"
-                  : "Construction (Q): draw reference geometry (toggle)"
+                  ? `Construction (${shortcutName("sketch.construction")}): toggle construction (reference) geometry on the selection`
+                  : `Construction (${shortcutName("sketch.construction")}): draw reference geometry (toggle)`
               }
               className={constructionMode ? "active" : ""}
               onClick={toggleConstruction}
             >
               <ConstructionIcon />
-              {kbd("Q")}
+              {kbd(shortcutHint("sketch.construction"))}
             </button>
           ),
         },
@@ -7660,8 +7739,8 @@ export default function App() {
       id: "sketch",
       icon: "✎",
       label: "Sketch",
-      shortcut: "S",
-      title: "Sketch (S): start a sketch — pick a plane or face",
+      shortcut: shortcutHint("model.sketch"),
+      title: `Sketch (${shortcutName("model.sketch")}): start a sketch — pick a plane or face`,
       keywords: ["draw", "2d", "profile"],
       disabled: !!editingSketch || picking,
       onSelect: () => {
@@ -7673,8 +7752,8 @@ export default function App() {
       id: "body",
       icon: "◧",
       label: "Body",
-      shortcut: "N",
-      title: "New Body (N): create a new solid body",
+      shortcut: shortcutHint("model.newBody"),
+      title: `New Body (${shortcutName("model.newBody")}): create a new solid body`,
       keywords: ["new", "primitive", "solid"],
       disabled: !!editingSketch,
       onSelect: () => setNewSolidOpen((o) => !o),
@@ -7690,8 +7769,8 @@ export default function App() {
       id: "plane",
       icon: "⧉",
       label: "Plane",
-      shortcut: "P",
-      title: "Plane (P): create a reference plane (offset, midplane, at-angle, or through 3 points)",
+      shortcut: shortcutHint("model.plane"),
+      title: `Plane (${shortcutName("model.plane")}): create a reference plane (offset, midplane, at-angle, or through 3 points)`,
       keywords: ["datum", "reference", "offset", "midplane"],
       disabled: !!editingSketch || picking || !!planeDialog,
       onSelect: openPlaneDialog,
@@ -7700,8 +7779,8 @@ export default function App() {
       id: "extrude",
       icon: "⬆",
       label: "Extrude",
-      shortcut: "E",
-      title: "Extrude (E): pull sketch regions and/or planar faces into a solid — pick them in the dialog",
+      shortcut: shortcutHint("model.extrude"),
+      title: `Extrude (${shortcutName("model.extrude")}): pull sketch regions and/or planar faces into a solid — pick them in the dialog`,
       keywords: ["pad", "boss", "pocket", "cut", "hole"],
       disabled: !!editingSketch || picking || !!extrudeDialog,
       onSelect: openExtrudeDialog,
@@ -7710,8 +7789,8 @@ export default function App() {
       id: "revolve",
       icon: "⟳",
       label: "Revolve",
-      shortcut: "R",
-      title: "Revolve (R): select a profile (sketch region or planar face) + an axis (edge or plane) in the dialog",
+      shortcut: shortcutHint("model.revolve"),
+      title: `Revolve (${shortcutName("model.revolve")}): select a profile (sketch region or planar face) + an axis (edge or plane) in the dialog`,
       keywords: ["lathe", "turn", "axis"],
       disabled: !!editingSketch || picking || !!revolveDialog,
       onSelect: openRevolve,
@@ -7720,8 +7799,8 @@ export default function App() {
       id: "sweep",
       icon: "⊃",
       label: "Sweep",
-      shortcut: "W",
-      title: "Sweep (W): sweep a sketch region along a path — pick the profile and the path in the dialog",
+      shortcut: shortcutHint("model.sweep"),
+      title: `Sweep (${shortcutName("model.sweep")}): sweep a sketch region along a path — pick the profile and the path in the dialog`,
       keywords: ["path", "rail"],
       disabled: !!editingSketch || picking || !!sweepDialog,
       onSelect: openSweep,
@@ -7730,8 +7809,8 @@ export default function App() {
       id: "loft",
       icon: "⌧",
       label: "Loft",
-      shortcut: "L",
-      title: "Loft (L): blend through 2+ sketch regions — pick the sections in the dialog",
+      shortcut: shortcutHint("model.loft"),
+      title: `Loft (${shortcutName("model.loft")}): blend through 2+ sketch regions — pick the sections in the dialog`,
       keywords: ["blend", "sections"],
       disabled: !!editingSketch || picking || !!loftDialog,
       onSelect: openLoft,
@@ -7740,8 +7819,8 @@ export default function App() {
       id: "chamfer",
       icon: "◣",
       label: "Chamfer",
-      shortcut: "C",
-      title: "Chamfer (C): bevel body edges or faces — pick them in the dialog",
+      shortcut: shortcutHint("model.chamfer"),
+      title: `Chamfer (${shortcutName("model.chamfer")}): bevel body edges or faces — pick them in the dialog`,
       keywords: ["bevel", "edge", "face"],
       disabled: !!editingSketch || picking || !!dressUpDialog,
       onSelect: () => openDressUp("chamfer"),
@@ -7750,8 +7829,8 @@ export default function App() {
       id: "fillet",
       icon: "◖",
       label: "Fillet",
-      shortcut: "F",
-      title: "Fillet (F): round body edges or faces — pick them in the dialog",
+      shortcut: shortcutHint("model.fillet"),
+      title: `Fillet (${shortcutName("model.fillet")}): round body edges or faces — pick them in the dialog`,
       keywords: ["round", "radius", "edge", "face"],
       disabled: !!editingSketch || picking || !!dressUpDialog,
       onSelect: () => openDressUp("fillet"),
@@ -7760,8 +7839,8 @@ export default function App() {
       id: "shell",
       icon: "▢",
       label: "Shell",
-      shortcut: "G",
-      title: "Shell (G): hollow a body — select it in the dialog; sealed by default, open faces from there too",
+      shortcut: shortcutHint("model.shell"),
+      title: `Shell (${shortcutName("model.shell")}): hollow a body — select it in the dialog; sealed by default, open faces from there too`,
       keywords: ["hollow", "thickness", "wall", "enclosure", "thicken"],
       disabled: !!editingSketch || picking || !!shellDialog,
       onSelect: openShell,
@@ -7770,8 +7849,8 @@ export default function App() {
       id: "boolean",
       icon: "⊕",
       label: "Boolean",
-      shortcut: "B",
-      title: "Boolean (B): union / subtract / intersect — pick the parts in the dialog",
+      shortcut: shortcutHint("model.boolean"),
+      title: `Boolean (${shortcutName("model.boolean")}): union / subtract / intersect — pick the parts in the dialog`,
       keywords: ["union", "subtract", "intersect", "combine", "cut"],
       disabled: !!editingSketch || picking || !!booleanDialog,
       onSelect: openBooleanDialog,
@@ -7780,8 +7859,8 @@ export default function App() {
       id: "transform",
       icon: "✥",
       label: "Transform",
-      shortcut: "T",
-      title: "Transform (T): move / rotate / scale a body — pick one first, or arm and click it in the viewport",
+      shortcut: shortcutHint("model.transform"),
+      title: `Transform (${shortcutName("model.transform")}): move / rotate / scale a body — pick one first, or arm and click it in the viewport`,
       disabled: !!editingSketch || picking || !!transformEditId || !!transformArming,
       // The button itself opens the gizmo on Move — its natural default — so it
       // stays a plain one-click action (choicesSearchOnly). The modes exist as
@@ -7817,8 +7896,8 @@ export default function App() {
       id: "mirror",
       icon: "⇋",
       label: "Mirror",
-      shortcut: "M",
-      title: "Mirror (M): arm a body, then mirror it across a datum, a reference plane, or a body face",
+      shortcut: shortcutHint("model.mirror"),
+      title: `Mirror (${shortcutName("model.mirror")}): arm a body, then mirror it across a datum, a reference plane, or a body face`,
       keywords: ["reflect", "symmetry"],
       disabled: !!editingSketch || picking || !!mirrorDialog,
       onSelect: openMirror,
@@ -7827,8 +7906,8 @@ export default function App() {
       id: "pattern",
       icon: "⁙",
       label: "Pattern",
-      shortcut: "X",
-      title: "Pattern (X): arm a body, then a linear run/grid or a circular ring",
+      shortcut: shortcutHint("model.pattern"),
+      title: `Pattern (${shortcutName("model.pattern")}): arm a body, then a linear run/grid or a circular ring`,
       keywords: ["array", "linear", "circular", "grid", "repeat"],
       disabled: !!editingSketch || picking || !!patternDialog,
       onSelect: openPattern,
@@ -7936,10 +8015,10 @@ export default function App() {
             <button
               className={"tool-btn shortcuts-btn" + (showShortcuts ? " active" : "")}
               onClick={toggleShortcuts}
-              title="Show keyboard shortcuts in button labels (?)"
+              title={`Show keyboard shortcuts in button labels (${shortcutName("app.toggleHints")})`}
               aria-pressed={showShortcuts}
             >
-              Keyboard shortcuts<span className="kbd-hint">?</span>
+              Keyboard shortcuts<span className="kbd-hint">{shortcutHint("app.toggleHints")}</span>
             </button>
             <button
               className={"tool-btn settings-btn" + (settingsOpen ? " active" : "")}

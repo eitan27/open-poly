@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { SearchIcon } from "./icons";
 import { MoreFlyout } from "./MoreFlyout";
 import { fitCount, toRows, type ToolbarChoice, type ToolbarItem, type ToolbarRow } from "./toolbarOverflow";
+import { shortcutHint } from "../settings/shortcuts";
 
 interface Props {
   /** Toolbar class (e.g. "model-toolbar"), so each bar keeps its own look. */
@@ -218,7 +219,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
             onClick={() => (menuOpen ? closeMenu() : openMenu())}
           >
             <SearchIcon />
-            {showShortcuts ? <span className="kbd-hint">/</span> : null}
+            {showShortcuts ? <span className="kbd-hint">{shortcutHint("app.toolSearch")}</span> : null}
           </button>
           {menuOpen && (
             // Keyed by the starting query so re-opening it pre-filtered (the
@@ -239,7 +240,7 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
           {items.map((item) => renderButton(item, true))}
           <button className="tb-more-btn" tabIndex={-1}>
             <SearchIcon />
-            {showShortcuts ? <span className="kbd-hint">/</span> : null}
+            {showShortcuts ? <span className="kbd-hint">{shortcutHint("app.toolSearch")}</span> : null}
           </button>
         </div>
       </div>

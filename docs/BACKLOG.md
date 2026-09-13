@@ -225,11 +225,12 @@ plane-ref control Mirror uses + a **Flip** toggle (which side keeps identity)
   re-opens the dialog populated, same edit-in-place pattern as every other
   creation-dialog feature.
 
-No natural bare-letter shortcut is free in the modeling toolbar (same
-constraint Pattern hit — see `KEYBOARD_SHORTCUTS.md`'s "Future conflicts to
-watch"); pick an unclaimed letter arbitrarily (e.g. `K`) the way `G` was
-picked for Shell and `Q` for construction, rather than forcing a weak
-mnemonic.
+No natural bare-letter shortcut is free in the modeling toolbar (the same
+constraint Pattern hit — see `src/settings/shortcuts.ts`, which is the whole
+table, and whose unit test fails the build if a new entry collides with an
+existing one in the same mode); pick an unclaimed letter arbitrarily (e.g.
+`K`, free in modeling mode) the way `G` was picked for Shell and `Q` for
+construction, rather than forcing a weak mnemonic.
 
 ### Agent op
 
