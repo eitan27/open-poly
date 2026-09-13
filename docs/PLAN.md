@@ -102,6 +102,8 @@ Roughly ordered by how often a user meets them.
 - **Planes:** hinge on a picked edge; line+point and two-parallel-edges methods.
 - **Sweep/loft:** twist, multiple profiles, guide rails, ruled option.
 - **Measure:** the info pane reads a selection; no pick-two measure tool.
+- **Split (body):** cut a body into independent parts with a plane or a sketch
+  curve. Built and tested on a branch, never merged — see BACKLOG.
 - **STEP import:** drag-and-drop onto the viewport. Disjoint solids already split
   into parts; their **names** are shelved on `feat/step-assembly-split`, blocked
   on a wasm build with XCAF.
