@@ -236,6 +236,10 @@
   align-items: flex-start;
   font-size: 13px;
 }
+.report-turnstile {
+  min-height: 65px; /* reserve the widget's height so the dialog doesn't jump */
+}
+
 .report-done a {
   color: var(--accent-pale-2);
 }

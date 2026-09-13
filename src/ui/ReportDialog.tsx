@@ -4,6 +4,7 @@
 // GitHub token and files the issue). No secrets here; this is all client code.
 import { useEffect, useRef, useState } from "react";
 import { Modal, ModalHeader } from "./Modal";
+import { loadTurnstile, turnstileSitekey } from "./turnstile";
 
 interface Props {
   onClose: () => void;
@@ -41,6 +42,42 @@ export function ReportDialog({ onClose, getDocJson, getScreenshot, version }: Pr
     textRef.current?.focus();
   }, []);
 
+  // Turnstile. The token is short-lived and single-use, so it is state, not a
+  // ref: submit is disabled until one arrives and again after it expires.
+  // `check` distinguishes "still loading" from "loaded and waiting for the
+  // user" from "unavailable" — the last must not strand a reporter behind a
+  // widget that never appeared, so it offers GitHub instead (see below).
+  const [token, setToken] = useState<string | null>(null);
+  const [check, setCheck] = useState<"loading" | "ready" | "unavailable">("loading");
+  const widgetRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let widgetId: string | undefined;
+    let live = true;
+    void loadTurnstile()
+      .then((api) => {
+        if (!live || !widgetRef.current) return;
+        setCheck("ready");
+        widgetId = api.render(widgetRef.current, {
+          sitekey: turnstileSitekey(),
+          // The app's OWN resolved theme, not Turnstile's "auto" — auto follows
+          // the OS, which disagrees with an in-app theme override and leaves a
+          // white widget in a dark dialog. applyTheme() stamps this attribute
+          // on <html>, so it is already the right answer, with no plumbing.
+          theme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
+          callback: (t) => setToken(t),
+          "expired-callback": () => setToken(null),
+          "error-callback": () => setCheck("unavailable"),
+        });
+      })
+      .catch(() => {
+        if (live) setCheck("unavailable");
+      });
+    return () => {
+      live = false;
+      if (widgetId) window.turnstile?.remove(widgetId);
+    };
+  }, []);
+
   const submit = async () => {
     if (!description.trim() || busy) return;
     setBusy(true);
@@ -54,6 +91,7 @@ export function ReportDialog({ onClose, getDocJson, getScreenshot, version }: Pr
           description,
           doc: includeDoc ? (getDocJson() ?? undefined) : undefined,
           screenshot: includeShot ? (getScreenshot() ?? undefined) : undefined,
+          turnstileToken: token ?? undefined,
           meta: { version, ua: navigator.userAgent, url: location.href },
         }),
       });
@@ -119,12 +157,30 @@ export function ReportDialog({ onClose, getDocJson, getScreenshot, version }: Pr
           <p className="report-note">
             Also sent: app version <code>{version.slice(0, 12)}</code>, your browser, and the page URL.
           </p>
+          {/* The spam check. Mounted always so the widget has somewhere to go;
+              when it can't load we say so and offer the route that doesn't
+              depend on it, rather than leaving a dead Send button. */}
+          <div className="report-turnstile" ref={widgetRef} />
+          {check === "unavailable" && (
+            <p className="report-note">
+              The spam check couldn't load, so this form can't send. You can{" "}
+              <a href="https://github.com/eitan27/open-poly/issues/new" target="_blank" rel="noreferrer">
+                open an issue on GitHub
+              </a>{" "}
+              instead.
+            </p>
+          )}
           {result?.error && <p className="report-error">{result.error}</p>}
           <div className="report-actions">
             <button className="report-cancel" onClick={onClose} disabled={busy}>
               Cancel
             </button>
-            <button className="report-submit" onClick={submit} disabled={busy || !description.trim()}>
+            <button
+              className="report-submit"
+              onClick={submit}
+              disabled={busy || !description.trim() || !token}
+              title={!token && check !== "unavailable" ? "Waiting for the spam check" : undefined}
+            >
               {busy ? "Sending…" : "Send report"}
             </button>
           </div>
