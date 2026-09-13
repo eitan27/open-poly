@@ -3,7 +3,13 @@
 Open Poly is licensed under the GNU General Public License v3.0 or later
 (see [`LICENSE`](./LICENSE)). It depends on a small number of third-party
 packages with their own licenses, most of which are MIT, and it bundles one
-font. Three of them are worth calling out explicitly:
+font.
+
+This file is the _reasoning_: the three components whose terms need an
+argument. It is not the list. The complete per-package list is generated at
+build time into `dist/third-party-licenses.txt` — see the end of this file.
+
+The three:
 
 - **[`@salusoft89/planegcs`](https://github.com/Salusoft89/planegcs)**
   (the 2D sketch constraint solver, a TypeScript/WASM port of FreeCAD's
@@ -46,15 +52,27 @@ font. Three of them are worth calling out explicitly:
   accompany every copy of the font; the font's own machine-readable name
   table already carries both, which condition 2 expressly accepts, so
   [`OFL.txt`](./OFL.txt) is here as a plain-text convenience rather than to
-  close a gap. The OFL covers the font file only — not Open Poly, and not
-  anything you draw with it.
+  close a gap — and the generated notices file now carries the same text into
+  the download itself. The OFL covers the font file only — not Open Poly,
+  and not anything you draw with it.
 
-Everything else in the shipped bundle is permissive. `replicad`,
-`replicad-threejs-helper`, `three`, `react`, `react-dom`, `zod`, `dxf-parser`,
-`opentype.js` and `polygon-clipping` declare MIT, as do their transitive
-dependencies — except `robust-predicates` (**Unlicense**, via
-`polygon-clipping`) and `flatbush`/`flatqueue` (**ISC**, via `replicad`). All
-are GPL-3.0-compatible. Run `npm ls --omit=dev` / check each package's
-`package.json` for the authoritative, up-to-date license of any dependency —
-note that a package's declared license describes what that package's authors
-wrote, which for a build or a port is not always the whole story.
+## Everything else
+
+Permissive and GPL-3.0-compatible: mostly MIT, with Unlicense and ISC turning
+up transitively. Rather than list them here — the version of this paragraph
+that did went out of date — the exhaustive list is generated:
+
+    dist/third-party-licenses.txt
+
+every runtime dependency that ships in the bundle, with its license text
+verbatim, built from the packages actually installed for that build by
+[`scripts/third-party-licenses.ts`](./scripts/third-party-licenses.ts). It is
+emitted next to the bundles it describes and served at
+<https://open-poly.pages.dev/third-party-licenses.txt>, linked from the app's
+Settings dialog, so a visitor who only ever receives the built site receives
+the notices with it. A package whose terms the generator cannot read fails the
+build rather than shipping unattributed.
+
+One caveat that no generator can fix: a package's _declared_ license describes
+what that package's authors wrote, which for a build or a port is not always
+the whole story. The OCCT case above is exactly that.

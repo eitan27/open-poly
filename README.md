@@ -91,3 +91,8 @@ backlog live in [`docs/`](docs/).
 GPL-3.0-or-later — see [`LICENSE`](LICENSE). Third-party license notes
 (including the LGPL constraint solver and the OCCT geometry kernel) are in
 [`NOTICE.md`](NOTICE.md).
+
+The exhaustive per-package list, with each license verbatim, is generated at
+build time into `dist/third-party-licenses.txt` — served at
+<https://open-poly.pages.dev/third-party-licenses.txt> and linked from the
+app's Settings dialog.
