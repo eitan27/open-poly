@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from "vitest/config";
+import { configDefaults, defineConfig, type Plugin } from "vitest/config";
 import path from "node:path";
 
 // Under vitest (node), a `foo.wasm?url` import resolves to a server-style
@@ -21,5 +21,11 @@ function wasmUrlForNode(): Plugin {
 
 export default defineConfig({
   plugins: [wasmUrlForNode()],
-  test: { environment: "node" },
+  test: {
+    environment: "node",
+    // Agent worktrees live under `.claude/worktrees/` — inside the repo, so the
+    // default glob walks into each one and runs every suite again. Two of them
+    // once turned 797 tests into 2423 and the inflated number looked like a win.
+    exclude: [...configDefaults.exclude, "**/.claude/**"],
+  },
 });
