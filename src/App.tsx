@@ -5771,6 +5771,12 @@ export default function App() {
     setDraft([]);
     setOffsetSession(null);
     setProjectSession(null);
+    // Mirror and Pattern hold sessions too, and leaving one behind outranks the
+    // key handler: `app.commit` swallows Enter into a commit that immediately
+    // bails on `!editingSketch`, and `app.cancel` spends the first Escape
+    // clearing the stale session instead of closing whatever is on screen.
+    setMirrorSession(null);
+    setPatternSession(null);
     setTextDraft(null);
     setSelection([]); // so the next click (e.g. a face to extrude) starts fresh
   };
