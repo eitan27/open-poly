@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Local stdio MCP server that lets an LLM agent drive a live Open Poly browser tab (Phase 9).",
+  "license": "GPL-3.0-or-later",
   "bin": {
     "open-poly-mcp": "src/index.ts"
   },
