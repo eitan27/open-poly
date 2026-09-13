@@ -83,6 +83,13 @@ at the repo root). From the repo root:
 npx tsx mcp-server/src/index.ts
 ```
 
+> **Install once, at the repo root.** `mcp-server/` has its own `package.json`,
+> but it is not an npm workspace and nothing installs from it: Node resolves
+> `ws` and `@modelcontextprotocol/sdk` upward into the root `node_modules`,
+> where they are declared as devDependencies — and where `scripts/bridge-e2e.mjs`
+> and `scripts/mcp-e2e.mjs` need them too. Don't tidy them out of the root
+> `package.json`; that is what actually installs them.
+
 Then open the Open Poly app in your browser — the tab dials the hub automatically
 and the top bar shows **● Agent connected**.
 
