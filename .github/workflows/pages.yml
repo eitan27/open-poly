@@ -2,19 +2,17 @@ name: Deploy landing page to GitHub Pages
 
 # Publishes the static landing page in `landing/` to GitHub Pages.
 #
-# DISABLED (auto-run): this repo is PRIVATE on the Free plan, where GitHub Pages
-# cannot publish, so every auto-run fails red. The `push` trigger is commented
-# out so it no longer runs on pushes. To RE-ENABLE once the repo is public OR on
-# a paid plan (Pro/Team/Enterprise): uncomment the `push` block below and set
-# Settings → Pages → Build and deployment → Source → "GitHub Actions". See the
-# PLAN.md backlog. (`workflow_dispatch` is kept so it can still be run manually.)
+# Runs on every push to main that touches the landing page. This needs
+# Settings → Pages → Build and deployment → Source set to "GitHub Actions";
+# without it the deploy step fails. (`workflow_dispatch` is kept so the page
+# can also be republished by hand.)
 
 on:
-  # push:
-  #   branches: [main]
-  #   paths:
-  #     - "landing/**"
-  #     - ".github/workflows/pages.yml"
+  push:
+    branches: [main]
+    paths:
+      - "landing/**"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:

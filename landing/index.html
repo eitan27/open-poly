@@ -282,7 +282,7 @@
   <body>
     <nav class="nav">
       <div class="nav__inner">
-        <a class="nav__brand" href="#">
+        <a class="nav__brand" href="https://open-poly.pages.dev">
           <img class="nav__logo" src="logo.svg" alt="" width="26" height="26" />
           <span>Open Poly</span>
         </a>
@@ -299,7 +299,7 @@
         Powerful 3D modeling that runs entirely on your device — no account, no install, and no internet required.
       </p>
       <div class="cta">
-        <a class="btn btn--primary" href="#">Start designing</a>
+        <a class="btn btn--primary" href="https://open-poly.pages.dev">Start designing</a>
         <a class="btn btn--ghost" href="https://github.com/eitan27/open-poly">View on GitHub ›</a>
       </div>
     </header>
@@ -344,12 +344,23 @@
     </section>
 
     <footer class="footer">Open Poly · Open source CAD in your browser</footer>
-    <!-- Cloudflare Web Analytics -->
-    <script
-      type="module"
-      src="https://static.cloudflareinsights.com/beacon.min.js"
-      data-cf-beacon='{"token": "cf67406d65bc4aa2b4c2e20472013eb6"}'
-    ></script>
+    <script>
+      // Cloudflare Web Analytics — loaded only on the public deployments, so a
+      // fork or a local copy never reports into someone else's account. On
+      // GitHub Pages the hostname is shared with every other project under the
+      // account, so the path narrows it to this one. The token is not a secret;
+      // it is visible in any deployed page.
+      const onPublicSite =
+        location.hostname === "open-poly.pages.dev" ||
+        (location.hostname === "eitan27.github.io" && location.pathname.startsWith("/open-poly"));
+      if (onPublicSite) {
+        const beacon = document.createElement("script");
+        beacon.type = "module";
+        beacon.src = "https://static.cloudflareinsights.com/beacon.min.js";
+        beacon.setAttribute("data-cf-beacon", '{"token": "cf67406d65bc4aa2b4c2e20472013eb6"}');
+        document.body.appendChild(beacon);
+      }
+    </script>
     <!-- End Cloudflare Web Analytics -->
   </body>
 </html>
