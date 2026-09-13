@@ -1,0 +1,21 @@
+# Editor defaults that match Prettier (.prettierrc.json) — Prettier still owns
+# layout; this only stops an editor from fighting it before Prettier runs.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+max_line_length = 120
+
+# Two trailing spaces are a hard line break in Markdown, and Prettier keeps them.
+[*.md]
+trim_trailing_whitespace = false
+
+# npm owns this file's layout (it's Prettier-ignored too).
+[package-lock.json]
+indent_size = unset
+max_line_length = unset
