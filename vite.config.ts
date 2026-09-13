@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { thirdPartyLicenses } from "./scripts/third-party-licenses";
 
 // A build id that changes on every build. It's baked into the app bundle (as
 // `__BUILD_ID__`) AND emitted to `dist/version.json`, so the running app can
@@ -25,7 +26,7 @@ function versionStamp(): Plugin {
 // pre-bundling and emit workers as ES modules so the `?url` wasm import resolves.
 export default defineConfig({
   define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
-  plugins: [react(), versionStamp()],
+  plugins: [react(), versionStamp(), thirdPartyLicenses()],
   worker: { format: "es" },
   optimizeDeps: { exclude: ["replicad-opencascadejs", "@salusoft89/planegcs"] },
 });
