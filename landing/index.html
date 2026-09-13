@@ -282,7 +282,7 @@
   <body>
     <nav class="nav">
       <div class="nav__inner">
-        <a class="nav__brand" href="#">
+        <a class="nav__brand" href="https://open-poly.pages.dev">
           <img class="nav__logo" src="logo.svg" alt="" width="26" height="26" />
           <span>Open Poly</span>
         </a>
@@ -344,12 +344,16 @@
     </section>
 
     <footer class="footer">Open Poly · Open source CAD in your browser</footer>
-    <!-- Cloudflare Web Analytics — loaded only on the public deployment, so a
-         fork or a local copy of this page never reports into someone else's
-         account. The token is not a secret; it is visible in any deployed
-         page. -->
     <script>
-      if (location.hostname === "open-poly.pages.dev") {
+      // Cloudflare Web Analytics — loaded only on the public deployments, so a
+      // fork or a local copy never reports into someone else's account. On
+      // GitHub Pages the hostname is shared with every other project under the
+      // account, so the path narrows it to this one. The token is not a secret;
+      // it is visible in any deployed page.
+      const onPublicSite =
+        location.hostname === "open-poly.pages.dev" ||
+        (location.hostname === "eitan27.github.io" && location.pathname.startsWith("/open-poly"));
+      if (onPublicSite) {
         const beacon = document.createElement("script");
         beacon.type = "module";
         beacon.src = "https://static.cloudflareinsights.com/beacon.min.js";
