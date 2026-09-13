@@ -135,6 +135,76 @@ Roughly ordered by how often a user meets them.
 
 ---
 
+## Open-sourcing (active work — resume here)
+
+The repo is going public. This section is the resumable state of that push:
+read it, check the marker, pick up the next unticked item. Delete the section
+once every wave is done.
+
+**Marker — 2026-09-14, main at `dedd168`.** Waves A.1 and A.2 landed. Next:
+Wave A.3 (App.tsx pure helpers).
+
+**Done**
+
+- [x] Only the public sites phone home; dead links go somewhere (`e7aa92f`).
+- [x] Turnstile token sent with every bug report (`e9edcd4`). `TURNSTILE_SECRET`
+      is set on the Pages project. **Still owed: file one real report against
+      production and confirm the Function accepts the token.**
+- [x] Docs consolidated — PLAN cut 1679→330, EXTRUDE_IMPROVEMENTS and
+      PATTERNS_PLAN folded in and deleted, cad-feature-comparison deleted, the
+      Split design rescued into BACKLOG (`8b0c514`).
+- [x] **A.1** Keyboard shortcuts declared once, collisions caught by a test
+      (`52ed65a`). `KEYBOARD_SHORTCUTS.md` deleted — `src/settings/shortcuts.ts`
+      is now the single source.
+- [x] **A.2** Third-party licence notices generated into
+      `dist/third-party-licenses.txt` at build time (`f967630`). MIT and the
+      rest require the notice to travel with the copy, and minification strips
+      it; the repo is not a copy the visitor receives.
+
+**Also owed, outside the waves**
+
+- [ ] Re-enable the landing-page auto-deploy once the repo is public — its
+      `push` trigger is commented out in `.github/workflows/pages.yml` because
+      GitHub Pages from a private repo needs a paid plan.
+
+**Wave A — harvest (remaining).** Four month-old refactor branches on
+`origin/claude/*`, all single commits from 2026-08-04. Their target files have
+grown 25–43% since, so **re-apply the idea against main; never rebase or
+cherry-pick**. Both waves that landed were re-done from scratch for this reason.
+
+- [ ] **A.3** `claude/app-tsx-decompose` (`90d297b`) — nine pure functions still
+      at `src/App.tsx:407–659`, untested. The branch writes
+      `src/selection/meshQuery.ts`, but main grew `src/geom/meshQuery.ts` since
+      with six of the same exports already in it, so the destination is `geom/`.
+      Remaining value = its ~295 lines of tests + `src/sketch/sketchGeom.ts`.
+      Smallest and safest; do it first.
+- [ ] **A.4** `claude/kernel-buildbodies-split` (`9693a1c`) — extract
+      `src/kernel/cache.ts` and split the `buildBodies` dispatch. The branch's
+      `contentKey` is stale: it predates folding the transform axis body's key
+      in. worker.ts is 5385 lines now against 3754 then.
+- [ ] **A.5** `claude/viewport-mount-effect-split` (`d203e75`) — four modules
+      (`geometryQuery`, `materials`, `sceneMath`, `viewCube`) + tests, −565 from
+      Viewport.tsx (5294 now, 4246 then). Only `gizmoShape.ts` lives there today.
+
+**Wave B — test infrastructure.** jsdom + `@testing-library/react`, so stateful
+hooks can be tested at all; a Playwright/MCP path for `worker.ts`. Everything
+below waits on this.
+
+**Wave C — boundaries.** `claude/use-persisted-documents-hook` (`4ba9d64`, a
+483-line hook, −418 from App.tsx) was Wave A until it became clear it is
+stateful — IndexedDB, recovery banners, corrupted-document paths — so no pure
+test can cover it. It needs B first. Then the Viewport mount effect, and
+`kernel/features/`.
+
+**Why the plan looks like this.** A branch audit killed the original "split the
+three big files" idea. Since 2026-07-31 App.tsx went 7900→10537, worker.ts
+3754→5385, Viewport.tsx 4246→5294 — the files grow faster than extraction
+shrinks them, and branch 1 found only 295 extractable lines in 7900 (3.7%). The
+pure-helper seam is nearly exhausted. What is left after Wave A is not more
+extraction but real boundaries, which need tests, which need Wave B.
+
+---
+
 ## What exists
 
 **Sketching.** Datum planes + planar faces; line, rect (2-corner/center), circle
