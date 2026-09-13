@@ -1,5 +1,9 @@
 # Keyboard shortcuts
 
+> This file is a hand-maintained mirror of the shortcuts implemented in
+> `src/App.tsx`. It can lag behind the code; where the two disagree, the code
+> wins.
+
 A scan of every clickable action in the app (`src/App.tsx` toolbars, the sketch
 toolbar, the feature timeline, and the Parts list), grouped by when each
 action is actually available. **All shortcuts below are wired up** (global
@@ -141,20 +145,17 @@ both at the same time):
 
 ## Future conflicts to watch (from [`docs/PLAN.md`](docs/PLAN.md)'s roadmap)
 
-- **Pattern (linear/circular)** — Phase 5, still TODO. Its natural letter `P`
-  is already double-claimed (Plane in modeling, Polygon in sketch), so it
-  can't get a bare letter when it ships. It'll sit in the modeling toolbar
-  near Mirror/Transform; recommend treating it as a Mirror variant —
-  `Shift+M` — since both are "duplicate the body" operations, consistent
-  with this doc's Shift-for-variant convention.
-- **Measurement tools** — Phase 8 backlog, still TODO. Its natural letter `M`
-  is already claimed by Mirror in the modeling toolbar. Will need an
-  alternate letter (or a non-letter glyph, as Equal does with `=`) once it
-  has a concrete toolbar button to attach a key to.
+- **Pattern (linear/circular)** — ✅ shipped. The prediction here (that `P` was
+  already double-claimed, so Pattern couldn't have it) held; it landed on `X`
+  instead, in both modeling and sketch mode. See the tables above.
+- **Measurement tools** — ✅ shipped, with no shortcut: measurements are a
+  read-out in the selection info panel rather than a tool you activate, so
+  there is no button to attach a key to.
 - **Multi-document manager** (new/open/rename/duplicate/delete documents) —
   ✅ shipped (Phase 8.7). The prediction here held: `⌘O` was tried for "Open"
   and reverted (browsers do reserve it for their own Open-File dialog, exactly
   as expected), so it ended up menu-only — a **"＋ New"** / **"Open…"** button
   pair in the topbar, no shortcut for now.
-- **Section view, appearance** — Phase 8 backlog, still TODO, no concrete UI
-  yet to attach letters to; revisit once they have toolbar buttons.
+- **Section view, appearance** — ✅ shipped, both without shortcuts: section
+  view is a viewport panel and appearance is a per-part colour swatch in the
+  Parts list, so neither has a toolbar button to attach a letter to.

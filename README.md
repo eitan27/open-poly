@@ -4,6 +4,8 @@ An open source, locally runnable, in-browser CAD application, that stores your w
 
 Open Poly runs entirely in your browser — modeling is powered by the OpenCASCADE geometry kernel (via [replicad](https://replicad.xyz/)) compiled to WebAssembly, rendered with [three.js](https://threejs.org/), with parametric sketch constraints handled by [planegcs](https://github.com/Salusoft89/planegcs). Documents autosave to your browser's IndexedDB — nothing leaves your machine.
 
+The public deployment at <https://open-poly.pages.dev> collects basic anonymous page analytics (no cookies, no personal data, nothing about your documents). Local and self-hosted builds send nothing.
+
 ## Requirements
 
 - [Node.js](https://nodejs.org/) 20.19+ or 22.12+ (required by Vite 8)

@@ -299,7 +299,7 @@
         Powerful 3D modeling that runs entirely on your device — no account, no install, and no internet required.
       </p>
       <div class="cta">
-        <a class="btn btn--primary" href="#">Start designing</a>
+        <a class="btn btn--primary" href="https://open-poly.pages.dev">Start designing</a>
         <a class="btn btn--ghost" href="https://github.com/eitan27/open-poly">View on GitHub ›</a>
       </div>
     </header>
@@ -344,12 +344,19 @@
     </section>
 
     <footer class="footer">Open Poly · Open source CAD in your browser</footer>
-    <!-- Cloudflare Web Analytics -->
-    <script
-      type="module"
-      src="https://static.cloudflareinsights.com/beacon.min.js"
-      data-cf-beacon='{"token": "cf67406d65bc4aa2b4c2e20472013eb6"}'
-    ></script>
+    <!-- Cloudflare Web Analytics — loaded only on the public deployment, so a
+         fork or a local copy of this page never reports into someone else's
+         account. The token is not a secret; it is visible in any deployed
+         page. -->
+    <script>
+      if (location.hostname === "open-poly.pages.dev") {
+        const beacon = document.createElement("script");
+        beacon.type = "module";
+        beacon.src = "https://static.cloudflareinsights.com/beacon.min.js";
+        beacon.setAttribute("data-cf-beacon", '{"token": "cf67406d65bc4aa2b4c2e20472013eb6"}');
+        document.body.appendChild(beacon);
+      }
+    </script>
     <!-- End Cloudflare Web Analytics -->
   </body>
 </html>
