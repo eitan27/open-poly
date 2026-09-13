@@ -22,6 +22,10 @@ node_modules/.tmp/
 
 # local claude settings
 .claude/settings.local.json
+# agent worktrees — full checkouts (node_modules and all) that land inside the
+# repo. Untracked but not ignored, one `git add -A` away from a 500 MB commit,
+# and vitest globs them, which silently triples the test count.
+.claude/worktrees/
 
 # wrangler local secrets
 .dev.vars
