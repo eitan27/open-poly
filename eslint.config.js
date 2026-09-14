@@ -9,7 +9,7 @@ export default tseslint.config(
   // `.claude/worktrees/` holds agent worktrees — full checkouts of this repo,
   // INSIDE it. Without this eslint walks into each one and lints the whole
   // codebase again, so the warning count doubles per running agent and the
-  // baseline stops meaning anything. Git (a4950c2) and vitest (3b5853c) each
+  // baseline stops meaning anything. Git (87608ff) and vitest (2c23ddc) each
   // had to learn the same thing.
   { ignores: ["dist", "node_modules", "mcp-server/node_modules", ".claude"] },
   {

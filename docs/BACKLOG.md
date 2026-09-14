@@ -446,13 +446,13 @@ failure may not be a version bug at all.
 ## Shelved: viewport geometry reuse (Opt A) + lazy-regen-on-load (Opt B)
 
 **Status:** shelved on branch `shelved/viewport-geom-reuse-and-lazy-regen`
-(commits `c3b1839` = Opt A, `183d370` = Opt B), off `feat/step-import-oom-and-reference`.
+(commits `dfaf4f9` = Opt A, `c5e5691` = Opt B), off `feat/step-import-oom-and-reference`.
 
 **Why shelved:** isolated micro-benchmarks showed gains (A saved ~1.5–8 ms CPU +
 11–69 MB GPU re-upload per unchanged body per regen; B skipped the whole initial
 regen on load), but **in real use the UI felt slower and CPU worked harder** with
 both applied. Backed out until we understand the regression; the transfer/typed-array
-and per-face-mesh work (through `5d71c08`) is unaffected and stays.
+and per-face-mesh work (through `24cdefb`) is unaffected and stays.
 
 ### What they were
 
@@ -492,5 +492,5 @@ and per-face-mesh work (through `5d71c08`) is unaffected and stays.
 
 ### How to restore
 
-`git cherry-pick c3b1839 183d370` onto the working branch, or work directly on the
+`git cherry-pick dfaf4f9 c5e5691` onto the working branch, or work directly on the
 `shelved/viewport-geom-reuse-and-lazy-regen` branch.

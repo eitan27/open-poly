@@ -56,7 +56,7 @@ for (const width of [1500, 1100, 800]) {
     `the button is on the bar at ${width}px (${bar} tools beside it)`,
     (await page.locator(modelMore).count()) === 1,
   );
-  // A magnifier since c0cc51d, not the old "…" glyph: it opens a SEARCH box.
+  // A magnifier since 324d70e, not the old "…" glyph: it opens a SEARCH box.
   // Assert the thing that has to be true for a user — an icon and a usable
   // title — rather than the text it no longer has.
   const title = await page.locator(modelMore).getAttribute("title");

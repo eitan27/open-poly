@@ -166,7 +166,7 @@ re-learning.
 **Still owed, and only on the day:**
 
 - [ ] **The landing-page Pages deploy fails red on every run, and has since
-      June.** `.github/workflows/pages.yml` was re-enabled in `fe08b76`, so it
+      June.** `.github/workflows/pages.yml` was re-enabled in `b0578bd`, so it
       DOES fire on a push touching `landing/**` — and then fails, because GitHub
       Pages cannot publish from a private repo on the Free plan. Nothing is
       broken by it and nothing is being published; it is just a red X on the

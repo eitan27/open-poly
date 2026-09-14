@@ -115,7 +115,7 @@ check(
 );
 check("the flyout stays inside the window", boxes.menu.r <= boxes.win, `right ${boxes.menu.r} of ${boxes.win}`);
 
-// The button is a bare magnifier (c0cc51d, "the tool search wears a
+// The button is a bare magnifier (324d70e, "the tool search wears a
 // magnifier") — it opens a SEARCH box, not one of the variant flyouts the ▸
 // arrows mark, so it carries no text and no arrow of its own. What it must
 // carry is a title a screen reader and a hover can both use.
