@@ -1,29 +1,14 @@
 // Transform UX branch: the toolbar button is always live, arms a body pick when
 // there is no unambiguous target, and Move / Rotate / Scale each get their own
 // searchable row in the "/" flyout without appearing on the bar.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5173/";
-const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
+const { page, close } = await launch({ deviceScaleFactor: 2, collectErrors: false });
+const { waitIdle, apply, read } = openPoly(page);
 page.on("console", (m) => {
   if (m.type() === "error") console.log(`[console.error] ${m.text()}`);
 });
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 80; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return;
-    await page.waitForTimeout(300);
-  }
-};
 await waitIdle();
-const read = (q) => page.evaluate((o) => window.__openpoly.read(o), q);
 let failures = 0;
 const check = (label, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}: ${label}${detail ? ` — ${detail}` : ""}`);
@@ -165,7 +150,6 @@ await waitIdle();
 check("document is back to its starting feature count", (await transformFeatures()).length === before);
 
 // --- 8. A selection spanning two bodies arms rather than guessing -----------
-const apply = (o) => page.evaluate((x) => window.__openpoly.apply(x), o);
 await apply({ op: "addPrimitive", kind: "box", params: { width: 10, depth: 10, height: 10, x: 60 } });
 await waitIdle();
 const ids = (await read({ read: "sceneSummary" })).bodies.map((b) => b.id);
@@ -189,5 +173,5 @@ await page.waitForTimeout(200);
 check("Esc leaves no Transform behind", (await transformFeatures()).length === n8);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL PASS");
-await browser.close();
+await close();
 process.exit(failures ? 1 : 0);

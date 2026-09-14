@@ -19,16 +19,10 @@
 // cylinder makes before and after differ by a hair over the whole wall between
 // the rings, and those slivers — fused to the real delta, so no volume floor
 // reaches them — defeat the mesher. The preview goes away; the model is fine.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5175/";
-const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
+const { page, close } = await launch({ deviceScaleFactor: 2, collectErrors: false });
+const { apply, read } = openPoly(page);
 
 const waitIdle = async ({ allowError = false } = {}) => {
   let stable = 0;
@@ -43,8 +37,6 @@ const waitIdle = async ({ allowError = false } = {}) => {
 };
 await waitIdle();
 
-const apply = (op) => page.evaluate((o) => window.__openpoly.apply(o), op);
-const read = (q) => page.evaluate((o) => window.__openpoly.read(o), q);
 // Opening a feature's dialog also SELECTS it, which tints the body orange — a
 // viewport change that has nothing to do with the ghost. Every comparison shot
 // therefore clears the selection first, so a pixel difference can only be the
@@ -368,5 +360,5 @@ if (rEdge.length === 1) {
 
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
 console.log("screenshots: /tmp/openpoly-dressup-*.png");
-await browser.close();
+await close();
 process.exit(failures === 0 ? 0 : 1);

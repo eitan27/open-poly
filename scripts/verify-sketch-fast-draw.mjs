@@ -2,28 +2,12 @@
 // so a click landing before the previous solve returned used to build on a stale
 // document and silently drop the earlier segment. Draws chains far faster than
 // the solver round-trip and checks nothing is lost.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5173/";
+const { page, close } = await launch({ deviceScaleFactor: 2, collectErrors: false });
+const { waitIdle, apply, read } = openPoly(page);
 const GAP = Number(process.env.GAP ?? 30); // ms between clicks — well under a solve
-const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 80; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return;
-    await page.waitForTimeout(300);
-  }
-};
 await waitIdle();
-const apply = (op) => page.evaluate((o) => window.__openpoly.apply(o), op);
-const read = (q) => page.evaluate((o) => window.__openpoly.read(o), q);
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -190,5 +174,5 @@ check(
 );
 
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
-await browser.close();
+await close();
 process.exit(failures === 0 ? 0 : 1);

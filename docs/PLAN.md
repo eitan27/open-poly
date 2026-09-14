@@ -236,11 +236,28 @@ harvested — `app-tsx-decompose`, `kernel-buildbodies-split`,
       when a script is being edited anyway: each is a mechanical preamble swap,
       but each needs a before/after run to confirm the same result, and that is
       a browser launch apiece.
-- [ ] **B.3** jsdom + `@testing-library/react`, so stateful hooks can be tested
-      at all. Do it as a per-file environment override, NOT a global flip of
-      `environment: "node"` — the 813 tests that predate Wave A all pass under
-      node today and there is no reason to move them. This is what Wave C's
-      483-line `usePersistedDocuments` needs.
+- [x] **B.3** jsdom + `@testing-library/react`, with 26 tests over `useHistory`
+      (incl. the coalescing rules deciding whether three keystrokes are one undo
+      step) and `useSettings`. Done as a per-file `// @vitest-environment jsdom`
+      docblock, NOT a global flip: `environment: "node"` is untouched, so
+      `vitest.config.ts` needed no change and the 813 pre-Wave-A tests run
+      exactly as before. jsdom costs ~700ms of setup per file that asks for it,
+      which is reason enough not to charge it to tests that never needed a DOM.
+      `src/test/webStorage.ts` exists because vitest's jsdom globals drop the
+      real `Storage`: jsdom's own localStorage round-trips fine when constructed
+      directly, but arrives in the test as a bare `{}` and the first `getItem`
+      throws. A test that needs storage calls `installWebStorage()` and can see
+      what it runs against. jsdom is pinned to `^26` — `^29` behaves identically
+      here, so this is not a fix, just the better-trodden major.
+- [ ] **B.4** Ten `verify-*.mjs` scripts fail on main, independently of Waves A
+      and B: `face-diameter` (3), `section-view-sketch` (2), `sketch-circle-pick`
+      (4), `sketch-degenerate-guard` (1), `sketch-fast-draw` (1), `sketch-qol`
+      (2), `sketch-toolbar-overflow` (2), `transform-arming` (1),
+      `transform-scale` (1), `ui-oneoffs` (5). Confirmed real, not parallel-run
+      artifacts — a serial rerun reproduces them exactly. Each is either a stale
+      script or a live bug, and there is no telling which without reading them.
+      Worth settling before the repo is public: a failing check suite is the
+      first thing a visitor runs.
 
 **Wave C — boundaries.** `claude/use-persisted-documents-hook` (`4ba9d64`, a
 483-line hook, −418 from App.tsx) was Wave A until it became clear it is

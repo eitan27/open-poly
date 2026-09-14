@@ -1,30 +1,14 @@
 // The timeline eye on a reference plane must HIDE it (view-only), not suppress
 // it: suppressing dropped the plane from the resolved frames, so every sketch
 // on it threw out of render and the whole app went blank.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5173/";
-const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
+const { page, close } = await launch({ deviceScaleFactor: 2 });
+const { waitIdle, apply } = openPoly(page);
 const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 100; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date|error/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return;
-    await page.waitForTimeout(300);
-  }
-  throw new Error("app never settled");
-};
 await waitIdle();
-await page.waitForFunction(() => window.__openpoly);
 
-const apply = (op) => page.evaluate((o) => window.__openpoly.apply(o), op);
 const doc = () => page.evaluate(() => window.__openpoly.read({ read: "document" }));
 
 let failures = 0;
@@ -90,5 +74,5 @@ check("toggles back to visible", d2.features.find((f) => f.type === "plane")?.hi
 check("still no page errors", errors.length === 0, errors.join(" | "));
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
-await browser.close();
+await close();
 process.exit(failures === 0 ? 0 : 1);

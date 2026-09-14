@@ -4,27 +4,11 @@
 //  2. Reference planes are clickable in the viewport (select + highlight + the
 //     timeline row lights up).
 //  3. The params box (box/cylinder) is styled like the dialogs (flex ed-field rows).
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5174/";
-const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 80; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return;
-    await page.waitForTimeout(300);
-  }
-};
+const { page, close } = await launch({ deviceScaleFactor: 2, collectErrors: false });
+const { waitIdle, apply, read } = openPoly(page);
 await waitIdle();
-const apply = (op) => page.evaluate((o) => window.__openpoly.apply(o), op);
-const read = (q) => page.evaluate((o) => window.__openpoly.read(o), q);
 let failures = 0;
 const check = (label, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}: ${label}${detail ? ` — ${detail}` : ""}`);
@@ -108,6 +92,6 @@ const flexed = await page
 check("params rows use the dialog-style flex layout", flexed === "flex", flexed);
 await page.screenshot({ path: "/tmp/params-styled.png" });
 
-await browser.close();
+await close();
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nAll checks passed");
 process.exit(failures ? 1 : 0);

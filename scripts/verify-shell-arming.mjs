@@ -8,35 +8,12 @@
 //
 // Run against a local dev server: `npm run dev`, then
 // `URL=http://localhost:5174/ node scripts/verify-shell-arming.mjs`.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5173/";
-const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
+const { page, close } = await launch({ deviceScaleFactor: 2, collectErrors: false });
+const { waitIdle, apply, read } = openPoly(page);
 
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
-
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 80; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    // "N error(s)" is a SETTLED state too, not a stall: cases 6 and 7 build a
-    // wall the kernel refuses on purpose, and that feature stays in the
-    // timeline carrying its error — waiting only for "up to date" would spin
-    // out the timeout on exactly the cases under test.
-    stable = /up to date|error/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return;
-    await page.waitForTimeout(300);
-  }
-  throw new Error("app never settled");
-};
 await waitIdle();
-
-const apply = (op) => page.evaluate((o) => window.__openpoly.apply(o), op);
-const read = (q) => page.evaluate((o) => window.__openpoly.read(o), q);
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -361,5 +338,5 @@ check(
 await page.screenshot({ path: "/tmp/openpoly-shell-arming.png" });
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
 console.log("screenshot: /tmp/openpoly-shell-arming.png");
-await browser.close();
+await close();
 process.exit(failures === 0 ? 0 : 1);

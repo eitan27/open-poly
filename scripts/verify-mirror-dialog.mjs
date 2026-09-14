@@ -11,29 +11,11 @@
 // SketchPlaneRef, which is exactly what a mirror needs.
 //
 // Run: `npm run dev`, then `URL=http://localhost:5173/ node scripts/verify-mirror-dialog.mjs`.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5173/";
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
-const page = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 200; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date|error/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return;
-    await page.waitForTimeout(300);
-  }
-  throw new Error("app never settled");
-};
+const { page, close } = await launch({ collectErrors: false, width: 1400, height: 900 });
+const { waitIdle, apply, read } = openPoly(page);
 await waitIdle();
-
-const apply = (op) => page.evaluate((o) => window.__openpoly.apply(o), op);
-const read = (q) => page.evaluate((o) => window.__openpoly.read(o), q);
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -172,5 +154,5 @@ check("a curved face is refused, keeping the pick armed", stillArmed, `${await s
 await dialog.getByRole("button", { name: "Cancel" }).click();
 
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
-await browser.close();
+await close();
 process.exit(failures === 0 ? 0 : 1);

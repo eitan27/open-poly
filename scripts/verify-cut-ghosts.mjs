@@ -13,27 +13,11 @@
 // Checked in pixels, not by eye: the app's own screenshot API renders and reads
 // back in one tick, and the shot is scored for warm vs cool pixels. Switching
 // the dialog between New and Remove must flip which one dominates.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5173/";
-const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
+const { page, close } = await launch({ deviceScaleFactor: 2, collectErrors: false, width: 1400, height: 900 });
+const { waitIdle, apply } = openPoly(page);
 
-const apply = (o) => page.evaluate((x) => window.__openpoly.apply(x), o);
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 200; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date|error|fail/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return s;
-    await page.waitForTimeout(300);
-  }
-  return "TIMEOUT";
-};
 let failures = 0;
 const check = (label, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}: ${label}${detail ? ` — ${detail}` : ""}`);
@@ -254,5 +238,5 @@ await page.screenshot({ path: "/tmp/openpoly-boolean-union.png" });
 check("switching to Union stops calling it a removal", unionShot.red < toolShot.red / 4, JSON.stringify(unionShot));
 
 console.log(failures ? `\n${failures} FAILED` : "\nAll checks passed");
-await browser.close();
+await close();
 process.exit(failures ? 1 : 0);

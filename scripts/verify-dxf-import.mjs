@@ -1,32 +1,14 @@
 // Verifies DXF import end-to-end against the running dev app: pick a DXF via the
 // Parts "Import ▾" flyout, confirm the placement dialog, and check that a native
 // sketch with the expected editable entities is created on the chosen plane.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
+
+const { page, close } = await launch({ deviceScaleFactor: 2, collectErrors: false });
+const { waitIdle, apply, read } = openPoly(page);
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SAMPLE = join(__dirname, "sample.dxf");
-const URL = process.env.URL ?? "http://localhost:5173/";
-
-const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
-
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 80; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return;
-    await page.waitForTimeout(300);
-  }
-};
-const read = (q) => page.evaluate((o) => window.__openpoly.read(o), q);
-const apply = (o) => page.evaluate((op) => window.__openpoly.apply(op), o);
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -83,5 +65,5 @@ void read;
 
 await page.screenshot({ path: join(__dirname, "..", "dxf-import.png") });
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL PASS");
-await browser.close();
+await close();
 process.exit(failures ? 1 : 0);

@@ -19,26 +19,11 @@
 //      meeting, so it survives a later solve rather than just touching
 //   8. hovering previews the exact piece the click would take
 //   9. the whole thing is one undo step
-import { chromium } from "playwright";
-const URL = process.env.URL ?? "http://localhost:5175/";
-const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-const page = await (await browser.newContext({ viewport: { width: 1660, height: 920 } })).newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 250; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date|error|fail/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return s;
-    await page.waitForTimeout(200);
-  }
-  return "TIMEOUT";
-};
-const apply = (o) => page.evaluate((x) => window.__openpoly.apply(x), o);
-const read = (q) => page.evaluate((x) => window.__openpoly.read(x), q);
+const { page, close } = await launch({ collectErrors: false });
+const { waitIdle, apply, read } = openPoly(page);
+
 const settle = async () => {
   await waitIdle();
   await page.waitForTimeout(400);
@@ -311,5 +296,5 @@ await settle();
 }
 
 console.log(`\n${failures === 0 ? "all checks passed" : `${failures} check(s) failed`}`);
-await browser.close();
+await close();
 process.exit(failures ? 1 : 0);

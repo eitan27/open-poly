@@ -5,27 +5,12 @@
 //  3. the modelling toolbar's overflow button is "…" and is always on the bar;
 //  4. the sketch groups' ▸ arrows (rectangle / circle / pattern) and the
 //     constraint ▸ arrow open their flyouts — the column used to clip them away.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5173/";
-const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1500, height: 900 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
+const { page, close } = await launch({ deviceScaleFactor: 2, collectErrors: false, width: 1500, height: 900 });
+const { waitIdle, apply } = openPoly(page);
 
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 80; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return;
-    await page.waitForTimeout(300);
-  }
-};
 await waitIdle();
-const apply = (op) => page.evaluate((o) => window.__openpoly.apply(o), op);
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -229,5 +214,5 @@ if (panel) {
 await page.screenshot({ path: "/tmp/openshape-transform-panel.png" });
 
 console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);
-await browser.close();
+await close();
 process.exit(failures === 0 ? 0 : 1);

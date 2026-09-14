@@ -12,31 +12,13 @@
 //
 // Run against a local dev server: `npm run dev`, then
 // `URL=http://localhost:5174/ node scripts/verify-tool-arming.mjs`.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5173/";
-const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
+const { page, close } = await launch({ deviceScaleFactor: 2, collectErrors: false });
+const { waitIdle, apply, read } = openPoly(page);
 
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
-
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 80; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date|error/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return;
-    await page.waitForTimeout(300);
-  }
-  throw new Error("app never settled");
-};
 await waitIdle();
 
-const apply = (o) => page.evaluate((x) => window.__openpoly.apply(x), o);
-const read = (q) => page.evaluate((x) => window.__openpoly.read(x), q);
 let failures = 0;
 const check = (label, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}: ${label}${detail ? ` — ${detail}` : ""}`);
@@ -328,5 +310,5 @@ check(
 );
 
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nall checks passed");
-await browser.close();
+await close();
 process.exit(failures ? 1 : 0);

@@ -12,30 +12,14 @@
 // Rather than replay that across a code change, this asks the question directly:
 // dress HALF a rim's segments and dress ALL of them, and require the same body.
 // Same code, same document, one variable.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5175/";
-const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-const page = await (await browser.newContext({ viewport: { width: 1660, height: 920 } })).newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
+const { page, close } = await launch({ collectErrors: false });
+const { waitIdle, apply, read } = openPoly(page);
 // The expansion notice is a per-feature regen warning (the timeline's badge), not
 // a console line — the apply result carries it back.
 const noticeOf = (r) => JSON.stringify(r?.warnings ?? {}).match(/stored selection covered[^"]*/)?.[0] ?? null;
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 250; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date|error|fail/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return s;
-    await page.waitForTimeout(300);
-  }
-  return "TIMEOUT";
-};
 await waitIdle();
-const apply = (o) => page.evaluate((x) => window.__openpoly.apply(x), o);
-const read = (q) => page.evaluate((x) => window.__openpoly.read(x), q);
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -129,5 +113,5 @@ check(
 );
 
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
-await browser.close();
+await close();
 process.exit(failures === 0 ? 0 : 1);

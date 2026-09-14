@@ -16,14 +16,10 @@
 // extra face is a crescent. Before the fix, phase 0 happened to align and gave
 // 100 while 0.9 degrees gave 245; the sweep below is over phases chosen to hit
 // the worst cases (half a facet is 1.875 degrees).
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5175/";
-const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-
+const { page, close } = await launch({ deviceScaleFactor: 2, collectErrors: false });
+const { waitIdle, apply, read } = openPoly(page);
 const unmeshed = [];
 const recovered = [];
 page.on("console", (m) => {
@@ -32,22 +28,7 @@ page.on("console", (m) => {
   const r = /mesh: recovered (\d+) dropped face/.exec(m.text());
   if (r) recovered.push(Number(r[1]));
 });
-
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 150; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date|error|fail/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return;
-    await page.waitForTimeout(300);
-  }
-  throw new Error("app never settled");
-};
 await waitIdle();
-const apply = (o) => page.evaluate((x) => window.__openpoly.apply(x), o);
-const read = (q) => page.evaluate((x) => window.__openpoly.read(x), q);
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -206,5 +187,5 @@ check(
 );
 
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
-await browser.close();
+await close();
 process.exit(failures === 0 ? 0 : 1);

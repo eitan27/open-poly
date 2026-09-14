@@ -24,14 +24,10 @@
 //     "mesh: NORMALLESS N face(s) on <id>"               — a false crease survives
 // So the run proves BOTH halves of each: that the defect is real and reproduced
 // here (something had to be recovered), and that none of it is left over.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5175/";
-const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-
+const { page, close } = await launch({ deviceScaleFactor: 2, collectErrors: false });
+const { waitIdle, apply, read } = openPoly(page);
 const recovered = [];
 const unmeshed = [];
 const fallbackNormals = [];
@@ -53,22 +49,7 @@ const resetCounters = () => {
   fallbackNormals.length = 0;
   normalless.length = 0;
 };
-
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 120; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date|error|fail/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return;
-    await page.waitForTimeout(300);
-  }
-  throw new Error("app never settled");
-};
 await waitIdle();
-const apply = (o) => page.evaluate((x) => window.__openpoly.apply(x), o);
-const read = (q) => page.evaluate((x) => window.__openpoly.read(x), q);
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -158,5 +139,5 @@ check(
 await page.screenshot({ path: "/tmp/openpoly-mesh-holes.png" });
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
 console.log("screenshot: /tmp/openpoly-mesh-holes.png");
-await browser.close();
+await close();
 process.exit(failures === 0 ? 0 : 1);

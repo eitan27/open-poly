@@ -7,28 +7,11 @@
 //   3. arming the profile cancels an armed axis — the two roles read different
 //      click streams, so the axis button used to stay lit (its dashed pulse)
 //      and still swallow the next click.
-import { chromium } from "playwright";
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const URL = process.env.URL ?? "http://localhost:5173/";
-const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2 });
-const page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
+const { page, close } = await launch({ deviceScaleFactor: 2, collectErrors: false, width: 1400, height: 900 });
+const { waitIdle, apply, read } = openPoly(page);
 
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 120; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date|error|fail/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return s;
-    await page.waitForTimeout(300);
-  }
-  return "TIMEOUT";
-};
-const apply = (o) => page.evaluate((x) => window.__openpoly.apply(x), o);
-const read = (q) => page.evaluate((x) => window.__openpoly.read(x), q);
 let failures = 0;
 const check = (label, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}: ${label}${detail ? ` — ${detail}` : ""}`);
@@ -188,5 +171,5 @@ check("…storing an edge axis by name", !!rev?.axis?.edge?.edgeName, JSON.strin
 await page.screenshot({ path: "/tmp/revolve-edge-axis-built.png" });
 
 console.log(failures ? `\n${failures} FAILED` : "\nAll checks passed");
-await browser.close();
+await close();
 process.exit(failures ? 1 : 0);
