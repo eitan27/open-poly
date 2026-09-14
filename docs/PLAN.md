@@ -221,13 +221,26 @@ harvested — `app-tsx-decompose`, `kernel-buildbodies-split`,
 `viewport-mount-effect-split` — can be deleted once this lands.
 `origin/claude/use-persisted-documents-hook` must NOT be: Wave C still wants it.
 
-**Wave B — test infrastructure (resume here).** jsdom +
-`@testing-library/react`, so stateful hooks can be tested at all; a
-Playwright/MCP path for `worker.ts` and the viewport — A.4 and A.5 left two to
-generalise from (`scripts/verify-build-bodies.mjs`,
-`scripts/verify-viewport-modules.mjs`), both of which re-implement the same
-wait-for-idle / apply / read scaffolding that every `verify-*.mjs` copies.
-Everything below waits on this.
+**Wave B — test infrastructure (resume here).**
+
+- [x] **B.1** `scripts/lib/harness.mjs` — the launch / waitIdle / apply / read /
+      check block that 62 of the 65 `verify-*.mjs` scripts each re-declared. They
+      had drifted: the poll loop ran 60–300 iterations at 200ms or 300ms, and
+      about a third treated "error" as NOT settled, so a failed regen spun the
+      whole timeout and the script then asserted against a state it never waited
+      for. The harness settles on error and returns the status text. Four scripts
+      are migrated (−94 lines) and produce byte-identical results; it is
+      deliberately à la carte — `verify-extrude-guards.mjs` keeps its own tally
+      and takes only the bridge and the waits.
+- [ ] **B.2** Migrate the remaining ~61 scripts. Incremental, and cheapest done
+      when a script is being edited anyway: each is a mechanical preamble swap,
+      but each needs a before/after run to confirm the same result, and that is
+      a browser launch apiece.
+- [ ] **B.3** jsdom + `@testing-library/react`, so stateful hooks can be tested
+      at all. Do it as a per-file environment override, NOT a global flip of
+      `environment: "node"` — the 813 tests that predate Wave A all pass under
+      node today and there is no reason to move them. This is what Wave C's
+      483-line `usePersistedDocuments` needs.
 
 **Wave C — boundaries.** `claude/use-persisted-documents-hook` (`4ba9d64`, a
 483-line hook, −418 from App.tsx) was Wave A until it became clear it is

@@ -20,26 +20,12 @@
 //        on a good one — with no raw OCCT text on screen
 //   8.   a remove whose target is deleted fails the feature instead of vanishing
 //   9.   a remove with no target at all is refused
-import { chromium } from "playwright";
-const URL = process.env.URL ?? "http://localhost:5175/";
-const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-const page = await (await browser.newContext({ viewport: { width: 1660, height: 920 } })).newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
+import { launch, openPoly } from "./lib/harness.mjs";
 
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 250; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date|error|fail/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return s;
-    await page.waitForTimeout(300);
-  }
-  return "TIMEOUT";
-};
-const apply = (o) => page.evaluate((x) => window.__openpoly.apply(x), o);
-const read = (q) => page.evaluate((x) => window.__openpoly.read(x), q);
+// Keeps its own results-array tally (it prints an "n/m checks passed" summary),
+// so it takes the harness's launch/bridge/waits and not its checker.
+const { page, close } = await launch({ collectErrors: false });
+const { apply, read, waitIdle } = openPoly(page);
 const scene = () => read({ read: "sceneSummary" });
 const bodyCount = async () => ((await scene()).bodies ?? []).length;
 
@@ -204,5 +190,5 @@ await page.waitForTimeout(400);
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
-await browser.close();
+await close();
 process.exit(failed.length ? 1 : 0);

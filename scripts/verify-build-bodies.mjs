@@ -15,46 +15,19 @@
 // forget, and forgetting it returns yesterday's body with no error anywhere.
 //
 // Run it against a dev server: `npm run dev`, then `node scripts/verify-build-bodies.mjs`.
-import { chromium } from "playwright";
-const URL = process.env.URL ?? "http://localhost:5173/";
-const browser = await chromium.launch();
-const page = await (await browser.newContext({ viewport: { width: 1660, height: 920 } })).newPage();
-const errors = [];
-page.on("pageerror", (e) => errors.push(e.message));
-await page.goto(URL, { waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
-const waitIdle = async () => {
-  let stable = 0;
-  for (let i = 0; i < 300; i++) {
-    const s = (await page.locator(".status").textContent())?.trim() ?? "";
-    stable = /up to date|error|fail/i.test(s) ? stable + 1 : 0;
-    if (stable >= 3) return s;
-    await page.waitForTimeout(200);
-  }
-  return "TIMEOUT";
-};
-const apply = (o) => page.evaluate((x) => window.__openpoly.apply(x), o);
-const read = (q) => page.evaluate((x) => window.__openpoly.read(x), q);
-const settle = async () => {
-  await waitIdle();
-  await page.waitForTimeout(300);
-  await waitIdle();
-};
-let failures = 0;
-const check = (l, ok, d = "") => {
-  console.log(`${ok ? "PASS" : "FAIL"}  ${l}${d ? ` — ${d}` : ""}`);
-  if (!ok) failures++;
-};
-const summary = () => read({ read: "sceneSummary" });
-const bodyCount = async () => (await summary()).bodies?.length ?? 0;
-const featErrors = async () => {
-  const d = await read({ read: "document" });
-  return (d.features ?? []).filter((f) => f.error).map((f) => `${f.type}: ${f.error}`);
-};
-const fresh = async () => {
-  await apply({ op: "newDocument" });
-  await settle();
-};
+import { checker, launch, openPoly } from "./lib/harness.mjs";
+
+const { page, errors, close } = await launch({ deviceScaleFactor: 1 });
+const op = openPoly(page);
+const { check, done } = checker();
+const { apply, read, settle, screenOf } = op;
+const canvasBox = async () => await page.locator("canvas").first().boundingBox();
+const summary = op.scene;
+const bodyCount = op.bodyCount;
+const featErrors = op.featureErrors;
+const fresh = op.newDocument;
+
+/** Run one feature build and assert the kernel reported no feature error. */
 const ok = async (label, fn) => {
   try {
     const before = await bodyCount();
@@ -291,6 +264,5 @@ check(
 
 check("no page errors across the whole run", errors.length === 0, errors.slice(0, 3).join(" | "));
 await page.screenshot({ path: "/tmp/openshape-smoke.png" });
-console.log(`\n${failures ? `${failures} FAILURE(S)` : "all checks passed"}`);
-await browser.close();
-process.exit(failures ? 1 : 0);
+await close();
+done();
