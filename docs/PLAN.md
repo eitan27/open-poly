@@ -163,6 +163,41 @@ to live here is in the git history, and what remains below is only what is still
 owed plus the handful of things the push taught us that are worth not
 re-learning.
 
+**Going public — do these in order.** Step 1 is a hard blocker; the rest are
+cleanup that only makes sense afterwards.
+
+1. - [ ] **Wait for GitHub Support to finish the purge, and VERIFY it.** The
+         history was rewritten (2026-09-14) to remove two personal email
+         addresses from 417 commits, and force-pushed. Branches are clean, but
+         GitHub's `refs/pull/*` are read-only server-side refs that a force-push
+         cannot touch, and the 10 of them still carried the old addresses — so a
+         support ticket asked for server-side GC. Do not trust the reply alone:
+
+     ```
+     git ls-remote origin 'refs/pull/*'
+     ```
+
+     It returned 10 refs before the purge. **It must return nothing.** If it
+     still lists refs, reply on the same ticket rather than closing it.
+     Flipping the repo public before this undoes the entire rewrite: anyone
+     could then `git fetch origin 'refs/pull/*:refs/pull/*'` and read them.
+
+2. - [ ] **Flip the repository to public.**
+
+3. - [ ] **Settings → Pages → Build and deployment → Source → "GitHub
+         Actions"**, which fixes the item below.
+
+4. - [ ] **Sanity-check the deployed site** — <https://open-poly.pages.dev> is a
+         direct `wrangler pages deploy` upload, NOT git-integrated, so nothing
+         about going public redeploys it. File one real bug report to confirm the
+         `/api/report` Function still reaches a now-public repo.
+
+**Do not undo these.** `user.email` is the GitHub noreply address in
+`~/.gitconfig`, and _Settings → Emails → Block command line pushes that exposes
+my email_ is on. The setting is the durable half: it rejects a push carrying a
+real address rather than letting it land. Collaborators were told to re-clone —
+a merge from a pre-rewrite clone pushes the old addresses straight back.
+
 **Still owed, and only on the day:**
 
 - [ ] **The landing-page Pages deploy fails red on every run, and has since
