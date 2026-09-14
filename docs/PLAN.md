@@ -384,6 +384,13 @@ in-app chat agent; OpenAI/Gemini adapters.
 
 - Everything becomes a tree feature; the tree is **editable history**, not a log.
 - Mini-dialogs anchored near the work, not buried menus.
+- A dialog **or** a viewport banner, never both — the banner is only for the two
+  picks with nothing to configure yet (starting a sketch, the section plane).
+- A dialog owns the screen: the whole modelling toolbar is inert until it is
+  finished or cancelled.
+- **One** Esc leaves any dialog or banner. To stop a slot listening without
+  leaving, click the slot.
+- A picker label is an instruction, so it wraps — never an ellipsis.
 - Pre-select then act, **or** act then select — support both.
 - Live ghost preview before commit; constraint state by colour (blue under, green
   fully, red over).
