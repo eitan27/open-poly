@@ -165,9 +165,15 @@ re-learning.
 
 **Still owed, and only on the day:**
 
-- [ ] Re-enable the landing-page auto-deploy once the repo IS public — its
-      `push` trigger is commented out in `.github/workflows/pages.yml` because
-      GitHub Pages from a private repo needs a paid plan.
+- [ ] **The landing-page Pages deploy fails red on every run, and has since
+      June.** `.github/workflows/pages.yml` was re-enabled in `fe08b76`, so it
+      DOES fire on a push touching `landing/**` — and then fails, because GitHub
+      Pages cannot publish from a private repo on the Free plan. Nothing is
+      broken by it and nothing is being published; it is just a red X on the
+      history. It resolves itself the moment the repo goes public (or on a paid
+      plan) — no code change needed, only
+      Settings → Pages → Build and deployment → Source → "GitHub Actions".
+      Until then, expect the red.
 
 **What it taught us, in order of how much it cost to find out:**
 
