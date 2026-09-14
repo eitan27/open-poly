@@ -383,6 +383,24 @@ back to its source sketch circle and reads the radius, re-derived every regen (t
 variable + timeline edits). Correct diameters on faceted extruded circles without touching
 geometry. Geometry stays a faceted prism.
 
+**Gap: that workaround covers extrudes only.** `measure.ts` has two ways to
+recover a radius the B-rep no longer carries — feature params for a primitive
+cylinder, and `extrudedCircleRadius` above for an extruded sketch circle. A
+**revolve has neither**, and nor does a loft. So selecting a revolved tube's bore
+or its annular cap shows Area and nothing else: `faceSurfacesFrom` finds no
+circular wire to classify (a revolved tube is ~384 flat faces), and no fallback
+picks it up. The cap still reports the right _area_, because `clusterArea` sums
+the facet cluster — which is why this reads as "the diameter row is missing"
+rather than as anything being wrong.
+
+Not a regression: it has been true since revolve started faceting, and the
+checks in `scripts/verify-face-diameter.mjs` that used to assert an analytic
+annulus were written before that and were simply stale (fixed 2026-09-14; they
+now assert the gap and point here). The fix, if it is worth doing, is a third
+fallback of the same shape: trace a revolved face back to its profile + axis and
+compute the radius. Small and self-contained — the reason it has stayed open is
+that nothing surfaces it until someone selects a bore.
+
 ### Re-investigated 2026-07-25/26 — validation spike CONFIRMS faceting is required
 
 Before building a "logical-face layer" to fix the circular selection/snapping UX, we

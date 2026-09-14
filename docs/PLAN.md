@@ -141,8 +141,10 @@ The repo is going public. This section is the resumable state of that push:
 read it, check the marker, pick up the next unticked item. Delete the section
 once every wave is done.
 
-**Marker — 2026-09-14, main at `befe5d7`.** Wave A is COMPLETE (A.1–A.5).
-Next: Wave B (test infrastructure), which everything below now waits on.
+**Marker — 2026-09-14.** Waves A and B are COMPLETE. `main` is at `951a8d3`
+(Wave A, pushed); Wave B is four commits on `chore/test-infrastructure`, not yet
+merged. Next: Wave C — `usePersistedDocuments`, which B.3 exists to make
+testable.
 
 **Done**
 
@@ -221,7 +223,7 @@ harvested — `app-tsx-decompose`, `kernel-buildbodies-split`,
 `viewport-mount-effect-split` — can be deleted once this lands.
 `origin/claude/use-persisted-documents-hook` must NOT be: Wave C still wants it.
 
-**Wave B — test infrastructure (resume here).**
+**Wave B — test infrastructure. DONE.**
 
 - [x] **B.1** `scripts/lib/harness.mjs` — the launch / waitIdle / apply / read /
       check block that 62 of the 65 `verify-*.mjs` scripts each re-declared. They
@@ -232,10 +234,24 @@ harvested — `app-tsx-decompose`, `kernel-buildbodies-split`,
       are migrated (−94 lines) and produce byte-identical results; it is
       deliberately à la carte — `verify-extrude-guards.mjs` keeps its own tally
       and takes only the bridge and the waits.
-- [ ] **B.2** Migrate the remaining ~61 scripts. Incremental, and cheapest done
-      when a script is being edited anyway: each is a mechanical preamble swap,
-      but each needs a before/after run to confirm the same result, and that is
-      a browser launch apiece.
+- [x] **B.2** 48 of the 67 scripts use the harness (−741 lines). The 19 that do
+      not are left on purpose: four have no launch block at all, and fifteen still
+      hold `browser`/`context` themselves (a second tab, their own screenshot
+      context), which the migration refuses rather than guesses at.
+      **How it was verified, because it was wrong twice first.** A before/after
+      run of all 67 is the only real check, and two things made it lie: the first
+      runner used `timeout`, which macOS does not ship, so every script "produced
+      no checks"; and the first comparison ran while `npm test` competed for CPU,
+      which moved results for scripts that had not been touched at all. The fix
+      for the second is the reusable one — the unmigrated scripts are a CONTROL
+      GROUP, and if a file nobody edited changes its answer the run is noise.
+      Final: 19/19 controls identical, 48/48 migrated identical.
+      The first transformer also matched the launch block with `.*?` and ate
+      script-specific lines inside it — a `const FILE`, a console listener
+      collecting mesh warnings. Two scripts died loudly; a script that merely LOST
+      a listener would have kept passing while testing less, which is why all 46
+      were reverted rather than the 8 visible breakages patched. The rewrite
+      classifies each line and keeps anything it does not recognise.
 - [x] **B.3** jsdom + `@testing-library/react`, with 26 tests over `useHistory`
       (incl. the coalescing rules deciding whether three keystrokes are one undo
       step) and `useSettings`. Done as a per-file `// @vitest-environment jsdom`
@@ -264,7 +280,9 @@ harvested — `app-tsx-decompose`, `kernel-buildbodies-split`,
       annular caps. It is faceted like everything round (`geom/circleFacets.ts` —
       this OCCT build cannot boolean an analytic cylinder against a plane), so
       there is no circular wire to classify: 384 faces, no analytic diameter. The
-      checks now assert what is true and name the gap (see B.5).
+      checks now assert what is true and name the gap, which is recorded in
+      BACKLOG under the faceting section (where the extrude-only workaround it
+      is missing already lives).
       **The real bug: with section view on, you could not draw in a sketch at
       all.** Any sketch, datum or face; every click after the first. The section
       plane's drag gizmo is a TransformControls, and it claimed the pointerdown,
@@ -274,13 +292,8 @@ harvested — `app-tsx-decompose`, `kernel-buildbodies-split`,
       same one, and now has it (`sectionControls.enabled` also requires
       `!activeFrameRef.current`). Dragging the section plane outside a sketch is
       unaffected — verified by sweeping for the handle and moving the offset.
-- [ ] **B.5** A revolved or lofted round face reports no diameter. `measure.ts`
-      has a fallback for a primitive cylinder (feature params) and for an
-      extruded sketch circle (`extrudedCircleRadius`); a revolve has neither, so
-      selecting a tube's bore or annular cap shows only Area. Small, real, and
-      entirely invisible until someone selects one.
 
-**Wave C — boundaries.** `claude/use-persisted-documents-hook` (`4ba9d64`, a
+**Wave C — boundaries (resume here).** `claude/use-persisted-documents-hook` (`4ba9d64`, a
 483-line hook, −418 from App.tsx) was Wave A until it became clear it is
 stateful — IndexedDB, recovery banners, corrupted-document paths — so no pure
 test can cover it. It needs B first. Then the Viewport mount effect, and
