@@ -47,6 +47,7 @@ import type {
   ResolvedProfile,
 } from "./types";
 import { DRESSUP_DELTA_IDS, dressUpDeltaBase } from "./types";
+import { builderKey, contentKey } from "./cache";
 import { CIRCLE_FACETS, circleStations } from "../geom/circleFacets";
 import { expandToChains, expansionCount } from "../geom/edgeChains";
 import { fitRing } from "../geom/ringFit";
@@ -3620,28 +3621,6 @@ const dressUpCache = new Map<string, { result: NamedShape & { changedBox?: [Vec3
 const REGEN_PROFILE = false;
 type FeatureTiming = { id: string; type: string; ms: number };
 
-/** cyrb53 — a fast, well-distributed 53-bit string hash. Used to keep content
- *  keys short and bounded (combining keys down a long feature chain would grow
- *  without a hash). Collisions are astronomically unlikely at our scale. */
-function hashKey(str: string): string {
-  let h1 = 0xdeadbeef,
-    h2 = 0x41c6ce57;
-  for (let i = 0; i < str.length; i++) {
-    const ch = str.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
-}
-
-/** A pure builder's content key: just its resolved feature (no body inputs). */
-const builderKey = (feature: ResolvedFeature) => hashKey(JSON.stringify(feature));
-/** A derived body's content key: its feature plus the keys of the bodies it read. */
-const contentKey = (feature: ResolvedFeature, inputKeys: string[]) =>
-  hashKey(JSON.stringify(feature) + "|" + inputKeys.join("|"));
-
 /** Duplicate a named shape (geometry + topology) without re-solving it, by
  *  applying an IDENTITY rigid transform with copy=true — the single OCCT build
  *  doesn't bind BRepBuilderAPI_Copy, but an identity Transform copies all the
@@ -3729,6 +3708,605 @@ function splitPartsPass(bodies: Body[], singleSolid: Set<string>): void {
   }
 }
 
+/** The running state a feature build folds into. Passed explicitly rather than
+ *  closed over, so each builder below declares exactly which parts of the fold
+ *  it touches — the if/else chain this replaced shared all of it implicitly.
+ *
+ *  `warn` is per-FEATURE (it files its notice under the feature being built), so
+ *  a fresh context is made for each iteration, not once for the run. */
+interface BuildContext {
+  /** The running set of real bodies. Builders push, mutate and consume these. */
+  bodies: Body[];
+  /** Display-only bodies (dress-up deltas), kept out of `bodies` on purpose. */
+  previews: Body[];
+  /** Builder-cache keys hit this run, for post-run eviction. */
+  used: Set<string>;
+  /** Dress-up-cache keys hit this run. */
+  usedDressUps: Set<string>;
+  /** Current content key of the body under an id (read before mutations). */
+  keyOf: (id: string) => string;
+  /** File a non-fatal notice against the feature being built. */
+  warn: Warn;
+  /** The whole resolved list — Shell scans it for the loft it can re-loft. */
+  features: ResolvedFeature[];
+}
+
+function buildPrimitiveFeature(feature: Extract<ResolvedFeature, { type: "primitive" }>, ctx: BuildContext): void {
+  const { bodies, used } = ctx;
+  const key = builderKey(feature);
+  bodies.push({ id: feature.id, key, ...buildCached(key, used, () => buildPrimitive(feature)) });
+}
+
+function buildImportFeature(feature: Extract<ResolvedFeature, { type: "import" }>, ctx: BuildContext): void {
+  const { bodies, used } = ctx;
+  const key = builderKey(feature);
+  bodies.push({
+    id: feature.id,
+    key,
+    ...buildCached(key, used, () => importStepNamed(feature.source, feature.id)),
+  });
+}
+
+function buildExtrudeFeature(feature: Extract<ResolvedFeature, { type: "extrude" }>, ctx: BuildContext): void {
+  const { bodies, keyOf, warn } = ctx;
+  const { flip, distance, extent, mode } = feature;
+  // A "remove" cuts *into* the body, so its natural direction is opposite
+  // the profile normal — the Flip toggle then reverses that. New/Add follow
+  // the normal outward.
+  const dirFlip = mode === "remove" ? !flip : flip;
+  // One tool per profile. In "new" they gather into a single body, which
+  // splitPartsPass then breaks into one PART per disjoint solid; in
+  // add/remove each tool goes into its own target, so extruding faces of
+  // two different parts modifies each of them (see targetOf below).
+  const newSolids: NamedShape[] = [];
+  const newKeys: string[] = [];
+  let newNoSplit = false;
+  for (let pi = 0; pi < feature.profiles.length; pi++) {
+    const profile = feature.profiles[pi];
+    // Merge scope. A profile taken from a body face acts on THAT body —
+    // the part it grew from — and a sketch profile, which has no body of
+    // its own, uses the target the dialog chose. Resolved up front (rather
+    // than after building the tool) because extent "throughAll" needs the
+    // target's geometry to size the tool.
+    const targetId = mode !== "new" ? (profile.kind === "bodyFace" ? profile.sourceId : feature.targetId) : undefined;
+    const targets = targetId ? bodies.filter((b) => b.id === targetId) : [];
+    // Both of these used to end at the same silent `built.shape.delete()`
+    // below — no error, no visible effect — so a cut whose target had gone
+    // simply vanished. Fail the feature instead, the way every other
+    // missing-body reference does (`requireBody`). A given targetId that
+    // names nothing is a DANGLING reference: the target was deleted,
+    // suppressed, moved after this extrude, or merged into another body by
+    // an earlier boolean. `add` with NO target at all stays the documented
+    // fallback (the tool becomes a new body of its own), and the dialog's
+    // ghost is exempt — it only ever shows the tool.
+    if (!feature.previewTool && targets.length === 0) {
+      if (targetId) {
+        throw new Error(
+          "extrude: the target body no longer exists — it was deleted, suppressed, moved after this extrude, or merged into another body. Re-pick the target.",
+        );
+      }
+      if (mode === "remove") throw new Error("extrude: a Remove needs a target body to cut from.");
+    }
+
+    // One profile face for region/body-face; many (one per glyph) for text.
+    let faces: Face[];
+    let normal: Vector;
+    if (profile.kind === "sketchRegion") {
+      const r = sketchRegionFace(profile);
+      faces = [r.face];
+      normal = r.normal;
+    } else if (profile.kind === "sketchText") {
+      const r = sketchTextFaces(profile);
+      faces = r.faces;
+      normal = r.normal;
+    } else {
+      const r = bodyProfileFace(
+        requireBody(bodies, profile.sourceId),
+        profile.faceName,
+        profile.center,
+        profile.normal,
+        warn,
+        "profile face",
+      );
+      // Facet a curved profile face (cylinder cap, fillet…) so its extruded
+      // wall is planar and can be cut/fused — an analytic cylinder wall can't
+      // (StdFail_NotDone). No-op for straight-edged faces.
+      const ff = facetedProfileFace(r.face, r.normal);
+      faces = [ff.face];
+      normal = ff.normal;
+    }
+    const face = faces[0]; // representative for through-all / up-to-face sizing
+
+    const sign = dirFlip ? -1 : 1;
+    // "Up to face/next" build a deliberately LONG prism and then CUT it flush
+    // with the target face's plane (`clip`), so a target that isn't
+    // perpendicular to the extrude axis yields a conforming (angled) top
+    // rather than a flat approximation. "Up to face" derives its own
+    // direction from the chosen face (ignoring Flip); "up to next" uses the
+    // Flip-adjusted direction.
+    let lengths: number[];
+    let clip: ClipPlane | null = null;
+    if (extent === "upToFace" && feature.upTo) {
+      const upBody = requireBody(bodies, feature.upTo.sourceId);
+      const up = bodyProfileFace(
+        upBody,
+        feature.upTo.faceName,
+        feature.upTo.center,
+        feature.upTo.normal,
+        warn,
+        "up-to face",
+      );
+      const t = upToFaceLength(face, normal, up.face, up.normal); // signed, validates reachability
+      const reach = bigReach(face, bodies);
+      lengths = [(t >= 0 ? 1 : -1) * reach];
+      clip = makeClipPlane(
+        up.face.center.toTuple() as Vec3,
+        up.normal.normalized().toTuple() as Vec3,
+        normal,
+        t >= 0 ? 1 : -1,
+        reach,
+      );
+    } else if (extent === "upToNext") {
+      // Scan every existing body (the model so far), not just the boolean
+      // target, so a boss can stop at a separate wall ahead of it.
+      const tgt = upToNextFace(face, normal, sign, bodies);
+      const reach = bigReach(face, bodies);
+      lengths = [sign * reach];
+      clip = makeClipPlane(tgt.point, tgt.normal, normal, sign, reach);
+    } else {
+      lengths = extrudeLengths(extent, distance, face, targets).map((l) => l * sign);
+    }
+    // Prism every face (one per glyph for text) at every length (two for
+    // symmetric). The symmetric halves of a SINGLE face touch at the profile
+    // plane, so they're fused into one solid; distinct glyph faces are
+    // disjoint, so they're collected into a COMPOUND rather than boolean-fused
+    // (fusing dozens of glyphs is the bottleneck that made long text time out).
+    // A lone profile keeps the feature id as its name prefix — so every
+    // stored reference into a single-profile extrude still resolves;
+    // several profiles scope theirs as `${id}/p{n}`, and text scopes each
+    // glyph below that, so no two profiles' faces share a name.
+    const prefixBase = feature.profiles.length > 1 ? `${feature.id}/p${pi}` : feature.id;
+    const glyphSolids: NamedShape[] = [];
+    for (let gi = 0; gi < faces.length; gi++) {
+      const prefix = faces.length > 1 ? `${prefixBase}/g${gi}` : prefixBase;
+      let glyph: NamedShape | null = null;
+      for (const len of lengths) {
+        let piece = prismFromFace(faces[gi], normal, len, prefix);
+        // Up to face/next: trim the long prism flush with the target plane.
+        if (clip) {
+          const box = halfSpaceBox(clip.point, clip.normal, clip.boxSize);
+          const trimmed = booleanNamed("cut", piece, { shape: box, names: new Map() });
+          piece.shape.delete();
+          box.delete();
+          piece = trimmed;
+        }
+        if (glyph === null) {
+          glyph = piece;
+        } else {
+          const fused = booleanNamed("fuse", glyph, piece);
+          glyph.shape.delete();
+          piece.shape.delete();
+          glyph = fused;
+        }
+      }
+      if (glyph) glyphSolids.push(glyph);
+    }
+    const built: NamedShape | null =
+      glyphSolids.length === 0 ? null : glyphSolids.length === 1 ? glyphSolids[0] : compoundOf(glyphSolids);
+    if (built === null) throw new Error("extrude: profile produced no geometry");
+
+    // Content key of the swept tool: the feature (and which profile of it)
+    // plus the keys of any bodies it read (a body-face profile / up-to-face
+    // target). Result keys fold in the affected target's key so a cut/fuse
+    // re-meshes only when it changed.
+    const toolInputKeys: string[] = [`p${pi}`];
+    if (profile.kind === "bodyFace") toolInputKeys.push(keyOf(profile.sourceId));
+    if (extent === "upToFace" && feature.upTo) toolInputKeys.push(keyOf(feature.upTo.sourceId));
+    // "Up to next" sizes the tool against the whole model, so fold in every
+    // scanned body's key — the ghost/tool must re-solve when any of them moves.
+    if (extent === "upToNext") for (const b of bodies) toolInputKeys.push(b.key);
+    const toolKey = contentKey(feature, toolInputKeys);
+
+    // Text is one solid per glyph and always disjoint; its letters are not
+    // parts, so a compound holding any stays whole (see splitPartsPass).
+    if (profile.kind === "sketchText") newNoSplit = true;
+    if (feature.previewTool || mode === "new" || targets.length === 0) {
+      // previewTool: the live ghost is just the swept tool, leaving every
+      // existing body untouched so they keep their own colour.
+      // targets.length === 0: only "add" with no target reaches this now
+      // (checked just above) — nothing to fuse into, so it becomes a body
+      // of its own.
+      if (feature.previewTool || mode !== "remove") {
+        newSolids.push(built);
+        newKeys.push(toolKey);
+      } else {
+        built.shape.delete();
+      }
+    } else if (mode === "add") {
+      // Fuse the tool into the targets, preserving the first target's id
+      // (and propagating names through the boolean history).
+      const targetKeys = targets.map((t) => t.key);
+      let acc: NamedShape = built;
+      for (const t of targets) {
+        const next = booleanNamed("fuse", t, acc);
+        acc.shape.delete();
+        t.shape.delete();
+        acc = next;
+      }
+      // Merge co-planar faces the fuse left (e.g. stacking a taller section
+      // on a body) so there's no black seam line where the tool met the body.
+      acc = unifyBody(acc);
+      const keepId = targets[0].id;
+      const remaining = bodies.filter((b) => !targets.includes(b));
+      bodies.length = 0;
+      bodies.push(...remaining, { id: keepId, key: contentKey(feature, [toolKey, ...targetKeys]), ...acc });
+    } else {
+      // remove: cut the tool from each target in place, preserving ids.
+      for (const t of targets) {
+        const next = unifyBody(booleanNamed("cut", t, built));
+        t.shape.delete();
+        t.shape = next.shape;
+        t.names = next.names;
+        t.key = contentKey(feature, [toolKey, t.key]);
+      }
+      built.shape.delete();
+    }
+  }
+  // Everything that didn't go into an existing body lands as this feature's
+  // own body — one for a single profile, a compound for several, which the
+  // split pass turns into one part per disjoint solid.
+  if (newSolids.length > 0) {
+    const built = newSolids.length === 1 ? newSolids[0] : compoundOf(newSolids);
+    bodies.push({
+      id: feature.id,
+      key: contentKey(feature, newKeys),
+      noSplit: newNoSplit || !!feature.previewTool,
+      ...built,
+    });
+  }
+}
+
+function buildDressUpFeature(feature: Extract<ResolvedFeature, { type: "dressup" }>, ctx: BuildContext): void {
+  const { bodies, previews, usedDressUps, warn } = ctx;
+  // Chamfer/fillet modifies each target body in place, keeping its id. One
+  // feature can dress several bodies (picks spanning parts); every target
+  // carries its own edge names, because a name only means something on the
+  // body it came from.
+  for (let ti = 0; ti < feature.targets.length; ti++) {
+    const spec = feature.targets[ti];
+    const target = requireBody(bodies, spec.targetId);
+    const beforeKey = target.key;
+    // Reuse the cached result when this feature over this input has already
+    // been solved. The canonical is cache-owned and never handed to the fold
+    // (which consumes and deletes what it is given), so the fold gets a copy
+    // — same discipline as buildCached.
+    const dressKey = contentKey(feature, [`t${ti}`, beforeKey]);
+    usedDressUps.add(dressKey);
+    let res: NamedShape & { changedBox?: [Vec3, Vec3] };
+    const hit = dressUpCache.get(dressKey);
+    if (hit) {
+      if (hit.warning) warn(hit.warning);
+      res = { ...copyNamed(hit.result), changedBox: hit.result.changedBox };
+    } else {
+      // Capture whatever this build reports, so a cache hit can replay it.
+      let raised: string | undefined;
+      const record: Warn = (msg) => {
+        raised = raised ? `${raised}; ${msg}` : msg;
+        warn(msg);
+      };
+      res = dressUpNamed(
+        feature.op,
+        target,
+        spec.edges,
+        spec.edgeRefs,
+        feature.size,
+        feature.id,
+        record,
+        feature.angle,
+        feature.flip,
+        spec.faces,
+        spec.faceRefs,
+      );
+      dressUpCache.set(dressKey, { result: { ...copyNamed(res), changedBox: res.changedBox }, warning: raised });
+    }
+    if (feature.previewDelta) {
+      // The two halves of the change, as solids the UI can ghost: what the
+      // bevel/round carves off (before − after) and what it fills in
+      // (after − before). Computed from the SAME pair the fold already has,
+      // so the preview can't disagree with the committed result. Each cut is
+      // keyed off the pre-dress body key so an unchanged dialog re-uses the
+      // cached tessellation instead of re-cutting on every keystroke.
+      // Both bodies are first restricted to the region the operation
+      // actually changed (`changedBox`). This is not an optimisation.
+      // Differencing the FULL bodies differences two solids that share large
+      // coincident faces everywhere the dress-up didn't reach, and OCCT
+      // hangs a zero-thickness FLAP off the true result there: a
+      // back-to-back pair of faces spanning the whole shared face, enclosing
+      // no volume. It passes every volume and solid-count test (it belongs
+      // to the one real solid) but it tessellates — and a zero-thickness
+      // sheet drawn without depth testing paints that entire face.
+      //
+      // The clip has to come FIRST, on the operands. Trimming the finished
+      // difference instead does not work: the flap makes that solid invalid,
+      // and intersecting an invalid solid with a box just returns nothing.
+      //
+      // Clipping can't abolish the effect either, only confine it — wherever
+      // a box wall passes through material common to both bodies it makes a
+      // fresh coincident pair of its own. The margin is therefore
+      // deliberately tiny: the box already contains the delta exactly, so
+      // any flap the clip induces lies inside the delta's own footprint,
+      // where it is indistinguishable from the delta. Growing the box "to be
+      // safe" is precisely wrong — it drags the flap back out into open
+      // space where it shows.
+      const clipBox = res.changedBox ? boxFromBounds(res.changedBox, Math.max(feature.size * 0.05, 1e-6)) : null;
+      const localize = (s: NamedShape) =>
+        clipBox ? booleanNamed("common", s, { shape: clipBox, names: new Map() }) : s;
+      const before: NamedShape = { shape: target.shape, names: target.names };
+      const beforeLocal = localize(before);
+      const afterLocal = localize(res);
+      const deltas: [string, NamedShape, NamedShape][] = [
+        [DRESSUP_DELTA_IDS.removed(dressUpDeltaBase(feature.id, ti)), beforeLocal, afterLocal],
+        [DRESSUP_DELTA_IDS.added(dressUpDeltaBase(feature.id, ti)), afterLocal, beforeLocal],
+      ];
+      for (const [id, base, tool] of deltas) {
+        const cut = booleanNamed("cut", base, tool);
+        // A convex edge yields only "removed", a concave one only "added" —
+        // the other cut has no solid content and is dropped, not rendered.
+        // The floor is a hundredth of `size` cubed — orders of magnitude
+        // below any real bevel or round, and above the free-floating debris
+        // a near-coincident boolean leaves behind: specks at the clip box's
+        // corners, and the razor slivers thrown off when a dress-up blends a
+        // FACETED cylinder into a true one, so that before and after differ
+        // by a hair over the whole wall. (Those slivers only get dropped
+        // when they come back as separate solids. Fused into the real delta
+        // they survive, and can defeat the mesher outright — a dress-up that
+        // spans two rings far apart on one faceted boss can still lose its
+        // ghost that way. It degrades to no preview, never a wrong one.)
+        const delta = solidsOnly(cut, feature.size ** 3 * 1e-2);
+        cut.shape.delete();
+        if (delta) previews.push({ id, key: contentKey(feature, [beforeKey, id]), preview: true, ...delta });
+      }
+      if (beforeLocal !== before) beforeLocal.shape.delete();
+      if (afterLocal !== res) afterLocal.shape.delete();
+      clipBox?.delete();
+    }
+    target.shape.delete();
+    target.shape = res.shape;
+    target.names = res.names;
+    target.key = contentKey(feature, [`t${ti}`, target.key]);
+  }
+}
+
+function buildShellFeature(feature: Extract<ResolvedFeature, { type: "shell" }>, ctx: BuildContext): void {
+  const { bodies, warn, features } = ctx;
+  // Hollow out the target body in place, keeping its id.
+  const target = requireBody(bodies, feature.targetId);
+  const res = shellNamed(
+    target,
+    feature.faces,
+    feature.faceRefs,
+    feature.thickness,
+    warn,
+    loftShellSource(target, features),
+  );
+  target.shape.delete();
+  target.shape = res.shape;
+  target.names = res.names;
+  target.key = contentKey(feature, [target.key]);
+}
+
+function buildBooleanFeature(feature: Extract<ResolvedFeature, { type: "boolean" }>, ctx: BuildContext): void {
+  const { bodies, used, keyOf } = ctx;
+  // Combine 2+ existing bodies into one, consuming the operands and
+  // keeping the result keyed by this feature's id. Names propagate through
+  // the boolean history so the result's faces/edges stay referenceable.
+  // CACHED by content key: OCCT booleans on complex solids are by far the
+  // dominant regen cost (seconds each), so on unchanged operands we reuse a
+  // cheap copy instead of recomputing the fuse/cut. The operands are still
+  // built (cheaply) and consumed below; only the boolean itself is skipped.
+  const operandKeys = feature.operands.map(keyOf);
+  const key = contentKey(feature, operandKeys);
+  // Unify inside the cached builder (so it runs only on a cache miss and the
+  // merged result is what's stored) — no black seam where operands met.
+  const result = buildCached(key, used, () => unifyBody(combineBodies(feature.op, feature.operands, bodies)));
+  const operandSet = new Set(feature.operands);
+  const remaining: Body[] = [];
+  for (const b of bodies) {
+    if (operandSet.has(b.id))
+      b.shape.delete(); // operand consumed
+    else remaining.push(b);
+  }
+  bodies.length = 0;
+  bodies.push(...remaining, { id: feature.id, key, ...result });
+}
+
+function buildTransformFeature(feature: Extract<ResolvedFeature, { type: "transform" }>, ctx: BuildContext): void {
+  const { bodies, warn } = ctx;
+  const target = requireBody(bodies, feature.targetId);
+  // The axis arrives baked unless it is a body EDGE, which only the B-rep
+  // can answer — resolved here (by persistent name, with the dress-up
+  // fingerprint fallback) and folded into the content key, so moving the
+  // edge's own body re-runs this transform instead of serving a stale one.
+  const depKeys = [target.key];
+  let axis: { origin: V3; dir: V3 };
+  if (feature.axisEdge) {
+    const axBody = requireBody(bodies, feature.axisEdge.sourceId);
+    depKeys.push(axBody.key);
+    axis = edgeRevolveAxis(
+      axBody,
+      feature.axisEdge.edgeName,
+      { mid: feature.axisEdge.mid, length: feature.axisEdge.length },
+      warn,
+    );
+  } else {
+    if (!feature.axisOrigin || !feature.axisDir) throw new Error("transform: missing rotation axis");
+    axis = { origin: feature.axisOrigin, dir: feature.axisDir };
+  }
+  const key = contentKey(feature, depKeys);
+  const res = transformNamed(target, feature, axis);
+  if (feature.copy) {
+    // Keep the original; add the transformed copy as a NEW body keyed by
+    // this feature (transformNamed builds a fresh shape, never consuming
+    // the target).
+    bodies.push({ id: feature.id, key, ...res });
+  } else {
+    // Move the target in place, keeping its id and names.
+    target.shape.delete();
+    target.shape = res.shape;
+    target.names = res.names;
+    target.key = key;
+  }
+}
+
+function buildMirrorFeature(feature: Extract<ResolvedFeature, { type: "mirror" }>, ctx: BuildContext): void {
+  const { bodies } = ctx;
+  // Reflect the target across the plane; keep the original, add the
+  // mirrored body as a NEW body keyed by this feature.
+  const src = requireBody(bodies, feature.targetId);
+  const res = mirrorNamed(src, feature.origin, feature.normal, feature.id);
+  bodies.push({ id: feature.id, key: contentKey(feature, [src.key]), ...res });
+}
+
+function buildPatternFeature(feature: Extract<ResolvedFeature, { type: "pattern" }>, ctx: BuildContext): void {
+  const { bodies, used, warn } = ctx;
+  // Repeat the target as rigid copies compounded into ONE new body keyed
+  // by this feature; the seed body is kept (like mirror). A face axis
+  // makes the result depend on that body's geometry, so fold its key in.
+  const src = requireBody(bodies, feature.targetId);
+  let axisOrigin = feature.axisOrigin as number[] | undefined;
+  let axisDir = feature.axisDir as number[] | undefined;
+  const depKeys = [src.key];
+  if (feature.axisFace) {
+    const axBody = requireBody(bodies, feature.axisFace.sourceId);
+    depKeys.push(axBody.key);
+    const line = facePatternAxis(
+      axBody,
+      feature.axisFace.faceName,
+      feature.axisFace.center,
+      feature.axisFace.normal,
+      warn,
+    );
+    axisOrigin = line.origin;
+    axisDir = line.dir;
+  }
+  const key = contentKey(feature, depKeys);
+  const res = buildCached(key, used, () => patternNamed(src, feature, axisOrigin, axisDir));
+  bodies.push({ id: feature.id, key, ...res });
+}
+
+function buildRevolveFeature(feature: Extract<ResolvedFeature, { type: "revolve" }>, ctx: BuildContext): void {
+  const { bodies, used, keyOf, warn } = ctx;
+  const profile = feature.profile;
+  // The profile is either a baked sketch region or a PLANAR body face. Both
+  // reduce to one face + the plane it lies in (`frame`): the face is what
+  // gets spun, the frame is what a plane/face axis is intersected with.
+  // A curved face profile is faceted, exactly as extrude does, so the
+  // surface of revolution stays booleanable.
+  let profileFace: Face;
+  let frame: ResolvedFrame;
+  if (profile.kind === "sketchRegion") {
+    if (profile.outline.length < 3) throw new Error("revolve: profile needs at least 3 points");
+    frame = profile.frame;
+    profileFace = regionFace(profile, planeOf(frame));
+  } else if (profile.kind === "bodyFace") {
+    const r = bodyProfileFace(
+      requireBody(bodies, profile.sourceId),
+      profile.faceName,
+      profile.center,
+      profile.normal,
+      warn,
+      "revolve profile face",
+    );
+    // A curved face has no single plane, so there'd be nothing to spin
+    // (and no plane for a plane/face axis to meet) — rejected up front
+    // rather than producing a self-intersecting solid.
+    if (r.face.geomType !== "PLANE") {
+      throw new Error(
+        "revolve: profile face must be planar — a curved face (cylinder, sphere, fillet) has no plane to spin",
+      );
+    }
+    const ff = facetedProfileFace(r.face, r.normal);
+    profileFace = ff.face;
+    frame = planarFaceFrame(r.face.center.toTuple() as V3, r.normal.toTuple() as V3);
+  } else {
+    throw new Error("revolve: profile must be a sketch region or a planar body face");
+  }
+  // A body-face axis is resolved here (needs the built body + profile
+  // plane), as is a plane axis whose profile is a body face (the document
+  // layer had no profile plane to intersect it with). A sketch-line axis —
+  // and a plane axis on a sketch-region profile — arrive pre-baked.
+  let axisOrigin = feature.axisOrigin;
+  let axisDir = feature.axisDir;
+  if (feature.axisFace) {
+    const axBody = requireBody(bodies, feature.axisFace.sourceId);
+    const line = faceRevolveAxis(
+      axBody,
+      feature.axisFace.faceName,
+      feature.axisFace.center,
+      frame,
+      feature.axisFace.normal,
+      warn,
+    );
+    axisOrigin = line.origin;
+    axisDir = line.dir;
+  } else if (feature.axisEdge) {
+    const axBody = requireBody(bodies, feature.axisEdge.sourceId);
+    const line = edgeRevolveAxis(
+      axBody,
+      feature.axisEdge.edgeName,
+      { mid: feature.axisEdge.mid, length: feature.axisEdge.length },
+      warn,
+    );
+    axisOrigin = line.origin;
+    axisDir = line.dir;
+  } else if (feature.axisPlane) {
+    const line = intersectPlanes(feature.axisPlane.origin, feature.axisPlane.normal, frame.origin, frame.normal);
+    if (!line) throw new Error("revolve: axis plane is parallel to the profile plane (no intersection line)");
+    axisOrigin = line.origin;
+    axisDir = line.dir;
+  }
+  if (!axisOrigin || !axisDir) throw new Error("revolve: missing axis");
+  const ao = axisOrigin,
+    ad = axisDir;
+  // A body-face profile or axis makes the result depend on that body's
+  // geometry, so fold its key in; baked profiles/axes are fully captured by
+  // the feature itself.
+  const sourceKeys = [
+    ...(profile.kind === "bodyFace" ? [keyOf(profile.sourceId)] : []),
+    ...(feature.axisFace ? [keyOf(feature.axisFace.sourceId)] : []),
+    ...(feature.axisEdge ? [keyOf(feature.axisEdge.sourceId)] : []),
+  ];
+  const key = sourceKeys.length ? contentKey(feature, sourceKeys) : builderKey(feature);
+  const face = profileFace;
+  const built = buildCached(key, used, () =>
+    revolveFromFace(face, ao, ad, (feature.angle * Math.PI) / 180, feature.symmetric, feature.id),
+  );
+  bodies.push({ id: feature.id, key, ...built });
+}
+
+function buildSweepFeature(feature: Extract<ResolvedFeature, { type: "sweep" }>, ctx: BuildContext): void {
+  const { bodies, used } = ctx;
+  if (feature.profile.kind !== "sketchRegion") throw new Error("sweep: profile must be a sketch region");
+  const swProfile = feature.profile; // narrowed; used inside the build closure
+  const path = feature.path;
+  const key = builderKey(feature);
+  bodies.push({ id: feature.id, key, ...buildCached(key, used, () => sweepBody(swProfile, path, feature.id)) });
+}
+
+function buildLoftFeature(feature: Extract<ResolvedFeature, { type: "loft" }>, ctx: BuildContext): void {
+  const { bodies, used } = ctx;
+  const regions = feature.profiles.filter((p) => p.kind === "sketchRegion");
+  if (regions.length < 2) throw new Error("loft: needs at least 2 sketch-region sections");
+  const key = builderKey(feature);
+  bodies.push({
+    id: feature.id,
+    key,
+    ...buildCached(key, used, () =>
+      loftBody(regions as Extract<ResolvedProfile, { kind: "sketchRegion" }>[], feature.id),
+    ),
+  });
+}
+
 function buildBodies(
   features: ResolvedFeature[],
   used: Set<string> = new Set(),
@@ -3761,548 +4339,45 @@ function buildBodies(
     const warn: Warn = (msg) => {
       warnings[feature.id] = warnings[feature.id] ? `${warnings[feature.id]}; ${msg}` : msg;
     };
+    const ctx: BuildContext = { bodies, previews, used, usedDressUps, keyOf, warn, features };
     try {
-      if (feature.type === "primitive") {
-        const key = builderKey(feature);
-        bodies.push({ id: feature.id, key, ...buildCached(key, used, () => buildPrimitive(feature)) });
-      } else if (feature.type === "import") {
-        const key = builderKey(feature);
-        bodies.push({
-          id: feature.id,
-          key,
-          ...buildCached(key, used, () => importStepNamed(feature.source, feature.id)),
-        });
-      } else if (feature.type === "extrude") {
-        const { flip, distance, extent, mode } = feature;
-        // A "remove" cuts *into* the body, so its natural direction is opposite
-        // the profile normal — the Flip toggle then reverses that. New/Add follow
-        // the normal outward.
-        const dirFlip = mode === "remove" ? !flip : flip;
-        // One tool per profile. In "new" they gather into a single body, which
-        // splitPartsPass then breaks into one PART per disjoint solid; in
-        // add/remove each tool goes into its own target, so extruding faces of
-        // two different parts modifies each of them (see targetOf below).
-        const newSolids: NamedShape[] = [];
-        const newKeys: string[] = [];
-        let newNoSplit = false;
-        for (let pi = 0; pi < feature.profiles.length; pi++) {
-          const profile = feature.profiles[pi];
-          // Merge scope. A profile taken from a body face acts on THAT body —
-          // the part it grew from — and a sketch profile, which has no body of
-          // its own, uses the target the dialog chose. Resolved up front (rather
-          // than after building the tool) because extent "throughAll" needs the
-          // target's geometry to size the tool.
-          const targetId =
-            mode !== "new" ? (profile.kind === "bodyFace" ? profile.sourceId : feature.targetId) : undefined;
-          const targets = targetId ? bodies.filter((b) => b.id === targetId) : [];
-          // Both of these used to end at the same silent `built.shape.delete()`
-          // below — no error, no visible effect — so a cut whose target had gone
-          // simply vanished. Fail the feature instead, the way every other
-          // missing-body reference does (`requireBody`). A given targetId that
-          // names nothing is a DANGLING reference: the target was deleted,
-          // suppressed, moved after this extrude, or merged into another body by
-          // an earlier boolean. `add` with NO target at all stays the documented
-          // fallback (the tool becomes a new body of its own), and the dialog's
-          // ghost is exempt — it only ever shows the tool.
-          if (!feature.previewTool && targets.length === 0) {
-            if (targetId) {
-              throw new Error(
-                "extrude: the target body no longer exists — it was deleted, suppressed, moved after this extrude, or merged into another body. Re-pick the target.",
-              );
-            }
-            if (mode === "remove") throw new Error("extrude: a Remove needs a target body to cut from.");
-          }
-
-          // One profile face for region/body-face; many (one per glyph) for text.
-          let faces: Face[];
-          let normal: Vector;
-          if (profile.kind === "sketchRegion") {
-            const r = sketchRegionFace(profile);
-            faces = [r.face];
-            normal = r.normal;
-          } else if (profile.kind === "sketchText") {
-            const r = sketchTextFaces(profile);
-            faces = r.faces;
-            normal = r.normal;
-          } else {
-            const r = bodyProfileFace(
-              requireBody(bodies, profile.sourceId),
-              profile.faceName,
-              profile.center,
-              profile.normal,
-              warn,
-              "profile face",
-            );
-            // Facet a curved profile face (cylinder cap, fillet…) so its extruded
-            // wall is planar and can be cut/fused — an analytic cylinder wall can't
-            // (StdFail_NotDone). No-op for straight-edged faces.
-            const ff = facetedProfileFace(r.face, r.normal);
-            faces = [ff.face];
-            normal = ff.normal;
-          }
-          const face = faces[0]; // representative for through-all / up-to-face sizing
-
-          const sign = dirFlip ? -1 : 1;
-          // "Up to face/next" build a deliberately LONG prism and then CUT it flush
-          // with the target face's plane (`clip`), so a target that isn't
-          // perpendicular to the extrude axis yields a conforming (angled) top
-          // rather than a flat approximation. "Up to face" derives its own
-          // direction from the chosen face (ignoring Flip); "up to next" uses the
-          // Flip-adjusted direction.
-          let lengths: number[];
-          let clip: ClipPlane | null = null;
-          if (extent === "upToFace" && feature.upTo) {
-            const upBody = requireBody(bodies, feature.upTo.sourceId);
-            const up = bodyProfileFace(
-              upBody,
-              feature.upTo.faceName,
-              feature.upTo.center,
-              feature.upTo.normal,
-              warn,
-              "up-to face",
-            );
-            const t = upToFaceLength(face, normal, up.face, up.normal); // signed, validates reachability
-            const reach = bigReach(face, bodies);
-            lengths = [(t >= 0 ? 1 : -1) * reach];
-            clip = makeClipPlane(
-              up.face.center.toTuple() as Vec3,
-              up.normal.normalized().toTuple() as Vec3,
-              normal,
-              t >= 0 ? 1 : -1,
-              reach,
-            );
-          } else if (extent === "upToNext") {
-            // Scan every existing body (the model so far), not just the boolean
-            // target, so a boss can stop at a separate wall ahead of it.
-            const tgt = upToNextFace(face, normal, sign, bodies);
-            const reach = bigReach(face, bodies);
-            lengths = [sign * reach];
-            clip = makeClipPlane(tgt.point, tgt.normal, normal, sign, reach);
-          } else {
-            lengths = extrudeLengths(extent, distance, face, targets).map((l) => l * sign);
-          }
-          // Prism every face (one per glyph for text) at every length (two for
-          // symmetric). The symmetric halves of a SINGLE face touch at the profile
-          // plane, so they're fused into one solid; distinct glyph faces are
-          // disjoint, so they're collected into a COMPOUND rather than boolean-fused
-          // (fusing dozens of glyphs is the bottleneck that made long text time out).
-          // A lone profile keeps the feature id as its name prefix — so every
-          // stored reference into a single-profile extrude still resolves;
-          // several profiles scope theirs as `${id}/p{n}`, and text scopes each
-          // glyph below that, so no two profiles' faces share a name.
-          const prefixBase = feature.profiles.length > 1 ? `${feature.id}/p${pi}` : feature.id;
-          const glyphSolids: NamedShape[] = [];
-          for (let gi = 0; gi < faces.length; gi++) {
-            const prefix = faces.length > 1 ? `${prefixBase}/g${gi}` : prefixBase;
-            let glyph: NamedShape | null = null;
-            for (const len of lengths) {
-              let piece = prismFromFace(faces[gi], normal, len, prefix);
-              // Up to face/next: trim the long prism flush with the target plane.
-              if (clip) {
-                const box = halfSpaceBox(clip.point, clip.normal, clip.boxSize);
-                const trimmed = booleanNamed("cut", piece, { shape: box, names: new Map() });
-                piece.shape.delete();
-                box.delete();
-                piece = trimmed;
-              }
-              if (glyph === null) {
-                glyph = piece;
-              } else {
-                const fused = booleanNamed("fuse", glyph, piece);
-                glyph.shape.delete();
-                piece.shape.delete();
-                glyph = fused;
-              }
-            }
-            if (glyph) glyphSolids.push(glyph);
-          }
-          const built: NamedShape | null =
-            glyphSolids.length === 0 ? null : glyphSolids.length === 1 ? glyphSolids[0] : compoundOf(glyphSolids);
-          if (built === null) throw new Error("extrude: profile produced no geometry");
-
-          // Content key of the swept tool: the feature (and which profile of it)
-          // plus the keys of any bodies it read (a body-face profile / up-to-face
-          // target). Result keys fold in the affected target's key so a cut/fuse
-          // re-meshes only when it changed.
-          const toolInputKeys: string[] = [`p${pi}`];
-          if (profile.kind === "bodyFace") toolInputKeys.push(keyOf(profile.sourceId));
-          if (extent === "upToFace" && feature.upTo) toolInputKeys.push(keyOf(feature.upTo.sourceId));
-          // "Up to next" sizes the tool against the whole model, so fold in every
-          // scanned body's key — the ghost/tool must re-solve when any of them moves.
-          if (extent === "upToNext") for (const b of bodies) toolInputKeys.push(b.key);
-          const toolKey = contentKey(feature, toolInputKeys);
-
-          // Text is one solid per glyph and always disjoint; its letters are not
-          // parts, so a compound holding any stays whole (see splitPartsPass).
-          if (profile.kind === "sketchText") newNoSplit = true;
-          if (feature.previewTool || mode === "new" || targets.length === 0) {
-            // previewTool: the live ghost is just the swept tool, leaving every
-            // existing body untouched so they keep their own colour.
-            // targets.length === 0: only "add" with no target reaches this now
-            // (checked just above) — nothing to fuse into, so it becomes a body
-            // of its own.
-            if (feature.previewTool || mode !== "remove") {
-              newSolids.push(built);
-              newKeys.push(toolKey);
-            } else {
-              built.shape.delete();
-            }
-          } else if (mode === "add") {
-            // Fuse the tool into the targets, preserving the first target's id
-            // (and propagating names through the boolean history).
-            const targetKeys = targets.map((t) => t.key);
-            let acc: NamedShape = built;
-            for (const t of targets) {
-              const next = booleanNamed("fuse", t, acc);
-              acc.shape.delete();
-              t.shape.delete();
-              acc = next;
-            }
-            // Merge co-planar faces the fuse left (e.g. stacking a taller section
-            // on a body) so there's no black seam line where the tool met the body.
-            acc = unifyBody(acc);
-            const keepId = targets[0].id;
-            const remaining = bodies.filter((b) => !targets.includes(b));
-            bodies.length = 0;
-            bodies.push(...remaining, { id: keepId, key: contentKey(feature, [toolKey, ...targetKeys]), ...acc });
-          } else {
-            // remove: cut the tool from each target in place, preserving ids.
-            for (const t of targets) {
-              const next = unifyBody(booleanNamed("cut", t, built));
-              t.shape.delete();
-              t.shape = next.shape;
-              t.names = next.names;
-              t.key = contentKey(feature, [toolKey, t.key]);
-            }
-            built.shape.delete();
-          }
-        }
-        // Everything that didn't go into an existing body lands as this feature's
-        // own body — one for a single profile, a compound for several, which the
-        // split pass turns into one part per disjoint solid.
-        if (newSolids.length > 0) {
-          const built = newSolids.length === 1 ? newSolids[0] : compoundOf(newSolids);
-          bodies.push({
-            id: feature.id,
-            key: contentKey(feature, newKeys),
-            noSplit: newNoSplit || !!feature.previewTool,
-            ...built,
-          });
-        }
-      } else if (feature.type === "dressup") {
-        // Chamfer/fillet modifies each target body in place, keeping its id. One
-        // feature can dress several bodies (picks spanning parts); every target
-        // carries its own edge names, because a name only means something on the
-        // body it came from.
-        for (let ti = 0; ti < feature.targets.length; ti++) {
-          const spec = feature.targets[ti];
-          const target = requireBody(bodies, spec.targetId);
-          const beforeKey = target.key;
-          // Reuse the cached result when this feature over this input has already
-          // been solved. The canonical is cache-owned and never handed to the fold
-          // (which consumes and deletes what it is given), so the fold gets a copy
-          // — same discipline as buildCached.
-          const dressKey = contentKey(feature, [`t${ti}`, beforeKey]);
-          usedDressUps.add(dressKey);
-          let res: NamedShape & { changedBox?: [Vec3, Vec3] };
-          const hit = dressUpCache.get(dressKey);
-          if (hit) {
-            if (hit.warning) warn(hit.warning);
-            res = { ...copyNamed(hit.result), changedBox: hit.result.changedBox };
-          } else {
-            // Capture whatever this build reports, so a cache hit can replay it.
-            let raised: string | undefined;
-            const record: Warn = (msg) => {
-              raised = raised ? `${raised}; ${msg}` : msg;
-              warn(msg);
-            };
-            res = dressUpNamed(
-              feature.op,
-              target,
-              spec.edges,
-              spec.edgeRefs,
-              feature.size,
-              feature.id,
-              record,
-              feature.angle,
-              feature.flip,
-              spec.faces,
-              spec.faceRefs,
-            );
-            dressUpCache.set(dressKey, { result: { ...copyNamed(res), changedBox: res.changedBox }, warning: raised });
-          }
-          if (feature.previewDelta) {
-            // The two halves of the change, as solids the UI can ghost: what the
-            // bevel/round carves off (before − after) and what it fills in
-            // (after − before). Computed from the SAME pair the fold already has,
-            // so the preview can't disagree with the committed result. Each cut is
-            // keyed off the pre-dress body key so an unchanged dialog re-uses the
-            // cached tessellation instead of re-cutting on every keystroke.
-            // Both bodies are first restricted to the region the operation
-            // actually changed (`changedBox`). This is not an optimisation.
-            // Differencing the FULL bodies differences two solids that share large
-            // coincident faces everywhere the dress-up didn't reach, and OCCT
-            // hangs a zero-thickness FLAP off the true result there: a
-            // back-to-back pair of faces spanning the whole shared face, enclosing
-            // no volume. It passes every volume and solid-count test (it belongs
-            // to the one real solid) but it tessellates — and a zero-thickness
-            // sheet drawn without depth testing paints that entire face.
-            //
-            // The clip has to come FIRST, on the operands. Trimming the finished
-            // difference instead does not work: the flap makes that solid invalid,
-            // and intersecting an invalid solid with a box just returns nothing.
-            //
-            // Clipping can't abolish the effect either, only confine it — wherever
-            // a box wall passes through material common to both bodies it makes a
-            // fresh coincident pair of its own. The margin is therefore
-            // deliberately tiny: the box already contains the delta exactly, so
-            // any flap the clip induces lies inside the delta's own footprint,
-            // where it is indistinguishable from the delta. Growing the box "to be
-            // safe" is precisely wrong — it drags the flap back out into open
-            // space where it shows.
-            const clipBox = res.changedBox ? boxFromBounds(res.changedBox, Math.max(feature.size * 0.05, 1e-6)) : null;
-            const localize = (s: NamedShape) =>
-              clipBox ? booleanNamed("common", s, { shape: clipBox, names: new Map() }) : s;
-            const before: NamedShape = { shape: target.shape, names: target.names };
-            const beforeLocal = localize(before);
-            const afterLocal = localize(res);
-            const deltas: [string, NamedShape, NamedShape][] = [
-              [DRESSUP_DELTA_IDS.removed(dressUpDeltaBase(feature.id, ti)), beforeLocal, afterLocal],
-              [DRESSUP_DELTA_IDS.added(dressUpDeltaBase(feature.id, ti)), afterLocal, beforeLocal],
-            ];
-            for (const [id, base, tool] of deltas) {
-              const cut = booleanNamed("cut", base, tool);
-              // A convex edge yields only "removed", a concave one only "added" —
-              // the other cut has no solid content and is dropped, not rendered.
-              // The floor is a hundredth of `size` cubed — orders of magnitude
-              // below any real bevel or round, and above the free-floating debris
-              // a near-coincident boolean leaves behind: specks at the clip box's
-              // corners, and the razor slivers thrown off when a dress-up blends a
-              // FACETED cylinder into a true one, so that before and after differ
-              // by a hair over the whole wall. (Those slivers only get dropped
-              // when they come back as separate solids. Fused into the real delta
-              // they survive, and can defeat the mesher outright — a dress-up that
-              // spans two rings far apart on one faceted boss can still lose its
-              // ghost that way. It degrades to no preview, never a wrong one.)
-              const delta = solidsOnly(cut, feature.size ** 3 * 1e-2);
-              cut.shape.delete();
-              if (delta) previews.push({ id, key: contentKey(feature, [beforeKey, id]), preview: true, ...delta });
-            }
-            if (beforeLocal !== before) beforeLocal.shape.delete();
-            if (afterLocal !== res) afterLocal.shape.delete();
-            clipBox?.delete();
-          }
-          target.shape.delete();
-          target.shape = res.shape;
-          target.names = res.names;
-          target.key = contentKey(feature, [`t${ti}`, target.key]);
-        }
-      } else if (feature.type === "shell") {
-        // Hollow out the target body in place, keeping its id.
-        const target = requireBody(bodies, feature.targetId);
-        const res = shellNamed(
-          target,
-          feature.faces,
-          feature.faceRefs,
-          feature.thickness,
-          warn,
-          loftShellSource(target, features),
-        );
-        target.shape.delete();
-        target.shape = res.shape;
-        target.names = res.names;
-        target.key = contentKey(feature, [target.key]);
-      } else if (feature.type === "boolean") {
-        // Combine 2+ existing bodies into one, consuming the operands and
-        // keeping the result keyed by this feature's id. Names propagate through
-        // the boolean history so the result's faces/edges stay referenceable.
-        // CACHED by content key: OCCT booleans on complex solids are by far the
-        // dominant regen cost (seconds each), so on unchanged operands we reuse a
-        // cheap copy instead of recomputing the fuse/cut. The operands are still
-        // built (cheaply) and consumed below; only the boolean itself is skipped.
-        const operandKeys = feature.operands.map(keyOf);
-        const key = contentKey(feature, operandKeys);
-        // Unify inside the cached builder (so it runs only on a cache miss and the
-        // merged result is what's stored) — no black seam where operands met.
-        const result = buildCached(key, used, () => unifyBody(combineBodies(feature.op, feature.operands, bodies)));
-        const operandSet = new Set(feature.operands);
-        const remaining: Body[] = [];
-        for (const b of bodies) {
-          if (operandSet.has(b.id))
-            b.shape.delete(); // operand consumed
-          else remaining.push(b);
-        }
-        bodies.length = 0;
-        bodies.push(...remaining, { id: feature.id, key, ...result });
-      } else if (feature.type === "transform") {
-        const target = requireBody(bodies, feature.targetId);
-        // The axis arrives baked unless it is a body EDGE, which only the B-rep
-        // can answer — resolved here (by persistent name, with the dress-up
-        // fingerprint fallback) and folded into the content key, so moving the
-        // edge's own body re-runs this transform instead of serving a stale one.
-        const depKeys = [target.key];
-        let axis: { origin: V3; dir: V3 };
-        if (feature.axisEdge) {
-          const axBody = requireBody(bodies, feature.axisEdge.sourceId);
-          depKeys.push(axBody.key);
-          axis = edgeRevolveAxis(
-            axBody,
-            feature.axisEdge.edgeName,
-            { mid: feature.axisEdge.mid, length: feature.axisEdge.length },
-            warn,
-          );
-        } else {
-          if (!feature.axisOrigin || !feature.axisDir) throw new Error("transform: missing rotation axis");
-          axis = { origin: feature.axisOrigin, dir: feature.axisDir };
-        }
-        const key = contentKey(feature, depKeys);
-        const res = transformNamed(target, feature, axis);
-        if (feature.copy) {
-          // Keep the original; add the transformed copy as a NEW body keyed by
-          // this feature (transformNamed builds a fresh shape, never consuming
-          // the target).
-          bodies.push({ id: feature.id, key, ...res });
-        } else {
-          // Move the target in place, keeping its id and names.
-          target.shape.delete();
-          target.shape = res.shape;
-          target.names = res.names;
-          target.key = key;
-        }
-      } else if (feature.type === "mirror") {
-        // Reflect the target across the plane; keep the original, add the
-        // mirrored body as a NEW body keyed by this feature.
-        const src = requireBody(bodies, feature.targetId);
-        const res = mirrorNamed(src, feature.origin, feature.normal, feature.id);
-        bodies.push({ id: feature.id, key: contentKey(feature, [src.key]), ...res });
-      } else if (feature.type === "pattern") {
-        // Repeat the target as rigid copies compounded into ONE new body keyed
-        // by this feature; the seed body is kept (like mirror). A face axis
-        // makes the result depend on that body's geometry, so fold its key in.
-        const src = requireBody(bodies, feature.targetId);
-        let axisOrigin = feature.axisOrigin as number[] | undefined;
-        let axisDir = feature.axisDir as number[] | undefined;
-        const depKeys = [src.key];
-        if (feature.axisFace) {
-          const axBody = requireBody(bodies, feature.axisFace.sourceId);
-          depKeys.push(axBody.key);
-          const line = facePatternAxis(
-            axBody,
-            feature.axisFace.faceName,
-            feature.axisFace.center,
-            feature.axisFace.normal,
-            warn,
-          );
-          axisOrigin = line.origin;
-          axisDir = line.dir;
-        }
-        const key = contentKey(feature, depKeys);
-        const res = buildCached(key, used, () => patternNamed(src, feature, axisOrigin, axisDir));
-        bodies.push({ id: feature.id, key, ...res });
-      } else if (feature.type === "revolve") {
-        const profile = feature.profile;
-        // The profile is either a baked sketch region or a PLANAR body face. Both
-        // reduce to one face + the plane it lies in (`frame`): the face is what
-        // gets spun, the frame is what a plane/face axis is intersected with.
-        // A curved face profile is faceted, exactly as extrude does, so the
-        // surface of revolution stays booleanable.
-        let profileFace: Face;
-        let frame: ResolvedFrame;
-        if (profile.kind === "sketchRegion") {
-          if (profile.outline.length < 3) throw new Error("revolve: profile needs at least 3 points");
-          frame = profile.frame;
-          profileFace = regionFace(profile, planeOf(frame));
-        } else if (profile.kind === "bodyFace") {
-          const r = bodyProfileFace(
-            requireBody(bodies, profile.sourceId),
-            profile.faceName,
-            profile.center,
-            profile.normal,
-            warn,
-            "revolve profile face",
-          );
-          // A curved face has no single plane, so there'd be nothing to spin
-          // (and no plane for a plane/face axis to meet) — rejected up front
-          // rather than producing a self-intersecting solid.
-          if (r.face.geomType !== "PLANE") {
-            throw new Error(
-              "revolve: profile face must be planar — a curved face (cylinder, sphere, fillet) has no plane to spin",
-            );
-          }
-          const ff = facetedProfileFace(r.face, r.normal);
-          profileFace = ff.face;
-          frame = planarFaceFrame(r.face.center.toTuple() as V3, r.normal.toTuple() as V3);
-        } else {
-          throw new Error("revolve: profile must be a sketch region or a planar body face");
-        }
-        // A body-face axis is resolved here (needs the built body + profile
-        // plane), as is a plane axis whose profile is a body face (the document
-        // layer had no profile plane to intersect it with). A sketch-line axis —
-        // and a plane axis on a sketch-region profile — arrive pre-baked.
-        let axisOrigin = feature.axisOrigin;
-        let axisDir = feature.axisDir;
-        if (feature.axisFace) {
-          const axBody = requireBody(bodies, feature.axisFace.sourceId);
-          const line = faceRevolveAxis(
-            axBody,
-            feature.axisFace.faceName,
-            feature.axisFace.center,
-            frame,
-            feature.axisFace.normal,
-            warn,
-          );
-          axisOrigin = line.origin;
-          axisDir = line.dir;
-        } else if (feature.axisEdge) {
-          const axBody = requireBody(bodies, feature.axisEdge.sourceId);
-          const line = edgeRevolveAxis(
-            axBody,
-            feature.axisEdge.edgeName,
-            { mid: feature.axisEdge.mid, length: feature.axisEdge.length },
-            warn,
-          );
-          axisOrigin = line.origin;
-          axisDir = line.dir;
-        } else if (feature.axisPlane) {
-          const line = intersectPlanes(feature.axisPlane.origin, feature.axisPlane.normal, frame.origin, frame.normal);
-          if (!line) throw new Error("revolve: axis plane is parallel to the profile plane (no intersection line)");
-          axisOrigin = line.origin;
-          axisDir = line.dir;
-        }
-        if (!axisOrigin || !axisDir) throw new Error("revolve: missing axis");
-        const ao = axisOrigin,
-          ad = axisDir;
-        // A body-face profile or axis makes the result depend on that body's
-        // geometry, so fold its key in; baked profiles/axes are fully captured by
-        // the feature itself.
-        const sourceKeys = [
-          ...(profile.kind === "bodyFace" ? [keyOf(profile.sourceId)] : []),
-          ...(feature.axisFace ? [keyOf(feature.axisFace.sourceId)] : []),
-          ...(feature.axisEdge ? [keyOf(feature.axisEdge.sourceId)] : []),
-        ];
-        const key = sourceKeys.length ? contentKey(feature, sourceKeys) : builderKey(feature);
-        const face = profileFace;
-        const built = buildCached(key, used, () =>
-          revolveFromFace(face, ao, ad, (feature.angle * Math.PI) / 180, feature.symmetric, feature.id),
-        );
-        bodies.push({ id: feature.id, key, ...built });
-      } else if (feature.type === "sweep") {
-        if (feature.profile.kind !== "sketchRegion") throw new Error("sweep: profile must be a sketch region");
-        const swProfile = feature.profile; // narrowed; used inside the build closure
-        const path = feature.path;
-        const key = builderKey(feature);
-        bodies.push({ id: feature.id, key, ...buildCached(key, used, () => sweepBody(swProfile, path, feature.id)) });
-      } else if (feature.type === "loft") {
-        const regions = feature.profiles.filter((p) => p.kind === "sketchRegion");
-        if (regions.length < 2) throw new Error("loft: needs at least 2 sketch-region sections");
-        const key = builderKey(feature);
-        bodies.push({
-          id: feature.id,
-          key,
-          ...buildCached(key, used, () =>
-            loftBody(regions as Extract<ResolvedProfile, { kind: "sketchRegion" }>[], feature.id),
-          ),
-        });
+      switch (feature.type) {
+        case "primitive":
+          buildPrimitiveFeature(feature, ctx);
+          break;
+        case "import":
+          buildImportFeature(feature, ctx);
+          break;
+        case "extrude":
+          buildExtrudeFeature(feature, ctx);
+          break;
+        case "dressup":
+          buildDressUpFeature(feature, ctx);
+          break;
+        case "shell":
+          buildShellFeature(feature, ctx);
+          break;
+        case "boolean":
+          buildBooleanFeature(feature, ctx);
+          break;
+        case "transform":
+          buildTransformFeature(feature, ctx);
+          break;
+        case "mirror":
+          buildMirrorFeature(feature, ctx);
+          break;
+        case "pattern":
+          buildPatternFeature(feature, ctx);
+          break;
+        case "revolve":
+          buildRevolveFeature(feature, ctx);
+          break;
+        case "sweep":
+          buildSweepFeature(feature, ctx);
+          break;
+        case "loft":
+          buildLoftFeature(feature, ctx);
+          break;
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: errorMessage(err) });

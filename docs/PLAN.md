@@ -141,15 +141,15 @@ The repo is going public. This section is the resumable state of that push:
 read it, check the marker, pick up the next unticked item. Delete the section
 once every wave is done.
 
-**Marker — 2026-09-14, main at `befe5d7`.** Waves A.1, A.2 and A.3 landed.
-Next: Wave A.4 (kernel buildBodies split).
+**Marker — 2026-09-14, main at `befe5d7`.** Waves A.1–A.4 landed. Next:
+Wave A.5 (Viewport mount-effect split).
 
 **Done**
 
 - [x] Only the public sites phone home; dead links go somewhere (`e7aa92f`).
 - [x] Turnstile token sent with every bug report (`e9edcd4`). `TURNSTILE_SECRET`
-      is set on the Pages project. **Still owed: file one real report against
-      production and confirm the Function accepts the token.**
+      is set on the Pages project, and one real report has been filed against
+      production with the Function accepting the token — the check can stay on.
 - [x] Docs consolidated — PLAN cut 1679→330, EXTRUDE_IMPROVEMENTS and
       PATTERNS_PLAN folded in and deleted, cad-feature-comparison deleted, the
       Split design rescued into BACKLOG (`8b0c514`).
@@ -170,6 +170,23 @@ Next: Wave A.4 (kernel buildBodies split).
       see the comment on it. What is left in that band is UI labelling and DOM
       (`mirrorPlaneLabel`, `downloadBlob`, `safeFilename`); the pure-helper seam
       in App.tsx is now genuinely exhausted.
+- [x] **A.4** `src/kernel/cache.ts` extracted with 16 tests, and `buildBodies`'s
+      542-line if/else chain split into one named builder per feature type
+      behind a switch, sharing an explicit `BuildContext`
+      (`refactor/kernel-cache-split`). worker.ts 5385 → 5460, so **+75** — the
+      split adds 12 signatures and a switch while removing only the 19 cache
+      lines. The win is that `buildBodies` itself went 582 → 80 lines and each
+      feature type is now separately readable; it is not a line count.
+      The branch's stale `contentKey` was real and was avoided: its
+      `buildTransformFeature` keys on `[target.key]` alone, where main resolves
+      a body-EDGE axis and folds that body's key in too. 11 of the 12 extracted
+      bodies are byte-identical to the originals (the 12th differs only where
+      prettier rejoined a line that fits at the shallower indent), and no branch
+      contained a `return`/`continue` that would change meaning inside a
+      function. worker.ts still has no unit coverage — Vitest cannot load the
+      OCCT wasm — so all 12 types were built through the live app instead, by
+      `scripts/verify-build-bodies.mjs`, which is kept: it is the only thing
+      that exercises this file at all.
 
 **Also owed, outside the waves**
 
@@ -177,21 +194,19 @@ Next: Wave A.4 (kernel buildBodies split).
       `push` trigger is commented out in `.github/workflows/pages.yml` because
       GitHub Pages from a private repo needs a paid plan.
 
-**Wave A — harvest (remaining).** Four month-old refactor branches on
-`origin/claude/*`, all single commits from 2026-08-04. Their target files have
-grown 25–43% since, so **re-apply the idea against main; never rebase or
-cherry-pick**. Both waves that landed were re-done from scratch for this reason.
+**Wave A — harvest (remaining).** One month-old refactor branch left on
+`origin/claude/*`, a single commit from 2026-08-04. Its target file has grown
+25% since, so **re-apply the idea against main; never rebase or cherry-pick**.
+All four waves that landed were re-done from scratch for this reason, and A.4
+found a real bug waiting in its branch (a `contentKey` missing a dependency).
 
-- [ ] **A.4** `claude/kernel-buildbodies-split` (`9693a1c`) — extract
-      `src/kernel/cache.ts` and split the `buildBodies` dispatch. The branch's
-      `contentKey` is stale: it predates folding the transform axis body's key
-      in. worker.ts is 5385 lines now against 3754 then.
 - [ ] **A.5** `claude/viewport-mount-effect-split` (`d203e75`) — four modules
       (`geometryQuery`, `materials`, `sceneMath`, `viewCube`) + tests, −565 from
       Viewport.tsx (5294 now, 4246 then). Only `gizmoShape.ts` lives there today.
 
 **Wave B — test infrastructure.** jsdom + `@testing-library/react`, so stateful
-hooks can be tested at all; a Playwright/MCP path for `worker.ts`. Everything
+hooks can be tested at all; a Playwright/MCP path for `worker.ts` — A.4 left a
+first one at `scripts/verify-build-bodies.mjs` to generalise from. Everything
 below waits on this.
 
 **Wave C — boundaries.** `claude/use-persisted-documents-hook` (`4ba9d64`, a
