@@ -1701,51 +1701,14 @@ export default function App() {
   // Normally only one can be live (each belongs to a different dialog), but
   // nothing stops a second dialog being opened over the first, and then the two
   // orders must not disagree about who wins.
-  const selectionArming = ((): { message: string; cancel: () => void } | null => {
-    if (pickingUpFace)
-      return { message: "Select the body face to extrude up to", cancel: () => setPickingUpFace(false) };
-    if (sweepDialog?.armed) {
-      return {
-        message:
-          sweepDialog.armed === "profile"
-            ? "Select the closed sketch region to sweep"
-            : "Select the path to sweep along — a sketch line, arc, or spline",
-        cancel: () => setSweepDialog((d) => (d ? { ...d, armed: null } : d)),
-      };
-    }
-    if (loftDialog?.arming) {
-      return {
-        message: "Select the sketch regions to loft through, in order — click a picked one again to drop it",
-        cancel: () => setLoftDialog((d) => (d ? { ...d, arming: false } : d)),
-      };
-    }
-    if (extrudeDialog?.arming) {
-      return {
-        message: "Select the sketch regions and/or planar faces to extrude — click a picked one again to drop it",
-        cancel: () => setExtrudeDialog((d) => (d ? { ...d, arming: false } : d)),
-      };
-    }
-    if (dressUpDialog?.arming) {
-      return {
-        message: `Select the edges and faces to ${dressUpDialog.op} — click a picked one again to drop it`,
-        cancel: () => setDressUpDialog((d) => (d ? { ...d, arming: false } : d)),
-      };
-    }
-    if (mirrorDialog?.arming === "target") {
-      return {
-        message: "Select the body to mirror",
-        cancel: () => setMirrorDialog((d) => (d ? { ...d, arming: null } : d)),
-      };
-    }
-    if (armingRevolveProfile) {
-      return {
-        message:
-          "Select a closed sketch region or a planar body face to revolve — hidden sketches are shown while you pick",
-        cancel: () => setRevolveDialog((d) => (d ? { ...d, armed: null } : d)),
-      };
-    }
-    return null;
-  })();
+  // (Removed: `selectionArming` built a viewport banner — "Select the closed
+  //  sketch region to sweep", "Select the edges and faces to chamfer" — for
+  //  every pick a DIALOG had armed. It duplicated the request the dialog's own
+  //  armed slot was already making, in a second place, with a second Cancel
+  //  button that only disarmed the slot while the dialog's own Cancel closed
+  //  the whole thing. A dialog or a modal, never both: the armed slot is the
+  //  single signal now. The pick banner survives only for the two picks that
+  //  have no dialog behind them — starting a sketch, and the section plane.)
   // The Transform feature currently being edited with the gizmo (a floating
   // panel + viewport gizmo are shown while this is set), and which gizmo to show.
   const [transformEditId, setTransformEditId] = useState<string | null>(null);
@@ -2059,6 +2022,33 @@ export default function App() {
     armed: "base" | "tools" | null;
     editId?: string;
   } | null>(null);
+
+  /** Is a feature dialog on screen? One place, because three things have to
+   *  agree about it and used to disagree:
+   *
+   *   - every modelling tool is inert while one is open (you finish or cancel,
+   *     you don't start a second feature on top of the first). Each tool used to
+   *     disable itself for its OWN dialog only, so Extrude's dialog left Revolve,
+   *     Shell and the rest clickable underneath it;
+   *   - the viewport's pick banner stays out of the way, since the dialog's own
+   *     armed slot is already asking for the pick;
+   *   - Escape closes it, in one press.
+   *
+   *  `transformArming` and `transformEditId` count: the transform gizmo is a
+   *  dialog by any other name. */
+  const anyDialogOpen =
+    !!planeDialog ||
+    !!extrudeDialog ||
+    !!revolveDialog ||
+    !!sweepDialog ||
+    !!loftDialog ||
+    !!dressUpDialog ||
+    !!shellDialog ||
+    !!booleanDialog ||
+    !!mirrorDialog ||
+    !!patternDialog ||
+    !!transformEditId ||
+    !!transformArming;
 
   // Own the worker's lifecycle here so each mount cycle (incl. StrictMode's
   // mount/unmount/remount) gets a fresh, live kernel rather than a disposed one.
@@ -2933,6 +2923,14 @@ export default function App() {
     const f = doc.features.find((x) => x.id === editingSketchId);
     return f && f.type === "sketch" ? f : null;
   }, [doc, editingSketchId]);
+
+  /** The modelling toolbar is inert while a sketch is open, a pick is armed, or
+   *  any dialog is up — the three "you are in the middle of something" modes.
+   *  Declared here rather than beside `anyDialogOpen` because it reads
+   *  `editingSketch`, which is a `const` further down the component: hoisting it
+   *  up there puts it in the temporal dead zone (see the note on
+   *  `planeKeyToRef`, where exactly that was swallowed by a try/catch). */
+  const toolsLocked = !!editingSketch || picking || anyDialogOpen;
 
   // The no-dialog feature whose params panel is open (double-click), if it still
   // exists. The panel closes automatically once the selection moves elsewhere.
@@ -4275,46 +4273,30 @@ export default function App() {
         else if (dimInputRef.current) setDimInput(null);
         else if (dimPendingRef.current) setDimPending(false);
         else if (polySidesOpen) setPolySidesOpen(false);
+        // ONE Escape closes a dialog, whatever it is and whatever it has armed.
+        //
+        // These branches used to be two-stage — the first Esc disarmed the slot
+        // still listening, a second closed the dialog — and the stages had drifted
+        // apart: Revolve took one press, Sweep/Loft/Shell/Extrude/Chamfer took
+        // two (they open already armed, so the first press was spent), and Boolean
+        // had no branch at all and could not be closed with the keyboard.
+        // Escape now means one thing everywhere: get me out. Disarming a slot
+        // without closing is still available by clicking the slot itself.
+        //
+        // Each close() already drops its own pick mode (closeRevolveDialog and
+        // closePattern clear `picking`/`pickPurpose`, closeMirror calls
+        // cancelMirrorPlanePick, closeExtrudeDialog clears pickingUpFace), and a
+        // slot armed in dialog state goes with the dialog object.
         else if (planeDialog) closePlaneDialog();
-        // While the revolve dialog is arming a plane axis, Esc cancels just that
-        // pick (keeping the dialog); a second Esc then closes the dialog.
-        else if (revolveDialog && picking) {
-          setPicking(false);
-          setPickPurpose("sketch");
-        } else if (revolveDialog) closeRevolveDialog();
-        // Mirror dialog: like Revolve, Esc first cancels an in-progress face
-        // pick (keeping the dialog), then a second Esc closes the dialog.
-        else if (mirrorDialog && picking && pickPurpose === "mirrorPlane") cancelMirrorPlanePick();
-        else if (mirrorDialog?.arming) setMirrorDialog((d) => (d ? { ...d, arming: null } : d));
+        else if (revolveDialog) closeRevolveDialog();
         else if (mirrorDialog) closeMirror();
-        // Pattern dialog: Esc first cancels an in-progress direction/axis pick
-        // (keeping the dialog), then a second Esc closes the dialog.
-        else if (patternDialog && picking) {
-          setPicking(false);
-          setPickPurpose("sketch");
-        } else if (patternDialog) closePattern();
-        // Shell dialog: Esc first disarms an in-progress body/face pick (keeping
-        // the dialog and everything picked so far), then a second Esc closes it.
-        else if (shellDialog?.arming) setShellDialog((d) => (d ? { ...d, arming: null } : d));
+        else if (patternDialog) closePattern();
         else if (shellDialog) closeShellDialog();
-        // Sweep / Loft: Esc disarms the slot still listening, keeping what has
-        // been picked; a second Esc closes the dialog.
-        else if (sweepDialog?.armed) setSweepDialog((d) => (d ? { ...d, armed: null } : d));
         else if (sweepDialog) closeSweep();
-        else if (loftDialog?.arming) setLoftDialog((d) => (d ? { ...d, arming: false } : d));
         else if (loftDialog) closeLoft();
-        // Extrude: Esc stops whichever pick is in flight — the up-to-face slot
-        // first, then the profile list — before closing the dialog.
-        else if (extrudeDialog && pickingUpFace) setPickingUpFace(false);
-        else if (extrudeDialog?.arming) setExtrudeDialog((d) => (d ? { ...d, arming: false } : d));
         else if (extrudeDialog) closeExtrudeDialog();
-        // Chamfer/fillet: Esc stops the edge pick first, keeping everything
-        // picked so far; a second Esc closes the dialog.
-        else if (dressUpDialog?.arming) setDressUpDialog((d) => (d ? { ...d, arming: false } : d));
         else if (dressUpDialog) closeDressUpDialog();
-        // While the Transform dialog is arming a rotation axis, Esc cancels just
-        // that pick (keeping the dialog); a second Esc then cancels the edit.
-        else if (transformEditId && picking && pickPurpose === "transformAxis") cancelTransformAxisPick();
+        else if (booleanDialog) closeBooleanDialog();
         else if (transformEditId) cancelTransform();
         else if (transformArming) cancelTransformArming();
         else if (editParamsId) setEditParamsId(null);
@@ -7506,7 +7488,7 @@ export default function App() {
       shortcut: shortcutHint("model.sketch"),
       title: `Sketch (${shortcutName("model.sketch")}): start a sketch — pick a plane or face`,
       keywords: ["draw", "2d", "profile"],
-      disabled: !!editingSketch || picking,
+      disabled: toolsLocked,
       onSelect: () => {
         setPickPurpose("sketch");
         setPicking(true);
@@ -7519,7 +7501,7 @@ export default function App() {
       shortcut: shortcutHint("model.newBody"),
       title: `New Body (${shortcutName("model.newBody")}): create a new solid body`,
       keywords: ["new", "primitive", "solid"],
-      disabled: !!editingSketch,
+      disabled: toolsLocked,
       onSelect: () => setNewSolidOpen((o) => !o),
       choices: FEATURE_KINDS.map((kind) => ({
         id: kind,
@@ -7536,7 +7518,7 @@ export default function App() {
       shortcut: shortcutHint("model.plane"),
       title: `Plane (${shortcutName("model.plane")}): create a reference plane (offset, midplane, at-angle, or through 3 points)`,
       keywords: ["datum", "reference", "offset", "midplane"],
-      disabled: !!editingSketch || picking || !!planeDialog,
+      disabled: toolsLocked,
       onSelect: openPlaneDialog,
     },
     {
@@ -7546,7 +7528,7 @@ export default function App() {
       shortcut: shortcutHint("model.extrude"),
       title: `Extrude (${shortcutName("model.extrude")}): pull sketch regions and/or planar faces into a solid — pick them in the dialog`,
       keywords: ["pad", "boss", "pocket", "cut", "hole"],
-      disabled: !!editingSketch || picking || !!extrudeDialog,
+      disabled: toolsLocked,
       onSelect: openExtrudeDialog,
     },
     {
@@ -7556,7 +7538,7 @@ export default function App() {
       shortcut: shortcutHint("model.revolve"),
       title: `Revolve (${shortcutName("model.revolve")}): select a profile (sketch region or planar face) + an axis (edge or plane) in the dialog`,
       keywords: ["lathe", "turn", "axis"],
-      disabled: !!editingSketch || picking || !!revolveDialog,
+      disabled: toolsLocked,
       onSelect: openRevolve,
     },
     {
@@ -7566,7 +7548,7 @@ export default function App() {
       shortcut: shortcutHint("model.sweep"),
       title: `Sweep (${shortcutName("model.sweep")}): sweep a sketch region along a path — pick the profile and the path in the dialog`,
       keywords: ["path", "rail"],
-      disabled: !!editingSketch || picking || !!sweepDialog,
+      disabled: toolsLocked,
       onSelect: openSweep,
     },
     {
@@ -7576,7 +7558,7 @@ export default function App() {
       shortcut: shortcutHint("model.loft"),
       title: `Loft (${shortcutName("model.loft")}): blend through 2+ sketch regions — pick the sections in the dialog`,
       keywords: ["blend", "sections"],
-      disabled: !!editingSketch || picking || !!loftDialog,
+      disabled: toolsLocked,
       onSelect: openLoft,
     },
     {
@@ -7586,7 +7568,7 @@ export default function App() {
       shortcut: shortcutHint("model.chamfer"),
       title: `Chamfer (${shortcutName("model.chamfer")}): bevel body edges or faces — pick them in the dialog`,
       keywords: ["bevel", "edge", "face"],
-      disabled: !!editingSketch || picking || !!dressUpDialog,
+      disabled: toolsLocked,
       onSelect: () => openDressUp("chamfer"),
     },
     {
@@ -7596,7 +7578,7 @@ export default function App() {
       shortcut: shortcutHint("model.fillet"),
       title: `Fillet (${shortcutName("model.fillet")}): round body edges or faces — pick them in the dialog`,
       keywords: ["round", "radius", "edge", "face"],
-      disabled: !!editingSketch || picking || !!dressUpDialog,
+      disabled: toolsLocked,
       onSelect: () => openDressUp("fillet"),
     },
     {
@@ -7606,7 +7588,7 @@ export default function App() {
       shortcut: shortcutHint("model.shell"),
       title: `Shell (${shortcutName("model.shell")}): hollow a body — select it in the dialog; sealed by default, open faces from there too`,
       keywords: ["hollow", "thickness", "wall", "enclosure", "thicken"],
-      disabled: !!editingSketch || picking || !!shellDialog,
+      disabled: toolsLocked,
       onSelect: openShell,
     },
     {
@@ -7616,7 +7598,7 @@ export default function App() {
       shortcut: shortcutHint("model.boolean"),
       title: `Boolean (${shortcutName("model.boolean")}): union / subtract / intersect — pick the parts in the dialog`,
       keywords: ["union", "subtract", "intersect", "combine", "cut"],
-      disabled: !!editingSketch || picking || !!booleanDialog,
+      disabled: toolsLocked,
       onSelect: openBooleanDialog,
     },
     {
@@ -7625,7 +7607,7 @@ export default function App() {
       label: "Transform",
       shortcut: shortcutHint("model.transform"),
       title: `Transform (${shortcutName("model.transform")}): move / rotate / scale a body — pick one first, or arm and click it in the viewport`,
-      disabled: !!editingSketch || picking || !!transformEditId || !!transformArming,
+      disabled: toolsLocked,
       // The button itself opens the gizmo on Move — its natural default — so it
       // stays a plain one-click action (choicesSearchOnly). The modes exist as
       // their own rows in the "/" flyout, where "rotate" or "resize" should land
@@ -7663,7 +7645,7 @@ export default function App() {
       shortcut: shortcutHint("model.mirror"),
       title: `Mirror (${shortcutName("model.mirror")}): arm a body, then mirror it across a datum, a reference plane, or a body face`,
       keywords: ["reflect", "symmetry"],
-      disabled: !!editingSketch || picking || !!mirrorDialog,
+      disabled: toolsLocked,
       onSelect: openMirror,
     },
     {
@@ -7673,7 +7655,7 @@ export default function App() {
       shortcut: shortcutHint("model.pattern"),
       title: `Pattern (${shortcutName("model.pattern")}): arm a body, then a linear run/grid or a circular ring`,
       keywords: ["array", "linear", "circular", "grid", "repeat"],
-      disabled: !!editingSketch || picking || !!patternDialog,
+      disabled: toolsLocked,
       onSelect: openPattern,
     },
   ];
@@ -8647,10 +8629,7 @@ export default function App() {
           {hudMsg && (
             // Nudged below the sketch/pick banner when one is up, so it doesn't
             // land on top of it — they share the top-centre slot.
-            <div
-              className={"sketch-msg" + (editingSketch || picking || selectionArming ? " below-banner" : "")}
-              role="alert"
-            >
+            <div className={"sketch-msg" + (editingSketch || picking ? " below-banner" : "")} role="alert">
               ⚠ {hudMsg}
             </div>
           )}
@@ -8815,46 +8794,36 @@ export default function App() {
               </span>
               <button onClick={finishSketch}>Finish sketch ⏎</button>
             </div>
-          ) : picking ? (
+          ) : picking && !anyDialogOpen ? (
+            // A modal OR a dialog, never both. When a dialog armed this pick it
+            // is already showing the request — a dashed, pulsing "Select an
+            // axis" slot — and the banner just repeated it lower down the
+            // screen with a second Cancel button that meant something subtly
+            // different. The banner is now only for the picks that have no
+            // dialog behind them: starting a sketch, and the section plane.
             <div className="sketch-banner pick">
               <span>
-                {pickPurpose === "revolveAxis"
-                  ? "Select a sketch line, a straight body edge, a plane, or a face to revolve around"
-                  : pickPurpose === "patternAxis"
-                    ? "Select a sketch line or a cylindrical face to pattern around"
-                    : pickPurpose === "patternDir"
-                      ? "Select a sketch line for the pattern direction"
-                      : pickPurpose === "transformAxis"
-                        ? "Select a sketch line or a straight body edge to rotate around"
-                        : pickPurpose === "mirrorPlane"
-                          ? "Select a datum, a reference plane, or a flat body face to mirror across"
-                          : pickPurpose === "sectionPlane"
-                            ? "Select a plane or planar face to cut the section through"
-                            : pickPurpose === "plane"
-                              ? // The wording only fits the offset method — the others
-                                // build off their reference rather than offsetting it.
-                                planeDialog?.method === "offset"
-                                ? "Select a plane or planar face to offset the new plane from"
-                                : "Select a plane or planar face for the new plane"
-                              : "Select a plane or planar face for the sketch"}
+                {/* Only the picks with no dialog behind them can reach this
+                    banner now — starting a sketch, and the section plane. Every
+                    other purpose (revolve/pattern/transform axes, the mirror
+                    plane, the reference plane's base) is armed BY a dialog, and
+                    that dialog's own slot does the asking. TypeScript proves
+                    it: narrow on `!anyDialogOpen` and `planeDialog` is `never`,
+                    which is what flagged the dead branches this replaced. */}
+                {pickPurpose === "sectionPlane"
+                  ? "Select a plane or planar face to cut the section through"
+                  : "Select a plane or planar face for the sketch"}
               </span>
               <button
                 onClick={() => {
                   setPicking(false);
-                  if (pickPurpose !== "sketch" && pickPurpose !== "plane") setPickPurpose("sketch");
+                  if (pickPurpose !== "sketch") setPickPurpose("sketch");
                 }}
               >
                 Cancel (Esc)
               </button>
             </div>
-          ) : (
-            selectionArming && (
-              <div className="sketch-banner pick">
-                <span>{selectionArming.message}</span>
-                <button onClick={selectionArming.cancel}>Cancel</button>
-              </div>
-            )
-          )}
+          ) : null}
           {extrudeDialog && (
             <DraggableDialog className="extrude-dialog" style={{ left: extrudeDialog.x, top: extrudeDialog.y }}>
               <div className="ed-title" data-drag-handle>
@@ -9606,7 +9575,7 @@ export default function App() {
                 <div className="ed-field">
                   <span>{planeDialog.method === "midplane" ? "First" : "Base"}</span>
                   <PickSlot
-                    noun="a plane/face"
+                    noun="a plane or face"
                     armed={planePick === "base"}
                     value={planeDialog.base && planeRefLabel(planeDialog.base)}
                     title={planeDialog.base ? planeRefLabel(planeDialog.base) : undefined}
@@ -9637,7 +9606,7 @@ export default function App() {
                 <div className="ed-field">
                   <span>Second</span>
                   <PickSlot
-                    noun="a plane/face"
+                    noun="a plane or face"
                     armed={planePick === "refB"}
                     value={planeDialog.refB && planeRefLabel(planeDialog.refB)}
                     title={planeDialog.refB ? planeRefLabel(planeDialog.refB) : undefined}

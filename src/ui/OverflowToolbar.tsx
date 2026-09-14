@@ -164,7 +164,12 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
               {item.choices.map((c) => (
                 <button
                   key={c.id}
-                  disabled={c.disabled}
+                  // A choice of a disabled tool is disabled too. Without the
+                  // fallback the parent could be inert (a dialog is up) while its
+                  // menu entries stayed clickable — Body's three and Transform's
+                  // Move/Rotate/Scale. A choice may still disable itself on its
+                  // own terms while the parent is live.
+                  disabled={c.disabled ?? item.disabled}
                   onClick={() => {
                     item.onChoicesOpenChange?.(false);
                     c.onSelect();

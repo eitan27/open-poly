@@ -108,11 +108,12 @@ check("clicking the same face again un-arms it", (await faceRowCount()) === 0, `
 
 await page.mouse.click(...centre);
 await page.waitForTimeout(300);
-await page.keyboard.press("Escape");
-await page.waitForTimeout(200);
-check("Esc disarms the picker but keeps the dialog", await dialog.isVisible());
-check("…and keeps the face already picked", (await faceRowCount()) === 1, `faceRows=${await faceRowCount()}`);
+check("the face is picked and listed", (await faceRowCount()) === 1, `faceRows=${await faceRowCount()}`);
 
+// Escape leaves the dialog, in ONE press. It used to disarm the picker and keep
+// the dialog up — which cost a second press to actually leave, and the count
+// differed per dialog (Shell took two, Revolve one, Boolean never closed at
+// all). Disarming without leaving is still available: click the armed slot.
 await dialog.getByRole("button", { name: "Create" }).click();
 await waitIdle();
 let shells = await shellFeatures();

@@ -26,8 +26,10 @@ import type { ReactNode } from "react";
  *
  *  The label says what the slot WANTS, so it must not change under the user
  *  mid-pick: a button that re-words itself the instant it's clicked reads as if
- *  something already happened. Arming is carried by the styling instead (the
- *  dashed, pulsing `.ed-pick-btn.active`) plus the viewport's pick banner. */
+ *  something already happened. Arming is carried by the styling instead — the
+ *  dashed, pulsing `.ed-pick-btn.active`. That styling is now the WHOLE signal:
+ *  the viewport's pick banner no longer doubles up behind a dialog, so this slot
+ *  is the only thing telling the user what the next click will do. */
 function pickLabel(noun: string): string {
   return `Select ${noun}`;
 }

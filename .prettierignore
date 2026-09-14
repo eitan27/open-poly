@@ -1,3 +1,7 @@
 # npm owns this file's layout and rewrites it on every install; don't let
 # Prettier fight it.
 package-lock.json
+
+# Agent worktrees: full checkouts of this repo inside it, so `prettier --check .`
+# would report another agent's half-finished files as failures in this tree.
+.claude/

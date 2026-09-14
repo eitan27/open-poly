@@ -128,14 +128,23 @@ check(
   !(await dlg.getByRole("button", { name: "Create" }).isDisabled()),
 );
 
-await blur();
-await page.keyboard.press("Escape");
-await page.waitForTimeout(250);
-check("Esc disarms but keeps the dialog", await dlg.isVisible());
-check("…and keeps what was picked", (await rows().count()) === 1, await dlg.textContent());
+// Escape closes the dialog outright, in ONE press. It used to disarm the slot
+// and leave the dialog up, which meant a second press to actually leave — and
+// the number of presses differed per dialog (Revolve one, Sweep/Loft/Shell two,
+// Boolean never). Escape means "get me out" everywhere now; to disarm a slot
+// without leaving, click the slot itself.
 await dlg.getByRole("button", { name: "Create" }).click();
 await waitIdle();
 check("Extrude created from a dialog-armed profile", (await features("extrude")).length === 1);
+
+// Re-open and confirm one Escape leaves, taking the dialog with it.
+await page.locator(".model-toolbar button").filter({ hasText: "Extrude" }).first().click();
+await page.waitForTimeout(600);
+check("the dialog re-opened", await dlg.isVisible());
+await blur();
+await page.keyboard.press("Escape");
+await page.waitForTimeout(350);
+check("one Esc closes the dialog", !(await dlg.isVisible()));
 
 // --- 3. Sweep: profile, then path, auto-advancing ---------------------------
 await pressTool("w");

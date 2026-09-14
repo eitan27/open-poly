@@ -2486,9 +2486,14 @@ button:disabled .kbd-hint {
   border: 1px solid var(--border);
   color: var(--text-2);
   cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* WRAP, never truncate. This label is an instruction — "Select a plane or
+     planar face" — so an ellipsis hides the one thing it exists to say, and at
+     112px it hid it often (the Plane slot clipped at 118px of text in 110px of
+     room). The button grows a line instead; .ed-field centres it against its
+     label either way. `anywhere` so a long picked name breaks rather than
+     overflowing the dialog. */
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ed-pick-btn:hover:not(:disabled) {
@@ -2551,11 +2556,9 @@ button:disabled .kbd-hint {
    profile", "Select an axis (sketch line / cylindrical face)"), which doesn't
    fit the 112px field width, so they take the dialog's full width and wrap
    instead of truncating. */
+/* Standalone slots span the dialog; wrapping is now the shared default. */
 .ed-pick-btn.ed-wide {
   width: 100%;
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
 }
 
 .ed-actions button:disabled {

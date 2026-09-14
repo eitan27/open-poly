@@ -99,6 +99,16 @@ const importPath = join(tmpdir(), "openpoly-import-test.json");
 await writeFile(importPath, JSON.stringify(envelope));
 await page.locator('.docs-dialog input[type="file"]').setInputFiles(importPath);
 await waitIdle();
+// Poll for the title rather than sampling it once. An import is read, parsed and
+// adopted OUTSIDE the regen the status chip reports, so waitIdle() can return
+// while the new document is still arriving — which made this check fail about
+// one run in two. Waiting for the condition removes the race without hiding a
+// real failure: a title that never arrives still fails, just after the timeout.
+await page
+  .waitForFunction(() => document.querySelector(".doc-title")?.textContent?.trim() === "ThumbDoc 2", null, {
+    timeout: 5000,
+  })
+  .catch(() => {});
 check("import opened the new document", (await title()) === "ThumbDoc 2", await title());
 check("imported content matches", (await featureCount()) === 1);
 const importedId = await page.evaluate(() => localStorage.getItem("openpoly.activeDocId"));
