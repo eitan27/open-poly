@@ -79,6 +79,26 @@ Roughly ordered by how often a user meets them.
 - Project: vertex projection is best-effort (re-projects a stored world point,
   doesn't track the source body); no agent op.
 
+**Codebase structure** — the two boundaries Wave C scoped but did not reach.
+Both were looked at closely enough to know what stopped them, so neither is a
+blind guess:
+
+- **The Viewport mount effect.** ~2,100 lines built around ~40 refs and local
+  three.js objects that the picking, highlighting and event handlers all close
+  over directly. A.5 took the module-level helpers out around it
+  (`geometryQuery`, `sceneMath`, `materials`, `viewCube`, −596 lines) and left
+  the effect alone on purpose: splitting it risks three.js lifecycle and
+  ordering bugs — setup order, cleanup order, double-init — that only exhaustive
+  interaction testing would catch. Wants the jsdom work of B.3 pointed at the
+  viewport first.
+- **`kernel/features/`.** A.4 split `buildBodies`'s dispatch into one builder per
+  feature type behind a `BuildContext`, but left the ~30 shared geometry helpers
+  (`prismFromFace`, `booleanNamed`, `dressUpNamed` and its ~700-line supporting
+  cast, `revolveFromFace`, `sweepBody`, `loftBody`, `applyTrsf`) where they are:
+  they are tightly coupled to each other and to the file's module-level OCCT
+  state (`getOC()`, the font and regen caches). Moving the per-feature builders
+  without that cluster trades one large file for fragile cross-file coupling.
+
 **Kernel / geometry**
 
 - Sphere booleans fail — `makeSphere` stays analytic (see Gotchas).
@@ -135,176 +155,54 @@ Roughly ordered by how often a user meets them.
 
 ---
 
-## Open-sourcing (active work — resume here)
+## Open-sourcing — DONE except one day-of item
 
-The repo is going public. This section is the resumable state of that push:
-read it, check the marker, pick up the next unticked item. Delete the section
-once every wave is done.
+The repo is ready to go public. This was five waves of harvest (A), test
+infrastructure (B) and the first real boundary (C); the per-item state that used
+to live here is in the git history, and what remains below is only what is still
+owed plus the handful of things the push taught us that are worth not
+re-learning.
 
-**Marker — 2026-09-14.** Waves A and B are COMPLETE. `main` is at `951a8d3`
-(Wave A, pushed); Wave B is four commits on `chore/test-infrastructure`, not yet
-merged. Next: Wave C — `usePersistedDocuments`, which B.3 exists to make
-testable.
+**Still owed, and only on the day:**
 
-**Done**
-
-- [x] Only the public sites phone home; dead links go somewhere (`e7aa92f`).
-- [x] Turnstile token sent with every bug report (`e9edcd4`). `TURNSTILE_SECRET`
-      is set on the Pages project, and one real report has been filed against
-      production with the Function accepting the token — the check can stay on.
-- [x] Docs consolidated — PLAN cut 1679→330, EXTRUDE_IMPROVEMENTS and
-      PATTERNS_PLAN folded in and deleted, cad-feature-comparison deleted, the
-      Split design rescued into BACKLOG (`8b0c514`).
-- [x] **A.1** Keyboard shortcuts declared once, collisions caught by a test
-      (`52ed65a`). `KEYBOARD_SHORTCUTS.md` deleted — `src/settings/shortcuts.ts`
-      is now the single source.
-- [x] **A.2** Third-party licence notices generated into
-      `dist/third-party-licenses.txt` at build time (`f967630`). MIT and the
-      rest require the notice to travel with the copy, and minification strips
-      it; the repo is not a copy the visitor receives.
-- [x] **A.3** Eleven pure helpers out of App.tsx, and 66 tests over them
-      (`refactor/app-pure-helpers`). Five to `src/geom/meshQuery.ts`
-      (bodyCenter, transformMeshPayload, reverseWinding, reflectionMappers,
-      rotationMappers), six to a new `src/sketch/sketchGeom.ts`. App.tsx
-      10537 → 10295, so −242; the branch's own tests were re-checked against
-      main before being trusted (`flipWinding` and the `text` entity are both
-      newer than the branch). `planeKeyToRef` stays at module scope on purpose —
-      see the comment on it. What is left in that band is UI labelling and DOM
-      (`mirrorPlaneLabel`, `downloadBlob`, `safeFilename`); the pure-helper seam
-      in App.tsx is now genuinely exhausted.
-- [x] **A.4** `src/kernel/cache.ts` extracted with 16 tests, and `buildBodies`'s
-      542-line if/else chain split into one named builder per feature type
-      behind a switch, sharing an explicit `BuildContext`
-      (`refactor/kernel-cache-split`). worker.ts 5385 → 5460, so **+75** — the
-      split adds 12 signatures and a switch while removing only the 19 cache
-      lines. The win is that `buildBodies` itself went 582 → 80 lines and each
-      feature type is now separately readable; it is not a line count.
-      The branch's stale `contentKey` was real and was avoided: its
-      `buildTransformFeature` keys on `[target.key]` alone, where main resolves
-      a body-EDGE axis and folds that body's key in too. 11 of the 12 extracted
-      bodies are byte-identical to the originals (the 12th differs only where
-      prettier rejoined a line that fits at the shallower indent), and no branch
-      contained a `return`/`continue` that would change meaning inside a
-      function. worker.ts still has no unit coverage — Vitest cannot load the
-      OCCT wasm — so all 12 types were built through the live app instead, by
-      `scripts/verify-build-bodies.mjs`, which is kept: it is the only thing
-      that exercises this file at all.
-- [x] **A.5** Four modules out of Viewport.tsx — `geometryQuery.ts`,
-      `sceneMath.ts`, `materials.ts`, `viewCube.ts` — with 46 tests, where
-      `gizmoShape` was previously the only tested thing in `src/viewport`
-      (`refactor/viewport-modules`). Viewport.tsx 5294 → 4698, so **−596**.
-      The branch's `sceneMath` tests were a total loss and were rewritten:
-      `closestLineParamToRay` no longer exists (the section handle drags a
-      TransformControls proxy now), and `transformMatrix` grew an axis-LINE
-      argument and a scale, so every one of its old calls was against a dead
-      signature. The new tests cover what the drift added — rotating about an
-      edge metres from the pivot, scaling about the pivot, and the T·R·S order.
-      `vitest.config.ts` gained one alias: `replicad-threejs-helper` ships
-      `main` (UMD) and `module` (ESM) but no `exports` map, so vitest's node
-      resolver loaded the UMD file as ESM and got an EMPTY namespace — every
-      named import undefined at call time, not import time. Pointing node at
-      the same ESM build the app uses made `syncBodyGeometry` testable.
-      `viewCube.ts` has no unit tests on purpose (its textures need a DOM
-      canvas); it and the picking integration are covered by
-      `scripts/verify-viewport-modules.mjs`, kept alongside A.4's.
-
-**Also owed, outside the waves**
-
-- [ ] Re-enable the landing-page auto-deploy once the repo is public — its
+- [ ] Re-enable the landing-page auto-deploy once the repo IS public — its
       `push` trigger is commented out in `.github/workflows/pages.yml` because
       GitHub Pages from a private repo needs a paid plan.
 
-**Wave A — harvest. DONE.** All five waves were re-applied against main rather
-than rebased or cherry-picked, and that was the right call every time: the
-branches were 4–6 weeks stale and two of them carried bugs into the present —
-A.4's `contentKey` had lost a dependency, and A.5's `sceneMath` tests were
-written against two signatures that no longer exist. The three branches these
-harvested — `app-tsx-decompose`, `kernel-buildbodies-split`,
-`viewport-mount-effect-split` — can be deleted once this lands.
-`origin/claude/use-persisted-documents-hook` must NOT be: Wave C still wants it.
+**What it taught us, in order of how much it cost to find out:**
 
-**Wave B — test infrastructure. DONE.**
+- **Re-apply a stale branch; never rebase or cherry-pick it.** Five month-old
+  `claude/*` branches were harvested and every one was re-done against main
+  instead. Two of them would have shipped bugs into the present: A.4's
+  `contentKey` had lost a dependency (a transform rotating about a body edge
+  would have served a stale body, silently), and A.5's tests were written
+  against two signatures that no longer existed. A stale branch is worth reading
+  for its idea and for the bug it is carrying.
+- **When a before/after run is your only proof, keep a control group.** The
+  `verify-*.mjs` migration (B.2) was "verified" twice before it was verified
+  once: the first runner used `timeout`, which macOS does not ship, so every
+  script reported nothing; the second ran while `npm test` competed for the CPU,
+  and scripts nobody had touched changed their answers. The fix that stuck: the
+  UNMIGRATED scripts are the control. If a file nobody edited moves, the run is
+  noise and nothing it says counts.
+- **A codemod that deletes a span will eat something you did not see.** The
+  first transformer matched a launch block with `.*?` and swallowed the
+  script-specific lines inside it — a fixture path, a console listener. Two
+  scripts died loudly; the dangerous case is the one that keeps passing while
+  testing less. Classify each line and keep what you do not recognise.
+- **Opt in to jsdom per file, never globally.** `environment: "node"` is still
+  the default and the ~800 tests that predate Wave B never had to move. A file
+  that needs a DOM says `// @vitest-environment jsdom`; jsdom costs ~700ms of
+  setup per file that asks.
+- **Agent worktrees live inside the repo.** `.claude/` now has to be ignored by
+  git, vitest, eslint AND prettier — each learned separately, the last two
+  because a running agent doubled the lint count and it read as a regression.
 
-- [x] **B.1** `scripts/lib/harness.mjs` — the launch / waitIdle / apply / read /
-      check block that 62 of the 65 `verify-*.mjs` scripts each re-declared. They
-      had drifted: the poll loop ran 60–300 iterations at 200ms or 300ms, and
-      about a third treated "error" as NOT settled, so a failed regen spun the
-      whole timeout and the script then asserted against a state it never waited
-      for. The harness settles on error and returns the status text. Four scripts
-      are migrated (−94 lines) and produce byte-identical results; it is
-      deliberately à la carte — `verify-extrude-guards.mjs` keeps its own tally
-      and takes only the bridge and the waits.
-- [x] **B.2** 48 of the 67 scripts use the harness (−741 lines). The 19 that do
-      not are left on purpose: four have no launch block at all, and fifteen still
-      hold `browser`/`context` themselves (a second tab, their own screenshot
-      context), which the migration refuses rather than guesses at.
-      **How it was verified, because it was wrong twice first.** A before/after
-      run of all 67 is the only real check, and two things made it lie: the first
-      runner used `timeout`, which macOS does not ship, so every script "produced
-      no checks"; and the first comparison ran while `npm test` competed for CPU,
-      which moved results for scripts that had not been touched at all. The fix
-      for the second is the reusable one — the unmigrated scripts are a CONTROL
-      GROUP, and if a file nobody edited changes its answer the run is noise.
-      Final: 19/19 controls identical, 48/48 migrated identical.
-      The first transformer also matched the launch block with `.*?` and ate
-      script-specific lines inside it — a `const FILE`, a console listener
-      collecting mesh warnings. Two scripts died loudly; a script that merely LOST
-      a listener would have kept passing while testing less, which is why all 46
-      were reverted rather than the 8 visible breakages patched. The rewrite
-      classifies each line and keeps anything it does not recognise.
-- [x] **B.3** jsdom + `@testing-library/react`, with 26 tests over `useHistory`
-      (incl. the coalescing rules deciding whether three keystrokes are one undo
-      step) and `useSettings`. Done as a per-file `// @vitest-environment jsdom`
-      docblock, NOT a global flip: `environment: "node"` is untouched, so
-      `vitest.config.ts` needed no change and the 813 pre-Wave-A tests run
-      exactly as before. jsdom costs ~700ms of setup per file that asks for it,
-      which is reason enough not to charge it to tests that never needed a DOM.
-      `src/test/webStorage.ts` exists because vitest's jsdom globals drop the
-      real `Storage`: jsdom's own localStorage round-trips fine when constructed
-      directly, but arrives in the test as a bare `{}` and the first `getItem`
-      throws. A test that needs storage calls `installWebStorage()` and can see
-      what it runs against. jsdom is pinned to `^26` — `^29` behaves identically
-      here, so this is not a fix, just the better-trodden major.
-- [x] **B.4** All ten failing `verify-*.mjs` scripts are green, and the audit
-      found one real bug. **Nine were stale**, each against a deliberate change
-      the script was never updated for: the transform gizmo's "Axis" became
-      "Along" (`e7364ba`, rotate about any line); the toolbar's "…"/"More▸"
-      overflow became a magnifier (`c0cc51d`); a fourth sketch tool group
-      (trim/extend) joined rectangle/circle/pattern; circle dimensions default to
-      DIAMETER, so a typed 35 means r=17.5; and a chained corner now records its
-      own `coincident` joint, which broke a constraint-COUNT assertion — rewritten
-      to assert the specific constraint disappeared, which is what it meant.
-      `verify-loft-hollow.mjs` had `/opt/pw-browsers/chromium` hard-coded and had
-      never run anywhere else; it passes 11/11 now.
-      `verify-face-diameter` expected a revolved tube to be true cylinders with
-      annular caps. It is faceted like everything round (`geom/circleFacets.ts` —
-      this OCCT build cannot boolean an analytic cylinder against a plane), so
-      there is no circular wire to classify: 384 faces, no analytic diameter. The
-      checks now assert what is true and name the gap, which is recorded in
-      BACKLOG under the faceting section (where the extrude-only workaround it
-      is missing already lives).
-      **The real bug: with section view on, you could not draw in a sketch at
-      all.** Any sketch, datum or face; every click after the first. The section
-      plane's drag gizmo is a TransformControls, and it claimed the pointerdown,
-      setting `dragging` — so `onDown` returned before setting `down`, and `onUp`
-      bailed at `if (!down)`. The click was swallowed with no error anywhere.
-      Picking mode already had exactly this opt-out; sketch editing needed the
-      same one, and now has it (`sectionControls.enabled` also requires
-      `!activeFrameRef.current`). Dragging the section plane outside a sketch is
-      unaffected — verified by sweeping for the handle and moving the offset.
-
-**Wave C — boundaries (resume here).** `claude/use-persisted-documents-hook` (`4ba9d64`, a
-483-line hook, −418 from App.tsx) was Wave A until it became clear it is
-stateful — IndexedDB, recovery banners, corrupted-document paths — so no pure
-test can cover it. It needs B first. Then the Viewport mount effect, and
-`kernel/features/`.
-
-**Why the plan looks like this.** A branch audit killed the original "split the
-three big files" idea. Since 2026-07-31 App.tsx went 7900→10537, worker.ts
-3754→5385, Viewport.tsx 4246→5294 — the files grow faster than extraction
-shrinks them, and branch 1 found only 295 extractable lines in 7900 (3.7%). The
-pure-helper seam is nearly exhausted. What is left after Wave A is not more
-extraction but real boundaries, which need tests, which need Wave B.
+**What it produced, beyond the code:** `scripts/lib/harness.mjs` (the launch /
+waitIdle / apply / read block 48 of the 67 verify scripts share),
+`scripts/verify-build-bodies.mjs` and `scripts/verify-viewport-modules.mjs` (the
+only coverage `worker.ts` and the viewport have, since Vitest can load neither
+the OCCT wasm nor a WebGL context), and `scripts/verify-dialog-consistency.mjs`.
 
 ---
 
