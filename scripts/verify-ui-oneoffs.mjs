@@ -56,7 +56,15 @@ for (const width of [1500, 1100, 800]) {
     `the button is on the bar at ${width}px (${bar} tools beside it)`,
     (await page.locator(modelMore).count()) === 1,
   );
-  check(`…labelled "…" at ${width}px`, label === "…", `"${label}"`);
+  // A magnifier since c0cc51d, not the old "…" glyph: it opens a SEARCH box.
+  // Assert the thing that has to be true for a user — an icon and a usable
+  // title — rather than the text it no longer has.
+  const title = await page.locator(modelMore).getAttribute("title");
+  check(
+    `…a magnifier with a descriptive title at ${width}px`,
+    (await page.locator(`${modelMore} svg`).count()) === 1 && /search all tools/i.test(title ?? ""),
+    `svg=${await page.locator(`${modelMore} svg`).count()} title="${title}" text="${label}"`,
+  );
 }
 await page.setViewportSize({ width: 1500, height: 900 });
 await page.waitForTimeout(400);
@@ -84,12 +92,17 @@ await page.locator(".tree-row", { hasText: "Sketch" }).first().dblclick();
 await page.waitForTimeout(500);
 
 const arrows = await page.$$eval(".sketch-group .sketch-group-arrow", (bs) => bs.length);
-check("all three tool groups (rectangle / circle / pattern) show an arrow", arrows === 3, `${arrows}`);
+check("all four tool groups (rectangle / circle / trim / pattern) show an arrow", arrows === 4, `${arrows}`);
 
 // Patterning is one idea: the sketch group's primary wears the same glyph as
 // the solids toolbar's Pattern button.
 const patternIcons = await page.evaluate(() => {
-  const sketch = document.querySelectorAll(".sketch-group")[2].querySelector(".sketch-group-primary");
+  // Find the pattern group by its primary's title, not by index: trim/extend
+  // joined the row after this was written and took slot [2].
+  const groups = [...document.querySelectorAll(".sketch-group")];
+  const sketch = groups
+    .map((g) => g.querySelector(".sketch-group-primary"))
+    .find((b) => /pattern/i.test(b?.getAttribute("title") ?? ""));
   const solids = [...document.querySelectorAll(".model-toolbar button")].find((b) =>
     /^Pattern \(X\)/.test(b.title ?? ""),
   );
@@ -101,7 +114,8 @@ check(
   `sketch "${patternIcons.sketch}" vs solids "${patternIcons.solids}"`,
 );
 
-for (const i of [0, 1, 2]) {
+const groupTotal = await page.locator(".sketch-group .sketch-group-arrow").count();
+for (let i = 0; i < groupTotal; i++) {
   const arrow = page.locator(".sketch-group .sketch-group-arrow").nth(i);
   await arrow.click();
   await page.waitForTimeout(200);

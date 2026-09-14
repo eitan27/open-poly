@@ -110,7 +110,7 @@ await page.mouse.click(...centre);
 await waitIdle();
 const after = await transformFeatures();
 check("clicking the body creates the Transform", after.length === before + 1, `${before} -> ${after.length}`);
-check("gizmo opened on the Rotate tab", (await fieldLabels()).startsWith("Axis,Angle"), await fieldLabels());
+check("gizmo opened on the Rotate tab", (await fieldLabels()).startsWith("Along,Angle"), await fieldLabels());
 const targetOk = after[after.length - 1]?.target ?? after[after.length - 1]?.targetId;
 const bodyId = (await read({ read: "sceneSummary" })).bodies[0]?.id;
 check("Transform targets a real body", Boolean(targetOk), JSON.stringify({ targetOk, bodyId }));

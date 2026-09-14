@@ -155,6 +155,7 @@ check(
 // The ✕ is resolved and the screen point computed BEFORE the draw click, and
 // the delete is dispatched with no round trip in between, so it really does
 // land while the segment's solve is still running.
+const idsBefore = new Set((await sketchOf()).constraints.map((c) => c.id));
 const delBtn = await page.locator(".cl-del").first().elementHandle();
 const last = await page.evaluate((p) => window.__openpoly.worldToScreen(p), [30, 35, 0]);
 await page.mouse.click(canvas.x + last.x, canvas.y + last.y);
@@ -167,10 +168,17 @@ check(
   linesAfter === linesBefore + 1,
   `lines: ${linesBefore} → ${linesAfter}`,
 );
+// Assert the DELETE landed, not a net count. Counting was fragile: a new
+// segment's constraint contribution changed when point identity became
+// referential (a chained corner now records its own `coincident` joint), so
+// "fewer than before + 1" started meaning something different. What the test is
+// actually about is whether a delete dispatched mid-solve survives it.
+const idsAfter = new Set(s1.constraints.map((c) => c.id));
+const removed = [...idsBefore].filter((id) => !idsAfter.has(id));
 check(
-  "…and the delete survives too",
-  s1.constraints.length < consBefore + 1,
-  `constraints: ${consBefore} → ${s1.constraints.length}`,
+  "…and the delete survives too (the constraint it removed is gone)",
+  removed.length === 1,
+  `removed ${removed.length} of ${idsBefore.size}; constraints ${consBefore} → ${s1.constraints.length}`,
 );
 
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);

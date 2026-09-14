@@ -249,15 +249,36 @@ harvested — `app-tsx-decompose`, `kernel-buildbodies-split`,
       throws. A test that needs storage calls `installWebStorage()` and can see
       what it runs against. jsdom is pinned to `^26` — `^29` behaves identically
       here, so this is not a fix, just the better-trodden major.
-- [ ] **B.4** Ten `verify-*.mjs` scripts fail on main, independently of Waves A
-      and B: `face-diameter` (3), `section-view-sketch` (2), `sketch-circle-pick`
-      (4), `sketch-degenerate-guard` (1), `sketch-fast-draw` (1), `sketch-qol`
-      (2), `sketch-toolbar-overflow` (2), `transform-arming` (1),
-      `transform-scale` (1), `ui-oneoffs` (5). Confirmed real, not parallel-run
-      artifacts — a serial rerun reproduces them exactly. Each is either a stale
-      script or a live bug, and there is no telling which without reading them.
-      Worth settling before the repo is public: a failing check suite is the
-      first thing a visitor runs.
+- [x] **B.4** All ten failing `verify-*.mjs` scripts are green, and the audit
+      found one real bug. **Nine were stale**, each against a deliberate change
+      the script was never updated for: the transform gizmo's "Axis" became
+      "Along" (`e7364ba`, rotate about any line); the toolbar's "…"/"More▸"
+      overflow became a magnifier (`c0cc51d`); a fourth sketch tool group
+      (trim/extend) joined rectangle/circle/pattern; circle dimensions default to
+      DIAMETER, so a typed 35 means r=17.5; and a chained corner now records its
+      own `coincident` joint, which broke a constraint-COUNT assertion — rewritten
+      to assert the specific constraint disappeared, which is what it meant.
+      `verify-loft-hollow.mjs` had `/opt/pw-browsers/chromium` hard-coded and had
+      never run anywhere else; it passes 11/11 now.
+      `verify-face-diameter` expected a revolved tube to be true cylinders with
+      annular caps. It is faceted like everything round (`geom/circleFacets.ts` —
+      this OCCT build cannot boolean an analytic cylinder against a plane), so
+      there is no circular wire to classify: 384 faces, no analytic diameter. The
+      checks now assert what is true and name the gap (see B.5).
+      **The real bug: with section view on, you could not draw in a sketch at
+      all.** Any sketch, datum or face; every click after the first. The section
+      plane's drag gizmo is a TransformControls, and it claimed the pointerdown,
+      setting `dragging` — so `onDown` returned before setting `down`, and `onUp`
+      bailed at `if (!down)`. The click was swallowed with no error anywhere.
+      Picking mode already had exactly this opt-out; sketch editing needed the
+      same one, and now has it (`sectionControls.enabled` also requires
+      `!activeFrameRef.current`). Dragging the section plane outside a sketch is
+      unaffected — verified by sweeping for the handle and moving the offset.
+- [ ] **B.5** A revolved or lofted round face reports no diameter. `measure.ts`
+      has a fallback for a primitive cylinder (feature params) and for an
+      extruded sketch circle (`extrudedCircleRadius`); a revolve has neither, so
+      selecting a tube's bore or annular cap shows only Area. Small, real, and
+      entirely invisible until someone selects one.
 
 **Wave C — boundaries.** `claude/use-persisted-documents-hook` (`4ba9d64`, a
 483-line hook, −418 from App.tsx) was Wave A until it became clear it is

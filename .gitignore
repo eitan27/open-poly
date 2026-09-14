@@ -30,3 +30,6 @@ node_modules/.tmp/
 # wrangler local secrets
 .dev.vars
 .wrangler/
+
+# Screenshots the verify scripts drop in the repo root
+/dxf-import.png

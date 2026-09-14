@@ -3309,8 +3309,14 @@ export function Viewport({
       sectionCapGroup.visible = sv.enabled;
       sectionHelper.visible = sv.enabled;
       // Picking mode has its own click meaning — the gizmo stays visible but
-      // inert there, same opt-out the old cone handle had.
-      sectionControls.enabled = sv.enabled && !pickingRef.current;
+      // inert there, same opt-out the old cone handle had. Sketch editing needs
+      // the SAME opt-out for the same reason: while drawing, a click means
+      // "place a point", not "drag the section plane". Without it the gizmo's
+      // TransformControls claims the press, `dragging` goes true, and onDown
+      // bails before setting `down` — so onUp returns early and the click is
+      // swallowed. Every click after the first one was, which made drawing in a
+      // sketch impossible whenever section view was on.
+      sectionControls.enabled = sv.enabled && !pickingRef.current && !activeFrameRef.current;
       if (!sv.enabled) {
         if (sectionControls.object) sectionControls.detach();
         sectionPlane.set(sectionUpZ, FAR_PLANE_CONSTANT);

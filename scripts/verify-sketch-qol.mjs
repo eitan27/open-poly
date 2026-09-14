@@ -76,14 +76,16 @@ const lineCount2 = (sketch?.entities ?? []).filter((e) => e.type === "line").len
 check("a click after closing does not extend the old chain", lineCount2 === 3, `lines: ${lineCount2}`);
 
 // --- Circle / rectangle groups use the same primary + ▸ flyout UX ----------
-// (There are 3 groups: rect, circle, pattern — all share the new rendering.)
+// (Four groups: rect, circle, trim, pattern — all share the same rendering.
+// Trim/extend joined them after this check was written.)
+const GROUPS = 4;
 const groupCount = await page.locator(".sketch-group").count();
-check("sketch-tool groups render with the new group UX", groupCount === 3, `groups: ${groupCount}`);
+check("sketch-tool groups render with the new group UX", groupCount === GROUPS, `groups: ${groupCount}`);
 const primaryCount = await page.locator(".sketch-group .sketch-group-primary").count();
 const arrowCount = await page.locator(".sketch-group .sketch-group-arrow").count();
 check(
   "each group has a primary + an arrow",
-  primaryCount === 3 && arrowCount === 3,
+  primaryCount === GROUPS && arrowCount === GROUPS,
   `primary:${primaryCount} arrow:${arrowCount}`,
 );
 // Open the RECTANGLE group's flyout (first group) and confirm it's vertical,

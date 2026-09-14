@@ -101,8 +101,12 @@ check("the section-view panel stays visible during sketch edit", panelVisible);
 // Inside the sketch, clicks raycast onto the (infinite) active sketch plane —
 // no need to compute the face's own uv axes. Center near the pick point,
 // radius point a modest pixel offset away.
+// Blur first: the sketch was started by a toolbar CLICK, so focus is still on
+// that button and the "c" keystroke goes to it rather than the canvas. Every
+// other sketch script does this before pressing a tool key.
+await page.evaluate(() => document.activeElement?.blur());
 await page.keyboard.press("c"); // circle (center + radius)
-await page.waitForTimeout(150);
+await page.waitForTimeout(250);
 const center = await toScreen(floorPoint);
 await clickPx(canvas.x + center.x, canvas.y + center.y);
 await clickPx(canvas.x + center.x + 30, canvas.y + center.y);

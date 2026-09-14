@@ -66,14 +66,25 @@ check(
   dimOpen ? ((await page.locator(".dim-input label").textContent()) ?? "") : "no dim box",
 );
 if (dimOpen) {
-  await page.locator(".dim-input input").fill("12");
+  // A circle dimension is a DIAMETER by default — settings.circleDimension,
+  // "what a drawing calls a hole". So 12 means a 12mm hole: radius 6.
+  const DIA = 12;
+  await page.locator(".dim-input input").fill(String(DIA));
   await page.keyboard.press("Enter");
   await waitIdle();
   const s = await sketchOf();
   const circle = s.entities.find((e) => e.type === "circle");
-  const radiusCon = s.constraints.filter((c) => c.type === "radius");
-  check("the radius constraint is stored", radiusCon.length === 1, JSON.stringify(radiusCon.map((c) => c.value)));
-  check("…and the circle resizes to it", Math.abs(circle.r - 12) < 0.01, `r=${circle.r?.toFixed(3)}`);
+  const dimCon = s.constraints.filter((c) => c.type === "diameter" || c.type === "radius");
+  check(
+    "the dimension constraint is stored",
+    dimCon.length === 1,
+    JSON.stringify(dimCon.map((c) => `${c.type}=${c.value}`)),
+  );
+  check(
+    "…and the circle resizes to it (diameter, so half the typed value)",
+    Math.abs(circle.r - DIA / 2) < 0.01,
+    `r=${circle.r?.toFixed(3)} for a ${DIA}mm diameter`,
+  );
 }
 
 // --- 3. Draw a line from the circle's centre to its rim -------------------------
@@ -120,7 +131,9 @@ if (line) {
   await clickWorld(rim(200)); // away from the line's endpoint
   await page.keyboard.press("d");
   await page.waitForTimeout(300);
-  await page.locator(".dim-input input").fill("35");
+  const DIA2 = 35; // again a diameter, so the rim lands at DIA2 / 2
+  const R2 = DIA2 / 2;
+  await page.locator(".dim-input input").fill(String(DIA2));
   await page.keyboard.press("Enter");
   await waitIdle();
   const s3 = (await read({ read: "document" })).features.find((f) => f.id === sketchId2);
@@ -130,13 +143,13 @@ if (line) {
   const startOff = Math.hypot(l3.a[0] - c3.c[0], l3.a[1] - c3.c[1]);
   check(
     "re-dimensioning the circle keeps the line's end on the rim",
-    Math.abs(c3.r - 35) < 0.01 && Math.abs(endR - 35) < 0.05,
-    `r=${c3.r?.toFixed(2)} end at ${endR.toFixed(2)} from centre`,
+    Math.abs(c3.r - R2) < 0.01 && Math.abs(endR - R2) < 0.05,
+    `r=${c3.r?.toFixed(2)} end at ${endR.toFixed(2)} from centre (Ø${DIA2})`,
   );
   check("…and its start still at the centre", startOff < 0.05, `off by ${startOff.toFixed(3)}mm`);
   check(
     "…so the line now spans the new radius",
-    Math.abs(Math.hypot(l3.b[0] - l3.a[0], l3.b[1] - l3.a[1]) - 35) < 0.05,
+    Math.abs(Math.hypot(l3.b[0] - l3.a[0], l3.b[1] - l3.a[1]) - R2) < 0.05,
     `length ${Math.hypot(l3.b[0] - l3.a[0], l3.b[1] - l3.a[1]).toFixed(2)}`,
   );
 }

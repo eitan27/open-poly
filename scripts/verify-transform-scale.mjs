@@ -48,7 +48,11 @@ check(
   await fieldLabels(),
 );
 await dialog.locator("button", { hasText: "Rotate" }).first().click();
-check("Rotate tab shows axis + angle", (await fieldLabels()).startsWith("Axis,Angle°"), await fieldLabels());
+check(
+  "Rotate tab shows the along-axis picker + angle",
+  (await fieldLabels()).startsWith("Along,Angle°"),
+  await fieldLabels(),
+);
 await dialog.locator("button", { hasText: "Scale" }).first().click();
 check("Scale tab shows a single factor", (await fieldLabels()).startsWith("Factor"), await fieldLabels());
 

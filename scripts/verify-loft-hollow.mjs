@@ -10,8 +10,12 @@
 import { chromium } from "playwright";
 
 const URL = process.env.URL ?? "http://localhost:5173/";
-const EXE = process.env.PW_EXE || "/opt/pw-browsers/chromium";
-const browser = await chromium.launch({ executablePath: EXE });
+// Was hard-coded to /opt/pw-browsers/chromium, which exists only on the machine
+// this was written on — everywhere else the script died at launch before a
+// single check ran. Use playwright's own browser unless told otherwise, the way
+// every other script here does.
+const EXE = process.env.PW_EXE || process.env.CHROMIUM_PATH;
+const browser = await chromium.launch(EXE ? { executablePath: EXE } : {});
 const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
 const page = await context.newPage();
 page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));

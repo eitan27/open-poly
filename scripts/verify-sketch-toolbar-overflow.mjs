@@ -115,10 +115,16 @@ check(
 );
 check("the flyout stays inside the window", boxes.menu.r <= boxes.win, `right ${boxes.menu.r} of ${boxes.win}`);
 
-// The button says "More" in words, not the modelling bar's "…": every button
-// around it in this column is a bare glyph, so a glyph would read as a tool.
-const moreLabel = (await page.locator(moreBtn).textContent())?.trim();
-check("the overflow button is labelled in words, not a glyph", moreLabel === "More▸", `"${moreLabel}"`);
+// The button is a bare magnifier (c0cc51d, "the tool search wears a
+// magnifier") — it opens a SEARCH box, not one of the variant flyouts the ▸
+// arrows mark, so it carries no text and no arrow of its own. What it must
+// carry is a title a screen reader and a hover can both use.
+const moreTitle = await page.locator(moreBtn).getAttribute("title");
+check(
+  "the overflow button is a magnifier with a descriptive title, not a glyph tool",
+  (await page.locator(`${moreBtn} svg`).count()) === 1 && /search all tools/i.test(moreTitle ?? ""),
+  `svg=${await page.locator(`${moreBtn} svg`).count()} title="${moreTitle}"`,
+);
 // The column is only ~50px wide, so the label + arrow have to fit one line.
 const fitsOneLine = await page.locator(moreBtn).evaluate((el) => {
   const line = parseFloat(getComputedStyle(el).fontSize) * 2; // generous single-line bound
@@ -134,10 +140,13 @@ check(
   fitsOneLine.ok,
   `overflow ${fitsOneLine.overflow.toFixed(1)}px`,
 );
+// ▸ means "this opens a variant flyout". The magnifier opens a search box, so
+// it must NOT wear one — the arrow has to keep meaning one thing.
+const groupArrow = (await page.locator(".sketch-group .sketch-group-arrow").first().textContent())?.trim();
 check(
-  "…and carries the same ▸ 'opens to the right' arrow as the tool groups",
-  moreLabel.endsWith("▸") &&
-    (await page.locator(".sketch-group .sketch-group-arrow").first().textContent())?.trim() === "▸",
+  "the ▸ arrow still marks the tool groups, and the search button does not wear one",
+  groupArrow === "▸" && !((await page.locator(moreBtn).textContent()) ?? "").includes("▸"),
+  `group arrow "${groupArrow}"`,
 );
 check(
   "the More button shows its open state like the group arrows",

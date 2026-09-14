@@ -79,7 +79,10 @@ await page.waitForTimeout(300);
 const boxOpen = (await page.locator(".dim-input input").count()) === 1;
 check("the circle is still dimensionable with a stray zero-length line present", boxOpen);
 if (boxOpen) {
-  await page.locator(".dim-input input").fill("35");
+  // Circle dimensions are DIAMETERS by default (settings.circleDimension), so a
+  // typed 35 is a 35mm hole and the radius lands at half of it.
+  const DIA = 35;
+  await page.locator(".dim-input input").fill(String(DIA));
   await page.keyboard.press("Enter");
   await waitIdle();
   const s = await sketchNow();
@@ -88,9 +91,9 @@ if (boxOpen) {
     ? (await page.locator(".sketch-msg").textContent())?.trim()
     : "";
   check(
-    "…and the radius actually applies",
-    Math.abs(circle.r - 35) < 0.01,
-    `r=${circle.r.toFixed(2)}${msg ? ` | banner: ${msg}` : ""}`,
+    "…and the dimension actually applies",
+    Math.abs(circle.r - DIA / 2) < 0.01,
+    `r=${circle.r.toFixed(2)} for a ${DIA}mm diameter${msg ? ` | banner: ${msg}` : ""}`,
   );
 }
 
