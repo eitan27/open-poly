@@ -141,8 +141,8 @@ The repo is going public. This section is the resumable state of that push:
 read it, check the marker, pick up the next unticked item. Delete the section
 once every wave is done.
 
-**Marker — 2026-09-14, main at `befe5d7`.** Waves A.1–A.4 landed. Next:
-Wave A.5 (Viewport mount-effect split).
+**Marker — 2026-09-14, main at `befe5d7`.** Wave A is COMPLETE (A.1–A.5).
+Next: Wave B (test infrastructure), which everything below now waits on.
 
 **Done**
 
@@ -187,6 +187,24 @@ Wave A.5 (Viewport mount-effect split).
       OCCT wasm — so all 12 types were built through the live app instead, by
       `scripts/verify-build-bodies.mjs`, which is kept: it is the only thing
       that exercises this file at all.
+- [x] **A.5** Four modules out of Viewport.tsx — `geometryQuery.ts`,
+      `sceneMath.ts`, `materials.ts`, `viewCube.ts` — with 46 tests, where
+      `gizmoShape` was previously the only tested thing in `src/viewport`
+      (`refactor/viewport-modules`). Viewport.tsx 5294 → 4698, so **−596**.
+      The branch's `sceneMath` tests were a total loss and were rewritten:
+      `closestLineParamToRay` no longer exists (the section handle drags a
+      TransformControls proxy now), and `transformMatrix` grew an axis-LINE
+      argument and a scale, so every one of its old calls was against a dead
+      signature. The new tests cover what the drift added — rotating about an
+      edge metres from the pivot, scaling about the pivot, and the T·R·S order.
+      `vitest.config.ts` gained one alias: `replicad-threejs-helper` ships
+      `main` (UMD) and `module` (ESM) but no `exports` map, so vitest's node
+      resolver loaded the UMD file as ESM and got an EMPTY namespace — every
+      named import undefined at call time, not import time. Pointing node at
+      the same ESM build the app uses made `syncBodyGeometry` testable.
+      `viewCube.ts` has no unit tests on purpose (its textures need a DOM
+      canvas); it and the picking integration are covered by
+      `scripts/verify-viewport-modules.mjs`, kept alongside A.4's.
 
 **Also owed, outside the waves**
 
@@ -194,20 +212,22 @@ Wave A.5 (Viewport mount-effect split).
       `push` trigger is commented out in `.github/workflows/pages.yml` because
       GitHub Pages from a private repo needs a paid plan.
 
-**Wave A — harvest (remaining).** One month-old refactor branch left on
-`origin/claude/*`, a single commit from 2026-08-04. Its target file has grown
-25% since, so **re-apply the idea against main; never rebase or cherry-pick**.
-All four waves that landed were re-done from scratch for this reason, and A.4
-found a real bug waiting in its branch (a `contentKey` missing a dependency).
+**Wave A — harvest. DONE.** All five waves were re-applied against main rather
+than rebased or cherry-picked, and that was the right call every time: the
+branches were 4–6 weeks stale and two of them carried bugs into the present —
+A.4's `contentKey` had lost a dependency, and A.5's `sceneMath` tests were
+written against two signatures that no longer exist. The three branches these
+harvested — `app-tsx-decompose`, `kernel-buildbodies-split`,
+`viewport-mount-effect-split` — can be deleted once this lands.
+`origin/claude/use-persisted-documents-hook` must NOT be: Wave C still wants it.
 
-- [ ] **A.5** `claude/viewport-mount-effect-split` (`d203e75`) — four modules
-      (`geometryQuery`, `materials`, `sceneMath`, `viewCube`) + tests, −565 from
-      Viewport.tsx (5294 now, 4246 then). Only `gizmoShape.ts` lives there today.
-
-**Wave B — test infrastructure.** jsdom + `@testing-library/react`, so stateful
-hooks can be tested at all; a Playwright/MCP path for `worker.ts` — A.4 left a
-first one at `scripts/verify-build-bodies.mjs` to generalise from. Everything
-below waits on this.
+**Wave B — test infrastructure (resume here).** jsdom +
+`@testing-library/react`, so stateful hooks can be tested at all; a
+Playwright/MCP path for `worker.ts` and the viewport — A.4 and A.5 left two to
+generalise from (`scripts/verify-build-bodies.mjs`,
+`scripts/verify-viewport-modules.mjs`), both of which re-implement the same
+wait-for-idle / apply / read scaffolding that every `verify-*.mjs` copies.
+Everything below waits on this.
 
 **Wave C — boundaries.** `claude/use-persisted-documents-hook` (`4ba9d64`, a
 483-line hook, −418 from App.tsx) was Wave A until it became clear it is

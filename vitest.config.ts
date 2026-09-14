@@ -21,6 +21,19 @@ function wasmUrlForNode(): Plugin {
 
 export default defineConfig({
   plugins: [wasmUrlForNode()],
+  resolve: {
+    alias: {
+      // replicad-threejs-helper declares `main` (a UMD bundle) and `module` (ESM)
+      // but no `exports` map. Vite takes `module`; vitest's node resolver takes
+      // `main`, and importing that UMD file as ESM yields an EMPTY namespace —
+      // every named import comes back undefined at call time, not import time.
+      // Point node at the same ESM build the app gets.
+      "replicad-threejs-helper": path.resolve(
+        __dirname,
+        "node_modules/replicad-threejs-helper/dist/es/replicad-threejs-helper.js",
+      ),
+    },
+  },
   test: {
     environment: "node",
     // Agent worktrees live under `.claude/worktrees/` — inside the repo, so the

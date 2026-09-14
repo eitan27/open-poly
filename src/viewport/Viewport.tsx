@@ -14,27 +14,15 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
-import { getEdgeId, getFaceId, syncGeometries } from "replicad-threejs-helper";
-import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
+import { getEdgeId, getFaceId } from "replicad-threejs-helper";
+import type { ShapeMeshPayload } from "../kernel/types";
 import type { MouseDragAction, ResolvedTheme } from "../settings/settings";
-import { VIEWPORT_THEMES, type ViewCubePalette } from "../settings/viewportTheme";
-import { clamp } from "../lib/clamp";
+import { VIEWPORT_THEMES } from "../settings/viewportTheme";
 
-/** Build a body's three.js geometry from a meshed payload. Wraps replicad's
- *  `syncGeometries`, then re-sets the index: our mesh indices are `Uint32Array`
- *  (so the mesh transfers from the worker as a raw ArrayBuffer copy), but
- *  `BufferGeometry.setIndex` only auto-wraps plain `number[]` — a typed array is
- *  assigned raw and won't render, so we install it as a proper `BufferAttribute`. */
-function syncBodyGeometry(name: string, faces: MeshedFaces, edges: MeshedEdges) {
-  // The helper types its input as `number[]` buffers; at runtime it feeds them to
-  // Float32BufferAttribute/setIndex, which accept typed arrays too. Cast past the
-  // narrow types (we fix the one case it can't handle — a typed index — below).
-  const meshes = [{ name, faces, edges }] as unknown as Parameters<typeof syncGeometries>[0];
-  const [geometry] = syncGeometries(meshes, []);
-  const tri = faces.triangles;
-  if (ArrayBuffer.isView(tri)) geometry.faces.setIndex(new THREE.BufferAttribute(tri as Uint32Array, 1));
-  return geometry;
-}
+import { faceBoundaryEdges, nearestHitInPixels, realVertexNear, syncBodyGeometry } from "./geometryQuery";
+import { fitCircle, nearestOnSegment, transformMatrix } from "./sceneMath";
+import { buttCaps, createSectionCapTriple, makeBodyMaterial } from "./materials";
+import { createViewCube, type CubeHit, type ViewCube } from "./viewCube";
 import type { SketchEntity, Vec2 } from "../document/types";
 import { buildGuides, snapToGuides, type Guide } from "../sketch/inference";
 import type { SketchRegion } from "../document/regions";
@@ -458,57 +446,6 @@ interface SceneState {
   viewCube: ViewCube;
 }
 
-/** Build the world matrix for a transform feature's values, matching the kernel's
- *  composition exactly: uniformly scale about the pivot, then rotate about the
- *  axis LINE, then translate (M = T·R·S). Keeps the live drag preview
- *  pixel-aligned with what regenerate will bake. */
-function transformMatrix(
-  pivot: [number, number, number],
-  tx: number,
-  ty: number,
-  tz: number,
-  angle: number,
-  axis: TransformEdit["axis"],
-  scale: number,
-): THREE.Matrix4 {
-  const toPivot = new THREE.Matrix4().makeTranslation(-pivot[0], -pivot[1], -pivot[2]);
-  const fromPivot = new THREE.Matrix4().makeTranslation(pivot[0], pivot[1], pivot[2]);
-  const m = new THREE.Matrix4(); // identity = no rotation, no scale
-  if (angle !== 0) {
-    // About the axis LINE, not the pivot: for a world axis the two coincide
-    // (axis.origin IS the pivot), for a picked edge they are metres apart.
-    const [ox, oy, oz] = axis.origin;
-    const toAxis = new THREE.Matrix4().makeTranslation(-ox, -oy, -oz);
-    const fromAxis = new THREE.Matrix4().makeTranslation(ox, oy, oz);
-    const axisVec = new THREE.Vector3(...axis.dir).normalize();
-    const rot = new THREE.Matrix4().makeRotationAxis(axisVec, THREE.MathUtils.degToRad(angle));
-    m.multiply(fromAxis).multiply(rot).multiply(toAxis);
-  }
-  if (scale !== 1) {
-    const sc = new THREE.Matrix4().makeScale(scale, scale, scale);
-    // Scale about the same pivot, applied BEFORE the rotation (R · S).
-    m.multiply(fromPivot).multiply(sc).multiply(toPivot);
-  }
-  // Translation applies last, so the final matrix is T · R · S.
-  return new THREE.Matrix4().makeTranslation(tx, ty, tz).multiply(m);
-}
-
-/** Material for a body's faces (base color, hover, or selected highlight).
- *  `clippingPlanes` is the shared section-view array (see SceneState) — passed
- *  in at construction so every body/hover/selected/sketch-face material clips
- *  identically without ever needing to be touched again after creation. */
-const makeBodyMaterial = (color: number, clippingPlanes: THREE.Plane[]) =>
-  new THREE.MeshStandardMaterial({
-    color,
-    metalness: 0.1,
-    roughness: 0.55,
-    side: THREE.DoubleSide,
-    polygonOffset: true,
-    polygonOffsetFactor: 1,
-    polygonOffsetUnits: 1,
-    clippingPlanes,
-  });
-
 // A clip plane this far from the origin never intersects a real model — used to
 // represent "section view off" without emptying any material's clippingPlanes
 // array (see SceneState.sectionPlane).
@@ -524,72 +461,6 @@ const SECTION_CAP_MARGIN = 1.1;
 // each body claims a strictly increasing 3-slot range (back, front, cap) so the
 // per-body stencil clear (cap.onAfterRender) never bleeds into the next body.
 const SECTION_CAP_RENDER_ORDER_BASE = 1000;
-
-/** Build the invisible stencil-writer pair + visible neutral cap quad for one
- *  body's section-view cross-section, per the standard clipping-stencil
- *  technique (back faces increment, front faces decrement, unconditionally, at
- *  every clip-surviving fragment; a quad at the plane then draws only where the
- *  accumulated stencil is nonzero — i.e. exactly the solid's interior at the cut).
- *  `renderOrder` must be a 3-value range unique to this body (see the caller). */
-function createSectionCapTriple(
-  faceGeometry: THREE.BufferGeometry,
-  clipPlane: THREE.Plane,
-  capGeometry: THREE.PlaneGeometry,
-  capMaterial: THREE.MeshStandardMaterial,
-  renderOrder: number,
-): THREE.Mesh[] {
-  const stencilBase = {
-    colorWrite: false,
-    depthWrite: false,
-    depthTest: false,
-    stencilWrite: true,
-    stencilFunc: THREE.AlwaysStencilFunc,
-    clippingPlanes: [clipPlane],
-  };
-  const back = new THREE.Mesh(
-    faceGeometry,
-    new THREE.MeshBasicMaterial({
-      ...stencilBase,
-      side: THREE.BackSide,
-      stencilFail: THREE.IncrementWrapStencilOp,
-      stencilZFail: THREE.IncrementWrapStencilOp,
-      stencilZPass: THREE.IncrementWrapStencilOp,
-    }),
-  );
-  const front = new THREE.Mesh(
-    faceGeometry,
-    new THREE.MeshBasicMaterial({
-      ...stencilBase,
-      side: THREE.FrontSide,
-      stencilFail: THREE.DecrementWrapStencilOp,
-      stencilZFail: THREE.DecrementWrapStencilOp,
-      stencilZPass: THREE.DecrementWrapStencilOp,
-    }),
-  );
-  const cap = new THREE.Mesh(capGeometry, capMaterial);
-  cap.onAfterRender = (r) => r.clearStencil();
-  for (const [i, m] of [back, front, cap].entries()) {
-    m.renderOrder = renderOrder + i;
-    m.frustumCulled = false;
-    m.userData.isSectionCap = true;
-  }
-  return [back, front, cap];
-}
-
-// Fat lines (LineMaterial) draw half-linewidth ROUND endcaps that overhang the
-// segment on both ends, so a highlighted/sketch line reads longer than its true
-// extent. The instanced box's uv.y is 1..-1 over the line body and runs out to
-// ±2 for the caps (see LineSegmentsGeometry), so discarding uv.y outside [-1, 1]
-// squares the ends off exactly at the endpoints — butt caps, no overhang.
-const buttCaps = (mat: LineMaterial): LineMaterial => {
-  mat.onBeforeCompile = (shader) => {
-    shader.fragmentShader = shader.fragmentShader.replace(
-      "void main() {",
-      "void main() {\n\t\t\tif ( vUv.y < - 1.0 || vUv.y > 1.0 ) discard; // butt caps",
-    );
-  };
-  return mat;
-};
 
 const VIEW_DISTANCE = 220;
 const TWEEN_MS = 300;
@@ -645,41 +516,6 @@ const PICK_DETECT_PX = 12;
 const VERTEX_PICK_PX = 8;
 const EDGE_PICK_PX = 6;
 
-/**
- * The intersection whose point is nearest the cursor **in pixels**, ignoring
- * hits beyond `maxDistance` (depth).
- *
- * Three.js sorts intersections by ray depth, and a sketch is planar: every
- * segment within the raycaster's world-space Line threshold comes back at the
- * *same* distance, so the sort is a tie and the array keeps buffer order.
- * Taking `[0]` therefore returns an arbitrary segment near the cursor rather
- * than the one under it — on a tessellated entity (circle, arc, spline, text)
- * typically a whole chord away. That gap then failed the EDGE_PICK_PX gate and
- * made circle rims unselectable, while straight lines (one long segment, no
- * neighbours) kept working.
- */
-function nearestHitInPixels(
-  hits: THREE.Intersection[],
-  toPx: (p: THREE.Vector3) => { x: number; y: number },
-  clientX: number,
-  clientY: number,
-  maxDistance = Infinity,
-): { hit: THREE.Intersection; px: number } | null {
-  let best: THREE.Intersection | null = null;
-  let bestPx = Infinity;
-  for (const h of hits) {
-    if (h.distance > maxDistance) continue;
-    const p = toPx(h.point);
-    const px = Math.hypot(p.x - clientX, p.y - clientY);
-    // Exact ties happen at a shared vertex between two segments — prefer the
-    // nearer one so an overlapping sketch in front still wins.
-    if (px < bestPx || (px === bestPx && best !== null && h.distance < best.distance)) {
-      bestPx = px;
-      best = h;
-    }
-  }
-  return best ? { hit: best, px: bestPx } : null;
-}
 // Depth slack (world mm): an edge/line counts as "in front of" the face under the
 // cursor if it's within this of the face hit — covers tessellation seams where a
 // face's own boundary edge sits a hair behind the triangles.
@@ -704,129 +540,6 @@ const SKETCH_LINE_WIDTH = 2.0;
 const sketchBaseColor = (active: boolean, fullyConstrained: boolean): number =>
   active ? (fullyConstrained ? SKETCH_COLOR_FULL : SKETCH_COLOR_UNDER) : SKETCH_COLOR_IDLE;
 
-const posKey = (x: number, y: number, z: number) =>
-  `${Math.round(x * 1000)},${Math.round(y * 1000)},${Math.round(z * 1000)}`;
-
-/**
- * Returns the [start, count] vertex ranges (into the edge geometry) of every
- * body edge that bounds the given face. An edge is a boundary of the face when
- * all of its tessellation vertices coincide (by rounded position) with the
- * face's triangle vertices. Exact for straight box edges; curved edges on
- * curved faces are a known limitation (face/edge tessellations differ).
- */
-function faceBoundaryEdges(
-  faceGeom: THREE.BufferGeometry,
-  edgeGeom: THREE.BufferGeometry,
-  faceIds: Set<number>,
-): [number, number][] {
-  const fg = faceGeom.userData.faceGroups as { faceId: number }[] | undefined;
-  const eg = edgeGeom.userData.edgeGroups as { start: number; count: number; edgeId: number }[] | undefined;
-  if (!fg || !eg) return [];
-
-  // Collect the rounded positions of every vertex used by the selected face(s)'
-  // triangles. For a logical cylinder this is the whole facet cluster, so an edge
-  // "on the face" means on the cluster — the facet seams between them are already
-  // filtered out of the edge mesh, leaving just the real boundary (the rim rings).
-  const faceVerts = new Set<string>();
-  const fpos = faceGeom.getAttribute("position");
-  const index = faceGeom.getIndex();
-  fg.forEach((g, gi) => {
-    if (!faceIds.has(g.faceId)) return;
-    const grp = faceGeom.groups[gi];
-    if (!grp) return;
-    for (let i = grp.start; i < grp.start + grp.count; i++) {
-      const v = index ? index.getX(i) : i;
-      faceVerts.add(posKey(fpos.getX(v), fpos.getY(v), fpos.getZ(v)));
-    }
-  });
-
-  const epos = edgeGeom.getAttribute("position");
-  const ranges: [number, number][] = [];
-  for (const e of eg) {
-    let onFace = true;
-    for (let v = e.start; v < e.start + e.count; v++) {
-      if (!faceVerts.has(posKey(epos.getX(v), epos.getY(v), epos.getZ(v)))) {
-        onFace = false;
-        break;
-      }
-    }
-    if (onFace) ranges.push([e.start, e.count]);
-  }
-  return ranges;
-}
-
-type PickEdgeGroup = { start: number; count: number; edgeId: number; chainId?: number };
-
-/**
- * Positions where a tangent chain merely turns the corner between two of its own
- * chords — the interior junctions of a faceted circle, keyed by rounded position.
- *
- * A round wall here is a 96-gon, so a rim is 96 *straight* edges and every chord
- * junction is a genuine OCCT vertex about a millimetre from its neighbours. They
- * are real topologically and meaningless to a user, so they must not be offered
- * as pickable vertices. Cached on the geometry (invalidated when the mesh hands
- * us new edgeGroups) because picking runs on every mouse move.
- */
-function chainInteriorPositions(geom: THREE.BufferGeometry): Set<string> {
-  const eg = geom.userData.edgeGroups as PickEdgeGroup[] | undefined;
-  if (geom.userData.chainInteriorFor === eg) return geom.userData.chainInterior as Set<string>;
-  const pos = geom.getAttribute("position");
-  // Count each chain's endpoint positions: an endpoint shared by two chords of
-  // the SAME chain is interior to it; one that ends the chain appears once.
-  const seen = new Map<string, number>();
-  if (eg && pos) {
-    for (const g of eg) {
-      if (g.chainId === undefined || g.count < 2) continue;
-      for (const v of [g.start, g.start + g.count - 1]) {
-        const k = `${g.chainId}|${posKey(pos.getX(v), pos.getY(v), pos.getZ(v))}`;
-        seen.set(k, (seen.get(k) ?? 0) + 1);
-      }
-    }
-  }
-  const interior = new Set<string>();
-  for (const [k, n] of seen) if (n > 1) interior.add(k.slice(k.indexOf("|") + 1));
-  geom.userData.chainInterior = interior;
-  geom.userData.chainInteriorFor = eg;
-  return interior;
-}
-
-/**
- * The genuine topological vertex nearest `at` on the edge that segment `hitIndex`
- * belongs to, or null when that edge exposes none.
- *
- * Two things otherwise masquerade as vertices, and together they made circular
- * edges practically unselectable — any click near a rim landed on a "vertex" a
- * fraction of a millimetre away, and vertex outranks edge:
- *   • a truly curved edge (a fillet's arc) is drawn as many chords, so every
- *     interior chord junction looked like an endpoint. Only the ends of the
- *     edge's whole polyline count — the buffer is consecutive pairs, so those
- *     are the group's first and last positions.
- *   • a faceted circle's chords meet tangentially at real vertices, filtered
- *     out by chainInteriorPositions above. A closed rim is one chain with no
- *     ends and therefore exposes no vertices at all, which is right: nothing
- *     there is a corner. The vertical wall seams landing on those same junctions
- *     drop out too, since the test is by position.
- */
-function realVertexNear(geom: THREE.BufferGeometry, hitIndex: number, at: THREE.Vector3): THREE.Vector3 | null {
-  const eg = geom.userData.edgeGroups as PickEdgeGroup[] | undefined;
-  const pos = geom.getAttribute("position");
-  if (!eg || !pos) return null;
-  const grp = eg.find((g) => hitIndex >= g.start && hitIndex < g.start + g.count);
-  if (!grp) return null;
-  const interior = chainInteriorPositions(geom);
-  let best: THREE.Vector3 | null = null;
-  let bestD = Infinity;
-  for (const v of [grp.start, grp.start + grp.count - 1]) {
-    const p = new THREE.Vector3().fromBufferAttribute(pos, v);
-    if (interior.has(posKey(p.x, p.y, p.z))) continue;
-    const d = p.distanceTo(at);
-    if (d < bestD) {
-      bestD = d;
-      best = p;
-    }
-  }
-  return best;
-}
 const ANGLE_SNAP = 0.06; // ~3.4° — horizontal/vertical inference window
 
 const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, number, number] }> = {
@@ -846,64 +559,9 @@ const VIEWS: Record<ViewName, { dir: [number, number, number]; up: [number, numb
 // corner's diagonal; clicking either tweens to it. Faces/corners highlight on
 // hover. It's drawn as an overlay into the SAME WebGL canvas, with `autoClear`
 // managed so its render pass never wipes the main scene.
-const VIEWCUBE_DIM = 108; // corner size in CSS px
-const VIEWCUBE_TOP = 60; // px from the canvas top — clears the modeling toolbar
-const VIEWCUBE_RIGHT = 14;
-const VIEWCUBE_FACES: {
-  view: ViewName;
-  label: string;
-  normal: [number, number, number];
-  up: [number, number, number];
-}[] = [
-  { view: "right", label: "RIGHT", normal: [1, 0, 0], up: [0, 0, 1] },
-  { view: "left", label: "LEFT", normal: [-1, 0, 0], up: [0, 0, 1] },
-  { view: "back", label: "BACK", normal: [0, 1, 0], up: [0, 0, 1] },
-  { view: "front", label: "FRONT", normal: [0, -1, 0], up: [0, 0, 1] },
-  { view: "top", label: "TOP", normal: [0, 0, 1], up: [0, 1, 0] },
-  { view: "bottom", label: "BOTTOM", normal: [0, 0, -1], up: [0, 1, 0] },
-];
-
-/** A tiny solid-colour sRGB texture — used for the corner nubs so they render
- *  through the same path as the face backgrounds (identical gray). */
-function solidCubeTexture(color: string): THREE.CanvasTexture {
-  const c = document.createElement("canvas");
-  c.width = c.height = 2;
-  const g = c.getContext("2d")!;
-  g.fillStyle = color;
-  g.fillRect(0, 0, 2, 2);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
-/** A face label rendered to a canvas texture. `hover` swaps to an accent look. */
-function viewCubeFaceTexture(label: string, hover: boolean, p: ViewCubePalette): THREE.CanvasTexture {
-  const S = 128;
-  const c = document.createElement("canvas");
-  c.width = c.height = S;
-  const g = c.getContext("2d")!;
-  g.fillStyle = hover ? p.faceFillHover : p.faceFill;
-  g.fillRect(0, 0, S, S);
-  g.strokeStyle = hover ? p.faceBorderHover : p.faceBorder;
-  g.lineWidth = hover ? 8 : 6;
-  g.strokeRect(3, 3, S - 6, S - 6);
-  g.fillStyle = hover ? p.faceLabelHover : p.faceLabel;
-  g.font = "600 23px ui-sans-serif, system-ui, -apple-system, sans-serif";
-  g.textAlign = "center";
-  g.textBaseline = "middle";
-  g.fillText(label, S / 2, S / 2 + 1);
-  const tex = new THREE.CanvasTexture(c);
-  // The canvas colours are authored in sRGB; tag the texture so they render as
-  // authored — matching the (also-sRGB) flat material colour of the corner nubs,
-  // so a nub is exactly the same gray as the face background it sits on.
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  return tex;
-}
 
 /** A navigation target under a cube click: a named face view, or a free camera
  *  direction (the corners → iso 3/4 views). */
-type CubeHit = { view: ViewName } | { dir: [number, number, number]; up: [number, number, number] };
 
 const MOUSE_ACTION_TO_THREE: Record<MouseDragAction, THREE.MOUSE> = {
   pan: THREE.MOUSE.PAN,
@@ -921,224 +579,6 @@ function applyMouseBindings(controls: OrbitControls, middle: MouseDragAction, ri
     LEFT: THREE.MOUSE.ROTATE,
     MIDDLE: MOUSE_ACTION_TO_THREE[middle],
     RIGHT: MOUSE_ACTION_TO_THREE[right],
-  };
-}
-
-interface ViewCube {
-  /** Overlay the cube into the top-right corner, oriented to mirror `mainCamera`. */
-  render(renderer: THREE.WebGLRenderer, mainCamera: THREE.Camera): void;
-  /** The nav target under a client point (updating the hover highlight), or null
-   *  if the cursor isn't over the cube. */
-  pick(renderer: THREE.WebGLRenderer, clientX: number, clientY: number): CubeHit | null;
-  /** Drop any hover highlight (e.g. when the pointer leaves the canvas). */
-  clearHover(): void;
-  /** Repaint for a colour theme. Both themes' face/nub textures are built up
-   *  front and simply swapped — a theme flip is a handful of pointer
-   *  assignments, not a canvas re-render, and there is nothing to dispose. */
-  setTheme(theme: ResolvedTheme): void;
-  dispose(): void;
-}
-
-function createViewCube(initialTheme: ResolvedTheme): ViewCube {
-  const cubeScene = new THREE.Scene();
-  // Frustum snug around the unit cube's iso silhouette (~±0.87 at the corners)
-  // so it fills the corner region — a big, easy click target.
-  const cam = new THREE.OrthographicCamera(-0.92, 0.92, 0.92, -0.92, 0.1, 10);
-  cam.position.set(0, 0, 3);
-  cam.lookAt(0, 0, 0);
-  cam.updateMatrixWorld(true);
-  const group = new THREE.Group();
-  cubeScene.add(group);
-
-  // Every themed texture is built once, for both themes, and indexed by theme
-  // below — see setTheme. `pal` is whichever one is currently showing.
-  const palettes = { dark: VIEWPORT_THEMES.dark.cube, light: VIEWPORT_THEMES.light.cube };
-  let pal = palettes[initialTheme];
-
-  // A solid body + crisp edges so the six label planes read as one cube.
-  const bodyMat = new THREE.MeshBasicMaterial({ color: pal.body });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.98, 0.98), bodyMat);
-  const edgeMat = new THREE.LineBasicMaterial({ color: pal.edge });
-  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), edgeMat);
-  group.add(body, edges);
-  const disposables: { dispose(): void }[] = [
-    body.geometry,
-    body.material as THREE.Material,
-    edges.geometry,
-    edges.material as THREE.Material,
-  ];
-
-  // Per-object hover appearance: faces swap their label texture, corners swap
-  // colour. Stored on userData so a single applyHover handles both.
-  const targets: THREE.Mesh[] = [];
-
-  // One label plane per face, oriented by an explicit basis (local +Z → outward
-  // normal, local +Y → the face's up) so every label reads upright.
-  const x = new THREE.Vector3(),
-    y = new THREE.Vector3(),
-    z = new THREE.Vector3();
-  for (const f of VIEWCUBE_FACES) {
-    const themed = {
-      dark: {
-        normal: viewCubeFaceTexture(f.label, false, palettes.dark),
-        hover: viewCubeFaceTexture(f.label, true, palettes.dark),
-      },
-      light: {
-        normal: viewCubeFaceTexture(f.label, false, palettes.light),
-        hover: viewCubeFaceTexture(f.label, true, palettes.light),
-      },
-    };
-    const texNormal = themed[initialTheme].normal;
-    const texHover = themed[initialTheme].hover;
-    const mat = new THREE.MeshBasicMaterial({ map: texNormal });
-    const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-    z.set(...f.normal).normalize();
-    y.set(...f.up).normalize();
-    x.crossVectors(y, z).normalize();
-    plane.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
-    plane.position.copy(z).multiplyScalar(0.5);
-    plane.userData = { hit: { view: f.view } as CubeHit, kind: "face", texNormal, texHover, themed };
-    group.add(plane);
-    targets.push(plane);
-    disposables.push(
-      plane.geometry,
-      mat,
-      themed.dark.normal,
-      themed.dark.hover,
-      themed.light.normal,
-      themed.light.hover,
-    );
-  }
-
-  // A small nub at each of the 8 corners → the iso view looking down that corner's
-  // diagonal (camera position = the corner direction, Z-up). They use the SAME
-  // solid-colour textures as the face backgrounds (not a flat material colour,
-  // which renders through a different colour-space path) so a nub is exactly the
-  // same gray as the face it sits on, hinting it's pressable without reading as a
-  // loud dot.
-  const cornerThemed = {
-    dark: { normal: solidCubeTexture(palettes.dark.corner), hover: solidCubeTexture(palettes.dark.cornerHover) },
-    light: { normal: solidCubeTexture(palettes.light.corner), hover: solidCubeTexture(palettes.light.cornerHover) },
-  };
-  const cornerGeom = new THREE.SphereGeometry(0.09, 16, 12);
-  // A slightly larger BackSide sphere behind each nub = a blue outline ring, shown
-  // only on hover (matching the faces' blue hover border).
-  const cornerOutlineGeom = new THREE.SphereGeometry(0.125, 16, 12);
-  disposables.push(
-    cornerGeom,
-    cornerOutlineGeom,
-    cornerThemed.dark.normal,
-    cornerThemed.dark.hover,
-    cornerThemed.light.normal,
-    cornerThemed.light.hover,
-  );
-  const outlineMats: THREE.MeshBasicMaterial[] = [];
-  for (const sx of [-1, 1])
-    for (const sy of [-1, 1])
-      for (const sz of [-1, 1]) {
-        const outlineMat = new THREE.MeshBasicMaterial({ color: pal.cornerOutline, side: THREE.BackSide });
-        outlineMats.push(outlineMat);
-        const outline = new THREE.Mesh(cornerOutlineGeom, outlineMat);
-        outline.position.set(sx * 0.5, sy * 0.5, sz * 0.5);
-        outline.visible = false;
-        group.add(outline);
-        const mat = new THREE.MeshBasicMaterial({ map: cornerThemed[initialTheme].normal });
-        const nub = new THREE.Mesh(cornerGeom, mat);
-        nub.position.set(sx * 0.5, sy * 0.5, sz * 0.5);
-        nub.userData = {
-          hit: { dir: [sx, sy, sz], up: [0, 0, 1] } as CubeHit,
-          texNormal: cornerThemed[initialTheme].normal,
-          texHover: cornerThemed[initialTheme].hover,
-          themed: cornerThemed,
-          outline,
-        };
-        group.add(nub);
-        targets.push(nub);
-        disposables.push(outlineMat, mat);
-      }
-
-  const raycaster = new THREE.Raycaster();
-  const size = new THREE.Vector2();
-  const prevVp = new THREE.Vector4();
-  let hovered: THREE.Mesh | null = null;
-
-  const applyHover = (obj: THREE.Mesh | null, on: boolean) => {
-    if (!obj) return;
-    const ud = obj.userData;
-    const mat = obj.material as THREE.MeshBasicMaterial;
-    // Faces and corner nubs both swap their (solid or labelled) texture on hover.
-    mat.map = on ? ud.texHover : ud.texNormal;
-    // Corner nubs also show their blue outline ring on hover (faces draw theirs
-    // into the texture; a sphere gets it from a BackSide shell behind it).
-    if (ud.outline) (ud.outline as THREE.Mesh).visible = on;
-  };
-  const setHovered = (obj: THREE.Mesh | null) => {
-    if (obj === hovered) return;
-    applyHover(hovered, false);
-    hovered = obj;
-    applyHover(hovered, true);
-  };
-
-  return {
-    render(renderer, mainCamera) {
-      group.quaternion.copy(mainCamera.quaternion).invert();
-      renderer.getSize(size);
-      renderer.autoClear = false;
-      renderer.clearDepth();
-      renderer.getViewport(prevVp);
-      // WebGL viewport y is measured from the bottom.
-      renderer.setViewport(
-        size.x - VIEWCUBE_DIM - VIEWCUBE_RIGHT,
-        size.y - VIEWCUBE_DIM - VIEWCUBE_TOP,
-        VIEWCUBE_DIM,
-        VIEWCUBE_DIM,
-      );
-      renderer.render(cubeScene, cam);
-      renderer.setViewport(prevVp.x, prevVp.y, prevVp.z, prevVp.w);
-      renderer.autoClear = true;
-    },
-    pick(renderer, clientX, clientY) {
-      const rect = renderer.domElement.getBoundingClientRect();
-      renderer.getSize(size);
-      const left = rect.left + size.x - VIEWCUBE_DIM - VIEWCUBE_RIGHT;
-      const top = rect.top + VIEWCUBE_TOP;
-      const lx = clientX - left,
-        ly = clientY - top;
-      if (lx < 0 || lx > VIEWCUBE_DIM || ly < 0 || ly > VIEWCUBE_DIM) {
-        setHovered(null);
-        return null;
-      }
-      group.updateMatrixWorld(true);
-      raycaster.setFromCamera(new THREE.Vector2((lx / VIEWCUBE_DIM) * 2 - 1, -(ly / VIEWCUBE_DIM) * 2 + 1), cam);
-      const obj = raycaster.intersectObjects(targets, false)[0]?.object as THREE.Mesh | undefined;
-      setHovered(obj ?? null);
-      return (obj?.userData.hit as CubeHit | undefined) ?? null;
-    },
-    clearHover() {
-      setHovered(null);
-    },
-    setTheme(theme) {
-      pal = palettes[theme];
-      bodyMat.color.set(pal.body);
-      edgeMat.color.set(pal.edge);
-      for (const m of outlineMats) m.color.set(pal.cornerOutline);
-      // Re-point every face/nub at its texture pair for the new theme. Anything
-      // currently hovered keeps its hover texture, so a theme change mid-hover
-      // doesn't blink the highlight off.
-      for (const obj of targets) {
-        const ud = obj.userData as {
-          texNormal: THREE.Texture;
-          texHover: THREE.Texture;
-          themed: Record<ResolvedTheme, { normal: THREE.Texture; hover: THREE.Texture }>;
-        };
-        ud.texNormal = ud.themed[theme].normal;
-        ud.texHover = ud.themed[theme].hover;
-        (obj.material as THREE.MeshBasicMaterial).map = obj === hovered ? ud.texHover : ud.texNormal;
-      }
-    },
-    dispose() {
-      for (const d of disposables) d.dispose();
-    },
   };
 }
 
@@ -4998,16 +4438,6 @@ function draggableVertices(sketch: RenderSketch): Vec2[] {
   return sketch.entities.flatMap(entityDragPoints);
 }
 
-/** Closest point on segment a-b to p, all in 2D (uv). */
-function nearestOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
-  const abx = b[0] - a[0];
-  const aby = b[1] - a[1];
-  const len2 = abx * abx + aby * aby || 1;
-  const t = ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / len2;
-  const tc = clamp(t, 0, 1);
-  return [a[0] + abx * tc, a[1] + aby * tc];
-}
-
 /** World-space endpoint pairs of every body edge currently in the scene. */
 function collectBodyEdges(group: THREE.Group): [THREE.Vector3, THREE.Vector3][] {
   const segments: [THREE.Vector3, THREE.Vector3][] = [];
@@ -5023,32 +4453,6 @@ function collectBodyEdges(group: THREE.Group): [THREE.Vector3, THREE.Vector3][] 
     }
   }
   return segments;
-}
-
-/** Fit a circle to a set of points, or null if they don't form one. Centre is
- *  the centroid, radius the mean distance; accepted only when every point sits
- *  within 2% of that radius (a closed ring). The plane normal is taken from three
- *  well-separated points, so it's independent of the points' storage order. */
-function fitCircle(pts: THREE.Vector3[]): { center: THREE.Vector3; radius: number; normal: THREE.Vector3 } | null {
-  if (pts.length < 8) return null;
-  const center = new THREE.Vector3();
-  for (const p of pts) center.add(p);
-  center.divideScalar(pts.length);
-  let sum = 0;
-  const radii = pts.map((p) => {
-    const r = p.distanceTo(center);
-    sum += r;
-    return r;
-  });
-  const radius = sum / radii.length;
-  if (radius < 1e-3) return null;
-  for (const r of radii) if (Math.abs(r - radius) > 0.02 * radius) return null;
-  const p0 = pts[0],
-    p1 = pts[Math.floor(pts.length / 3)],
-    p2 = pts[Math.floor((2 * pts.length) / 3)];
-  const normal = new THREE.Vector3().crossVectors(p1.clone().sub(p0), p2.clone().sub(p0));
-  if (normal.lengthSq() < 1e-9) return null;
-  return { center, radius, normal: normal.normalize() };
 }
 
 /** Circular edges of the running bodies (a hole rim, a cylinder cap), fitted from
