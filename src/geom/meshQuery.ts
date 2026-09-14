@@ -1,9 +1,10 @@
-// Pure queries over a tessellated body's meshed faces/edges — centroid, normal,
-// persistent name, midpoint, fingerprint. Split out of App.tsx so the pick →
+// Pure queries and rigid motions over a tessellated body — centroid, normal,
+// persistent name, midpoint, fingerprint, bounding-box centre, and the mapped
+// mesh a ghost preview is drawn from. Split out of App.tsx so the pick →
 // feature-reference logic that needs them (dressUpTarget.ts, extrudeProfiles.ts)
 // can live in the document layer and be unit-tested without React.
 
-import type { MeshedEdges, MeshedFaces } from "../kernel/types";
+import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 
 /** Average position of a tessellated body face — the centroid fallback used to
  *  re-find a face that has no persistent name yet. */
@@ -181,4 +182,117 @@ export function edgeLine(
     if (off > 1e-6 * len + 1e-9) return null; // bows away from the chord: curved
   }
   return { origin: a, dir };
+}
+
+/** Bounding-box centre of a tessellated body — the default rotation pivot for a
+ *  Transform (intuitive: the body spins about its own middle). */
+export function bodyCenter(faces: MeshedFaces): [number, number, number] {
+  const { vertices } = faces;
+  if (vertices.length === 0) return [0, 0, 0];
+  let minX = Infinity,
+    minY = Infinity,
+    minZ = Infinity;
+  let maxX = -Infinity,
+    maxY = -Infinity,
+    maxZ = -Infinity;
+  for (let i = 0; i < vertices.length; i += 3) {
+    const x = vertices[i],
+      y = vertices[i + 1],
+      z = vertices[i + 2];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+  }
+  return [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+}
+
+/** Apply a rigid motion to a tessellated mesh payload for a dialog's ghost
+ *  preview — no kernel round trip: positions map through `mapPt`, normals
+ *  through `mapVec` (identity for a pure translation). Face/edge groups are
+ *  dropped (ghosts are never picked).
+ *
+ *  `flipWinding` is for a REFLECTION, which reverses orientation: the mapped
+ *  normals come out correct, but the triangle winding they were paired with does
+ *  not, and the ghost material is double-sided — so the shader would take the
+ *  now-backfacing triangles and flip those correct normals back, lighting the
+ *  mirrored body inside-out. Reversing each triangle restores the pairing. */
+export function transformMeshPayload(
+  mesh: ShapeMeshPayload,
+  mapPt: (p: [number, number, number]) => [number, number, number],
+  mapVec: (v: [number, number, number]) => [number, number, number],
+  flipWinding = false,
+): ShapeMeshPayload {
+  const mapFlat = (src: ArrayLike<number>, fn: (p: [number, number, number]) => [number, number, number]) => {
+    const out = new Array<number>(src.length);
+    for (let i = 0; i < src.length; i += 3) {
+      const [x, y, z] = fn([src[i], src[i + 1], src[i + 2]]);
+      out[i] = x;
+      out[i + 1] = y;
+      out[i + 2] = z;
+    }
+    return out;
+  };
+  const triangles = flipWinding ? reverseWinding(mesh.faces.triangles) : mesh.faces.triangles;
+  return {
+    name: mesh.name,
+    faces: {
+      vertices: mapFlat(mesh.faces.vertices, mapPt),
+      triangles,
+      ...(mesh.faces.normals ? { normals: mapFlat(mesh.faces.normals, mapVec) } : {}),
+    },
+    edges: { lines: mapFlat(mesh.edges.lines, mapPt) },
+  };
+}
+
+/** Swap two corners of every triangle, reversing its facing. */
+export function reverseWinding(triangles: ArrayLike<number>): number[] {
+  const out = new Array<number>(triangles.length);
+  for (let i = 0; i + 2 < triangles.length; i += 3) {
+    out[i] = triangles[i];
+    out[i + 1] = triangles[i + 2];
+    out[i + 2] = triangles[i + 1];
+  }
+  return out;
+}
+
+/** Point/vector mappers for a reflection in the plane through `origin` with unit
+ *  normal `n`. Orientation-reversing — see transformMeshPayload's flipWinding. */
+export function reflectionMappers(origin: [number, number, number], n: [number, number, number]) {
+  const mapVec = (v: [number, number, number]): [number, number, number] => {
+    const d = 2 * (v[0] * n[0] + v[1] * n[1] + v[2] * n[2]);
+    return [v[0] - d * n[0], v[1] - d * n[1], v[2] - d * n[2]];
+  };
+  const mapPt = (p: [number, number, number]): [number, number, number] => {
+    const r = mapVec([p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]]);
+    return [r[0] + origin[0], r[1] + origin[1], r[2] + origin[2]];
+  };
+  return { mapPt, mapVec };
+}
+
+/** Point/vector mappers for a rotation of `angle` radians about the axis line
+ *  through `origin` along (unit) `dir` — Rodrigues' formula. */
+export function rotationMappers(origin: [number, number, number], dir: [number, number, number], angle: number) {
+  const [ux, uy, uz] = dir;
+  const cos = Math.cos(angle),
+    sin = Math.sin(angle);
+  const mapVec = (v: [number, number, number]): [number, number, number] => {
+    const [x, y, z] = v;
+    const dot = ux * x + uy * y + uz * z;
+    const cx = uy * z - uz * y,
+      cy = uz * x - ux * z,
+      cz = ux * y - uy * x;
+    return [
+      x * cos + cx * sin + ux * dot * (1 - cos),
+      y * cos + cy * sin + uy * dot * (1 - cos),
+      z * cos + cz * sin + uz * dot * (1 - cos),
+    ];
+  };
+  const mapPt = (p: [number, number, number]): [number, number, number] => {
+    const r = mapVec([p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]]);
+    return [r[0] + origin[0], r[1] + origin[1], r[2] + origin[2]];
+  };
+  return { mapPt, mapVec };
 }

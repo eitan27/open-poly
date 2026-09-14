@@ -141,8 +141,8 @@ The repo is going public. This section is the resumable state of that push:
 read it, check the marker, pick up the next unticked item. Delete the section
 once every wave is done.
 
-**Marker — 2026-09-14, main at `dedd168`.** Waves A.1 and A.2 landed. Next:
-Wave A.3 (App.tsx pure helpers).
+**Marker — 2026-09-14, main at `befe5d7`.** Waves A.1, A.2 and A.3 landed.
+Next: Wave A.4 (kernel buildBodies split).
 
 **Done**
 
@@ -160,6 +160,16 @@ Wave A.3 (App.tsx pure helpers).
       `dist/third-party-licenses.txt` at build time (`f967630`). MIT and the
       rest require the notice to travel with the copy, and minification strips
       it; the repo is not a copy the visitor receives.
+- [x] **A.3** Eleven pure helpers out of App.tsx, and 66 tests over them
+      (`refactor/app-pure-helpers`). Five to `src/geom/meshQuery.ts`
+      (bodyCenter, transformMeshPayload, reverseWinding, reflectionMappers,
+      rotationMappers), six to a new `src/sketch/sketchGeom.ts`. App.tsx
+      10537 → 10295, so −242; the branch's own tests were re-checked against
+      main before being trusted (`flipWinding` and the `text` entity are both
+      newer than the branch). `planeKeyToRef` stays at module scope on purpose —
+      see the comment on it. What is left in that band is UI labelling and DOM
+      (`mirrorPlaneLabel`, `downloadBlob`, `safeFilename`); the pure-helper seam
+      in App.tsx is now genuinely exhausted.
 
 **Also owed, outside the waves**
 
@@ -172,12 +182,6 @@ Wave A.3 (App.tsx pure helpers).
 grown 25–43% since, so **re-apply the idea against main; never rebase or
 cherry-pick**. Both waves that landed were re-done from scratch for this reason.
 
-- [ ] **A.3** `claude/app-tsx-decompose` (`90d297b`) — nine pure functions still
-      at `src/App.tsx:407–659`, untested. The branch writes
-      `src/selection/meshQuery.ts`, but main grew `src/geom/meshQuery.ts` since
-      with six of the same exports already in it, so the destination is `geom/`.
-      Remaining value = its ~295 lines of tests + `src/sketch/sketchGeom.ts`.
-      Smallest and safest; do it first.
 - [ ] **A.4** `claude/kernel-buildbodies-split` (`9693a1c`) — extract
       `src/kernel/cache.ts` and split the `buildBodies` dispatch. The branch's
       `contentKey` is stale: it predates folding the transform axis body's key
