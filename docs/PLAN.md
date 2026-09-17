@@ -368,9 +368,14 @@ Things that cost real time to learn and are not obvious from the code.
 
 - **Typecheck with `npm run typecheck` (`tsc -b`), never a bare `tsc --noEmit`** —
   the root tsconfig has `files: []`, so a bare run checks nothing and "passes".
-- `scripts/verify-*.mjs` are ad-hoc Playwright checks against a local `npm run
-dev`; they are not part of CI. Most hardcode a cloud `executablePath` — pass
-  `CHROMIUM_PATH`.
+- **`worker.ts` has no unit coverage and cannot have any** — Vitest can load
+  neither the OCCT wasm nor a worker global, so none of its ~30 geometry
+  functions run under `npm test`. `scripts/verify-build-bodies.mjs` builds one of
+  every feature type against a live app instead; it is the only thing that
+  exercises that file at all.
+- `scripts/verify-*.mjs` are Playwright checks against a local `npm run dev`, not
+  part of CI. Most share `scripts/lib/harness.mjs` (launch / waitIdle / apply /
+  read); set `CHROMIUM_PATH` to use a browser other than Playwright's own.
 
 ---
 
@@ -432,16 +437,3 @@ in-app chat agent; OpenAI/Gemini adapters.
   fully, red over).
 - Normal-to camera on sketch entry; hover-highlight everything selectable.
 - Non-blocking regen with a subtle status.
-
----
-
-## Risks
-
-| Risk                                                 | Status                                                                                                                                                                                                                                                                                                                        |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Topological naming**                               | ✅ Mitigated — history + geometric fallback + warning surfacing. Residual: fingerprints go stale if geometry moves far AND names churn at once.                                                                                                                                                                               |
-| **Regen performance**                                | ✅ Worker, debounce, content-hash caching (`kernel/cache.ts`). LOD not built — not yet a bottleneck.                                                                                                                                                                                                                          |
-| **Licence mix** (LGPL GCS, OCCT LGPL-with-exception) | ✅ Settled — GPL-3.0-or-later. `NOTICE.md` argues the hard cases, `scripts/third-party-licenses.ts` generates `dist/third-party-licenses.txt` at build time so the notices travel with the copy a visitor receives.                                                                                                           |
-| **`worker.ts` cannot be unit-tested**                | ⚠️ Structural, permanent. Vitest can load neither the OCCT wasm nor a worker global, so none of the ~30 geometry functions run under `npm test`. Mitigated by `scripts/verify-build-bodies.mjs` (one of every feature type) and the rest of `verify-*.mjs` — but those need a dev server and someone remembering to run them. |
-| OCCT WASM size/load                                  | 10.4 MB, split into its own chunk (the worker is a separate entry), but fetched when the kernel starts at app mount rather than on first use. Cached thereafter.                                                                                                                                                              |
-| Constraint solver                                    | Lean on planegcs; keep the supported set bounded.                                                                                                                                                                                                                                                                             |
