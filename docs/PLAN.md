@@ -155,60 +155,55 @@ blind guess:
 
 ---
 
-## Open-sourcing — DONE except one day-of item
+## Open-sourcing — the blocker is cleared; only the switch remains
 
-The repo is ready to go public. This was five waves of harvest (A), test
-infrastructure (B) and the first real boundary (C); the per-item state that used
-to live here is in the git history, and what remains below is only what is still
-owed plus the handful of things the push taught us that are worth not
-re-learning.
+Five waves of harvest (A), test infrastructure (B) and the first real boundary
+(C), all on `main` and deployed. The per-item state that used to live here is in
+the git history; what remains is the going-public checklist, what must not be
+undone afterwards, and the things the push cost enough to learn.
 
-**Going public — do these in order.** Step 1 is a hard blocker; the rest are
-cleanup that only makes sense afterwards.
+**Going public — in order.**
 
-1. - [ ] **Wait for GitHub Support to finish the purge, and VERIFY it.** The
-         history was rewritten (2026-09-14) to remove two personal email
-         addresses from 417 commits, and force-pushed. Branches are clean, but
-         GitHub's `refs/pull/*` are read-only server-side refs that a force-push
-         cannot touch, and the 10 of them still carried the old addresses — so a
-         support ticket asked for server-side GC. Do not trust the reply alone:
-
-     ```
-     git ls-remote origin 'refs/pull/*'
-     ```
-
-     It returned 10 refs before the purge. **It must return nothing.** If it
-     still lists refs, reply on the same ticket rather than closing it.
-     Flipping the repo public before this undoes the entire rewrite: anyone
-     could then `git fetch origin 'refs/pull/*:refs/pull/*'` and read them.
-
-2. - [ ] **Flip the repository to public.**
-
-3. - [ ] **Settings → Pages → Build and deployment → Source → "GitHub
-         Actions"**, which fixes the item below.
-
-4. - [ ] **Sanity-check the deployed site** — <https://open-poly.pages.dev> is a
-         direct `wrangler pages deploy` upload, NOT git-integrated, so nothing
-         about going public redeploys it. File one real bug report to confirm the
-         `/api/report` Function still reaches a now-public repo.
+- [x] **1. The `refs/pull/*` purge is done and verified (2026-09-17).** The
+      history was rewritten on 2026-09-14 to map two personal email addresses to
+      `3627572+eitan27@users.noreply.github.com` across 417 commits, and
+      force-pushed. Branches went clean immediately, but GitHub's `refs/pull/*`
+      are read-only server-side refs a force-push cannot reach, and all 10 still
+      carried the old addresses. GitHub Support deleted all ten pull requests
+      (1–9, 12) and cleared their references; issues #10, #11, #13 and #14 were
+      never in scope and are untouched. Verified independently rather than on
+      their word, and the second check is the one that counts — refs vanishing
+      from the listing would not prove the objects were gone:
+      `git ls-remote origin 'refs/pull/*'` (10 before, 0 now), and
+      `git fetch --depth=1 origin <old-sha>` for four old SHAs including the
+      pre-rewrite `main` tip, the commit carrying the alooma address, and the
+      head of closed PR #5 — all unreachable. No branch, tag, release or
+      surviving issue mentions either address. Cosmetic side effect: the 8
+      `Merge pull request #N` messages in `main` now link to deleted PRs.
+- [ ] **2. Flip the repository to public.**
+- [ ] **3. Settings → Pages → Build and deployment → Source → "GitHub
+      Actions".** This also clears a standing red X:
+      `.github/workflows/pages.yml` fires on every push touching `landing/**`
+      (re-enabled in `b0578bd`) and has failed on every run since June, because
+      Pages cannot publish from a private repo on the Free plan. Nothing is
+      broken and nothing is being published — going public plus this setting
+      resolves it, with no code change.
+- [ ] **4. Sanity-check the deployed site.** <https://open-poly.pages.dev> is a
+      direct `wrangler pages deploy` upload, NOT git-integrated, so going public
+      redeploys nothing. File one real bug report to confirm the `/api/report`
+      Function still reaches a now-public repo.
+- [ ] **5. Then, and only then, delete the backups** in `~/Developer/`:
+      `open-poly-mirror`, `open-poly-backup`, and `open-poly-local-mirror.git` —
+      the last being the only copy outside the working tree of two never-pushed
+      branches (`feat/step-assembly-split`,
+      `shelved/viewport-geom-reuse-and-lazy-regen`).
 
 **Do not undo these.** `user.email` is the GitHub noreply address in
-`~/.gitconfig`, and _Settings → Emails → Block command line pushes that exposes
-my email_ is on. The setting is the durable half: it rejects a push carrying a
-real address rather than letting it land. Collaborators were told to re-clone —
-a merge from a pre-rewrite clone pushes the old addresses straight back.
-
-**Still owed, and only on the day:**
-
-- [ ] **The landing-page Pages deploy fails red on every run, and has since
-      June.** `.github/workflows/pages.yml` was re-enabled in `b0578bd`, so it
-      DOES fire on a push touching `landing/**` — and then fails, because GitHub
-      Pages cannot publish from a private repo on the Free plan. Nothing is
-      broken by it and nothing is being published; it is just a red X on the
-      history. It resolves itself the moment the repo goes public (or on a paid
-      plan) — no code change needed, only
-      Settings → Pages → Build and deployment → Source → "GitHub Actions".
-      Until then, expect the red.
+`~/.gitconfig`, and _Settings → Emails → Block command line pushes that expose my
+email_ is on. The setting is the durable half: it rejects a push carrying a real
+address rather than letting it land. Collaborators must **re-clone, not pull** —
+a merge from a pre-rewrite clone pushes the old addresses straight back in, which
+is the one way this work can be undone.
 
 **What it taught us, in order of how much it cost to find out:**
 
