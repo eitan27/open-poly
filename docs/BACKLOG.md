@@ -257,33 +257,6 @@ pass with several tools at once.
 
 </details>
 
-## Adjustable cross-section view — SHIPPED 2026-07
-
-One section plane, any plane ref, live drag + numeric offset + flip, stencil
-capping, clip-aware picking, persisted across reload, plus the `set_section_view`
-MCP op (which is most of the point: `screenshot` only shows the exterior, so
-without it the agent can build a bore it can never actually inspect).
-
-**Calls that still bind:**
-
-- **It's view state, not a feature** — it changes no geometry, so it's out of the
-  timeline and out of undo. Lives beside `doc` (`document/sectionView.ts` +
-  `StoredDoc.sectionView`), not inside the document JSON.
-- **Picking must respect the clip.** Three.js clipping is a fragment-shader op;
-  the raycaster knows nothing about it, so the pick path needs its own half-space
-  test or clicking into the opening selects the invisible back face.
-- **Local (per-material) clipping, not global** — global also slices the grid,
-  datums, origin marker and view cube. Sketch entities + grid stay exempt.
-- **The clip plane never structurally empties**: "off" parks the single
-  `THREE.Plane` far away rather than emptying the array, so toggling can't
-  trigger a shader recompile.
-- **Kernel-exact section curves** (`BRepAlgoAPI_Common` vs a half-space) would
-  give snappable cut edges but are far too slow to drag. If ever wanted, layer
-  them as a settle pass after the drag ends.
-
-**v2 if asked:** multiple simultaneous planes (corner cuts), exact section
-curves. One plane covers the overwhelming majority of real use.
-
 ## Sketch inference lines (alignment guides) — SHIPPED 2026-07
 
 Arming a point/line while drawing shows dotted guides, the cursor snaps to them

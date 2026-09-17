@@ -304,11 +304,21 @@ Things that cost real time to learn and are not obvious from the code.
   nothing. It reproduces **only in a real browser**: no automation, headless or
   headed, shows it, focused select or not. Transform, Pattern and Mirror arm from
   buttons for this reason.
-- **A gizmo must stand down during a pick** (`tc.enabled = !picking`).
-  TransformControls' handles are invisible donuts and cones several times fatter
-  than what they draw (the rotate picker is a full torus around the pivot), so a
-  live gizmo covers the geometry the dialog just asked for and swallows the press
-  into a zero-distance drag.
+- **A gizmo must stand down during a pick AND during sketch editing**
+  (`tc.enabled = !picking && !activeFrame`). TransformControls' handles are
+  invisible donuts and cones several times fatter than what they draw (the rotate
+  picker is a full torus around the pivot), so a live gizmo covers the geometry
+  the dialog just asked for and swallows the press into a zero-distance drag. The
+  section gizmo had the pick half only, which made drawing in ANY sketch
+  impossible while section view was on: it claimed the pointerdown, `dragging`
+  went true, and every click after the first vanished with no error anywhere.
+- **Section view clips per material, and picking must clip itself.** three.js
+  clipping is a fragment-shader op the raycaster knows nothing about, so the pick
+  path needs its own half-space test (`sectionAllows`) or a click into the
+  opening selects the invisible back face. Planes are per-material, never global —
+  global also slices the grid, datums, origin marker and view cube. "Off" parks
+  the single `THREE.Plane` far away rather than emptying the array, so toggling
+  cannot trigger a shader recompile.
 - **One control per reference**, in two levels: a chooser for the KIND, revealing
   that kind's detail (X/Y/Z, or a `PickSlot`) — never both at once. Two controls
   that both say "axis" read as two independent choices.
