@@ -196,6 +196,7 @@ import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
+import { MirrorDialog } from "./ui/MirrorDialog";
 import { DxfImportDialog } from "./ui/DxfImportDialog";
 import { LoftDialog } from "./ui/LoftDialog";
 import { SweepDialog } from "./ui/SweepDialog";
@@ -9443,52 +9444,24 @@ export default function App() {
         />
       )}
       {mirrorDialog && (
-        <DraggableDialog className="feature-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
-          <div className="ed-title" data-drag-handle>
-            {mirrorDialog.editId ? "Edit mirror" : "Mirror a body"}
-          </div>
-          <div className="bool-group-label">Body</div>
-          <PickSlot
-            noun="a body"
-            armed={mirrorDialog.arming === "target"}
-            value={
-              mirrorDialog.targetId ? (doc.features.find((f) => f.id === mirrorDialog.targetId)?.name ?? "Body") : null
-            }
-            wide
-            onArm={armMirrorTarget}
-            onClear={() => armMirrorTarget(true)}
-          />
-          <div className="bool-group-label">Plane or face</div>
-          {/* ONE slot for all three kinds of mirror plane — a datum, a reference
-              plane, or a planar body face — because the viewport's plane-pick
-              stream already resolves all three to a SketchPlaneRef (it is what
-              the reference-plane dialog's own slots read). A dropdown of named
-              planes would be a second control for the same job, and an option
-              that armed a pick is the shape whose first canvas click gets
-              swallowed on macOS (see the Transform dialog's axis control). */}
-          <PickSlot
-            noun="a plane or face"
-            armed={picking && pickPurpose === "mirrorPlane"}
-            value={mirrorDialog.plane ? mirrorPlaneLabel(mirrorDialog.plane, doc) : null}
-            wide
-            title="A datum plane, a reference plane, or a flat face of a body"
-            onArm={armMirrorPlane}
-            onClear={() => {
-              setMirrorDialog((d) => (d ? { ...d, plane: null } : d));
-              armMirrorPlane();
-            }}
-          />
-          <div className="ed-actions">
-            <button
-              className="ed-primary"
-              onClick={createMirror}
-              disabled={!mirrorDialog.targetId || !mirrorDialog.plane}
-            >
-              {mirrorDialog.editId ? "Done" : "Create"}
-            </button>
-            <button onClick={closeMirror}>Cancel</button>
-          </div>
-        </DraggableDialog>
+        <MirrorDialog
+          editing={!!mirrorDialog.editId}
+          targetLabel={
+            mirrorDialog.targetId ? (doc.features.find((f) => f.id === mirrorDialog.targetId)?.name ?? "Body") : null
+          }
+          targetArmed={mirrorDialog.arming === "target"}
+          planeLabel={mirrorDialog.plane ? mirrorPlaneLabel(mirrorDialog.plane, doc) : null}
+          planeArmed={picking && pickPurpose === "mirrorPlane"}
+          onArmTarget={armMirrorTarget}
+          onClearTarget={() => armMirrorTarget(true)}
+          onArmPlane={armMirrorPlane}
+          onClearPlane={() => {
+            setMirrorDialog((d) => (d ? { ...d, plane: null } : d));
+            armMirrorPlane();
+          }}
+          onConfirm={createMirror}
+          onCancel={closeMirror}
+        />
       )}
       {patternDialog &&
         (() => {
