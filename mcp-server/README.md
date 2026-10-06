@@ -3,7 +3,7 @@
 A local **stdio MCP server** that lets an LLM agent (Claude Desktop, Cursor,
 Cline, Zed, …) **drive a live Open Poly browser tab** — sketch, extrude,
 transform, combine — while you watch it happen, and **read** state (document,
-scene summary, screenshot) so it can plan and self-correct. Part of Phase 9; see
+scene summary, screenshot) so it can plan and self-correct. See
 [`../docs/PLAN.md`](../docs/PLAN.md) and `src/agent/modeling-guide.md`.
 
 ## Try it (manual test, with Claude Desktop)
@@ -158,4 +158,5 @@ npx @modelcontextprotocol/inspector npx tsx mcp-server/src/index.ts
 ```
 
 > **v1 scope:** local, single-user, single active tab (last-connected wins), no
-> auth token yet (planned for L4). The hub binds `127.0.0.1` only.
+> auth token yet — the client sends one, the hub does not check it. The hub
+> binds `127.0.0.1` only.

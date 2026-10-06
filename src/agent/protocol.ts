@@ -22,7 +22,8 @@ export interface HelloMsg {
   protocolVersion: number;
   /** Stable per-tab id (so the hub can track / dedupe sessions). */
   sessionId: string;
-  /** Shared secret (L4); echoed from the MCP config. Optional for v1. */
+  /** Shared secret, echoed from the MCP config. The hub does not check it yet;
+   *  it binds 127.0.0.1 only. */
   token?: string;
   conventions: {
     units: "mm";

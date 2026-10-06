@@ -1,4 +1,4 @@
-// M1 verification (multi-document foundation): editable topbar title, browser
+// Multi-document foundation: editable topbar title, browser
 // tab title, activeDocId pointer, rename persisted through autosave + reload.
 import { chromium } from "playwright";
 
@@ -77,7 +77,7 @@ const meta = await page.evaluate(
 );
 check("meta row exists with the new name", meta && meta.name === "Test Bracket", JSON.stringify(meta)?.slice(0, 160));
 
-await page.screenshot({ path: "/tmp/openshape-multidoc-m1.png" });
+await page.screenshot({ path: "/tmp/openpoly-multidoc-foundation.png" });
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
 await browser.close();
 process.exit(failures === 0 ? 0 : 1);

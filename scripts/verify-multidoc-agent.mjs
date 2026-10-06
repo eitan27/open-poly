@@ -1,4 +1,4 @@
-// M4 verification: the agent's multi-document tools, driven end-to-end through
+// The agent's multi-document tools, driven end-to-end through
 // window.__openpoly (the same command layer the MCP server forwards to):
 // list → new(name) → build → summary carries documentId/Name → open other →
 // context flips → duplicate → rename → bogus id errors.

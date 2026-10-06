@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 //
-// The first tests this subsystem has ever had. It is why Wave C waited for
-// Wave B: every path here is effectful — IndexedDB, localStorage,
-// BroadcastChannel, timers, a canvas — so no pure test could reach it, and the
-// reference branch that first extracted it said as much and verified by hand.
+// The first tests this subsystem has ever had, and the reason extracting it had
+// to wait for a jsdom setup: every path here is effectful — IndexedDB,
+// localStorage, BroadcastChannel, timers, a canvas — so no pure test could reach
+// it, and the branch that first extracted it verified by hand and said as much.
 //
 // Setup mirrors src/storage/db.test.ts: a FRESH fake IDBFactory per test plus
 // `__resetDBForTests()`, because the db module caches its connection. Storage

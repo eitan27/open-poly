@@ -79,21 +79,21 @@ Roughly ordered by how often a user meets them.
 - Project: vertex projection is best-effort (re-projects a stored world point,
   doesn't track the source body); no agent op.
 
-**Codebase structure** — the two boundaries Wave C scoped but did not reach.
-Both were looked at closely enough to know what stopped them, so neither is a
-blind guess. Everything else structural, including `App.tsx` itself, is tracked
+**Codebase structure** — the two boundaries that were scoped and deliberately
+not crossed. Both were looked at closely enough to know what stopped them, so
+neither is a blind guess. Everything else structural, including `App.tsx` itself, is tracked
 as a checklist under **Code hygiene** below:
 
 - **The Viewport mount effect.** ~2,100 lines built around ~40 refs and local
   three.js objects that the picking, highlighting and event handlers all close
-  over directly. A.5 took the module-level helpers out around it
-  (`geometryQuery`, `sceneMath`, `materials`, `viewCube`, −596 lines) and left
-  the effect alone on purpose: splitting it risks three.js lifecycle and
+  over directly. The module-level helpers have already been taken out around it
+  (`geometryQuery`, `sceneMath`, `materials`, `viewCube`, −596 lines), leaving
+  the effect itself alone on purpose: splitting it risks three.js lifecycle and
   ordering bugs — setup order, cleanup order, double-init — that only exhaustive
-  interaction testing would catch. Wants the jsdom work of B.3 pointed at the
+  interaction testing would catch. Wants the jsdom test setup pointed at the
   viewport first.
-- **`kernel/features/`.** A.4 split `buildBodies`'s dispatch into one builder per
-  feature type behind a `BuildContext`, but left the ~30 shared geometry helpers
+- **`kernel/features/`.** `buildBodies`'s dispatch is already split into one
+  builder per feature type behind a `BuildContext`, but that left the ~30 shared geometry helpers
   (`prismFromFace`, `booleanNamed`, `dressUpNamed` and its ~700-line supporting
   cast, `revolveFromFace`, `sweepBody`, `loftBody`, `applyTrsf`) where they are:
   they are tightly coupled to each other and to the file's module-level OCCT
@@ -140,7 +140,7 @@ as a checklist under **Code hygiene** below:
 - Parts are keyed by lump index, so an upstream edit that removes a lump slides
   the ones after it (colours/names shift by one).
 
-**Agent — L4**
+**Agent — robustness**
 
 - Token auth (the client sends one, the hub never checks it) and multi-tab
   handling (`wsHub` is last-connected-wins). Reconnection, timeouts, queue
@@ -155,10 +155,11 @@ as a checklist under **Code hygiene** below:
 
 ## Open-sourcing — the blocker is cleared; only the switch remains
 
-Five waves of harvest (A), test infrastructure (B) and the first real boundary
-(C), all on `main` and deployed. The per-item state that used to live here is in
-the git history; what remains is the going-public checklist, what must not be
-undone afterwards, and the things the push cost enough to learn.
+Harvesting the old branches, building the test infrastructure and crossing the
+first real module boundary are all done, on `main` and deployed. The per-item
+state that used to live here is in the git history; what remains is the
+going-public checklist, what must not be undone afterwards, and the things the
+push cost enough to learn.
 
 **Going public — in order.**
 
@@ -210,14 +211,13 @@ is the one way this work can be undone.
 
 - **Re-apply a stale branch; never rebase or cherry-pick it.** Five month-old
   `claude/*` branches were harvested and every one was re-done against main
-  instead. Two of them would have shipped bugs into the present: A.4's
+  instead. Two of them would have shipped bugs into the present: one's
   `contentKey` had lost a dependency (a transform rotating about a body edge
-  would have served a stale body, silently), and A.5's tests were written
+  would have served a stale body, silently), and another's tests were written
   against two signatures that no longer existed. A stale branch is worth reading
   for its idea and for the bug it is carrying.
 - **When a before/after run is your only proof, keep a control group.** The
-  `verify-*.mjs` migration (B.2) was "verified" twice before it was verified
-  once: the first runner used `timeout`, which macOS does not ship, so every
+  `verify-*.mjs` migration was "verified" twice before it was verified once: the first runner used `timeout`, which macOS does not ship, so every
   script reported nothing; the second ran while `npm test` competed for the CPU,
   and scripts nobody had touched changed their answers. The fix that stuck: the
   UNMIGRATED scripts are the control. If a file nobody edited moves, the run is
@@ -228,7 +228,8 @@ is the one way this work can be undone.
   scripts died loudly; the dangerous case is the one that keeps passing while
   testing less. Classify each line and keep what you do not recognise.
 - **Opt in to jsdom per file, never globally.** `environment: "node"` is still
-  the default and the ~800 tests that predate Wave B never had to move. A file
+  the default and the ~800 tests that predate the jsdom work never had to move.
+  A file
   that needs a DOM says `// @vitest-environment jsdom`; jsdom costs ~700ms of
   setup per file that asks.
 - **Agent worktrees live inside the repo.** `.claude/` now has to be ignored by
@@ -492,9 +493,10 @@ Things that cost real time to learn and are not obvious from the code.
 
 ---
 
-## Agent (Phase 9) — local MCP
+## Agent — local MCP
 
-**L0–L3 shipped; L4 (robustness) is what's left.**
+**The stack below is shipped end to end; robustness is what's left — see
+"What's left".**
 
 ```
 LLM client ⟷ (stdio MCP) ⟷  bridge/MCP server (Node)  ⟷ (WebSocket) ⟷  browser tab

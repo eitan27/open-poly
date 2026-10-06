@@ -1,7 +1,7 @@
 // Mounts the agent command layer into the live app. Builds an AgentContext that
 // reads the latest committed state through refs (never a stale closure — mirrors
 // Viewport's selectionRef) and routes mutations through the undo setter. Owns the
-// WebSocket bridge client (L1): it dials the local hub, services requests via the
+// WebSocket bridge client: it dials the local hub, services requests via the
 // command layer, and surfaces the connection status for the "Agent connected"
 // badge. Also exposes `window.__openpoly = { apply, read }` in dev for manual
 // console testing without any networking.

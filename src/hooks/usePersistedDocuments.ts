@@ -5,9 +5,9 @@
 // Split out of App.tsx, which keeps everything else — the document model, the
 // kernel, selection, sketch mode, every dialog — and reaches in only through the
 // params below plus the handlers returned. The coupling really is that narrow,
-// which is what made this extractable at all; what made it wait for Wave B is
-// that none of it is pure. It is IndexedDB, BroadcastChannel, timers and a
-// canvas, so it could not be unit-tested at all until jsdom arrived (B.3).
+// which is what made this extractable at all; what held it up is that none of it
+// is pure. It is IndexedDB, BroadcastChannel, timers and a canvas, so it could
+// not be unit-tested at all until the suite could opt into jsdom per file.
 //
 // The logic is unchanged from App.tsx — same effects, same dependency arrays,
 // same comments — with two adaptations that decouple it from App.tsx internals:

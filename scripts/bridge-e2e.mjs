@@ -1,4 +1,4 @@
-// Throwaway L1 validation: stand up the local WS hub, open the app in headless
+// Browser-side bridge check: stand up the local WS hub, open the app in headless
 // Chromium (the tab dials the hub on its own), then drive a couple of requests
 // through the bridge and check the results. Proves browser⟷hub round-trips +
 // the serial request pipeline end to end.
@@ -68,7 +68,7 @@ check("apply addPrimitive -> ok", r1.ok && r1.payload?.ok === true, JSON.stringi
 const boxId = r1.payload?.createdId;
 
 // 2) read: scene summary reflects it. Bodies come from kernel meshes, and
-// applyOperation doesn't await regen until L3 — so poll a few times to let the
+// applyOperation itself doesn't await regen — so poll a few times to let the
 // worker settle (proves the read path, not instantaneous consistency).
 let names = [];
 for (let i = 0; i < 12; i++) {

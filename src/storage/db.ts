@@ -50,7 +50,8 @@ export interface DocMeta {
   createdAt: number;
   featureCount: number;
   partCount: number;
-  /** Small downscaled snapshot for the Documents dialog (set by M3). */
+  /** Small downscaled snapshot for the Documents dialog, written by the
+   *  thumbnail capture in usePersistedDocuments. */
   thumb?: Blob;
 }
 

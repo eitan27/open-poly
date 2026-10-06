@@ -29,9 +29,9 @@ per-script limit (default 300000).
 
 **Run them alone.** They are wall-clock scripts that poll the app's status chip,
 so anything else competing for the CPU — `npm test`, a build, a second verify
-run — changes their answers. This is not hypothetical: it is how the B.2
-migration "verified" itself twice before verifying itself once (see PLAN,
-"What it taught us").
+run — changes their answers. This is not hypothetical: it is how the migration
+that produced `lib/harness.mjs` "verified" itself twice before verifying itself
+once (see PLAN, "What it taught us").
 
 ## What a verify script is
 

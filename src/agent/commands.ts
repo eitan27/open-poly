@@ -5,10 +5,11 @@
 // human can Cmd-Z anything the agent does — the agent is "just another input
 // device".
 //
-// L0 scope: synchronous document mutations + reads, driven from the dev console
-// via `window.__openpoly` (see useAgentBridge). Awaiting kernel regen before
-// resolving a mutating op (so the agent knows it succeeded) lands in L3; for now
-// we surface the synchronous resolve errors (bad expressions, missing refs).
+// Scope: synchronous document mutations + reads, reachable from the dev console
+// via `window.__openpoly` (see useAgentBridge). Awaiting kernel regen before a
+// mutating op resolves — so the agent knows it actually succeeded — belongs to
+// the host's regen coordinator, a layer up; what this layer reports is the
+// synchronous resolve errors (bad expressions, missing refs).
 import {
   addBoolean,
   addDerivedOp,
