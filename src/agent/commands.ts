@@ -77,7 +77,8 @@ import type {
 import { listMeta } from "../storage/db";
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 import type { SectionViewState } from "../document/sectionView";
-import type { Selection, ViewName } from "../viewport/Viewport";
+import type { Selection } from "../selection/types";
+import type { ViewName } from "../viewport/types";
 import {
   expandEntities,
   type ConstraintSpec,

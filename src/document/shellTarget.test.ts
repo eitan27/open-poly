@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { Selection } from "../viewport/Viewport";
+import type { Selection } from "../selection/types";
 import type { FaceRef } from "./types";
 import { shellBodyFromSelection, toggleShellFace, retargetShell, NO_SHELL_FACES } from "./shellTarget";
 

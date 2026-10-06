@@ -10,7 +10,7 @@
 import * as THREE from "three";
 import { VIEWPORT_THEMES, type ViewCubePalette } from "../settings/viewportTheme";
 import type { ResolvedTheme } from "../settings/settings";
-import type { ViewName } from "./Viewport";
+import type { ViewName } from "./types";
 
 // Corner size and inset (CSS px). The cube is drawn as an overlay into the SAME
 // WebGL canvas, with `autoClear` managed so its pass never wipes the main scene.

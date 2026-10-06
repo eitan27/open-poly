@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { featureTypeLabel } from "../document/featureDefs";
 import type { Document } from "../document/types";
-import type { DatumId } from "../viewport/Viewport";
+import type { DatumId } from "../selection/types";
 import { EyeIcon, SuppressIcon } from "./icons";
 
 interface Props {

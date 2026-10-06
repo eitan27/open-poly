@@ -3,7 +3,8 @@ import { measureSelection } from "./measure";
 import { detectSketchRegions } from "../document/regions";
 import type { Document, SketchEntity } from "../document/types";
 import type { FaceSurface } from "../kernel/types";
-import type { FeatureMesh, Selection } from "../viewport/Viewport";
+import type { FeatureMesh } from "../viewport/types";
+import type { Selection } from "./types";
 
 const doc: Document = { features: [] } as unknown as Document;
 

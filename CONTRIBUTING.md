@@ -56,12 +56,12 @@ a single line. Keep the blank line.
 | `src/geom/`      | Small standalone geometry algorithms (circle faceting, edge chains, chamfer wedges, ring fitting).                                                                                        |
 | `src/kernel/`    | The web worker that drives the OpenCascade/replicad geometry kernel — feature regeneration, meshing, topological naming.                                                                  |
 | `src/sketch/`    | The 2D constraint solver integration and sketch-specific geometry (inference, snapping, dimensions).                                                                                      |
-| `src/selection/` | Measurement and selection-derived computations.                                                                                                                                           |
+| `src/selection/` | What a selection _is_ (`types.ts` — `Selection`, `SelectionFilter`, `DatumId`) plus measurement and other selection-derived computations. No three.js.                                    |
 | `src/storage/`   | IndexedDB document persistence.                                                                                                                                                           |
 | `src/settings/`  | User settings/preferences, and `shortcuts.ts` — the one table every keyboard shortcut is declared in (the key handler and the toolbar hints both read it; its test fails on a collision). |
 | `src/agent/`     | The in-app side of the MCP agent bridge (commands, operations, protocol). Should call into `src/document/` rather than reimplement its logic.                                             |
 | `src/ui/`        | Dialogs and panels.                                                                                                                                                                       |
-| `src/viewport/`  | The three.js viewport — rendering, camera, picking, highlighting.                                                                                                                         |
+| `src/viewport/`  | The three.js viewport — rendering, camera, picking, highlighting. `types.ts` holds the render payloads and `ViewportApi`, so a consumer needing only a type doesn't pull three.js.        |
 | `src/App.tsx`    | Top-level orchestration: state, wiring, dialog lifecycle. Currently oversized and mid-refactor into smaller hooks — see open issues.                                                      |
 | `mcp-server/`    | The standalone MCP server package that external agent clients (Claude Desktop, Cursor, etc.) connect to. Imports types/logic from `src/agent/` rather than duplicating them.              |
 | `functions/`     | Cloudflare Pages functions (currently: the bug-report endpoint).                                                                                                                          |

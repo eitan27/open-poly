@@ -249,33 +249,18 @@ the OCCT wasm nor a WebGL context), and `scripts/verify-dialog-consistency.mjs`.
 A deep structural scan (2026-10-02) against one question: can a stranger
 navigate, maintain and extend this? Mostly yes. CI gates lint, format,
 typecheck, 999 tests and a build on every PR; `strict` is on with
-`noUnusedLocals` and `noFallthroughCasesInSwitch`; the layer graph is acyclic
-but for one edge; the comments are overwhelmingly _why_-comments and are an
-asset — **do not bulk-trim them.**
+`noUnusedLocals` and `noFallthroughCasesInSwitch`; the layer graph is acyclic;
+the comments are overwhelmingly _why_-comments and are an asset — **do not
+bulk-trim them.**
 
-What is wrong is concentrated, not diffuse. Four files hold 46% of the code,
-and the app's core vocabulary types live inside a React component. The two
-hardest boundaries (the Viewport mount effect, `kernel/features/`) are already
-scoped with their rationale under **What's left → Codebase structure** and are
+What is wrong is concentrated, not diffuse: four files hold 46% of the code. The
+two hardest boundaries (the Viewport mount effect, `kernel/features/`) are
+already scoped with their rationale under **What's left → Codebase structure** and are
 _not_ repeated here; this section is the rest.
 
 **Tier 1 — structure.** The actual answer to "is this maintainable".
 
-- [ ] **1. Lift the shared types out of `viewport/Viewport.tsx`. Do this
-      first — cheapest high-leverage change in the repo.** `Selection`,
-      `ViewName`, `ViewportApi`, `FeatureMesh`, `GhostMesh`, `DatumId`,
-      `SketchTool`, `TransformMode` and `SelectionFilter` are declared inside a
-      4,704-line three.js component. Ten modules import that file and most want
-      only a type: `selection/measure.ts`, `hooks/usePersistedDocuments.ts`,
-      `agent/commands.ts`, `agent/useAgentBridge.ts`, `ui/FeatureTree.tsx`,
-      `ui/DimensionOverlay.tsx` and three test files.
-      `selection/measure.ts → viewport/Viewport` is the **only** layering
-      violation in the whole graph and it exists purely for this. Split into
-      `viewport/types.ts` (render payloads, `ViewportApi`) and
-      `selection/types.ts` (`Selection`, `SelectionFilter`, `DatumId`). Pure
-      move, no behaviour change; it also stops the pure-logic tests pulling in
-      three.js, and drops two `react-refresh` lint warnings on the way.
-- [ ] **2. `src/App.tsx` is 9,896 lines in one component.** 84 `useState`;
+- [ ] **1. `src/App.tsx` is 9,896 lines in one component.** 84 `useState`;
       61 hook blocks totalling 1,245 lines (the largest, the global keydown
       handler, is 295 at `3884-4178`); ~5,300 lines of handlers and derived
       values declared inline across 372 bindings; and a single 2,601-line JSX
@@ -285,32 +270,32 @@ _not_ repeated here; this section is the rest.
       this as correctness work rather than tidying. `CONTRIBUTING.md:59`
       already concedes "oversized and mid-refactor", which reads as an
       unfinished job to anyone arriving. Four independently shippable steps:
-  - [ ] **2a.** Extract the JSX tail — the lowest-risk half. The 20
+  - [ ] **1a.** Extract the JSX tail — the lowest-risk half. The 20
         `DraggableDialog` blocks are already visually delimited and
         `BooleanDialog`, `SettingsDialog`, `DocumentsDialog` and `ReportDialog`
         are the pattern to copy. Should land App.tsx under 7,000 on its own.
-  - [ ] **2b.** Move each dialog's state machine behind its own hook
+  - [ ] **1b.** Move each dialog's state machine behind its own hook
         (`useExtrudeDialog`, `useDressUpDialog`, `useShellDialog`,
         `useRevolveDialog`, `useTransformSession`) — each owns 3-8 `useState`
         plus its effects today. This is what actually retires the
         exhaustive-deps disables, because it shrinks the dep graph to something
         honest rather than silencing it.
-  - [ ] **2c.** Collapse the sketch-session cluster. `offsetSession`,
+  - [ ] **1c.** Collapse the sketch-session cluster. `offsetSession`,
         `mirrorSession`, `projectSession`, `patternSession` and `textDraft`
         each carry the same shape — state, a mirroring `*Ref`, a `commit*Ref` —
         five times over. One `useSketchSession` abstraction.
-  - [ ] **2d.** Move the 295-line keydown effect to
+  - [ ] **1d.** Move the 295-line keydown effect to
         `settings/useShortcutHandler.ts`, next to the `shortcuts.ts` table it
         dispatches from.
-- [ ] **3. `src/App.css` is 3,235 lines / 392 rules** styling components that
+- [ ] **2. `src/App.css` is 3,235 lines / 392 rules** styling components that
       already live in `src/ui/`. It is cleanly sectioned by comment, so split
-      along the same seams as 2a and let a dialog's styles sit beside the
+      along the same seams as 1a and let a dialog's styles sit beside the
       dialog. Move the token block at the head of `index.css` into its own file
       so theming is findable.
 
 **Tier 2 — guardrails, so it does not regress.**
 
-- [ ] **4. Nothing checks switch exhaustiveness.** Adding a feature kind means
+- [ ] **3. Nothing checks switch exhaustiveness.** Adding a feature kind means
       touching **nine files** (`document/types.ts`, `document/document.ts`,
       `App.tsx`, `ui/ParamEditor.tsx`, `kernel/worker.ts`, `kernel/types.ts`,
       `document/featureDefs.ts`, `document/parts.ts`, `agent/commands.ts`) and
@@ -320,7 +305,7 @@ _not_ repeated here; this section is the rest.
       raises no error. Add `default: assertNever(feature)` to every switch over
       `FeatureKind`. This is the single best thing available for a stranger's
       first feature PR — it makes the compiler the checklist.
-- [ ] **5. A ten-way union is hand-inlined four times, and one copy has
+- [ ] **4. A ten-way union is hand-inlined four times, and one copy has
       already diverged.** `document.ts:237`, `:943`, `:960` and `:981` each
       spell out the same ten body-producing feature types by hand (primitive,
       extrude, boolean, transform, mirror, pattern, revolve, sweep, loft,
@@ -328,19 +313,20 @@ _not_ repeated here; this section is the rest.
       divergence is probably correct and is currently indistinguishable from a
       typo. Extract `isBodyFeature` / `isHideableFeature` guards into
       `document/parts.ts`.
-- [ ] **6. Write the "where do I add a feature?" walkthrough** into
-      `CONTRIBUTING.md`. The nine-file answer from item 4 is the map; for a
+- [ ] **5. Write the "where do I add a feature?" walkthrough** into
+      `CONTRIBUTING.md`. The nine-file answer from item 3 is the map; for a
       parametric CAD app it is _the_ onboarding question, and no amount of
       structure substitutes for writing it down.
-- [ ] **7. Clear the 12 lint warnings.** Two `react-refresh` ones fall out of
-      item 1; the rest are `exhaustive-deps` in `MoreFlyout`,
-      `OverflowToolbar`, `DimValueInput` and the Viewport mount effect.
+- [ ] **6. Clear the 11 lint warnings.** Three are `react-refresh` in
+      `DimValueInput`; the rest are `exhaustive-deps` in `MoreFlyout`,
+      `OverflowToolbar`, `useAgentBridge`, `App.tsx` and the Viewport mount
+      effect.
 
-**Sequencing.** `npm run verify` gates item 2. `App.tsx` and `Viewport.tsx`
+**Sequencing.** `npm run verify` gates item 1. `App.tsx` and `Viewport.tsx`
 have no unit tests — Vitest can load neither the OCCT wasm nor a WebGL context —
 so the verify scripts are the only net under a refactor of that size, and they
 need to be green _first_ (`scripts/README.md` has the current state of that).
-Items 1, 4 and 5 are low-risk and land in a day together. Item 2 is the big one
+Items 3 and 4 are low-risk and land in a day together. Item 1 is the big one
 and is better done in public as a series of small PRs than held back: a repo
 visibly being improved reads better than a suspiciously pristine one.
 

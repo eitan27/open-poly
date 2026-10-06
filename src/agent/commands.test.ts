@@ -6,7 +6,7 @@ import { createDocument, resolveDocument } from "../document/document";
 import { applyDerived } from "../document/derived";
 import type { Document } from "../document/types";
 import { DEFAULT_SECTION_VIEW } from "../document/sectionView";
-import type { Selection } from "../viewport/Viewport";
+import type { Selection } from "../selection/types";
 
 // A minimal in-memory AgentContext. Doc mutations are pure, so no kernel is
 // needed. `waitForRegen` stands in for the worker by returning the pure
