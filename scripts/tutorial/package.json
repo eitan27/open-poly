@@ -1,0 +1,9 @@
+{
+  "name": "open-poly-tutorial-video",
+  "private": true,
+  "type": "module",
+  "description": "Tooling for recording the Open Poly tutorial video. Kept separate from the app's dependencies.",
+  "dependencies": {
+    "kokoro-js": "1.2.1"
+  }
+}
