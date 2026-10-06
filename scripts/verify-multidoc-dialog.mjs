@@ -1,4 +1,4 @@
-// M2 verification: Documents dialog, the switch flow (content isolation +
+// The Documents dialog and the switch flow (content isolation +
 // flush-before-switch, i.e. the docIdRef clobber guard), duplicate,
 // delete-active fallback, and the two-tab BroadcastChannel warning.
 import { chromium } from "playwright";
@@ -124,7 +124,7 @@ check(
 );
 
 await page.locator(".docs-btn").click();
-await page.screenshot({ path: "/tmp/openshape-multidoc-m2.png" });
+await page.screenshot({ path: "/tmp/openpoly-multidoc-dialog.png" });
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
 await browser.close();
 process.exit(failures === 0 ? 0 : 1);

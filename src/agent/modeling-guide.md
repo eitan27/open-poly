@@ -1,7 +1,7 @@
 # Open Poly — Agent Modeling Guide
 
-> This is the "skill" an LLM agent loads to model in Open Poly via the MCP tools
-> (Phase 9). Tool names match the live command layer (`src/agent/operations.ts`)
+> This is the "skill" an LLM agent loads to model in Open Poly via the MCP
+> tools. Tool names match the live command layer (`src/agent/operations.ts`)
 > — keep this file in sync with it. Delivered to clients as an MCP **prompt** +
 > **resource** (and a `get_modeling_guide` tool).
 

@@ -6,7 +6,7 @@
 //
 // Sequential on purpose. These are wall-clock scripts that poll the app's status
 // chip, so anything else competing for the CPU changes their answers — a lesson
-// the B.2 migration learned twice (see PLAN, "What it taught us"). For the same
+// migrating these scripts learned twice (see PLAN, "What it taught us"). For the same
 // reason, don't run them next to `npm test`.
 //
 // The per-script timeout is enforced here rather than with `timeout(1)`, which

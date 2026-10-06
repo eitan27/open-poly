@@ -1,4 +1,4 @@
-// Full L2 validation: act as an MCP client (spawn the stdio server, which starts
+// Full MCP-server check: act as an MCP client (spawn the stdio server, which starts
 // the WS hub), open the app in Playwright (the tab dials the hub), then call MCP
 // tools and check they flow through to the live tab and back — including image
 // content for screenshot and the modeling-guide / report_issue tools.
@@ -53,7 +53,7 @@ check("add_primitive -> ok", !r1.isError && op1.ok === true, textOf(r1));
 const boxId = op1.createdId;
 
 // read: a SINGLE read right after the awaited apply must already see the body —
-// L3 makes apply await regen, so no polling is needed.
+// The host makes apply await regen, so no polling is needed.
 const rsum = await client.callTool({ name: "get_scene_summary", arguments: {} });
 const names = (JSON.parse(textOf(rsum)).bodies ?? []).map((b) => b.name);
 check("get_scene_summary sees McpBox on first read (regen awaited)", names.includes("McpBox"), JSON.stringify(names));
@@ -91,7 +91,10 @@ check(
 // modeling guide + report_issue (don't go through the hub)
 const rg = await client.callTool({ name: "get_modeling_guide", arguments: {} });
 check("get_modeling_guide returns the guide", textOf(rg).includes("Open Poly") && textOf(rg).includes("work loop"));
-const ri = await client.callTool({ name: "report_issue", arguments: { kind: "friction", goal: "L2 e2e smoke" } });
+const ri = await client.callTool({
+  name: "report_issue",
+  arguments: { kind: "friction", goal: "MCP end-to-end smoke" },
+});
 check("report_issue acks", !ri.isError && textOf(ri).toLowerCase().includes("logged"));
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);

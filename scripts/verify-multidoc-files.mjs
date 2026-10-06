@@ -1,4 +1,4 @@
-// M3 verification: thumbnails captured into meta, .json export (envelope, no
+// Thumbnails captured into meta, .json export (envelope, no
 // meshes), import (new id + deduped name + opens), corrupt-file error.
 import { chromium } from "playwright";
 import { readFile, writeFile } from "node:fs/promises";
@@ -124,7 +124,7 @@ const err = (await page.locator(".docs-error").textContent())?.trim();
 check("corrupt import shows a readable error", err === "Not an Open Poly document file.", err);
 check("dialog stayed open", (await page.locator(".docs-dialog").count()) === 1);
 
-await page.screenshot({ path: "/tmp/openshape-multidoc-m3.png" });
+await page.screenshot({ path: "/tmp/openpoly-multidoc-files.png" });
 console.log(failures === 0 ? "=== ALL CHECKS PASSED ===" : `=== ${failures} CHECK(S) FAILED ===`);
 await browser.close();
 process.exit(failures === 0 ? 0 : 1);

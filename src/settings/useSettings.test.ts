@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 //
-// Second jsdom opt-in (see useHistory.test.ts). This one is the shape Wave C
-// needs: a hook that reads and writes browser storage and subscribes to a
-// browser event source, both of which only exist under jsdom.
+// Second jsdom opt-in (see useHistory.test.ts). This is the shape that needs
+// one: a hook that reads and writes browser storage and subscribes to a browser
+// event source, both of which only exist under jsdom.
 
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

@@ -65,8 +65,8 @@ describe("putDoc / loadDoc / listMeta", () => {
 
   it("preserves an existing thumbnail and createdAt across autosaves", async () => {
     await putDoc(record("a", "Doc", { createdAt: 100, updatedAt: 100 }));
-    // Simulate the thumbnail path writing straight to meta (M3 API will wrap
-    // this; here we prove putDoc doesn't clobber what it doesn't know about).
+    // Simulate the thumbnail path writing straight to meta (usePersistedDocuments
+    // wraps this; here we prove putDoc doesn't clobber what it doesn't know about).
     const thumb = new Blob(["png-bytes"], { type: "image/png" });
     const withThumb = (await listMeta())[0];
     await new Promise<void>((resolve, reject) => {

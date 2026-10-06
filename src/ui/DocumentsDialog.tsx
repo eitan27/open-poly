@@ -241,8 +241,8 @@ export function DocumentsDialog({
   );
 }
 
-/** Thumbnail Blob → object URL, revoked on unmount/replace (M3 populates the
- *  blobs; until then this renders the empty placeholder). */
+/** Thumbnail Blob → object URL, revoked on unmount/replace. A document that has
+ *  not been captured yet has no blob, and renders the empty placeholder. */
 function Thumb({ thumb }: { thumb?: Blob }) {
   const [url, setUrl] = useState<string | null>(null);
   const urlRef = useRef<string | null>(null);

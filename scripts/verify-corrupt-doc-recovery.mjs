@@ -1,4 +1,4 @@
-// Corrupt-document recovery (Phase 8.7 follow-up): if a stored document's
+// Corrupt-document recovery: if a stored document's
 // `.doc` shape is malformed (migrateDocument throws), the app must never
 // silently discard it or half-switch into a broken state. Covers:
 //  1. Boot: the active doc is corrupt → app falls back to a fresh doc (never
