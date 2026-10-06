@@ -37,6 +37,12 @@ a single line. Keep the blank line.
 - If you touched anything rendering- or interaction-related in the viewport
   or sketch tools, manually exercise the change in the browser — the unit
   suite covers document/geometry logic, not rendering or picking.
+- For kernel or viewport changes, also run the relevant acceptance checks:
+  `npm run dev` in one shell, then `npm run verify -- <name>` (or
+  `npm run verify` for all of them). These drive the real app in a real
+  browser and are the only coverage `src/kernel/worker.ts` and
+  `src/viewport/` have. See [`scripts/README.md`](scripts/README.md), which
+  also records which of them are currently green.
 - Keep PRs focused. Unrelated cleanup, formatting-only changes, or drive-by
   refactors belong in a separate PR unless they're in files you're already
   touching for the main change.
