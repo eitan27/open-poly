@@ -4,7 +4,7 @@
 import * as THREE from "three";
 import { clamp } from "../lib/clamp";
 import type { Vec2 } from "../document/types";
-import type { TransformEdit } from "./Viewport";
+import type { TransformEdit } from "./types";
 
 /** Build the world matrix for a transform feature's values, matching the kernel's
  *  composition exactly: uniformly scale about the pivot, then rotate about the

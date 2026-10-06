@@ -38,7 +38,8 @@ import {
 import { copyName, dedupeName, nextUntitled } from "../storage/docNames";
 import { parseDocFile, serializeDocFile } from "../storage/docFile";
 import { CorruptDocError } from "../storage/docErrors";
-import type { FeatureMesh, Selection, ViewportApi } from "../viewport/Viewport";
+import type { Selection } from "../selection/types";
+import type { FeatureMesh, ViewportApi } from "../viewport/types";
 
 type RawMesh = { id: string; mesh: FeatureMesh["mesh"] };
 

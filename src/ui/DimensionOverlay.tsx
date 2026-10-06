@@ -1,7 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { uvToWorld, type PlaneFrameData } from "../document/planes";
 import type { Vec2 } from "../document/types";
-import type { ViewportApi } from "../viewport/Viewport";
+import type { ViewportApi } from "../viewport/types";
 
 /** One on-canvas dimension, drawn like a technical-drawing annotation next to
  *  the sketch geometry it constrains. `id` is the constraint id — reported on

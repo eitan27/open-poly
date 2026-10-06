@@ -19,7 +19,7 @@ import { serializeDocFile } from "../storage/docFile";
 import { installWebStorage } from "../test/webStorage";
 import { usePersistedDocuments, type UsePersistedDocumentsParams } from "./usePersistedDocuments";
 import type { Document } from "../document/types";
-import type { ViewportApi } from "../viewport/Viewport";
+import type { ViewportApi } from "../viewport/types";
 
 const record = (id: string, name: string, over: Partial<StoredDoc> = {}): StoredDoc => ({
   id,

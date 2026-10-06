@@ -4,7 +4,8 @@ import type { Document, SketchEntity } from "../document/types";
 import { detectSketchRegions, type SketchRegion } from "../document/regions";
 import { evaluateExpression, type Scope } from "../document/expression";
 import type { MeshedEdges, MeshedFaces } from "../kernel/types";
-import type { FeatureMesh, Selection } from "../viewport/Viewport";
+import type { FeatureMesh } from "../viewport/types";
+import type { Selection } from "./types";
 import { formatNumber as fmt } from "../lib/format";
 
 export interface MeasureInfo {

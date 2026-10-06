@@ -201,22 +201,19 @@ import type { ToolbarItem, ToolbarRow } from "./ui/toolbarOverflow";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
 import { VariablesPanel } from "./ui/VariablesPanel";
-import {
-  Viewport,
-  sameSelection,
-  type DatumId,
-  type ExtrudeGizmo,
-  type FeatureMesh,
-  type GhostMesh,
-  type RevolveAxisPick,
-  type Selection,
-  type SelectionFilter,
-  type SketchTool,
-  type TransformEdit,
-  type TransformMode,
-  type ViewName,
-  type ViewportApi,
-} from "./viewport/Viewport";
+import { sameSelection, type DatumId, type Selection, type SelectionFilter } from "./selection/types";
+import { Viewport } from "./viewport/Viewport";
+import type {
+  ExtrudeGizmo,
+  FeatureMesh,
+  GhostMesh,
+  RevolveAxisPick,
+  SketchTool,
+  TransformEdit,
+  TransformMode,
+  ViewName,
+  ViewportApi,
+} from "./viewport/types";
 import "./App.css";
 
 /** Log each regen's end-to-end round-trip time to the console. Off by default;

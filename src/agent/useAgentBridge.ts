@@ -32,7 +32,8 @@ import { BridgeClient, type BridgeStatus } from "./bridgeClient";
 import { genId } from "../document/document";
 import type { Document } from "../document/types";
 import type { SectionViewState } from "../document/sectionView";
-import type { Selection, ViewName, ViewportApi } from "../viewport/Viewport";
+import type { Selection } from "../selection/types";
+import type { ViewName, ViewportApi } from "../viewport/types";
 
 interface BridgeDeps {
   doc: Document;
