@@ -190,6 +190,8 @@ import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
+import { LoftDialog } from "./ui/LoftDialog";
+import { SweepDialog } from "./ui/SweepDialog";
 import { PickButton, PickedRow, PickSlot } from "./ui/PickSlot";
 import { DraggableDialog } from "./ui/DraggableDialog";
 import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
@@ -7283,6 +7285,12 @@ export default function App() {
     },
   ];
 
+  /** A sketch feature's display name, for the dialogs that label a picked region
+   *  or path by the sketch it came from. "Sketch" rather than the raw id when it
+   *  can't be resolved: the slot is describing geometry the user just clicked, so
+   *  a uuid there reads as a bug. */
+  const sketchName = (id: string) => doc.features.find((f) => f.id === id)?.name ?? "Sketch";
+
   return (
     <div className="app">
       <header className="topbar">
@@ -9022,100 +9030,32 @@ export default function App() {
                 </DraggableDialog>
               );
             })()}
-          {sweepDialog &&
-            (() => {
-              const d = sweepDialog;
-              const nameOf = (id: string, fallback: string) => doc.features.find((f) => f.id === id)?.name ?? fallback;
-              const arm = (slot: "profile" | "path", clear = false) =>
-                setSweepDialog((p) => (p ? { ...p, ...(clear ? { [slot]: null } : {}), armed: slot } : p));
-              return (
-                <DraggableDialog
-                  className="feature-dialog"
-                  style={{ left: "50%", top: 70 }}
-                  baseTransform="translateX(-50%)"
-                >
-                  <div className="ed-title" data-drag-handle>
-                    Sweep
-                  </div>
-                  <div className="ed-hint">
-                    Profile: a closed sketch region. Path: a sketch line, arc, or spline — it may live in another
-                    sketch.
-                  </div>
-                  <div className="bool-group-label">Profile</div>
-                  <PickSlot
-                    noun="a profile"
-                    armed={d.armed === "profile"}
-                    value={d.profile ? `${nameOf(d.profile.sketchId, "Sketch")} · region` : null}
-                    wide
-                    onArm={() => arm("profile")}
-                    onClear={() => arm("profile", true)}
-                  />
-                  <div className="bool-group-label">Path</div>
-                  <PickSlot
-                    noun="a path"
-                    armed={d.armed === "path"}
-                    value={d.path ? `${nameOf(d.path.sketchId, "Sketch")} · path` : null}
-                    wide
-                    onArm={() => arm("path")}
-                    onClear={() => arm("path", true)}
-                  />
-                  <div className="ed-actions">
-                    <button className="ed-primary" disabled={!d.profile || !d.path} onClick={createSweep}>
-                      Create
-                    </button>
-                    <button onClick={closeSweep}>Cancel</button>
-                  </div>
-                </DraggableDialog>
-              );
-            })()}
-          {loftDialog &&
-            (() => {
-              const d = loftDialog;
-              const nameOf = (id: string) => doc.features.find((f) => f.id === id)?.name ?? "Sketch";
-              return (
-                <DraggableDialog
-                  className="feature-dialog"
-                  style={{ left: "50%", top: 70 }}
-                  baseTransform="translateX(-50%)"
-                >
-                  <div className="ed-title" data-drag-handle>
-                    Loft
-                  </div>
-                  <div className="ed-hint">
-                    Blends through the sections in the order below — the order you pick them in.
-                  </div>
-                  {/* An accumulating slot (see PickSlot.tsx): the arming stays
-                      live between picks, and clicking a listed section in the
-                      viewport removes it. */}
-                  <div className="bool-group-label">Sections</div>
-                  {d.sections.map((s, i) => (
-                    <PickedRow
-                      key={`${s.sketchId}/${s.regionId}`}
-                      label={`${i + 1}. ${nameOf(s.sketchId)} · region`}
-                      clearTitle="Remove"
-                      onClear={() =>
-                        setLoftDialog((p) => (p ? { ...p, sections: p.sections.filter((_, k) => k !== i) } : p))
-                      }
-                    />
-                  ))}
-                  <PickButton
-                    noun="sections"
-                    armed={d.arming}
-                    wide
-                    onClick={() => setLoftDialog((p) => (p ? { ...p, arming: !p.arming } : p))}
-                  >
-                    {d.arming ? "Select sections (Esc to stop)" : d.sections.length ? "Add more sections" : undefined}
-                  </PickButton>
-                  {d.sections.length === 1 && <p className="ed-hint">A loft needs at least two sections.</p>}
-                  <div className="ed-actions">
-                    <button className="ed-primary" disabled={d.sections.length < 2} onClick={createLoft}>
-                      Create
-                    </button>
-                    <button onClick={closeLoft}>Cancel</button>
-                  </div>
-                </DraggableDialog>
-              );
-            })()}
+          {sweepDialog && (
+            <SweepDialog
+              profileLabel={sweepDialog.profile ? `${sketchName(sweepDialog.profile.sketchId)} · region` : null}
+              pathLabel={sweepDialog.path ? `${sketchName(sweepDialog.path.sketchId)} · path` : null}
+              armed={sweepDialog.armed}
+              onArm={(slot) => setSweepDialog((d) => (d ? { ...d, armed: slot } : d))}
+              onClear={(slot) => setSweepDialog((d) => (d ? { ...d, [slot]: null, armed: slot } : d))}
+              onConfirm={createSweep}
+              onCancel={closeSweep}
+            />
+          )}
+          {loftDialog && (
+            <LoftDialog
+              sections={loftDialog.sections.map((s, i) => ({
+                key: `${s.sketchId}/${s.regionId}`,
+                label: `${i + 1}. ${sketchName(s.sketchId)} · region`,
+              }))}
+              arming={loftDialog.arming}
+              onToggleArming={() => setLoftDialog((d) => (d ? { ...d, arming: !d.arming } : d))}
+              onRemoveSection={(i) =>
+                setLoftDialog((d) => (d ? { ...d, sections: d.sections.filter((_, k) => k !== i) } : d))
+              }
+              onConfirm={createLoft}
+              onCancel={closeLoft}
+            />
+          )}
           {dxfDialog && (
             <DraggableDialog
               className="feature-dialog"
