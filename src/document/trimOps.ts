@@ -28,6 +28,7 @@
 import { genId, removeSketchEntity } from "./document";
 import { extendPlan, isTrimTarget, nearestEnd, trimPlan, type ExtendPlan, type TrimPlan } from "../sketch/trim";
 import type { Document, PointRef, SketchConstraint, SketchFeature, Vec2 } from "./types";
+import { assertNever } from "../lib/assertNever";
 
 type Vertex = "a" | "b" | "c";
 
@@ -45,8 +46,24 @@ function pointRefsOf(c: SketchConstraint): PointRef[] {
       return [c.point];
     case "distanceBetween":
       return [c.a, c.b].filter((s) => s.on === "point").map((s) => (s as { ref: PointRef }).ref);
-    default:
+    // Entity-level constraints: they name whole entities, never vertices, so a
+    // trim has nothing to retarget on them. Spelled out rather than swept into a
+    // `default: return []`, because that default would also have silently
+    // swallowed a NEW constraint kind that DOES hold a PointRef — and the symptom
+    // would be trim/extend quietly dropping its references, not an error.
+    case "horizontal":
+    case "vertical":
+    case "parallel":
+    case "perpendicular":
+    case "equal":
+    case "angle":
+    case "tangent":
+    case "distance":
+    case "radius":
+    case "diameter":
       return [];
+    default:
+      return assertNever(c, "constraint");
   }
 }
 
@@ -67,8 +84,20 @@ function retargetVertex(c: SketchConstraint, entityId: string, at: Vertex, toId:
       const side = (s: typeof c.a) => (s.on === "point" ? { ...s, ref: swap(s.ref) } : s);
       return { ...c, a: side(c.a), b: side(c.b) };
     }
-    default:
+    // Nothing to rewrite — see `pointRefsOf` for why these are listed.
+    case "horizontal":
+    case "vertical":
+    case "parallel":
+    case "perpendicular":
+    case "equal":
+    case "angle":
+    case "tangent":
+    case "distance":
+    case "radius":
+    case "diameter":
       return c;
+    default:
+      return assertNever(c, "constraint");
   }
 }
 

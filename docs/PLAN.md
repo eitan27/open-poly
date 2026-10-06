@@ -267,8 +267,8 @@ _not_ repeated here; this section is the rest.
       return at `7295-9896`. **17 of the repo's 20 `eslint-disable` comments are
       `react-hooks/exhaustive-deps` in this file** — that is the dependency
       graph having outgrown hand-verification, and it is the reason to treat
-      this as correctness work rather than tidying. `CONTRIBUTING.md:59`
-      already concedes "oversized and mid-refactor", which reads as an
+      this as correctness work rather than tidying. `CONTRIBUTING.md`'s layout
+      table already concedes "oversized and mid-refactor", which reads as an
       unfinished job to anyone arriving. Four independently shippable steps:
   - [ ] **1a.** Extract the JSX tail — the lowest-risk half. The 20
         `DraggableDialog` blocks are already visually delimited and
@@ -295,40 +295,47 @@ _not_ repeated here; this section is the rest.
 
 **Tier 2 — guardrails, so it does not regress.**
 
-- [ ] **3. Nothing checks switch exhaustiveness.** Adding a feature kind means
-      touching **nine files** (`document/types.ts`, `document/document.ts`,
-      `App.tsx`, `ui/ParamEditor.tsx`, `kernel/worker.ts`, `kernel/types.ts`,
-      `document/featureDefs.ts`, `document/parts.ts`, `agent/commands.ts`) and
-      nothing tells you which one you missed. The consequential site is the
-      `buildBodies` dispatch at `worker.ts:4344`: a missing case falls straight
-      through, so the feature appears in the timeline, builds no geometry, and
-      raises no error. Add `default: assertNever(feature)` to every switch over
-      `FeatureKind`. This is the single best thing available for a stranger's
-      first feature PR — it makes the compiler the checklist.
-- [ ] **4. A ten-way union is hand-inlined four times, and one copy has
-      already diverged.** `document.ts:237`, `:943`, `:960` and `:981` each
-      spell out the same ten body-producing feature types by hand (primitive,
-      extrude, boolean, transform, mirror, pattern, revolve, sweep, loft,
-      import); the fourth, `setFeatureHidden`, also admits `plane`. The
-      divergence is probably correct and is currently indistinguishable from a
-      typo. Extract `isBodyFeature` / `isHideableFeature` guards into
-      `document/parts.ts`.
-- [ ] **5. Write the "where do I add a feature?" walkthrough** into
-      `CONTRIBUTING.md`. The nine-file answer from item 3 is the map; for a
-      parametric CAD app it is _the_ onboarding question, and no amount of
-      structure substitutes for writing it down.
-- [ ] **6. Clear the 11 lint warnings.** Three are `react-refresh` in
+- [ ] **3. Clear the 11 lint warnings.** Three are `react-refresh` in
       `DimValueInput`; the rest are `exhaustive-deps` in `MoreFlyout`,
       `OverflowToolbar`, `useAgentBridge`, `App.tsx` and the Viewport mount
-      effect.
+      effect. Most of the `App.tsx` ones should fall out of item 1b rather than
+      be silenced by hand.
 
 **Sequencing.** `npm run verify` gates item 1. `App.tsx` and `Viewport.tsx`
 have no unit tests — Vitest can load neither the OCCT wasm nor a WebGL context —
 so the verify scripts are the only net under a refactor of that size, and they
 need to be green _first_ (`scripts/README.md` has the current state of that).
-Items 3 and 4 are low-risk and land in a day together. Item 1 is the big one
-and is better done in public as a series of small PRs than held back: a repo
-visibly being improved reads better than a suspiciously pristine one.
+Item 1 is the big one and is better done in public as a series of small PRs
+than held back: a repo visibly being improved reads better than a suspiciously
+pristine one. The exhaustiveness guardrails are in, so a refactor that drops a
+case on the floor now fails the build rather than the user.
+
+**On the `assertNever` guards, so they are not "tidied" away.** Six dispatches
+had a genuinely silent fallthrough and now carry one:
+
+- `resolveDocument` (`document.ts`) and `buildBodies` (`kernel/worker.ts`) — a
+  feature kind missing from either built nothing and raised nothing. The first is
+  the worse of the two: it never even reaches the worker.
+- `applyDerived` (`derived.ts`) — same shape, for a derived-op kind: the offset /
+  mirror / pattern geometry simply never appears.
+- `pointRefsOf` and `retargetVertex` (`trimOps.ts`) — their catch-all `default`
+  was correct for the ten entity-level constraints and would have quietly dropped
+  a new constraint kind's vertex references. The ten are spelled out now so the
+  default can be a guard.
+- `sketchEntitiesBounds` (`dxfImport.ts`) — a void switch, so the return check
+  never applied; a new entity kind would have left a DXF import framing the view
+  on everything except that kind.
+
+The other eleven switches over these same unions — the constraint and
+sketch-entity dispatches in `App.tsx`, `document.ts`, `sketchTools.ts`,
+`sketchGeom.ts`, `Viewport.tsx` and `agent/commands.ts` — are **already**
+exhaustiveness-checked, because each returns a non-`undefined` type and
+TypeScript rejects the fall-through path (TS2366). Adding `assertNever` there
+buys a slightly clearer error message and nothing else, so they were left alone.
+The remaining `dxfImport.ts` switch, over a parsed DXF entity's own `type`
+string, must stay permissive: that is an open set from an external file, not a
+union we own, and unsupported types are deliberately counted into `skipped`
+rather than rejected.
 
 ---
 

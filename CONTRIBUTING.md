@@ -67,6 +67,85 @@ a single line. Keep the blank line.
 | `functions/`     | Cloudflare Pages functions (currently: the bug-report endpoint).                                                                                                                          |
 | `scripts/`       | Manual Playwright-based verification scripts, run ad hoc against a local `npm run dev` instance — not part of CI.                                                                         |
 
+## Where do I add a feature?
+
+The most common substantial contribution, and the one the layout above doesn't
+answer on its own. A "feature" here is a timeline entry — Extrude, Revolve,
+Shell — not a UI affordance.
+
+**Start by copying the nearest existing one, end to end.** Every feature is the
+same ten-odd edits in the same order, so the fastest correct route is to pick the
+closest sibling and follow it through:
+
+| If the new feature…                    | copy                                              |
+| -------------------------------------- | ------------------------------------------------- |
+| consumes a sketch region and sweeps it | `revolve` (or `sweep` / `loft` for multi-profile) |
+| modifies a body you select             | `shell`, or `dressup` for an edge/face selection  |
+| combines or copies whole bodies        | `boolean`, `mirror`, `pattern`                    |
+| is a standalone solid from parameters  | `primitive`                                       |
+
+`grep -rn '"revolve"' src/` is a genuinely good map of the work. Revolve is the
+best all-round model: it has a sketch profile, a picked axis, an expression-valued
+parameter, a creation dialog, an edit-in-place path and an agent tool.
+
+**The compiler will tell you most of what you missed.** Add the interface to
+`Feature` in `document/types.ts` and the build fails until you have answered,
+by name:
+
+- `resolveDocument` in `document/document.ts` — turn expressions into numbers and
+  push a `ResolvedFeature`. Skipping this is the mistake worth knowing about: the
+  feature would reach neither the kernel nor an error message.
+- `buildBodies` in `kernel/worker.ts` — the actual geometry, once you add the
+  matching `ResolvedFeature` member to `kernel/types.ts`.
+- `featureTypeLabel` in `document/featureDefs.ts` — the timeline row's label.
+- `openFeatureEditor` in `App.tsx` — double-click behaviour: its own dialog, or
+  the floating parameter panel.
+- `BODY_FEATURE_TYPES` in `document/parts.ts` — only if it produces a body of its
+  own, which is also what makes it colourable and hideable.
+- `ParamEditor.tsx` — a branch for the parameter panel.
+
+Those are `assertNever` guards and exhaustive `Record`s, added for exactly this
+reason. Treat a build error in one of them as the checklist working.
+
+**What the compiler cannot tell you**, and what reviewers will look for:
+
+- **A constructor in `document/document.ts`** (`addRevolve` and friends): one
+  function that inserts the feature, names it by ordinal, and assigns a colour.
+  Both the UI and the agent must call it rather than building the object
+  themselves — see the last bullet under Code style.
+- **Numeric parameters are expression strings**, not numbers. `"40"` and
+  `"width * 2"` are both valid and are resolved against the document scope, which
+  is what makes variables work. Store the string; evaluate in `resolveDocument`.
+- **Backfill in `migrateDocument`** whenever you later add a field to a feature
+  that may already be on someone's disk. Old documents must keep opening.
+- **Topological references must be persistent names, not indices.** If the
+  feature selects faces or edges, store the names from the kernel's naming pass
+  and keep the geometric fingerprint beside them, the way `dressup` and `shell`
+  do. Build-local ids renumber on the next rebuild.
+- **The agent path**: a zod spec in `agent/operations.ts`, the handler in
+  `agent/commands.ts`, the tool in `mcp-server/src/tools.ts`, and a line in
+  `agent/modeling-guide.md`. Feature parity with the UI is the expectation, not a
+  follow-up.
+- **The UI.** Today a feature's dialog, its state and its JSX all live in
+  `src/App.tsx`, with styles in `src/App.css`. Both files are mid-refactor —
+  dialogs are moving into `src/ui/` and styles alongside them — so copy whichever
+  sibling is closest to where that has got to, and prefer `src/ui/` for anything
+  genuinely new. `BooleanDialog.tsx`, `SettingsDialog.tsx` and `ReportDialog.tsx`
+  are the pattern.
+
+**Two things to know about the kernel before you design the geometry.** This
+OCCT build cannot boolean an analytic primitive surface (cylinder, sphere)
+against a plane, so curved geometry is faceted deliberately — cylinders are
+48-gon prisms and revolve is a faceted ruled loft. And the failure only
+reproduces in the full pipeline, never in an isolated probe. `docs/PLAN.md`'s
+Gotchas section is the required reading; it will save you a day.
+
+**Testing.** Vitest can load neither the OCCT wasm nor a WebGL context, so
+document-level logic (the constructor, the resolve step, validation) goes in a
+`*.test.ts` next to it, and the geometry gets a `scripts/verify-<feature>.mjs`
+acceptance check driving the real app. `scripts/README.md` explains the harness;
+`verify-build-bodies.mjs` is the one to extend with a "does it build at all" case.
+
 ## Code style
 
 - TypeScript throughout; avoid `any` where a real type is available.

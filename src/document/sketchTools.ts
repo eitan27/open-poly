@@ -2,6 +2,7 @@
 // circle / arc parameters; the caller turns them into SketchEntity objects (for
 // committing) or polylines (for preview rendering). Shared by App and Viewport.
 import type { SketchEntity, Vec2 } from "./types";
+import { assertNever } from "../lib/assertNever";
 import { arcStations, circleStations } from "../geom/circleFacets";
 import { dist2 as dist, approxEqual2, angleOf2 as angleOf } from "../lib/vec2";
 
@@ -647,6 +648,32 @@ export type FittedProjection =
   | { type: "circle"; c: Vec2; r: number }
   | { type: "arc"; c: Vec2; r: number; start: number; end: number }
   | { type: "spline"; points: Vec2[] };
+
+/** Turn a fitted projection into a committable `SketchEntity`.
+ *
+ *  `derivedFrom`, when given, tags the entity as associative geometry owned by
+ *  that source (the Project/Convert tool's live re-projection); it is LEFT OFF
+ *  entirely when absent rather than set to `undefined`, because a one-off
+ *  projection must be indistinguishable from hand-drawn geometry — including to
+ *  the serialiser and to anything that tests for the key.
+ *
+ *  Lived twice, once in `App.tsx` without the tag and once in `derived.ts` with
+ *  it, which is the sort of pair where a fix lands in one copy only. */
+export function fittedToEntity(f: FittedProjection, id: string, derivedFrom?: string): SketchEntity {
+  const tag = derivedFrom === undefined ? {} : { derivedFrom };
+  switch (f.type) {
+    case "line":
+      return { type: "line", id, a: f.a, b: f.b, ...tag };
+    case "circle":
+      return { type: "circle", id, c: f.c, r: f.r, ...tag };
+    case "arc":
+      return { type: "arc", id, c: f.c, r: f.r, start: f.start, end: f.end, ...tag };
+    case "spline":
+      return { type: "spline", id, points: f.points, ...tag };
+    default:
+      return assertNever(f, "fitted projection");
+  }
+}
 
 /** Largest perpendicular distance from any point to the chord a→b. */
 function maxDeviationFromChord(pts: Vec2[], a: Vec2, b: Vec2): number {

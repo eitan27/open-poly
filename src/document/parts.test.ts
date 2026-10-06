@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { featureIdOfPart, isSubPart, partAppearance, partIndex, setPartAppearance } from "./parts";
-import type { Document, PrimitiveFeature } from "./types";
+import {
+  featureIdOfPart,
+  isBodyFeature,
+  isHideableFeature,
+  isSubPart,
+  partAppearance,
+  partIndex,
+  setPartAppearance,
+} from "./parts";
+import type { Document, Feature, PrimitiveFeature } from "./types";
 
 const box = (id: string, name: string): PrimitiveFeature => ({
   id,
@@ -93,5 +101,68 @@ describe("setPartAppearance", () => {
   it("leaves other parts' overrides alone", () => {
     const two = setPartAppearance(setPartAppearance(doc, "ext#1", { name: "A" }), "ext#2", { name: "B" });
     expect(Object.keys(two.parts ?? {})).toEqual(["ext#1", "ext#2"]);
+  });
+});
+
+/** Every member of `Feature["type"]`, as a `Record` so that adding a feature kind
+ *  breaks this file until its author says which side of the two guards it falls
+ *  on — which is the whole point of the guards existing. A bare discriminant
+ *  stands in for a whole feature because `type` is all either guard reads. */
+const ALL_FEATURE_TYPES: Record<Feature["type"], true> = {
+  primitive: true,
+  sketch: true,
+  extrude: true,
+  dressup: true,
+  shell: true,
+  boolean: true,
+  plane: true,
+  transform: true,
+  mirror: true,
+  pattern: true,
+  revolve: true,
+  sweep: true,
+  loft: true,
+  import: true,
+};
+const FEATURE_TYPES = Object.keys(ALL_FEATURE_TYPES) as Feature["type"][];
+const asFeature = (type: Feature["type"]) => ({ type }) as Feature;
+
+describe("isBodyFeature / isHideableFeature", () => {
+  const typesWhere = (p: (f: Feature) => boolean) => FEATURE_TYPES.filter((t) => p(asFeature(t))).sort();
+
+  const BODY = [
+    "boolean",
+    "extrude",
+    "import",
+    "loft",
+    "mirror",
+    "pattern",
+    "primitive",
+    "revolve",
+    "sweep",
+    "transform",
+  ];
+
+  it("admits exactly the ten body-producing feature types", () => {
+    expect(typesWhere(isBodyFeature)).toEqual(BODY);
+  });
+
+  // A plane has a colour and a hidden flag but no opacity — the asymmetry that
+  // used to live as a lone extra `|| f.type === "plane"` in one of four copies,
+  // where it was indistinguishable from a typo.
+  it("adds planes, and only planes, to the hideable set", () => {
+    expect(typesWhere(isHideableFeature)).toEqual([...BODY, "plane"].sort());
+  });
+
+  it("excludes the features that modify someone else's body in place", () => {
+    for (const t of ["sketch", "dressup", "shell"] as const) {
+      expect(isBodyFeature(asFeature(t))).toBe(false);
+      expect(isHideableFeature(asFeature(t))).toBe(false);
+    }
+  });
+
+  it("is false for a missing feature", () => {
+    expect(isBodyFeature(undefined)).toBe(false);
+    expect(isHideableFeature(undefined)).toBe(false);
   });
 });

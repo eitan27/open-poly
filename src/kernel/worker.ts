@@ -69,6 +69,7 @@ import {
   type NamedFaceCandidate,
   type NamedFaceRefFingerprint,
 } from "./topoMatch";
+import { assertNever } from "../lib/assertNever";
 import { clamp } from "../lib/clamp";
 import { vunit, vcross, vdot } from "../lib/vec3";
 import { insetOutline, padOutline, ringEscapes } from "../geom/loftInset";
@@ -253,7 +254,9 @@ function buildPrimitive(feature: Extract<ResolvedFeature, { type: "primitive" }>
       shape = makeSphere(p.radius);
       break;
     default:
-      throw new Error(`Unknown feature kind: ${(feature as { kind: string }).kind}`);
+      // The cast this used to carry defeated the narrowing, so a fourth
+      // PrimitiveKind compiled cleanly and failed at runtime instead.
+      assertNever(feature.kind, "primitive kind");
   }
   // NB: replicad's 3D translate() deletes the original and returns a new shape.
   shape = shape.translate(p.x ?? 0, p.y ?? 0, p.z ?? 0) as Shape3D;
@@ -4378,6 +4381,12 @@ function buildBodies(
         case "loft":
           buildLoftFeature(feature, ctx);
           break;
+        // Every member of ResolvedFeature is handled above, and the compiler
+        // enforces that: this is the dispatch whose failure mode was invisible
+        // (a missing case built no geometry and raised nothing), and the one
+        // place a new feature kind MUST be wired up.
+        default:
+          assertNever(feature, "feature type");
       }
     } catch (err) {
       failures.push({ id: feature.id, ok: false, error: errorMessage(err) });

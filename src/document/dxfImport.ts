@@ -12,6 +12,7 @@ import DxfParser from "dxf-parser";
 import type { SketchEntity, Vec2 } from "./types";
 import { genId } from "./document";
 import { clamp } from "../lib/clamp";
+import { assertNever } from "../lib/assertNever";
 
 export interface DxfImportResult {
   entities: SketchEntity[];
@@ -178,6 +179,11 @@ export function sketchEntitiesBounds(entities: SketchEntity[]): { min: Vec2; max
         see(e.p[0], e.p[1]);
         see(e.p[0], e.p[1] + e.height);
         break;
+      // Void switches get no help from the compiler's return check, so this is
+      // the only thing standing between a new entity kind and an import that
+      // silently frames the view on everything EXCEPT that kind.
+      default:
+        assertNever(e, "sketch entity");
     }
   }
   if (!Number.isFinite(minX)) return null;

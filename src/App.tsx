@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { KernelClient } from "./kernel/KernelClient";
+import { assertNever } from "./lib/assertNever";
 import { clamp } from "./lib/clamp";
 import { useUpdateAvailable } from "./useVersionCheck";
 import {
@@ -171,6 +172,7 @@ import {
   connectedEntityIds,
   detectSingleChain,
   fitProjectedPolyline,
+  fittedToEntity,
   loopSegments,
   mirrorEntity,
   offsetChain,
@@ -180,7 +182,6 @@ import {
   rotateEntity,
   translateEntity,
   type ChainEdge,
-  type FittedProjection,
   type OffsetPrimitive,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
@@ -709,20 +710,6 @@ function offsetPrimToEntity(p: OffsetPrimitive, construction: boolean, id = genI
   if (p.type === "line") return { type: "line", id, a: p.a, b: p.b, ...base };
   if (p.type === "circle") return { type: "circle", id, c: p.c, r: p.r, ...base };
   return { type: "arc", id, c: p.c, r: p.r, start: p.start, end: p.end, ...base };
-}
-
-/** Turn a fitted projected edge (Project/Convert tool) into a SketchEntity. */
-function fittedToEntity(f: FittedProjection, id = genId()): SketchEntity {
-  switch (f.type) {
-    case "line":
-      return { type: "line", id, a: f.a, b: f.b };
-    case "circle":
-      return { type: "circle", id, c: f.c, r: f.r };
-    case "arc":
-      return { type: "arc", id, c: f.c, r: f.r, start: f.start, end: f.end };
-    case "spline":
-      return { type: "spline", id, points: f.points };
-  }
 }
 
 // Which standard view each of the seven view shortcuts snaps to. The digits
@@ -5188,9 +5175,18 @@ export default function App() {
       case "shell":
         editShell(id);
         break;
-      default: // primitive / import / sweep / loft — no creation dialog
+      // No creation dialog to re-open: the floating parameter panel IS their
+      // editor. Listed rather than left to a `default` so that adding a feature
+      // kind forces an answer to "does this one have a dialog?" at compile time.
+      case "primitive":
+      case "import":
+      case "sweep":
+      case "loft":
         selectFeature(id);
         setEditParamsId(id);
+        break;
+      default:
+        assertNever(f, "feature type");
     }
   };
   const handleTreeDoubleClick = openFeatureEditor;

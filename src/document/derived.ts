@@ -3,16 +3,17 @@
 // op's output entities from the CURRENT source entities on every solve/regen, so
 // the result follows when the sources move (a dimension changes, the solver
 // nudges a point, …). Generated entities are tagged `derivedFrom: op.id`.
+import { assertNever } from "../lib/assertNever";
 import { evaluateExpression, type Scope } from "./expression";
 import { worldToUv, type PlaneFrameData, type Vec3 } from "./planes";
 import {
   detectSingleChain,
   fitProjectedPolyline,
+  fittedToEntity,
   offsetChain,
   mirrorEntity,
   rotateEntity,
   translateEntity,
-  type FittedProjection,
   type OffsetPrimitive,
 } from "./sketchTools";
 import type { Document, PointRef, SketchEntity, SketchFeature, Vec2 } from "./types";
@@ -220,6 +221,16 @@ export function applyDerived(sketch: SketchFeature, scope: Scope): SketchFeature
             generated.push({ ...rotateEntity(src, center, a, `${op.id}:${j}:${i + 1}`), derivedFrom: op.id });
           });
         });
+      } else if (op.kind === "project") {
+        // Preserved above (projectKeep), not regenerated here — its sources are
+        // kernel body edges rather than sibling entities.
+      } else {
+        // The compile-time half is the point: an if-chain over DerivedOp gets no
+        // help from the return check, so a new op kind would otherwise generate
+        // nothing and raise nothing — the derived geometry would just never
+        // appear. At runtime the throw lands in the catch below, which is right:
+        // a single bad op must not take the sketch with it.
+        assertNever(op, "derived op");
       }
     } catch {
       // A single bad op never breaks the whole sketch.
@@ -242,19 +253,6 @@ export function applyDerivedToSketch(doc: Document, sketchId: string, scope: Sco
 // body) lives in the app layer; these helpers turn an already-fetched world
 // polyline/point into a tagged sketch entity, and compare two projected sets so
 // the app layer can avoid an endless reproject→regen loop.
-
-function fittedToEntity(f: FittedProjection, id: string, derivedFrom: string): SketchEntity {
-  switch (f.type) {
-    case "line":
-      return { type: "line", id, a: f.a, b: f.b, derivedFrom };
-    case "circle":
-      return { type: "circle", id, c: f.c, r: f.r, derivedFrom };
-    case "arc":
-      return { type: "arc", id, c: f.c, r: f.r, start: f.start, end: f.end, derivedFrom };
-    case "spline":
-      return { type: "spline", id, points: f.points, derivedFrom };
-  }
-}
 
 /** Project a body edge's world-space polyline onto a sketch frame and fit it to
  *  the simplest primitive, tagged `derivedFrom`. Null if the polyline is too
