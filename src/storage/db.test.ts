@@ -1,4 +1,4 @@
-// DB v2 (Phase 8.7): meta/payload split, dual-write atomicity, v1→v2
+// DB v2: meta/payload split, dual-write atomicity, v1→v2
 // migration. Runs against fake-indexeddb — each test gets a FRESH factory so
 // state can't leak between tests (the module caches its connection; the
 // __resetDBForTests hook drops it).

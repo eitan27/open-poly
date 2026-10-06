@@ -39,7 +39,7 @@ const seed = async () => {
   await page.waitForTimeout(200);
 };
 
-const dialogs = () => page.locator(".extrude-dialog, .bool-dialog");
+const dialogs = () => page.locator(".feature-dialog, .bool-dialog");
 /** Buttons a user can actually press — the .tb-mirror measuring row is aria-hidden. */
 const liveTools = async () =>
   await page.$$eval(".model-toolbar button", (bs) =>
@@ -116,7 +116,7 @@ for (const label of TOOLS) {
   await btn.click();
   await page.waitForTimeout(600);
   const bad = await page
-    .locator(".extrude-dialog .ed-pick-btn")
+    .locator(".feature-dialog .ed-pick-btn")
     .evaluateAll((bs) => bs.filter((b) => b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent.trim()));
   if (bad.length) clipped.push(`${label}: ${bad.join(" / ")}`);
   await page.evaluate(() => document.activeElement?.blur());

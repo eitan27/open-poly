@@ -354,12 +354,12 @@ await beat("extrude", async () => {
 });
 await beat("extrudeSet", async () => {
   await clickWorld([20, 10, 0], { ms: 550, after: 250 });
-  const dist = page.locator(".extrude-dialog .ed-field input").first();
+  const dist = page.locator(".feature-dialog .ed-field input").first();
   await clickEl(dist, { ms: 400, after: 100 });
   await page.keyboard.press("Meta+a");
   await page.keyboard.type("thickness", { delay: 45 });
   await sleep(400);
-  await clickEl(page.locator(".extrude-dialog .ed-primary"), { ms: 450 });
+  await clickEl(page.locator(".feature-dialog .ed-primary"), { ms: 450 });
 });
 await idle();
 await beat("plate", () => moveTo(560, 560, 900), { gap: 400 });
@@ -384,12 +384,12 @@ await beat("fillet", async () => {
   await clickWorld([18, 12, 12], { ms: 700, after: 300 });
 });
 await beat("filletSet", async () => {
-  const r = page.locator(".extrude-dialog .ed-field input").first();
+  const r = page.locator(".feature-dialog .ed-field input").first();
   await clickEl(r, { ms: 500, after: 100 });
   await page.keyboard.press("Meta+a");
   await typeSlow("2");
   await sleep(350);
-  await clickEl(page.locator(".extrude-dialog .ed-primary"), { ms: 500 });
+  await clickEl(page.locator(".feature-dialog .ed-primary"), { ms: 500 });
 });
 await idle();
 await moveTo(1000, 640, 500);

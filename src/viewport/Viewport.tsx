@@ -319,7 +319,7 @@ export interface ViewportApi {
    *  currently rendered (a dangling projection). */
   getEdgeWorldPolylineByName(featureId: string, name: string): [number, number, number][] | null;
   /** Render the current scene and return it as a PNG data URL — the agent's
-   *  visual feedback (Phase 9). Finalizes any in-flight camera tween first so a
+   *  visual feedback. Finalizes any in-flight camera tween first so a
    *  preceding setView is reflected immediately. `plain` renders the capture
    *  frame with ALL highlights suppressed (selection/hover/whole-body/boolean
    *  operands) — for document thumbnails, where an orange selected part would
@@ -496,8 +496,8 @@ const sketchDotMaterial = new THREE.PointsMaterial({
   opacity: 0.95,
 });
 // Edge/vertex picking is done entirely in SCREEN space (pixels), at every stage,
-// so it behaves identically at any zoom. The old design used a world-space ray
-// threshold (EDGE_PICK_WORLD = 1.6 mm) for edge *detection*, which had two flaws:
+// so it behaves identically at any zoom. A world-space ray threshold for edge
+// *detection* — a fixed 1.6 mm, say — is the obvious alternative and has two flaws:
 //   • zoomed out, 1.6 mm is only a pixel or two, so edges were hard to click and
 //     you had to nudge the cursor to hit them;
 //   • zoomed in, 1.6 mm is tens of pixels, so an edge's grab band ballooned and
@@ -917,8 +917,8 @@ export function Viewport({
     controls.target.set(0, 0, 0);
     controls.update();
 
-    // On-canvas navigation ViewCube (replaces the old view-buttons row): a small
-    // labelled cube drawn into the top-right corner of this same WebGL canvas.
+    // On-canvas navigation ViewCube: a small labelled cube drawn into the
+    // top-right corner of this same WebGL canvas.
     // It tracks whichever camera is current (perspective/orthographic) since
     // `render` is passed `state.camera` each frame; clicks route through
     // `goToView` below so its up-vectors match the named views exactly.
@@ -2604,9 +2604,8 @@ export function Viewport({
       pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
-      // Screen-space line threshold (world units for PICK_DETECT_PX pixels at the
-      // orbit-target depth) — the old world-space EDGE_PICK_WORLD was removed when
-      // picking moved to screen space.
+      // Screen-space line threshold: world units for PICK_DETECT_PX pixels at
+      // the orbit-target depth, so the grab band is constant on screen.
       const dragDepth = camera.position.distanceTo(controls.target);
       const dragWorldPerPx = worldPerPixel(dragDepth, rect.height);
       raycaster.params.Line = { threshold: dragWorldPerPx * PICK_DETECT_PX };
@@ -2766,9 +2765,9 @@ export function Viewport({
       if (pickingRef.current) {
         // An AXIS pick resolves the same way its click does — the selection
         // raycaster first (sketch line / body edge / face), planes only as the
-        // fallback. Hovering used to run `pick()` alone, which sees neither
-        // lines nor edges: the thing you were aiming at stayed unlit while the
-        // plane behind it lit up, and the click then landed on that plane.
+        // fallback. Hover must not run `pick()` alone: that sees neither lines
+        // nor edges, so the thing being aimed at stays unlit while the plane
+        // behind it lights up, and the click then lands on that plane.
         if (axisPickRef.current) {
           const sel = pickSelection(e.clientX, e.clientY);
           if (sel && (sel.kind === "edge" || sel.kind === "face" || sel.kind === "sketchEntity")) {
@@ -3309,8 +3308,8 @@ export function Viewport({
       sectionCapGroup.visible = sv.enabled;
       sectionHelper.visible = sv.enabled;
       // Picking mode has its own click meaning — the gizmo stays visible but
-      // inert there, same opt-out the old cone handle had. Sketch editing needs
-      // the SAME opt-out for the same reason: while drawing, a click means
+      // inert there. Sketch editing needs the SAME opt-out, for the same
+      // reason: while drawing, a click means
       // "place a point", not "drag the section plane". Without it the gizmo's
       // TransformControls claims the press, `dragging` goes true, and onDown
       // bails before setting `down` — so onUp returns early and the click is

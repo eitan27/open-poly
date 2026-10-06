@@ -189,9 +189,9 @@ await setView("7");
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press("f");
   await page.waitForTimeout(400);
-  const title = (await page.locator(".extrude-dialog .ed-title").textContent()) ?? "";
+  const title = (await page.locator(".feature-dialog .ed-title").textContent()) ?? "";
   check("F opens the Fillet dialog", /Fillet/.test(title), title || "no dialog");
-  await page.locator(".extrude-dialog .ed-field input").first().fill("0.5");
+  await page.locator(".feature-dialog .ed-field input").first().fill("0.5");
   await page.keyboard.press("Enter");
   // Wait for the FEATURE to exist before waiting for idle: the status still
   // reads "up to date" for a moment after Enter, so waitIdle alone would return

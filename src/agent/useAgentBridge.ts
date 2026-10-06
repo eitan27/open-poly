@@ -50,7 +50,7 @@ interface BridgeDeps {
   /** Resolves after the next kernel regen settles. */
   waitForRegen: () => Promise<RegenSettle>;
   viewApiRef: RefObject<ViewportApi | null>;
-  /** Multi-document workspace API (Phase 8.7 M4). App refreshes the ref each
+  /** Multi-document workspace API. App refreshes the ref each
    *  render so the getters/actions always see the latest switch-flow closures. */
   docApiRef: RefObject<AgentContext["documents"]>;
 }

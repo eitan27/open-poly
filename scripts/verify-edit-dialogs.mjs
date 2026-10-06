@@ -15,7 +15,7 @@ const check = (label, ok, detail = "") => {
 };
 const row = (label) => page.locator(".tree-row", { hasText: label }).first();
 const panel = page.locator(".edit-panel");
-const anyDialog = page.locator(".extrude-dialog");
+const anyDialog = page.locator(".feature-dialog");
 
 await apply({ op: "newDocument" });
 await waitIdle();

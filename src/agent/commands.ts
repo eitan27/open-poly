@@ -133,7 +133,7 @@ export interface AgentContext {
     setView(name: ViewName): void;
     capturePNG(): string | null;
   } | null;
-  /** Multi-document workspace (Phase 8.7 M4). All mutations run through the
+  /** Multi-document workspace. All mutations run through the
    *  App's switch flow (flush → load → adopt) — NEVER a raw setDoc — so
    *  autosave/undo/meshes stay consistent across the boundary. */
   documents: {

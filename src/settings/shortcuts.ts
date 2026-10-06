@@ -1,88 +1,17 @@
-// The single source of truth for every keyboard shortcut in the app.
+// The single source of truth for what each key does: the handler dispatches from
+// this table and the toolbars read their hints from it, so a letter is written
+// down exactly once.
 //
-// A shortcut's letter used to be written in three places — the global keydown
-// switch in App.tsx, the hand-typed strings passed to `kbd()` for the toolbar
-// hints, and a KEYBOARD_SHORTCUTS.md at the repo root that drifted out of date
-// (it still listed shipped tools as TODO, and its hand-checked "conflicts
-// resolved" section was the only thing stopping two tools claiming one key).
-// The doc is gone; this table replaced it. The handler dispatches from it and
-// the toolbars read their hints from it, so a letter is written down once.
+// `shortcuts.test.ts` enforces that a chord is claimed once — two entries
+// sharing one means the second silently never fires.
 //
-// ---------------------------------------------------------------------------
-// Why letters repeat: the two toolbars are mutually exclusive
-// ---------------------------------------------------------------------------
-// You are either editing a sketch or you are not, and the sketch toolbar and
-// the modeling toolbar are each only usable in one of those states. So a letter
-// can mean two things without ambiguity, and several deliberately do:
+// A letter MAY be reused across modes. The sketch and modeling toolbars are
+// mutually exclusive (you are either editing a sketch or you are not), so an
+// entry's `mode` is what makes the reuse unambiguous. A "both" entry is live in
+// either mode and so collides with both.
 //
-//   P  Plane (modeling)      / Polygon (sketch)
-//   C  Chamfer (modeling)    / Circle: center (sketch)
-//   S  Sketch (modeling)     / Select (sketch)
-//   N  New Body (modeling)   / Perpendicular (sketch)
-//   R  Revolve (modeling)    / Rectangle: 2 corners (sketch)
-//   L  Loft (modeling)       / Line (sketch)
-//   M  Mirror body (modeling)/ Mirror entities (sketch) — same verb, two scopes
-//   T  Transform (modeling)  / Text (sketch)
-//   H  Home view (modeling)  / Horizontal constraint (sketch)
-//
-// That is the whole point of the `mode` field, and of the collision test in
-// shortcuts.test.ts: reuse ACROSS the two modes is fine, reuse WITHIN one mode
-// is a bug. A "both" entry is live in either mode, so it collides with both.
-//
-// ---------------------------------------------------------------------------
-// Why N and B landed where they did
-// ---------------------------------------------------------------------------
-// New Body and Boolean both want "B", and unlike the pairs above they are both
-// live at the same time — nothing gates them against each other. So one had to
-// move: `B` went to Boolean (the stronger claim on the letter) and New Body
-// took `N`, the next letter of its own name.
-//
-// ---------------------------------------------------------------------------
-// Why Parallel is Shift+P and Perpendicular is N
-// ---------------------------------------------------------------------------
-// Polygon, Parallel and Perpendicular all naturally want "P", and all three are
-// clickable together while sketching. Polygon shipped first and kept the bare
-// letter. Parallel took `Shift+P` — a modifier on the contended letter, which is
-// how the tool variants already work (`Shift+R` rectangle-from-center,
-// `Shift+C` circle-through-3-points, `Shift+S` spline, `Shift+X` circular
-// pattern, `Shift+K` extend). Perpendicular took `N`, which is also FreeCAD's
-// choice when P is unavailable; it is free in sketch mode because New Body's
-// `N` is a modeling-toolbar binding.
-//
-// A few letters carry no mnemonic at all and were simply picked from what was
-// left: `G` for Shell (S, H and O were all taken), `Q` for construction
-// geometry (C twice over), `W` for Sweep (S was Sketch), `K` for Trim (T is
-// Text — so K, for the knife).
-//
-// ---------------------------------------------------------------------------
-// Why the standard views are digits
-// ---------------------------------------------------------------------------
-// First letters would collide with each other (Back vs. Bottom) and, worse,
-// with modeling-toolbar letters that stay live in the same context — Top vs.
-// Transform, Front vs. Fillet, Left vs. Loft, Right vs. Revolve. So 1–7 it is,
-// and because the view-controls bar is visible in both modes they are "both"
-// entries, unlike almost everything else here.
-//
-// ---------------------------------------------------------------------------
-// Reading the table
-// ---------------------------------------------------------------------------
-// `key` is a `KeyboardEvent.key` value, lower-cased for letters. `mods` lists
-// what must be held; "mod" means ⌘ on a Mac and Ctrl elsewhere.
-//
-// Alt and "mod" are only tested when an entry asks for them — an entry without
-// them is indifferent to whether they are down. That is what the hand-written
-// handler did, and it is load-bearing in one direction: Escape, "?", "/",
-// Enter and Delete/Backspace were all handled ABOVE the handler's "leave other
-// OS/browser chords alone" bail-out, so they fired with ⌘ held too. Everything
-// below that line can never see ⌘, because the handler still bails there, at
-// exactly the point the old switch did.
-//
-// `anyShift` marks the entries the old handler never Shift-tested, so they fire
-// whether or not Shift is down. It is not a design statement — it is fidelity
-// to the behaviour that shipped. Every modeling binding is like this (that
-// branch simply never looked at `e.shiftKey`), as is anything reached through a
-// Shift-produced character such as "?". The sketch bindings are strict, because
-// several of them have a Shift variant that would otherwise be unreachable.
+// `mod` means ⌘ on a Mac and Ctrl elsewhere. `anyShift` marks the entries that
+// are not Shift-tested, so they fire whether or not Shift is down.
 
 export type ShortcutMode = "modeling" | "sketch" | "both";
 export type ShortcutModifier = "mod" | "shift" | "alt";
@@ -96,7 +25,7 @@ interface ShortcutDef {
   readonly mode: ShortcutMode;
   /** Human label, for the hint tooltips and for anyone reading this table. */
   readonly label: string;
-  /** Fires with or without Shift held — see the note above. */
+  /** Fires with or without Shift held — see the note at the top of the file. */
   readonly anyShift?: boolean;
 }
 
@@ -217,7 +146,7 @@ export function modsOf(s: Shortcut): readonly ShortcutModifier[] {
   return "mods" in s ? s.mods : [];
 }
 
-/** Whether this entry fires with or without Shift — see the note above. */
+/** Whether this entry fires with or without Shift. */
 export function firesWithAnyShift(s: Shortcut): boolean {
   return "anyShift" in s && s.anyShift;
 }

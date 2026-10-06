@@ -1,4 +1,4 @@
-// Document persistence (Phase 8.7): the IndexedDB boot-restore, the debounced
+// Document persistence: the IndexedDB boot-restore, the debounced
 // autosave, thumbnail capture, the multi-document actions (open/new/duplicate/
 // delete/rename/export/import), and the same-document multi-tab guard.
 //
@@ -132,7 +132,7 @@ export function usePersistedDocuments({
   const docIdRef = useRef<string | null>(null);
   if (docIdRef.current === null) docIdRef.current = genId();
   const [persistLoaded, setPersistLoaded] = useState(false);
-  // Document identity (Phase 8.7). The name lives OUTSIDE the parametric
+  // Document identity. The name lives OUTSIDE the parametric
   // `Document` (rename is a storage-level operation, not an undoable model
   // edit); `createdAt` rides along so autosaves preserve it.
   const [docName, setDocName] = useState("Untitled");
@@ -221,7 +221,7 @@ export function usePersistedDocuments({
   // effect); `rawMeshes` is a dependency so a completed regen re-saves the fresh
   // geometry — a doc-only edit persists with the meshes that are current when the
   // debounce fires (regen typically settles first, so they match the doc).
-  // `putDoc` writes the full record AND its meta row atomically (Phase 8.7);
+  // `putDoc` writes the full record AND its meta row atomically;
   // `docName` is a dependency so a rename persists through the same path.
   useEffect(() => {
     if (!persistLoaded) return;
@@ -244,7 +244,7 @@ export function usePersistedDocuments({
     document.title = `${docName} — Open Poly`;
   }, [docName]);
 
-  // --- Multi-document actions (Phase 8.7 M2) -------------------------------
+  // --- Multi-document actions -----------------------------------------------
 
   /** Persist the working document NOW (same payload as the debounced autosave).
    *  Called before switching away so the last ≤600 ms of edits can't be lost;

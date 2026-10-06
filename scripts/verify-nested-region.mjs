@@ -77,7 +77,7 @@ check(
 check("outer region selected for extrude", sel.length === 1 && sel[0].regionId === outer.id, JSON.stringify(sel));
 await page.keyboard.press("e");
 await page.waitForTimeout(300);
-check("extrude dialog opened", (await page.locator(".extrude-dialog").count()) === 1);
+check("extrude dialog opened", (await page.locator(".feature-dialog").count()) === 1);
 await page.keyboard.press("Enter");
 try {
   await waitIdle();

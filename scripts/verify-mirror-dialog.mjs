@@ -32,7 +32,7 @@ await waitIdle();
 await apply({ op: "select", refs: [{ kind: "feature", id: box.id }] });
 await page.waitForTimeout(300);
 await page.keyboard.press("m"); // Mirror
-const dialog = page.locator(".extrude-dialog");
+const dialog = page.locator(".feature-dialog");
 await dialog.waitFor({ state: "visible", timeout: 5000 });
 
 // --- 1. Two pickers, no dropdown -----------------------------------------
@@ -59,8 +59,16 @@ check(
   (await page.evaluate(() => document.activeElement?.tagName)) === "BODY",
   await page.evaluate(() => document.activeElement?.tagName),
 );
-const banner = (await page.locator(".sketch-banner.pick span").textContent())?.trim() ?? "";
-check("the banner names all three kinds of plane", /datum/i.test(banner) && /face/i.test(banner), banner);
+// Not the viewport's pick banner: that is suppressed while a dialog is open,
+// because the dialog's own armed slot is already doing the asking (see
+// `anyDialogOpen` in App.tsx). The slot's tooltip is where the kinds are spelt
+// out now.
+const planeHint = (await dialog.locator(".ed-pick-btn.active").getAttribute("title")) ?? "";
+check(
+  "the armed slot names all three kinds of plane",
+  /datum/i.test(planeHint) && /reference/i.test(planeHint) && /face/i.test(planeHint),
+  planeHint,
+);
 check("Create is refused until a plane is picked", await dialog.getByRole("button", { name: "Create" }).isDisabled());
 check("the plane slot asks for either kind of reference", /plane or face/i.test(await slotText()), await slotText());
 

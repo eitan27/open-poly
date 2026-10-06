@@ -15,10 +15,10 @@ interface Props {
 
 /** The active-edit panel: the constraints of the sketch being edited and/or the
  *  parameters of the selected feature, in a movable dialog anchored to the
- *  viewport's top-left. It used to live at the BOTTOM of the left sidebar, under
- *  the Parts list, where the thing you were actually editing was easy to miss.
- *  Floating it over the viewport (like the extrude/boolean mini-dialogs) puts it
- *  where the eye already is, and it shows only while something is being edited. */
+ *  viewport's top-left. Floating it there (like the feature mini-dialogs) puts
+ *  it where the eye already is: down in the left sidebar under the Parts list,
+ *  the thing you are actually editing is easy to miss. Shows only while
+ *  something is being edited. */
 export function EditPanel({ title, targetKey, onClose, children }: Props) {
   const [closed, setClosed] = useState(false);
   // A new selection is a new intent — bring the panel back.
@@ -29,7 +29,7 @@ export function EditPanel({ title, targetKey, onClose, children }: Props) {
   return (
     // Anchor comes from .edit-panel in CSS; baseTransform="" drops the base
     // dialog's translate so drag deltas apply from that anchor.
-    <DraggableDialog className="extrude-dialog edit-panel" baseTransform="">
+    <DraggableDialog className="feature-dialog edit-panel" baseTransform="">
       <div className="ep-titlebar">
         <span className="ed-title" data-drag-handle>
           {title}

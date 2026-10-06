@@ -31,7 +31,7 @@ await page.setInputFiles('input[accept=".dxf,.DXF"]', SAMPLE);
 await page.waitForTimeout(300);
 
 // --- The placement dialog appears with a parse preview ---------------------
-const dialog = page.locator(".extrude-dialog", { hasText: "Import DXF sketch" });
+const dialog = page.locator(".feature-dialog", { hasText: "Import DXF sketch" });
 check("DXF placement dialog opened", (await dialog.count()) > 0);
 const hint = (await dialog.locator(".ed-hint").textContent()) ?? "";
 check("Preview counts entities", /entit/.test(hint), hint.trim());

@@ -17,7 +17,7 @@ const check = (label, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}: ${label}${detail ? ` — ${detail}` : ""}`);
   if (!ok) failures++;
 };
-const dlg = page.locator(".extrude-dialog");
+const dlg = page.locator(".feature-dialog");
 const blur = () => page.evaluate(() => document.activeElement?.blur());
 
 // A profile sketch on Front, off to one side of the Z axis, plus a box whose
@@ -67,12 +67,10 @@ const c = await classes();
 check("…and going back to the profile disarms it", l[1] === "Select an axis", l.join(" | "));
 check("…including its highlight", !c[1].includes("active"), c.join(" | "));
 check("…while the profile is now the armed one", c[0].includes("active"), c.join(" | "));
-check(
-  "…and the pick banner is gone",
-  (await page.locator(".sketch-banner.pick span").textContent()) !== null
-    ? !/revolve around/.test(await page.locator(".sketch-banner.pick span").textContent())
-    : true,
-);
+// `textContent()` on an element that isn't there WAITS for it and then throws,
+// so it can never report absence — ask with `count()`. (The banner is suppressed
+// for any pick a dialog armed; see `anyDialogOpen` in App.tsx.)
+check("…and the pick banner is gone", (await page.locator(".sketch-banner.pick").count()) === 0);
 
 // --- 1 + 2. Hide the Front plane, then use a body edge as the axis -----------
 // The Front datum stands between the camera and the box's near vertical edge.

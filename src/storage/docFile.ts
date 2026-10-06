@@ -1,4 +1,4 @@
-// The `.openpoly.json` document file (Phase 8.7 M3): a small envelope around
+// The `.openpoly.json` document file: a small envelope around
 // the parametric `Document` for sharing/backup. Deliberately EXCLUDES cached
 // meshes — they're a render cache, not truth, and would bloat a diffable file.
 // Pure string↔object code (no DOM/IDB), so it's Node-testable.

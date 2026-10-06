@@ -194,7 +194,7 @@ await apply({ op: "select", refs: [{ kind: "feature", id: made.createdId }] });
 await page.waitForTimeout(300);
 await page.locator(".model-toolbar button[title^='Transform']").first().click();
 await page.waitForTimeout(800);
-const panel = await box(".extrude-dialog");
+const panel = await box(".feature-dialog");
 check("the Transform panel opened", panel !== null);
 if (panel) {
   const g = await page.evaluate(() => {

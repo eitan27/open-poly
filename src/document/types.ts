@@ -315,7 +315,7 @@ export type ExtrudeProfile =
   // the text re-extrudes parametrically.
   | { kind: "sketchText"; sketchId: string; textId: string };
 
-/** Extrude a sketch region or a body face into a solid. (Phase 3.) */
+/** Extrude a sketch region or a body face into a solid. */
 export interface ExtrudeFeature extends FeatureBase {
   type: "extrude";
   /** Everything this extrude pulls, in pick order. Several profiles are ONE
@@ -466,7 +466,7 @@ export type TransformAxis = "x" | "y" | "z" | { sketchId: string; entityId: stri
  *  Like a rigid motion, a similarity (uniform scale) doesn't alter topology, so
  *  the body keeps its identity AND its persistent topological names — downstream
  *  features still reference it. The body keeps the id of the feature that
- *  produced it (like chamfer/fillet). Phase 5.5. */
+ *  produced it (like chamfer/fillet). */
 export interface TransformFeature extends FeatureBase {
   type: "transform";
   /** The body being moved (the feature id that produced it). */
@@ -546,8 +546,7 @@ export type RevolveAxis =
 export type RevolveProfile = Extract<ExtrudeProfile, { kind: "sketchRegion" } | { kind: "bodyFace" }>;
 
 /** Revolve a sketch region or planar body face around an axis (a sketch line, a
- *  plane, or a body face) to make a solid. Like extrude, a body *producer*.
- *  (Phase 6.) */
+ *  plane, or a body face) to make a solid. Like extrude, a body *producer*. */
 export interface RevolveFeature extends FeatureBase {
   type: "revolve";
   /** The closed region (or planar body face) to revolve. */
@@ -585,7 +584,7 @@ export type PatternAxisRef =
  *  the wrap); any other sweep spreads the instances endpoints-inclusive, and
  *  `symmetric` re-centers the spread on the seed (±angle/2). There is no radius
  *  input — instances are rotations of the seed about the axis, so the radius is
- *  wherever the seed already sits. (Phase 5.) */
+ *  wherever the seed already sits. */
 export interface PatternFeature extends FeatureBase {
   type: "pattern";
   kind: "linear" | "circular";
@@ -625,7 +624,7 @@ export interface MirrorFeature extends FeatureBase {
 }
 
 /** Sweep a sketch region (profile) along a path entity (line/arc/spline) in a
- *  sketch. A body *producer* like extrude/revolve. (Phase 6.) */
+ *  sketch. A body *producer* like extrude/revolve. */
 export interface SweepFeature extends FeatureBase {
   type: "sweep";
   /** The closed sketch region to sweep. */
@@ -638,7 +637,7 @@ export interface SweepFeature extends FeatureBase {
 }
 
 /** Loft through two or more sketch regions (in timeline order) to make a solid.
- *  A body *producer*. (Phase 6.) */
+ *  A body *producer*. */
 export interface LoftFeature extends FeatureBase {
   type: "loft";
   /** Ordered closed sections to loft through (≥2). */

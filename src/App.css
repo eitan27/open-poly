@@ -98,7 +98,7 @@
   white-space: nowrap;
 }
 
-/* --- Documents dialog (Phase 8.7) --- */
+/* --- Documents dialog --- */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -941,7 +941,7 @@ button:disabled .kbd-hint {
   color: var(--danger-text-3);
 }
 
-/* Live indicator that an LLM agent is driving this tab (Phase 9). Sits at the
+/* Live indicator that an LLM agent is driving this tab. Sits at the
    head of the right-hand cluster, which owns the flex auto-space and the
    spacing between the three. */
 .agent-badge {
@@ -2311,7 +2311,13 @@ button:disabled .kbd-hint {
   border: 1px solid var(--border);
   border-radius: 8px;
   backdrop-filter: blur(4px);
-  z-index: 6;
+  /* Above `.feature-dialog` (30), because the active-edit panel IS one and it
+     is anchored at the viewport's top-left — exactly where these open. At a
+     lower z-index the panel covers the flyout and swallows the click, so
+     picking a variant lands on a constraint row instead. Still below
+     `.sketch-msg` (40) and `.modal-overlay` (50): a transient menu outranks a
+     panel, not a message or a modal. */
+  z-index: 35;
 }
 .constraint-flyout button,
 .sketch-flyout button {
@@ -2372,7 +2378,13 @@ button:disabled .kbd-hint {
   background: rgba(var(--hud-accent-2-rgb), 0.95);
 }
 
-.extrude-dialog {
+/* The shared shell for every feature's mini-dialog — extrude, dress-up, shell,
+   revolve, sweep, loft, pattern, mirror, transform and boolean all wear it, and
+   the two `.feature-dialog.<name>` rules further down are the only per-dialog
+   deviations. Anchored absolutely because most of these open AT the geometry
+   they act on; the ones you pick INTO (boolean, pattern, shell) override the
+   position so the dialog doesn't land on the faces you then have to click. */
+.feature-dialog {
   position: absolute;
   transform: translate(16px, -50%);
   z-index: 30;
@@ -2994,7 +3006,7 @@ button:disabled .kbd-hint {
    it clears both at its default position (it's draggable from there). Wider than
    the mini-dialogs because it hosts the full parameter editor, and capped in
    height so a long constraints list scrolls instead of running off-screen. */
-.extrude-dialog.edit-panel {
+.feature-dialog.edit-panel {
   left: 66px;
   top: 58px;
   width: 232px;
@@ -3093,7 +3105,7 @@ button:disabled .kbd-hint {
 /* The boolean dialog holds three longer op labels (Union/Subtract/Intersect),
    so it's a bit wider than the default mini-dialog and its op buttons get real
    horizontal padding instead of the border crowding the text. */
-.extrude-dialog.boolean-dialog {
+.feature-dialog.boolean-dialog {
   width: 232px;
 }
 .boolean-dialog .ed-modes button {
