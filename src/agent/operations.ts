@@ -1,9 +1,9 @@
-// Vendor-neutral command + read API for the agent layer (Phase 9, layer 1).
+// Vendor-neutral command + read API for the agent layer.
 //
 // This module owns the typed `Operation` union an agent can apply, the read
 // queries it can run, the result shapes it gets back, and the **zod schemas**
 // that validate everything. It knows nothing about MCP, WebSockets, or any LLM —
-// the MCP server (Phase 9 L2) reuses these same schemas to validate tool args,
+// the MCP server reuses these same schemas to validate tool args,
 // so this file is the single source of truth for the API surface.
 //
 // Conventions (state these in every tool description): **millimetres**, world is
@@ -534,7 +534,7 @@ export const operationSchema = z.discriminatedUnion("op", [
     scale: z.number().positive().optional(),
     name: z.string().optional(),
   }),
-  // --- Multi-document ops (Phase 8.7 M4). These act on the WORKSPACE, not the
+  // --- Multi-document ops. These act on the WORKSPACE, not the
   // model: opening/creating/duplicating switches the working document (undo
   // history resets — a document boundary). Ids come from list_documents.
   z.object({ op: z.literal("openDocument"), id: z.string() }),

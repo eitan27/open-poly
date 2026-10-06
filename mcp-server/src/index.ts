@@ -1,4 +1,4 @@
-// Open Poly MCP server (Phase 9 L2). Two faces in one Node process: a stdio MCP
+// Open Poly MCP server. Two faces in one Node process: a stdio MCP
 // server for the LLM client, and a localhost WebSocket hub the browser tab dials
 // into. An LLM tool call → forwarded over WS to the tab → applied via the command
 // layer → result back to the LLM. Plus the modeling guide (as a tool, resource,

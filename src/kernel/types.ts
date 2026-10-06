@@ -65,7 +65,7 @@ export interface ShapeMeshPayload {
   edges: MeshedEdges;
 }
 
-/** Primitive solids the kernel knows how to build (Phase 1). */
+/** Primitive solids the kernel knows how to build. */
 export type PrimitiveKind = "box" | "cylinder" | "sphere";
 
 /** Boolean combination operators. */

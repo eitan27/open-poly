@@ -1,4 +1,4 @@
-// Browser side of the agent bridge (Phase 9 L1). The tab can't be listened to,
+// Browser side of the agent bridge. The tab can't be listened to,
 // so it dials OUT to the local Node hub, announces itself (`hello`), then
 // services `request` messages by calling the command layer and replying with
 // `result`. Requests are processed **strictly one at a time** (await each before

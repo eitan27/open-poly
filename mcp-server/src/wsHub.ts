@@ -1,4 +1,4 @@
-// Hub side of the agent bridge (Phase 9 L2). A localhost WebSocket server the
+// Hub side of the agent bridge. A localhost WebSocket server the
 // Open Poly browser tab dials into (the tab can't be listened to, so it connects
 // OUT). The MCP server forwards each LLM tool call here as a `request`; the tab
 // applies it and replies with a `result`, correlated by `id`.

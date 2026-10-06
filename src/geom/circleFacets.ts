@@ -4,8 +4,8 @@
 // surfaces (this OCCT build can't boolean an analytic cylinder against a plane —
 // see facetedCylinderShape). That is fine on its own. What is not fine is
 // approximating the SAME circle twice, by two code paths, and getting two
-// different polygons: a primitive cylinder used to be a 96-gon anchored at angle
-// 0, while a sketch arc was cut into 48 equal pieces starting wherever the user
+// different polygons — a primitive cylinder as a 96-gon anchored at angle 0,
+// say, while a sketch arc is cut into 48 equal pieces starting wherever the user
 // happened to draw it. Sketch a semicircle on a cylinder's top face, extrude it,
 // and the two walls that are meant to BE the same surface disagree by up to
 // r·(1−cos(π/96)) — 0.016mm at r=30 — leaving a ribbon of hair-thin crescent

@@ -1314,8 +1314,8 @@ export default function App() {
   // most recent commit. Solving is async (planegcs runs off the main thread), so
   // between a click and its solved result landing, the `doc` a handler closed
   // over is stale: a second click would build on a document that never saw the
-  // first one and silently drop it — drawing a polyline faster than the solve
-  // round-trip (~150ms) used to lose whole segments. Every sketch commit writes
+  // first one and silently drop it: draw a polyline faster than the ~150ms
+  // solve round-trip and whole segments go missing. Every sketch commit writes
   // this ref synchronously so back-to-back edits stack, and stamps the counter
   // so a superseded solve can't overwrite the newer geometry. See
   // commitSketchEdit.
@@ -1971,7 +1971,7 @@ export default function App() {
   const [meshProgress, setMeshProgress] = useState<{ done: number; total: number } | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
 
-  // Agent regen coordinator (Phase 9 L3). The regen effect feeds these refs the
+  // Agent regen coordinator. The regen effect feeds these refs the
   // instant a regen settles — synchronously, ahead of React's re-render — so an
   // agent op can await regen and a follow-up read/screenshot sees fresh geometry
   // without polling. `agentMeshesRef` mirrors `rawMeshes`; `agentErrorsRef`
@@ -2020,12 +2020,12 @@ export default function App() {
   } | null>(null);
 
   /** Is a feature dialog on screen? One place, because three things have to
-   *  agree about it and used to disagree:
+   *  agree about it, and they drift apart if each works it out for itself:
    *
    *   - every modelling tool is inert while one is open (you finish or cancel,
-   *     you don't start a second feature on top of the first). Each tool used to
-   *     disable itself for its OWN dialog only, so Extrude's dialog left Revolve,
-   *     Shell and the rest clickable underneath it;
+   *     you don't start a second feature on top of the first). A tool that
+   *     disables itself for its OWN dialog only leaves Extrude's dialog with
+   *     Revolve, Shell and the rest clickable underneath it;
    *   - the viewport's pick banner stays out of the way, since the dialog's own
    *     armed slot is already asking for the pick;
    *   - Escape closes it, in one press.
@@ -2503,10 +2503,10 @@ export default function App() {
   // document/parts.ts); most contribute one, whose id IS the feature's.
   const partIds = useMemo(() => rawMeshes.map((m) => m.id), [rawMeshes]);
 
-  // Agent command layer (Phase 9): exposes window.__openpoly for console testing
+  // Agent command layer: exposes window.__openpoly for console testing
   // and runs the WebSocket bridge to the local MCP hub. `agentStatus` drives the
   // "Agent connected" badge.
-  // Multi-document API for the agent (Phase 8.7 M4). A ref refreshed each
+  // Multi-document API for the agent. A ref refreshed each
   // render, so the stable AgentContext always calls the latest switch-flow
   // closures (openDocument etc. close over doc/docName/rawMeshes).
   const agentDocApiRef = useRef({
@@ -3685,7 +3685,7 @@ export default function App() {
 
   // Revolve prefills from a selection of a profile + an axis line: a sketch
   // region (which must share its sketch with the axis line — the same-sketch rule
-  // that made the old pair unambiguous), or a planar body face, whose axis line
+  // is what keeps the pair unambiguous), or a planar body face, whose axis line
   // may live in any sketch since there's no sketch of its own to match.
   const revolveInputs = useMemo(() => {
     let profile: RevolveProfile | null = null;
@@ -3876,11 +3876,11 @@ export default function App() {
   // table in src/settings/shortcuts.ts; this handler only says what each id
   // *does*. No key letter is written here.
   //
-  // The order of the branches is still load-bearing, and still mirrors what
-  // shipped: Escape is matched above the don't-fire-while-typing guard (it has
-  // to back you out of a dialog whose input has the focus), and the
-  // stray-⌘/Ctrl bail-out sits exactly where the old switch had it, so the
-  // handful of bindings above it keep firing with ⌘ held.
+  // The order of the branches is load-bearing. Escape is matched above the
+  // don't-fire-while-typing guard (it has to back you out of a dialog whose
+  // input has the focus), and the stray-⌘/Ctrl bail-out sits below the handful
+  // of bindings that are meant to keep firing with ⌘ held — move it up and they
+  // stop (Escape, ?, /, Enter and Delete/Backspace).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isShortcut(e, "app.cancel")) {
@@ -3907,13 +3907,12 @@ export default function App() {
         else if (polySidesOpen) setPolySidesOpen(false);
         // ONE Escape closes a dialog, whatever it is and whatever it has armed.
         //
-        // These branches used to be two-stage — the first Esc disarmed the slot
-        // still listening, a second closed the dialog — and the stages had drifted
-        // apart: Revolve took one press, Sweep/Loft/Shell/Extrude/Chamfer took
-        // two (they open already armed, so the first press was spent), and Boolean
-        // had no branch at all and could not be closed with the keyboard.
-        // Escape now means one thing everywhere: get me out. Disarming a slot
-        // without closing is still available by clicking the slot itself.
+        // Escape means one thing everywhere: get me out. Not two stages — a
+        // press to disarm the listening slot and another to close — because the
+        // dialogs that open already armed would spend the first press and the
+        // ones that don't wouldn't, so the same key would cost a different
+        // number of presses per tool. Disarming a slot without closing the
+        // dialog is still available by clicking the slot itself.
         //
         // Each close() already drops its own pick mode (closeRevolveDialog and
         // closePattern clear `picking`/`pickPurpose`, closeMirror calls
@@ -4019,8 +4018,8 @@ export default function App() {
         // ---- Sketch toolbar ----
         // preventDefault on the tool keys: tools like Offset/Text open an input
         // that autofocuses synchronously, and without this the same keystroke
-        // leaks into that input (e.g. "o" → offset distance "o", which used to
-        // throw in the expression parser and crash the app).
+        // leaks into that input (e.g. "o" → offset distance "o", which throws
+        // in the expression parser and takes the app down with it).
         const tool = id && SKETCH_TOOL_BY_SHORTCUT.get(id);
         if (tool) {
           e.preventDefault();
@@ -4063,9 +4062,8 @@ export default function App() {
       // ---- Modeling toolbar ----
       switch (id) {
         case "view.home":
-          // Iso view zoomed to fit all bodies + visible sketches. (This key
-          // used to Hide/suppress the selected feature — that now lives only on
-          // the timeline's per-feature eye toggle.)
+          // Iso view zoomed to fit all bodies + visible sketches. Hiding and
+          // suppressing live only on the timeline's per-feature eye toggle.
           viewApiRef.current?.homeView();
           return;
         case "feature.moveUp":
@@ -4339,8 +4337,8 @@ export default function App() {
   };
   /** Switch the Pattern dialog between linear and circular. The two kinds want
    *  different refs, so any in-flight direction/axis pick is dropped — but the
-   *  BODY arming outlives the switch (the body means the same thing to both, and
-   *  the slot's dashed pulse used to go out just for changing tab), and a
+   *  BODY arming outlives the switch (the body means the same thing to both, so
+   *  the slot's dashed pulse shouldn't go out just for changing tab), and a
    *  circular pattern that already HAS its body arms the axis it now needs, the
    *  way the plane dialog arms the pick its method needs. */
   const setPatternKind = (kind: "linear" | "circular") => {
@@ -4418,18 +4416,18 @@ export default function App() {
   // Where the Transform panel opens: beside the gizmo rather than over it. The
   // gizmo is drawn at the body's pivot and TransformControls sizes its arrows as
   // a constant fraction of the viewport height, so it claims a wide disc around
-  // that point — parked at top-centre (where the panel used to live) it sat on
-  // the handles of anything near the middle of the view. Pick whichever side of
+  // that point — parked at top-centre it lands on the handles of anything near
+  // the middle of the view. Pick whichever side of
   // the gizmo has room for the panel, preferring the left; the drag handle still
   // lets the user move it anywhere afterwards.
   const transformPanelPos = (pivot: [number, number, number]) => {
-    // .extrude-dialog: 190px of content + 10px padding + 1px border a side.
+    // .feature-dialog: 190px of content + 10px padding + 1px border a side.
     const PANEL_W = 212;
     const el = viewportElRef.current;
     const g = viewApiRef.current?.worldToScreen(pivot);
     const vw = el?.clientWidth ?? 0;
     const vh = el?.clientHeight ?? 0;
-    // Fallback: the old top-centre anchor, minus the panel's half width.
+    // Fallback with no gizmo to dodge: top-centre, minus the panel's half width.
     if (!g || vw === 0) return { x: Math.max(12, vw / 2 - PANEL_W / 2), y: 64 };
     const radius = Math.min(0.3 * vh, 260); // the gizmo's on-screen reach, generously
     const left = g.x - radius - 12 - PANEL_W;
@@ -4885,7 +4883,7 @@ export default function App() {
       // A curved face has no plane of its own: what arrives here is the tangent
       // at wherever the pointer landed, which would mirror across something the
       // user never chose. faceNormal is null for exactly those, so the arming
-      // stays live for another try — the same guard the old face-only pick had.
+      // stays live for another try — the same guard the face-only pick uses.
       if (ref.kind === "face" && faceId !== undefined) {
         const m = meshes.find((x) => x.id === ref.featureId);
         if (!m || !faceNormal(m.mesh.faces, faceId)) {
@@ -4986,9 +4984,9 @@ export default function App() {
         const normal = (m && faceNormal(m.mesh.faces, pick.faceId)) || undefined;
         // A face is the axis only when it HAS one: a curved surface (faceNormal
         // is null exactly for those) or a faceted round wall, whose strips are
-        // planar but wrap an axis all the same. A genuinely flat face used to be
-        // taken here and then failed in the kernel, so the whole feature landed
-        // broken in the timeline instead of the click just not counting.
+        // planar but wrap an axis all the same. Taking a genuinely flat face
+        // here fails later in the kernel, landing the whole feature broken in
+        // the timeline instead of the click simply not counting.
         if (normal && !isFacetedWall(m!.mesh.faces, pick.faceId)) {
           flashMsg("A flat face has no axis of its own. Use World X/Y/Z, a sketch line, or a cylindrical face.");
           return; // keep the pick armed for another try
@@ -5003,9 +5001,9 @@ export default function App() {
             : d,
         );
       } else {
-        // Answer the pick the user actually made. The old copy recited the whole
-        // rule ("a body edge only works for a revolve") whatever they clicked —
-        // so picking a PLANE got told about edges — and never mentioned the
+        // Answer the pick the user actually made: name why THAT thing was
+        // rejected, rather than reciting the whole rule ("a body edge only works
+        // for a revolve") at someone who clicked a plane — and mention the
         // World X/Y/Z options sitting right above the slot.
         flashMsg(
           pickPurpose === "patternDir"
@@ -5215,7 +5213,7 @@ export default function App() {
     const sketchId = editingSketchId;
     // Build on the last committed sketch rather than this render's `doc`, which
     // is stale while the previous click's solve is still running (see
-    // sketchBaseDocRef — clicking faster than the solver used to drop segments).
+    // sketchBaseDocRef — clicking faster than the solver drops segments).
     const base = sketchBaseDocRef.current;
     // Drawing solves immediately: the constraints captured while drawing (auto
     // H/V, rectangle edges, shared corners) are enforced on the spot, the geometry
@@ -6230,8 +6228,8 @@ export default function App() {
   //  • a body/solid vertex → an EXTERNAL fixed reference, projected orthographically
   //    onto the active sketch plane. Immovable, so a coincidence pulls the sketch
   //    geometry onto it. This is what makes "sketch vertex ↔ solid face vertex"
-  //    coincidence work (previously a solid vertex was ignored, so the button was
-  //    either disabled or a lone sketch point silently anchored to the origin).
+  //    coincidence work: without it a solid vertex is ignored, leaving the
+  //    button disabled or a lone sketch point silently anchored to the origin.
   const selectedPointRefs: { ref: PointRef; editable: boolean }[] = editingSketch
     ? selection.flatMap((s): { ref: PointRef; editable: boolean }[] => {
         if (s.kind === "sketchPoint" && s.sketchId === editingSketch.id) {
@@ -8035,7 +8033,7 @@ export default function App() {
                     : "Sketch point";
               return (
                 <DraggableDialog
-                  className="extrude-dialog"
+                  className="feature-dialog"
                   style={{ left: "50%", top: 70 }}
                   baseTransform="translateX(-50%)"
                 >
@@ -8457,7 +8455,7 @@ export default function App() {
             </div>
           ) : null}
           {extrudeDialog && (
-            <DraggableDialog className="extrude-dialog" style={{ left: extrudeDialog.x, top: extrudeDialog.y }}>
+            <DraggableDialog className="feature-dialog" style={{ left: extrudeDialog.x, top: extrudeDialog.y }}>
               <div className="ed-title" data-drag-handle>
                 {extrudeDialog.editId ? "Edit extrude" : "Extrude"}
                 {!extrudeDialog.editId && extrudeDialogProfiles.length > 1
@@ -8730,7 +8728,7 @@ export default function App() {
                 else closeDressUpDialog();
               };
               return (
-                <DraggableDialog className="extrude-dialog" style={{ left: dressUpDialog.x, top: dressUpDialog.y }}>
+                <DraggableDialog className="feature-dialog" style={{ left: dressUpDialog.x, top: dressUpDialog.y }}>
                   <div className="ed-title" data-drag-handle>
                     {dressUpDialog.editId ? "Edit " : ""}
                     {dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}
@@ -8849,7 +8847,7 @@ export default function App() {
                 });
               return (
                 <DraggableDialog
-                  className="extrude-dialog"
+                  className="feature-dialog"
                   style={{ left: "50%", top: 64 }}
                   baseTransform="translateX(-50%)"
                 >
@@ -8953,7 +8951,7 @@ export default function App() {
                 setRevolveDialog((d) => (d ? { ...d, ...(clear ? { profile: null } : {}), armed: "profile" } : d));
               };
               return (
-                <DraggableDialog className="extrude-dialog" style={{ left: revolveDialog.x, top: revolveDialog.y }}>
+                <DraggableDialog className="feature-dialog" style={{ left: revolveDialog.x, top: revolveDialog.y }}>
                   <div className="ed-title" data-drag-handle>
                     {revolveDialog.editId ? "Edit revolve" : "Revolve"}
                   </div>
@@ -9039,7 +9037,7 @@ export default function App() {
                 setSweepDialog((p) => (p ? { ...p, ...(clear ? { [slot]: null } : {}), armed: slot } : p));
               return (
                 <DraggableDialog
-                  className="extrude-dialog"
+                  className="feature-dialog"
                   style={{ left: "50%", top: 70 }}
                   baseTransform="translateX(-50%)"
                 >
@@ -9083,7 +9081,7 @@ export default function App() {
               const nameOf = (id: string) => doc.features.find((f) => f.id === id)?.name ?? "Sketch";
               return (
                 <DraggableDialog
-                  className="extrude-dialog"
+                  className="feature-dialog"
                   style={{ left: "50%", top: 70 }}
                   baseTransform="translateX(-50%)"
                 >
@@ -9127,7 +9125,7 @@ export default function App() {
             })()}
           {dxfDialog && (
             <DraggableDialog
-              className="extrude-dialog"
+              className="feature-dialog"
               style={{ left: "50%", top: 64 }}
               baseTransform="translateX(-50%)"
             >
@@ -9177,7 +9175,7 @@ export default function App() {
           )}
           {planeDialog && (
             <DraggableDialog
-              className="extrude-dialog"
+              className="feature-dialog"
               style={{ left: "50%", top: 64 }}
               baseTransform="translateX(-50%)"
             >
@@ -9324,7 +9322,7 @@ export default function App() {
           )}
           {editingTransform && (
             <DraggableDialog
-              className="extrude-dialog"
+              className="feature-dialog"
               style={{ left: transformPanelXY?.x ?? "50%", top: transformPanelXY?.y ?? 64 }}
               baseTransform={transformPanelXY ? undefined : "translateX(-50%)"}
             >
@@ -9496,7 +9494,7 @@ export default function App() {
           )}
           {transformArming && !editingTransform && (
             <DraggableDialog
-              className="extrude-dialog"
+              className="feature-dialog"
               style={{ left: transformPanelXY?.x ?? "50%", top: transformPanelXY?.y ?? 64 }}
               baseTransform={transformPanelXY ? undefined : "translateX(-50%)"}
             >
@@ -9554,7 +9552,7 @@ export default function App() {
         />
       )}
       {mirrorDialog && (
-        <DraggableDialog className="extrude-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
+        <DraggableDialog className="feature-dialog" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
           <div className="ed-title" data-drag-handle>
             {mirrorDialog.editId ? "Edit mirror" : "Mirror a body"}
           </div>
@@ -9705,7 +9703,7 @@ export default function App() {
           const armTarget = () => setPatternDialog((p) => (p ? { ...p, targetId: null, arming: "target" } : p));
           return (
             <DraggableDialog
-              className="extrude-dialog"
+              className="feature-dialog"
               style={{ left: "50%", top: 64 }}
               baseTransform="translateX(-50%)"
             >

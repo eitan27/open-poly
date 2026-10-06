@@ -57,7 +57,7 @@ export function BooleanDialog({
 
   return (
     <DraggableDialog
-      className="extrude-dialog boolean-dialog"
+      className="feature-dialog boolean-dialog"
       style={{ left: "50%", top: 70 }}
       baseTransform="translateX(-50%)"
     >

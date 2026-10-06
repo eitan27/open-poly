@@ -1,4 +1,4 @@
-// The Documents manager (Phase 8.7 M2): a centered modal listing every stored
+// The Documents manager: a centered modal listing every stored
 // document from the cheap `meta` store — full records (feature trees + cached
 // meshes) are NEVER loaded just to browse. All mutations are owned by App
 // (which owns the switch flow); the dialog re-lists after each action settles.

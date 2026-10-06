@@ -1,6 +1,6 @@
 // Local-first persistence in the browser's IndexedDB. The parametric `Document`
 // is plain JSON-serializable data, so we store records directly (structured
-// clone). Two object stores, both keyed by document id (Phase 8.7):
+// clone). Two object stores, both keyed by document id:
 //  • `documents` — the full payload (doc + cached meshes). Loaded ONLY for the
 //    active document (boot / open / switch).
 //  • `meta` — light metadata (name, dates, counts, thumbnail). This is all a

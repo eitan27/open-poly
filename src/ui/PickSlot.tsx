@@ -15,9 +15,9 @@ import type { ReactNode } from "react";
  *  (A slot inside a labelled `.ed-field` shows its value in the button itself
  *  instead of a row — there's no room for a second line — via `children`.)
  *
- *  Keeping that in one place is the point: the states used to be hand-rolled at
- *  ~16 call sites, which is how the arming state ended up wearing the *filled*
- *  state's styling and reading as "already picked". Reach for `PickSlot` — it
+ *  Keeping that in one place is the point: hand-rolling the states across ~16
+ *  call sites is how the arming state ends up wearing the *filled* state's
+ *  styling and reading as "already picked". Reach for `PickSlot` — it
  *  drives the whole cycle from one `value` — and only drop to `PickButton` /
  *  `PickedRow` for a slot that accumulates several picks. */
 

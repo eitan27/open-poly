@@ -2382,7 +2382,7 @@ function dressUpNamed(
   // Fast path: when EVERY edge is a straight edge between two perpendicular flat
   // faces, the chamfer or fillet is built as a boolean instead — exact there, and
   // unlike BRepFilletAPI indifferent to how the adjoining round walls are faceted
-  // (see dressUpWedgeFor: the old ceiling was one facet chord). All-or-nothing,
+  // (see dressUpWedgeFor: the facet-chord ceiling). All-or-nothing,
   // and every wedge is derived from the ORIGINAL shape, so no edge has to be
   // re-found on a partially rebuilt body.
   //
@@ -2980,8 +2980,8 @@ function shellLoftSections(target: Body, hits: Face[], thickness: number, loft: 
   // 1. Which of the loft's own faces are being opened. The two caps are known
   //    by name; everything else is treated as part of the SIDE wall and traced
   //    onto the sections geometrically — including the `f{n}` faces, whose
-  //    history `loftBody` couldn't follow and which used to be refused outright
-  //    even though they are ordinary side faces.
+  //    history `loftBody` cannot follow, but which are ordinary side faces all
+  //    the same and must not be refused on that account.
   let openStart = false;
   let openEnd = false;
   const sideFaces: Face[] = [];

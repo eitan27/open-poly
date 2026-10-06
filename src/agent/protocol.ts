@@ -1,7 +1,7 @@
 // Shared WebSocket protocol between the browser tab (the command layer / state
 // holder) and the local Node bridge+MCP hub. This is the **single source of
 // truth** for the wire format — imported by both the browser bridge client
-// (`bridgeClient.ts`) and, later, the Node server (`mcp-server/`, Phase 9 L2).
+// (`bridgeClient.ts`) and, later, the Node server (`mcp-server/`).
 // Keep it dependency-free and isomorphic (no DOM, no Node APIs).
 //
 // Data flow: the tab can't be listened to, so it connects OUT to the hub. The
