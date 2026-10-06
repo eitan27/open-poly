@@ -270,10 +270,25 @@ _not_ repeated here; this section is the rest.
       this as correctness work rather than tidying. `CONTRIBUTING.md`'s layout
       table already concedes "oversized and mid-refactor", which reads as an
       unfinished job to anyone arriving. Four independently shippable steps:
-  - [ ] **1a.** Extract the JSX tail — the lowest-risk half. The 20
-        `DraggableDialog` blocks are already visually delimited and
-        `BooleanDialog`, `SettingsDialog`, `DocumentsDialog` and `ReportDialog`
-        are the pattern to copy. Should land App.tsx under 7,000 on its own.
+  - [ ] **1a.** Extract the JSX tail. The 20 `DraggableDialog` blocks are
+        already visually delimited and `BooleanDialog`, `SettingsDialog`,
+        `DocumentsDialog` and `ReportDialog` are the pattern to copy.
+        **Partly done, and it does not reach 7,000 on its own — "the lowest-risk
+        half" was only true of half the dialogs.** Sweep, Loft, DXF import and
+        Mirror are out (App.tsx 9,891 → 9,758), each as labels-in /
+        callbacks-out with neither a setter nor `doc` crossing the boundary. They
+        are the ones whose JSX needed only resolved strings and a few flags, so
+        their `useState` could stay put. Pattern, Extrude, Dress-up, Revolve and
+        the two Transform blocks are NOT like that: each opens with a long run of
+        closures that drive state rather than read it — Pattern's `setWorldRef`
+        calls `setPicking(false)` and `setPickPurpose("sketch")` to cancel an
+        in-flight pick while rewriting the dialog. Extracting those as
+        presentational components means threading the pick setters through them,
+        which is exactly what makes the four landed ones clean. For those, do
+        **1b first for that dialog**, or treat 1a+1b as one job per dialog. The
+        DXF extraction also had to move the unit table and `$INSUNITS` sniffer
+        into `document/dxfImport.ts` first — expect more of that, and treat it as
+        the point rather than a detour.
   - [ ] **1b.** Move each dialog's state machine behind its own hook
         (`useExtrudeDialog`, `useDressUpDialog`, `useShellDialog`,
         `useRevolveDialog`, `useTransformSession`) — each owns 3-8 `useState`
