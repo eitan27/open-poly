@@ -18,6 +18,8 @@ import {
 import { extrudeUsesDistance } from "./extrudeValidation";
 import { detectSketchRegions, regionProfileSegments } from "./regions";
 import { missingJoints } from "./joints";
+import { isBodyFeature, isHideableFeature } from "./parts";
+import { assertNever } from "../lib/assertNever";
 import { applyDerived, circularPatternAngles, resolvePatternCount } from "./derived";
 import type {
   BooleanFeature,
@@ -232,19 +234,7 @@ export function addExtrude(
  *  from — true for all three ops, not just union. */
 function colorOfFeature(doc: Document, id: string): number {
   const f = doc.features.find((x) => x.id === id);
-  return f &&
-    (f.type === "primitive" ||
-      f.type === "extrude" ||
-      f.type === "boolean" ||
-      f.type === "transform" ||
-      f.type === "mirror" ||
-      f.type === "pattern" ||
-      f.type === "revolve" ||
-      f.type === "sweep" ||
-      f.type === "loft" ||
-      f.type === "import")
-    ? f.color
-    : newBodyColor();
+  return isBodyFeature(f) ? f.color : newBodyColor();
 }
 
 export function addBoolean(doc: Document, op: BooleanOp, operands: string[]): { doc: Document; id: string } {
@@ -938,58 +928,18 @@ export function renameFeature(doc: Document, id: string, name: string): Document
 }
 
 export function setFeatureColor(doc: Document, id: string, color: number): Document {
-  return mapFeature(doc, id, (f) =>
-    f.type === "primitive" ||
-    f.type === "extrude" ||
-    f.type === "boolean" ||
-    f.type === "transform" ||
-    f.type === "mirror" ||
-    f.type === "pattern" ||
-    f.type === "revolve" ||
-    f.type === "sweep" ||
-    f.type === "loft" ||
-    f.type === "import"
-      ? { ...f, color }
-      : f,
-  );
+  return mapFeature(doc, id, (f) => (isBodyFeature(f) ? { ...f, color } : f));
 }
 
 export function setFeatureOpacity(doc: Document, id: string, opacity: number): Document {
-  return mapFeature(doc, id, (f) =>
-    f.type === "primitive" ||
-    f.type === "extrude" ||
-    f.type === "boolean" ||
-    f.type === "transform" ||
-    f.type === "mirror" ||
-    f.type === "pattern" ||
-    f.type === "revolve" ||
-    f.type === "sweep" ||
-    f.type === "loft" ||
-    f.type === "import"
-      ? { ...f, opacity: clamp(opacity, 0, 1) }
-      : f,
-  );
+  return mapFeature(doc, id, (f) => (isBodyFeature(f) ? { ...f, opacity: clamp(opacity, 0, 1) } : f));
 }
 
 /** Hide/show a part or reference plane — a view toggle (skips rendering),
  *  distinct from suppress: the feature stays in the model, so anything built on
  *  it still resolves. */
 export function setFeatureHidden(doc: Document, id: string, hidden: boolean): Document {
-  return mapFeature(doc, id, (f) =>
-    f.type === "primitive" ||
-    f.type === "plane" ||
-    f.type === "extrude" ||
-    f.type === "boolean" ||
-    f.type === "transform" ||
-    f.type === "mirror" ||
-    f.type === "pattern" ||
-    f.type === "revolve" ||
-    f.type === "sweep" ||
-    f.type === "loft" ||
-    f.type === "import"
-      ? { ...f, hidden }
-      : f,
-  );
+  return mapFeature(doc, id, (f) => (isHideableFeature(f) ? { ...f, hidden } : f));
 }
 
 export function setRollbackIndex(doc: Document, index: number): Document {
@@ -1520,8 +1470,18 @@ export function resolveDocument(doc: Document): ResolveResult {
         features.push({ id: f.id, type: "loft", profiles });
       } else if (f.type === "import") {
         features.push({ id: f.id, type: "import", source: f.source });
+      } else if (f.type === "sketch" || f.type === "plane") {
+        // No body of their own. A sketch is consumed by the features built on it
+        // (and its derived geometry was applied into `dDoc` above); a plane is
+        // resolved by `resolvePlanes` before this loop, into `planeFrames`.
+      } else {
+        // A feature kind that reaches neither branch would never be resolved, so
+        // it would never reach the worker and never build — the timeline would
+        // show it doing nothing, with no error anywhere. This is that bug's
+        // compile-time end; the throw itself is caught below and surfaces as the
+        // feature's own error, which is the right place for it to show up.
+        assertNever(f, "feature type");
       }
-      // sketches + planes contribute no body directly
     } catch (err) {
       errors[f.id] = String((err as Error).message ?? err);
     }

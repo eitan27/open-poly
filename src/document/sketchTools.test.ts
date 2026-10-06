@@ -3,6 +3,7 @@ import {
   connectedEntityIds,
   detectSingleChain,
   fitProjectedPolyline,
+  fittedToEntity,
   mirrorEntity,
   offsetChain,
   reflectPointAcrossLine,
@@ -368,5 +369,48 @@ describe("fitProjectedPolyline", () => {
     const pts: Vec2[] = [];
     for (let i = 0; i <= 30; i++) pts.push([i, Math.sin(i * 0.4) * 2]);
     expect(fitProjectedPolyline(pts)?.type).toBe("spline");
+  });
+});
+
+describe("fittedToEntity", () => {
+  it("carries each fitted primitive's params onto the entity", () => {
+    expect(fittedToEntity({ type: "line", a: [0, 0], b: [3, 4] }, "e1")).toEqual({
+      type: "line",
+      id: "e1",
+      a: [0, 0],
+      b: [3, 4],
+    });
+    expect(fittedToEntity({ type: "arc", c: [1, 2], r: 5, start: 0, end: 1 }, "e2")).toEqual({
+      type: "arc",
+      id: "e2",
+      c: [1, 2],
+      r: 5,
+      start: 0,
+      end: 1,
+    });
+  });
+
+  // The two implementations this replaced differed only here, so it is the one
+  // behaviour worth pinning: a one-off projection must be indistinguishable from
+  // hand-drawn geometry, which means NO `derivedFrom` key — not one set to
+  // undefined, which `"derivedFrom" in e` would still see.
+  it("omits derivedFrom entirely when none is given", () => {
+    const e = fittedToEntity({ type: "circle", c: [0, 0], r: 1 }, "e3");
+    expect("derivedFrom" in e).toBe(false);
+  });
+
+  it("tags associative geometry when a source is given", () => {
+    const e = fittedToEntity(
+      {
+        type: "spline",
+        points: [
+          [0, 0],
+          [1, 1],
+        ],
+      },
+      "e4",
+      "op7",
+    );
+    expect(e).toMatchObject({ type: "spline", id: "e4", derivedFrom: "op7" });
   });
 });

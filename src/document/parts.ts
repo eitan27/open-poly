@@ -21,36 +21,28 @@
 // in `doc.parts`, an optional map that old documents simply don't have.
 
 import { siblingBodyColor } from "./colors";
-import type {
-  BooleanFeature,
-  Document,
-  ExtrudeFeature,
-  Feature,
-  ImportFeature,
-  LoftFeature,
-  MirrorFeature,
-  PartOverride,
-  PatternFeature,
-  PrimitiveFeature,
-  RevolveFeature,
-  SweepFeature,
-  TransformFeature,
-} from "./types";
+import type { Document, Feature, PartOverride, PlaneFeature } from "./types";
 
-/** A feature that owns a body's appearance (colour / opacity / hidden). A
- *  copy-transform produces a body keyed by its own id; an in-place transform
- *  doesn't (its body keeps the target's id), so it isn't one of these. */
-export type SolidFeature =
-  | PrimitiveFeature
-  | ExtrudeFeature
-  | BooleanFeature
-  | TransformFeature
-  | MirrorFeature
-  | PatternFeature
-  | RevolveFeature
-  | SweepFeature
-  | LoftFeature
-  | ImportFeature;
+/** A feature that produces a body of its own, and therefore owns that body's
+ *  appearance (colour / opacity / hidden). A copy-transform produces a body
+ *  keyed by its own id; an in-place transform doesn't (its body keeps the
+ *  target's id), so it isn't one of these.
+ *
+ *  Derived from `Feature` by the presence of `opacity` rather than listed by
+ *  hand, because the hand-written list was the thing that went wrong: the same
+ *  ten `f.type === …` tests were spelled out in five places and nothing tied
+ *  them together. Opacity is the right discriminator and not a coincidence —
+ *  only a body can be made translucent. A new body-producing feature kind joins
+ *  this type the moment it gains the field, and the compiler then demands it in
+ *  `BODY_FEATURE_TYPES` below, which is the one remaining list. */
+export type SolidFeature = Extract<Feature, { opacity: number }>;
+
+/** A feature whose visibility can be toggled. The solids, plus reference planes:
+ *  a plane is hideable and has a colour, but has no opacity, which is exactly
+ *  why it is not a `SolidFeature`. That asymmetry used to show up as one of the
+ *  four inlined lists having an extra `|| f.type === "plane"` in it, where it was
+ *  indistinguishable from a typo. */
+export type HideableFeature = SolidFeature | PlaneFeature;
 
 /** The feature that produced this part. */
 export function featureIdOfPart(partId: string): string {
@@ -70,22 +62,38 @@ export function partIndex(partId: string): number {
   return i === -1 ? 0 : Number(partId.slice(i + 1)) || 0;
 }
 
-/** Which feature types own their body's appearance. A body modified in place
- *  (an Add/Remove extrude, a dress-up, a shell, a non-copy transform) keeps the
- *  id — and therefore the appearance — of the body it modified. */
-export function ownsAppearance(f: Feature | undefined): f is SolidFeature {
-  return (
-    f?.type === "primitive" ||
-    f?.type === "extrude" ||
-    f?.type === "boolean" ||
-    f?.type === "transform" ||
-    f?.type === "mirror" ||
-    f?.type === "pattern" ||
-    f?.type === "revolve" ||
-    f?.type === "sweep" ||
-    f?.type === "loft" ||
-    f?.type === "import"
-  );
+/** Every `SolidFeature["type"]` as a runtime value. Typed as a `Record` over the
+ *  union, so the compiler demands every member and rejects anything that isn't
+ *  one: the list cannot drift from the type the way five hand-written copies of
+ *  it did. The test on `type` (rather than on the presence of `opacity`) is what
+ *  the five copies did and is deliberate — a transform feature written by an old
+ *  enough version of the app has no `opacity` field until `upgradeDocument`
+ *  fills it in. */
+const BODY_FEATURE_TYPES: Record<SolidFeature["type"], true> = {
+  primitive: true,
+  extrude: true,
+  boolean: true,
+  transform: true,
+  mirror: true,
+  pattern: true,
+  revolve: true,
+  sweep: true,
+  loft: true,
+  import: true,
+};
+
+/** Does this feature produce a body of its own — and so own its appearance? A
+ *  body modified in place (an Add/Remove extrude, a dress-up, a shell, a non-copy
+ *  transform) keeps the id, and therefore the appearance, of the body it
+ *  modified. The single source of truth for the question; see `SolidFeature`. */
+export function isBodyFeature(f: Feature | undefined): f is SolidFeature {
+  return f !== undefined && f.type in BODY_FEATURE_TYPES;
+}
+
+/** Can this feature be hidden? See `HideableFeature` for why planes are in and
+ *  why they are not body features. */
+export function isHideableFeature(f: Feature | undefined): f is HideableFeature {
+  return isBodyFeature(f) || f?.type === "plane";
 }
 
 export interface PartAppearance {
@@ -103,7 +111,7 @@ export interface PartAppearance {
  *  overrides, and the defaults in that order. */
 export function partAppearance(doc: Document, partId: string, defaultColor: number): PartAppearance {
   const feature = doc.features.find((f) => f.id === featureIdOfPart(partId));
-  const owned = ownsAppearance(feature);
+  const owned = isBodyFeature(feature);
   const base = {
     name: feature?.name ?? partId,
     color: owned ? feature.color : defaultColor,
@@ -136,7 +144,7 @@ export function setPartAppearance(doc: Document, partId: string, patch: Partial<
     const featureId = featureIdOfPart(partId);
     return {
       ...doc,
-      features: doc.features.map((f) => (f.id === featureId && ownsAppearance(f) ? { ...f, ...patch } : f)),
+      features: doc.features.map((f) => (f.id === featureId && isBodyFeature(f) ? { ...f, ...patch } : f)),
     };
   }
   const next: PartOverride = { ...doc.parts?.[partId], ...patch };

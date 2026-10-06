@@ -1,5 +1,6 @@
 // Static metadata for each feature kind: which parameters it exposes and their
 // defaults. Drives both the parameter editor UI and new-feature creation.
+import { assertNever } from "../lib/assertNever";
 import type { BooleanOp } from "../kernel/types";
 import type { Feature, FeatureKind } from "./types";
 
@@ -94,7 +95,12 @@ export function featureTypeLabel(feature: Feature): string {
       return "Sweep";
     case "loft":
       return "Loft";
-    default:
+    // Primitives are the one type whose label comes from its own table (one
+    // label per box/cylinder/sphere, not one for "primitive"), which is why it
+    // reads as a case rather than the fallthrough it used to be.
+    case "primitive":
       return FEATURE_DEFS[feature.kind].label;
+    default:
+      return assertNever(feature, "feature type");
   }
 }
