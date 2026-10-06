@@ -78,7 +78,13 @@ import {
   rayFromCorner,
   sketchBoundsCenter,
 } from "./sketch/sketchGeom";
-import { parseDxfToEntities, sketchEntitiesBounds } from "./document/dxfImport";
+import {
+  dxfScaleOf,
+  guessDxfUnits,
+  parseDxfToEntities,
+  sketchEntitiesBounds,
+  type DxfUnitsKey,
+} from "./document/dxfImport";
 import {
   applyDerivedToSketch,
   applyEntityExprs,
@@ -190,6 +196,7 @@ import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
+import { DxfImportDialog } from "./ui/DxfImportDialog";
 import { LoftDialog } from "./ui/LoftDialog";
 import { SweepDialog } from "./ui/SweepDialog";
 import { PickButton, PickedRow, PickSlot } from "./ui/PickSlot";
@@ -232,24 +239,6 @@ const fmt = (n: number) => {
 // DXF has no reliable notion of physical units — imported coordinates are bare
 // numbers. We convert to Open Poly's millimetres with a scale the user picks;
 // the $INSUNITS header code (when present) preselects the likely source unit.
-type DxfUnitsKey = "mm" | "cm" | "m" | "in";
-const DXF_UNITS: { key: DxfUnitsKey; label: string; scale: number }[] = [
-  { key: "mm", label: "Millimeters (1:1)", scale: 1 },
-  { key: "cm", label: "Centimeters (×10)", scale: 10 },
-  { key: "m", label: "Meters (×1000)", scale: 1000 },
-  { key: "in", label: "Inches (×25.4)", scale: 25.4 },
-];
-const dxfScaleOf = (key: DxfUnitsKey) => DXF_UNITS.find((u) => u.key === key)?.scale ?? 1;
-// AutoCAD $INSUNITS values we recognise → our unit key (1=in, 4=mm, 5=cm, 6=m).
-const INSUNITS_TO_KEY: Record<number, DxfUnitsKey> = { 1: "in", 4: "mm", 5: "cm", 6: "m" };
-/** Read the DXF header's `$INSUNITS` (a code-9 name followed by a code-70 int)
- *  and map it to a unit key, so the dialog can preselect. Returns null if absent
- *  or unrecognised (caller defaults to mm). */
-function guessDxfUnits(text: string): DxfUnitsKey | null {
-  const m = /\$INSUNITS\s*\r?\n\s*70\s*\r?\n\s*(\d+)/.exec(text);
-  return m ? (INSUNITS_TO_KEY[Number(m[1])] ?? null) : null;
-}
-
 // The geometric constraints grouped behind the one toolbar button, in flyout
 // order. (Dimensional constraints and the construction toggle stay separate.)
 type ConstraintKind = "horizontal" | "vertical" | "parallel" | "perpendicular" | "equal" | "coincident" | "tangent";
@@ -9057,54 +9046,23 @@ export default function App() {
             />
           )}
           {dxfDialog && (
-            <DraggableDialog
-              className="feature-dialog"
-              style={{ left: "50%", top: 64 }}
-              baseTransform="translateX(-50%)"
-            >
-              <div className="ed-title" data-drag-handle>
-                Import DXF sketch
-              </div>
-              <div className="ed-hint">
-                {dxfDialog.fileName} — {dxfDialog.preview.total} entit{dxfDialog.preview.total === 1 ? "y" : "ies"}
-                {dxfDialog.preview.skipped > 0 && `, ${dxfDialog.preview.skipped} unsupported skipped`}
-              </div>
-              <label className="ed-field">
-                <span>Plane</span>
-                <select
-                  value={dxfDialog.planeKey}
-                  onChange={(e) => setDxfDialog((d) => (d ? { ...d, planeKey: e.target.value } : d))}
-                >
-                  <option value="datum:plane-top">Top</option>
-                  <option value="datum:plane-front">Front</option>
-                  <option value="datum:plane-right">Right</option>
-                  {userPlanes.map((pl) => (
-                    <option key={pl.id} value={`plane:${pl.id}`}>
-                      {pl.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="ed-field">
-                <span>Units</span>
-                <select
-                  value={dxfDialog.unitsKey}
-                  onChange={(e) => setDxfDialog((d) => (d ? { ...d, unitsKey: e.target.value as DxfUnitsKey } : d))}
-                >
-                  {DXF_UNITS.map((u) => (
-                    <option key={u.key} value={u.key}>
-                      {u.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="ed-actions">
-                <button className="ed-primary" onClick={confirmDxfImport} disabled={dxfDialog.preview.total === 0}>
-                  Import
-                </button>
-                <button onClick={() => setDxfDialog(null)}>Cancel</button>
-              </div>
-            </DraggableDialog>
+            <DxfImportDialog
+              fileName={dxfDialog.fileName}
+              total={dxfDialog.preview.total}
+              skipped={dxfDialog.preview.skipped}
+              planeKey={dxfDialog.planeKey}
+              planeOptions={[
+                { key: "datum:plane-top", label: "Top" },
+                { key: "datum:plane-front", label: "Front" },
+                { key: "datum:plane-right", label: "Right" },
+                ...userPlanes.map((pl) => ({ key: `plane:${pl.id}`, label: pl.name })),
+              ]}
+              unitsKey={dxfDialog.unitsKey}
+              onPlaneChange={(key) => setDxfDialog((d) => (d ? { ...d, planeKey: key } : d))}
+              onUnitsChange={(key) => setDxfDialog((d) => (d ? { ...d, unitsKey: key } : d))}
+              onConfirm={confirmDxfImport}
+              onCancel={() => setDxfDialog(null)}
+            />
           )}
           {planeDialog && (
             <DraggableDialog

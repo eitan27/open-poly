@@ -14,6 +14,31 @@ import { genId } from "./document";
 import { clamp } from "../lib/clamp";
 import { assertNever } from "../lib/assertNever";
 
+// A DXF carries no absolute unit — just numbers — so the importer converts to Open
+// Poly's millimetres with a scale the user picks. The $INSUNITS header code, when
+// present, preselects the likely source unit.
+export type DxfUnitsKey = "mm" | "cm" | "m" | "in";
+
+export const DXF_UNITS: { key: DxfUnitsKey; label: string; scale: number }[] = [
+  { key: "mm", label: "Millimeters (1:1)", scale: 1 },
+  { key: "cm", label: "Centimeters (×10)", scale: 10 },
+  { key: "m", label: "Meters (×1000)", scale: 1000 },
+  { key: "in", label: "Inches (×25.4)", scale: 25.4 },
+];
+
+export const dxfScaleOf = (key: DxfUnitsKey) => DXF_UNITS.find((u) => u.key === key)?.scale ?? 1;
+
+// AutoCAD $INSUNITS values we recognise → our unit key (1=in, 4=mm, 5=cm, 6=m).
+const INSUNITS_TO_KEY: Record<number, DxfUnitsKey> = { 1: "in", 4: "mm", 5: "cm", 6: "m" };
+
+/** Read the DXF header's `$INSUNITS` (a code-9 name followed by a code-70 int)
+ *  and map it to a unit key, so the dialog can preselect. Returns null if absent
+ *  or unrecognised (caller defaults to mm). */
+export function guessDxfUnits(text: string): DxfUnitsKey | null {
+  const m = /\$INSUNITS\s*\r?\n\s*70\s*\r?\n\s*(\d+)/.exec(text);
+  return m ? (INSUNITS_TO_KEY[Number(m[1])] ?? null) : null;
+}
+
 export interface DxfImportResult {
   entities: SketchEntity[];
   /** Count of imported entities by our SketchEntity kind (line/arc/…). */
