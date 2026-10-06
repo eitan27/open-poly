@@ -21,7 +21,7 @@ const check = (label, ok, detail = "") => {
   if (!ok) failures++;
 };
 
-const dialog = page.locator(".extrude-dialog").filter({ hasText: "Shell" });
+const dialog = page.locator(".feature-dialog").filter({ hasText: "Shell" });
 const rows = () => dialog.locator(".bool-operand-row");
 // Row 0 is the armed body; every row after it is a face to open.
 const faceRowCount = async () => Math.max(0, (await rows().count()) - 1);

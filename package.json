@@ -26,7 +26,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify": "node scripts/verify-all.mjs"
   },
   "dependencies": {
     "@salusoft89/planegcs": "^1.1.7",

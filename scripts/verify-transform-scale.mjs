@@ -15,7 +15,7 @@ const check = (label, ok, detail = "") => {
   if (!ok) failures++;
 };
 const near = (a, b, eps = 0.05) => Math.abs(a - b) <= eps;
-const dialog = page.locator(".extrude-dialog");
+const dialog = page.locator(".feature-dialog");
 const row = (label) => page.locator(".tree-row", { hasText: label }).first();
 const size = (b) => [b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]];
 const centre = (b) => [0, 1, 2].map((i) => (b.min[i] + b.max[i]) / 2);
@@ -250,7 +250,11 @@ await page.waitForTimeout(500);
 await dialog.locator("button", { hasText: "Scale" }).first().click();
 await dialog.locator(".ed-field", { hasText: "Factor" }).locator("input").fill("2");
 await dialog.locator("button", { hasText: "Rotate" }).first().click();
-await dialog.locator(".ed-field", { hasText: "Axis" }).locator("button", { hasText: "Z" }).click();
+// X/Y/Z are their own `.ed-modes` row, not an `.ed-field` labelled "Axis": the
+// Rotate tab now picks an axis KIND first (body centre vs. a picked line/edge),
+// and the world-direction buttons only show for the centre kind. Rows are
+// 0 = Move/Rotate/Scale, 1 = the axis kind, 2 = X/Y/Z (see verify-transform-axis).
+await dialog.locator(".ed-modes").nth(2).getByRole("button", { name: "Z", exact: true }).click();
 await dialog.locator(".ed-field", { hasText: "Angle" }).locator("input").fill("90");
 await dialog.locator("button", { hasText: "Move" }).first().click();
 await dialog.locator(".ed-field", { hasText: "Move X" }).locator("input").fill("5");

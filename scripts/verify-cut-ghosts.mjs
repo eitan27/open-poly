@@ -122,7 +122,7 @@ await apply({ op: "select", refs: [{ kind: "sketchEntity", sketchId: sk.createdI
 await page.waitForTimeout(200);
 await page.keyboard.press("e");
 await page.waitForTimeout(600);
-const dlg = page.locator(".extrude-dialog");
+const dlg = page.locator(".feature-dialog");
 check("the extrude dialog opened", await dlg.isVisible());
 
 const mode = (name) => dlg.locator(".ed-modes button", { hasText: new RegExp(`^${name}$`) }).click();

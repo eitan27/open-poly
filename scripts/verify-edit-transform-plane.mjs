@@ -11,7 +11,7 @@ const { apply, read, waitIdle } = op;
 await waitIdle();
 const row = (label) => page.locator(".tree-row", { hasText: label }).first();
 const panel = page.locator(".edit-panel");
-const dialog = page.locator(".extrude-dialog");
+const dialog = page.locator(".feature-dialog");
 
 // --- Transform ---
 await apply({ op: "newDocument" });

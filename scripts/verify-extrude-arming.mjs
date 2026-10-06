@@ -36,7 +36,7 @@ const sk = await apply({
 });
 await waitIdle();
 
-const dialog = page.locator(".extrude-dialog");
+const dialog = page.locator(".feature-dialog");
 const armed = async () => (await dialog.locator(".ed-pick-btn.active").allTextContents()).map((t) => t.trim());
 
 // --- 1. Open with NOTHING selected: the profile slot is the live one -------

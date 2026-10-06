@@ -110,7 +110,7 @@ await clickWorld([-10, 5, 0]); // back to two cells for the extrude
 // --- 3. Extrude the two selected cells through the UI (E, then Enter) -------
 await page.keyboard.press("e");
 await page.waitForTimeout(300);
-const dialogVisible = await page.locator(".extrude-dialog").count();
+const dialogVisible = await page.locator(".feature-dialog").count();
 check("extrude dialog opened from the 2-cell selection", dialogVisible === 1);
 await page.keyboard.press("Enter");
 await waitIdle();

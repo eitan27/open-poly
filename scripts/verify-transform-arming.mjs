@@ -15,7 +15,7 @@ const check = (label, ok, detail = "") => {
   if (!ok) failures++;
 };
 
-const dialog = page.locator(".extrude-dialog");
+const dialog = page.locator(".feature-dialog");
 const barLabels = () =>
   page.$$eval(".model-toolbar > button, .model-toolbar > .mt-dropdown > button", (bs) =>
     bs.map((b) => b.textContent.trim()),

@@ -140,7 +140,7 @@ await page
   .getByRole("button", { name: /transform/i })
   .first()
   .click();
-const dialog = page.locator(".extrude-dialog");
+const dialog = page.locator(".feature-dialog");
 await dialog.waitFor({ state: "visible", timeout: 5000 });
 // Move the dialog clear of the viewport centre so the picks land on the body.
 const hb = await dialog.locator("[data-drag-handle]").first().boundingBox();
@@ -182,8 +182,11 @@ check(
 await axisKind.getByRole("button", { name: "Line or edge" }).click();
 await page.waitForTimeout(300);
 check("switching to a picked axis puts X/Y/Z away", (await dialog.locator(".ed-modes").count()) === 2);
-const banner = (await page.locator(".sketch-banner.pick span").textContent())?.trim() ?? "";
-check("the pick banner names what counts as an axis", /sketch line|body edge/i.test(banner), banner);
+// Not the viewport's pick banner: it is suppressed while a dialog is open,
+// because the dialog's armed slot does the asking (see `anyDialogOpen` in
+// App.tsx). The slot's tooltip is where this is said now.
+const axisHint = (await dialog.locator(".ed-pick-btn.active").getAttribute("title")) ?? "";
+check("the armed axis slot names what counts as an axis", /sketch line|body edge/i.test(axisHint), axisHint);
 
 // The box's front-bottom edge, around (778, 505) in the default iso view.
 await page.mouse.move(778, 505);

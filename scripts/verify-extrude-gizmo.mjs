@@ -37,7 +37,7 @@ await apply({ op: "select", refs: [{ kind: "sketchFace", sketchId: sk.createdId,
 await page.waitForTimeout(400);
 await page.keyboard.press("e");
 
-const dialog = page.locator(".extrude-dialog");
+const dialog = page.locator(".feature-dialog");
 await dialog.waitFor({ state: "visible", timeout: 5000 });
 const distanceInput = dialog.locator("input").first();
 check("extrude dialog opened with a distance", (await distanceInput.inputValue()).trim().length > 0);

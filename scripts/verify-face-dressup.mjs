@@ -151,12 +151,12 @@ await waitIdle();
   await page.waitForTimeout(400);
   const title =
     (await page
-      .locator(".extrude-dialog .ed-title")
+      .locator(".feature-dialog .ed-title")
       .textContent()
       .catch(() => null)) ?? "";
   check("F opens the Fillet dialog on a face selection", /Fillet/.test(title), title || "no dialog");
   if (/Fillet/.test(title)) {
-    await page.locator(".extrude-dialog .ed-field input").first().fill("1");
+    await page.locator(".feature-dialog .ed-field input").first().fill("1");
     await page.keyboard.press("Enter");
     // The document gains the feature synchronously on commit but the mesh only
     // after a regen, and the status still reads "up to date" in between — so

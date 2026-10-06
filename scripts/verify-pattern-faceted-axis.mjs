@@ -25,7 +25,7 @@ const check = (label, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}: ${label}${detail ? ` — ${detail}` : ""}`);
   if (!ok) failures++;
 };
-const dlg = page.locator(".extrude-dialog");
+const dlg = page.locator(".feature-dialog");
 const rows = () => dlg.locator(".bool-operand-name").allTextContents();
 const msg = async () =>
   (await page

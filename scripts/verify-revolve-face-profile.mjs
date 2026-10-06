@@ -103,7 +103,7 @@ await page.evaluate(() => document.activeElement?.blur());
 await apply({ op: "select", refs: [] });
 await page.keyboard.press("r");
 await page.waitForTimeout(400);
-const dlg = page.locator(".extrude-dialog");
+const dlg = page.locator(".feature-dialog");
 // The label reads "Select a profile" armed or not — arming is the dashed-pulse
 // `.active` class, so that's what says which slot the next click fills.
 check(

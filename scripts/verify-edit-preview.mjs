@@ -15,7 +15,7 @@ const check = (label, ok, detail = "") => {
   if (!ok) failures++;
 };
 const featRow = (label) => page.locator(".tree-row:not(.datum-row)", { hasText: label }).first();
-const dialog = page.locator(".extrude-dialog");
+const dialog = page.locator(".feature-dialog");
 const findFeat = (doc, pred) => (doc.document ?? doc).features.find(pred);
 
 // --- 1. Live preview + cancel-revert on an extrude edit ---

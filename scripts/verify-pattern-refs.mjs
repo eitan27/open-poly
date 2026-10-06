@@ -55,7 +55,7 @@ const box = scene.bodies[0];
 await apply({ op: "select", refs: [{ kind: "feature", id: box.id }] });
 await page.waitForTimeout(300);
 await page.keyboard.press("x"); // Pattern
-const dialog = page.locator(".extrude-dialog");
+const dialog = page.locator(".feature-dialog");
 await dialog.waitFor({ state: "visible", timeout: 5000 });
 
 // --- 1. Linear direction: a two-level chooser, no dropdown ----------------

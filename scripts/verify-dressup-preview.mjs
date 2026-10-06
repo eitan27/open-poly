@@ -164,7 +164,7 @@ await checkSame("closing the dialog removes the ghost (view back to plain)", pla
 // 4. The ghost follows the size field.
 // ---------------------------------------------------------------------------
 await openEdit("Chamfer");
-const sizeInput = page.locator(".extrude-dialog input").first();
+const sizeInput = page.locator(".feature-dialog input").first();
 await sizeInput.fill("16");
 await settlePreview();
 const biggerGhost = await shotUntil(withCutGhost, "differs");
@@ -191,7 +191,7 @@ check(
   "an unbuildable size is reported in the dialog",
   /\S/.test(
     (await page
-      .locator(".extrude-dialog .ed-warning")
+      .locator(".feature-dialog .ed-warning")
       .first()
       .textContent()
       .catch(() => "")) ?? "",
@@ -294,10 +294,10 @@ if (picked) {
   const beforeCreate = await page.evaluate(() => window.__openpoly.screenshot("iso")); // keep the selection!
   await page.keyboard.press("c"); // Chamfer
   await settlePreview();
-  check("the Chamfer dialog opened", (await page.locator(".extrude-dialog").count()) === 1);
+  check("the Chamfer dialog opened", (await page.locator(".feature-dialog").count()) === 1);
   // Match the size used for the edit-mode checks — the dialog defaults to 2mm,
   // whose wedge is real but too slight to clear the "something was painted" bar.
-  await page.locator(".extrude-dialog input").first().fill("8");
+  await page.locator(".feature-dialog input").first().fill("8");
   await settlePreview();
   // The selection tint is present in BOTH frames here (the edge stays picked
   // while the dialog is open), so it cancels out of the comparison.

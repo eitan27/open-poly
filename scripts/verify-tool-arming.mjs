@@ -25,7 +25,7 @@ const check = (label, ok, detail = "") => {
   if (!ok) failures++;
 };
 
-const dlg = page.locator(".extrude-dialog");
+const dlg = page.locator(".feature-dialog");
 const rows = () => dlg.locator(".bool-operand-row");
 const armedButtons = () => dlg.locator(".ed-pick-btn.active");
 const blur = () => page.evaluate(() => document.activeElement?.blur());
@@ -216,6 +216,12 @@ check("…armed on the body", (await armedButtons().count()) === 1, await dlg.te
 check("…with Create held back", await dlg.getByRole("button", { name: "Create" }).isDisabled());
 await clickWorld(boxTop);
 check("clicking the body fills the slot", (await rows().count()) === 1, await dlg.textContent());
+// Mirror needs BOTH slots — Create stays disabled on the body alone — and
+// filling the body hands the arming straight on to the plane. Pick the Top
+// datum out at [28,28,0]: on the 72×72 datum quad, clear of the 30mm box.
+check("…and hands the arming on to the plane", (await armedButtons().count()) === 1, await dlg.textContent());
+await clickWorld([28, 28, 0]);
+check("clicking a datum fills the plane slot", (await rows().count()) === 2, await dlg.textContent());
 await dlg.getByRole("button", { name: "Create" }).click();
 await waitIdle();
 check("Mirror created from a dialog-armed body", (await features("mirror")).length === 1);
@@ -231,7 +237,15 @@ await page.waitForTimeout(400);
 await page.keyboard.press("m");
 await page.waitForTimeout(400);
 check("Mirror prefills from a selected body", (await rows().count()) === 1, await dlg.textContent());
-check("…and nothing is left armed", (await armedButtons().count()) === 0, await dlg.textContent());
+// Not "nothing is armed": prefilling the body hands the arming straight on to
+// the plane, the same advance that filling it by click makes (verify-mirror-
+// dialog asserts both). "Costing no extra pick" means the body costs none — not
+// that the dialog stops asking for the half it still needs.
+check(
+  "…and the arming has moved on to the plane",
+  (await armedButtons().count()) === 1 && /plane or face/i.test((await armedButtons().first().textContent()) ?? ""),
+  await dlg.textContent(),
+);
 await cancel();
 
 // --- 9. A dress-up dresses several bodies, as ONE feature -------------------
