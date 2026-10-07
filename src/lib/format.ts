@@ -10,3 +10,16 @@ export function formatNumber(v: number): string {
   const s = Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/\.?0+$/, "");
   return s === "-0" ? "0" : s;
 }
+
+/** The older compact formatter: round to 3 decimals, then stringify.
+ *
+ *  Kept distinct from `formatNumber` because they are **not** interchangeable at an
+ *  exact half. `Math.round` always goes up (1.0005 → "1.001"); `toFixed(3)` follows
+ *  the float, and 1.0005 is stored a hair below the half, so it goes down
+ *  ("1"). The difference is one part in a thousand and invisible on screen, but this
+ *  one's output is written back into the document as a transform's expression
+ *  string, so switching it is a behaviour change rather than a tidy-up. Unify
+ *  deliberately, with that in mind — see `format.test.ts`. */
+export function formatRounded3(v: number): string {
+  return String(Math.round(v * 1000) / 1000);
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatNumber } from "./format";
+import { formatNumber, formatRounded3 } from "./format";
 
 describe("formatNumber", () => {
   it("shows integers with no decimal point", () => {
@@ -32,5 +32,26 @@ describe("formatNumber", () => {
     expect(formatNumber(-0.0004)).toBe("0");
     expect(formatNumber(-1e-7)).toBe("0");
     expect(formatNumber(-0)).toBe("0");
+  });
+});
+
+describe("formatRounded3 vs formatNumber", () => {
+  it("agrees with formatNumber on ordinary values", () => {
+    for (const v of [0, 2, -7, 1.5, 1.23456, 100.0001, -0.25]) {
+      expect(formatRounded3(v)).toBe(formatNumber(v));
+    }
+  });
+
+  it("renders a near-zero as 0, never -0", () => {
+    // String(-0) is "0", which is why the old one never needed formatNumber's guard.
+    expect(formatRounded3(-1e-7)).toBe("0");
+    expect(formatNumber(-1e-7)).toBe("0");
+  });
+
+  // The one documented disagreement. Pinned so that unifying the two is a decision
+  // someone makes on purpose rather than a diff nobody notices.
+  it("differs at an exact half, which is why they are still two functions", () => {
+    expect(formatRounded3(1.0005)).toBe("1.001");
+    expect(formatNumber(1.0005)).toBe("1");
   });
 });
