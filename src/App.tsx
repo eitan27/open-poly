@@ -194,6 +194,9 @@ import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
+import { ShellDialog } from "./ui/ShellDialog";
+import { DressUpDialog } from "./ui/DressUpDialog";
+import { buildDressUpGroups, dressUpCountLabel } from "./ui/dressUpRows";
 import { PlaneDialog } from "./ui/PlaneDialog";
 import { TransformArmingDialog, TransformDialog } from "./ui/TransformDialog";
 import { RevolveDialog } from "./ui/RevolveDialog";
@@ -8531,151 +8534,55 @@ export default function App() {
               // kernel-free; the async geometry error (size too big) lives in
               // `dressUpError`. Show whichever applies; empty stays silent.
               const sv = validateDressUpDialog(dressUpDialog);
-              const message = sv.value === null ? sv.error : dressUpError;
               // Nothing picked yet is not an ERROR — the dialog opened that way
               // on purpose — so it only holds the primary button, silently.
               const targets = dressUpDialogTargets;
-              const disabled = sv.value === null || !!dressUpError || targets.length === 0;
-              const picks = dressUpDialog.picks;
-              const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-              const armPicks = () => setDressUpDialog((d) => (d ? { ...d, arming: !d.arming } : d));
-              // Rows grouped by the body they dress, which is how they commit.
-              // Two sources: what the feature being edited already references
-              // (`stored` — a chamfer replaces the edge it bevels, so those
-              // can't be re-picked, only dropped), then the live picks. "Edge 2"
-              // counts within its own kind and its own body, so the rows read
-              // the way they were picked.
-              const groups: { bodyId: string; items: { label: string; remove: () => void }[] }[] = [];
-              // `kind` numbers within its own body ("Edge 1", "Edge 2"); a
-              // stored row passes its own finished label instead, since it
-              // stands for a whole list of names rather than one click.
-              const addRow = (bodyId: string, kind: string, remove: () => void, exact = false) => {
-                let g = groups.find((x) => x.bodyId === bodyId);
-                if (!g) groups.push((g = { bodyId, items: [] }));
-                const n = g.items.filter((q) => q.label.startsWith(kind)).length + 1;
-                g.items.push({ label: exact ? kind : `${kind} ${n}`, remove });
-              };
-              dressUpDialog.stored.forEach((t, i) => {
-                const drop = () =>
-                  setDressUpDialog((d) => (d ? { ...d, stored: d.stored.filter((_, k) => k !== i) } : d));
-                // One row for the whole stored target: it's a list of names, not
-                // a sequence of clicks, so there's nothing finer to remove.
-                const counts = [
-                  t.edges.length ? plural(t.edges.length, "edge") : null,
-                  t.faces?.length ? plural(t.faces.length, "face") : null,
-                ].filter(Boolean);
-                addRow(t.targetId, counts.join(" + ") || "Nothing", drop, true);
-              });
-              picks.forEach((p, index) => {
-                const drop = () =>
-                  setDressUpDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== index) } : d));
-                addRow(dressUpPickBody(p) ?? "", p.kind === "edge" ? "Edge" : "Face", drop);
-              });
               const bodyLabel = (id: string) =>
                 isSubPart(id)
                   ? partAppearance(doc, id, DEFAULT_SOLID_COLOR).name
                   : (doc.features.find((f) => f.id === id)?.name ?? "Body");
-              // What the picks actually RESOLVE to, which is the interesting
-              // number: one click on a faceted rim stands for its whole tangent
-              // chain, so three picks can be ninety-odd edges. Zeros are left
-              // out — "0 edges + 1 face" says nothing the rows below don't.
-
-              const countOf = (ts: DressUpTarget[]) =>
-                [ts.reduce((n, x) => n + x.edges.length, 0), ts.reduce((n, x) => n + x.faces.length, 0)] as const;
-              const countLabel = (ts: DressUpTarget[]) => {
-                const [e, f] = countOf(ts);
-                return [e ? plural(e, "edge") : null, f ? plural(f, "face") : null].filter(Boolean).join(" + ") || null;
-              };
-              const summary = countLabel(targets);
-              const escapeDressUp = () => {
-                if (dressUpDialog.arming) setDressUpDialog((d) => (d ? { ...d, arming: false } : d));
-                else closeDressUpDialog();
-              };
               return (
-                <DraggableDialog className="feature-dialog" style={{ left: dressUpDialog.x, top: dressUpDialog.y }}>
-                  <div className="ed-title" data-drag-handle>
-                    {dressUpDialog.editId ? "Edit " : ""}
-                    {dressUpDialog.op === "chamfer" ? "Chamfer" : "Fillet"}
-                    {!dressUpDialog.editId && targets.length > 1 ? ` (${targets.length} bodies)` : ""}
-                  </div>
-                  {/* An accumulating slot (see PickSlot.tsx): one PickedRow per
-                      pick, and a button that keeps the arming live for the next
-                      one. Clicking a listed edge/face in the viewport removes it.
-                      Picks on several bodies are grouped by body, because that is
-                      how they commit — one dress-up each. */}
-                  <div className="bool-group-label">Edges / faces{summary ? ` — ${summary}` : ""}</div>
-                  {groups.map((g) => (
-                    <Fragment key={g.bodyId}>
-                      {groups.length > 1 && <div className="bool-group-label ed-subgroup">{bodyLabel(g.bodyId)}</div>}
-                      {g.items.map((item) => (
-                        <PickedRow key={item.label} label={item.label} clearTitle="Remove" onClear={item.remove} />
-                      ))}
-                    </Fragment>
-                  ))}
-                  <PickButton noun="edges or faces" armed={dressUpDialog.arming} wide onClick={armPicks}>
-                    {dressUpDialog.arming
-                      ? "Select edges or faces (Esc to stop)"
-                      : picks.length
-                        ? "Add more edges"
-                        : undefined}
-                  </PickButton>
-                  {targets.length > 1 && (
-                    <p className="ed-hint">
-                      One {dressUpDialog.op} across {targets.length} parts — a single feature, dressing each body from
-                      its own edges.
-                    </p>
+                <DressUpDialog
+                  op={dressUpDialog.op}
+                  editing={!!dressUpDialog.editId}
+                  x={dressUpDialog.x}
+                  y={dressUpDialog.y}
+                  groups={buildDressUpGroups(
+                    dressUpDialog.stored.map((t, i) => ({
+                      targetId: t.targetId,
+                      edges: t.edges.length,
+                      faces: t.faces?.length ?? 0,
+                      onRemove: () =>
+                        setDressUpDialog((d) => (d ? { ...d, stored: d.stored.filter((_, k) => k !== i) } : d)),
+                    })),
+                    dressUpDialog.picks.map((p, index) => ({
+                      bodyId: dressUpPickBody(p),
+                      kind: p.kind === "edge" ? ("edge" as const) : ("face" as const),
+                      onRemove: () =>
+                        setDressUpDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== index) } : d)),
+                    })),
+                    bodyLabel,
                   )}
-                  <label className="ed-field">
-                    <span>{dressUpDialog.op === "chamfer" ? "Distance" : "Radius"}</span>
-                    <input
-                      autoFocus
-                      onFocus={(e) => e.currentTarget.select()}
-                      value={dressUpDialog.size}
-                      onChange={(e) => setDressUpDialog((d) => (d ? { ...d, size: e.target.value } : d))}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") createDressUp();
-                        else if (e.key === "Escape") escapeDressUp();
-                      }}
-                    />
-                  </label>
-                  {/* Chamfer only: the bevel angle off the reference face (45° is
-                    the symmetric cut), and which of the edge's two adjacent
-                    faces that reference is. Flip does nothing at 45°. */}
-                  {dressUpDialog.op === "chamfer" && (
-                    <>
-                      <label className="ed-field">
-                        <span>Angle (°)</span>
-                        <input
-                          value={dressUpDialog.angle}
-                          onFocus={(e) => e.currentTarget.select()}
-                          onChange={(e) => setDressUpDialog((d) => (d ? { ...d, angle: e.target.value } : d))}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") createDressUp();
-                            else if (e.key === "Escape") escapeDressUp();
-                          }}
-                        />
-                      </label>
-                      <label
-                        className="ed-field ed-flip"
-                        title="Measure the distance and angle from the edge's other face"
-                      >
-                        <span>Flip angle</span>
-                        <input
-                          type="checkbox"
-                          checked={dressUpDialog.flip}
-                          onChange={(e) => setDressUpDialog((d) => (d ? { ...d, flip: e.target.checked } : d))}
-                        />
-                      </label>
-                    </>
-                  )}
-                  {message && <p className="ed-warning">{message}</p>}
-                  <div className="ed-actions">
-                    <button className="ed-primary" onClick={createDressUp} disabled={disabled}>
-                      {dressUpDialog.editId ? "Done" : "Create"}
-                    </button>
-                    <button onClick={closeDressUpDialog}>Cancel</button>
-                  </div>
-                </DraggableDialog>
+                  bodyCount={targets.length}
+                  summary={dressUpCountLabel(targets)}
+                  arming={dressUpDialog.arming}
+                  hasPicks={dressUpDialog.picks.length > 0}
+                  size={dressUpDialog.size}
+                  angle={dressUpDialog.angle}
+                  flip={dressUpDialog.flip}
+                  message={sv.value === null ? sv.error : dressUpError}
+                  confirmDisabled={sv.value === null || !!dressUpError || targets.length === 0}
+                  onToggleArming={() => setDressUpDialog((d) => (d ? { ...d, arming: !d.arming } : d))}
+                  onSizeChange={(size) => setDressUpDialog((d) => (d ? { ...d, size } : d))}
+                  onAngleChange={(angle) => setDressUpDialog((d) => (d ? { ...d, angle } : d))}
+                  onFlipChange={(flip) => setDressUpDialog((d) => (d ? { ...d, flip } : d))}
+                  onConfirm={createDressUp}
+                  onEscape={() => {
+                    if (dressUpDialog.arming) setDressUpDialog((d) => (d ? { ...d, arming: false } : d));
+                    else closeDressUpDialog();
+                  }}
+                  onCancel={closeDressUpDialog}
+                />
               );
             })()}
           {shellDialog &&
@@ -8685,103 +8592,51 @@ export default function App() {
               // kernel-free; the async geometry error (thickness too big) lives in
               // `shellError`. Show whichever applies; empty stays silent.
               const sv = validateShellThickness(d.thickness, resolved.scope);
-              const message = sv.value === null ? sv.error : shellError;
-              const disabled = !d.targetId || sv.value === null || !!shellError;
-              const bodyName = doc.features.find((f) => f.id === d.targetId)?.name ?? "Body";
               // Persistent face names are scoped by the body that owns them
               // ("<featureId>/-y"), so drop that prefix rather than showing the
               // user a raw UUID. Anything else (a re-matched or renamed face)
               // shows as-is.
               const faceLabel = (n: string) =>
                 d.targetId && n.startsWith(`${d.targetId}/`) ? n.slice(d.targetId.length + 1) : n;
-              const armBody = () => setShellDialog((p) => (p ? { ...p, arming: "body" } : p));
-              const armFaces = () =>
-                setShellDialog((p) => (p ? { ...p, arming: p.arming === "faces" ? null : "faces" } : p));
-              const dropFace = (name: string) =>
-                setShellDialog((p) => {
-                  if (!p) return p;
-                  const at = p.faces.indexOf(name);
-                  return at === -1
-                    ? p
-                    : {
-                        ...p,
-                        faces: p.faces.filter((_, i) => i !== at),
-                        faceRefs: p.faceRefs.filter((_, i) => i !== at),
-                      };
-                });
               return (
-                <DraggableDialog
-                  className="feature-dialog"
-                  style={{ left: "50%", top: 64 }}
-                  baseTransform="translateX(-50%)"
-                >
-                  <div className="ed-title" data-drag-handle>
-                    {/* `editId` is set the moment a Create commits, so that a
-                        retry updates that feature instead of adding another —
-                        but until it BUILDS this is still the creation the user
-                        started, and saying "Edit" would be news to them. */}
-                    {d.editId && !d.createdId ? "Edit " : ""}Shell
-                  </div>
-                  <div className="bool-group-label">Body</div>
-                  <PickSlot
-                    noun="a body"
-                    armed={d.arming === "body"}
-                    value={d.targetId ? bodyName : null}
-                    wide
-                    onArm={armBody}
-                  />
-                  {/* Openings are optional — no faces means a fully sealed hollow
-                    shell, which is the common case and so must not require a
-                    pick to get to. */}
-                  <div className="bool-group-label">Faces to open (optional)</div>
-                  {d.faces.map((name) => (
-                    <PickedRow
-                      key={name}
-                      label={faceLabel(name)}
-                      title={name}
-                      clearTitle="Remove"
-                      onClear={() => dropFace(name)}
-                    />
-                  ))}
-                  <PickButton noun="faces" armed={d.arming === "faces"} wide disabled={!d.targetId} onClick={armFaces}>
-                    {/* An accumulating slot: it keeps taking clicks after the
-                        first, so it says how to stop and how to add more. */}
-                    {d.arming === "faces"
-                      ? "Select faces (Esc to stop)"
-                      : d.faces.length
-                        ? "Add more faces"
-                        : undefined}
-                  </PickButton>
-                  <label className="ed-field">
-                    <span>Thickness</span>
-                    <input
-                      autoFocus
-                      onFocus={(e) => e.currentTarget.select()}
-                      value={d.thickness}
-                      onChange={(e) => setShellDialog((p) => (p ? { ...p, thickness: e.target.value } : p))}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") createShell();
-                        // The thickness field has autoFocus, so Escape almost
-                        // always arrives here rather than at the global handler —
-                        // it has to follow the same disarm-then-close order, or
-                        // stopping a face pick would blow away the whole dialog.
-                        else if (e.key === "Escape") {
-                          if (d.arming) setShellDialog((p) => (p ? { ...p, arming: null } : p));
-                          else closeShellDialog();
-                        }
-                      }}
-                    />
-                  </label>
-                  {message && <p className="ed-warning">{message}</p>}
-                  <div className="ed-actions">
-                    {/* Hollowing a loft is seconds of OCCT work with nothing to
-                        see: say so, and refuse further clicks while it runs. */}
-                    <button className="ed-primary" onClick={createShell} disabled={disabled || shellBusy}>
-                      {shellBusy ? "Working…" : d.editId && !d.createdId ? "Done" : "Create"}
-                    </button>
-                    <button onClick={closeShellDialog}>Cancel</button>
-                  </div>
-                </DraggableDialog>
+                <ShellDialog
+                  editing={!!d.editId && !d.createdId}
+                  bodyLabel={d.targetId ? (doc.features.find((f) => f.id === d.targetId)?.name ?? "Body") : null}
+                  bodyArmed={d.arming === "body"}
+                  faces={d.faces.map((name) => ({ name, label: faceLabel(name) }))}
+                  facesArmed={d.arming === "faces"}
+                  thickness={d.thickness}
+                  message={sv.value === null ? sv.error : shellError}
+                  confirmDisabled={!d.targetId || sv.value === null || !!shellError}
+                  busy={shellBusy}
+                  onArmBody={() => setShellDialog((p) => (p ? { ...p, arming: "body" } : p))}
+                  onToggleFaces={() =>
+                    setShellDialog((p) => (p ? { ...p, arming: p.arming === "faces" ? null : "faces" } : p))
+                  }
+                  onRemoveFace={(name) =>
+                    setShellDialog((p) => {
+                      if (!p) return p;
+                      const at = p.faces.indexOf(name);
+                      // `faces` and `faceRefs` are parallel arrays, so a face has
+                      // to leave both at the same index or the fingerprints
+                      // silently start describing the wrong names.
+                      return at === -1
+                        ? p
+                        : {
+                            ...p,
+                            faces: p.faces.filter((_, i) => i !== at),
+                            faceRefs: p.faceRefs.filter((_, i) => i !== at),
+                          };
+                    })
+                  }
+                  onThicknessChange={(thickness) => setShellDialog((p) => (p ? { ...p, thickness } : p))}
+                  onConfirm={createShell}
+                  onEscape={() => {
+                    if (d.arming) setShellDialog((p) => (p ? { ...p, arming: null } : p));
+                    else closeShellDialog();
+                  }}
+                  onCancel={closeShellDialog}
+                />
               );
             })()}
           {revolve.dialog &&
