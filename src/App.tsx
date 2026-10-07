@@ -173,6 +173,7 @@ import {
   type OffsetPrimitive,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
+import { useSketchSession } from "./hooks/useSketchSession";
 import { useTransformSession } from "./hooks/useTransformSession";
 import { useDressUpDialog } from "./hooks/useDressUpDialog";
 import { useShellDialog } from "./hooks/useShellDialog";
@@ -1267,41 +1268,45 @@ export default function App() {
   // signed distance (expression text), and a uv anchor + unit normal for placing
   // the on-canvas input box and its draggable arrow handle. Null = no offset in
   // progress. See beginOffset / commitOffset.
-  const [offsetSession, setOffsetSession] = useState<{
+  const {
+    value: offsetSession,
+    set: setOffsetSession,
+    ref: offsetSessionRef,
+  } = useSketchSession<{
     chain: ChainEdge[];
     value: string;
     anchor: Vec2;
     normal: Vec2;
-  } | null>(null);
-  const offsetSessionRef = useRef(offsetSession);
-  offsetSessionRef.current = offsetSession;
+  }>();
   // The active sketch Mirror session (the 2D sketch tool — distinct from the
   // modeling-mode body MirrorFeature). `axisEntityId` is the armed mirror line
   // (null until the user clicks one); `previews` are the live mirrored copies,
   // committed on Enter and discarded on Esc. Null = no mirror in progress.
-  const [mirrorSession, setMirrorSession] = useState<{
+  const {
+    value: mirrorSession,
+    set: setMirrorSession,
+    ref: mirrorSessionRef,
+    commitRef: commitMirrorRef,
+  } = useSketchSession<{
     axisEntityId: string | null;
     /** Source entity ids already mirrored (so re-clicking toggles them off). */
     sourceIds: string[];
     previews: SketchEntity[];
-  } | null>(null);
-  const mirrorSessionRef = useRef(mirrorSession);
-  mirrorSessionRef.current = mirrorSession;
-  // Set below once commitMirror is defined; the key handler calls it via this
-  // ref so Enter always commits using the latest doc/session (no stale closure).
-  const commitMirrorRef = useRef<() => void>(() => {});
+  }>();
   // The active Project/Convert session: live previews of existing 3D body
   // edges/vertices projected onto the active sketch plane. `keys` tracks the
   // source pick of each preview (featureId/edgeId or vertex) so re-clicking a
   // source toggles it off. Committed on Enter, discarded on Esc. Null = none.
-  const [projectSession, setProjectSession] = useState<{
+  const {
+    value: projectSession,
+    set: setProjectSession,
+    ref: projectSessionRef,
+    commitRef: commitProjectRef,
+  } = useSketchSession<{
     refs: ProjectRef[];
     keys: string[];
     previews: SketchEntity[];
-  } | null>(null);
-  const projectSessionRef = useRef(projectSession);
-  projectSessionRef.current = projectSession;
-  const commitProjectRef = useRef<() => void>(() => {});
+  }>();
   // The active sketch Pattern session (linear or circular — the 2D sketch tools,
   // distinct from the modeling-mode body PatternFeature). Sources accumulate by
   // clicking entities (re-click toggles off); the session seeds from the current
@@ -1309,7 +1314,12 @@ export default function App() {
   // click (an entity-point PointRef when the snapped uv lands on one, else a raw
   // uv committed as a construction point). All numeric fields are expression
   // text. Committed on Enter as a DerivedOp, discarded on Esc. Null = none.
-  const [patternSession, setPatternSession] = useState<{
+  const {
+    value: patternSession,
+    set: setPatternSession,
+    ref: patternSessionRef,
+    commitRef: commitPatternRef,
+  } = useSketchSession<{
     kind: "linear" | "circular";
     sourceIds: string[];
     /** TOTAL instances including the seed (expression). */
@@ -1323,20 +1333,17 @@ export default function App() {
     mode: "full" | "angle";
     angle: string;
     symmetric: boolean;
-  } | null>(null);
-  const patternSessionRef = useRef(patternSession);
-  patternSessionRef.current = patternSession;
-  const commitPatternRef = useRef<() => void>(() => {});
+  }>();
   // Text tool: after clicking the plane to set the anchor, the user types the
   // string + height in a floating box. Live-previewed; committed on Enter,
   // discarded on Esc. Null = no placement in progress.
   // `editId` set ⇒ editing an existing text entity in place (re-edit), else a
   // fresh placement.
-  const [textDraft, setTextDraft] = useState<{ anchor: Vec2; value: string; height: string; editId?: string } | null>(
-    null,
-  );
-  const textDraftRef = useRef(textDraft);
-  textDraftRef.current = textDraft;
+  const {
+    value: textDraft,
+    set: setTextDraft,
+    ref: textDraftRef,
+  } = useSketchSession<{ anchor: Vec2; value: string; height: string; editId?: string }>();
   // In-progress edit of a committed offset op's distance (keyed by op id). Shown
   // when a single derived offset entity is selected; null = not editing.
   const [offsetEdit, setOffsetEdit] = useState<{ opId: string; value: string } | null>(null);
