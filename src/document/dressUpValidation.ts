@@ -39,3 +39,20 @@ export function mapDressUpKernelError(raw: string, op: "chamfer" | "fillet"): st
   }
   return raw;
 }
+
+/** Both fields a dress-up dialog can get wrong, checked in the order the dialog
+ *  shows them: the size first, then (chamfer only) the bevel angle — a fillet has
+ *  no bevel to tilt. Returns the first failure, else the size's own result, so
+ *  callers get a usable `value` when everything passes.
+ *
+ *  Shared by the commit and by the live-validate effect, so the dialog cannot
+ *  commit something its own preview refused. */
+export function validateDressUpDialog(
+  d: { op: "chamfer" | "fillet"; size: string; angle: string },
+  scope: Scope,
+): FieldResult {
+  const size = validateDressUpSize(d.size, scope, d.op);
+  if (size.value === null || d.op !== "chamfer") return size;
+  const angle = validateDressUpAngle(d.angle, scope);
+  return angle.value === null ? angle : size;
+}
