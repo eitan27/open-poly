@@ -273,17 +273,27 @@ _not_ repeated here; this section is the rest.
   - [ ] **1a.** Extract the JSX tail. `BooleanDialog`, `SettingsDialog`,
         `DocumentsDialog` and `ReportDialog` are the pattern to copy: resolved
         labels and flags in, granular callbacks out, neither a setter nor `doc`
-        crossing the boundary. **Eight done — Sweep, Loft, DXF import, Mirror,
-        Revolve and both Transform panels — taking App.tsx 9,891 → 9,562.** The
-        table below says what is left. Note 1a does **not** reach 7,000 on its
-        own: the eight easiest dialogs were worth ~330 lines, so the rest of item
-        1's total has to come from 1b–1d.
+        crossing the boundary. **Nine done — Sweep, Loft, DXF import, Mirror,
+        Revolve, both Transform panels and the reference plane.** The table below
+        says what is left. Note 1a does **not** reach 7,000 on its own: the nine
+        easiest dialogs were worth ~435 lines, so the rest of item 1's total has
+        to come from 1b–1d.
   - [ ] **1b.** Move each dialog's state machine behind its own hook
         (`useExtrudeDialog`, `useDressUpDialog`, `useShellDialog`,
-        `useRevolveDialog`, `useTransformSession`) — each owns 3-8 `useState`
-        plus its effects today. This is what actually retires the
-        exhaustive-deps disables, because it shrinks the dep graph to something
-        honest rather than silencing it.
+        `useTransformSession`) — each owns 3-8 `useState` plus its effects today.
+        **`useRevolveDialog` is done and the item's premise holds**: it carries no
+        `exhaustive-deps` disable and App.tsx went 17 → 16. Both of Revolve's
+        disables were hiding something real — the live-edit effect must depend on
+        the dialog's six _value_ fields and not on `x`/`y`/`armed`, or dragging the
+        panel re-applies the edit and adds an undo entry; the ghost effect was
+        silenced only for a closure that turned out to be pure and belonged at
+        module scope. Two supporting moves generalise: make the shared
+        `shouldLiveApply` guard a `useCallback` (it touches only refs), and keep
+        "where does the panel go" out of the hook — pass an `at: {x, y}`, since
+        anchoring to the clicked geometry needs the camera, which is the shell's
+        business. Expect ~13 explicit dependencies per hook. That is not a smell to
+        design away: every one was already an implicit coupling, and writing it
+        down is the deliverable.
   - [ ] **1c.** Collapse the sketch-session cluster. `offsetSession`,
         `mirrorSession`, `projectSession`, `patternSession` and `textDraft`
         each carry the same shape — state, a mirroring `*Ref`, a `commit*Ref` —
@@ -306,15 +316,14 @@ such closure) and the Transform panels entangled (they had none). What remains:
 
 | block           | lines | pick-setters | pre-JSX closures |
 | --------------- | ----- | ------------ | ---------------- |
-| `planeDialog`   | 147   | 0            | 0                |
 | `dressUpDialog` | 153   | 0            | 9                |
 | `shellDialog`   | 106   | 0            | 4                |
 | `extrudeDialog` | 207   | 5            | 0                |
 | `patternDialog` | 293   | 2            | 7                |
 
-`planeDialog` is pure JSX and should go next. Dress-up and Shell have no
-pick-setters, so their closures are label/row helpers that can become props or
-move inside the component. **Extrude and Pattern are the real 1b work**:
+Dress-up and Shell have no pick-setters, so their closures are label/row helpers
+that can become props or move inside the component — take those next.
+**Extrude and Pattern are the real 1b work**:
 Pattern's `setWorldRef` calls `setPicking(false)` and `setPickPurpose("sketch")`
 to cancel an in-flight pick while rewriting the dialog, and handing that to a
 presentational component means threading the pick setters through it. Expect more

@@ -24,7 +24,6 @@ import {
   addMirror,
   addPattern,
   addPlane,
-  addRevolve,
   addSweep,
   addDerivedOp,
   setDerivedOffsetDistance,
@@ -56,7 +55,6 @@ import {
   updateParam,
   updatePattern,
   updatePlane,
-  updateRevolve,
   updateVariable,
 } from "./document/document";
 import {
@@ -114,7 +112,6 @@ import type {
   PlaneFeature,
   PlaneMethod,
   PointRef,
-  RevolveAxis,
   RevolveProfile,
   SketchConstraint,
   SketchEntity,
@@ -191,11 +188,13 @@ import {
   type OffsetPrimitive,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
+import { useRevolveDialog } from "./hooks/useRevolveDialog";
 import { usePersistedDocuments } from "./hooks/usePersistedDocuments";
 import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
+import { PlaneDialog } from "./ui/PlaneDialog";
 import { TransformArmingDialog, TransformDialog } from "./ui/TransformDialog";
 import { RevolveDialog } from "./ui/RevolveDialog";
 import { MirrorDialog } from "./ui/MirrorDialog";
@@ -1010,15 +1009,16 @@ export default function App() {
     // the normal selection raycaster. Arming the AXIS uses picking mode instead
     // (→ handleAxisPick), so one click stream can take a sketch line, a body
     // face, or a datum/reference plane.
-    if (revolveDialog && revolveDialog.armed === "profile") {
+    const rd = revolve.dialog;
+    if (rd && rd.armed === "profile") {
       // With the profile in hand the dialog's next empty slot takes over the
       // arming, so the axis is already listening for the following click.
       const advance = () => {
-        if (!revolveDialog.axis) armRevolveAxis();
+        if (!rd.axis) revolve.armAxis();
       };
       if (picked?.kind === "sketchFace") {
         const profile: RevolveProfile = { kind: "sketchRegion", sketchId: picked.sketchId, regionId: picked.regionId };
-        setRevolveDialog((d) => (d ? { ...d, profile, armed: null } : d));
+        revolve.setDialog((d) => (d ? { ...d, profile, armed: null } : d));
         advance();
       } else if (picked?.kind === "face") {
         // A body face is a profile too (same reference as an extrude pulled off
@@ -1039,7 +1039,7 @@ export default function App() {
           center,
           normal,
         };
-        setRevolveDialog((d) => (d ? { ...d, profile, armed: null } : d));
+        revolve.setDialog((d) => (d ? { ...d, profile, armed: null } : d));
         advance();
       } else if (picked) {
         // Anything else keeps the arming live — but say why nothing happened,
@@ -1450,7 +1450,10 @@ export default function App() {
   // params are unchanged breaks that loop and also skips the open-time seed.
   const editSigRef = useRef<string | null>(null);
   // Returns true if this live-sync run should proceed to apply. Seeds/loops skip.
-  const shouldLiveApply = (sig: string): boolean => {
+  // `useCallback` with no deps because it touches only refs, and because it being
+  // referentially stable is what lets a live-sync effect list it as a dependency
+  // honestly instead of silencing the lint rule (see useRevolveDialog).
+  const shouldLiveApply = useCallback((sig: string): boolean => {
     if (editSeedRef.current) {
       editSeedRef.current = false;
       editSigRef.current = sig;
@@ -1459,7 +1462,7 @@ export default function App() {
     if (sig === editSigRef.current) return false;
     editSigRef.current = sig;
     return true;
-  };
+  }, []);
   // Begin/commit/cancel an in-place dialog edit. Every edit* opener calls
   // beginEdit; each dialog's Confirm calls commitEdit (keep the live changes);
   // each close path calls cancelEdit (a no-op after commit, else revert to the
@@ -1477,6 +1480,27 @@ export default function App() {
     editSnapshotRef.current = null;
     if (snap) setDoc((prev) => ({ ...prev, features: prev.features.map((f) => (f.id === snap.id ? snap : f)) }));
   };
+
+  // The Revolve dialog owns its own state machine — both slots' arming, the
+  // debounced ghost preview, and the live-apply of an in-place edit. Installed
+  // here, directly after the edit-session helpers it needs, because three derived
+  // values further down read `revolve.dialog` and `revolve.preview`. See
+  // useRevolveDialog for why the dependency list is explicit rather than implicit.
+  const revolve = useRevolveDialog({
+    doc,
+    setDoc,
+    ready,
+    kernelRef,
+    picking,
+    pickPurpose,
+    setPicking,
+    setPickPurpose,
+    beginEdit,
+    commitEdit,
+    cancelEdit,
+    shouldLiveApply,
+    selectFeature,
+  });
   // The extrude dialog (anchored at the profile) while choosing parameters.
   // `editId` set ⇒ editing an existing extrude in place (Confirm updates it);
   // else creating from the current profile selection.
@@ -1522,10 +1546,6 @@ export default function App() {
    *  ghost is at stake: editing a committed extrude applies to the real model
    *  instead of ghosting. */
   const extrudeCutting = extrudeDialog?.mode === "remove";
-  // Live ghost of the revolve dialog's currently-armed inputs (translucent solid
-  // of the would-be result), and its build/resolve error if any.
-  const [revolvePreview, setRevolvePreview] = useState<FeatureMesh["mesh"] | null>(null);
-  const [revolvePreviewError, setRevolvePreviewError] = useState<string | null>(null);
   const [dressUpDialog, setDressUpDialog] = useState<
     // `angle`/`flip` are chamfer-only (degrees from the reference face, and
     // which adjacent face that is); they're ignored when the op is a fillet.
@@ -1592,17 +1612,6 @@ export default function App() {
   // viewport — like the Boolean dialog — then sets the angle (Full 360° vs. a
   // specified angle + optional symmetric sweep). `armed` says which role the next
   // viewport click fills.
-  const [revolveDialog, setRevolveDialog] = useState<{
-    profile: RevolveProfile | null;
-    axis: RevolveAxis | null;
-    armed: "profile" | "axis" | null;
-    mode: "full" | "angle";
-    degrees: string;
-    symmetric: boolean;
-    x: number;
-    y: number;
-    editId?: string;
-  } | null>(null);
   // The Sweep dialog: a profile region + the path to sweep it along. Both are
   // armed by clicking the viewport (like Revolve); `armed` says which slot the
   // next click fills, and filling the profile hands the arming to the path.
@@ -1624,7 +1633,7 @@ export default function App() {
   // hidden, and was therefore unpickable — the arming could never be satisfied),
   // and a region outranks the body geometry in front of it in the picker, so a
   // profile behind a solid stays reachable.
-  const armingRevolveProfile = revolveDialog?.armed === "profile";
+  const armingRevolveProfile = revolve.dialog?.armed === "profile";
   const armingSketchProfile =
     armingRevolveProfile || !!extrudeDialog?.arming || !!sweepDialog?.armed || !!loftDialog?.arming;
   // Arming that rides the NORMAL selection raycaster rather than `picking` mode
@@ -2013,7 +2022,7 @@ export default function App() {
   const anyDialogOpen =
     !!planeDialog ||
     !!extrudeDialog ||
-    !!revolveDialog ||
+    !!revolve.dialog ||
     !!sweepDialog ||
     !!loftDialog ||
     !!dressUpDialog ||
@@ -2461,7 +2470,7 @@ export default function App() {
       ...(extrudePreview
         ? extrudePreview.map((p) => ({ mesh: p.mesh, ...(extrudeCutting ? { variant: "cut" as const } : {}) }))
         : []),
-      ...(revolvePreview ? [{ mesh: revolvePreview }] : []),
+      ...(revolve.preview ? [{ mesh: revolve.preview }] : []),
       ...patternGhosts,
       ...mirrorGhost,
       // The chamfer/fillet delta: what the operation fills in and what it carves
@@ -2469,7 +2478,7 @@ export default function App() {
       ...(dressUpPreview?.added ?? []).map((mesh) => ({ mesh, variant: "fill" as const })),
       ...(dressUpPreview?.removed ?? []).map((mesh) => ({ mesh, variant: "cut" as const })),
     ],
-    [extrudePreview, extrudeCutting, revolvePreview, patternGhosts, mirrorGhost, dressUpPreview],
+    [extrudePreview, extrudeCutting, revolve.preview, patternGhosts, mirrorGhost, dressUpPreview],
   );
 
   // Feature ids that produced an actual rendered body — what the Solids list
@@ -3159,58 +3168,6 @@ export default function App() {
     };
   }, [extrudeDialog, extrudeDialogProfiles, extrudeTargetSatisfied, extrudeDistanceSatisfied, doc, ready]);
 
-  // Live ghost preview of the revolve dialog: once a profile + axis are armed,
-  // build a throwaway doc with that revolve (mirrors createRevolve, minus the
-  // setDoc / hide-sketch), regenerate just the new body, and show it translucent.
-  // Re-runs as the angle / symmetric / arming change. Debounced so dragging the
-  // angle field stays responsive.
-  useEffect(() => {
-    if (!revolveDialog || revolveDialog.editId || !revolveDialog.profile || !revolveDialog.axis) {
-      // Editing shows the committed revolve live; the create-only ghost would
-      // double the body.
-      setRevolvePreview(null);
-      setRevolvePreviewError(null);
-      return;
-    }
-    const kernel = kernelRef.current;
-    if (!ready || !kernel) return;
-    const angle = revolveDialog.mode === "full" ? "360" : revolveDialog.degrees;
-    const symmetric = revolveDialog.mode === "angle" && revolveDialog.symmetric;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      const { doc: previewDoc, id } = addRevolve(doc, revolveDialog.profile!, revolveDialog.axis!, angle, symmetric);
-      const previewResolved = resolveDocument(previewDoc);
-      const resolveErr = previewResolved.errors[id];
-      if (resolveErr) {
-        setRevolvePreview(null);
-        setRevolvePreviewError(resolveErr);
-        return;
-      }
-      kernel
-        .regenerate(previewResolved.features)
-        .then(({ results }) => {
-          if (cancelled) return;
-          const hit = results.find((r) => r.id === id);
-          if (hit?.ok) {
-            setRevolvePreview(hit.mesh);
-            setRevolvePreviewError(null);
-          } else {
-            setRevolvePreview(null);
-            setRevolvePreviewError(hit && !hit.ok ? hit.error : "Preview failed.");
-          }
-        })
-        .catch((err) => {
-          if (cancelled) return;
-          setRevolvePreview(null);
-          setRevolvePreviewError(String(err?.message ?? err));
-        });
-    }, 120);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [revolveDialog, doc, ready]);
-
   // Open the chamfer/fillet dialog. Always available: the edges and faces to
   // dress are armed inside it. Whatever edges/faces are already selected prefill
   // the list (and place the dialog beside them); with nothing selected it opens
@@ -3699,116 +3656,17 @@ export default function App() {
   // the dialog by clicking the viewport. If a profile region + axis line happen
   // to be pre-selected, they prefill the roles; otherwise the profile role is
   // armed and waiting for the first click.
-  const openRevolve = () => {
-    const pre = revolveInputs;
+  /** Where a revolve panel should sit: over the profile the user is working on
+   *  when its screen position is known, else a fixed spot near the top left. */
+  const revolvePanelAt = () => {
     const world = profileAnchorWorld();
-    const s = (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
-    setRevolveDialog({
-      profile: pre?.profile ?? null,
-      axis: pre?.axis ?? null,
-      armed: pre ? null : "profile",
-      mode: "full",
-      degrees: "90",
-      symmetric: false,
-      x: s.x,
-      y: s.y,
-    });
+    return (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
   };
-
-  /** Arm the Revolve dialog's PROFILE slot, cancelling an armed axis on the way.
-   *  The two roles read different click streams — profile goes through the
-   *  selection raycaster, axis through picking mode — so without the cancel both
-   *  stay live: the axis button keeps its armed styling and the next click still
-   *  fills the axis. */
-  const armRevolveProfile = (clear = false) => {
-    if (picking && pickPurpose === "revolveAxis") {
-      setPicking(false);
-      setPickPurpose("sketch");
-    }
-    setRevolveDialog((d) => (d ? { ...d, ...(clear ? { profile: null } : {}), armed: "profile" } : d));
-  };
-
-  /** Arm the Revolve dialog's AXIS slot. Shared by the dialog's own button and
-   *  by the auto-advance that follows a profile pick, so a two-slot tool costs
-   *  two viewport clicks rather than click-button-click-button-click. */
-  const armRevolveAxis = () => {
-    setRevolveDialog((d) => (d ? { ...d, armed: null } : d));
-    setPickPurpose("revolveAxis");
-    setPicking(true);
-  };
-
-  const closeRevolveDialog = () => {
-    setRevolveDialog(null);
-    // Drop any in-flight "pick a plane for the axis" mode the dialog armed.
-    if (pickPurpose === "revolveAxis") {
-      setPicking(false);
-      setPickPurpose("sketch");
-    }
-    cancelEdit();
-  };
-
-  // Live-preview a revolve edit.
-  useEffect(() => {
-    const d = revolveDialog;
-    if (!d?.editId || !d.profile || !d.axis) return;
-    const angle = d.mode === "full" ? "360" : d.degrees;
-    const symmetric = d.mode === "angle" && d.symmetric;
-    if (!shouldLiveApply(JSON.stringify({ e: d.editId, p: d.profile, a: d.axis, angle, symmetric }))) return;
-    setDoc((prev) => updateRevolve(prev, d.editId!, d.profile!, d.axis!, angle, symmetric), `edit:${d.editId}`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    revolveDialog?.editId,
-    revolveDialog?.profile,
-    revolveDialog?.axis,
-    revolveDialog?.mode,
-    revolveDialog?.degrees,
-    revolveDialog?.symmetric,
-  ]);
-
-  const createRevolve = () => {
-    if (!revolveDialog || !revolveDialog.profile || !revolveDialog.axis) return;
-    // Full revolve = 360°; symmetric is meaningless there, so force it off.
-    const angle = revolveDialog.mode === "full" ? "360" : revolveDialog.degrees;
-    const symmetric = revolveDialog.mode === "angle" && revolveDialog.symmetric;
-    // Hide the originating sketch once it's been consumed (like extrude does).
-    // A body-face profile has no sketch to hide — the face stays part of its body.
-    const prof = revolveDialog.profile;
-    const hideSource = (d: Document) => (prof.kind === "sketchRegion" ? setSuppressed(d, prof.sketchId, true) : d);
-    if (revolveDialog.editId) {
-      const next = hideSource(updateRevolve(doc, revolveDialog.editId, prof, revolveDialog.axis, angle, symmetric));
-      setDoc(next);
-      selectFeature(revolveDialog.editId);
-      commitEdit();
-      closeRevolveDialog();
-      return;
-    }
-    const { doc: created } = addRevolve(doc, prof, revolveDialog.axis, angle, symmetric);
-    const next = hideSource(created);
-    setDoc(next);
-    selectFeature(null);
-    closeRevolveDialog();
-  };
-
-  // Re-open the revolve dialog to edit in place, seeded from the feature.
+  const openRevolve = () => revolve.open(revolveInputs, revolvePanelAt());
+  /** Re-open the revolve dialog to edit in place, seeded from the feature. */
   const editRevolve = (id: string) => {
     const f = doc.features.find((x) => x.id === id);
-    if (f?.type !== "revolve") return;
-    beginEdit(f);
-    selectFeature(id);
-    const full = f.angle === "360";
-    const world = profileAnchorWorld();
-    const s = (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
-    setRevolveDialog({
-      profile: f.profile,
-      axis: f.axis,
-      armed: null,
-      mode: full ? "full" : "angle",
-      degrees: full ? "90" : f.angle,
-      symmetric: f.symmetric,
-      x: s.x,
-      y: s.y,
-      editId: id,
-    });
+    if (f?.type === "revolve") revolve.edit(f, revolvePanelAt());
   };
 
   // Sweep needs a profile region + a path entity (line / arc / spline). They may
@@ -3905,12 +3763,12 @@ export default function App() {
         // number of presses per tool. Disarming a slot without closing the
         // dialog is still available by clicking the slot itself.
         //
-        // Each close() already drops its own pick mode (closeRevolveDialog and
+        // Each close() already drops its own pick mode (revolve.close and
         // closePattern clear `picking`/`pickPurpose`, closeMirror calls
         // cancelMirrorPlanePick, closeExtrudeDialog clears pickingUpFace), and a
         // slot armed in dialog state goes with the dialog object.
         else if (planeDialog) closePlaneDialog();
-        else if (revolveDialog) closeRevolveDialog();
+        else if (revolve.dialog) revolve.close();
         else if (mirrorDialog) closeMirror();
         else if (patternDialog) closePattern();
         else if (shellDialog) closeShellDialog();
@@ -4090,7 +3948,7 @@ export default function App() {
           if (!extrudeDialog) openExtrudeDialog();
           break;
         case "model.revolve":
-          if (!revolveDialog) openRevolve();
+          if (!revolve.dialog) openRevolve();
           break;
         case "model.sweep":
           if (!sweepDialog) openSweep();
@@ -4141,7 +3999,7 @@ export default function App() {
     extrudeDialog,
     pickingUpFace,
     revolveInputs,
-    revolveDialog,
+    revolve.dialog,
     mirrorDialog,
     patternDialog,
     sweepInputs,
@@ -5016,7 +4874,7 @@ export default function App() {
         flashMsg("The axis must be a straight sketch line, a body edge, a plane, or a face.");
         return;
       }
-      setRevolveDialog((d) => (d ? { ...d, axis: { sketchId: pick.sketchId, entityId: pick.entityId } } : d));
+      revolve.setDialog((d) => (d ? { ...d, axis: { sketchId: pick.sketchId, entityId: pick.entityId } } : d));
     } else if (pick.kind === "bodyEdge") {
       // A straight body edge is the axis line itself. Stored by persistent name
       // + the mid/length fingerprint, like a dress-up's edges, so it survives an
@@ -5028,7 +4886,7 @@ export default function App() {
         return; // keep the pick armed
       }
       const fp = m ? edgeFingerprint(m.mesh.edges, pick.edgeId) : null;
-      setRevolveDialog((d) =>
+      revolve.setDialog((d) =>
         d
           ? {
               ...d,
@@ -5044,17 +4902,17 @@ export default function App() {
       if (!center) return;
       const faceName = m ? faceNameOf(m.mesh.faces, pick.faceId) : undefined;
       const normal = (m && faceNormal(m.mesh.faces, pick.faceId)) || undefined;
-      setRevolveDialog((d) =>
+      revolve.setDialog((d) =>
         d ? { ...d, axis: { face: { featureId: pick.featureId, faceId: pick.faceId, faceName, center, normal } } } : d,
       );
     } else {
-      setRevolveDialog((d) => (d ? { ...d, axis: { plane: pick.ref } } : d));
+      revolve.setDialog((d) => (d ? { ...d, axis: { plane: pick.ref } } : d));
     }
     setPicking(false);
     setPickPurpose("sketch");
     // Same auto-advance the other way round: axis first, so the still-empty
     // profile slot is what the next click fills.
-    if (!revolveDialog?.profile) setRevolveDialog((d) => (d ? { ...d, armed: "profile" } : d));
+    if (!revolve.dialog?.profile) revolve.setDialog((d) => (d ? { ...d, armed: "profile" } : d));
   };
 
   const createPlane = () => {
@@ -8926,15 +8784,15 @@ export default function App() {
                 </DraggableDialog>
               );
             })()}
-          {revolveDialog &&
+          {revolve.dialog &&
             (() => {
-              const prof = revolveDialog.profile;
+              const prof = revolve.dialog.profile;
               const profileLabel = !prof
                 ? null
                 : prof.kind === "bodyFace"
                   ? (doc.features.find((f) => f.id === prof.featureId)?.name ?? "Body") + " · face"
                   : (doc.features.find((f) => f.id === prof.sketchId)?.name ?? "Region");
-              const ax = revolveDialog.axis;
+              const ax = revolve.dialog.axis;
               const axisLabel = !ax
                 ? null
                 : "plane" in ax
@@ -8946,29 +8804,29 @@ export default function App() {
                       : (doc.features.find((f) => f.id === ax.sketchId)?.name ?? "Sketch") + " · line";
               return (
                 <RevolveDialog
-                  editing={!!revolveDialog.editId}
-                  x={revolveDialog.x}
-                  y={revolveDialog.y}
+                  editing={!!revolve.dialog.editId}
+                  x={revolve.dialog.x}
+                  y={revolve.dialog.y}
                   profileLabel={profileLabel}
-                  profileArmed={revolveDialog.armed === "profile"}
+                  profileArmed={revolve.dialog.armed === "profile"}
                   axisLabel={axisLabel}
                   axisArmed={picking && pickPurpose === "revolveAxis"}
-                  mode={revolveDialog.mode}
-                  degrees={revolveDialog.degrees}
-                  symmetric={revolveDialog.symmetric}
-                  previewError={revolvePreviewError}
-                  onArmProfile={() => armRevolveProfile()}
-                  onClearProfile={() => armRevolveProfile(true)}
-                  onArmAxis={armRevolveAxis}
+                  mode={revolve.dialog.mode}
+                  degrees={revolve.dialog.degrees}
+                  symmetric={revolve.dialog.symmetric}
+                  previewError={revolve.previewError}
+                  onArmProfile={() => revolve.armProfile()}
+                  onClearProfile={() => revolve.armProfile(true)}
+                  onArmAxis={revolve.armAxis}
                   onClearAxis={() => {
-                    setRevolveDialog((d) => (d ? { ...d, axis: null } : d));
-                    armRevolveAxis();
+                    revolve.setDialog((d) => (d ? { ...d, axis: null } : d));
+                    revolve.armAxis();
                   }}
-                  onModeChange={(mode) => setRevolveDialog((d) => (d ? { ...d, mode } : d))}
-                  onDegreesChange={(degrees) => setRevolveDialog((d) => (d ? { ...d, degrees } : d))}
-                  onSymmetricChange={(symmetric) => setRevolveDialog((d) => (d ? { ...d, symmetric } : d))}
-                  onConfirm={createRevolve}
-                  onCancel={closeRevolveDialog}
+                  onModeChange={(mode) => revolve.setDialog((d) => (d ? { ...d, mode } : d))}
+                  onDegreesChange={(degrees) => revolve.setDialog((d) => (d ? { ...d, degrees } : d))}
+                  onSymmetricChange={(symmetric) => revolve.setDialog((d) => (d ? { ...d, symmetric } : d))}
+                  onConfirm={revolve.confirm}
+                  onCancel={revolve.close}
                 />
               );
             })()}
@@ -9018,151 +8876,45 @@ export default function App() {
             />
           )}
           {planeDialog && (
-            <DraggableDialog
-              className="feature-dialog"
-              style={{ left: "50%", top: 64 }}
-              baseTransform="translateX(-50%)"
-            >
-              <div className="ed-title" data-drag-handle>
-                {planeDialog.editId ? "Edit plane" : "Reference plane"}
-              </div>
-              <label className="ed-field">
-                <span>Method</span>
-                <select
-                  value={planeDialog.method}
-                  onChange={(e) => {
-                    const method = e.target.value as PlaneMethod;
-                    setPlaneDialog((d) => (d ? { ...d, method } : d));
-                    // Arm the first pick the method needs: a plane/face for all but
-                    // "through", which collects vertices/sketch points via clicks.
-                    armPlanePick(method === "through" ? "point" : "base");
-                  }}
-                >
-                  <option value="offset">Offset</option>
-                  <option value="midplane">Midplane</option>
-                  <option value="angle">At angle</option>
-                  <option value="through">Through 3 points</option>
-                </select>
-              </label>
-
-              {planeDialog.method !== "through" && (
-                <div className="ed-field">
-                  <span>{planeDialog.method === "midplane" ? "First" : "Base"}</span>
-                  <PickSlot
-                    noun="a plane or face"
-                    armed={planePick === "base"}
-                    value={planeDialog.base && planeRefLabel(planeDialog.base)}
-                    title={planeDialog.base ? planeRefLabel(planeDialog.base) : undefined}
-                    onArm={() => armPlanePick("base")}
-                    onClear={() => {
-                      setPlaneDialog((d) => (d ? { ...d, base: null } : d));
-                      armPlanePick("base");
-                    }}
-                  />
-                </div>
-              )}
-
-              {planeDialog.method === "offset" && (
-                <label className="ed-field">
-                  <span>Offset</span>
-                  <input
-                    value={planeDialog.offset}
-                    onChange={(e) => setPlaneDialog((d) => (d ? { ...d, offset: e.target.value } : d))}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") createPlane();
-                      else if (e.key === "Escape") closePlaneDialog();
-                    }}
-                  />
-                </label>
-              )}
-
-              {planeDialog.method === "midplane" && (
-                <div className="ed-field">
-                  <span>Second</span>
-                  <PickSlot
-                    noun="a plane or face"
-                    armed={planePick === "refB"}
-                    value={planeDialog.refB && planeRefLabel(planeDialog.refB)}
-                    title={planeDialog.refB ? planeRefLabel(planeDialog.refB) : undefined}
-                    onArm={() => armPlanePick("refB")}
-                    onClear={() => {
-                      setPlaneDialog((d) => (d ? { ...d, refB: null } : d));
-                      armPlanePick("refB");
-                    }}
-                  />
-                </div>
-              )}
-
-              {planeDialog.method === "angle" && (
-                <>
-                  <div className="ed-field">
-                    <span>Hinge</span>
-                    <div className="ed-modes" style={{ width: 112 }}>
-                      {(["u", "v"] as const).map((ax) => (
-                        <button
-                          key={ax}
-                          className={planeDialog.angleAxis === ax ? "active" : ""}
-                          onClick={() => setPlaneDialog((d) => (d ? { ...d, angleAxis: ax } : d))}
-                        >
-                          {ax.toUpperCase()}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <label className="ed-field">
-                    <span>Angle°</span>
-                    <input
-                      value={planeDialog.angle}
-                      onChange={(e) => setPlaneDialog((d) => (d ? { ...d, angle: e.target.value } : d))}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") createPlane();
-                        else if (e.key === "Escape") closePlaneDialog();
-                      }}
-                    />
-                  </label>
-                </>
-              )}
-
-              {planeDialog.method === "through" && (
-                <div className="ed-field">
-                  <span>Points</span>
-                  {/* A counting slot: it takes three clicks, so the button
-                      carries the tally alongside the imperative, and it only
-                      reads as FILLED at 3/3 — where it stops taking clicks and
-                      ✕ starts the three over. */}
-                  <PickSlot
-                    noun="points"
-                    armed={planePick === "point" && planeDialog.points.length < 3}
-                    value={planeDialog.points.length === 3 ? "3/3 picked" : null}
-                    clearTitle="Clear the points and pick again"
-                    onArm={() => armPlanePick("point")}
-                    onClear={() => {
-                      setPlaneDialog((d) => (d ? { ...d, points: [] } : d));
-                      armPlanePick("point");
-                    }}
-                  >
-                    {`Select points (${planeDialog.points.length}/3)`}
-                  </PickSlot>
-                </div>
-              )}
-
-              <div className="ed-actions">
-                <button
-                  className="ed-primary"
-                  disabled={
-                    planeDialog.method === "through"
-                      ? planeDialog.points.length !== 3
-                      : planeDialog.method === "midplane"
-                        ? !planeDialog.base || !planeDialog.refB
-                        : !planeDialog.base
-                  }
-                  onClick={createPlane}
-                >
-                  {planeDialog.editId ? "Done" : "Create"}
-                </button>
-                <button onClick={closePlaneDialog}>Cancel</button>
-              </div>
-            </DraggableDialog>
+            <PlaneDialog
+              editing={!!planeDialog.editId}
+              method={planeDialog.method}
+              baseLabel={planeDialog.base ? planeRefLabel(planeDialog.base) : null}
+              baseArmed={planePick === "base"}
+              refBLabel={planeDialog.refB ? planeRefLabel(planeDialog.refB) : null}
+              refBArmed={planePick === "refB"}
+              offset={planeDialog.offset}
+              angleAxis={planeDialog.angleAxis}
+              angle={planeDialog.angle}
+              pointCount={planeDialog.points.length}
+              pointsArmed={planePick === "point"}
+              onMethodChange={(method) => {
+                setPlaneDialog((d) => (d ? { ...d, method } : d));
+                // Arm the first pick the method needs: a plane/face for all but
+                // "through", which collects vertices/sketch points via clicks.
+                armPlanePick(method === "through" ? "point" : "base");
+              }}
+              onArmBase={() => armPlanePick("base")}
+              onClearBase={() => {
+                setPlaneDialog((d) => (d ? { ...d, base: null } : d));
+                armPlanePick("base");
+              }}
+              onArmRefB={() => armPlanePick("refB")}
+              onClearRefB={() => {
+                setPlaneDialog((d) => (d ? { ...d, refB: null } : d));
+                armPlanePick("refB");
+              }}
+              onOffsetChange={(offset) => setPlaneDialog((d) => (d ? { ...d, offset } : d))}
+              onAngleAxisChange={(angleAxis) => setPlaneDialog((d) => (d ? { ...d, angleAxis } : d))}
+              onAngleChange={(angle) => setPlaneDialog((d) => (d ? { ...d, angle } : d))}
+              onArmPoints={() => armPlanePick("point")}
+              onClearPoints={() => {
+                setPlaneDialog((d) => (d ? { ...d, points: [] } : d));
+                armPlanePick("point");
+              }}
+              onConfirm={createPlane}
+              onCancel={closePlaneDialog}
+            />
           )}
           {editingTransform && (
             <TransformDialog
