@@ -273,11 +273,12 @@ _not_ repeated here; this section is the rest.
   - [ ] **1a.** Extract the JSX tail. `BooleanDialog`, `SettingsDialog`,
         `DocumentsDialog` and `ReportDialog` are the pattern to copy: resolved
         labels and flags in, granular callbacks out, neither a setter nor `doc`
-        crossing the boundary. **Nine done — Sweep, Loft, DXF import, Mirror,
-        Revolve, both Transform panels and the reference plane.** The table below
-        says what is left. Note 1a does **not** reach 7,000 on its own: the nine
-        easiest dialogs were worth ~435 lines, so the rest of item 1's total has
-        to come from 1b–1d.
+        crossing the boundary. **Eleven done — Sweep, Loft, DXF import, Mirror,
+        Revolve, both Transform panels, the reference plane, Chamfer/Fillet and
+        Shell — taking App.tsx 9,891 → 9,169.** Only Extrude and Pattern are
+        left, and both want 1b first; see the table below. Note 1a does **not**
+        reach 7,000 on its own: eleven dialogs were worth ~720 lines, so the rest
+        of item 1's total has to come from 1b–1d.
   - [ ] **1b.** Move each dialog's state machine behind its own hook
         (`useExtrudeDialog`, `useDressUpDialog`, `useShellDialog`,
         `useTransformSession`) — each owns 3-8 `useState` plus its effects today.
@@ -316,14 +317,15 @@ such closure) and the Transform panels entangled (they had none). What remains:
 
 | block           | lines | pick-setters | pre-JSX closures |
 | --------------- | ----- | ------------ | ---------------- |
-| `dressUpDialog` | 153   | 0            | 9                |
-| `shellDialog`   | 106   | 0            | 4                |
 | `extrudeDialog` | 207   | 5            | 0                |
 | `patternDialog` | 293   | 2            | 7                |
 
-Dress-up and Shell have no pick-setters, so their closures are label/row helpers
-that can become props or move inside the component — take those next.
-**Extrude and Pattern are the real 1b work**:
+The zero-pick-setter blocks are all out. Dress-up confirmed the second half of the
+rule: nine closures sounds entangled, but with no pick-setters they were row and
+label builders, and the right move was neither to carry them into the component
+nor to leave them — it was to lift the arithmetic into pure functions
+(`ui/dressUpRows.ts`) and finally test it. **Extrude and Pattern are the real 1b
+work**:
 Pattern's `setWorldRef` calls `setPicking(false)` and `setPickPurpose("sketch")`
 to cancel an in-flight pick while rewriting the dialog, and handing that to a
 presentational component means threading the pick setters through it. Expect more
