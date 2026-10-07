@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildDressUpGroups, dressUpCountLabel, plural, type PickRow, type StoredTargetRow } from "./dressUpRows";
+import {
+  buildDressUpGroups,
+  dressUpCountLabel,
+  groupPickRows,
+  plural,
+  type PickRow,
+  type PickRowSpec,
+  type StoredTargetRow,
+} from "./pickRows";
 
 const noop = () => {};
 const pick = (bodyId: string | null, kind: "edge" | "face"): PickRow => ({ bodyId, kind, onRemove: noop });
@@ -10,14 +18,48 @@ const stored = (targetId: string, edges: number, faces: number): StoredTargetRow
   onRemove: noop,
 });
 const names = (id: string) => ({ b1: "Box 1", b2: "Box 2" })[id] ?? id;
-const labels = (gs: ReturnType<typeof buildDressUpGroups>) =>
-  gs.map((g) => [g.bodyLabel, ...g.items.map((i) => i.label)]);
+const labels = (gs: ReturnType<typeof buildDressUpGroups>) => gs.map((g) => [g.label, ...g.items.map((i) => i.label)]);
 
 describe("plural", () => {
   it("only pluralises away from one", () => {
     expect(plural(1, "edge")).toBe("1 edge");
     expect(plural(0, "edge")).toBe("0 edges");
     expect(plural(3, "face")).toBe("3 faces");
+  });
+});
+
+describe("groupPickRows", () => {
+  const spec = (key: string, kind: string, exact = false): PickRowSpec => ({
+    key,
+    label: names(key),
+    kind,
+    exact,
+    onRemove: noop,
+  });
+
+  it("keeps groups in first-seen order, not key order", () => {
+    const gs = groupPickRows([spec("b2", "Face"), spec("b1", "Face")]);
+    expect(gs.map((g) => g.key)).toEqual(["b2", "b1"]);
+  });
+
+  it("numbers within a group and within a kind", () => {
+    const gs = groupPickRows([spec("b1", "Region"), spec("b1", "Text"), spec("b1", "Region")]);
+    expect(gs[0].items.map((i) => i.label)).toEqual(["Region 1", "Text 1", "Region 2"]);
+  });
+
+  // An exact row keeps its kind as the whole label, and — the part that matters —
+  // must not be counted when the numbered rows beside it are tallied.
+  it("leaves an exact row out of the numbering", () => {
+    const gs = groupPickRows([spec("b1", "Edge 7", true), spec("b1", "Edge")]);
+    expect(gs[0].items.map((i) => i.label)).toEqual(["Edge 7", "Edge 1"]);
+  });
+
+  it("takes the group label from the first row that opened it", () => {
+    const gs = groupPickRows([
+      { ...spec("b1", "Face"), label: "First" },
+      { ...spec("b1", "Face"), label: "Second" },
+    ]);
+    expect(gs[0].label).toBe("First");
   });
 });
 
@@ -54,7 +96,7 @@ describe("buildDressUpGroups", () => {
   it("still gives an unresolved pick a row, grouped under the empty id", () => {
     const gs = buildDressUpGroups([], [pick(null, "edge")], names);
     expect(gs).toHaveLength(1);
-    expect(gs[0].bodyId).toBe("");
+    expect(gs[0].key).toBe("");
     expect(gs[0].items.map((i) => i.label)).toEqual(["Edge 1"]);
   });
 

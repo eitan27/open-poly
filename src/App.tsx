@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -194,9 +193,10 @@ import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
+import { ExtrudeDialog } from "./ui/ExtrudeDialog";
 import { ShellDialog } from "./ui/ShellDialog";
 import { DressUpDialog } from "./ui/DressUpDialog";
-import { buildDressUpGroups, dressUpCountLabel } from "./ui/dressUpRows";
+import { buildDressUpGroups, dressUpCountLabel, groupPickRows, type PickRowSpec } from "./ui/pickRows";
 import { PlaneDialog } from "./ui/PlaneDialog";
 import { TransformArmingDialog, TransformDialog } from "./ui/TransformDialog";
 import { RevolveDialog } from "./ui/RevolveDialog";
@@ -204,7 +204,7 @@ import { MirrorDialog } from "./ui/MirrorDialog";
 import { DxfImportDialog } from "./ui/DxfImportDialog";
 import { LoftDialog } from "./ui/LoftDialog";
 import { SweepDialog } from "./ui/SweepDialog";
-import { PickButton, PickedRow, PickSlot } from "./ui/PickSlot";
+import { PickSlot } from "./ui/PickSlot";
 import { DraggableDialog } from "./ui/DraggableDialog";
 import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
 import { DimValueInput, type VarOption } from "./ui/DimValueInput";
@@ -2911,30 +2911,26 @@ export default function App() {
       isSubPart(id)
         ? partAppearance(doc, id, DEFAULT_SOLID_COLOR).name
         : (doc.features.find((f) => f.id === id)?.name ?? fallback);
-    const groups: { key: string; label: string; items: { label: string; remove: () => void }[] }[] = [];
-    const add = (key: string, label: string, kind: string, remove: () => void) => {
-      let g = groups.find((x) => x.key === key);
-      if (!g) groups.push((g = { key, label, items: [] }));
-      const n = g.items.filter((q) => q.label.startsWith(kind)).length + 1;
-      g.items.push({ label: `${kind} ${n}`, remove });
-    };
     // The stored rows come first — they're the profiles the edited feature
     // already had — then the live picks, matching extrudeDialogProfiles.
+    const specs: PickRowSpec[] = [];
+    const push = (id: string, fallback: string, kind: string, onRemove: () => void) =>
+      specs.push({ key: id, label: nameOf(id, fallback), kind, onRemove });
     (extrudeDialog?.stored ?? []).forEach((p, i) => {
       const drop = () => setExtrudeDialog((d) => (d ? { ...d, stored: d.stored.filter((_, k) => k !== i) } : d));
-      if (p.kind === "bodyFace") add(p.featureId, nameOf(p.featureId, "Body"), "Face", drop);
-      else if (p.kind === "sketchRegion") add(p.sketchId, nameOf(p.sketchId, "Sketch"), "Region", drop);
-      else add(p.sketchId, nameOf(p.sketchId, "Sketch"), "Text", drop);
+      if (p.kind === "bodyFace") push(p.featureId, "Body", "Face", drop);
+      else if (p.kind === "sketchRegion") push(p.sketchId, "Sketch", "Region", drop);
+      else push(p.sketchId, "Sketch", "Text", drop);
     });
     (extrudeDialog?.picks ?? []).forEach((p, i) => {
       const drop = () => setExtrudeDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== i) } : d));
-      if (p.kind === "face") add(p.featureId, nameOf(p.featureId, "Body"), "Face", drop);
-      else if (p.kind === "sketchFace") add(p.sketchId, nameOf(p.sketchId, "Sketch"), "Region", drop);
+      if (p.kind === "face") push(p.featureId, "Body", "Face", drop);
+      else if (p.kind === "sketchFace") push(p.sketchId, "Sketch", "Region", drop);
       else if (p.kind === "sketchEntity") {
-        add(p.sketchId, nameOf(p.sketchId, "Sketch"), sketchEntityIsText(p) ? "Text" : "Edges", drop);
+        push(p.sketchId, "Sketch", sketchEntityIsText(p) ? "Text" : "Edges", drop);
       }
     });
-    return groups;
+    return groupPickRows(specs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [extrudeDialog?.picks, extrudeDialog?.stored, doc]);
 
@@ -8322,211 +8318,96 @@ export default function App() {
             </div>
           ) : null}
           {extrudeDialog && (
-            <DraggableDialog className="feature-dialog" style={{ left: extrudeDialog.x, top: extrudeDialog.y }}>
-              <div className="ed-title" data-drag-handle>
-                {extrudeDialog.editId ? "Edit extrude" : "Extrude"}
-                {!extrudeDialog.editId && extrudeDialogProfiles.length > 1
-                  ? ` (${extrudeDialogProfiles.length} profiles)`
-                  : ""}
-              </div>
-              {/* An accumulating slot (see PickSlot.tsx): one row per picked
-                  profile, and a button that keeps the arming live for the next.
-                  Clicking a listed profile in the viewport removes it. Profiles
-                  taken off a part are grouped under it, because in Add/Remove
-                  that is the body each one acts on. */}
-              <div className="bool-group-label">Profiles</div>
-              {extrudeProfileGroups.map((g) => (
-                <Fragment key={g.key}>
-                  {extrudeProfileGroups.length > 1 && <div className="bool-group-label ed-subgroup">{g.label}</div>}
-                  {g.items.map((item) => (
-                    <PickedRow key={item.label} label={item.label} clearTitle="Remove" onClear={item.remove} />
-                  ))}
-                </Fragment>
-              ))}
-              <PickButton
-                noun="a profile"
-                armed={extrudeDialog.arming}
-                wide
-                onClick={() => {
-                  // The two slots read the same click stream and the face is
-                  // checked first, so asking for profiles has to take the stream
-                  // back — otherwise the button lights up and the clicks still
-                  // go to the face.
-                  if (pickingUpFace) setPickingUpFace(false);
-                  setExtrudeDialog((d) => (d ? { ...d, arming: !d.arming } : d));
-                }}
-              >
-                {extrudeDialog.arming
-                  ? "Select profiles (Esc to stop)"
-                  : extrudeDialog.picks.length
-                    ? "Add more profiles"
-                    : undefined}
-              </PickButton>
-              <div className="ed-modes">
-                {(["new", "add", "remove"] as const).map((m) => (
-                  <button
-                    key={m}
-                    className={extrudeDialog.mode === m ? "active" : ""}
-                    onClick={() =>
-                      setExtrudeDialog((d) =>
-                        // Through All is only meaningful for a cut (Remove); switching
-                        // to New or Add drops it back to Blind.
-                        d
-                          ? {
-                              ...d,
-                              mode: m,
-                              modeTouched: true,
-                              extent: m !== "remove" && d.extent === "throughAll" ? "blind" : d.extent,
-                            }
-                          : d,
-                      )
-                    }
-                  >
-                    {m === "new" ? "New" : m === "add" ? "Add" : "Remove"}
-                  </button>
-                ))}
-              </div>
-              {extrudeDialog.mode !== "new" && extrudeNeedsTarget && (
-                <label className="ed-field">
-                  <span>Target</span>
-                  <select
-                    value={extrudeDialog.targetId ?? ""}
-                    onChange={(e) =>
-                      setExtrudeDialog((d) => (d ? { ...d, targetId: e.target.value || null, modeTouched: true } : d))
-                    }
-                  >
-                    <option value="" disabled>
-                      Select a part…
-                    </option>
-                    {booleanCandidates.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {extrudeDialog.mode !== "new" && !extrudeNeedsTarget && extrudeDialogProfiles.length > 0 && (
-                <p className="ed-hint">
-                  {extrudeDialog.mode === "add" ? "Added to" : "Cut from"} the part each face belongs to.
-                </p>
-              )}
-              <label className="ed-field">
-                <span>Extent</span>
-                <select
-                  value={extrudeDialog.extent}
-                  onChange={(e) => {
-                    const extent = e.target.value as ExtrudeExtent;
-                    // Arming the face pick takes the click stream away from the
-                    // profile list (handlePick checks pickingUpFace FIRST), so it
-                    // must not happen while the profile slot is still the one
-                    // with a job to do: with no profile picked, both slots glowed
-                    // and the face silently won every click. The profile comes
-                    // first, always; the face arms when the extent asks for it
-                    // AND there is something to extrude — and then the profile
-                    // list stands down so only one slot is ever live.
-                    const armFace = extent === "upToFace" && extrudeDialogProfiles.length > 0;
-                    setExtrudeDialog((d) => (d ? { ...d, extent, ...(armFace ? { arming: false } : {}) } : d));
-                    setPickingUpFace(armFace);
-                    // This is still a <select> arming a viewport pick — the shape
-                    // whose first canvas click gets swallowed on macOS (see the
-                    // Transform dialog's axis control). It no longer bites on the
-                    // path people actually hit, because with no profile yet the
-                    // dropdown arms nothing at all; the remaining path is
-                    // switching the extent AFTER picking a profile. If it ever
-                    // resurfaces, this control has to stop being a <select> the
-                    // way Transform's, Pattern's and Mirror's did.
-                    if (extent === "upToFace") releaseFocus();
-                  }}
-                >
-                  <option value="blind">Blind</option>
-                  <option value="symmetric">Symmetric</option>
-                  {/* Through All only makes sense as a cut, so it's shown for Remove only. */}
-                  {extrudeDialog.mode === "remove" && <option value="throughAll">Through All</option>}
-                  <option value="upToFace">Up to face</option>
-                  {/* Up to next reaches the nearest body face ahead; like Up to
-                      face it's offered in every mode (it errors clearly if nothing
-                      lies ahead). */}
-                  <option value="upToNext">Up to next</option>
-                </select>
-              </label>
-              {extrudeDialog.extent === "upToFace" && (
-                <div className="ed-field">
-                  <span>Face</span>
-                  <PickSlot
-                    noun="a face"
-                    armed={pickingUpFace}
-                    value={
-                      extrudeDialog.upTo
-                        ? `On ${doc.features.find((f) => f.id === extrudeDialog.upTo!.featureId)?.name ?? "body"}`
-                        : null
-                    }
-                    onArm={() =>
-                      setPickingUpFace((v) => {
-                        if (!v) setExtrudeDialog((d) => (d ? { ...d, arming: false } : d));
-                        return !v;
-                      })
-                    }
-                    onClear={() => {
-                      setExtrudeDialog((d) => (d ? { ...d, upTo: null, arming: false } : d));
-                      setPickingUpFace(true);
-                    }}
-                  />
-                </div>
-              )}
-              {extrudeDialog.extent !== "upToFace" && extrudeDialog.extent !== "upToNext" && (
-                <label className="ed-field">
-                  <span>Distance</span>
-                  <input
-                    autoFocus
-                    value={extrudeDialog.distance}
-                    onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, distance: e.target.value } : d))}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") createExtrude();
-                      // Same disarm-then-close order as the global handler: the
-                      // field has autoFocus, so Escape almost always lands here.
-                      else if (e.key === "Escape") {
-                        if (pickingUpFace) setPickingUpFace(false);
-                        else if (extrudeDialog.arming) setExtrudeDialog((d) => (d ? { ...d, arming: false } : d));
-                        else closeExtrudeDialog();
+            <ExtrudeDialog
+              editing={!!extrudeDialog.editId}
+              x={extrudeDialog.x}
+              y={extrudeDialog.y}
+              groups={extrudeProfileGroups}
+              profileCount={extrudeDialogProfiles.length}
+              arming={extrudeDialog.arming}
+              hasPicks={extrudeDialog.picks.length > 0}
+              mode={extrudeDialog.mode}
+              extent={extrudeDialog.extent}
+              needsTarget={extrudeNeedsTarget}
+              targetId={extrudeDialog.targetId ?? null}
+              targetOptions={booleanCandidates}
+              distance={extrudeDialog.distance}
+              flip={extrudeDialog.flip}
+              upToLabel={
+                extrudeDialog.upTo
+                  ? `On ${doc.features.find((f) => f.id === extrudeDialog.upTo!.featureId)?.name ?? "body"}`
+                  : null
+              }
+              faceArmed={pickingUpFace}
+              message={extrudeDistanceCheck.error ?? extrudePreviewError}
+              confirmDisabled={
+                extrudeDialogProfiles.length === 0 ||
+                (extrudeDialog.mode !== "new" && !extrudeTargetSatisfied) ||
+                (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) ||
+                !extrudeDistanceSatisfied
+              }
+              onToggleArming={() => {
+                // The two slots read the same click stream and the face is checked
+                // first, so asking for profiles has to take the stream back —
+                // otherwise the button lights up and the clicks still go to the face.
+                if (pickingUpFace) setPickingUpFace(false);
+                setExtrudeDialog((d) => (d ? { ...d, arming: !d.arming } : d));
+              }}
+              onModeChange={(mode) =>
+                setExtrudeDialog((d) =>
+                  // Through All is only meaningful for a cut (Remove); switching to
+                  // New or Add drops it back to Blind.
+                  d
+                    ? {
+                        ...d,
+                        mode,
+                        modeTouched: true,
+                        extent: mode !== "remove" && d.extent === "throughAll" ? "blind" : d.extent,
                       }
-                    }}
-                  />
-                </label>
-              )}
-              {extrudeDialog.extent !== "symmetric" && extrudeDialog.extent !== "upToFace" && (
-                <label className="ed-field ed-flip">
-                  <span>Flip direction</span>
-                  <input
-                    type="checkbox"
-                    checked={extrudeDialog.flip}
-                    onChange={(e) => setExtrudeDialog((d) => (d ? { ...d, flip: e.target.checked } : d))}
-                  />
-                </label>
-              )}
-              {/* Synchronous distance validation first (instant, kernel-free);
-                  the async ghost-build failure only shows once the field is
-                  sane. An empty field stays silent — the button is disabled
-                  but nothing is flagged as wrong. */}
-              {(extrudeDistanceCheck.error ?? extrudePreviewError) && (
-                <p className="ed-warning">{extrudeDistanceCheck.error ?? extrudePreviewError}</p>
-              )}
-              <div className="ed-actions">
-                <button
-                  className="ed-primary"
-                  disabled={
-                    extrudeDialogProfiles.length === 0 ||
-                    (extrudeDialog.mode !== "new" && !extrudeTargetSatisfied) ||
-                    (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) ||
-                    !extrudeDistanceSatisfied
-                  }
-                  onClick={createExtrude}
-                >
-                  {extrudeDialog.editId ? "Done" : "Create"}
-                </button>
-                <button onClick={closeExtrudeDialog}>Cancel</button>
-              </div>
-            </DraggableDialog>
+                    : d,
+                )
+              }
+              onTargetChange={(targetId) => setExtrudeDialog((d) => (d ? { ...d, targetId, modeTouched: true } : d))}
+              onExtentChange={(extent) => {
+                // Arming the face pick takes the click stream away from the profile
+                // list (handlePick checks pickingUpFace FIRST), so it must not
+                // happen while the profile slot is still the one with a job to do:
+                // with no profile picked, both slots glowed and the face silently
+                // won every click. The profile comes first, always; the face arms
+                // when the extent asks for it AND there is something to extrude —
+                // and then the profile list stands down so only one slot is live.
+                const armFace = extent === "upToFace" && extrudeDialogProfiles.length > 0;
+                setExtrudeDialog((d) => (d ? { ...d, extent, ...(armFace ? { arming: false } : {}) } : d));
+                setPickingUpFace(armFace);
+                // This is still a <select> arming a viewport pick — the shape whose
+                // first canvas click gets swallowed on macOS (see the Transform
+                // dialog's axis control). It no longer bites on the path people
+                // actually hit, because with no profile yet the dropdown arms
+                // nothing at all; the remaining path is switching the extent AFTER
+                // picking a profile. If it ever resurfaces, this control has to stop
+                // being a <select> the way Transform's, Pattern's and Mirror's did.
+                if (extent === "upToFace") releaseFocus();
+              }}
+              onArmFace={() =>
+                setPickingUpFace((v) => {
+                  if (!v) setExtrudeDialog((d) => (d ? { ...d, arming: false } : d));
+                  return !v;
+                })
+              }
+              onClearFace={() => {
+                setExtrudeDialog((d) => (d ? { ...d, upTo: null, arming: false } : d));
+                setPickingUpFace(true);
+              }}
+              onDistanceChange={(distance) => setExtrudeDialog((d) => (d ? { ...d, distance } : d))}
+              onFlipChange={(flip) => setExtrudeDialog((d) => (d ? { ...d, flip } : d))}
+              onConfirm={createExtrude}
+              onEscape={() => {
+                if (pickingUpFace) setPickingUpFace(false);
+                else if (extrudeDialog.arming) setExtrudeDialog((d) => (d ? { ...d, arming: false } : d));
+                else closeExtrudeDialog();
+              }}
+              onCancel={closeExtrudeDialog}
+            />
           )}
           {dressUpDialog &&
             (() => {
