@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 import { DraggableDialog } from "./DraggableDialog";
 import { PickButton, PickedRow } from "./PickSlot";
-import type { DressUpGroup } from "./dressUpRows";
+import type { PickGroup } from "./pickRows";
 
 export type DressUpOp = "chamfer" | "fillet";
 
@@ -12,7 +12,7 @@ interface Props {
   x: number;
   y: number;
   /** Rows grouped by the body they dress — see `buildDressUpGroups`. */
-  groups: DressUpGroup[];
+  groups: PickGroup[];
   /** How many bodies this one feature will dress. */
   bodyCount: number;
   /** What the picks resolve to ("5 edges + 1 face"), or null when nothing to say. */
@@ -81,8 +81,8 @@ export function DressUpDialog({
           by body, because that is how they commit — one dress-up each. */}
       <div className="bool-group-label">Edges / faces{summary ? ` — ${summary}` : ""}</div>
       {groups.map((g) => (
-        <Fragment key={g.bodyId}>
-          {groups.length > 1 && <div className="bool-group-label ed-subgroup">{g.bodyLabel}</div>}
+        <Fragment key={g.key}>
+          {groups.length > 1 && <div className="bool-group-label ed-subgroup">{g.label}</div>}
           {g.items.map((item) => (
             <PickedRow key={item.label} label={item.label} clearTitle="Remove" onClear={item.onRemove} />
           ))}
