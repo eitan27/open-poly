@@ -32,6 +32,13 @@ export function sameSelection(a: Selection | null, b: Selection | null): boolean
   return false;
 }
 
+/** The feature a selection belongs to, whatever kind of thing was picked: the
+ *  feature itself, the body a face/edge/vertex sits on, or the sketch a region or
+ *  entity came from. Every member of the union resolves to exactly one. */
+export function featureIdOf(s: Selection): string {
+  return s.kind === "feature" ? s.id : "featureId" in s ? s.featureId : s.sketchId;
+}
+
 export type DatumId = "origin" | SketchPlaneId;
 
 /** Which body-geometry kinds the picker is allowed to return (selection filters).

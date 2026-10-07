@@ -276,24 +276,13 @@ _not_ repeated here; this section is the rest.
         `doc` crossing the boundary. It did **not** reach 7,000 on its own — the
         thirteen were worth ~1,220 lines — so the rest of item 1's total has to
         come from 1b–1d.
-  - [ ] **1b.** Move each dialog's state machine behind its own hook
-        (`useExtrudeDialog`, `useDressUpDialog`, `useShellDialog`,
-        `useTransformSession`) — each owns 3-8 `useState` plus its effects today.
-        **`useRevolveDialog` and `usePatternDialog` are done and the item's premise
-        holds**: neither carries a
-        `exhaustive-deps` disable and App.tsx went 17 → 15. Both of Revolve's
-        disables were hiding something real — the live-edit effect must depend on
-        the dialog's six _value_ fields and not on `x`/`y`/`armed`, or dragging the
-        panel re-applies the edit and adds an undo entry; the ghost effect was
-        silenced only for a closure that turned out to be pure and belonged at
-        module scope. Two supporting moves generalise: make the shared
-        `shouldLiveApply` guard a `useCallback` (it touches only refs), and keep
-        "where does the panel go" out of the hook — pass an `at: {x, y}`, since
-        anchoring to the clicked geometry needs the camera, which is the shell's
-        business. Expect ~13 explicit dependencies per hook. That is not a smell to
-        design away: every one was already an implicit coupling, and writing it
-        down is the deliverable.
-
+  - [x] **1b. Done.** Five hooks — `useRevolveDialog`, `usePatternDialog`,
+        `useShellDialog`, `useDressUpDialog`, `useTransformSession` — each owning
+        its own state, handlers and effects. **The item's premise held: none of the
+        five carries an `exhaustive-deps` disable, and App.tsx went from 17 to 12.** Every disable they absorbed was hiding something real, usually "this
+        effect must depend on the dialog's VALUE fields, not on its `x`/`y` or its
+        arming" — depend on the state object whole and dragging the panel re-applies
+        the edit and leaves an undo entry for a move.
   - [ ] **1c.** Collapse the sketch-session cluster. `offsetSession`,
         `mirrorSession`, `projectSession`, `patternSession` and `textDraft`
         each carry the same shape — state, a mirroring `*Ref`, a `commit*Ref` —
@@ -324,16 +313,22 @@ exposed that both numbered by label prefix rather than by kind) and
 boundary forces the question "what is this a pure function of?", and the answer is
 usually testable.
 
-**Two rules for the remaining hooks.** _A hook cannot take as input something
+**Three rules the five hooks settled**, kept because 1c faces the same choices.
+
+_A hook cannot take as input something
 derived from its own output._ Pattern's validation warning was a memo over the
 dialog state, and both `confirm` and the live-edit effect need it — so it became a
 pure `(draft, scope) => string | null` in `document/patternValidation.ts`, beside
 `shellValidation.ts` and `dressUpValidation.ts`, and gained the 12 tests it never
-had. Expect the same of Extrude's and Dress-up's validation. _And resist grouping
+had — as did Dress-up's, which moved out beside it and gained 5. _Resist grouping
 the dependency object._ Folding the obvious clusters into shared `usePickMode` /
 `useEditSession` hooks would cut 8 of the 13 entries, but those clusters have 107
 and 40 use sites across `App.tsx` — a ~147-site change to tidy five hooks, in code
-the refactor is not otherwise touching.
+the refactor is not otherwise touching. _And keep placement out._ Every hook takes
+the panel's screen position as an argument rather than computing it, because
+anchoring to clicked geometry needs the camera and the viewport element — the
+shell's business. That rule kept three helpers in App.tsx and is what let each hook
+install early enough for the derived values that read it.
 
 **Tier 2 — guardrails, so it does not regress.**
 

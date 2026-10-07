@@ -12,6 +12,7 @@ import {
 import { KernelClient } from "./kernel/KernelClient";
 import { assertNever } from "./lib/assertNever";
 import { clamp } from "./lib/clamp";
+import { formatRounded3 } from "./lib/format";
 import { useUpdateAvailable } from "./useVersionCheck";
 import {
   addBoolean,
@@ -27,7 +28,6 @@ import {
   addSketch,
   addSketchConstraints,
   addSketchEntities,
-  addTransform,
   addVariable,
   createDocument,
   genId,
@@ -108,7 +108,6 @@ import type {
   SketchConstraint,
   SketchEntity,
   SketchFeature,
-  TransformFeature,
   Vec2,
 } from "./document/types";
 import { measureBetween, resolveSide } from "./sketch/distanceDim";
@@ -174,6 +173,7 @@ import {
   type OffsetPrimitive,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
+import { useTransformSession } from "./hooks/useTransformSession";
 import { useDressUpDialog } from "./hooks/useDressUpDialog";
 import { useShellDialog } from "./hooks/useShellDialog";
 import { usePatternDialog } from "./hooks/usePatternDialog";
@@ -207,7 +207,7 @@ import type { ToolbarItem, ToolbarRow } from "./ui/toolbarOverflow";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
 import { VariablesPanel } from "./ui/VariablesPanel";
-import { sameSelection, type DatumId, type Selection, type SelectionFilter } from "./selection/types";
+import { featureIdOf, sameSelection, type DatumId, type Selection, type SelectionFilter } from "./selection/types";
 import { Viewport } from "./viewport/Viewport";
 import type {
   ExtrudeGizmo,
@@ -225,12 +225,6 @@ import "./App.css";
 /** Log each regen's end-to-end round-trip time to the console. Off by default;
  *  enable with `?perf` in the URL to objectively compare responsiveness. */
 const PERF_LOG = typeof location !== "undefined" && location.search.includes("perf");
-
-/** Compact number formatting for the dimension input (trims trailing zeros). */
-const fmt = (n: number) => {
-  const r = Math.round(n * 1000) / 1000;
-  return Number.isInteger(r) ? String(r) : String(r);
-};
 
 // DXF has no reliable notion of physical units — imported coordinates are bare
 // numbers. We convert to Open Poly's millimetres with a scale the user picks;
@@ -271,15 +265,15 @@ const constraintLabel = (c: SketchConstraint): string => {
     case "equal":
       return "Equal";
     case "distance":
-      return `Length ${fmt(c.value)}`;
+      return `Length ${formatRounded3(c.value)}`;
     case "distanceBetween":
-      return `Distance ${fmt(c.value)}`;
+      return `Distance ${formatRounded3(c.value)}`;
     case "radius":
-      return `Radius ${fmt(c.value)}`;
+      return `Radius ${formatRounded3(c.value)}`;
     case "diameter":
-      return `Diameter ${fmt(c.value)}`;
+      return `Diameter ${formatRounded3(c.value)}`;
     case "angle":
-      return `Angle ${fmt(c.value)}°`;
+      return `Angle ${formatRounded3(c.value)}°`;
     case "tangent":
       return "Tangent";
     case "coincident":
@@ -736,8 +730,6 @@ export default function App() {
   // True once a newer build has been deployed — surfaces a "refresh" banner.
   const updateAvailable = useUpdateAvailable();
   const [selection, setSelection] = useState<Selection[]>([]);
-  const featureIdOf = (s: Selection): string =>
-    s.kind === "feature" ? s.id : "featureId" in s ? s.featureId : s.sketchId;
   const selectedFeatureIds = useMemo(() => new Set(selection.map(featureIdOf)), [selection]);
   // Which rendered bodies a whole-feature selection should highlight. A body
   // keeps the id of the feature that *created* it; in-place modifiers (Add/Remove
@@ -975,9 +967,9 @@ export default function App() {
     }
     // Transform armed with no target yet: the next body click picks it and
     // creates+opens the Transform feature directly on the requested mode.
-    if (transformArming) {
+    if (transform.arming) {
       const id = picked ? featureIdOf(picked) : null;
-      if (id && bodyIds.has(id)) openTransformOn(id, transformArming.mode);
+      if (id && bodyIds.has(id)) openTransformOn(id, transform.arming.mode);
       return;
     }
     // Revolve dialog open: arming the PROFILE (a sketch region) happens here via
@@ -1541,35 +1533,6 @@ export default function App() {
   //  the whole thing. A dialog or a modal, never both: the armed slot is the
   //  single signal now. The pick banner survives only for the two picks that
   //  have no dialog behind them — starting a sketch, and the section plane.)
-  // The Transform feature currently being edited with the gizmo (a floating
-  // panel + viewport gizmo are shown while this is set), and which gizmo to show.
-  const [transformEditId, setTransformEditId] = useState<string | null>(null);
-  const [transformMode, setTransformMode] = useState<TransformMode>("translate");
-  // Where the panel opens: beside the gizmo, never on top of it (see
-  // transformPanelPos). Null until the first placement; draggable after that.
-  const [transformPanelXY, setTransformPanelXY] = useState<{ x: number; y: number } | null>(null);
-  // Live numeric readout during a gizmo drag (display only; cleared on commit).
-  // Kept out of the document so dragging never regenerates the kernel.
-  const [liveTransform, setLiveTransform] = useState<{
-    tx: number;
-    ty: number;
-    tz: number;
-    angle: number;
-    scale: number;
-  } | null>(null);
-  // How the current transform edit began, so Cancel knows what to undo: a
-  // just-created transform is dropped entirely; an existing one being re-edited
-  // is reverted to the snapshot it had when this edit started.
-  const [transformOrigin, setTransformOrigin] = useState<
-    | { created: true }
-    | { created: false; snapshot: Pick<TransformFeature, "tx" | "ty" | "tz" | "angle" | "axis" | "scale" | "copy"> }
-    | null
-  >(null);
-  // Transform requested with no unambiguous single-body target (nothing
-  // selected, or a selection spanning more than one body): a small panel
-  // shows the requested mode and waits for the next viewport body click to
-  // arm it — see the click-router branch below and openTransform/openTransformOn.
-  const [transformArming, setTransformArming] = useState<{ mode: TransformMode } | null>(null);
   // The "New Body" dropdown (box/cylinder/sphere) in the viewport toolbar.
   const [newSolidOpen, setNewSolidOpen] = useState(false);
   // Toggle (via the "?" button in the topbar, or the "?" key) that appends each
@@ -2199,6 +2162,22 @@ export default function App() {
     [rawMeshes, doc, isolatedBodyId],
   );
 
+  // The Transform gizmo is a SESSION, not a dialog: its inputs are viewport drags,
+  // so it carries a per-frame readout kept out of the document and a record of how
+  // the session began (Cancel deletes a new transform, reverts a re-opened one).
+  // See useTransformSession.
+  const transform = useTransformSession({
+    doc,
+    setDoc,
+    picking,
+    pickPurpose,
+    setPicking,
+    setPickPurpose,
+    releaseFocus,
+    selectFeature,
+    setSelection,
+  });
+
   // The Chamfer/Fillet dialog owns its own state machine. Two kernel round trips
   // live in there — a debounced one that validates the size AND carries back the
   // ghost deltas, and an authoritative one on commit. See useDressUpDialog.
@@ -2227,7 +2206,7 @@ export default function App() {
    *     armed slot is already asking for the pick;
    *   - Escape closes it, in one press.
    *
-   *  `transformArming` and `transformEditId` count: the transform gizmo is a
+   *  `transform.arming` and `transform.editId` count: the transform gizmo is a
    *  dialog by any other name. */
   const anyDialogOpen =
     !!planeDialog ||
@@ -2240,8 +2219,8 @@ export default function App() {
     !!booleanDialog ||
     !!mirrorDialog ||
     !!pattern.dialog ||
-    !!transformEditId ||
-    !!transformArming;
+    !!transform.editId ||
+    !!transform.arming;
 
   // The extrude live preview ghosts only the swept *tool* (the changing
   // portion), keyed by fresh ids that aren't among the real bodies — so every
@@ -2584,23 +2563,23 @@ export default function App() {
       if (c.id === dimInput?.editId) return [];
       if (c.type === "distance") {
         const e = ent(c.entity);
-        if (e?.type === "line") return [{ id: c.id, kind: "length", text: fmt(c.value), a: e.a, b: e.b }];
+        if (e?.type === "line") return [{ id: c.id, kind: "length", text: formatRounded3(c.value), a: e.a, b: e.b }];
       } else if (c.type === "distanceBetween") {
         const ra = resolveSide(c.a, editingSketch.entities);
         const rb = resolveSide(c.b, editingSketch.entities);
         if (ra && rb) {
           const m = measureBetween(ra, rb);
-          if (m) return [{ id: c.id, kind: "distance", text: fmt(c.value), a: m.wa, b: m.wb }];
+          if (m) return [{ id: c.id, kind: "distance", text: formatRounded3(c.value), a: m.wa, b: m.wb }];
         }
       } else if (c.type === "radius") {
         const e = ent(c.entity);
         if (e?.type === "circle" || e?.type === "arc")
-          return [{ id: c.id, kind: "radius", text: `R${fmt(c.value)}`, c: e.c, r: e.r }];
+          return [{ id: c.id, kind: "radius", text: `R${formatRounded3(c.value)}`, c: e.c, r: e.r }];
       } else if (c.type === "diameter") {
         // `e.r` is the geometry's radius; the label carries the typed diameter.
         const e = ent(c.entity);
         if (e?.type === "circle" || e?.type === "arc")
-          return [{ id: c.id, kind: "diameter", text: `\u00d8${fmt(c.value)}`, c: e.c, r: e.r }];
+          return [{ id: c.id, kind: "diameter", text: `\u00d8${formatRounded3(c.value)}`, c: e.c, r: e.r }];
       } else if (c.type === "angle") {
         const la = ent(c.a);
         const lb = ent(c.b);
@@ -2611,7 +2590,7 @@ export default function App() {
               {
                 id: c.id,
                 kind: "angle",
-                text: `${fmt(c.value)}°`,
+                text: `${formatRounded3(c.value)}°`,
                 p,
                 dir1: rayFromCorner(la, p),
                 dir2: rayFromCorner(lb, p),
@@ -2623,7 +2602,7 @@ export default function App() {
             (l.a[0] + l.b[0]) / 2,
             (l.a[1] + l.b[1]) / 2,
           ];
-          return [{ id: c.id, kind: "free", text: `${fmt(c.value)}°`, a: mid(la), b: mid(lb) }];
+          return [{ id: c.id, kind: "free", text: `${formatRounded3(c.value)}°`, a: mid(la), b: mid(lb) }];
         }
       }
       return [];
@@ -2761,9 +2740,9 @@ export default function App() {
   const handleExtrudeGizmoDistance = (v: number) => {
     setExtrudeDialog((d) => {
       if (!d) return d;
-      if (d.extent === "symmetric") return { ...d, distance: fmt(Math.abs(v)) };
-      if (v < 0) return { ...d, flip: !d.flip, distance: fmt(-v) };
-      return { ...d, distance: fmt(v) };
+      if (d.extent === "symmetric") return { ...d, distance: formatRounded3(Math.abs(v)) };
+      if (v < 0) return { ...d, flip: !d.flip, distance: formatRounded3(-v) };
+      return { ...d, distance: formatRounded3(v) };
     });
   };
 
@@ -3296,8 +3275,8 @@ export default function App() {
         else if (extrudeDialog) closeExtrudeDialog();
         else if (dressUp.dialog) dressUp.close();
         else if (booleanDialog) closeBooleanDialog();
-        else if (transformEditId) cancelTransform();
-        else if (transformArming) cancelTransformArming();
+        else if (transform.editId) transform.cancel();
+        else if (transform.arming) transform.cancelArming();
         else if (editParamsId) setEditParamsId(null);
         else if (picking) setPicking(false);
         // Esc finishes an in-progress draft: the spline commits its accumulated
@@ -3488,7 +3467,7 @@ export default function App() {
           if (!booleanDialog) openBooleanDialog();
           break;
         case "model.transform":
-          if (!transformEditId && !transformArming) openTransform();
+          if (!transform.editId && !transform.arming) openTransform();
           break;
         case "model.mirror":
           if (!mirrorDialog) openMirror();
@@ -3508,7 +3487,7 @@ export default function App() {
     redo,
     picking,
     planeDialog,
-    transformEditId,
+    transform.editId,
     draft,
     editingSketchId,
     selection,
@@ -3679,18 +3658,13 @@ export default function App() {
     return { x: Math.max(12, Math.min(x, Math.max(12, vw - PANEL_W - 12))), y: 64 };
   };
 
-  // Create a Transform on `targetId` and open the gizmo directly on `mode`.
+  // Create a Transform on `targetId` and open the gizmo directly on `mode`. The
+  // pivot (the body's centre) and the panel's screen spot are resolved here because
+  // both need the rendered meshes and the camera.
   const openTransformOn = (targetId: string, mode: TransformMode) => {
     const m = rawMeshes.find((x) => x.id === targetId);
     const pivot = m ? bodyCenter(m.mesh.faces) : ([0, 0, 0] as [number, number, number]);
-    const { doc: next, id } = addTransform(doc, targetId, pivot);
-    setDoc(next);
-    selectFeature(null);
-    setTransformMode(mode);
-    setTransformEditId(id);
-    setTransformPanelXY(transformPanelPos(pivot));
-    setTransformOrigin({ created: true });
-    setTransformArming(null);
+    transform.begin(targetId, mode, pivot, transformPanelPos(pivot));
   };
 
   // Entry point for the toolbar button, the "T" shortcut, and the Move /
@@ -3700,66 +3674,37 @@ export default function App() {
   // selection and arms a body pick for that mode instead — like Pattern's
   // target arming, this doesn't touch `picking`/`pickPurpose` (those drive
   // the separate axis/direction pick stream); the click-router branch above
-  // matches on `transformArming` directly.
+  // matches on `transform.arming` directly.
   const openTransform = (mode: TransformMode = "translate") => {
     if (transformTarget) {
       openTransformOn(transformTarget, mode);
       return;
     }
-    setSelection([]);
-    setTransformArming({ mode });
+    transform.armBody(mode);
   };
 
-  // Cancel an in-progress Transform arming (Esc, or the arming panel's own
-  // Cancel button) without creating a feature.
-  const cancelTransformArming = () => setTransformArming(null);
+  // The transform feature being edited (drives the floating panel's fields).
+  const editingTransform = transform.editing;
 
-  // Arm the rotation-axis pick: the next click on a straight body edge or a
-  // sketch line becomes the line the body swings around. Rides the same
-  // axis-pick stream as Revolve's and Pattern's axis slots.
-  const armTransformAxis = () => {
-    setPickPurpose("transformAxis");
-    setPicking(true);
-    releaseFocus();
-  };
-  /** True while the next viewport click fills the transform's rotation axis. */
-  const transformAxisPicking = picking && pickPurpose === "transformAxis";
-  /** Is the transform's axis a picked reference (or about to be)? Drives which
-   *  half of the axis control the dialog shows. */
-  const pickedTransformAxis =
-    transformAxisPicking ||
-    doc.features.some((f) => f.id === transformEditId && f.type === "transform" && typeof f.axis !== "string");
-  /** Drop an armed axis pick (choosing a world axis, or closing the dialog). */
-  const cancelTransformAxisPick = () => {
-    if (pickPurpose !== "transformAxis") return;
-    setPicking(false);
-    setPickPurpose("sketch");
-  };
-
-  // Re-open the gizmo for an existing Transform (from the parameter editor).
-  // Snapshot its current values so Cancel can revert this edit (vs. delete).
-  const editTransform = (id: string) => {
+  // Re-open the gizmo for an existing Transform (from the parameter editor). The
+  // panel goes where the gizmo will be: the pivot plus the translation already
+  // applied.
+  const editTransformFeature = (id: string) => {
     const f = doc.features.find((x) => x.id === id);
     if (f?.type !== "transform") return;
-    selectFeature(id);
-    setTransformMode("translate");
-    setTransformEditId(id);
-    // Re-opening: the gizmo sits at the pivot PLUS the translation already
-    // applied, which is where it will be drawn.
-    setTransformPanelXY(
-      transformPanelPos([f.pivot[0] + numOrZero(f.tx), f.pivot[1] + numOrZero(f.ty), f.pivot[2] + numOrZero(f.tz)]),
-    );
-    setTransformOrigin({
-      created: false,
-      snapshot: { tx: f.tx, ty: f.ty, tz: f.tz, angle: f.angle, axis: f.axis, scale: f.scale, copy: f.copy },
-    });
+    const at = transformPanelPos([
+      f.pivot[0] + numOrZero(f.tx),
+      f.pivot[1] + numOrZero(f.ty),
+      f.pivot[2] + numOrZero(f.tz),
+    ]);
+    transform.edit(f, at);
   };
 
   // The live gizmo state: resolve the editing transform's expressions to numbers
   // (the gizmo is numeric) while leaving the document's expression strings intact.
   const transformEdit = useMemo<TransformEdit | null>(() => {
-    if (!transformEditId) return null;
-    const f = doc.features.find((x) => x.id === transformEditId);
+    if (!transform.editId) return null;
+    const f = doc.features.find((x) => x.id === transform.editId);
     if (f?.type !== "transform") return null;
     const num = (s: string) => {
       try {
@@ -3791,73 +3736,9 @@ export default function App() {
       // fall back to 1 until the field resolves to something buildable.
       scale: num(f.scale) > 0 ? num(f.scale) : 1,
     };
-  }, [transformEditId, doc, resolved.scope, resolved.planeFrames, meshes]);
+  }, [transform.editId, doc, resolved.scope, resolved.planeFrames, meshes]);
 
   // The transform feature being edited (drives the floating panel's fields).
-  const editingTransform = useMemo(
-    () => doc.features.find((f) => f.id === transformEditId && f.type === "transform") as TransformFeature | undefined,
-    [doc, transformEditId],
-  );
-
-  // A gizmo drag commits ONCE, on release: write the final numeric values back as
-  // the feature's expressions (one regenerate for the whole drag). During the drag
-  // the body is moved locally in the viewport, so the kernel never sees the
-  // intermediate frames — the fix for "stuck regenerating" in a many-solid doc.
-  const handleTransformInput = (d: { tx: number; ty: number; tz: number; angle: number; scale: number }) => {
-    if (!transformEditId) return;
-    if (![d.tx, d.ty, d.tz, d.angle, d.scale].every(Number.isFinite)) return; // see handleTransformPreview
-    setLiveTransform(null); // commit supersedes the live readout
-    setDoc(
-      setTransform(doc, transformEditId, {
-        tx: fmt(d.tx),
-        ty: fmt(d.ty),
-        tz: fmt(d.tz),
-        angle: fmt(d.angle),
-        scale: fmt(d.scale),
-      }),
-      `transform:${transformEditId}`,
-    );
-  };
-
-  // Per-frame readout while dragging — drives the floating panel's numbers only,
-  // never the document, so it can't trigger a regenerate. A frame carrying a
-  // non-finite number is dropped rather than shown: `fmt` would render it into
-  // the field as the text "NaN"/"Infinity", and the same value on release would
-  // be committed as an expression that can't be evaluated. Holding the last good
-  // readout instead makes a degenerate frame invisible. (The gizmo guards this at
-  // source too — see proxyDelta — this is the backstop for every field.)
-  const handleTransformPreview = (d: { tx: number; ty: number; tz: number; angle: number; scale: number }) => {
-    if (![d.tx, d.ty, d.tz, d.angle, d.scale].every(Number.isFinite)) return;
-    setLiveTransform(d);
-  };
-
-  // Close the gizmo, keeping the Transform feature as-is.
-  const finishTransform = () => {
-    cancelTransformAxisPick(); // an axis arming outlives the dialog otherwise
-    setTransformEditId(null);
-    setTransformOrigin(null);
-    setTransformPanelXY(null);
-    setLiveTransform(null);
-  };
-
-  // Cancel (panel Cancel / Esc): a just-created transform is dropped entirely;
-  // an existing one being re-edited reverts to its pre-edit snapshot.
-  const cancelTransform = () => {
-    cancelTransformAxisPick();
-    if (transformEditId) {
-      if (transformOrigin && !transformOrigin.created) {
-        setDoc(setTransform(doc, transformEditId, transformOrigin.snapshot));
-      } else {
-        setDoc(removeFeature(doc, transformEditId));
-        setSelection((prev) => prev.filter((s) => featureIdOf(s) !== transformEditId));
-      }
-    }
-    setTransformEditId(null);
-    setTransformOrigin(null);
-    setTransformPanelXY(null);
-    setLiveTransform(null);
-  };
-
   // All visible sketches (so finished sketches stay rendered), each with its frame.
   const renderSketches = useMemo(
     () =>
@@ -4158,7 +4039,7 @@ export default function App() {
       // need a second reference to pin a line down (revolve has the profile
       // plane to intersect with; a transform has nothing), so they're refused
       // with the options that do work rather than silently ignored.
-      const id = transformEditId;
+      const id = transform.editId;
       if (!id) return;
       if (pick.kind === "line") {
         const sk = doc.features.find((f) => f.id === pick.sketchId);
@@ -4408,7 +4289,7 @@ export default function App() {
         editSketch(id);
         break;
       case "transform":
-        editTransform(id);
+        editTransformFeature(id);
         break;
       case "extrude":
         editExtrude(id);
@@ -5272,7 +5153,7 @@ export default function App() {
       entityId: entity.id,
       kind,
       editId,
-      value: prefillExpr ?? fmt(prefill ?? measured),
+      value: prefillExpr ?? formatRounded3(prefill ?? measured),
       x: s.x,
       y: s.y,
     });
@@ -5320,7 +5201,7 @@ export default function App() {
       entityId2: lb.id,
       kind: "angle",
       editId,
-      value: prefillExpr ?? fmt(deg),
+      value: prefillExpr ?? formatRounded3(deg),
       x: s.x,
       y: s.y,
     });
@@ -5343,7 +5224,7 @@ export default function App() {
       kind: "distance",
       refs: [a, b],
       editId,
-      value: prefillExpr ?? fmt(prefill ?? Math.abs(m.value)),
+      value: prefillExpr ?? formatRounded3(prefill ?? Math.abs(m.value)),
       x: s.x,
       y: s.y,
     });
@@ -6936,9 +6817,9 @@ export default function App() {
             userPlanes={visibleUserPlanes}
             ghostPlane={ghostPlaneFrame}
             transformEdit={transformEdit}
-            transformMode={transformMode}
-            onTransformInput={handleTransformInput}
-            onTransformPreview={handleTransformPreview}
+            transformMode={transform.mode}
+            onTransformInput={transform.applyDrag}
+            onTransformPreview={transform.previewDrag}
             extrudeGizmo={extrudeGizmo}
             onExtrudeDistanceChange={handleExtrudeGizmoDistance}
             picking={picking}
@@ -7043,7 +6924,7 @@ export default function App() {
                     onRename={handleSolidRename}
                     onEditSketch={editSketch}
                     onFinishSketch={finishSketch}
-                    onEditTransform={editTransform}
+                    onEditTransform={editTransformFeature}
                   />
                 </>
               )}
@@ -8051,26 +7932,26 @@ export default function App() {
           {editingTransform && (
             <TransformDialog
               name={editingTransform.name}
-              at={transformPanelXY ?? null}
-              mode={transformMode}
+              at={transform.panelAt ?? null}
+              mode={transform.mode}
               values={{
-                tx: liveTransform ? fmt(liveTransform.tx) : editingTransform.tx,
-                ty: liveTransform ? fmt(liveTransform.ty) : editingTransform.ty,
-                tz: liveTransform ? fmt(liveTransform.tz) : editingTransform.tz,
-                scale: liveTransform ? fmt(liveTransform.scale) : editingTransform.scale,
-                angle: liveTransform ? fmt(liveTransform.angle) : editingTransform.angle,
+                tx: transform.live ? formatRounded3(transform.live.tx) : editingTransform.tx,
+                ty: transform.live ? formatRounded3(transform.live.ty) : editingTransform.ty,
+                tz: transform.live ? formatRounded3(transform.live.tz) : editingTransform.tz,
+                scale: transform.live ? formatRounded3(transform.live.scale) : editingTransform.scale,
+                angle: transform.live ? formatRounded3(transform.live.angle) : editingTransform.angle,
               }}
-              pickedAxis={pickedTransformAxis}
-              axisArmed={transformAxisPicking}
+              pickedAxis={transform.pickedAxis}
+              axisArmed={transform.axisPicking}
               axisLabel={transformAxisLabel(editingTransform.axis, doc)}
               worldAxis={typeof editingTransform.axis === "string" ? editingTransform.axis : null}
               copy={editingTransform.copy}
-              onModeChange={setTransformMode}
+              onModeChange={transform.setMode}
               onParamChange={(field, value) =>
                 setDoc(updateParam(doc, editingTransform.id, field, value), `param:${editingTransform.id}:${field}`)
               }
               onUseWorldAxis={() => {
-                cancelTransformAxisPick();
+                transform.cancelAxisPick();
                 // Falling back to a world direction: keep the one the feature
                 // already held, or Z for a feature coming off a picked line
                 // (which has no direction of its own).
@@ -8078,24 +7959,24 @@ export default function App() {
                   setDoc(setTransform(doc, editingTransform.id, { axis: "z" }));
                 }
               }}
-              onArmAxis={armTransformAxis}
+              onArmAxis={transform.armAxis}
               onClearAxis={() => {
                 // Back to a world direction, then straight into re-picking — an
                 // empty slot would leave no rotation.
                 setDoc(setTransform(doc, editingTransform.id, { axis: "z" }));
-                armTransformAxis();
+                transform.armAxis();
               }}
               onCopyChange={(copy) => setDoc(updateParam(doc, editingTransform.id, "copy", String(copy)))}
-              onConfirm={finishTransform}
-              onCancel={cancelTransform}
+              onConfirm={transform.finish}
+              onCancel={transform.cancel}
             />
           )}
-          {transformArming && !editingTransform && (
+          {transform.arming && !transform.editing && (
             <TransformArmingDialog
-              at={transformPanelXY ?? null}
-              mode={transformArming.mode}
-              onModeChange={(mode) => setTransformArming({ mode })}
-              onCancel={cancelTransformArming}
+              at={transform.panelAt ?? null}
+              mode={transform.arming.mode}
+              onModeChange={transform.setArmingMode}
+              onCancel={transform.cancelArming}
             />
           )}
           {measure && (
