@@ -196,6 +196,8 @@ import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
+import { TransformArmingDialog, TransformDialog } from "./ui/TransformDialog";
+import { RevolveDialog } from "./ui/RevolveDialog";
 import { MirrorDialog } from "./ui/MirrorDialog";
 import { DxfImportDialog } from "./ui/DxfImportDialog";
 import { LoftDialog } from "./ui/LoftDialog";
@@ -3711,6 +3713,19 @@ export default function App() {
       x: s.x,
       y: s.y,
     });
+  };
+
+  /** Arm the Revolve dialog's PROFILE slot, cancelling an armed axis on the way.
+   *  The two roles read different click streams — profile goes through the
+   *  selection raycaster, axis through picking mode — so without the cancel both
+   *  stay live: the axis button keeps its armed styling and the next click still
+   *  fills the axis. */
+  const armRevolveProfile = (clear = false) => {
+    if (picking && pickPurpose === "revolveAxis") {
+      setPicking(false);
+      setPickPurpose("sketch");
+    }
+    setRevolveDialog((d) => (d ? { ...d, ...(clear ? { profile: null } : {}), armed: "profile" } : d));
   };
 
   /** Arm the Revolve dialog's AXIS slot. Shared by the dialog's own button and
@@ -8929,95 +8944,32 @@ export default function App() {
                     : "edge" in ax
                       ? (doc.features.find((f) => f.id === ax.edge.featureId)?.name ?? "Body") + " · edge"
                       : (doc.features.find((f) => f.id === ax.sketchId)?.name ?? "Sketch") + " · line";
-              const axisArming = picking && pickPurpose === "revolveAxis";
-              // Arming the profile has to CANCEL an armed axis: the two roles read
-              // different click streams (profile = the selection raycaster, axis =
-              // picking mode), so without this both stay live — the axis button
-              // keeps its armed styling and the next click still fills the axis.
-              const armProfile = (clear = false) => {
-                if (picking && pickPurpose === "revolveAxis") {
-                  setPicking(false);
-                  setPickPurpose("sketch");
-                }
-                setRevolveDialog((d) => (d ? { ...d, ...(clear ? { profile: null } : {}), armed: "profile" } : d));
-              };
               return (
-                <DraggableDialog className="feature-dialog" style={{ left: revolveDialog.x, top: revolveDialog.y }}>
-                  <div className="ed-title" data-drag-handle>
-                    {revolveDialog.editId ? "Edit revolve" : "Revolve"}
-                  </div>
-                  <div className="ed-hint">
-                    Profile: a closed sketch region or a planar body face. Axis: a sketch line, a straight body edge, a
-                    plane, or a body face.
-                  </div>
-                  <div className="bool-group-label">Profile</div>
-                  <PickSlot
-                    noun="a profile"
-                    armed={revolveDialog.armed === "profile"}
-                    value={profileLabel}
-                    wide
-                    onArm={() => armProfile()}
-                    onClear={() => armProfile(true)}
-                  />
-                  <div className="bool-group-label">Axis</div>
-                  <PickSlot
-                    noun="an axis"
-                    armed={axisArming}
-                    value={axisLabel}
-                    wide
-                    onArm={armRevolveAxis}
-                    onClear={() => {
-                      setRevolveDialog((d) => (d ? { ...d, axis: null } : d));
-                      armRevolveAxis();
-                    }}
-                  />
-                  <div className="ed-modes">
-                    {(["full", "angle"] as const).map((m) => (
-                      <button
-                        key={m}
-                        className={revolveDialog.mode === m ? "active" : ""}
-                        onClick={() => setRevolveDialog((d) => (d ? { ...d, mode: m } : d))}
-                      >
-                        {m === "full" ? "Full (360°)" : "Angle"}
-                      </button>
-                    ))}
-                  </div>
-                  {revolveDialog.mode === "angle" && (
-                    <>
-                      <label className="ed-field">
-                        <span>Angle (°)</span>
-                        <input
-                          autoFocus
-                          value={revolveDialog.degrees}
-                          onChange={(e) => setRevolveDialog((d) => (d ? { ...d, degrees: e.target.value } : d))}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") createRevolve();
-                            else if (e.key === "Escape") closeRevolveDialog();
-                          }}
-                        />
-                      </label>
-                      <label className="ed-field ed-flip">
-                        <span>Symmetric</span>
-                        <input
-                          type="checkbox"
-                          checked={revolveDialog.symmetric}
-                          onChange={(e) => setRevolveDialog((d) => (d ? { ...d, symmetric: e.target.checked } : d))}
-                        />
-                      </label>
-                    </>
-                  )}
-                  {revolvePreviewError && <p className="ed-warning">{revolvePreviewError}</p>}
-                  <div className="ed-actions">
-                    <button
-                      className="ed-primary"
-                      disabled={!revolveDialog.profile || !revolveDialog.axis}
-                      onClick={createRevolve}
-                    >
-                      {revolveDialog.editId ? "Done" : "Create"}
-                    </button>
-                    <button onClick={closeRevolveDialog}>Cancel</button>
-                  </div>
-                </DraggableDialog>
+                <RevolveDialog
+                  editing={!!revolveDialog.editId}
+                  x={revolveDialog.x}
+                  y={revolveDialog.y}
+                  profileLabel={profileLabel}
+                  profileArmed={revolveDialog.armed === "profile"}
+                  axisLabel={axisLabel}
+                  axisArmed={picking && pickPurpose === "revolveAxis"}
+                  mode={revolveDialog.mode}
+                  degrees={revolveDialog.degrees}
+                  symmetric={revolveDialog.symmetric}
+                  previewError={revolvePreviewError}
+                  onArmProfile={() => armRevolveProfile()}
+                  onClearProfile={() => armRevolveProfile(true)}
+                  onArmAxis={armRevolveAxis}
+                  onClearAxis={() => {
+                    setRevolveDialog((d) => (d ? { ...d, axis: null } : d));
+                    armRevolveAxis();
+                  }}
+                  onModeChange={(mode) => setRevolveDialog((d) => (d ? { ...d, mode } : d))}
+                  onDegreesChange={(degrees) => setRevolveDialog((d) => (d ? { ...d, degrees } : d))}
+                  onSymmetricChange={(symmetric) => setRevolveDialog((d) => (d ? { ...d, symmetric } : d))}
+                  onConfirm={createRevolve}
+                  onCancel={closeRevolveDialog}
+                />
               );
             })()}
           {sweepDialog && (
@@ -9213,202 +9165,54 @@ export default function App() {
             </DraggableDialog>
           )}
           {editingTransform && (
-            <DraggableDialog
-              className="feature-dialog"
-              style={{ left: transformPanelXY?.x ?? "50%", top: transformPanelXY?.y ?? 64 }}
-              baseTransform={transformPanelXY ? undefined : "translateX(-50%)"}
-            >
-              <div className="ed-title" data-drag-handle>
-                Transform · {editingTransform.name}
-              </div>
-              <div className="ed-modes">
-                {(["translate", "rotate", "scale"] as const).map((m) => (
-                  <button key={m} className={transformMode === m ? "active" : ""} onClick={() => setTransformMode(m)}>
-                    {m === "translate" ? "Move" : m === "rotate" ? "Rotate" : "Scale"}
-                  </button>
-                ))}
-              </div>
-              {transformMode === "translate" ? (
-                (["tx", "ty", "tz"] as const).map((k) => (
-                  <label className="ed-field" key={k}>
-                    <span>Move {k[1].toUpperCase()}</span>
-                    <input
-                      value={liveTransform ? fmt(liveTransform[k]) : editingTransform[k]}
-                      onChange={(e) =>
-                        setDoc(
-                          updateParam(doc, editingTransform.id, k, e.target.value),
-                          `param:${editingTransform.id}:${k}`,
-                        )
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") finishTransform();
-                        else if (e.key === "Escape") cancelTransform();
-                      }}
-                    />
-                  </label>
-                ))
-              ) : transformMode === "scale" ? (
-                <label className="ed-field">
-                  <span>Factor</span>
-                  <input
-                    value={liveTransform ? fmt(liveTransform.scale) : editingTransform.scale}
-                    onChange={(e) =>
-                      setDoc(
-                        updateParam(doc, editingTransform.id, "scale", e.target.value),
-                        `param:${editingTransform.id}:scale`,
-                      )
-                    }
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") finishTransform();
-                      else if (e.key === "Escape") cancelTransform();
-                    }}
-                  />
-                </label>
-              ) : (
-                <>
-                  {/* ONE axis control, in two levels. The two KINDS of axis are
-                      alternatives, so they're one segmented choice rather than
-                      two controls that both say "axis"; whichever is chosen then
-                      reveals its own detail below (X/Y/Z, or the pick slot).
-                      "Body center" rather than "World X/Y/Z" because the world
-                      wording reads as "through the origin" — which is what it
-                      means in the Pattern dialog, and is NOT what happens here:
-                      the direction is world-aligned but the axis runs through the
-                      body's own center, so the body spins on the spot.
-
-                      Buttons, NOT a <select>, and that part is load-bearing: on
-                      macOS a select's popup is a native menu running its own
-                      event loop, and after choosing from it the first click on
-                      the canvas is swallowed — so the pick this option arms
-                      needs two clicks, the first appearing to do nothing. (It
-                      reproduces only in a real browser; neither headless nor
-                      headed Chromium under automation shows it, with or without
-                      the select focused.) Buttons have no popup, and they match
-                      the Move/Rotate/Scale row above. NB the Pattern dialog arms
-                      its picks from a <select> the same way and is likely to
-                      have the same fault. */}
-                  <div className="bool-group-label">Axis</div>
-                  <div className="ed-modes">
-                    <button
-                      className={pickedTransformAxis ? "" : "active"}
-                      onClick={() => {
-                        cancelTransformAxisPick();
-                        // Falling back to a world direction: keep the one the
-                        // feature already held, or Z for a feature coming off a
-                        // picked line (which has no direction of its own).
-                        if (typeof editingTransform.axis !== "string") {
-                          setDoc(setTransform(doc, editingTransform.id, { axis: "z" }));
-                        }
-                      }}
-                    >
-                      Body center
-                    </button>
-                    <button className={pickedTransformAxis ? "active" : ""} onClick={armTransformAxis}>
-                      Line or edge
-                    </button>
-                  </div>
-                  {pickedTransformAxis ? (
-                    <PickSlot
-                      noun="an axis"
-                      armed={transformAxisPicking}
-                      value={transformAxisLabel(editingTransform.axis, doc)}
-                      wide
-                      title="A straight body edge or a sketch line to swing the body around"
-                      onArm={armTransformAxis}
-                      onClear={() => {
-                        // Back to a world direction, then straight into
-                        // re-picking — an empty slot would leave no rotation.
-                        setDoc(setTransform(doc, editingTransform.id, { axis: "z" }));
-                        armTransformAxis();
-                      }}
-                    />
-                  ) : (
-                    <div className="ed-field">
-                      <span>Along</span>
-                      <div className="ed-modes" style={{ width: 112 }}>
-                        {(["x", "y", "z"] as const).map((ax) => (
-                          <button
-                            key={ax}
-                            className={editingTransform.axis === ax ? "active" : ""}
-                            onClick={() =>
-                              setDoc(
-                                updateParam(doc, editingTransform.id, "axis", ax),
-                                `param:${editingTransform.id}:axis`,
-                              )
-                            }
-                          >
-                            {ax.toUpperCase()}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <label className="ed-field">
-                    <span>Angle°</span>
-                    <input
-                      value={liveTransform ? fmt(liveTransform.angle) : editingTransform.angle}
-                      onChange={(e) =>
-                        setDoc(
-                          updateParam(doc, editingTransform.id, "angle", e.target.value),
-                          `param:${editingTransform.id}:angle`,
-                        )
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") finishTransform();
-                        else if (e.key === "Escape") cancelTransform();
-                      }}
-                    />
-                  </label>
-                </>
-              )}
-              <label className="ed-field ed-flip">
-                <span>Keep original (copy)</span>
-                <input
-                  type="checkbox"
-                  checked={editingTransform.copy}
-                  onChange={(e) => setDoc(updateParam(doc, editingTransform.id, "copy", String(e.target.checked)))}
-                />
-              </label>
-              <div className="ed-hint">
-                {transformMode === "scale"
-                  ? "Uniform scale about the body's center — drag a corner of the box out to grow, in to shrink."
-                  : transformMode === "rotate"
-                    ? "An axis through the body's center spins it on the spot; a picked line or edge hinges it around that line. Drag the ring, or type an angle."
-                    : "Drag the gizmo, or type exact values."}
-              </div>
-              <div className="ed-actions">
-                <button className="ed-primary" onClick={finishTransform}>
-                  Done
-                </button>
-                <button onClick={cancelTransform}>Cancel</button>
-              </div>
-            </DraggableDialog>
+            <TransformDialog
+              name={editingTransform.name}
+              at={transformPanelXY ?? null}
+              mode={transformMode}
+              values={{
+                tx: liveTransform ? fmt(liveTransform.tx) : editingTransform.tx,
+                ty: liveTransform ? fmt(liveTransform.ty) : editingTransform.ty,
+                tz: liveTransform ? fmt(liveTransform.tz) : editingTransform.tz,
+                scale: liveTransform ? fmt(liveTransform.scale) : editingTransform.scale,
+                angle: liveTransform ? fmt(liveTransform.angle) : editingTransform.angle,
+              }}
+              pickedAxis={pickedTransformAxis}
+              axisArmed={transformAxisPicking}
+              axisLabel={transformAxisLabel(editingTransform.axis, doc)}
+              worldAxis={typeof editingTransform.axis === "string" ? editingTransform.axis : null}
+              copy={editingTransform.copy}
+              onModeChange={setTransformMode}
+              onParamChange={(field, value) =>
+                setDoc(updateParam(doc, editingTransform.id, field, value), `param:${editingTransform.id}:${field}`)
+              }
+              onUseWorldAxis={() => {
+                cancelTransformAxisPick();
+                // Falling back to a world direction: keep the one the feature
+                // already held, or Z for a feature coming off a picked line
+                // (which has no direction of its own).
+                if (typeof editingTransform.axis !== "string") {
+                  setDoc(setTransform(doc, editingTransform.id, { axis: "z" }));
+                }
+              }}
+              onArmAxis={armTransformAxis}
+              onClearAxis={() => {
+                // Back to a world direction, then straight into re-picking — an
+                // empty slot would leave no rotation.
+                setDoc(setTransform(doc, editingTransform.id, { axis: "z" }));
+                armTransformAxis();
+              }}
+              onCopyChange={(copy) => setDoc(updateParam(doc, editingTransform.id, "copy", String(copy)))}
+              onConfirm={finishTransform}
+              onCancel={cancelTransform}
+            />
           )}
           {transformArming && !editingTransform && (
-            <DraggableDialog
-              className="feature-dialog"
-              style={{ left: transformPanelXY?.x ?? "50%", top: transformPanelXY?.y ?? 64 }}
-              baseTransform={transformPanelXY ? undefined : "translateX(-50%)"}
-            >
-              <div className="ed-title" data-drag-handle>
-                Transform
-              </div>
-              <div className="ed-modes">
-                {(["translate", "rotate", "scale"] as const).map((m) => (
-                  <button
-                    key={m}
-                    className={transformArming.mode === m ? "active" : ""}
-                    onClick={() => setTransformArming({ mode: m })}
-                  >
-                    {m === "translate" ? "Move" : m === "rotate" ? "Rotate" : "Scale"}
-                  </button>
-                ))}
-              </div>
-              <PickSlot noun="a body" armed value={null} wide onArm={() => {}} />
-              <div className="ed-actions">
-                <button onClick={cancelTransformArming}>Cancel</button>
-              </div>
-            </DraggableDialog>
+            <TransformArmingDialog
+              at={transformPanelXY ?? null}
+              mode={transformArming.mode}
+              onModeChange={(mode) => setTransformArming({ mode })}
+              onCancel={cancelTransformArming}
+            />
           )}
           {measure && (
             <div className="selection-info">

@@ -270,25 +270,14 @@ _not_ repeated here; this section is the rest.
       this as correctness work rather than tidying. `CONTRIBUTING.md`'s layout
       table already concedes "oversized and mid-refactor", which reads as an
       unfinished job to anyone arriving. Four independently shippable steps:
-  - [ ] **1a.** Extract the JSX tail. The 20 `DraggableDialog` blocks are
-        already visually delimited and `BooleanDialog`, `SettingsDialog`,
-        `DocumentsDialog` and `ReportDialog` are the pattern to copy.
-        **Partly done, and it does not reach 7,000 on its own — "the lowest-risk
-        half" was only true of half the dialogs.** Sweep, Loft, DXF import and
-        Mirror are out (App.tsx 9,891 → 9,758), each as labels-in /
-        callbacks-out with neither a setter nor `doc` crossing the boundary. They
-        are the ones whose JSX needed only resolved strings and a few flags, so
-        their `useState` could stay put. Pattern, Extrude, Dress-up, Revolve and
-        the two Transform blocks are NOT like that: each opens with a long run of
-        closures that drive state rather than read it — Pattern's `setWorldRef`
-        calls `setPicking(false)` and `setPickPurpose("sketch")` to cancel an
-        in-flight pick while rewriting the dialog. Extracting those as
-        presentational components means threading the pick setters through them,
-        which is exactly what makes the four landed ones clean. For those, do
-        **1b first for that dialog**, or treat 1a+1b as one job per dialog. The
-        DXF extraction also had to move the unit table and `$INSUNITS` sniffer
-        into `document/dxfImport.ts` first — expect more of that, and treat it as
-        the point rather than a detour.
+  - [ ] **1a.** Extract the JSX tail. `BooleanDialog`, `SettingsDialog`,
+        `DocumentsDialog` and `ReportDialog` are the pattern to copy: resolved
+        labels and flags in, granular callbacks out, neither a setter nor `doc`
+        crossing the boundary. **Eight done — Sweep, Loft, DXF import, Mirror,
+        Revolve and both Transform panels — taking App.tsx 9,891 → 9,562.** The
+        table below says what is left. Note 1a does **not** reach 7,000 on its
+        own: the eight easiest dialogs were worth ~330 lines, so the rest of item
+        1's total has to come from 1b–1d.
   - [ ] **1b.** Move each dialog's state machine behind its own hook
         (`useExtrudeDialog`, `useDressUpDialog`, `useShellDialog`,
         `useRevolveDialog`, `useTransformSession`) — each owns 3-8 `useState`
@@ -307,6 +296,30 @@ _not_ repeated here; this section is the rest.
       along the same seams as 1a and let a dialog's styles sit beside the
       dialog. Move the token block at the head of `index.css` into its own file
       so theming is findable.
+
+**Which dialog to extract next, and why not by feature family.** The predictor
+that works is whether a block's JSX _reads_ state or _drives_ it, measured by
+counting `setPicking`/`setPickPurpose` calls and closures defined before the
+`return`. Measured, not guessed: an earlier pass of this item guessed by feature
+family and was wrong twice in the same note, calling Revolve entangled (it had one
+such closure) and the Transform panels entangled (they had none). What remains:
+
+| block           | lines | pick-setters | pre-JSX closures |
+| --------------- | ----- | ------------ | ---------------- |
+| `planeDialog`   | 147   | 0            | 0                |
+| `dressUpDialog` | 153   | 0            | 9                |
+| `shellDialog`   | 106   | 0            | 4                |
+| `extrudeDialog` | 207   | 5            | 0                |
+| `patternDialog` | 293   | 2            | 7                |
+
+`planeDialog` is pure JSX and should go next. Dress-up and Shell have no
+pick-setters, so their closures are label/row helpers that can become props or
+move inside the component. **Extrude and Pattern are the real 1b work**:
+Pattern's `setWorldRef` calls `setPicking(false)` and `setPickPurpose("sketch")`
+to cancel an in-flight pick while rewriting the dialog, and handing that to a
+presentational component means threading the pick setters through it. Expect more
+moves like the DXF one, where the unit table and `$INSUNITS` sniffer had to go to
+`document/dxfImport.ts` first — that is the point, not a detour.
 
 **Tier 2 — guardrails, so it does not regress.**
 
