@@ -196,6 +196,7 @@ import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
+import { RevolveDialog } from "./ui/RevolveDialog";
 import { MirrorDialog } from "./ui/MirrorDialog";
 import { DxfImportDialog } from "./ui/DxfImportDialog";
 import { LoftDialog } from "./ui/LoftDialog";
@@ -3711,6 +3712,19 @@ export default function App() {
       x: s.x,
       y: s.y,
     });
+  };
+
+  /** Arm the Revolve dialog's PROFILE slot, cancelling an armed axis on the way.
+   *  The two roles read different click streams — profile goes through the
+   *  selection raycaster, axis through picking mode — so without the cancel both
+   *  stay live: the axis button keeps its armed styling and the next click still
+   *  fills the axis. */
+  const armRevolveProfile = (clear = false) => {
+    if (picking && pickPurpose === "revolveAxis") {
+      setPicking(false);
+      setPickPurpose("sketch");
+    }
+    setRevolveDialog((d) => (d ? { ...d, ...(clear ? { profile: null } : {}), armed: "profile" } : d));
   };
 
   /** Arm the Revolve dialog's AXIS slot. Shared by the dialog's own button and
@@ -8929,95 +8943,32 @@ export default function App() {
                     : "edge" in ax
                       ? (doc.features.find((f) => f.id === ax.edge.featureId)?.name ?? "Body") + " · edge"
                       : (doc.features.find((f) => f.id === ax.sketchId)?.name ?? "Sketch") + " · line";
-              const axisArming = picking && pickPurpose === "revolveAxis";
-              // Arming the profile has to CANCEL an armed axis: the two roles read
-              // different click streams (profile = the selection raycaster, axis =
-              // picking mode), so without this both stay live — the axis button
-              // keeps its armed styling and the next click still fills the axis.
-              const armProfile = (clear = false) => {
-                if (picking && pickPurpose === "revolveAxis") {
-                  setPicking(false);
-                  setPickPurpose("sketch");
-                }
-                setRevolveDialog((d) => (d ? { ...d, ...(clear ? { profile: null } : {}), armed: "profile" } : d));
-              };
               return (
-                <DraggableDialog className="feature-dialog" style={{ left: revolveDialog.x, top: revolveDialog.y }}>
-                  <div className="ed-title" data-drag-handle>
-                    {revolveDialog.editId ? "Edit revolve" : "Revolve"}
-                  </div>
-                  <div className="ed-hint">
-                    Profile: a closed sketch region or a planar body face. Axis: a sketch line, a straight body edge, a
-                    plane, or a body face.
-                  </div>
-                  <div className="bool-group-label">Profile</div>
-                  <PickSlot
-                    noun="a profile"
-                    armed={revolveDialog.armed === "profile"}
-                    value={profileLabel}
-                    wide
-                    onArm={() => armProfile()}
-                    onClear={() => armProfile(true)}
-                  />
-                  <div className="bool-group-label">Axis</div>
-                  <PickSlot
-                    noun="an axis"
-                    armed={axisArming}
-                    value={axisLabel}
-                    wide
-                    onArm={armRevolveAxis}
-                    onClear={() => {
-                      setRevolveDialog((d) => (d ? { ...d, axis: null } : d));
-                      armRevolveAxis();
-                    }}
-                  />
-                  <div className="ed-modes">
-                    {(["full", "angle"] as const).map((m) => (
-                      <button
-                        key={m}
-                        className={revolveDialog.mode === m ? "active" : ""}
-                        onClick={() => setRevolveDialog((d) => (d ? { ...d, mode: m } : d))}
-                      >
-                        {m === "full" ? "Full (360°)" : "Angle"}
-                      </button>
-                    ))}
-                  </div>
-                  {revolveDialog.mode === "angle" && (
-                    <>
-                      <label className="ed-field">
-                        <span>Angle (°)</span>
-                        <input
-                          autoFocus
-                          value={revolveDialog.degrees}
-                          onChange={(e) => setRevolveDialog((d) => (d ? { ...d, degrees: e.target.value } : d))}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") createRevolve();
-                            else if (e.key === "Escape") closeRevolveDialog();
-                          }}
-                        />
-                      </label>
-                      <label className="ed-field ed-flip">
-                        <span>Symmetric</span>
-                        <input
-                          type="checkbox"
-                          checked={revolveDialog.symmetric}
-                          onChange={(e) => setRevolveDialog((d) => (d ? { ...d, symmetric: e.target.checked } : d))}
-                        />
-                      </label>
-                    </>
-                  )}
-                  {revolvePreviewError && <p className="ed-warning">{revolvePreviewError}</p>}
-                  <div className="ed-actions">
-                    <button
-                      className="ed-primary"
-                      disabled={!revolveDialog.profile || !revolveDialog.axis}
-                      onClick={createRevolve}
-                    >
-                      {revolveDialog.editId ? "Done" : "Create"}
-                    </button>
-                    <button onClick={closeRevolveDialog}>Cancel</button>
-                  </div>
-                </DraggableDialog>
+                <RevolveDialog
+                  editing={!!revolveDialog.editId}
+                  x={revolveDialog.x}
+                  y={revolveDialog.y}
+                  profileLabel={profileLabel}
+                  profileArmed={revolveDialog.armed === "profile"}
+                  axisLabel={axisLabel}
+                  axisArmed={picking && pickPurpose === "revolveAxis"}
+                  mode={revolveDialog.mode}
+                  degrees={revolveDialog.degrees}
+                  symmetric={revolveDialog.symmetric}
+                  previewError={revolvePreviewError}
+                  onArmProfile={() => armRevolveProfile()}
+                  onClearProfile={() => armRevolveProfile(true)}
+                  onArmAxis={armRevolveAxis}
+                  onClearAxis={() => {
+                    setRevolveDialog((d) => (d ? { ...d, axis: null } : d));
+                    armRevolveAxis();
+                  }}
+                  onModeChange={(mode) => setRevolveDialog((d) => (d ? { ...d, mode } : d))}
+                  onDegreesChange={(degrees) => setRevolveDialog((d) => (d ? { ...d, degrees } : d))}
+                  onSymmetricChange={(symmetric) => setRevolveDialog((d) => (d ? { ...d, symmetric } : d))}
+                  onConfirm={createRevolve}
+                  onCancel={closeRevolveDialog}
+                />
               );
             })()}
           {sweepDialog && (
