@@ -196,6 +196,7 @@ import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
+import { PlaneDialog } from "./ui/PlaneDialog";
 import { TransformArmingDialog, TransformDialog } from "./ui/TransformDialog";
 import { RevolveDialog } from "./ui/RevolveDialog";
 import { MirrorDialog } from "./ui/MirrorDialog";
@@ -9018,151 +9019,45 @@ export default function App() {
             />
           )}
           {planeDialog && (
-            <DraggableDialog
-              className="feature-dialog"
-              style={{ left: "50%", top: 64 }}
-              baseTransform="translateX(-50%)"
-            >
-              <div className="ed-title" data-drag-handle>
-                {planeDialog.editId ? "Edit plane" : "Reference plane"}
-              </div>
-              <label className="ed-field">
-                <span>Method</span>
-                <select
-                  value={planeDialog.method}
-                  onChange={(e) => {
-                    const method = e.target.value as PlaneMethod;
-                    setPlaneDialog((d) => (d ? { ...d, method } : d));
-                    // Arm the first pick the method needs: a plane/face for all but
-                    // "through", which collects vertices/sketch points via clicks.
-                    armPlanePick(method === "through" ? "point" : "base");
-                  }}
-                >
-                  <option value="offset">Offset</option>
-                  <option value="midplane">Midplane</option>
-                  <option value="angle">At angle</option>
-                  <option value="through">Through 3 points</option>
-                </select>
-              </label>
-
-              {planeDialog.method !== "through" && (
-                <div className="ed-field">
-                  <span>{planeDialog.method === "midplane" ? "First" : "Base"}</span>
-                  <PickSlot
-                    noun="a plane or face"
-                    armed={planePick === "base"}
-                    value={planeDialog.base && planeRefLabel(planeDialog.base)}
-                    title={planeDialog.base ? planeRefLabel(planeDialog.base) : undefined}
-                    onArm={() => armPlanePick("base")}
-                    onClear={() => {
-                      setPlaneDialog((d) => (d ? { ...d, base: null } : d));
-                      armPlanePick("base");
-                    }}
-                  />
-                </div>
-              )}
-
-              {planeDialog.method === "offset" && (
-                <label className="ed-field">
-                  <span>Offset</span>
-                  <input
-                    value={planeDialog.offset}
-                    onChange={(e) => setPlaneDialog((d) => (d ? { ...d, offset: e.target.value } : d))}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") createPlane();
-                      else if (e.key === "Escape") closePlaneDialog();
-                    }}
-                  />
-                </label>
-              )}
-
-              {planeDialog.method === "midplane" && (
-                <div className="ed-field">
-                  <span>Second</span>
-                  <PickSlot
-                    noun="a plane or face"
-                    armed={planePick === "refB"}
-                    value={planeDialog.refB && planeRefLabel(planeDialog.refB)}
-                    title={planeDialog.refB ? planeRefLabel(planeDialog.refB) : undefined}
-                    onArm={() => armPlanePick("refB")}
-                    onClear={() => {
-                      setPlaneDialog((d) => (d ? { ...d, refB: null } : d));
-                      armPlanePick("refB");
-                    }}
-                  />
-                </div>
-              )}
-
-              {planeDialog.method === "angle" && (
-                <>
-                  <div className="ed-field">
-                    <span>Hinge</span>
-                    <div className="ed-modes" style={{ width: 112 }}>
-                      {(["u", "v"] as const).map((ax) => (
-                        <button
-                          key={ax}
-                          className={planeDialog.angleAxis === ax ? "active" : ""}
-                          onClick={() => setPlaneDialog((d) => (d ? { ...d, angleAxis: ax } : d))}
-                        >
-                          {ax.toUpperCase()}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <label className="ed-field">
-                    <span>Angle°</span>
-                    <input
-                      value={planeDialog.angle}
-                      onChange={(e) => setPlaneDialog((d) => (d ? { ...d, angle: e.target.value } : d))}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") createPlane();
-                        else if (e.key === "Escape") closePlaneDialog();
-                      }}
-                    />
-                  </label>
-                </>
-              )}
-
-              {planeDialog.method === "through" && (
-                <div className="ed-field">
-                  <span>Points</span>
-                  {/* A counting slot: it takes three clicks, so the button
-                      carries the tally alongside the imperative, and it only
-                      reads as FILLED at 3/3 — where it stops taking clicks and
-                      ✕ starts the three over. */}
-                  <PickSlot
-                    noun="points"
-                    armed={planePick === "point" && planeDialog.points.length < 3}
-                    value={planeDialog.points.length === 3 ? "3/3 picked" : null}
-                    clearTitle="Clear the points and pick again"
-                    onArm={() => armPlanePick("point")}
-                    onClear={() => {
-                      setPlaneDialog((d) => (d ? { ...d, points: [] } : d));
-                      armPlanePick("point");
-                    }}
-                  >
-                    {`Select points (${planeDialog.points.length}/3)`}
-                  </PickSlot>
-                </div>
-              )}
-
-              <div className="ed-actions">
-                <button
-                  className="ed-primary"
-                  disabled={
-                    planeDialog.method === "through"
-                      ? planeDialog.points.length !== 3
-                      : planeDialog.method === "midplane"
-                        ? !planeDialog.base || !planeDialog.refB
-                        : !planeDialog.base
-                  }
-                  onClick={createPlane}
-                >
-                  {planeDialog.editId ? "Done" : "Create"}
-                </button>
-                <button onClick={closePlaneDialog}>Cancel</button>
-              </div>
-            </DraggableDialog>
+            <PlaneDialog
+              editing={!!planeDialog.editId}
+              method={planeDialog.method}
+              baseLabel={planeDialog.base ? planeRefLabel(planeDialog.base) : null}
+              baseArmed={planePick === "base"}
+              refBLabel={planeDialog.refB ? planeRefLabel(planeDialog.refB) : null}
+              refBArmed={planePick === "refB"}
+              offset={planeDialog.offset}
+              angleAxis={planeDialog.angleAxis}
+              angle={planeDialog.angle}
+              pointCount={planeDialog.points.length}
+              pointsArmed={planePick === "point"}
+              onMethodChange={(method) => {
+                setPlaneDialog((d) => (d ? { ...d, method } : d));
+                // Arm the first pick the method needs: a plane/face for all but
+                // "through", which collects vertices/sketch points via clicks.
+                armPlanePick(method === "through" ? "point" : "base");
+              }}
+              onArmBase={() => armPlanePick("base")}
+              onClearBase={() => {
+                setPlaneDialog((d) => (d ? { ...d, base: null } : d));
+                armPlanePick("base");
+              }}
+              onArmRefB={() => armPlanePick("refB")}
+              onClearRefB={() => {
+                setPlaneDialog((d) => (d ? { ...d, refB: null } : d));
+                armPlanePick("refB");
+              }}
+              onOffsetChange={(offset) => setPlaneDialog((d) => (d ? { ...d, offset } : d))}
+              onAngleAxisChange={(angleAxis) => setPlaneDialog((d) => (d ? { ...d, angleAxis } : d))}
+              onAngleChange={(angle) => setPlaneDialog((d) => (d ? { ...d, angle } : d))}
+              onArmPoints={() => armPlanePick("point")}
+              onClearPoints={() => {
+                setPlaneDialog((d) => (d ? { ...d, points: [] } : d));
+                armPlanePick("point");
+              }}
+              onConfirm={createPlane}
+              onCancel={closePlaneDialog}
+            />
           )}
           {editingTransform && (
             <TransformDialog
