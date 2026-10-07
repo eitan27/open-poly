@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { validateDressUpSize, validateDressUpAngle, mapDressUpKernelError } from "./dressUpValidation";
+import {
+  validateDressUpSize,
+  validateDressUpAngle,
+  validateDressUpDialog,
+  mapDressUpKernelError,
+} from "./dressUpValidation";
 
 const scope = { wall: 4, gap: 0 };
 
@@ -103,5 +108,37 @@ describe("mapDressUpKernelError — geometry failures", () => {
 
   it("passes an already-readable non-OCCT message through unchanged", () => {
     expect(mapDressUpKernelError("No edges selected", "fillet")).toBe("No edges selected");
+  });
+});
+
+describe("validateDressUpDialog — both fields together", () => {
+  const fillet = { op: "fillet" as const, size: "2", angle: "45" };
+  const chamfer = { op: "chamfer" as const, size: "2", angle: "45" };
+
+  it("passes a valid pair and hands back the SIZE's value, not the angle's", () => {
+    // Callers use `value` as the resolved size, so a passing chamfer must not
+    // return 45 from the angle check.
+    expect(validateDressUpDialog(chamfer, scope)).toMatchObject({ value: 2, error: null });
+  });
+
+  it("reports the size first when both are wrong", () => {
+    const r = validateDressUpDialog({ op: "chamfer", size: "-1", angle: "200" }, scope);
+    expect(r.value).toBeNull();
+    expect(r.error).toContain("Distance");
+  });
+
+  it("ignores the angle entirely for a fillet", () => {
+    expect(validateDressUpDialog({ ...fillet, angle: "999" }, scope)).toMatchObject({ value: 2 });
+  });
+
+  it("rejects an out-of-range chamfer angle even when the size is fine", () => {
+    expect(validateDressUpDialog({ ...chamfer, angle: "90" }, scope)).toMatchObject({
+      value: null,
+      error: "Angle must be between 0 and 90°.",
+    });
+  });
+
+  it("stays silent on an empty size, like the single-field validators do", () => {
+    expect(validateDressUpDialog({ ...chamfer, size: "" }, scope)).toMatchObject({ value: null, error: null });
   });
 });

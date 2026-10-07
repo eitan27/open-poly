@@ -15,7 +15,6 @@ import { clamp } from "./lib/clamp";
 import { useUpdateAvailable } from "./useVersionCheck";
 import {
   addBoolean,
-  addDressUp,
   addExtrude,
   addFeature,
   addImport,
@@ -45,7 +44,6 @@ import {
   setSuppressed,
   setTransform,
   updateBoolean,
-  updateDressUp,
   updateExtrude,
   updateMirror,
   updateParam,
@@ -92,7 +90,6 @@ import { DEFAULT_SOLID_COLOR, hexToColor, setNewBodyColorPreference } from "./do
 import { featureIdOfPart, isSubPart, partAppearance, setPartAppearance } from "./document/parts";
 import type {
   DerivedOp,
-  DressUpTargetSpec,
   ProjectRef,
   Document,
   FaceRef,
@@ -122,7 +119,6 @@ import {
 } from "./sketch/coincidentSelection";
 import { pinConstraints } from "./sketch/snapPins";
 import type { BooleanOp, MeshedFaces } from "./kernel/types";
-import { DRESSUP_DELTA_IDS, dressUpDeltaBase } from "./kernel/types";
 import { solveSketch } from "./sketch/solver";
 import { isVariableExpression, relinkDimensions, sketchesNeedingRelink } from "./document/dimensionExpr";
 import { measureSelection } from "./selection/measure";
@@ -142,7 +138,8 @@ import {
 } from "./document/planes";
 import { DEFAULT_SECTION_VIEW, type SectionViewState } from "./document/sectionView";
 import { evaluateExpression } from "./document/expression";
-import { validateDressUpSize, validateDressUpAngle, mapDressUpKernelError } from "./document/dressUpValidation";
+import { validateDressUpDialog } from "./document/dressUpValidation";
+import { dressUpTargetsFromPicks } from "./document/dressUpTarget";
 import { validateShellThickness } from "./document/shellValidation";
 import { validateExtrudeDistance, extrudeUsesDistance } from "./document/extrudeValidation";
 import { shellBodyFromSelection, toggleShellFace, retargetShell } from "./document/shellTarget";
@@ -150,13 +147,7 @@ import { transformAxisLabel, transformAxisLine } from "./document/transformAxis"
 import { detectSketchRegions } from "./document/regions";
 import { applyExtend, applyTrim, planExtend, planTrim } from "./document/trimOps";
 import { extrudeProfilesFromPicks, isExtrudePick, toggleExtrudePick } from "./document/extrudeProfiles";
-import {
-  dressUpPickBody,
-  dressUpTargetsFromPicks,
-  mergeDressUpTargets,
-  toggleDressUpPick,
-  type DressUpTarget,
-} from "./document/dressUpTarget";
+import { dressUpPickBody, toggleDressUpPick } from "./document/dressUpTarget";
 import { FEATURE_DEFS, FEATURE_KINDS, featureTypeLabel } from "./document/featureDefs";
 import { DocumentsDialog } from "./ui/DocumentsDialog";
 import { ReportDialog } from "./ui/ReportDialog";
@@ -183,6 +174,7 @@ import {
   type OffsetPrimitive,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
+import { useDressUpDialog } from "./hooks/useDressUpDialog";
 import { useShellDialog } from "./hooks/useShellDialog";
 import { usePatternDialog } from "./hooks/usePatternDialog";
 import { useRevolveDialog } from "./hooks/useRevolveDialog";
@@ -954,8 +946,8 @@ export default function App() {
     // wipe what's been picked), and clicking a listed edge/face removes it —
     // the toggle rule shared with the boolean tools and the shell's open faces.
     // The arming stays live throughout: dressing a rim is many clicks.
-    if (dressUpDialog?.arming) {
-      const op = dressUpDialog.op;
+    if (dressUp.dialog?.arming) {
+      const op = dressUp.dialog.op;
       if (!picked || (picked.kind !== "edge" && picked.kind !== "face")) {
         if (picked) flashMsg(`Select the body edges or faces to ${op} — nothing else can be dressed.`);
         return;
@@ -963,7 +955,7 @@ export default function App() {
       // Edges on several bodies are fine: the dialog groups them by body and
       // commits one dress-up each (dressUpTargetsFromPicks), so a chamfer across
       // three parts is one gesture and one undo step.
-      setDressUpDialog((d) => (d ? { ...d, picks: toggleDressUpPick(d.picks, picked) } : d));
+      dressUp.setDialog((d) => (d ? { ...d, picks: toggleDressUpPick(d.picks, picked) } : d));
       return;
     }
     // Mirror dialog open, BODY not yet picked: same rule as Pattern's target —
@@ -1507,60 +1499,6 @@ export default function App() {
    *  ghost is at stake: editing a committed extrude applies to the real model
    *  instead of ghosting. */
   const extrudeCutting = extrudeDialog?.mode === "remove";
-  const [dressUpDialog, setDressUpDialog] = useState<
-    // `angle`/`flip` are chamfer-only (degrees from the reference face, and
-    // which adjacent face that is); they're ignored when the op is a fillet.
-    {
-      op: "chamfer" | "fillet";
-      size: string;
-      angle: string;
-      flip: boolean;
-      /** The edges/faces this dialog dresses — its OWN accumulated picks, not
-       *  the viewport selection, so an empty-space click can't wipe them.
-       *  Resolved to names/fingerprints by dressUpTargetFromPicks. */
-      picks: Selection[];
-      /** True while the next viewport click adds to (or removes from) `picks`.
-       *  Unlike a single-value slot, arming PERSISTS across picks: a five-edge
-       *  fillet is five clicks, not click-button-click-button. */
-      arming: boolean;
-      /** What the feature being EDITED already dresses. A chamfer replaces the
-       *  edge it bevels, so once committed those edges aren't in the model to be
-       *  re-picked — but the feature still references them, and re-opening must
-       *  show them as rows you can drop. Empty while creating. */
-      stored: DressUpTargetSpec[];
-      x: number;
-      y: number;
-      editId?: string;
-    } | null
-  >(null);
-  // Validation for the chamfer/fillet dialog: a human-readable message when the
-  // current size is unsatisfiable (e.g. a fillet radius larger than the
-  // geometry), or null when it builds cleanly. Set live as the user types and
-  // re-checked authoritatively before commit, so an invalid size can't close it.
-  const [dressUpError, setDressUpError] = useState<string | null>(null);
-  // Live ghost of what the chamfer/fillet dialog's current size/angle will
-  // change: `removed` is the solid it carves off (a bevel, a rounded-off
-  // corner), `added` the solid it fills in (a fillet on a concave edge). Either
-  // may be absent — a feature whose edges are all convex only removes. Produced
-  // by the same debounced regen that validates the dialog, so previewing costs
-  // no extra kernel round trip.
-  // One entry per fanned-out feature: a multi-body dress-up ghosts on every
-  // body it touches, not just the first.
-  const [dressUpPreview, setDressUpPreview] = useState<{
-    removed: FeatureMesh["mesh"][];
-    added: FeatureMesh["mesh"][];
-  } | null>(null);
-  // Shell dialog. The body is armed when the tool opens (from whatever was
-  // selected — a face pick resolves to its owning body) and shown in the
-  // dialog; the faces to open are optional and armed separately from there, so
-  // the common "just hollow this" case can't accidentally open the face the
-  // user happened to have clicked. `arming` says which role the next viewport
-  // click fills.
-  // Revolve dialog. The user arms a profile (a sketch region or a planar body
-  // face) and an axis (a sketch line, a plane, or a body face) by clicking in the
-  // viewport — like the Boolean dialog — then sets the angle (Full 360° vs. a
-  // specified angle + optional symmetric sweep). `armed` says which role the next
-  // viewport click fills.
   // The Sweep dialog: a profile region + the path to sweep it along. Both are
   // armed by clicking the viewport (like Revolve); `armed` says which slot the
   // next click fills, and filling the profile hands the arming to the path.
@@ -1990,33 +1928,6 @@ export default function App() {
     waitForRegen,
   });
 
-  /** Is a feature dialog on screen? One place, because three things have to
-   *  agree about it, and they drift apart if each works it out for itself:
-   *
-   *   - every modelling tool is inert while one is open (you finish or cancel,
-   *     you don't start a second feature on top of the first). A tool that
-   *     disables itself for its OWN dialog only leaves Extrude's dialog with
-   *     Revolve, Shell and the rest clickable underneath it;
-   *   - the viewport's pick banner stays out of the way, since the dialog's own
-   *     armed slot is already asking for the pick;
-   *   - Escape closes it, in one press.
-   *
-   *  `transformArming` and `transformEditId` count: the transform gizmo is a
-   *  dialog by any other name. */
-  const anyDialogOpen =
-    !!planeDialog ||
-    !!extrudeDialog ||
-    !!revolve.dialog ||
-    !!sweepDialog ||
-    !!loftDialog ||
-    !!dressUpDialog ||
-    !!shell.dialog ||
-    !!booleanDialog ||
-    !!mirrorDialog ||
-    !!pattern.dialog ||
-    !!transformEditId ||
-    !!transformArming;
-
   // Own the worker's lifecycle here so each mount cycle (incl. StrictMode's
   // mount/unmount/remount) gets a fresh, live kernel rather than a disposed one.
   useEffect(() => {
@@ -2288,6 +2199,50 @@ export default function App() {
     [rawMeshes, doc, isolatedBodyId],
   );
 
+  // The Chamfer/Fillet dialog owns its own state machine. Two kernel round trips
+  // live in there — a debounced one that validates the size AND carries back the
+  // ghost deltas, and an authoritative one on commit. See useDressUpDialog.
+  const dressUp = useDressUpDialog({
+    doc,
+    setDoc,
+    scope: resolved.scope,
+    meshes,
+    ready,
+    kernelRef,
+    beginEdit,
+    commitEdit,
+    cancelEdit,
+    shouldLiveApply,
+    selectFeature,
+  });
+
+  /** Is a feature dialog on screen? One place, because three things have to
+   *  agree about it, and they drift apart if each works it out for itself:
+   *
+   *   - every modelling tool is inert while one is open (you finish or cancel,
+   *     you don't start a second feature on top of the first). A tool that
+   *     disables itself for its OWN dialog only leaves Extrude's dialog with
+   *     Revolve, Shell and the rest clickable underneath it;
+   *   - the viewport's pick banner stays out of the way, since the dialog's own
+   *     armed slot is already asking for the pick;
+   *   - Escape closes it, in one press.
+   *
+   *  `transformArming` and `transformEditId` count: the transform gizmo is a
+   *  dialog by any other name. */
+  const anyDialogOpen =
+    !!planeDialog ||
+    !!extrudeDialog ||
+    !!revolve.dialog ||
+    !!sweepDialog ||
+    !!loftDialog ||
+    !!dressUp.dialog ||
+    !!shell.dialog ||
+    !!booleanDialog ||
+    !!mirrorDialog ||
+    !!pattern.dialog ||
+    !!transformEditId ||
+    !!transformArming;
+
   // The extrude live preview ghosts only the swept *tool* (the changing
   // portion), keyed by fresh ids that aren't among the real bodies — so every
   // existing body stays rendered in its own colour and only the new material
@@ -2426,10 +2381,10 @@ export default function App() {
       ...mirrorGhost,
       // The chamfer/fillet delta: what the operation fills in and what it carves
       // off, ghosted over the model (see GhostMesh.variant).
-      ...(dressUpPreview?.added ?? []).map((mesh) => ({ mesh, variant: "fill" as const })),
-      ...(dressUpPreview?.removed ?? []).map((mesh) => ({ mesh, variant: "cut" as const })),
+      ...(dressUp.preview?.added ?? []).map((mesh) => ({ mesh, variant: "fill" as const })),
+      ...(dressUp.preview?.removed ?? []).map((mesh) => ({ mesh, variant: "cut" as const })),
     ],
-    [extrudePreview, extrudeCutting, revolve.preview, patternGhosts, mirrorGhost, dressUpPreview],
+    [extrudePreview, extrudeCutting, revolve.preview, patternGhosts, mirrorGhost, dressUp.preview],
   );
 
   // Feature ids that produced an actual rendered body — what the Solids list
@@ -3115,265 +3070,18 @@ export default function App() {
     };
   }, [extrudeDialog, extrudeDialogProfiles, extrudeTargetSatisfied, extrudeDistanceSatisfied, doc, ready]);
 
-  // Open the chamfer/fillet dialog. Always available: the edges and faces to
-  // dress are armed inside it. Whatever edges/faces are already selected prefill
-  // the list (and place the dialog beside them); with nothing selected it opens
-  // armed and waiting for the first click.
+  // Whatever edges/faces are already selected prefill the list and place the
+  // dialog beside them; the anchor needs the camera, which is the shell's business.
   const openDressUp = (op: "chamfer" | "fillet") => {
-    const picks = selection.filter((s) => s.kind === "edge" || s.kind === "face");
-    const targets = dressUpTargetsFromPicks(picks, meshes);
-    const anchor = targets[0]?.anchor;
-    const s = (anchor && viewApiRef.current?.worldToScreen(anchor)) || { x: 240, y: 160 };
-    setDressUpError(null);
-    setDressUpDialog({
-      op,
-      size: "2",
-      angle: "45",
-      flip: false,
-      picks,
-      stored: [],
-      arming: targets.length === 0,
-      x: s.x,
-      y: s.y,
-    });
+    const picks = selection.filter((sel) => sel.kind === "edge" || sel.kind === "face");
+    const anchorWorld = dressUpTargetsFromPicks(picks, meshes)[0]?.anchor;
+    const at = (anchorWorld && viewApiRef.current?.worldToScreen(anchorWorld)) || undefined;
+    dressUp.open(op, picks, at);
   };
-
-  // Re-open the chamfer/fillet dialog to edit in place. Seeds op + size + angle
-  // from the feature; its edges stay referenced (re-pick by clicking edges on
-  // the body). A feature with no stored angle is a symmetric 45° chamfer.
   const editDressUp = (id: string) => {
     const f = doc.features.find((x) => x.id === id);
-    if (f?.type !== "dressup") return;
-    beginEdit(f);
-    selectFeature(id);
-    setDressUpError(null);
-    setDressUpDialog({
-      op: f.op,
-      size: f.size,
-      angle: f.angle ?? "45",
-      flip: f.flip ?? false,
-      // Editing starts from what the feature already dresses; picking adds to
-      // it (a pick on a body it already dresses joins that body's list).
-      picks: [],
-      stored: f.targets,
-      arming: false,
-      x: 240,
-      y: 160,
-      editId: id,
-    });
+    if (f?.type === "dressup") dressUp.edit(f);
   };
-  const closeDressUpDialog = () => {
-    setDressUpDialog(null);
-    setDressUpError(null);
-    cancelEdit();
-  };
-
-  // What the dialog dresses: its own accumulated picks, grouped into ONE TARGET
-  // PER BODY (see dressUpTargetsFromPicks — picks spanning three bodies commit
-  // as three features), else (editing) the feature's own referenced edges.
-  const dressUpDialogTargets = useMemo((): DressUpTarget[] => {
-    if (!dressUpDialog) return [];
-    const stored: DressUpTarget[] = dressUpDialog.stored.map((t) => ({
-      targetId: t.targetId,
-      edges: t.edges,
-      edgeRefs: t.edgeRefs ?? [],
-      faces: t.faces ?? [],
-      faceRefs: t.faceRefs ?? [],
-      anchor: null,
-    }));
-    return mergeDressUpTargets([...stored, ...dressUpTargetsFromPicks(dressUpDialog.picks, meshes)]);
-  }, [dressUpDialog, meshes]);
-
-  // The document-level spec the dialog's current inputs describe. Angle/flip
-  // ride along for chamfers only — a fillet has no bevel to tilt.
-  const dressUpSpec = (targets: DressUpTarget[], d: NonNullable<typeof dressUpDialog>) => ({
-    op: d.op,
-    targets: targets.map((t) => ({
-      targetId: t.targetId,
-      edges: t.edges,
-      edgeRefs: t.edgeRefs,
-      faces: t.faces,
-      faceRefs: t.faceRefs,
-    })),
-    size: d.size,
-    ...(d.op === "chamfer" ? { angle: d.angle, flip: d.flip } : {}),
-  });
-
-  // Both size and (for a chamfer) angle must resolve before anything is built.
-  const validateDressUpDialog = (d: NonNullable<typeof dressUpDialog>) => {
-    const sv = validateDressUpSize(d.size, resolved.scope, d.op);
-    if (sv.value === null) return sv;
-    if (d.op !== "chamfer") return sv;
-    const av = validateDressUpAngle(d.angle, resolved.scope);
-    return av.value === null ? av : sv;
-  };
-
-  // Add the dress-up, or (editing) update it in place — shared by the commit and
-  // the live-validation effect so both build the same doc. However many bodies
-  // it dresses, it is ONE feature: the dialog that made it reopens with all of
-  // them, and undo takes the whole thing back.
-  const applyDressUp = (
-    base: Document,
-    targets: DressUpTarget[],
-    d: NonNullable<typeof dressUpDialog>,
-  ): { doc: Document; id: string } => {
-    const spec = dressUpSpec(targets, d);
-    if (d.editId) return { doc: updateDressUp(base, d.editId, spec), id: d.editId };
-    return addDressUp(
-      base,
-      d.op,
-      spec.targets,
-      d.size,
-      d.op === "chamfer" ? d.angle : undefined,
-      d.op === "chamfer" && d.flip,
-    );
-  };
-
-  // Live-preview a chamfer/fillet edit: apply the new size/angle/edges to the
-  // real feature as they change (skipping empty/invalid inputs). The existing
-  // async validation effect still surfaces an unsatisfiable radius as
-  // `dressUpError`.
-  useEffect(() => {
-    const d = dressUpDialog;
-    if (!d?.editId || dressUpDialogTargets.length === 0) return;
-    if (validateDressUpDialog(d).value === null) return;
-    const spec = dressUpSpec(dressUpDialogTargets, d);
-    if (!shouldLiveApply(JSON.stringify({ e: d.editId, spec }))) return;
-    setDoc((prev) => updateDressUp(prev, d.editId!, spec), `edit:${d.editId}`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    dressUpDialog?.editId,
-    dressUpDialog?.size,
-    dressUpDialog?.angle,
-    dressUpDialog?.flip,
-    dressUpDialog?.op,
-    dressUpDialogTargets,
-  ]);
-
-  const createDressUp = async () => {
-    if (dressUpDialogTargets.length === 0 || !dressUpDialog) return;
-    // Synchronous gate first: an empty/garbage/≤0 size (or an out-of-range
-    // chamfer angle) never reaches the kernel. Empty is silently ignored (no
-    // error, just a no-op); anything invalid keeps the dialog open with its
-    // message.
-    const sv = validateDressUpDialog(dressUpDialog);
-    if (sv.value === null) {
-      setDressUpError(null);
-      return;
-    }
-    const { doc: next, id } = applyDressUp(doc, dressUpDialogTargets, dressUpDialog);
-    // Authoritative pre-commit check against the kernel: an unsatisfiable size
-    // (radius too big, degenerate edge) keeps the dialog open with the error
-    // rather than committing a broken feature. Runs even if the live-validation
-    // effect hasn't caught up (e.g. Enter pressed immediately after typing).
-    // With a fan-out this is all-or-nothing: one body that can't take the size
-    // fails the whole commit, so the timeline never ends up half dressed.
-    const kernel = kernelRef.current;
-    if (ready && kernel) {
-      const resolvedNext = resolveDocument(next);
-      let err: string | null = resolvedNext.errors[id] ?? null;
-      if (!err) {
-        try {
-          const { results } = await kernel.regenerate(resolvedNext.features);
-          const hit = results.find((r) => r.id === id && !r.ok);
-          if (hit && !hit.ok) err = hit.error;
-        } catch (e) {
-          err = String((e as Error)?.message ?? e);
-        }
-      }
-      if (err) {
-        setDressUpError(mapDressUpKernelError(err, dressUpDialog.op));
-        return;
-      }
-    }
-    setDoc(next);
-    selectFeature(null);
-    commitEdit();
-    setDressUpDialog(null);
-    setDressUpError(null);
-  };
-
-  // Live geometry validation AND ghost preview of the chamfer/fillet dialog. The
-  // sync part of validation (empty / unparseable / ≤ 0) is done in render off the
-  // raw size — instant, and never touches the kernel. This effect covers only the
-  // case that NEEDS the kernel: a valid positive size that OCCT still can't build
-  // (e.g. a fillet radius too large for the edges). It regenerates a throwaway doc
-  // (mirrors createDressUp, minus setDoc), debounced so each keystroke on a heavy
-  // body stays responsive. `dressUpError` holds only this async error.
-  //
-  // The same regen carries `previewDelta`, so the kernel hands back the material
-  // the dress-up removes and the material it adds as extra bodies — the ghosts
-  // below. Validation and preview therefore always agree, and a preview never
-  // costs a second round trip.
-  useEffect(() => {
-    if (!dressUpDialog || dressUpDialogTargets.length === 0) {
-      setDressUpError(null);
-      setDressUpPreview(null);
-      return;
-    }
-    const sv = validateDressUpDialog(dressUpDialog);
-    if (sv.value === null) {
-      // Empty/invalid/≤0 — surfaced synchronously in the dialog; clear any stale
-      // geometry error and don't build. The stale ghost goes too: showing the
-      // last good size's wedge while the field reads something else is a lie.
-      setDressUpError(null);
-      setDressUpPreview(null);
-      return;
-    }
-    const kernel = kernelRef.current;
-    if (!ready || !kernel) return;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      const { doc: next, id } = applyDressUp(doc, dressUpDialogTargets, dressUpDialog);
-      const resolvedNext = resolveDocument(next);
-      const resolveErr = resolvedNext.errors[id];
-      if (resolveErr) {
-        if (!cancelled) {
-          setDressUpError(mapDressUpKernelError(resolveErr, dressUpDialog.op));
-          setDressUpPreview(null);
-        }
-        return;
-      }
-      // Every fanned-out feature ghosts, so a multi-body dress-up previews on
-      // all of its bodies at once rather than just the first.
-      const features = resolvedNext.features.map((rf) =>
-        rf.type === "dressup" && rf.id === id ? { ...rf, previewDelta: true } : rf,
-      );
-      kernel
-        .regenerate(features)
-        .then(({ results }) => {
-          if (cancelled) return;
-          const hit = results.find((r) => r.id === id && !r.ok);
-          const err = hit && !hit.ok ? mapDressUpKernelError(hit.error, dressUpDialog.op) : null;
-          setDressUpError(err);
-          if (err) {
-            setDressUpPreview(null);
-            return;
-          }
-          const delta = (deltaId: string) => {
-            const r = results.find((x) => x.id === deltaId);
-            return r?.ok ? r.mesh : undefined;
-          };
-          // One delta pair per dressed body (see dressUpDeltaBase), so a
-          // multi-body dress-up ghosts on all of them.
-          const bases = dressUpDialogTargets.map((_, ti) => dressUpDeltaBase(id, ti));
-          const removed = bases.map((b) => delta(DRESSUP_DELTA_IDS.removed(b))).filter((m) => !!m);
-          const added = bases.map((b) => delta(DRESSUP_DELTA_IDS.added(b))).filter((m) => !!m);
-          setDressUpPreview(removed.length || added.length ? { removed, added } : null);
-        })
-        .catch((err) => {
-          if (!cancelled) {
-            setDressUpError(mapDressUpKernelError(String(err?.message ?? err), dressUpDialog.op));
-            setDressUpPreview(null);
-          }
-        });
-    }, 250);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dressUpDialog, dressUpDialogTargets, doc, ready, resolved.scope]);
 
   // The single body a Shell would hollow, resolved from the selection. Any pick
   // on a rendered body — the body, or one of its faces/edges/vertices — arms
@@ -3586,7 +3294,7 @@ export default function App() {
         else if (sweepDialog) closeSweep();
         else if (loftDialog) closeLoft();
         else if (extrudeDialog) closeExtrudeDialog();
-        else if (dressUpDialog) closeDressUpDialog();
+        else if (dressUp.dialog) dressUp.close();
         else if (booleanDialog) closeBooleanDialog();
         else if (transformEditId) cancelTransform();
         else if (transformArming) cancelTransformArming();
@@ -3768,10 +3476,10 @@ export default function App() {
           if (!loftDialog) openLoft();
           break;
         case "model.chamfer":
-          if (!dressUpDialog) openDressUp("chamfer");
+          if (!dressUp.dialog) openDressUp("chamfer");
           break;
         case "model.fillet":
-          if (!dressUpDialog) openDressUp("fillet");
+          if (!dressUp.dialog) openDressUp("fillet");
           break;
         case "model.shell":
           if (!shell.dialog) openShell();
@@ -3823,7 +3531,7 @@ export default function App() {
     // list changes and Esc would run against a closure that still thought
     // nothing was armed — closing the whole dialog instead of disarming.
     shell.dialog,
-    dressUpDialog,
+    dressUp.dialog,
     booleanDialog,
     bodyIds,
     transformTarget,
@@ -6247,7 +5955,7 @@ export default function App() {
       regionId: s.regionId,
     });
     if (extrudeDialog?.picks.length) return extrudeDialog.picks;
-    if (dressUpDialog?.picks.length) return dressUpDialog.picks;
+    if (dressUp.dialog?.picks.length) return dressUp.dialog.picks;
     if (loftDialog?.sections.length) return loftDialog.sections.map(region);
     if (sweepDialog) {
       const out: Selection[] = [];
@@ -6259,7 +5967,7 @@ export default function App() {
     }
     if (mirrorDialog?.targetId) return [{ kind: "feature", id: mirrorDialog.targetId }];
     return null;
-  }, [extrudeDialog, dressUpDialog, loftDialog, sweepDialog, mirrorDialog]);
+  }, [extrudeDialog, dressUp.dialog, loftDialog, sweepDialog, mirrorDialog]);
 
   // Per-operand viewport highlight while the dialog is open, keyed by what the
   // operation does to each body rather than by colour: union → every operand
@@ -8096,60 +7804,61 @@ export default function App() {
               onCancel={closeExtrudeDialog}
             />
           )}
-          {dressUpDialog &&
+          {dressUp.dialog &&
             (() => {
+              const d = dressUp.dialog;
               // Synchronous validation (empty / unparseable / ≤ 0) is instant and
               // kernel-free; the async geometry error (size too big) lives in
-              // `dressUpError`. Show whichever applies; empty stays silent.
-              const sv = validateDressUpDialog(dressUpDialog);
+              // `dressUp.error`. Show whichever applies; empty stays silent.
+              const sv = validateDressUpDialog(d, resolved.scope);
               // Nothing picked yet is not an ERROR — the dialog opened that way
               // on purpose — so it only holds the primary button, silently.
-              const targets = dressUpDialogTargets;
+              const targets = dressUp.targets;
               const bodyLabel = (id: string) =>
                 isSubPart(id)
                   ? partAppearance(doc, id, DEFAULT_SOLID_COLOR).name
                   : (doc.features.find((f) => f.id === id)?.name ?? "Body");
               return (
                 <DressUpDialog
-                  op={dressUpDialog.op}
-                  editing={!!dressUpDialog.editId}
-                  x={dressUpDialog.x}
-                  y={dressUpDialog.y}
+                  op={dressUp.dialog.op}
+                  editing={!!dressUp.dialog.editId}
+                  x={dressUp.dialog.x}
+                  y={dressUp.dialog.y}
                   groups={buildDressUpGroups(
-                    dressUpDialog.stored.map((t, i) => ({
+                    dressUp.dialog.stored.map((t, i) => ({
                       targetId: t.targetId,
                       edges: t.edges.length,
                       faces: t.faces?.length ?? 0,
                       onRemove: () =>
-                        setDressUpDialog((d) => (d ? { ...d, stored: d.stored.filter((_, k) => k !== i) } : d)),
+                        dressUp.setDialog((d) => (d ? { ...d, stored: d.stored.filter((_, k) => k !== i) } : d)),
                     })),
-                    dressUpDialog.picks.map((p, index) => ({
+                    dressUp.dialog.picks.map((p, index) => ({
                       bodyId: dressUpPickBody(p),
                       kind: p.kind === "edge" ? ("edge" as const) : ("face" as const),
                       onRemove: () =>
-                        setDressUpDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== index) } : d)),
+                        dressUp.setDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== index) } : d)),
                     })),
                     bodyLabel,
                   )}
                   bodyCount={targets.length}
                   summary={dressUpCountLabel(targets)}
-                  arming={dressUpDialog.arming}
-                  hasPicks={dressUpDialog.picks.length > 0}
-                  size={dressUpDialog.size}
-                  angle={dressUpDialog.angle}
-                  flip={dressUpDialog.flip}
-                  message={sv.value === null ? sv.error : dressUpError}
-                  confirmDisabled={sv.value === null || !!dressUpError || targets.length === 0}
-                  onToggleArming={() => setDressUpDialog((d) => (d ? { ...d, arming: !d.arming } : d))}
-                  onSizeChange={(size) => setDressUpDialog((d) => (d ? { ...d, size } : d))}
-                  onAngleChange={(angle) => setDressUpDialog((d) => (d ? { ...d, angle } : d))}
-                  onFlipChange={(flip) => setDressUpDialog((d) => (d ? { ...d, flip } : d))}
-                  onConfirm={createDressUp}
+                  arming={dressUp.dialog.arming}
+                  hasPicks={dressUp.dialog.picks.length > 0}
+                  size={dressUp.dialog.size}
+                  angle={dressUp.dialog.angle}
+                  flip={dressUp.dialog.flip}
+                  message={sv.value === null ? sv.error : dressUp.error}
+                  confirmDisabled={sv.value === null || !!dressUp.error || targets.length === 0}
+                  onToggleArming={() => dressUp.setDialog((d) => (d ? { ...d, arming: !d.arming } : d))}
+                  onSizeChange={(size) => dressUp.setDialog((d) => (d ? { ...d, size } : d))}
+                  onAngleChange={(angle) => dressUp.setDialog((d) => (d ? { ...d, angle } : d))}
+                  onFlipChange={(flip) => dressUp.setDialog((d) => (d ? { ...d, flip } : d))}
+                  onConfirm={dressUp.confirm}
                   onEscape={() => {
-                    if (dressUpDialog.arming) setDressUpDialog((d) => (d ? { ...d, arming: false } : d));
-                    else closeDressUpDialog();
+                    if (d.arming) dressUp.setDialog((p) => (p ? { ...p, arming: false } : p));
+                    else dressUp.close();
                   }}
-                  onCancel={closeDressUpDialog}
+                  onCancel={dressUp.close}
                 />
               );
             })()}
