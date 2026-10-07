@@ -270,18 +270,18 @@ _not_ repeated here; this section is the rest.
       this as correctness work rather than tidying. `CONTRIBUTING.md`'s layout
       table already concedes "oversized and mid-refactor", which reads as an
       unfinished job to anyone arriving. Four independently shippable steps:
-  - [ ] **1a.** Extract the JSX tail. `BooleanDialog`, `SettingsDialog`,
-        `DocumentsDialog` and `ReportDialog` are the pattern to copy: resolved
-        labels and flags in, granular callbacks out, neither a setter nor `doc`
-        crossing the boundary. **Twelve done — everything except Pattern —
-        taking App.tsx 9,891 → 9,050.** Note 1a does **not** reach 7,000 on its
-        own: twelve dialogs were worth ~840 lines, so the rest of item 1's total
-        has to come from 1b–1d.
+  - [x] **1a. Done.** All thirteen `DraggableDialog` blocks are out of
+        `App.tsx`, which went 9,891 → 8,675. Each follows `BooleanDialog`'s shape:
+        resolved labels and flags in, granular callbacks out, neither a setter nor
+        `doc` crossing the boundary. It did **not** reach 7,000 on its own — the
+        thirteen were worth ~1,220 lines — so the rest of item 1's total has to
+        come from 1b–1d.
   - [ ] **1b.** Move each dialog's state machine behind its own hook
         (`useExtrudeDialog`, `useDressUpDialog`, `useShellDialog`,
         `useTransformSession`) — each owns 3-8 `useState` plus its effects today.
-        **`useRevolveDialog` is done and the item's premise holds**: it carries no
-        `exhaustive-deps` disable and App.tsx went 17 → 16. Both of Revolve's
+        **`useRevolveDialog` and `usePatternDialog` are done and the item's premise
+        holds**: neither carries a
+        `exhaustive-deps` disable and App.tsx went 17 → 15. Both of Revolve's
         disables were hiding something real — the live-edit effect must depend on
         the dialog's six _value_ fields and not on `x`/`y`/`armed`, or dragging the
         panel re-applies the edit and adds an undo entry; the ghost effect was
@@ -293,6 +293,7 @@ _not_ repeated here; this section is the rest.
         business. Expect ~13 explicit dependencies per hook. That is not a smell to
         design away: every one was already an implicit coupling, and writing it
         down is the deliverable.
+
   - [ ] **1c.** Collapse the sketch-session cluster. `offsetSession`,
         `mirrorSession`, `projectSession`, `patternSession` and `textDraft`
         each carry the same shape — state, a mirroring `*Ref`, a `commit*Ref` —
@@ -306,36 +307,33 @@ _not_ repeated here; this section is the rest.
       dialog. Move the token block at the head of `index.css` into its own file
       so theming is findable.
 
-**Which dialog to extract next, and why not by feature family.** The predictor
-that works is whether a block's JSX _reads_ state or _drives_ it, measured by
-counting `setPicking`/`setPickPurpose` calls and closures defined before the
-`return`. Measured, not guessed: an earlier pass of this item guessed by feature
-family and was wrong twice in the same note, calling Revolve entangled (it had one
-such closure) and the Transform panels entangled (they had none). What remains:
+**What the dialog extraction taught, for 1b–1d.** The predictor that worked was
+whether a block's JSX _reads_ state or _drives_ it — counted as `setPicking\(` /
+`setPickPurpose\(` calls and closures defined before the `return`. Only Pattern
+truly drove state; everything else extracted as presentation. Two corrections
+worth remembering, because both were self-inflicted: guessing by feature family was
+wrong twice (Revolve and the Transform panels were called entangled and were not),
+and the metric itself was wrong once — `grep "setPicking"` matches
+`setPickingUpFace` by prefix, which is what made Extrude look like 1b work.
 
-| block           | lines | pick-setters | pre-JSX closures |
-| --------------- | ----- | ------------ | ---------------- |
-| `patternDialog` | 293   | 2            | 7                |
+The recurring win was not line count but **logic that only a JSX tail could reach
+getting tested**: `ui/pickRows.ts` (the grouped, per-kind-numbered row list that
+Chamfer/Fillet and Extrude each had their own copy of — 15 tests, and writing them
+exposed that both numbered by label prefix rather than by kind) and
+`document/patternValidation.ts` (12 tests). Expect more of this in 1b: a hook
+boundary forces the question "what is this a pure function of?", and the answer is
+usually testable.
 
-**Measure with `setPicking\(`, not `setPicking`.** The first version of this table
-credited Extrude with 5 pick-setters and called it 1b work. It has none — the
-prefix match was catching `setPickingUpFace`, a dialog-local boolean — and Extrude
-extracted like every other 1a block. Pattern's 1 + 1 is real.
-
-Dress-up confirmed the second half of the rule: nine closures sounds entangled, but
-with no pick-setters they were row and label builders, and the right move was
-neither to carry them into the component nor to leave them — it was to lift the
-arithmetic into pure functions and test it. That paid twice: Extrude held a second
-copy of the same grouping rule, so both now share `ui/pickRows.ts`
-(`groupPickRows`), and writing its tests exposed that both originals numbered rows
-by label prefix rather than by kind — harmless given the labels they produce,
-wrong as a primitive, now fixed. **Pattern is the last block, and the real 1b
-work**:
-Pattern's `setWorldRef` calls `setPicking(false)` and `setPickPurpose("sketch")`
-to cancel an in-flight pick while rewriting the dialog, and handing that to a
-presentational component means threading the pick setters through it. Expect more
-moves like the DXF one, where the unit table and `$INSUNITS` sniffer had to go to
-`document/dxfImport.ts` first — that is the point, not a detour.
+**Two rules for the remaining hooks.** _A hook cannot take as input something
+derived from its own output._ Pattern's validation warning was a memo over the
+dialog state, and both `confirm` and the live-edit effect need it — so it became a
+pure `(draft, scope) => string | null` in `document/patternValidation.ts`, beside
+`shellValidation.ts` and `dressUpValidation.ts`, and gained the 12 tests it never
+had. Expect the same of Extrude's and Dress-up's validation. _And resist grouping
+the dependency object._ Folding the obvious clusters into shared `usePickMode` /
+`useEditSession` hooks would cut 8 of the 13 entries, but those clusters have 107
+and 40 use sites across `App.tsx` — a ~147-site change to tidy five hooks, in code
+the refactor is not otherwise touching.
 
 **Tier 2 — guardrails, so it does not regress.**
 

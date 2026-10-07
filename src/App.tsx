@@ -21,7 +21,6 @@ import {
   addImport,
   addLoft,
   addMirror,
-  addPattern,
   addPlane,
   addSweep,
   addDerivedOp,
@@ -52,7 +51,6 @@ import {
   updateExtrude,
   updateMirror,
   updateParam,
-  updatePattern,
   updatePlane,
   updateVariable,
 } from "./document/document";
@@ -187,12 +185,14 @@ import {
   type OffsetPrimitive,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
+import { usePatternDialog } from "./hooks/usePatternDialog";
 import { useRevolveDialog } from "./hooks/useRevolveDialog";
 import { usePersistedDocuments } from "./hooks/usePersistedDocuments";
 import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
+import { PatternDialog } from "./ui/PatternDialog";
 import { ExtrudeDialog } from "./ui/ExtrudeDialog";
 import { ShellDialog } from "./ui/ShellDialog";
 import { DressUpDialog } from "./ui/DressUpDialog";
@@ -740,6 +740,10 @@ export default function App() {
     canUndo,
     canRedo,
   } = useHistory<Document>(initialDocument);
+
+  // Resolution (variables + params -> numbers) is synchronous and pure; memoize
+  // it so the UI can read evaluated values without re-running the kernel.
+  const resolved = useMemo(() => resolveDocument(doc), [doc]);
   // Inline title editing in the topbar: null when idle, else the draft text.
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [docsDialogOpen, setDocsDialogOpen] = useState(false);
@@ -898,13 +902,13 @@ export default function App() {
     // Pattern dialog open, TARGET body not yet picked: like Revolve's profile,
     // arming it happens via the normal selection raycaster (any click that
     // resolves to a body).
-    if (patternDialog && patternDialog.arming === "target") {
+    if (pattern.dialog && pattern.dialog.arming === "target") {
       const id = picked ? featureIdOf(picked) : null;
       if (id && bodyIds.has(id)) {
-        setPatternDialog((d) => (d ? { ...d, targetId: id, arming: null } : d));
+        pattern.setDialog((d) => (d ? { ...d, targetId: id, arming: null } : d));
         // A circular pattern still needs an axis (a linear one defaults to World
         // X), so the body landing hands the arming straight to that slot.
-        if (patternDialog.kind === "circular" && !patternDialog.axis) armPatternPick("axis");
+        if (pattern.dialog.kind === "circular" && !pattern.dialog.axis) pattern.armPick("axis");
       }
       return;
     }
@@ -1252,28 +1256,6 @@ export default function App() {
   // "patternDir"/"patternAxis"); `arming` says which slot the next pick fills.
   // `dir2on` reveals the optional second direction (a count1×count2 grid).
   // All numeric fields are expression text.
-  const [patternDialog, setPatternDialog] = useState<{
-    kind: "linear" | "circular";
-    /** Null until a body is armed + clicked (see `arming: "target"`) — the
-     *  dialog opens immediately like Revolve, no pre-selection required. */
-    targetId: string | null;
-    dir1: PatternDirRef;
-    count1: string;
-    spacing1: string;
-    flip1: boolean;
-    dir2on: boolean;
-    dir2: PatternDirRef | null;
-    count2: string;
-    spacing2: string;
-    flip2: boolean;
-    axis: PatternAxisRef | null;
-    count: string;
-    mode: "full" | "angle";
-    angle: string;
-    symmetric: boolean;
-    arming: "target" | "dir1" | "dir2" | "axis" | null;
-    editId?: string;
-  } | null>(null);
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
   const [draft, setDraft] = useState<Vec2[]>([]);
@@ -2009,6 +1991,25 @@ export default function App() {
     editId?: string;
   } | null>(null);
 
+  // The Pattern dialog owns its own state machine: three two-level reference
+  // slots, each able to hold a world axis or a picked line/face, and switching
+  // between those has to cancel an in-flight viewport pick. See usePatternDialog.
+  const pattern = usePatternDialog({
+    doc,
+    setDoc,
+    picking,
+    pickPurpose,
+    setPicking,
+    setPickPurpose,
+    releaseFocus,
+    beginEdit,
+    commitEdit,
+    cancelEdit,
+    shouldLiveApply,
+    selectFeature,
+    scope: resolved.scope,
+  });
+
   /** Is a feature dialog on screen? One place, because three things have to
    *  agree about it, and they drift apart if each works it out for itself:
    *
@@ -2032,7 +2033,7 @@ export default function App() {
     !!shellDialog ||
     !!booleanDialog ||
     !!mirrorDialog ||
-    !!patternDialog ||
+    !!pattern.dialog ||
     !!transformEditId ||
     !!transformArming;
 
@@ -2062,9 +2063,6 @@ export default function App() {
     return () => window.removeEventListener("mousedown", onDown);
   }, [importMenuOpen]);
 
-  // Resolution (variables + params -> numbers) is synchronous and pure; memoize
-  // it so the UI can read evaluated values without re-running the kernel.
-  const resolved = useMemo(() => resolveDocument(doc), [doc]);
   // Latest doc/resolved for effects that fire off async kernel builds (the
   // reproject effect runs after a regen and must read the current state, not a
   // closure captured when the effect was registered).
@@ -2318,37 +2316,6 @@ export default function App() {
 
   // The Pattern dialog's live validation: null = fields are commit-ready. Used
   // both to gate Create and as the dialog's warning line.
-  const patternDialogWarning = useMemo<string | null>(() => {
-    const d = patternDialog;
-    if (!d) return null;
-    if (!d.targetId) return "Pick a body to pattern.";
-    const num = (expr: string): number => {
-      try {
-        return evaluateExpression(expr, resolved.scope);
-      } catch {
-        return NaN;
-      }
-    };
-    const badCount = (expr: string) => resolvePatternCount(expr, resolved.scope) === null;
-    if (d.kind === "linear") {
-      if (badCount(d.count1)) return "Count must be 2 or more.";
-      const s1 = num(d.spacing1);
-      if (!Number.isFinite(s1) || Math.abs(s1) < 1e-9) return "Spacing must be a non-zero number.";
-      if (d.dir2on) {
-        if (!d.dir2) return "Pick the second direction (or collapse it).";
-        if (badCount(d.count2)) return "The second count must be 2 or more.";
-        const s2 = num(d.spacing2);
-        if (!Number.isFinite(s2) || Math.abs(s2) < 1e-9) return "The second spacing must be a non-zero number.";
-      }
-      return null;
-    }
-    if (badCount(d.count)) return "Count must be 2 or more.";
-    if (d.mode === "angle") {
-      const a = num(d.angle);
-      if (!Number.isFinite(a) || Math.abs(a) < 1e-9) return "Angle must be a non-zero number.";
-    }
-    return null;
-  }, [patternDialog, resolved.scope]);
 
   // Ghost preview of the Pattern dialog: the seed's ALREADY-TESSELLATED mesh
   // cloned once per would-be copy with the instance's rigid motion applied in
@@ -2356,9 +2323,10 @@ export default function App() {
   // keystroke. Mirrors resolveDocument's baking but tolerates half-typed fields
   // (⇒ no ghosts). A face axis only resolves in the worker (a cylinder's axis
   // needs the B-rep), so it previews nothing until Create.
+
   const patternGhosts = useMemo<GhostMesh[]>(() => {
-    const d = patternDialog;
-    if (!d || patternDialogWarning) return [];
+    const d = pattern.dialog;
+    if (!d || pattern.warning) return [];
     const m = meshes.find((x) => x.id === d.targetId);
     if (!m) return [];
     const worldDir = (ref: PatternDirRef): [number, number, number] | null => {
@@ -2441,7 +2409,7 @@ export default function App() {
       const { mapPt, mapVec } = rotationMappers(origin, dir!, a);
       return { mesh: transformMeshPayload(m.mesh, mapPt, mapVec) };
     });
-  }, [patternDialog, patternDialogWarning, meshes, doc, resolved.planeFrames, resolved.scope]);
+  }, [pattern.dialog, pattern.warning, meshes, doc, resolved.planeFrames, resolved.scope]);
 
   // The mirrored body, previewed before Create — the same trick as the pattern
   // ghosts: reflect the target's own tessellation in place, no kernel round
@@ -3763,13 +3731,13 @@ export default function App() {
         // dialog is still available by clicking the slot itself.
         //
         // Each close() already drops its own pick mode (revolve.close and
-        // closePattern clear `picking`/`pickPurpose`, closeMirror calls
+        // pattern.close clear `picking`/`pickPurpose`, closeMirror calls
         // cancelMirrorPlanePick, closeExtrudeDialog clears pickingUpFace), and a
         // slot armed in dialog state goes with the dialog object.
         else if (planeDialog) closePlaneDialog();
         else if (revolve.dialog) revolve.close();
         else if (mirrorDialog) closeMirror();
-        else if (patternDialog) closePattern();
+        else if (pattern.dialog) pattern.close();
         else if (shellDialog) closeShellDialog();
         else if (sweepDialog) closeSweep();
         else if (loftDialog) closeLoft();
@@ -3974,7 +3942,7 @@ export default function App() {
           if (!mirrorDialog) openMirror();
           break;
         case "model.pattern":
-          if (!patternDialog) openPattern();
+          if (!pattern.dialog) openPattern();
           break;
         default:
           break;
@@ -4000,7 +3968,7 @@ export default function App() {
     revolveInputs,
     revolve.dialog,
     mirrorDialog,
-    patternDialog,
+    pattern.dialog,
     sweepInputs,
     sweepDialog,
     loftInputs,
@@ -4114,140 +4082,15 @@ export default function App() {
     setMirrorDialog({ targetId: f.targetId, plane: f.plane, arming: null, editId: id });
   };
 
-  // Open the Pattern dialog. Always available: like Revolve, a body is armed
-  // inside the dialog by clicking one in the viewport. If a single body
-  // happens to be pre-selected it prefills the target; otherwise the target
-  // role is armed and waiting for the first click.
-  const openPattern = () => {
-    setPatternDialog({
-      kind: "linear",
-      targetId: transformTarget,
-      dir1: { world: "x" },
-      count1: "3",
-      spacing1: "25",
-      flip1: false,
-      dir2on: false,
-      dir2: null,
-      count2: "2",
-      spacing2: "25",
-      flip2: false,
-      axis: null,
-      count: "6",
-      mode: "full",
-      angle: "90",
-      symmetric: false,
-      arming: transformTarget ? null : "target",
-    });
-  };
-  const closePattern = () => {
-    setPatternDialog(null);
-    if (pickPurpose === "patternAxis" || pickPurpose === "patternDir") {
-      setPicking(false);
-      setPickPurpose("sketch");
-    }
-    cancelEdit();
-  };
-  // The PatternFeature fields the dialog currently describes (shared by commit
-  // and live-preview so they can't drift).
-  const patternFieldsOf = (d: NonNullable<typeof patternDialog>) =>
-    d.kind === "linear"
-      ? {
-          kind: "linear" as const,
-          dir1: d.dir1,
-          count1: d.count1,
-          spacing1: d.spacing1,
-          flip1: d.flip1,
-          ...(d.dir2on && d.dir2 ? { dir2: d.dir2, count2: d.count2, spacing2: d.spacing2, flip2: d.flip2 } : {}),
-        }
-      : {
-          kind: "circular" as const,
-          axis: d.axis!,
-          count: d.count,
-          angle: d.mode === "full" ? "360" : d.angle,
-          symmetric: d.mode === "angle" && d.symmetric,
-        };
-  // Live-preview a pattern edit (skips while the dialog is in an invalid state).
-  useEffect(() => {
-    const d = patternDialog;
-    if (!d?.editId || !d.targetId || patternDialogWarning) return;
-    if (d.kind === "circular" && !d.axis) return;
-    const fields = patternFieldsOf(d);
-    if (!shouldLiveApply(JSON.stringify({ e: d.editId, t: d.targetId, fields }))) return;
-    setDoc((prev) => updatePattern(prev, d.editId!, d.targetId!, fields), `edit:${d.editId}`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patternDialog, patternDialogWarning]);
-  // Arm the shared axis-pick stream to fill one of the dialog's reference slots.
-  const armPatternPick = (slot: "dir1" | "dir2" | "axis") => {
-    setPatternDialog((d) => (d ? { ...d, arming: slot } : d));
-    setPickPurpose(slot === "axis" ? "patternAxis" : "patternDir");
-    setPicking(true);
-    releaseFocus();
-  };
-  /** Switch the Pattern dialog between linear and circular. The two kinds want
-   *  different refs, so any in-flight direction/axis pick is dropped — but the
-   *  BODY arming outlives the switch (the body means the same thing to both, so
-   *  the slot's dashed pulse shouldn't go out just for changing tab), and a
-   *  circular pattern that already HAS its body arms the axis it now needs, the
-   *  way the plane dialog arms the pick its method needs. */
-  const setPatternKind = (kind: "linear" | "circular") => {
-    if (picking && (pickPurpose === "patternAxis" || pickPurpose === "patternDir")) {
-      setPicking(false);
-      setPickPurpose("sketch");
-    }
-    if (kind === "circular" && patternDialog?.targetId && !patternDialog.axis) {
-      setPatternDialog((p) => (p ? { ...p, kind } : p));
-      armPatternPick("axis");
-      return;
-    }
-    setPatternDialog((p) => (p ? { ...p, kind, arming: p.arming === "target" ? "target" : null } : p));
-  };
-
-  const createPattern = () => {
-    const d = patternDialog;
-    if (!d || !d.targetId || patternDialogWarning) return;
-    if (d.kind === "circular" && !d.axis) return;
-    const fields = patternFieldsOf(d);
-    if (d.editId) {
-      setDoc(updatePattern(doc, d.editId, d.targetId, fields));
-      selectFeature(d.editId);
-      commitEdit();
-      closePattern();
-      return;
-    }
-    const { doc: next } = addPattern(doc, d.targetId, fields);
-    setDoc(next);
-    closePattern();
-    selectFeature(null);
-  };
-
   // Re-open the Pattern dialog to edit an existing pattern in place. Seeds every
   // field from the feature; refs (dir/axis) re-pick through the same axis stream.
+  // Always available: like Revolve, a body is armed inside the dialog by clicking
+  // one in the viewport. A single pre-selected body prefills the target.
+  const openPattern = () => pattern.open(transformTarget);
+
   const editPattern = (id: string) => {
     const f = doc.features.find((x) => x.id === id);
-    if (f?.type !== "pattern") return;
-    beginEdit(f);
-    selectFeature(id);
-    const full = (f.angle ?? "360") === "360";
-    setPatternDialog({
-      kind: f.kind,
-      targetId: f.targetId,
-      dir1: f.dir1 ?? { world: "x" },
-      count1: f.count1 ?? "3",
-      spacing1: f.spacing1 ?? "25",
-      flip1: f.flip1 ?? false,
-      dir2on: !!f.dir2,
-      dir2: f.dir2 ?? null,
-      count2: f.count2 ?? "2",
-      spacing2: f.spacing2 ?? "25",
-      flip2: f.flip2 ?? false,
-      axis: f.axis ?? null,
-      count: f.count ?? "6",
-      mode: full ? "full" : "angle",
-      angle: full ? "90" : (f.angle ?? "90"),
-      symmetric: f.symmetric ?? false,
-      arming: null,
-      editId: id,
-    });
+    if (f?.type === "pattern") pattern.edit(f);
   };
 
   // An expression resolved to a number for geometry maths; unparseable (or
@@ -4815,7 +4658,7 @@ export default function App() {
           return;
         }
         const ref = { sketchId: pick.sketchId, entityId: pick.entityId };
-        setPatternDialog((d) =>
+        pattern.setDialog((d) =>
           d && d.arming
             ? d.arming === "axis"
               ? { ...d, axis: ref, arming: null }
@@ -4839,7 +4682,7 @@ export default function App() {
           flashMsg("A flat face has no axis of its own. Use World X/Y/Z, a sketch line, or a cylindrical face.");
           return; // keep the pick armed for another try
         }
-        setPatternDialog((d) =>
+        pattern.setDialog((d) =>
           d && d.arming === "axis"
             ? {
                 ...d,
@@ -8755,294 +8598,76 @@ export default function App() {
           onCancel={closeMirror}
         />
       )}
-      {patternDialog &&
+      {pattern.dialog &&
         (() => {
-          const d = patternDialog;
-          const targetName = doc.features.find((f) => f.id === d.targetId)?.name ?? "Body";
-          const lineLabel = (ref: { sketchId: string }) =>
-            (doc.features.find((f) => f.id === ref.sketchId)?.name ?? "Sketch") + " · line";
-          /** How a PICKED reference reads in its slot (a world one never gets
-           *  here — the X/Y/Z row says which axis it is). */
+          const d = pattern.dialog;
+          const nameOf = (id: string, fallback: string) => doc.features.find((f) => f.id === id)?.name ?? fallback;
+          /** How a PICKED reference reads in its slot (a world one never gets here
+           *  — the X/Y/Z row says which axis it is). */
           const refLabel = (ref: PatternDirRef | PatternAxisRef) =>
             "face" in ref
-              ? (doc.features.find((f) => f.id === ref.face.featureId)?.name ?? "Body") + " · face"
+              ? nameOf(ref.face.featureId, "Body") + " · face"
               : "world" in ref
                 ? `World ${ref.world.toUpperCase()}`
-                : lineLabel(ref);
-          // Which KIND of reference a slot currently holds — a world axis, a
-          // picked one, or nothing yet. A slot reads as "picked" while its pick
-          // is merely ARMED too, so the control shows what you're in the middle
-          // of choosing rather than snapping back the moment you arm it.
-          const refKind = (slot: "dir1" | "dir2" | "axis", ref: PatternDirRef | PatternAxisRef | null) =>
-            d.arming === slot || (ref && !("world" in ref)) ? "picked" : ref ? "world" : null;
-          /** Put a slot on a world axis: the one given, else the one it already
-           *  held, else X — so switching back from a picked reference lands
-           *  somewhere valid instead of empty. Cancels the slot's arming. */
-          const setWorldRef = (
-            slot: "dir1" | "dir2" | "axis",
-            ref: PatternDirRef | PatternAxisRef | null,
-            ax?: "x" | "y" | "z",
-          ) => {
-            if (picking && d.arming === slot) {
-              setPicking(false);
-              setPickPurpose("sketch");
-            }
-            const world = ax ?? (ref && "world" in ref ? ref.world : "x");
-            setPatternDialog((p) => (p ? { ...p, [slot]: { world }, arming: null } : p));
-          };
-          /** The X/Y/Z row under a slot that's on a world axis. */
-          const worldAxisRow = (
-            slot: "dir1" | "dir2" | "axis",
-            ref: PatternDirRef | PatternAxisRef | null,
-            label: string,
-          ) => (
-            <div className="ed-field">
-              <span>{label}</span>
-              <div className="ed-modes" style={{ width: 112 }}>
-                {(["x", "y", "z"] as const).map((ax) => (
-                  <button
-                    key={ax}
-                    className={ref && "world" in ref && ref.world === ax ? "active" : ""}
-                    onClick={() => setWorldRef(slot, ref, ax)}
-                  >
-                    {ax.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </div>
-          );
-          /** The two-level reference control both directions and the circular
-           *  axis use: a segmented pair choosing the KIND, then that kind's own
-           *  detail. Buttons rather than a `<select>`, and that is load-bearing —
-           *  see the Transform dialog's axis control for the whole story: a
-           *  native popup menu swallows the first click of the pick an option
-           *  arms, so the pick appears to need two. */
-          const refControl = (
-            slot: "dir1" | "dir2" | "axis",
-            ref: PatternDirRef | PatternAxisRef | null,
-            opts: { pickLabel: string; pickNoun: string; alongLabel: string; worldTitle?: string },
-          ) => {
-            const kind = refKind(slot, ref);
-            return (
-              <>
-                <div className="ed-modes">
-                  <button
-                    className={kind === "world" ? "active" : ""}
-                    title={opts.worldTitle}
-                    onClick={() => setWorldRef(slot, ref)}
-                  >
-                    World axis
-                  </button>
-                  <button className={kind === "picked" ? "active" : ""} onClick={() => armPatternPick(slot)}>
-                    {opts.pickLabel}
-                  </button>
-                </div>
-                {kind === "picked" ? (
-                  <PickSlot
-                    noun={opts.pickNoun}
-                    armed={picking && d.arming === slot}
-                    value={ref && !("world" in ref) ? refLabel(ref) : null}
-                    wide
-                    onArm={() => armPatternPick(slot)}
-                    onClear={() => {
-                      setPatternDialog((p) => (p ? { ...p, [slot]: null } : p));
-                      armPatternPick(slot);
-                    }}
-                  />
-                ) : kind === "world" ? (
-                  worldAxisRow(slot, ref, opts.alongLabel)
-                ) : null}
-              </>
-            );
-          };
-          const targetArming = patternDialog.arming === "target";
-          const armTarget = () => setPatternDialog((p) => (p ? { ...p, targetId: null, arming: "target" } : p));
+                : nameOf(ref.sketchId, "Sketch") + " · line";
+          /** Which KIND of reference a slot currently holds — a world axis, a
+           *  picked one, or nothing yet. A slot reads as "picked" while its pick is
+           *  merely ARMED too, so the control shows what you're in the middle of
+           *  choosing rather than snapping back the moment you arm it. */
+          const control = (slot: "dir1" | "dir2" | "axis", ref: PatternDirRef | PatternAxisRef | null) => ({
+            kind:
+              d.arming === slot || (ref && !("world" in ref)) ? ("picked" as const) : ref ? ("world" as const) : null,
+            label: ref && !("world" in ref) ? refLabel(ref) : null,
+            armed: picking && d.arming === slot,
+            worldAxis: ref && "world" in ref ? ref.world : null,
+            onUseWorld: () => pattern.setWorldRef(slot, ref),
+            onWorldAxisChange: (ax: "x" | "y" | "z") => pattern.setWorldRef(slot, ref, ax),
+            onArmPick: () => pattern.armPick(slot),
+            onClearPick: () => pattern.clearRef(slot),
+          });
           return (
-            <DraggableDialog
-              className="feature-dialog"
-              style={{ left: "50%", top: 64 }}
-              baseTransform="translateX(-50%)"
-            >
-              <div className="ed-title" data-drag-handle>
-                {d.editId ? "Edit pattern" : "Pattern"}
-              </div>
-              <div className="ed-modes">
-                {(["linear", "circular"] as const).map((k) => (
-                  <button key={k} className={d.kind === k ? "active" : ""} onClick={() => setPatternKind(k)}>
-                    {k === "linear" ? "Linear" : "Circular"}
-                  </button>
-                ))}
-              </div>
-              <div className="bool-group-label">Body</div>
-              <PickSlot
-                noun="a body"
-                armed={targetArming}
-                value={d.targetId ? targetName : null}
-                wide
-                onArm={armTarget}
-              />
-              {d.kind === "linear" ? (
-                <>
-                  <div className="bool-group-label">Direction</div>
-                  {refControl("dir1", d.dir1, {
-                    pickLabel: "Sketch line",
-                    pickNoun: "a sketch line",
-                    alongLabel: "Along",
-                  })}
-                  <label className="ed-field">
-                    <span>Count</span>
-                    <input
-                      autoFocus
-                      value={d.count1}
-                      onChange={(e) => setPatternDialog((p) => (p ? { ...p, count1: e.target.value } : p))}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") createPattern();
-                      }}
-                    />
-                  </label>
-                  <label className="ed-field">
-                    <span>Spacing</span>
-                    <input
-                      value={d.spacing1}
-                      onChange={(e) => setPatternDialog((p) => (p ? { ...p, spacing1: e.target.value } : p))}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") createPattern();
-                      }}
-                    />
-                  </label>
-                  <label className="ed-field ed-flip">
-                    <span>Flip</span>
-                    <input
-                      type="checkbox"
-                      checked={d.flip1}
-                      onChange={(e) => setPatternDialog((p) => (p ? { ...p, flip1: e.target.checked } : p))}
-                    />
-                  </label>
-                  <label className="ed-field ed-flip">
-                    <span>Second direction</span>
-                    <input
-                      type="checkbox"
-                      checked={d.dir2on}
-                      onChange={(e) =>
-                        setPatternDialog((p) =>
-                          p ? { ...p, dir2on: e.target.checked, arming: p.arming === "target" ? "target" : null } : p,
-                        )
+            <PatternDialog
+              editing={!!d.editId}
+              kind={d.kind}
+              targetLabel={d.targetId ? nameOf(d.targetId, "Body") : null}
+              targetArmed={d.arming === "target"}
+              dir1={control("dir1", d.dir1)}
+              dir2={control("dir2", d.dir2)}
+              axis={control("axis", d.axis)}
+              count1={d.count1}
+              spacing1={d.spacing1}
+              flip1={d.flip1}
+              dir2on={d.dir2on}
+              count2={d.count2}
+              spacing2={d.spacing2}
+              flip2={d.flip2}
+              count={d.count}
+              mode={d.mode}
+              angle={d.angle}
+              symmetric={d.symmetric}
+              axisIsFace={!!d.axis && "face" in d.axis}
+              warning={pattern.warning}
+              confirmDisabled={!!pattern.warning || (d.kind === "circular" && !d.axis)}
+              onKindChange={pattern.setKind}
+              onArmTarget={pattern.armTarget}
+              onFieldChange={(field, value) => pattern.setDialog((prev) => (prev ? { ...prev, [field]: value } : prev))}
+              onFlagChange={(field, value) =>
+                pattern.setDialog((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        [field]: value,
+                        // Collapsing or opening the second direction drops a ref
+                        // pick, but never the BODY arming.
+                        ...(field === "dir2on" ? { arming: prev.arming === "target" ? "target" : null } : {}),
                       }
-                    />
-                  </label>
-                  {d.dir2on && (
-                    <>
-                      {refControl("dir2", d.dir2, {
-                        pickLabel: "Sketch line",
-                        pickNoun: "a sketch line",
-                        alongLabel: "Along",
-                      })}
-                      <label className="ed-field">
-                        <span>Count</span>
-                        <input
-                          value={d.count2}
-                          onChange={(e) => setPatternDialog((p) => (p ? { ...p, count2: e.target.value } : p))}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") createPattern();
-                          }}
-                        />
-                      </label>
-                      <label className="ed-field">
-                        <span>Spacing</span>
-                        <input
-                          value={d.spacing2}
-                          onChange={(e) => setPatternDialog((p) => (p ? { ...p, spacing2: e.target.value } : p))}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") createPattern();
-                          }}
-                        />
-                      </label>
-                      <label className="ed-field ed-flip">
-                        <span>Flip</span>
-                        <input
-                          type="checkbox"
-                          checked={d.flip2}
-                          onChange={(e) => setPatternDialog((p) => (p ? { ...p, flip2: e.target.checked } : p))}
-                        />
-                      </label>
-                    </>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="bool-group-label">Axis</div>
-                  {refControl("axis", d.axis, {
-                    pickLabel: "Line or face",
-                    pickNoun: "an axis",
-                    alongLabel: "Around",
-                    // Unlike a linear DIRECTION (a vector, positionless), a
-                    // circular axis is a line — and the world one runs through
-                    // the origin, which is not where the body is.
-                    worldTitle: "A world axis through the origin",
-                  })}
-                  <label className="ed-field">
-                    <span>Count</span>
-                    <input
-                      autoFocus
-                      value={d.count}
-                      onChange={(e) => setPatternDialog((p) => (p ? { ...p, count: e.target.value } : p))}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") createPattern();
-                      }}
-                    />
-                  </label>
-                  <div className="ed-modes">
-                    {(["full", "angle"] as const).map((m) => (
-                      <button
-                        key={m}
-                        className={d.mode === m ? "active" : ""}
-                        onClick={() => setPatternDialog((p) => (p ? { ...p, mode: m } : p))}
-                      >
-                        {m === "full" ? "Full (360°)" : "Angle"}
-                      </button>
-                    ))}
-                  </div>
-                  {d.mode === "angle" && (
-                    <>
-                      <label className="ed-field">
-                        <span>Angle (°)</span>
-                        <input
-                          value={d.angle}
-                          onChange={(e) => setPatternDialog((p) => (p ? { ...p, angle: e.target.value } : p))}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") createPattern();
-                          }}
-                        />
-                      </label>
-                      <label className="ed-field ed-flip">
-                        <span>Symmetric</span>
-                        <input
-                          type="checkbox"
-                          checked={d.symmetric}
-                          onChange={(e) => setPatternDialog((p) => (p ? { ...p, symmetric: e.target.checked } : p))}
-                        />
-                      </label>
-                    </>
-                  )}
-                  {d.axis && "face" in d.axis && (
-                    <div className="ed-hint">
-                      A face axis resolves in the kernel — the preview appears after Create.
-                    </div>
-                  )}
-                </>
-              )}
-              {patternDialogWarning && <p className="ed-warning">{patternDialogWarning}</p>}
-              <div className="ed-actions">
-                <button
-                  className="ed-primary"
-                  disabled={!!patternDialogWarning || (d.kind === "circular" && !d.axis)}
-                  onClick={createPattern}
-                >
-                  {d.editId ? "Done" : "Create"}
-                </button>
-                <button onClick={closePattern}>Cancel</button>
-              </div>
-            </DraggableDialog>
+                    : prev,
+                )
+              }
+              onModeChange={(mode) => pattern.setDialog((prev) => (prev ? { ...prev, mode } : prev))}
+              onConfirm={pattern.confirm}
+              onCancel={pattern.close}
+            />
           );
         })()}
     </div>
