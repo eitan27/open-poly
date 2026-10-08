@@ -190,11 +190,6 @@ blocking, or persisting the import's built body across reloads, over deferring.
   handling (`wsHub` is last-connected-wins). Reconnection, timeouts, queue
   ordering and the error taxonomy are in.
 
-**Housekeeping**
-
-- Landing-page auto-deploy disabled (private repo on the Free plan) —
-  `.github/workflows/pages.yml` has its `push` trigger commented out.
-
 ---
 
 ## Open-sourcing — the blocker is cleared; only the switch remains
@@ -216,19 +211,27 @@ push cost enough to learn.
       cosmetic residue, recorded so it is not mistaken for damage later: eight
       merge-commit messages on `main` now link to pull requests that no longer
       exist.
-- [ ] **2. Flip the repository to public.**
-- [ ] **3. Settings → Pages → Build and deployment → Source → "GitHub
+- [x] **2. `TURNSTILE_SECRET` is set as a Pages secret (confirmed 2026-10-08).**
+      Worth having checked, because `functions/api/report.ts` enforces the spam
+      check **only when that secret exists** — without it `/api/report` is an open
+      endpoint filing GitHub issues under `GITHUB_ISSUES_TOKEN`, which is harmless
+      while the repo is private and the app obscure and an invitation once it is
+      neither. `wrangler pages secret list --project-name open-poly` re-checks it.
+- [ ] **3. Flip the repository to public.** While in Settings: the repo has no
+      `homepage` and no topics, so the deployed app is not linked from its own
+      page. GPL-3.0 and the description are already set.
+- [ ] **4. Settings → Pages → Build and deployment → Source → "GitHub
       Actions".** This also clears a standing red X:
       `.github/workflows/pages.yml` fires on every push touching `landing/**`
       (re-enabled in `b0578bd`) and has failed on every run since June, because
       Pages cannot publish from a private repo on the Free plan. Nothing is
       broken and nothing is being published — going public plus this setting
       resolves it, with no code change.
-- [ ] **4. Sanity-check the deployed site.** <https://open-poly.pages.dev> is a
+- [ ] **5. Sanity-check the deployed site.** <https://open-poly.pages.dev> is a
       direct `wrangler pages deploy` upload, NOT git-integrated, so going public
       redeploys nothing. File one real bug report to confirm the `/api/report`
       Function still reaches a now-public repo.
-- [ ] **5. Then, and only then, delete the backups** in `~/Developer/`:
+- [ ] **6. Then, and only then, delete the backups** in `~/Developer/`:
       `open-poly-mirror`, `open-poly-backup`, and `open-poly-local-mirror.git`.
       The last holds pre-rewrite copies of everything, including the one
       never-pushed branch still worth keeping — `feat/step-assembly-split`,
