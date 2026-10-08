@@ -1,0 +1,523 @@
+/* Pick slots.
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+/* ---- Pick slots (see src/ui/PickSlot.tsx) -------------------------------
+   One box, three states. A slot keeps the same metrics and type throughout —
+   only the border and fill change — so filling it doesn't make the text jump
+   or resize:
+
+     UNARMED  .ed-pick-btn            plain control, sunken
+     ARMING   .ed-pick-btn.active     dashed accent outline, softly pulsing
+     ARMED    .bool-operand-row       solid accent fill (further down)
+
+   The shared metrics live here and are re-declared by .bool-operand-row so the
+   two agree; anything that differs between the three is listed in this block. */
+.ed-pick-btn,
+.bool-operand-row {
+  box-sizing: border-box;
+  min-height: 26px;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+/* Field-aligned slots (a label beside them) match the select width; standalone
+   ones take .ed-wide below. */
+.ed-pick-btn {
+  width: 112px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  cursor: pointer;
+  /* WRAP, never truncate. This label is an instruction — "Select a plane or
+     planar face" — so an ellipsis hides the one thing it exists to say, and at
+     112px it hid it often (the Plane slot clipped at 118px of text in 110px of
+     room). The button grows a line instead; .ed-field centres it against its
+     label either way. `anywhere` so a long picked name breaks rather than
+     overflowing the dialog. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ed-pick-btn:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  color: var(--text-1);
+}
+
+/* Nothing to pick yet (Shell's face slot before a body is chosen): match the
+   dialog's other disabled controls rather than looking clickable. */
+.ed-pick-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ARMING (waiting for a click in the viewport) — deliberately NOT the solid
+   accent fill of .bool-operand-row, which means "this slot is filled". A
+   dashed, softly pulsing outline reads as an empty slot listening for a pick,
+   so an arming button can't be mistaken for a chosen one. The label itself
+   stays the plain high-contrast text colour — the state is carried by the
+   outline, not by tinting the words. */
+.ed-pick-btn.active,
+.ed-pick-btn.active:hover {
+  border: 1px dashed var(--accent);
+  background: var(--accent-surface-2);
+  color: var(--text-1);
+  animation: pick-pulse 1.6s ease-in-out infinite;
+}
+
+/* The same ARMING treatment outside a dialog: the section view panel's
+   "Select plane" button while it waits for the click. Listening for a pick has
+   to look the same everywhere, so it borrows the dashed pulse rather than the
+   panel's `.active` fill (which means "on", as on Flip). */
+.section-view-panel button.arming,
+.section-view-panel button.arming:hover {
+  border: 1px dashed var(--accent);
+  background: var(--accent-surface-2);
+  color: var(--accent-palest);
+  animation: pick-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pick-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 2px var(--accent-border);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ed-pick-btn.active,
+  .section-view-panel button.arming {
+    animation: none;
+  }
+}
+
+/* Standalone slots — no field label beside them, replaced by a full-width
+   .bool-operand-row once filled. They carry the whole phrase ("Select a
+   profile", "Select an axis (sketch line / cylindrical face)"), which doesn't
+   fit the 112px field width, so they take the dialog's full width and wrap
+   instead of truncating. */
+/* Standalone slots span the dialog; wrapping is now the shared default. */
+.ed-pick-btn.ed-wide {
+  width: 100%;
+}
+
+.ed-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ed-flip {
+  cursor: pointer;
+}
+
+.ed-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.ed-actions button {
+  flex: 1;
+  padding: 6px 0;
+  font-size: 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--border-control);
+  color: var(--text-4);
+}
+
+.ed-actions .ed-primary {
+  background: var(--accent-surface);
+  border-color: var(--accent);
+  color: var(--accent-palest);
+}
+
+.ed-hint {
+  font-size: 11px;
+  color: var(--text-9);
+  line-height: 1.3;
+}
+
+.ed-warning {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--danger-text-soft);
+}
+
+.dim-hint {
+  position: absolute;
+  left: 50%;
+  top: 16px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--accent-palest);
+  background: rgba(var(--hud-rgb), 0.92);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+
+/* Draggable arrow handle for the Offset tool — anchored on the chain, dragged
+   to set the signed offset distance. */
+/* The Offset drag handle: a 2D translate-style arrow (shaft + cone head) that
+   mirrors the Transform gizmo's translate arrow — muted neutral blue-grey (the
+   gizmo's 0xc2cad8 tint), not a bright dot. Positioned at the live offset
+   handle (centered via the inline translate) and rotated to point along the
+   drag axis. */
+.offset-arrow {
+  position: absolute;
+  overflow: visible;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  filter: drop-shadow(0 1px 2px var(--shadow-soft));
+}
+.offset-arrow-shaft {
+  stroke: var(--text-4);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.offset-arrow-head {
+  fill: var(--text-4);
+  stroke: var(--text-1);
+  stroke-width: 0.75;
+  stroke-linejoin: round;
+}
+.offset-arrow:hover .offset-arrow-shaft {
+  stroke: var(--text-1);
+}
+.offset-arrow:hover .offset-arrow-head {
+  fill: var(--text-1);
+}
+.offset-arrow:active {
+  cursor: grabbing;
+}
+
+.dim-input label {
+  font-size: 12px;
+  color: var(--text-7);
+}
+
+/* Instructional status text inside a .dim-input floater (Mirror/Pattern/
+   Project sessions — "Click entities to pattern", "N in pattern — click
+   entities to add", …). Without an explicit size these plain <span>s fell
+   back to the browser default (~16px), reading far larger than the field
+   labels right next to them. Matches .dim-input label's size, with a looser
+   line-height since these are full sentences that often wrap. */
+.dim-status {
+  font-size: 12px;
+  color: var(--text-7);
+  line-height: 1.3;
+}
+
+.dim-input input {
+  width: 80px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+
+.dim-value {
+  position: relative;
+  display: flex;
+}
+
+.dim-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 120px;
+  margin: 0;
+  padding: 3px;
+  list-style: none;
+  background: rgba(var(--hud-rgb), 0.98);
+  border: 1px solid var(--border-strong-2);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px var(--shadow-soft);
+  z-index: 30;
+}
+
+.dim-suggest li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 7px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  cursor: pointer;
+}
+
+.dim-suggest li.active {
+  background: var(--accent-surface);
+}
+
+.dim-suggest-name {
+  color: var(--accent-pale);
+}
+
+.dim-suggest-val {
+  color: var(--ok);
+}
+
+.dim-input button {
+  background: var(--accent-surface);
+  border: 1px solid var(--accent);
+  color: var(--accent-palest);
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dim-input button.ghost {
+  background: transparent;
+  border-color: var(--border-control);
+  color: var(--text-7);
+  padding: 4px 8px;
+}
+
+/* On-canvas dimension value, drawn beside its line. Positioned imperatively
+   (top/left 0; the per-frame transform places it), tracks the camera. */
+.dim-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 15;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-palest);
+  background: rgba(var(--hud-rgb), 0.82);
+  border: 1px solid var(--accent-border-2);
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  backdrop-filter: blur(2px);
+}
+
+.dim-label:hover {
+  border-color: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.dim-label:focus,
+.dim-right-angle:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.32);
+}
+
+/* Technical-drawing-style graphics (witness/dimension lines, arrows, angle arcs
+   and right-angle corner boxes) drawn behind the labels above. Plain SVG,
+   repositioned imperatively each frame — see DimensionOverlay.tsx. */
+.dim-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 14;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.dim-ext,
+.dim-line,
+.dim-arc {
+  stroke: var(--accent-dim);
+  stroke-width: 1.1;
+  fill: none;
+}
+
+.dim-arrow {
+  fill: var(--accent-dim);
+}
+
+.dim-box {
+  stroke: var(--accent-dim);
+  stroke-width: 1.3;
+  fill: none;
+}
+
+/* The double-clickable/deletable corner mark standing in for a right-angle
+   dimension's value — same interaction model as .dim-label, no visible text. */
+.dim-right-angle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 15;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 3px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.dim-right-angle:hover {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
+/* Constraints list (sketch editing): each row is a constraint + delete. */
+.constraint-list {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.constraint-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: var(--text-4);
+  border-radius: 5px;
+}
+
+.constraint-list li:hover,
+.constraint-list li.cl-hover {
+  background: var(--bg-raised-3);
+}
+
+/* Hovering a constraint emphasises its name (matching the entities lit up in
+   the viewport) so the row and the geometry read as the same thing. */
+.constraint-list li.cl-hover > span {
+  color: var(--ok-teal);
+  font-weight: 600;
+}
+
+.constraint-list .cl-del {
+  background: transparent;
+  border: none;
+  color: var(--text-7);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+}
+
+.constraint-list .cl-del:hover {
+  color: var(--danger);
+}
+
+.constraint-warn {
+  color: var(--danger);
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.row-icon.active {
+  color: var(--accent-bright);
+}
+
+.isolate-banner {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: rgba(var(--hud-warn-rgb), 0.92);
+  border: 1px solid var(--warn-border-2);
+  border-radius: 8px;
+  color: var(--warn-text-5);
+  font-size: 12px;
+  backdrop-filter: blur(4px);
+  z-index: 20;
+}
+
+.isolate-banner button {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--warn-text-5);
+  background: var(--warn-surface-3);
+  border: 1px solid var(--warn-border-2);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.isolate-banner button:hover {
+  background: var(--warn-surface-4);
+}
+
+/* Selection-filter chips (what a click can pick), bottom-left of the viewport. */
+.sel-filters {
+  position: absolute;
+  left: 12px;
+  bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 15;
+}
+
+.sel-filters-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-9);
+  padding-left: 2px;
+}
+
+.sel-filters-row {
+  display: flex;
+  gap: 4px;
+}
+
+.sel-filters button {
+  padding: 3px 9px;
+  font-size: 11px;
+  text-transform: capitalize;
+  color: var(--text-9);
+  background: rgba(var(--hud-rgb), 0.8);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.sel-filters button.active {
+  color: var(--accent-palest);
+  border-color: var(--accent);
+  background: rgba(var(--hud-accent-rgb), 0.9);
+}
+
+.sketch-start {
+  width: 100%;
+  margin-bottom: 6px;
+  background: var(--accent-surface-5);
+  border-color: var(--accent-border-2);
+}
+
+.sketch-start:hover {
+  background: var(--accent-ring);
+  border-color: var(--accent);
+}
+
+.param-static {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.sketch-btn {
+  width: 100%;
+  margin-top: 8px;
+}

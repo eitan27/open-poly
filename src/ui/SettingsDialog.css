@@ -1,0 +1,447 @@
+/* Settings dialog, including its theme miniature.
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+/* --- Settings dialog --- */
+/* Sibling of .report-dialog (same shell), a little wider so the three theme
+   cards sit on one row at any dialog width. */
+.settings-dialog {
+  width: min(520px, calc(100vw - 48px));
+  max-height: 82vh;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 12px 40px var(--shadow-strong);
+  color: var(--text-4);
+}
+
+.set-section {
+  margin-bottom: 16px;
+}
+
+.set-section h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-7);
+}
+
+.set-themes {
+  display: flex;
+  gap: 8px;
+}
+
+.set-theme {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px;
+  text-align: left;
+  font-family: inherit;
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.set-theme:hover {
+  border-color: var(--border-hover);
+}
+
+.set-theme.active {
+  background: var(--accent-surface);
+  border-color: var(--accent);
+}
+
+/* The miniature: the app at 50 px — topbar, side panel, ground grid, and one
+   body sitting on it. Every colour comes from the --sw-* custom properties the
+   dialog sets per swatch (see SettingsDialog.tsx), EXCEPT the body, which is
+   the same pastel in both themes because a real body's colour comes from the
+   document, not the theme. Regions are separated by 1px --sw-line rules: the
+   panel and the viewport are within a few units of each other per channel in
+   both themes, so fill alone doesn't distinguish them at this size. */
+.set-theme-swatch {
+  position: relative;
+  display: block;
+  height: 50px;
+  border-radius: 5px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.set-theme-half {
+  position: absolute;
+  inset: 0;
+  background: var(--sw-bg);
+}
+
+/* Topbar, with a pill for the accent-coloured control and one plain button. */
+.set-theme-chrome {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 10px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+  background: var(--sw-chrome);
+  border-bottom: 1px solid var(--sw-line);
+}
+
+.set-theme-chrome::before,
+.set-theme-chrome::after {
+  content: "";
+  height: 3px;
+  border-radius: 1.5px;
+}
+
+.set-theme-chrome::before {
+  width: 13px;
+  background: var(--sw-accent);
+}
+
+.set-theme-chrome::after {
+  width: 7px;
+  background: var(--sw-line);
+}
+
+/* Left panel (timeline + parts), with two list rows. */
+.set-theme-panel {
+  position: absolute;
+  top: 10px;
+  bottom: 0;
+  left: 0;
+  width: 30%;
+  background: var(--sw-panel);
+  border-right: 1px solid var(--sw-line);
+}
+
+.set-theme-panel::before,
+.set-theme-panel::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--sw-line);
+}
+
+.set-theme-panel::before {
+  top: 6px;
+  right: 5px;
+}
+
+.set-theme-panel::after {
+  top: 12px;
+  right: 10px;
+}
+
+/* Ground grid. Faded so it reads as a backdrop rather than as a table. */
+.set-theme-grid {
+  position: absolute;
+  top: 10px;
+  right: 0;
+  bottom: 0;
+  left: 30%;
+  opacity: 0.45;
+  background-image:
+    repeating-linear-gradient(0deg, var(--sw-line) 0 1px, transparent 1px 8px),
+    repeating-linear-gradient(90deg, var(--sw-line) 0 1px, transparent 1px 8px);
+}
+
+/* One body on the grid: a hexagon clipped out of a three-wedge conic gradient,
+   which is an isometric cube's three visible faces. The wedge boundaries are
+   the cube's three internal edges seen from the centre — straight down (180°)
+   and up to the two upper corners (±63.4°, i.e. atan(w/2 ÷ h/4) for the 2:1
+   isometric diamond). Lit like the viewport is: top face brightest. */
+.set-theme-body {
+  position: absolute;
+  top: 50%;
+  left: 64%;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -46%);
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  background: conic-gradient(
+    from 0deg,
+    var(--sw-body-top) 0 63.4deg,
+    var(--sw-body-right) 63.4deg 180deg,
+    var(--sw-body-left) 180deg 296.6deg,
+    var(--sw-body-top) 296.6deg 360deg
+  );
+}
+
+.set-theme-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.set-theme.active .set-theme-label {
+  color: var(--accent-palest);
+}
+
+.set-theme-hint {
+  font-size: 10.5px;
+  color: var(--text-8);
+}
+
+.set-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.set-toggle:hover {
+  background: var(--bg-row-hover);
+}
+
+.set-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.set-toggle-label {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.set-toggle-hint {
+  font-size: 11px;
+  color: var(--text-8);
+}
+
+.set-select {
+  flex: 0 0 auto;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-3);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-control);
+  border-radius: 5px;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+
+.set-select:hover {
+  border-color: var(--accent);
+}
+
+/* A note under a section, explaining a limit rather than labelling a control. */
+.set-note {
+  margin: 6px 8px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-8);
+}
+
+.set-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.set-swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.set-swatch:hover {
+  border-color: var(--border-hover);
+}
+
+/* The selected swatch keeps its own fill, so the marker has to sit outside it:
+   a ring separated from the tile by a gap in the panel's own colour, which
+   reads on all ten fills (a plain glow gets lost on the pale ones). */
+.set-swatch.active {
+  border-color: var(--bg-panel);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.set-swatch-random,
+.set-swatch-custom {
+  background: var(--bg-control);
+  color: var(--text-5);
+}
+
+/* The native colour well is the whole tile — invisible, but it's what opens the
+   OS picker, so it has to cover the label it sits behind. */
+.set-swatch-custom {
+  position: relative;
+  overflow: hidden;
+}
+
+.set-swatch-custom input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Once a custom colour is showing, the ⋯ glyph sits on top of it — drop it to
+   a shadowed white so it stays legible on any fill the user picks. */
+.set-swatch-custom.active span {
+  color: var(--on-user-color);
+  text-shadow: 0 0 3px var(--on-user-color-shade);
+}
+
+/* The licensing footnote — the last line in the dialog, as quiet as the notes
+   under each setting. The link needs its own colour: no global rule styles
+   anchors, so without this it would render in the UA's blue. */
+.set-legal {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-8);
+}
+.set-legal a {
+  color: var(--accent-pale-2);
+}
+
+.docs-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.docs-header h2 {
+  font-size: 14px;
+  margin: 0;
+  flex: 1;
+}
+
+.docs-close {
+  font-size: 14px;
+}
+
+.docs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.docs-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.docs-row.active {
+  border-color: var(--border-strong);
+  background: var(--bg-raised-2);
+}
+
+.docs-thumb {
+  width: 56px;
+  height: 40px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: var(--bg-sunken-2);
+  flex: 0 0 auto;
+}
+
+.docs-thumb.placeholder {
+  border: 1px dashed var(--border);
+}
+
+.docs-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.docs-name {
+  background: none;
+  border: none;
+  color: var(--text-2);
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.docs-current {
+  color: var(--text-7);
+  font-size: 11px;
+}
+
+.docs-name-input {
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-2);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 1px 6px;
+  outline: none;
+}
+
+.docs-sub {
+  font-size: 11px;
+  color: var(--text-7);
+}
+
+.docs-row-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.docs-row-actions .text-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.docs-delete-confirm {
+  color: var(--danger-pale);
+  border-color: var(--danger-border);
+}
+
+.docs-error {
+  font-size: 12px;
+  color: var(--danger-pale);
+  background: var(--danger-surface);
+  border: 1px solid var(--danger-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 0 0 10px;
+}

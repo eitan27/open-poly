@@ -1,0 +1,15 @@
+/* Boolean dialog operand list.
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+/* --- Boolean dialog operand list (click-to-populate) --- */
+
+.bool-operands {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  /* Fill the (fixed-width) dialog rather than forcing it wider, so rows — and
+     the trailing ✕ — stay within the dialog's bounds. */
+  align-self: stretch;
+  min-width: 0;
+}

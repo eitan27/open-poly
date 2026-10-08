@@ -1,0 +1,126 @@
+/* Report-an-issue dialog.
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+/* Report-an-issue dialog */
+.report-dialog {
+  width: min(460px, calc(100vw - 48px));
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 12px 40px var(--shadow-strong);
+  color: var(--text-4);
+}
+.report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.report-field {
+  display: block;
+  margin-bottom: 10px;
+}
+.report-field > span {
+  display: block;
+  font-size: 12px;
+  color: var(--text-6);
+  margin-bottom: 4px;
+}
+.report-field select,
+.report-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-sunken);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+}
+.report-field textarea {
+  line-height: 1.4;
+}
+.report-attach {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  margin: 6px 0 4px;
+}
+.report-attach label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+.report-note {
+  font-size: 11px;
+  color: var(--text-8);
+  margin: 6px 0 12px;
+}
+.report-note code,
+.report-done code {
+  color: var(--accent-pale-2);
+}
+.report-error {
+  font-size: 12px;
+  color: var(--danger-text);
+  margin: 4px 0 8px;
+}
+.report-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* Primary — matches the app's blue action buttons (.sketch-banner button). */
+.report-submit {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: 5px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.report-submit:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.report-submit:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* Secondary — matches .text-btn. */
+.report-cancel {
+  background: var(--bg-control);
+  color: var(--text-3);
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.report-cancel:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.report-done {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 13px;
+}
+.report-turnstile {
+  min-height: 65px; /* reserve the widget's height so the dialog doesn't jump */
+}
+
+.report-done a {
+  color: var(--accent-pale-2);
+}
