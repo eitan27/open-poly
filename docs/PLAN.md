@@ -237,12 +237,24 @@ push cost enough to learn.
       up under **What's left** in enough detail to rebuild from, so the mirror's
       stale copies of them are not a reason to keep it.)
 
-**Do not undo these.** `user.email` is the GitHub noreply address in
-`~/.gitconfig`, and _Settings → Emails → Block command line pushes that expose my
-email_ is on. The setting is the durable half: it rejects a push carrying a real
-address rather than letting it land. Collaborators must **re-clone, not pull** —
-a merge from a pre-rewrite clone pushes the old addresses straight back in, which
-is the one way this work can be undone.
+**Do not undo these.** Three layers, because the first two depend on the machine:
+
+- `user.email` is the GitHub noreply address in `~/.gitconfig` — **per
+  environment**, so a phone or cloud session, a fresh clone or a new collaborator
+  starts without it. This is the layer that silently does not apply.
+- _Settings → Emails → Keep my email addresses private_ plus _Block command line
+  pushes that expose my email_ is on. Server-side, so it covers every origin, and
+  it rejects the push rather than letting it land — the strongest of the three.
+  Its blind spot is an address GitHub does not know is yours.
+- CI's `identity` job runs `scripts/check-commit-identity.sh` on every push and PR
+  and fails on any author or committer email that is not a GitHub noreply. An
+  **allowlist**, deliberately: a denylist would mean committing the private
+  addresses to a public repo. It prints the offending SHA and never the address,
+  for the same reason. On a direct push to `main` this is detection rather than
+  prevention — the push has already landed — but it is loud and immediate.
+
+Collaborators must **re-clone, not pull** — a merge from a pre-rewrite clone pushes
+the old addresses straight back in, which is the one way this work can be undone.
 
 **What it taught us, in order of how much it cost to find out:**
 

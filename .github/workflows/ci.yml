@@ -13,6 +13,31 @@ on:
   pull_request:
 
 jobs:
+  # Catches a commit whose author/committer email is not a GitHub noreply address,
+  # whichever machine made it. The history was rewritten once to remove personal
+  # addresses; the way that gets undone is a commit from an environment whose git
+  # identity was never configured — a phone or cloud session, a fresh clone, a new
+  # collaborator. GitHub's "block command line pushes that expose my email" is the
+  # prevention; this is the part that does not depend on remembering.
+  identity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check commit identity
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # A new branch or a force-push gives no usable base; fall back to the tip.
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+            RANGE="$HEAD_SHA~1..$HEAD_SHA"
+          else
+            RANGE="$BASE..$HEAD_SHA"
+          fi
+          sh scripts/check-commit-identity.sh "$RANGE"
+
   check:
     runs-on: ubuntu-latest
     steps:
