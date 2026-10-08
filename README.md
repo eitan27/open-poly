@@ -61,6 +61,13 @@ npx wrangler pages deploy dist --project-name open-poly
 
 Notes:
 
+- **Verify a deploy with a cache-buster.** The production alias can serve a stale
+  `version.json` from an edge cache for a moment after a deploy, `Cache-Control:
+no-cache` notwithstanding — so a plain `curl` can show the previous build and
+  look like the deploy went to a preview instead of production.
+  `curl "https://open-poly.pages.dev/version.json?cb=$RANDOM"` is the one that
+  tells the truth; `wrangler pages deployment list` says which environment the
+  upload actually landed in.
 - The agent/MCP bridge auto-disables on deployed builds (it only dials the local
   hub on `127.0.0.1`), so the public site never attempts to connect to an agent.
 - `public/_redirects` sends unknown paths to `index.html` so deep links and hard

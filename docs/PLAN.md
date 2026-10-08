@@ -211,12 +211,16 @@ push cost enough to learn.
       cosmetic residue, recorded so it is not mistaken for damage later: eight
       merge-commit messages on `main` now link to pull requests that no longer
       exist.
-- [x] **2. `TURNSTILE_SECRET` is set as a Pages secret (confirmed 2026-10-08).**
-      Worth having checked, because `functions/api/report.ts` enforces the spam
-      check **only when that secret exists** — without it `/api/report` is an open
-      endpoint filing GitHub issues under `GITHUB_ISSUES_TOKEN`, which is harmless
-      while the repo is private and the app obscure and an invitation once it is
-      neither. `wrangler pages secret list --project-name open-poly` re-checks it.
+- [x] **2. `TURNSTILE_SECRET` is set (verified against the live endpoint,
+      2026-10-08).** Worth having checked, because `functions/api/report.ts`
+      enforces the spam check **only when that secret exists** — without it
+      `/api/report` is an open endpoint filing GitHub issues under
+      `GITHUB_ISSUES_TOKEN`, harmless while the repo is private and the app obscure
+      and an invitation once it is neither. Re-check it without filing anything:
+      `POST /api/report` with a description and no Turnstile token returns
+      `403 failed spam check`, which is only reachable when the secret is set, and
+      the request is rejected before it ever reaches GitHub. (A `400 description is
+    required` from an empty body proves the Function is deployed at all.)
 - [ ] **3. Flip the repository to public.** While in Settings: the repo has no
       `homepage` and no topics, so the deployed app is not linked from its own
       page. GPL-3.0 and the description are already set.
@@ -229,8 +233,11 @@ push cost enough to learn.
       resolves it, with no code change.
 - [ ] **5. Sanity-check the deployed site.** <https://open-poly.pages.dev> is a
       direct `wrangler pages deploy` upload, NOT git-integrated, so going public
-      redeploys nothing. File one real bug report to confirm the `/api/report`
-      Function still reaches a now-public repo.
+      redeploys nothing — a deploy of `fd076d1` on 2026-10-08 confirmed the shell,
+      both wasm bundles (served as `application/wasm`, which the kernel needs), the
+      SPA deep-link fallback and the Function all serve correctly. What is left can
+      only be done after the flip: file one real bug report and confirm the issue
+      lands in a now-public repo.
 - [ ] **6. Then, and only then, delete the backups** in `~/Developer/`:
       `open-poly-mirror`, `open-poly-backup`, and `open-poly-local-mirror.git`.
       The last holds pre-rewrite copies of everything, including the one
