@@ -219,8 +219,8 @@ push cost enough to learn.
       and an invitation once it is neither. Re-check it without filing anything:
       `POST /api/report` with a description and no Turnstile token returns
       `403 failed spam check`, which is only reachable when the secret is set, and
-      the request is rejected before it ever reaches GitHub. (A `400 description is
-    required` from an empty body proves the Function is deployed at all.)
+      the request is rejected before it ever reaches GitHub. An empty body gets a
+      400 instead, which proves the Function is deployed at all.
 - [ ] **3. Flip the repository to public.** While in Settings: the repo has no
       `homepage` and no topics, so the deployed app is not linked from its own
       page. GPL-3.0 and the description are already set.
