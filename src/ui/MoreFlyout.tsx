@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { nextEnabledIndex, searchRows, type ToolbarRow } from "./toolbarOverflow";
 
 interface Props {
@@ -34,12 +34,14 @@ export function MoreFlyout({
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const shown = query.trim() ? searchRows(rows, query) : defaultRows;
+  // Memoised so the effect below can depend on the rows themselves rather than on
+  // `shown.length` as a stand-in — and so the search stops re-running every render.
+  const shown = useMemo(() => (query.trim() ? searchRows(rows, query) : defaultRows), [query, rows, defaultRows]);
 
   // Keep the highlight on a row that exists and can be picked.
   useEffect(() => {
     setActive((a) => (shown[a] && !shown[a].disabled ? a : nextEnabledIndex(shown, -1, 1)));
-  }, [query, shown.length]);
+  }, [shown]);
 
   useEffect(() => {
     listRef.current?.children[active]?.scrollIntoView({ block: "nearest" });
