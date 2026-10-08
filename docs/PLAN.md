@@ -381,14 +381,26 @@ part. One fix is a **documented behaviour change**: OverflowToolbar's "close the
 flyout when every tool is disabled" now also fires when the flyout opens, which is
 what the effect was written to do.
 
-**Sequencing.** `npm run verify` gates item 1. `App.tsx` and `Viewport.tsx`
-have no unit tests — Vitest can load neither the OCCT wasm nor a WebGL context —
-so the verify scripts are the only net under a refactor of that size, and they
-need to be green _first_ (`scripts/README.md` has the current state of that).
-Item 1 is the big one and is better done in public as a series of small PRs
-than held back: a repo visibly being improved reads better than a suspiciously
-pristine one. The exhaustiveness guardrails are in, so a refactor that drops a
-case on the floor now fails the build rather than the user.
+**This checklist is complete.** All seven items the 2026-10-02 scan raised are
+done. What it cost and what it bought, in case a future scan asks the same
+question: `App.tsx` 9,896 → 8,010 and `App.css` 3,247 → a manifest; 84 `useState`
+→ 64; 20 `eslint-disable` → 1; tests 999 → 1,068. The line counts are the least of
+it. The durable wins were the compiler learning to refuse a half-wired feature
+(`assertNever` on six silent dispatches, `Record`s over the feature union), the
+shared vocabulary leaving a three.js component, and roughly 60 tests on logic that
+had been unreachable because it lived inside a JSX tail or a 290-line effect.
+
+**How to run a refactor of this size here**, since the next one will face the same
+thing: `App.tsx` and `Viewport.tsx` have no unit tests — Vitest can load neither the
+OCCT wasm nor a WebGL context — so the 64 verify scripts are the only net, and they
+must be green _before_ you start or a red result afterwards means nothing. Establish
+that baseline once (~55 minutes quiet), then run the subset a change touches and the
+full suite only for something global like the keyboard handler. **Budget for the
+machine being the variable**: these are wall-clock scripts, one of them keeps ~7
+cores busy, and a loaded machine turns a 54-minute suite into 86 and times out
+scripts that pass in 16 seconds alone. Every red result in this work that was
+investigated turned out to be contention, and re-running the script by itself was
+the test that settled it every time.
 
 **On the `assertNever` guards, so they are not "tidied" away.** Six dispatches
 had a genuinely silent fallthrough and now carry one:
