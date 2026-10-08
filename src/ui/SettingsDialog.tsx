@@ -231,7 +231,7 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
         <h3>Sketch</h3>
         <Choice
           label="Dimension circles as"
-          hint="Default: diameter — what a drawing calls a hole"
+          hint="Default: diameter"
           value={settings.circleDimension}
           options={CIRCLE_DIMENSIONS}
           onChange={(circleDimension) => onChange({ circleDimension })}

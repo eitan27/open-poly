@@ -61,13 +61,13 @@ await page.keyboard.press("d");
 await page.waitForTimeout(300);
 const dimOpen = (await page.locator(".dim-input input").count()) === 1;
 check(
-  "D on a selected circle opens the radius dimension",
+  "D on a selected circle opens the diameter dimension",
   dimOpen,
   dimOpen ? ((await page.locator(".dim-input label").textContent()) ?? "") : "no dim box",
 );
 if (dimOpen) {
-  // A circle dimension is a DIAMETER by default — settings.circleDimension,
-  // "what a drawing calls a hole". So 12 means a 12mm hole: radius 6.
+  // A circle dimension is a DIAMETER by default (settings.circleDimension),
+  // so 12 means a 12mm hole: radius 6.
   const DIA = 12;
   await page.locator(".dim-input input").fill(String(DIA));
   await page.keyboard.press("Enter");
