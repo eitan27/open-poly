@@ -13,12 +13,18 @@ on:
   pull_request:
 
 jobs:
-  # Catches a commit whose author/committer email is not a GitHub noreply address,
-  # whichever machine made it. The history was rewritten once to remove personal
-  # addresses; the way that gets undone is a commit from an environment whose git
-  # identity was never configured — a phone or cloud session, a fresh clone, a new
-  # collaborator. GitHub's "block command line pushes that expose my email" is the
-  # prevention; this is the part that does not depend on remembering.
+  # Catches a commit carrying one of the maintainer's private email addresses,
+  # whichever machine made it. The history was rewritten once to remove them; the
+  # way that gets undone is a commit from an environment whose git identity was
+  # never configured — a phone or cloud session, a fresh clone. GitHub's "block
+  # command line pushes that expose my email" is the prevention; this is the part
+  # that does not depend on remembering.
+  #
+  # It checks for those specific addresses, NOT for "is this a GitHub noreply", so
+  # a contributor using their own real address is never blocked. The addresses live
+  # in the PRIVATE_EMAILS secret, never in this repo; on a fork's pull request the
+  # secret is absent and the step says so and passes, which is correct — a
+  # contributor's own address is not what this guards against.
   identity:
     runs-on: ubuntu-latest
     steps:
@@ -27,6 +33,7 @@ jobs:
           fetch-depth: 0
       - name: Check commit identity
         env:
+          PRIVATE_EMAILS: ${{ secrets.PRIVATE_EMAILS }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
