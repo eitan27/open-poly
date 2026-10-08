@@ -7311,7 +7311,7 @@ export default function App() {
               every body in the scene. */}
           <button
             className="view-reset"
-            title="Home — iso view, fit all (H)"
+            title={`Home — iso view, fit all (${shortcutName("view.home")})`}
             onClick={() => viewApiRef.current?.homeView()}
           >
             <svg
@@ -7330,6 +7330,13 @@ export default function App() {
               <path d="M9.5 20v-6h5v6" />
             </svg>
           </button>
+          {/* Its key cap hangs just below it — the row to its left is full of
+              its peers. Hidden while sketching, where H isn't bound to Home. */}
+          {showShortcuts && !editingSketch && (
+            <span className="kbd-hint view-reset-kbd" aria-hidden="true">
+              {shortcutHint("view.home")}
+            </span>
+          )}
           {/* Perspective/orthographic toggle — a peer of Home/Section in the view-
               controls corner. View-only (the camera swap lives in the viewport API);
               the icon shows a box in one-point perspective, filled while active. */}

@@ -156,6 +156,17 @@
   border-color: var(--accent);
 }
 
+/* Home's shortcut key cap (.kbd-hint), centred under the 30px button: its
+   centre line is right: 14px + 15px. */
+.view-reset-kbd {
+  position: absolute;
+  top: 211px;
+  right: 29px;
+  margin-left: 0;
+  transform: translateX(50%);
+  pointer-events: none;
+}
+
 /* Section view toggle: a peer of .view-reset (Home) in the same corner, sitting
    just to its left. */
 .section-view-toggle {
