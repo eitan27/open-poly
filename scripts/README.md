@@ -7,9 +7,10 @@ suite to add to when you can.
 
 These exist because a large part of this app is unreachable from Vitest: it can
 load neither the OCCT WebAssembly kernel nor a WebGL context. So
-`src/kernel/worker.ts` and `src/viewport/` have **no unit tests at all**, and
-`verify-build-bodies.mjs` and `verify-viewport-modules.mjs` are the only
-coverage they have. Treat those two as load-bearing.
+`src/kernel/worker.ts`, `src/viewport/` and `src/App.tsx` — which mounts the
+viewport — have **no unit tests at all**, and `verify-build-bodies.mjs` and
+`verify-viewport-modules.mjs` are the only coverage the first two have. Treat
+those two as load-bearing.
 
 ## Running them
 
@@ -25,7 +26,16 @@ node scripts/verify-shell.mjs       # one script, with its full output
 `npm run verify` prints a pass/fail line per script and exits non-zero if any
 failed. `VERBOSE=1` echoes each script's own output; `URL=` points at a
 different server (a `vite preview` build, say); `TIMEOUT_MS=` changes the
-per-script limit (default 300000).
+per-script limit (default 420000 — see the note on `verify-shell-loft` below).
+
+**Take a baseline before a large refactor, not after.** These are the only
+coverage `src/kernel/worker.ts`, `src/viewport/` and `src/App.tsx` have, so they
+are the net under any change big enough to need one — and a red script afterwards
+tells you nothing unless you know it was green before. Run the full suite once
+before you start (~45 minutes quiet), then the subset a change touches, and the
+full suite again only for something global like the keyboard handler or the
+stylesheet. Expect the baseline to find a stale script or two on its own: the app
+moves and the scripts do not follow by themselves.
 
 **Run them alone.** They are wall-clock scripts that poll the app's status chip,
 so anything else competing for the CPU — `npm test`, a build, a second verify
