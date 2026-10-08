@@ -246,12 +246,17 @@ push cost enough to learn.
   pushes that expose my email_ is on. Server-side, so it covers every origin, and
   it rejects the push rather than letting it land — the strongest of the three.
   Its blind spot is an address GitHub does not know is yours.
-- CI's `identity` job runs `scripts/check-commit-identity.sh` on every push and PR
-  and fails on any author or committer email that is not a GitHub noreply. An
-  **allowlist**, deliberately: a denylist would mean committing the private
-  addresses to a public repo. It prints the offending SHA and never the address,
-  for the same reason. On a direct push to `main` this is detection rather than
-  prevention — the push has already landed — but it is loud and immediate.
+- CI's `identity` job runs `scripts/check-commit-identity.sh` on every push and
+  PR, failing if a commit carries one of the private addresses as author or
+  committer. It checks for **those specific addresses, never for "is this a
+  noreply"** — the first version did the latter and would have rejected any
+  contributor using their own real address, which is their business and no risk
+  here. The addresses live in the `PRIVATE_EMAILS` repository secret, never in the
+  repo; failures print the SHA and not the address, since the logs are public. On a
+  fork's PR the secret is absent, the step says so and passes — correct, because a
+  contributor's address is not what this guards. On a direct push to `main` it is
+  detection rather than prevention, and it only knows the addresses it is given: a
+  brand-new unknown address is GitHub's block to catch, not this.
 
 Collaborators must **re-clone, not pull** — a merge from a pre-rewrite clone pushes
 the old addresses straight back in, which is the one way this work can be undone.

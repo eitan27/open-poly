@@ -46,6 +46,12 @@ a single line. Keep the blank line.
 - Keep PRs focused. Unrelated cleanup, formatting-only changes, or drive-by
   refactors belong in a separate PR unless they're in files you're already
   touching for the main change.
+- **Commit with whatever name and email you like.** CI has an `identity` job, but
+  it only looks for the maintainer's own addresses — a leftover guard from a
+  history rewrite — and never for yours. If you'd rather your address not appear
+  in a public history, GitHub's noreply (`Settings → Emails → Keep my email
+addresses private`, then `<id>+<user>@users.noreply.github.com`) is worth
+  knowing about, but nothing here requires it.
 
 ## Codebase layout
 
