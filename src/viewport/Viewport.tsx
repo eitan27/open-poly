@@ -531,7 +531,7 @@ export function Viewport({
    *  resolution, same as activeSketchFace) plus a signed offset along the
    *  frame's own normal and a flip (which half is kept). `enabled` false still
    *  carries a valid frame — it's just not applied. Pure view state: no undo,
-   *  no timeline (see docs/BACKLOG.md). */
+   *  no timeline. */
   sectionView: { enabled: boolean; frame: PlaneFrameData; offset: number; flip: boolean };
   /** Fired on every drag frame of the plane handle with the new offset (along
    *  the frame's unflipped normal) — cheap, since this is plain view state. */
@@ -3502,8 +3502,8 @@ export function Viewport({
     // stencil-cap group (which must be absent, not just hidden, when off — see
     // the SceneState field comment). This re-syncs body geometries too, which is
     // a bit of wasted work on toggle, but keeping the rebuild logic in ONE place
-    // is worth it — see docs/BACKLOG.md's account of a "clever reuse" perf attempt
-    // that made real use feel worse despite winning on paper.
+    // is worth it — see PLAN's "Performance" entry under What's left for a geometry-
+    // reuse optimization that won on paper and made real use feel worse.
   }, [meshes, sectionView.enabled]);
 
   // Rebuild the ghost-preview bodies independently of the real bodies — their

@@ -1,6 +1,6 @@
 // End-to-end verification of the FACETED-EXTRUDED-CIRCLE diameter readout.
 //
-// This OCCT WASM build can't boolean a true cylinder (see BACKLOG), so an
+// This OCCT WASM build can't boolean a true cylinder (see PLAN's Gotchas), so an
 // extruded sketch circle is a POLYGONAL prism — its radius is nowhere in the
 // mesh. Instead, measure.ts traces a face named "{extrudeId}/start|end|side{n}"
 // back to the source sketch circle and reads its radius. The key property to

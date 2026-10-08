@@ -83,8 +83,8 @@ Notes:
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the codebase layout, dev
-workflow, and PR process. Design/architecture notes and the feature
-backlog live in [`docs/`](docs/).
+workflow, and PR process. Design and architecture notes, the gotchas, and what
+is not built yet live in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## License
 

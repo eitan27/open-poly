@@ -226,7 +226,7 @@ function axisFaceName(f: Face): string | null {
 
 /** A cylinder built as a FACETED prism (a 48-gon extruded along +Z), not an
  *  analytic `gp_Cyl`. This OCCT/wasm build can't boolean an analytic cylinder
- *  against a plane (see BACKLOG) — so cutting/fusing anything with an analytic
+ *  against a plane (see PLAN's Gotchas) — so cutting/fusing anything with an analytic
  *  cylinder throws StdFail_NotDone. A faceted wall booleans fine, exactly as
  *  extruded circles already do here (they're polygonal prisms for the same
  *  reason), so the two now behave — and look — identically. The diameter is
@@ -461,7 +461,7 @@ function chainWirePoints(edges: Edge[]): V3[] {
  *  a filleted face…) with a FACETED planar face of the same outline on the same
  *  plane. Prisming an analytic circle/arc face makes an analytic `gp_Cyl` side
  *  wall, and this OCCT build fails booleans of an analytic cylinder against a
- *  plane (see BACKLOG) — so cutting/fusing such an extrude throws StdFail_NotDone.
+ *  plane (see PLAN's Gotchas) — so cutting/fusing such an extrude throws StdFail_NotDone.
  *  A faceted (polygonal) wall booleans fine, matching how sketch-region extrudes
  *  already facet their profile. Straight-edged faces are returned unchanged
  *  (they prism to planar walls and stay exact). */
@@ -526,7 +526,7 @@ function prismFromFace(profileFace: Face, dir: Vector, signedDist: number, id: s
 
 /** A FACETED revolve: loft (ruled) through rotated copies of the profile's outer
  *  wire, so the surface of revolution is polygonal, not an analytic `gp_Cyl`/cone
- *  /torus — which this OCCT/wasm build can't boolean (see BACKLOG). Matches how
+ *  /torus — which this OCCT/wasm build can't boolean (see PLAN's Gotchas). Matches how
  *  cylinders + extruded circles are already faceted, so a revolve can be cut/fused
  *  like any other body. Returns null (→ analytic fallback) for cases the ruled
  *  loft can't handle: a profile with holes (ThruSections lofts a single wire per

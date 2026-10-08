@@ -2,7 +2,7 @@
 
 A local-first, browser-based parametric CAD. This file holds the **decisions, the
 gotchas, and what is not built yet**. It is not a changelog — git is the record of
-what shipped when, and `docs/BACKLOG.md` holds the long-form investigations.
+what shipped when.
 
 ---
 
@@ -79,6 +79,27 @@ Roughly ordered by how often a user meets them.
 - Project: vertex projection is best-effort (re-projects a stored world point,
   doesn't track the source body); no agent op.
 
+**Split (body)** — the largest unbuilt feature. Cut one body into two or more
+**independent** parts with a plane, a planar face, or a sketch line/arc/spline;
+unlike `boolean subtract` both pieces survive as separately colourable, hideable,
+exportable Parts. ("Split Face" is a different op — not this.) Most of the
+machinery is already on main because Boolean needed it: `splitPartsPass` /
+`explodeToBodies` (`worker.ts`) explode a compound into one body per solid in a
+deterministic order (descending volume, ties by bbox min-corner) with the
+face-name map partitioned, fragment 0 keeping the feature's id and the rest
+minting `<id>~<i>`; `doc.parts` gives per-fragment colour/name/hidden already.
+Two kernel paths: a **plane or planar face** is two opposing `Common`s against
+half-space boxes sized off `bboxDiagonal` (not a `Cut` — both sides then keep
+history-based face naming, zero gap); a **sketch line reduces exactly to a plane**,
+while an **arc or spline** does not and this wasm build has no
+`BRepAlgoAPI_Splitter`, so facet the curve, inflate it to a ~5e-4 mm blade prismed
+along the plane normal, and `Cut` — a sliver under 0.01 mm on a 40 mm part. **Guard
+on `countSolids(result) < 2`, never on volume**: a `Cut` that misses the body leaves
+it at full volume. Clone Mirror's dialog and its two-step arming; the agent op is
+`addSplit` (the `add` prefix is what body producers use). Accepted gaps: an
+orphaned fragment ref falls through to `requireBody`'s generic error rather than
+`topoMatch`'s scored fallback, and there is no ghost preview.
+
 **Codebase structure** — the two boundaries that were scoped and deliberately
 not crossed. Both were looked at closely enough to know what stopped them, so
 neither is a blind guess. Everything else structural, `App.tsx` and `App.css`
@@ -103,9 +124,32 @@ included, has since been done:
 **Kernel / geometry**
 
 - Sphere booleans fail — `makeSphere` stays analytic (see Gotchas).
-- True round holes/bosses — a B-spline wall (pipe-style) may be smooth _and_
-  booleanable; see BACKLOG for the spike that confirmed faceting is required today.
+- True round holes/bosses. The blocker is the analytic `gp_Cyl`, not curvature, so
+  building an extruded circle as a **B-spline** wall (pipe/sweep-style rather than a
+  prism of an analytic circle) may be smooth _and_ booleanable, the way the swept
+  tube already is. Not attempted. `BOOL_FUZZY` does not help — it is an algorithm
+  failure, not a tolerance one. A newer OCCT would also solve it, but there is **no
+  drop-in**: we are on the latest replicad (`0.23.1`, OCCT ~7.7–7.8) and 7.9.x means
+  a custom `opencascade.js` build, with no certainty it helps — stock OCCT booleans
+  cylinder−box fine, and so does this build _in isolation_.
 - Tessellation LOD — no distance/zoom mesh simplification.
+
+**Performance — two optimizations that measured well alone and badly together.**
+The warning is the point; `shelved/viewport-geom-reuse-and-lazy-regen` is deleted.
+**Opt A** stamps each mesh with its content hash (`ShapeMeshPayload.key`) and
+reuses cached three.js geometry for unchanged bodies instead of rebuilding every
+regen (isolated: ~1.5–8 ms CPU and 11–69 MB of GPU re-upload per unchanged body).
+**Opt B** paints a document's cached mesh on boot and skips the initial regen.
+Built together they made the UI feel slower. Settle both hypotheses before writing
+either: **B probably backfires through a cold worker cache** — `meshCache` is keyed
+by `b.key` and the on-load regen is what warms it, so skipping it means the first
+edit after a reload re-tessellates an 80k-face import from scratch, at a far worse
+moment; reload-then-edit is the common flow. **A only pays if `key` is stable
+across regens** for unchanged bodies — check the hit rate first, `?perf` logs
+`N rebuilt, M reused`, and if `M` is ~0 while editing a heavy document the key
+churns and A is all cost. Measure end to end in the browser over those two flows,
+not in isolation. For B, prefer warming the cache in the background without
+blocking, or persisting the import's built body across reloads, over deferring.
 
 **Features with obvious next increments**
 
@@ -163,22 +207,15 @@ push cost enough to learn.
 
 **Going public — in order.**
 
-- [x] **1. The `refs/pull/*` purge is done and verified (2026-09-17).** The
-      history was rewritten on 2026-09-14 to map two personal email addresses to
-      `3627572+eitan27@users.noreply.github.com` across 417 commits, and
-      force-pushed. Branches went clean immediately, but GitHub's `refs/pull/*`
-      are read-only server-side refs a force-push cannot reach, and all 10 still
-      carried the old addresses. GitHub Support deleted all ten pull requests
-      (1–9, 12) and cleared their references; issues #10, #11, #13 and #14 were
-      never in scope and are untouched. Verified independently rather than on
-      their word, and the second check is the one that counts — refs vanishing
-      from the listing would not prove the objects were gone:
-      `git ls-remote origin 'refs/pull/*'` (10 before, 0 now), and
-      `git fetch --depth=1 origin <old-sha>` for four old SHAs including the
-      pre-rewrite `main` tip, the commit carrying the alooma address, and the
-      head of closed PR #5 — all unreachable. No branch, tag, release or
-      surviving issue mentions either address. Cosmetic side effect: the 8
-      `Merge pull request #N` messages in `main` now link to deleted PRs.
+- [x] **1. The `refs/pull/*` purge is done and verified (2026-09-17).** The 417
+      commits were rewritten to the GitHub noreply address on 2026-09-14, but
+      `refs/pull/*` are read-only server-side refs a force-push cannot reach, so
+      all 10 still carried the old addresses until GitHub Support deleted the PRs.
+      Verified independently and by object reachability, not by the refs vanishing
+      from a listing — that would not have proved the objects were gone. One
+      cosmetic residue, recorded so it is not mistaken for damage later: eight
+      merge-commit messages on `main` now link to pull requests that no longer
+      exist.
 - [ ] **2. Flip the repository to public.**
 - [ ] **3. Settings → Pages → Build and deployment → Source → "GitHub
       Actions".** This also clears a standing red X:
@@ -196,8 +233,8 @@ push cost enough to learn.
       The last holds pre-rewrite copies of everything, including the one
       never-pushed branch still worth keeping — `feat/step-assembly-split`,
       which is also in the working tree. (`shelved/viewport-geom-reuse-and-lazy-regen`
-      and the `archive/split-body` tag were deleted on 2026-10-06; both are
-      written up in BACKLOG in enough detail to rebuild from, so the mirror's
+      and the `archive/split-body` tag were deleted on 2026-10-06; both are written
+      up under **What's left** in enough detail to rebuild from, so the mirror's
       stale copies of them are not a reason to keep it.)
 
 **Do not undo these.** `user.email` is the GitHub noreply address in
@@ -235,12 +272,6 @@ is the one way this work can be undone.
 - **Agent worktrees live inside the repo.** `.claude/` now has to be ignored by
   git, vitest, eslint AND prettier — each learned separately, the last two
   because a running agent doubled the lint count and it read as a regression.
-
-**What it produced, beyond the code:** `scripts/lib/harness.mjs` (the launch /
-waitIdle / apply / read block 48 of the 67 verify scripts share),
-`scripts/verify-build-bodies.mjs` and `scripts/verify-viewport-modules.mjs` (the
-only coverage `worker.ts` and the viewport have, since Vitest can load neither
-the OCCT wasm nor a WebGL context), and `scripts/verify-dialog-consistency.mjs`.
 
 ## What exists
 
@@ -282,8 +313,13 @@ Things that cost real time to learn and are not obvious from the code.
   plane** (`gp_Cyl`, sphere) — `StdFail_NotDone`. Not curvature in general:
   B-spline swept surfaces boolean fine. So cylinders are faceted 48-gon prisms,
   curved body-face profiles are re-faceted before prisming, and revolve is a
-  faceted ruled loft. **Spheres are the exception and still fail.** Re-verified by
-  a spike in 2026-07; full account in BACKLOG.
+  faceted ruled loft. **Spheres are the exception and still fail.** Confirmed by
+  table: box−box and faceted-cylinder−box pass; primitive `gp_Cyl`−box, sphere−box
+  and coaxial-cylinder subtract all throw; a B-spline swept solid − box passes. So
+  it is the surface REPRESENTATION, not curvature. Making extrude smooth by passing
+  the exact `segments` was tried and reverted: it turns the wall into a `gp_Cyl`,
+  which is precisely the surface that cannot be cut. Re-verified by a spike in
+  2026-07.
 - **The failure only reproduces in the full pipeline.** The same booleans pass in
   isolation, in Node and in-browser. Never judge this by an isolated probe.
 - Faceted bodies are **smoothed for display only** (`smoothMeshNormals` within a
@@ -371,21 +407,16 @@ Things that cost real time to learn and are not obvious from the code.
 - Validate a record **before** mutating any state — an `adoptRecord` that threw
   after moving `docIdRef` left the app pointing at a broken doc and the next
   autosave overwrote it.
-- Parts: the first lump keeps the producing feature's id, later lumps take
-  `<id>#1`, `<id>#2`. Chosen so nothing needed migrating.
 
 **Build / test**
 
 - **Typecheck with `npm run typecheck` (`tsc -b`), never a bare `tsc --noEmit`** —
   the root tsconfig has `files: []`, so a bare run checks nothing and "passes".
-- **`worker.ts` has no unit coverage and cannot have any** — Vitest can load
-  neither the OCCT wasm nor a worker global, so none of its ~30 geometry
-  functions run under `npm test`. `scripts/verify-build-bodies.mjs` builds one of
-  every feature type against a live app instead; it is the only thing that
-  exercises that file at all.
-- `scripts/verify-*.mjs` are Playwright checks against a local `npm run dev`, not
-  part of CI. Most share `scripts/lib/harness.mjs` (launch / waitIdle / apply /
-  read); set `CHROMIUM_PATH` to use a browser other than Playwright's own.
+- **A large part of this app is unreachable from `npm test`** — `worker.ts`,
+  `src/viewport/` and `App.tsx` have no unit coverage and cannot, so the
+  `scripts/verify-*.mjs` Playwright checks are the only thing exercising them.
+  They are not in CI and they are wall-clock sensitive: `scripts/README.md` has
+  the whole story, and it is worth reading before trusting a red one.
 
 ---
 

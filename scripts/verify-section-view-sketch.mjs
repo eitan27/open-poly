@@ -1,6 +1,5 @@
-// Verifies sketching on an interior face while section view is active — the
-// workflow BACKLOG.md calls out explicitly ("sketching on an interior face is
-// a real use"): the section must stay on through sketch entry/exit, a face
+// Verifies sketching on an interior face while section view is active, which is a
+// real workflow and the reason the two features have to coexist: the section must stay on through sketch entry/exit, a face
 // exposed only by the cut must be pickable (clip-aware picking), and a sketch
 // started there must draw and extrude normally.
 import { launch, openPoly } from "./lib/harness.mjs";

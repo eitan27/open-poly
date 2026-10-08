@@ -55,7 +55,7 @@ export function resolveSectionPlane(frame: PlaneFrameData, offset: number, flip:
 /** Half-space test: is `point` on the KEPT side of a resolved section plane
  *  (or is there no plane at all — section view off)? This is the exact rule
  *  clip-aware picking uses to reject a click that lands on geometry the GPU
- *  clip has visually discarded (docs/BACKLOG.md: "picking must respect the clip"
+ *  clip has visually discarded (PLAN's gotcha "picking must clip itself"
  *  — otherwise clicking into the opening selects the invisible far face). A
  *  point exactly on the plane counts as kept (a small tolerance, not a
  *  strict >0), matching the GPU clip shader's own boundary. */

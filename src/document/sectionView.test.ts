@@ -63,7 +63,7 @@ describe("sectionKeeps", () => {
   });
 });
 
-// Regression coverage for BACKLOG.md's "picking must respect the clip" gotcha
+// Regression coverage for PLAN's "picking must clip itself" gotcha
 // and the sketch-on-an-interior-face workflow (see
 // scripts/verify-section-view-sketch.mjs for the full end-to-end version):
 // this is the exact plane/point math clip-aware picking runs on every click.

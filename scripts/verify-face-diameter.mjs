@@ -138,8 +138,8 @@ const ring = await clickFace([4.5 / Math.SQRT2, 4.5 / Math.SQRT2, 10]);
 // cylinder (feature params) and an extruded sketch circle (extrudedCircleRadius).
 // The area below still reads correctly because it sums the facet CLUSTER.
 // This check was written when a revolved profile really did give true cylinders.
-// The gap is recorded in docs/BACKLOG.md, under the faceting section, beside the
-// extrude-only workaround (`extrudedCircleRadius`) that a revolve lacks.
+// The gap is the extrude-only workaround (`extrudedCircleRadius`) that a revolve
+// lacks; PLAN's Gotchas has the faceting finding behind it.
 check(
   "annular top face reports no analytic diameter (revolve is faceted — known gap)",
   ring !== null && ring["Outer diameter"] === undefined && ring["Inner diameter"] === undefined,

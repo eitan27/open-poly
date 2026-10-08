@@ -507,7 +507,7 @@ export const operationSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("delete"), featureId: z.string() }),
   z.object({ op: z.literal("setRollback"), index: z.number().int().min(0) }),
   z.object({ op: z.literal("select"), refs: z.array(selectionSchema) }),
-  // View-only cross-section (see BACKLOG.md "adjustable cross-section view") —
+  // View-only cross-section —
   // like `select`, mutates viewport state, not the document (no undo, no
   // regen). `plane` defaults to the current section plane (Front datum on the
   // very first use); omit `offset`/`flip` to leave them as they are. The

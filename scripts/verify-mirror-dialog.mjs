@@ -130,7 +130,7 @@ check("no feature errored", Object.keys(after.errors ?? {}).length === 0, JSON.s
 
 // --- 4. A genuinely curved face is refused --------------------------------
 // A SPHERE, not a cylinder: this build facets its cylinders into 48-gon prisms
-// (see BACKLOG), so a cylinder's wall strip is a real planar face and mirroring
+// (see PLAN's Gotchas), so a cylinder's wall strip is a real planar face and mirroring
 // across it is legitimate. A sphere stays analytic, so its surface is the one
 // primitive that is actually curved.
 const cyl = await apply({ op: "addPrimitive", kind: "sphere", params: { radius: "35" } });

@@ -26,7 +26,8 @@ node scripts/verify-shell.mjs       # one script, with its full output
 `npm run verify` prints a pass/fail line per script and exits non-zero if any
 failed. `VERBOSE=1` echoes each script's own output; `URL=` points at a
 different server (a `vite preview` build, say); `TIMEOUT_MS=` changes the
-per-script limit (default 420000 — see the note on `verify-shell-loft` below).
+per-script limit (default 420000 — see the note on `verify-shell-loft` below);
+`CHROMIUM_PATH=` uses a browser other than Playwright's own.
 
 **Take a baseline before a large refactor, not after.** These are the only
 coverage `src/kernel/worker.ts`, `src/viewport/` and `src/App.tsx` have, so they

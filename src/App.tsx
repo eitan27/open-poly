@@ -1653,7 +1653,7 @@ export default function App() {
     "plane-right": true,
   });
   const viewApiRef = useRef<ViewportApi | null>(null);
-  // Section view: pure viewport state — no undo, no timeline (see BACKLOG.md).
+  // Section view: pure viewport state — no undo, no timeline.
   // Same bucket as datumVisibility/selFilter above: it changes nothing about the
   // geometry, so it never goes through setDoc. `offset` is measured along the
   // ref's own (unflipped) normal; `flip` picks which half is kept. Persisted to
