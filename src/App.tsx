@@ -152,7 +152,7 @@ import { DocumentsDialog } from "./ui/DocumentsDialog";
 import { ReportDialog } from "./ui/ReportDialog";
 import { SettingsDialog } from "./ui/SettingsDialog";
 import { useSettings } from "./settings/useSettings";
-import { isShortcut, matchShortcut, shortcutHint, shortcutName } from "./settings/shortcuts";
+import { shortcutHint, shortcutName } from "./settings/shortcuts";
 import type { ShortcutId } from "./settings/shortcuts";
 import {
   arcFrom3,
@@ -173,6 +173,8 @@ import {
   type OffsetPrimitive,
 } from "./document/sketchTools";
 import { useHistory } from "./hooks/useHistory";
+import { useShortcutHandler } from "./settings/useShortcutHandler";
+import { useSketchSession } from "./hooks/useSketchSession";
 import { useTransformSession } from "./hooks/useTransformSession";
 import { useDressUpDialog } from "./hooks/useDressUpDialog";
 import { useShellDialog } from "./hooks/useShellDialog";
@@ -1267,41 +1269,45 @@ export default function App() {
   // signed distance (expression text), and a uv anchor + unit normal for placing
   // the on-canvas input box and its draggable arrow handle. Null = no offset in
   // progress. See beginOffset / commitOffset.
-  const [offsetSession, setOffsetSession] = useState<{
+  const {
+    value: offsetSession,
+    set: setOffsetSession,
+    ref: offsetSessionRef,
+  } = useSketchSession<{
     chain: ChainEdge[];
     value: string;
     anchor: Vec2;
     normal: Vec2;
-  } | null>(null);
-  const offsetSessionRef = useRef(offsetSession);
-  offsetSessionRef.current = offsetSession;
+  }>();
   // The active sketch Mirror session (the 2D sketch tool — distinct from the
   // modeling-mode body MirrorFeature). `axisEntityId` is the armed mirror line
   // (null until the user clicks one); `previews` are the live mirrored copies,
   // committed on Enter and discarded on Esc. Null = no mirror in progress.
-  const [mirrorSession, setMirrorSession] = useState<{
+  const {
+    value: mirrorSession,
+    set: setMirrorSession,
+    ref: mirrorSessionRef,
+    commitRef: commitMirrorRef,
+  } = useSketchSession<{
     axisEntityId: string | null;
     /** Source entity ids already mirrored (so re-clicking toggles them off). */
     sourceIds: string[];
     previews: SketchEntity[];
-  } | null>(null);
-  const mirrorSessionRef = useRef(mirrorSession);
-  mirrorSessionRef.current = mirrorSession;
-  // Set below once commitMirror is defined; the key handler calls it via this
-  // ref so Enter always commits using the latest doc/session (no stale closure).
-  const commitMirrorRef = useRef<() => void>(() => {});
+  }>();
   // The active Project/Convert session: live previews of existing 3D body
   // edges/vertices projected onto the active sketch plane. `keys` tracks the
   // source pick of each preview (featureId/edgeId or vertex) so re-clicking a
   // source toggles it off. Committed on Enter, discarded on Esc. Null = none.
-  const [projectSession, setProjectSession] = useState<{
+  const {
+    value: projectSession,
+    set: setProjectSession,
+    ref: projectSessionRef,
+    commitRef: commitProjectRef,
+  } = useSketchSession<{
     refs: ProjectRef[];
     keys: string[];
     previews: SketchEntity[];
-  } | null>(null);
-  const projectSessionRef = useRef(projectSession);
-  projectSessionRef.current = projectSession;
-  const commitProjectRef = useRef<() => void>(() => {});
+  }>();
   // The active sketch Pattern session (linear or circular — the 2D sketch tools,
   // distinct from the modeling-mode body PatternFeature). Sources accumulate by
   // clicking entities (re-click toggles off); the session seeds from the current
@@ -1309,7 +1315,12 @@ export default function App() {
   // click (an entity-point PointRef when the snapped uv lands on one, else a raw
   // uv committed as a construction point). All numeric fields are expression
   // text. Committed on Enter as a DerivedOp, discarded on Esc. Null = none.
-  const [patternSession, setPatternSession] = useState<{
+  const {
+    value: patternSession,
+    set: setPatternSession,
+    ref: patternSessionRef,
+    commitRef: commitPatternRef,
+  } = useSketchSession<{
     kind: "linear" | "circular";
     sourceIds: string[];
     /** TOTAL instances including the seed (expression). */
@@ -1323,20 +1334,17 @@ export default function App() {
     mode: "full" | "angle";
     angle: string;
     symmetric: boolean;
-  } | null>(null);
-  const patternSessionRef = useRef(patternSession);
-  patternSessionRef.current = patternSession;
-  const commitPatternRef = useRef<() => void>(() => {});
+  }>();
   // Text tool: after clicking the plane to set the anchor, the user types the
   // string + height in a floating box. Live-previewed; committed on Enter,
   // discarded on Esc. Null = no placement in progress.
   // `editId` set ⇒ editing an existing text entity in place (re-edit), else a
   // fresh placement.
-  const [textDraft, setTextDraft] = useState<{ anchor: Vec2; value: string; height: string; editId?: string } | null>(
-    null,
-  );
-  const textDraftRef = useRef(textDraft);
-  textDraftRef.current = textDraft;
+  const {
+    value: textDraft,
+    set: setTextDraft,
+    ref: textDraftRef,
+  } = useSketchSession<{ anchor: Vec2; value: string; height: string; editId?: string }>();
   // In-progress edit of a committed offset op's distance (keyed by op id). Shown
   // when a single derived offset entity is selected; null = not editing.
   const [offsetEdit, setOffsetEdit] = useState<{ opId: string; value: string } | null>(null);
@@ -3218,309 +3226,202 @@ export default function App() {
       .map((s) => ({ sketchId: s.sketchId, regionId: s.regionId }));
   }, [selection, doc]);
 
-  // Global keyboard shortcuts. Every binding — which key, which modifier, and
-  // which of the two mutually exclusive toolbars it belongs to — lives in the
-  // table in src/settings/shortcuts.ts; this handler only says what each id
-  // *does*. No key letter is written here.
-  //
-  // The order of the branches is load-bearing. Escape is matched above the
-  // don't-fire-while-typing guard (it has to back you out of a dialog whose
-  // input has the focus), and the stray-⌘/Ctrl bail-out sits below the handful
-  // of bindings that are meant to keep firing with ⌘ held — move it up and they
-  // stop (Escape, ?, /, Enter and Delete/Backspace).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (isShortcut(e, "app.cancel")) {
-        if (offsetSessionRef.current) {
-          setOffsetSession(null);
-          setSketchToolState("select");
-        } else if (mirrorSessionRef.current) {
-          setMirrorSession(null);
-          setSelection([]);
-          setSketchToolState("select");
-        } else if (patternSessionRef.current) {
-          setPatternSession(null);
-          setSelection([]);
-          setSketchToolState("select");
-        } else if (projectSessionRef.current) {
-          setProjectSession(null);
-          setSketchToolState("select");
-        } else if (sketchTool === "trim" || sketchTool === "extend") {
-          setTrimHover(null);
-          setSketchToolState("select");
-        } else if (textDraftRef.current) setTextDraft(null);
-        else if (dimInputRef.current) setDimInput(null);
-        else if (dimPendingRef.current) setDimPending(false);
-        else if (polySidesOpen) setPolySidesOpen(false);
-        // ONE Escape closes a dialog, whatever it is and whatever it has armed.
-        //
-        // Escape means one thing everywhere: get me out. Not two stages — a
-        // press to disarm the listening slot and another to close — because the
-        // dialogs that open already armed would spend the first press and the
-        // ones that don't wouldn't, so the same key would cost a different
-        // number of presses per tool. Disarming a slot without closing the
-        // dialog is still available by clicking the slot itself.
-        //
-        // Each close() already drops its own pick mode (revolve.close and
-        // pattern.close clear `picking`/`pickPurpose`, closeMirror calls
-        // cancelMirrorPlanePick, closeExtrudeDialog clears pickingUpFace), and a
-        // slot armed in dialog state goes with the dialog object.
-        else if (planeDialog) closePlaneDialog();
-        else if (revolve.dialog) revolve.close();
-        else if (mirrorDialog) closeMirror();
-        else if (pattern.dialog) pattern.close();
-        else if (shell.dialog) shell.close();
-        else if (sweepDialog) closeSweep();
-        else if (loftDialog) closeLoft();
-        else if (extrudeDialog) closeExtrudeDialog();
-        else if (dressUp.dialog) dressUp.close();
-        else if (booleanDialog) closeBooleanDialog();
-        else if (transform.editId) transform.cancel();
-        else if (transform.arming) transform.cancelArming();
-        else if (editParamsId) setEditParamsId(null);
-        else if (picking) setPicking(false);
-        // Esc finishes an in-progress draft: the spline commits its accumulated
-        // points (like ending a polyline); every other tool just abandons the
-        // draft. finishSpline() returns false unless the spline tool has ≥2
-        // points, so non-spline drafts fall through to setDraft([]).
-        else if (draft.length > 0) {
-          if (!finishSpline()) setDraft([]);
-        } else if (editingSketchId) finishSketch();
-        return;
-      }
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+  /** Delete/Backspace only claim the key when something is selected; with an empty
+   *  selection they decline it, so the browser's own behaviour is left alone. */
+  const deleteSelectionIfAny = (e: KeyboardEvent) => {
+    if (selection.length === 0) return false;
+    e.preventDefault();
+    handleDeleteSelection();
+  };
+  /** Same for reordering: no primary feature, no claim. */
+  const moveFeatureIfAny = (e: KeyboardEvent, by: -1 | 1) => {
+    if (!primaryFeatureId) return false;
+    e.preventDefault();
+    setDoc(moveFeature(doc, primaryFeatureId, by));
+  };
 
-      const id = matchShortcut(e, editingSketchId ? "sketch" : "modeling")?.id;
-
-      switch (id) {
-        case "app.toggleHints":
-          // Toggles the keyboard-shortcut hints appended to toolbar labels.
-          e.preventDefault();
-          toggleShortcuts();
-          return;
-        case "app.toolSearch":
-          // Opens (or closes) the More flyout of whichever toolbar is live, so
-          // every tool — including the ones that didn't fit — is a search away.
-          e.preventDefault();
-          if (editingSketchId) setSketchMoreRequest((n) => n + 1);
-          else setModelMoreRequest((n) => n + 1);
-          return;
-        case "sketch.commitSession":
-          // Turns whichever preview session is running into real entities: the
-          // sketch Mirror, the Project/Convert previews, or the Pattern (which
-          // commits as a DerivedOp). With none running this falls through.
-          if (mirrorSessionRef.current) {
-            e.preventDefault();
-            commitMirrorRef.current();
-            return;
-          }
-          if (projectSessionRef.current) {
-            e.preventDefault();
-            commitProjectRef.current();
-            return;
-          }
-          if (patternSessionRef.current) {
-            e.preventDefault();
-            commitPatternRef.current();
-            return;
-          }
-          break;
-        case "app.delete":
-        case "app.deleteBack":
-          if (selection.length > 0) {
-            e.preventDefault();
-            handleDeleteSelection();
-            return;
-          }
-          break;
-        case "app.undo":
-          e.preventDefault();
-          undo();
-          return;
-        case "app.redo":
-          e.preventDefault();
-          redo();
-          return;
-        case "app.importStep":
-          e.preventDefault();
-          importInputRef.current?.click();
-          return;
-        default:
-          break;
-      }
-      if (e.metaKey || e.ctrlKey) return; // leave other OS/browser chords alone
-
-      // Standard views: the on-canvas gizmo covers these by click, but the
-      // digits remain a keyboard shortcut in both modeling and sketch mode —
-      // letters were deliberately avoided here (see the shortcut table's
-      // header for why).
-      const view = id && VIEW_BY_SHORTCUT[id];
-      if (view) {
-        viewApiRef.current?.setView(view);
-        return;
-      }
-
-      if (editingSketchId) {
-        // ---- Sketch toolbar ----
-        // preventDefault on the tool keys: tools like Offset/Text open an input
-        // that autofocuses synchronously, and without this the same keystroke
-        // leaks into that input (e.g. "o" → offset distance "o", which throws
-        // in the expression parser and takes the app down with it).
-        const tool = id && SKETCH_TOOL_BY_SHORTCUT.get(id);
-        if (tool) {
-          e.preventDefault();
-          setSketchTool(tool);
-          return;
-        }
-        switch (id) {
-          case "sketch.dimension":
-            // preventDefault for the same reason: the dimension dialog
-            // autofocuses its input synchronously.
-            e.preventDefault();
-            startDimensionRef.current();
-            break;
-          case "sketch.construction":
-            toggleConstruction();
-            break;
-          case "sketch.perpendicular":
-            if (twoSelectedLines) addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id);
-            break;
-          case "sketch.horizontal":
-            if (oneSelectedLine) addHVConstraint("horizontal", oneSelectedLine.id);
-            break;
-          case "sketch.vertical":
-            if (oneSelectedLine) addHVConstraint("vertical", oneSelectedLine.id);
-            break;
-          case "sketch.parallel":
-            if (twoSelectedLines) addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id);
-            break;
-          case "sketch.equal": {
-            const pair = twoSelectedLines ?? twoRadiusEntities;
-            if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
-            break;
-          }
-          default:
-            break;
-        }
-        return;
-      }
-
-      // ---- Modeling toolbar ----
-      switch (id) {
-        case "view.home":
-          // Iso view zoomed to fit all bodies + visible sketches. Hiding and
-          // suppressing live only on the timeline's per-feature eye toggle.
-          viewApiRef.current?.homeView();
-          return;
-        case "feature.moveUp":
-        case "feature.moveDown":
-          if (primaryFeatureId) {
-            e.preventDefault();
-            setDoc(moveFeature(doc, primaryFeatureId, id === "feature.moveUp" ? -1 : 1));
-            return;
-          }
-          break;
-        case "model.newBody":
-          // New Body ignores `picking`, matching the toolbar button itself.
-          setNewSolidOpen((o) => !o);
-          return;
-        default:
-          break;
-      }
-      if (picking) return;
-      // preventDefault before acting: several cases below (Extrude/Chamfer/
-      // Fillet) synchronously mount a dialog with an autoFocus text input, and
-      // without this the same keystroke leaks into that input right after it
-      // mounts (e.g. "e" turning the Extrude distance default "10" into "10e").
-      e.preventDefault();
-      switch (id) {
-        case "model.sketch":
-          setPickPurpose("sketch");
-          setPicking(true);
-          break;
-        case "model.plane":
-          openPlaneDialog();
-          break;
-        case "model.extrude":
-          if (!extrudeDialog) openExtrudeDialog();
-          break;
-        case "model.revolve":
-          if (!revolve.dialog) openRevolve();
-          break;
-        case "model.sweep":
-          if (!sweepDialog) openSweep();
-          break;
-        case "model.loft":
-          if (!loftDialog) openLoft();
-          break;
-        case "model.chamfer":
-          if (!dressUp.dialog) openDressUp("chamfer");
-          break;
-        case "model.fillet":
-          if (!dressUp.dialog) openDressUp("fillet");
-          break;
-        case "model.shell":
-          if (!shell.dialog) openShell();
-          break;
-        case "model.boolean":
-          if (!booleanDialog) openBooleanDialog();
-          break;
-        case "model.transform":
-          if (!transform.editId && !transform.arming) openTransform();
-          break;
-        case "model.mirror":
-          if (!mirrorDialog) openMirror();
-          break;
-        case "model.pattern":
-          if (!pattern.dialog) openPattern();
-          break;
-        default:
-          break;
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    undo,
-    redo,
+  // Global keyboard shortcuts. Every binding — which key, which modifier, and which
+  // of the two mutually exclusive toolbars it belongs to — lives in the table in
+  // src/settings/shortcuts.ts; the ORDER the groups below are tried in lives in
+  // useShortcutHandler. This only says what each id *does*. No key letter is here.
+  useShortcutHandler({
+    mode: editingSketchId ? "sketch" : "modeling",
     picking,
-    planeDialog,
-    transform.editId,
-    draft,
-    editingSketchId,
-    selection,
-    doc,
-    sketchTool,
-    constructionMode,
-    extrudeDialog,
-    pickingUpFace,
-    revolveInputs,
-    revolve.dialog,
-    mirrorDialog,
-    pattern.dialog,
-    sweepInputs,
-    sweepDialog,
-    loftInputs,
-    loftDialog,
-    shellBody,
-    // The dialog itself, not just `shellBody`: arming a face pick returns early
-    // from handlePick without touching the selection, so nothing else in this
-    // list changes and Esc would run against a closure that still thought
-    // nothing was armed — closing the whole dialog instead of disarming.
-    shell.dialog,
-    dressUp.dialog,
-    booleanDialog,
-    bodyIds,
-    transformTarget,
-    twoSelectedLines,
-    twoRadiusEntities,
-    oneSelectedLine,
-    primaryFeatureId,
-    polySidesOpen,
-    editParamsId,
-  ]);
+    views: VIEW_BY_SHORTCUT,
+    onView: (view) => viewApiRef.current?.setView(view),
+    sketchTools: SKETCH_TOOL_BY_SHORTCUT,
+    onSketchTool: setSketchTool,
+    // Escape means one thing everywhere: get me out. Not two stages — a press to
+    // disarm the listening slot and another to close — because the dialogs that open
+    // already armed would spend the first press and the ones that don't wouldn't, so
+    // the same key would cost a different number of presses per tool. Disarming a
+    // slot without closing the dialog is still available by clicking the slot.
+    //
+    // Each close() already drops its own pick mode (revolve.close and pattern.close
+    // clear `picking`/`pickPurpose`, closeMirror calls cancelMirrorPlanePick,
+    // closeExtrudeDialog clears pickingUpFace), and a slot armed in dialog state goes
+    // with the dialog object.
+    onCancel: () => {
+      if (offsetSessionRef.current) {
+        setOffsetSession(null);
+        setSketchToolState("select");
+      } else if (mirrorSessionRef.current) {
+        setMirrorSession(null);
+        setSelection([]);
+        setSketchToolState("select");
+      } else if (patternSessionRef.current) {
+        setPatternSession(null);
+        setSelection([]);
+        setSketchToolState("select");
+      } else if (projectSessionRef.current) {
+        setProjectSession(null);
+        setSketchToolState("select");
+      } else if (sketchTool === "trim" || sketchTool === "extend") {
+        setTrimHover(null);
+        setSketchToolState("select");
+      } else if (textDraftRef.current) setTextDraft(null);
+      else if (dimInputRef.current) setDimInput(null);
+      else if (dimPendingRef.current) setDimPending(false);
+      else if (polySidesOpen) setPolySidesOpen(false);
+      else if (planeDialog) closePlaneDialog();
+      else if (revolve.dialog) revolve.close();
+      else if (mirrorDialog) closeMirror();
+      else if (pattern.dialog) pattern.close();
+      else if (shell.dialog) shell.close();
+      else if (sweepDialog) closeSweep();
+      else if (loftDialog) closeLoft();
+      else if (extrudeDialog) closeExtrudeDialog();
+      else if (dressUp.dialog) dressUp.close();
+      else if (booleanDialog) closeBooleanDialog();
+      else if (transform.editId) transform.cancel();
+      else if (transform.arming) transform.cancelArming();
+      else if (editParamsId) setEditParamsId(null);
+      else if (picking) setPicking(false);
+      // Esc finishes an in-progress draft: the spline commits its accumulated points
+      // (like ending a polyline); every other tool just abandons the draft.
+      // finishSpline() returns false unless the spline tool has ≥2 points, so
+      // non-spline drafts fall through to setDraft([]).
+      else if (draft.length > 0) {
+        if (!finishSpline()) setDraft([]);
+      } else if (editingSketchId) finishSketch();
+    },
+    withModifier: {
+      "app.toggleHints": (e) => {
+        // Toggles the keyboard-shortcut hints appended to toolbar labels.
+        e.preventDefault();
+        toggleShortcuts();
+      },
+      "app.toolSearch": (e) => {
+        // Opens (or closes) the More flyout of whichever toolbar is live, so every
+        // tool — including the ones that didn't fit — is a search away.
+        e.preventDefault();
+        if (editingSketchId) setSketchMoreRequest((n) => n + 1);
+        else setModelMoreRequest((n) => n + 1);
+      },
+      // Turns whichever preview session is running into real entities: the sketch
+      // Mirror, the Project/Convert previews, or the Pattern (which commits as a
+      // DerivedOp). With none running this declines the key.
+      "sketch.commitSession": (e) => {
+        const commit =
+          (mirrorSessionRef.current && commitMirrorRef) ||
+          (projectSessionRef.current && commitProjectRef) ||
+          (patternSessionRef.current && commitPatternRef);
+        if (!commit) return false;
+        e.preventDefault();
+        commit.current();
+      },
+      "app.delete": (e) => deleteSelectionIfAny(e),
+      "app.deleteBack": (e) => deleteSelectionIfAny(e),
+      "app.undo": (e) => {
+        e.preventDefault();
+        undo();
+      },
+      "app.redo": (e) => {
+        e.preventDefault();
+        redo();
+      },
+      "app.importStep": (e) => {
+        e.preventDefault();
+        importInputRef.current?.click();
+      },
+    },
+    sketchActions: {
+      "sketch.dimension": (e) => {
+        // preventDefault because the dimension dialog autofocuses its input
+        // synchronously, and the same keystroke would leak into it.
+        e.preventDefault();
+        startDimensionRef.current();
+      },
+      "sketch.construction": () => toggleConstruction(),
+      "sketch.perpendicular": () => {
+        if (twoSelectedLines) addGeoConstraint("perpendicular", twoSelectedLines[0].id, twoSelectedLines[1].id);
+      },
+      "sketch.horizontal": () => {
+        if (oneSelectedLine) addHVConstraint("horizontal", oneSelectedLine.id);
+      },
+      "sketch.vertical": () => {
+        if (oneSelectedLine) addHVConstraint("vertical", oneSelectedLine.id);
+      },
+      "sketch.parallel": () => {
+        if (twoSelectedLines) addGeoConstraint("parallel", twoSelectedLines[0].id, twoSelectedLines[1].id);
+      },
+      "sketch.equal": () => {
+        const pair = twoSelectedLines ?? twoRadiusEntities;
+        if (pair) addGeoConstraint("equal", pair[0].id, pair[1].id);
+      },
+    },
+    whilePicking: {
+      "view.home": () => {
+        // Iso view zoomed to fit all bodies + visible sketches. Hiding and
+        // suppressing live only on the timeline's per-feature eye toggle.
+        viewApiRef.current?.homeView();
+      },
+      "feature.moveUp": (e) => moveFeatureIfAny(e, -1),
+      "feature.moveDown": (e) => moveFeatureIfAny(e, 1),
+      // New Body ignores `picking`, matching the toolbar button itself.
+      "model.newBody": () => setNewSolidOpen((o) => !o),
+    },
+    modelingActions: {
+      "model.sketch": () => {
+        setPickPurpose("sketch");
+        setPicking(true);
+      },
+      "model.plane": () => openPlaneDialog(),
+      "model.extrude": () => {
+        if (!extrudeDialog) openExtrudeDialog();
+      },
+      "model.revolve": () => {
+        if (!revolve.dialog) openRevolve();
+      },
+      "model.sweep": () => {
+        if (!sweepDialog) openSweep();
+      },
+      "model.loft": () => {
+        if (!loftDialog) openLoft();
+      },
+      "model.chamfer": () => {
+        if (!dressUp.dialog) openDressUp("chamfer");
+      },
+      "model.fillet": () => {
+        if (!dressUp.dialog) openDressUp("fillet");
+      },
+      "model.shell": () => {
+        if (!shell.dialog) openShell();
+      },
+      "model.boolean": () => {
+        if (!booleanDialog) openBooleanDialog();
+      },
+      "model.transform": () => {
+        if (!transform.editId && !transform.arming) openTransform();
+      },
+      "model.mirror": () => {
+        if (!mirrorDialog) openMirror();
+      },
+      "model.pattern": () => {
+        if (!pattern.dialog) openPattern();
+      },
+    },
+  });
 
   // Open the Loft dialog. Always available: the sections are armed inside it.
   // A selection of 2+ regions prefills them in timeline order (see loftInputs);

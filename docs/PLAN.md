@@ -248,48 +248,62 @@ the OCCT wasm nor a WebGL context), and `scripts/verify-dialog-consistency.mjs`.
 
 A deep structural scan (2026-10-02) against one question: can a stranger
 navigate, maintain and extend this? Mostly yes. CI gates lint, format,
-typecheck, 999 tests and a build on every PR; `strict` is on with
+typecheck, 1,051 tests and a build on every PR; `strict` is on with
 `noUnusedLocals` and `noFallthroughCasesInSwitch`; the layer graph is acyclic;
 the comments are overwhelmingly _why_-comments and are an asset — **do not
 bulk-trim them.**
 
-What is wrong is concentrated, not diffuse: four files hold 46% of the code. The
-two hardest boundaries (the Viewport mount effect, `kernel/features/`) are
-already scoped with their rationale under **What's left → Codebase structure** and are
-_not_ repeated here; this section is the rest.
+What is wrong is concentrated, not diffuse. The four largest files are 48% of
+`src/` by non-test line count (`App.tsx` 8,010, `kernel/worker.ts` 5,469,
+`viewport/Viewport.tsx` 4,501, `document/document.ts` 1,491 of 40,197) — and that
+share is **unchanged by item 1**, which is worth knowing before anyone measures
+this again: App.tsx lost 1,886 lines but they landed in `src/ui/` and `src/hooks/`
+with headers and prop types, so the denominator grew with the numerator. Item 1
+made the big file navigable, not the codebase flatter. The next lever on
+concentration is `worker.ts` and the Viewport mount effect, both already scoped
+with their rationale under **What's left → Codebase structure** and _not_ repeated
+here; this section is the rest.
 
 **Tier 1 — structure.** The actual answer to "is this maintainable".
 
-- [ ] **1. `src/App.tsx` is 9,896 lines in one component.** 84 `useState`;
-      61 hook blocks totalling 1,245 lines (the largest, the global keydown
-      handler, is 295 at `3884-4178`); ~5,300 lines of handlers and derived
-      values declared inline across 372 bindings; and a single 2,601-line JSX
-      return at `7295-9896`. **17 of the repo's 20 `eslint-disable` comments are
-      `react-hooks/exhaustive-deps` in this file** — that is the dependency
-      graph having outgrown hand-verification, and it is the reason to treat
-      this as correctness work rather than tidying. `CONTRIBUTING.md`'s layout
-      table already concedes "oversized and mid-refactor", which reads as an
-      unfinished job to anyone arriving. Four independently shippable steps:
-  - [x] **1a. Done.** All thirteen `DraggableDialog` blocks are out of
-        `App.tsx`, which went 9,891 → 8,675. Each follows `BooleanDialog`'s shape:
-        resolved labels and flags in, granular callbacks out, neither a setter nor
-        `doc` crossing the boundary. It did **not** reach 7,000 on its own — the
-        thirteen were worth ~1,220 lines — so the rest of item 1's total has to
-        come from 1b–1d.
-  - [x] **1b. Done.** Five hooks — `useRevolveDialog`, `usePatternDialog`,
-        `useShellDialog`, `useDressUpDialog`, `useTransformSession` — each owning
-        its own state, handlers and effects. **The item's premise held: none of the
-        five carries an `exhaustive-deps` disable, and App.tsx went from 17 to 12.** Every disable they absorbed was hiding something real, usually "this
-        effect must depend on the dialog's VALUE fields, not on its `x`/`y` or its
-        arming" — depend on the state object whole and dragging the panel re-applies
-        the edit and leaves an undo entry for a move.
-  - [ ] **1c.** Collapse the sketch-session cluster. `offsetSession`,
-        `mirrorSession`, `projectSession`, `patternSession` and `textDraft`
-        each carry the same shape — state, a mirroring `*Ref`, a `commit*Ref` —
-        five times over. One `useSketchSession` abstraction.
-  - [ ] **1d.** Move the 295-line keydown effect to
-        `settings/useShortcutHandler.ts`, next to the `shortcuts.ts` table it
-        dispatches from.
+- [x] **1. `src/App.tsx`: 9,896 → 8,010 lines. Done, with one claim unmet.** All
+      four steps landed. What the item promised and what it delivered:
+  - [x] **1a.** All thirteen `DraggableDialog` blocks are out, each as resolved
+        labels and flags in / granular callbacks out, with neither a setter nor
+        `doc` crossing the boundary. **It did not "land App.tsx under 7,000 on its
+        own"** — the thirteen were worth ~1,220 lines. That estimate was the one
+        thing this item got wrong.
+  - [x] **1b.** Five hooks: `useRevolveDialog`, `usePatternDialog`,
+        `useShellDialog`, `useDressUpDialog`, `useTransformSession`. **The premise
+        held exactly: none carries an `exhaustive-deps` disable.**
+  - [x] **1c.** `useSketchSession` — the state + render-mirrored ref + commit-ref
+        idiom the five sketch sessions each assembled by hand, now once, with 8
+        tests.
+  - [x] **1d.** `settings/useShortcutHandler.ts`, beside the table it dispatches
+        from. The listener registers once and reads a ref, so its 36-entry
+        dependency array went with it rather than moving.
+
+    **The numbers.** 84 `useState` → 64. **20 `eslint-disable` comments → 11, and
+    the 17 `exhaustive-deps` disables in App.tsx → 11 repo-wide** (the dialogs
+    and the key handler accounted for six of them; the rest were never in this
+    file). The 2,601-line JSX return starts at 6,333 now. Every key letter still
+    lives only in `shortcuts.ts`.
+
+    **What it was actually worth, beyond the count.** The recurring payoff was
+    logic that only a JSX tail or a 290-line effect could reach becoming pure,
+    tested functions: `ui/pickRows.ts` (15 tests — and writing them exposed that
+    two copies of the row-numbering rule counted by label prefix rather than by
+    kind), `document/patternValidation.ts` (12), `dressUpValidation`'s combined
+    check (5), `useSketchSession` (8), `lib/format.ts`'s second formatter (3, and
+    finding that `fmt` was a fossil predecessor of `formatNumber` that disagrees
+    with it at an exact half). Tests 999 → 1,051.
+
+    **Three bugs it surfaced and did not fix**, all recorded where they live: the
+    reference-plane dialog still arms a viewport pick from a `<select>`, the macOS
+    swallowed-first-click shape; Extrude's extent control does the same on one
+    remaining path; and `formatRounded3`/`formatNumber` want unifying, which is a
+    behaviour change because one writes into the document.
+
 - [ ] **2. `src/App.css` is 3,235 lines / 392 rules** styling components that
       already live in `src/ui/`. It is cleanly sectioned by comment, so split
       along the same seams as 1a and let a dialog's styles sit beside the
@@ -332,11 +346,13 @@ install early enough for the derived values that read it.
 
 **Tier 2 — guardrails, so it does not regress.**
 
-- [ ] **3. Clear the 11 lint warnings.** Three are `react-refresh` in
-      `DimValueInput`; the rest are `exhaustive-deps` in `MoreFlyout`,
-      `OverflowToolbar`, `useAgentBridge`, `App.tsx` and the Viewport mount
-      effect. Most of the `App.tsx` ones should fall out of item 1b rather than
-      be silenced by hand.
+- [ ] **3. Clear the 11 lint warnings.** Unchanged in number by item 1, which is
+      the honest result: none of the eleven was ever in `App.tsx`'s dialog or
+      keyboard code. Three are `react-refresh` in `DimValueInput`; the rest are
+      `exhaustive-deps` in `MoreFlyout`, `OverflowToolbar`, `useAgentBridge`, the
+      Viewport mount effect, and one `doc.features` in `App.tsx` that survives.
+      The `DimValueInput` three are the same split that fixed `Viewport.tsx`
+      earlier and are worth ten minutes; the rest need reading one at a time.
 
 **Sequencing.** `npm run verify` gates item 1. `App.tsx` and `Viewport.tsx`
 have no unit tests — Vitest can load neither the OCCT wasm nor a WebGL context —
