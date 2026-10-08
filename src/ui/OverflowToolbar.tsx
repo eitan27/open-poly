@@ -3,6 +3,7 @@ import { SearchIcon } from "./icons";
 import { MoreFlyout } from "./MoreFlyout";
 import { fitCount, toRows, type ToolbarChoice, type ToolbarItem, type ToolbarRow } from "./toolbarOverflow";
 import { shortcutHint } from "../settings/shortcuts";
+import { useLatest } from "../hooks/useLatest";
 
 interface Props {
   /** Toolbar class (e.g. "model-toolbar"), so each bar keeps its own look. */
@@ -97,27 +98,39 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
   const closeMenu = () => setMenuQuery(null);
   const openMenu = (initialQuery = "") => setMenuQuery(initialQuery);
 
+  // A bar whose every tool is disabled has nothing to show, so the flyout closes —
+  // including if it is opened while that is true.
   useEffect(() => {
-    if (allDisabled && menuOpen) closeMenu();
-  }, [allDisabled]);
+    if (allDisabled && menuOpen) setMenuQuery(null);
+  }, [allDisabled, menuOpen]);
 
   // "/" from the app: toggle the flyout. With nothing hidden it opens as a
   // plain "find me a tool" search over the whole bar.
+  //
+  // `openRequest` is a nonce and must be the ONLY trigger: `allDisabled` is read
+  // here but adding it would re-toggle the flyout every time a tool's enabled
+  // state flipped, which is not what pressing "/" asked for.
+  const allDisabledRef = useLatest(allDisabled);
   useEffect(() => {
-    if (!openRequest || allDisabled) return;
+    if (!openRequest || allDisabledRef.current) return;
     setMenuQuery((q) => (q === null ? "" : null));
-  }, [openRequest]);
+  }, [openRequest, allDisabledRef]);
 
   // A dropdown button (New Body) whose menu was opened by its keyboard shortcut
   // while the button itself is hidden: honour the keystroke by opening the
   // flyout pre-filtered to that button instead.
+  //
+  // Keyed on which item is armed, not on `hidden` itself — that array is rebuilt
+  // on every resize measurement, and re-running this then would re-open the
+  // flyout behind the user.
   const armedKey = hidden.map((i) => (i.choicesOpen ? i.id : "")).join(",");
+  const hiddenRef = useLatest(hidden);
   useEffect(() => {
-    const armed = hidden.find((i) => hasDropdown(i) && i.choicesOpen);
+    const armed = hiddenRef.current.find((i) => hasDropdown(i) && i.choicesOpen);
     if (!armed) return;
     armed.onChoicesOpenChange?.(false);
-    openMenu(armed.label);
-  }, [armedKey]);
+    setMenuQuery(armed.label);
+  }, [armedKey, hiddenRef]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -128,15 +141,21 @@ export function OverflowToolbar({ className, items, showShortcuts, openRequest }
     return () => window.removeEventListener("mousedown", onDown);
   }, [menuOpen]);
 
+  // Keyed on the open dropdown's id: the item object is a fresh literal every
+  // render, so depending on it would tear down and re-register the listener
+  // constantly. The handler reads the current one through the ref.
   const openDropdown = items.find((i) => hasDropdown(i) && i.choicesOpen);
+  const openDropdownRef = useLatest(openDropdown);
   useEffect(() => {
-    if (!openDropdown) return;
+    if (!openDropdownRef.current) return;
     const onDown = (e: MouseEvent) => {
-      if (!dropdownRef.current?.contains(e.target as Node)) openDropdown.onChoicesOpenChange?.(false);
+      if (!dropdownRef.current?.contains(e.target as Node)) {
+        openDropdownRef.current?.onChoicesOpenChange?.(false);
+      }
     };
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
-  }, [openDropdown?.id]);
+  }, [openDropdown?.id, openDropdownRef]);
 
   const renderButton = (item: ToolbarItem, forMirror: boolean): ReactNode => {
     const label = (

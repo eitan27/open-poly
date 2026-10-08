@@ -219,7 +219,7 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
     return () => {
       if (window.__openpoly === api) delete window.__openpoly;
     };
-  }, [ctx, handleRead]);
+  }, [ctx, handleRead, viewApiRef]);
 
   return { ctx, status };
 }

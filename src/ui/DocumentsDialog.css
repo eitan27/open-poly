@@ -1,0 +1,26 @@
+/* Documents dialog.
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+/* --- Documents dialog --- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+  z-index: 50;
+}
+
+.docs-dialog {
+  width: min(560px, calc(100vw - 48px));
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 12px 40px var(--shadow-strong);
+}

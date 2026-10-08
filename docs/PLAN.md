@@ -304,11 +304,11 @@ here; this section is the rest.
     remaining path; and `formatRounded3`/`formatNumber` want unifying, which is a
     behaviour change because one writes into the document.
 
-- [ ] **2. `src/App.css` is 3,235 lines / 392 rules** styling components that
-      already live in `src/ui/`. It is cleanly sectioned by comment, so split
-      along the same seams as 1a and let a dialog's styles sit beside the
-      dialog. Move the token block at the head of `index.css` into its own file
-      so theming is findable.
+- [x] **2. Done. `src/App.css` is a sixteen-line manifest**, each section beside
+      what it styles — a dialog's rules next to the dialog in `src/ui/`, the app
+      frame's in `src/styles/` — and the token block moved to `styles/tokens.css`,
+      leaving `index.css` as 21 lines of base reset. See **On the CSS split** below
+      before touching it.
 
 **What the dialog extraction taught, for 1b–1d.** The predictor that worked was
 whether a block's JSX _reads_ state or _drives_ it — counted as `setPicking\(` /
@@ -346,22 +346,61 @@ install early enough for the derived values that read it.
 
 **Tier 2 — guardrails, so it does not regress.**
 
-- [ ] **3. Clear the 11 lint warnings.** Unchanged in number by item 1, which is
-      the honest result: none of the eleven was ever in `App.tsx`'s dialog or
-      keyboard code. Three are `react-refresh` in `DimValueInput`; the rest are
-      `exhaustive-deps` in `MoreFlyout`, `OverflowToolbar`, `useAgentBridge`, the
-      Viewport mount effect, and one `doc.features` in `App.tsx` that survives.
-      The `DimValueInput` three are the same split that fixed `Viewport.tsx`
-      earlier and are worth ten minutes; the rest need reading one at a time.
+- [x] **3. Done — 11 warnings down to 1**, and the one left is the Viewport mount
+      effect (`mouseMiddle`, `mouseRight`, `theme`), deliberately: it is one of the
+      two hardest boundaries, already scoped under **What's left → Codebase
+      structure**, and silencing it there would be the opposite of what the other ten
+      fixes did. See **On the lint warnings** below.
 
-**Sequencing.** `npm run verify` gates item 1. `App.tsx` and `Viewport.tsx`
-have no unit tests — Vitest can load neither the OCCT wasm nor a WebGL context —
-so the verify scripts are the only net under a refactor of that size, and they
-need to be green _first_ (`scripts/README.md` has the current state of that).
-Item 1 is the big one and is better done in public as a series of small PRs
-than held back: a repo visibly being improved reads better than a suspiciously
-pristine one. The exhaustiveness guardrails are in, so a refactor that drops a
-case on the floor now fails the build rather than the user.
+**On the CSS split, before re-ordering anything.** The cascade was the risk, and
+the obvious approach is the unsafe one. App.css was ONE stylesheet, so two rules of
+equal specificity resolve by which comes first. Had each component imported its own
+CSS, emission order would follow the module graph instead and rules could silently
+swap precedence — a visual regression with no failing test anywhere, in a codebase
+with no computed-style coverage. So `App.css` holds nothing but `@import`s **in
+source order**. That is also why every section became a file and not only the
+component-scoped ones: `@import` must precede any rule, so a leftover rule at the
+top would have had to jump the imports. Proven rather than argued — the built
+stylesheet is byte-identical before and after, same SHA-256 and same Vite content
+hash. **Re-order those imports and re-check that.** `themeTokens.test.ts` followed
+the split and got stronger: it read `../App.css` by path and now walks `src/` for
+every stylesheet, so a file added later is guarded automatically (5 tests → 21).
+
+**On the lint warnings, and the pattern behind them.** Ten of the eleven came down
+to one shape: **an effect keyed deliberately narrower than its body reads.** That is
+what `exhaustive-deps` is complaining about whenever the dependency it names would
+be wrong to add — a nonce-triggered effect that must not re-run when an unrelated
+flag flips, or one keyed on an id while it reads the object that id belongs to. The
+answer is `hooks/useLatest.ts`, the one-line version of the render-mirrored ref
+`useSketchSession` and `useShortcutHandler` already use: the effect reads the
+current value without being woken by it, and the dependency list becomes honest.
+Each use carries a comment saying what adding the dependency would have broken.
+`DimValueInput`'s three pure functions also moved to `ui/dimAutocomplete.ts` — the
+same split `viewport/types.ts` got, and they were already that file's only tested
+part. One fix is a **documented behaviour change**: OverflowToolbar's "close the
+flyout when every tool is disabled" now also fires when the flyout opens, which is
+what the effect was written to do.
+
+**This checklist is complete.** All seven items the 2026-10-02 scan raised are
+done. What it cost and what it bought, in case a future scan asks the same
+question: `App.tsx` 9,896 → 8,010 and `App.css` 3,247 → a manifest; 84 `useState`
+→ 64; 20 `eslint-disable` → 1; tests 999 → 1,068. The line counts are the least of
+it. The durable wins were the compiler learning to refuse a half-wired feature
+(`assertNever` on six silent dispatches, `Record`s over the feature union), the
+shared vocabulary leaving a three.js component, and roughly 60 tests on logic that
+had been unreachable because it lived inside a JSX tail or a 290-line effect.
+
+**How to run a refactor of this size here**, since the next one will face the same
+thing: `App.tsx` and `Viewport.tsx` have no unit tests — Vitest can load neither the
+OCCT wasm nor a WebGL context — so the 64 verify scripts are the only net, and they
+must be green _before_ you start or a red result afterwards means nothing. Establish
+that baseline once (~55 minutes quiet), then run the subset a change touches and the
+full suite only for something global like the keyboard handler. **Budget for the
+machine being the variable**: these are wall-clock scripts, one of them keeps ~7
+cores busy, and a loaded machine turns a 54-minute suite into 86 and times out
+scripts that pass in 16 seconds alone. Every red result in this work that was
+investigated turned out to be contention, and re-running the script by itself was
+the test that settled it every time.
 
 **On the `assertNever` guards, so they are not "tidied" away.** Six dispatches
 had a genuinely silent fallthrough and now carry one:

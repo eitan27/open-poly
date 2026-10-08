@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeWith, matchVariables, trailingToken } from "./DimValueInput";
+import { completeWith, matchVariables, trailingToken } from "./dimAutocomplete";
 
 const vars = [
   { name: "width", value: 40 },

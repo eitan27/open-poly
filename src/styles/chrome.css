@@ -1,0 +1,434 @@
+/* Banners, the chrome row, the status chip, the side panel.
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+/* Full-width banner under the topbar: the boot-restore path couldn't open the
+   saved active/most-recent document (corrupt or unreadable). Same red palette
+   as .docs-error — this is a real (if recoverable) problem, not routine. */
+.recovery-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--danger-pale);
+  background: var(--danger-surface);
+  border-bottom: 1px solid var(--danger-border);
+  flex: 0 0 auto;
+}
+
+.recovery-banner span {
+  flex: 1;
+}
+
+/* Informational sibling of .recovery-banner: a calm blue "a new version is
+   available" notice with an inline Refresh link. */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--accent-palest);
+  background: var(--accent-surface-3);
+  border-bottom: 1px solid var(--accent-border-3);
+  flex: 0 0 auto;
+}
+
+.update-banner span {
+  flex: 1;
+}
+
+.update-banner .banner-link {
+  color: var(--accent-bright-2);
+}
+
+.update-banner .banner-link:hover {
+  color: var(--accent-pale-3);
+}
+
+/* An inline text link within a banner sentence (e.g. "…in the Documents
+   menu…") — deliberately NOT a boxed button off to the side, so the action
+   sits right where you're reading instead of needing to notice a separate
+   control. */
+.banner-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--danger-text-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.banner-link:hover {
+  color: var(--danger-pale-2);
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+/* Everything at the right end — agent badge, status chip, chrome buttons — as
+   one group. It claims the flex auto-space, and sets its own spacing: the
+   topbar's 16px gap separates SECTIONS, and letting it apply between these
+   three left the chip stranded in the middle of a lot of air. */
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* App-level chrome at the right edge (shortcut hints, settings, report). Ruled
+   off from the status chip so it reads as its own group rather than as more
+   status. */
+.topbar-chrome {
+  display: flex;
+  gap: 4px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+/* The gear has far more internal detail than the glyphs beside it, so at a
+   shared font size it reads noticeably smaller. Sized up to match by eye.
+   Compound selector because .tool-btn sets font-size further down this file and
+   would otherwise win on source order at equal specificity. */
+.tool-btn.settings-btn {
+  font-size: 17px;
+}
+
+/* The one labelled control in the chrome row: .tool-btn is a fixed 28px square
+   for the icon buttons, so this one opts out of the width and sizes to its
+   words instead. */
+.tool-btn.shortcuts-btn {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* The report bug is an SVG, not a glyph — centre it in the fixed-size button
+   rather than letting it sit on the text baseline. */
+.report-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tool-btn {
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  color: var(--text-3);
+  border-radius: 6px;
+  width: 28px;
+  height: 26px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tool-btn:hover:not(:disabled) {
+  background: var(--bg-control-hover);
+  border-color: var(--accent);
+}
+
+.tool-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.tool-btn.active {
+  background: var(--accent-surface-5);
+  border-color: var(--accent);
+  color: var(--accent-palest);
+}
+
+/* Keyboard-shortcut hint appended to a toolbar button label when the "?"
+   toggle is on (e.g. "⬆ Extrude (E)"). */
+/* Fixed (not em) size so the hint reads identically in the 12px solid toolbar
+   and the 16px icon-only sketch toolbar. */
+/* A shortcut key on a toolbar button, drawn as a small key cap — the same
+   treatment as .tb-row-kbd in the More flyout, so a shortcut reads the same
+   wherever it appears. Translucent dark fill + hairline border rather than
+   fixed colours, so it sits correctly on a normal, hovered or active button. */
+.kbd-hint {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 4px;
+  min-width: 8px;
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  vertical-align: middle;
+  color: inherit;
+  opacity: 0.75;
+  background: var(--keycap-bg);
+  border: 1px solid var(--keycap-border);
+  border-radius: 4px;
+}
+
+/* Disabled buttons already dim as a whole; don't double up on the cap. */
+button:disabled .kbd-hint {
+  opacity: 0.85;
+}
+
+.status {
+  position: relative; /* containing block for the .sr-only sentence inside */
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 999px;
+}
+
+/* Kernel at work. A ring with one quarter missing, so the rotation is legible
+   at 11px; `currentColor` picks up whichever state colour .status is wearing. */
+.status-spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: status-spin 0.7s linear infinite;
+}
+
+@keyframes status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The chip still has to read as "working" without motion, so the ring breathes
+   in place rather than spinning. */
+@media (prefers-reduced-motion: reduce) {
+  .status-spinner {
+    animation: status-fade 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes status-fade {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.status-check {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Present to assistive tech (and to the E2E harnesses, which read .status to
+   know when the app has settled) but not on screen. Clipped rather than
+   `display: none`, which screen readers skip entirely. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.status.busy {
+  background: var(--warn-surface-2);
+  color: var(--warn-text-2);
+}
+
+.status.idle {
+  background: var(--ok-surface);
+  color: var(--ok-2);
+}
+
+.status.err {
+  background: var(--danger-surface-2);
+  color: var(--danger-text-3);
+}
+
+/* Live indicator that an LLM agent is driving this tab. Sits at the
+   head of the right-hand cluster, which owns the flex auto-space and the
+   spacing between the three. */
+.agent-badge {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--accent-surface-2);
+  color: var(--accent-bright);
+  border: 1px solid var(--accent-border);
+}
+
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Anchor for the mobile off-canvas panel + its backdrop. */
+  position: relative;
+}
+
+.panel {
+  width: 288px;
+  flex: 0 0 auto;
+  padding: 14px;
+  background: var(--bg-panel-3);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+/* Panel hidden: it simply leaves the flex row and the viewport reclaims the
+   width. The toggle (☰ in the topbar) flips this on any screen size. */
+.body.sidebar-closed .panel {
+  display: none;
+}
+
+/* Collapse/expand tab for the panel. A slim vertical tab attached to the
+   panel's right edge, protruding into the viewport; when the panel is hidden
+   it slides to the viewport's left edge (the `left` transition animates the
+   slide). Vertically centred so it clears the viewport's corner toolbars. */
+.panel-toggle {
+  position: absolute;
+  top: 50%;
+  /* Panel is 288px + 1px right border — sit flush against that edge. */
+  left: 289px;
+  transform: translateY(-50%);
+  z-index: 46;
+  /* Narrow enough to clear the viewport's left-hand toolbars (the sketch
+     column starts 11px right of the viewport edge), so the tab protrudes
+     without clipping a corner off it. Height carries the hit area. */
+  width: 11px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-5);
+  background: var(--bg-panel-3);
+  border: 1px solid var(--border);
+  /* No left border: reads as protruding from the panel, not a floating box. */
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  cursor: pointer;
+  box-shadow: 2px 0 7px var(--shadow-xs);
+  transition:
+    left 0.14s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.panel-toggle:hover {
+  color: var(--accent-palest);
+  border-color: var(--accent);
+}
+
+/* Collapsed: free-standing at the viewport's left edge — give it its left
+   border back so it's a complete tab. */
+.body.sidebar-closed .panel-toggle {
+  left: 0;
+  border-left: 1px solid var(--border);
+}
+
+/* Backdrop is desktop-invisible; it only becomes a real dimming layer once the
+   panel floats over the viewport at narrow widths (see the media query). */
+.sidebar-backdrop {
+  display: none;
+}
+
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-7);
+}
+
+.params-heading {
+  margin-top: 22px;
+}
+
+/* A collapsible section heading (e.g. Variables) — a full-width toggle button
+   with a disclosure caret. Typography matches the .panel h2 section headings
+   (Timeline/Parts/Parameters): same font, weight, size, casing and colour. */
+.params-heading.collapsible {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 10px 0 10px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-7);
+  text-align: left;
+}
+
+.params-heading.collapsible:hover {
+  color: var(--accent-palest);
+}
+
+.collapse-caret {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1;
+  transition: transform 0.12s ease;
+}
+
+.collapse-caret.open {
+  transform: rotate(90deg);
+}
+
+/* Parts section header: title on the left, "Import STEP" on the right. */
+.parts-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.parts-header .params-heading {
+  margin-bottom: 0;
+}
+/* In the Parts header the collapsible heading shares the row with Import, so it
+   hugs its text instead of taking the full width. */
+.parts-header .params-heading.collapsible {
+  width: auto;
+}
+.parts-import {
+  position: relative;
+}
+.parts-import > button {
+  font-size: 11px;
+  padding: 3px 8px;
+  color: var(--accent-palest);
+  background: var(--accent-surface-4);
+  border: 1px solid var(--accent-border-4);
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.parts-import > button:hover {
+  background: var(--accent-surface-6);
+}
+/* Right-align a flyout so it drops from a right-edge button and opens leftward,
+ *  staying inside the scrollable .panel (which clips horizontal overflow) instead
+ *  of spilling past its right border. Compound selector so it beats .mt-menu's
+ *  `left: 0` regardless of rule order. */
+.mt-menu.mt-menu-right {
+  left: auto;
+  right: 0;
+}

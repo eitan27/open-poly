@@ -1,0 +1,65 @@
+/* Solids list.
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+/* --- Solids list --- */
+
+.solids-list {
+  margin-top: 2px;
+}
+
+.solid-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.solid-row:hover {
+  background: var(--bg-row-hover);
+}
+
+.solid-row.selected {
+  background: var(--accent-surface);
+  border-color: var(--accent);
+}
+
+.solid-row.dim {
+  opacity: 0.45;
+}
+
+.solid-color {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border-control);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.solid-name {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.solid-name:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.export-btn {
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  padding: 2px 4px;
+}

@@ -1,0 +1,153 @@
+/* Viewport modeling toolbar (top-left).
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+/* --- Viewport modeling toolbar (top-left) --- */
+/* The wrapper marks out the width the bar may use (the bar is only as wide as
+   its buttons); OverflowToolbar measures it to decide what fits. It must not
+   swallow clicks over the empty space beside the bar. */
+/* No z-index: the bar must keep painting *below* the later siblings it can
+   overlap (the centred sketch banner), exactly as it did before it was wrapped. */
+.tb-wrap {
+  display: flex;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.tb-wrap > * {
+  pointer-events: auto;
+}
+
+.model-toolbar-wrap {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  right: 12px;
+}
+
+/* NOTE: the frosted background lives on the .tb-blur child, NOT here. A
+   backdrop-filter on this element would make it a stacking context, which would
+   trap its dropdown/flyout z-indexes inside the bar — the viewport's own corner
+   controls (Home / section view / perspective) come later in the DOM and would
+   then paint over an open menu. Keeping the bar itself at z-index:auto also
+   preserves the old paint order against the centred sketch banner. */
+.model-toolbar {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* The bar's frosted panel, as a layer instead of a filter on the bar. z-index 0
+   (not -1, which would escape to the viewport and hide behind the canvas) puts
+   it below the buttons, which are positioned so they paint after it. */
+.tb-blur {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: rgba(var(--hud-rgb), 0.85);
+  border-radius: inherit;
+  backdrop-filter: blur(4px);
+}
+
+/* The inference glyph chip (—/|/∥/⊥) that follows the cursor while a snap is
+   live. Created imperatively by Viewport (it lives on <body>, outside React's
+   tree) — only `display` and left/top are set from there. */
+.guide-badge {
+  position: fixed;
+  display: none;
+  pointer-events: none;
+  z-index: 9999;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(var(--hud-rgb), 0.92);
+  color: var(--text-4);
+  font:
+    600 13px/1.3 ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+
+.model-toolbar > button {
+  position: relative;
+}
+
+/* The off-screen copy of the full button row that the overflow measurement
+   reads: laid out exactly like the bar, but never painted and never hit. */
+.tb-mirror {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  gap: inherit;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.model-toolbar button,
+.mt-dropdown > button {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.model-toolbar button:hover:not(:disabled) {
+  background: var(--bg-control-hover);
+  border-color: var(--accent);
+}
+
+.model-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mt-dropdown {
+  position: relative;
+  /* Flex so the button fills the wrapper's stretched height, matching the
+   *  plain <button> siblings in .model-toolbar (the absolutely-positioned
+   *  .mt-menu is out of flow, so it's unaffected). */
+  display: flex;
+}
+
+.mt-dropdown > button {
+  flex: 1;
+}
+
+.mt-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  min-width: 110px;
+  background: rgba(var(--hud-rgb), 0.97);
+  border: 1px solid var(--border-control);
+  border-radius: 7px;
+  z-index: 25;
+  backdrop-filter: blur(4px);
+}
+
+.mt-menu button {
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  background: none;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.mt-menu button:hover {
+  background: var(--bg-control-hover);
+}

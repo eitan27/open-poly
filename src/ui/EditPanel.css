@@ -1,0 +1,183 @@
+/* Active-edit panel.
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+/* --- Active-edit panel (constraints + parameters, floating over the viewport) --- */
+
+/* Anchored below the model toolbar and right of the sketch toolbar's column, so
+   it clears both at its default position (it's draggable from there). Wider than
+   the mini-dialogs because it hosts the full parameter editor, and capped in
+   height so a long constraints list scrolls instead of running off-screen. */
+.feature-dialog.edit-panel {
+  left: 66px;
+  top: 58px;
+  width: 232px;
+  gap: 8px;
+  max-height: calc(100% - 76px);
+  overflow-y: auto;
+  /* Inherit the creation-dialog blue border (no grey override) so an edit menu
+     reads identically to Extrude/Revolve/etc. */
+}
+
+.ep-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Only the title itself drags, so the ✕ stays clickable. */
+.edit-panel .ed-title {
+  flex: 1;
+}
+
+.ep-close {
+  background: transparent;
+  border: none;
+  color: var(--text-7);
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 3px;
+  cursor: pointer;
+}
+
+.ep-close:hover {
+  color: var(--text-2);
+}
+
+/* Section label inside the panel — styled like the creation dialogs' own
+   sub-labels (.bool-group-label: "Base"/"Profile"/…), not the old bold sidebar
+   heading, so the edit menu matches Extrude/Revolve/Boolean. */
+.ep-heading {
+  margin: 2px 0 -2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-7);
+}
+
+.edit-panel .constraint-list {
+  max-height: 150px;
+}
+
+/* Match the params inside the floating panel to the creation-dialog look:
+   flex rows (label left, control right) like .ed-field, not the sidebar's
+   two-column grid. Scoped to .edit-panel so the (now-unused) sidebar styles
+   are untouched. */
+.edit-panel .params {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.edit-panel .param-name-input {
+  margin-bottom: 2px;
+  font-size: 13px;
+}
+
+.edit-panel .param-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+}
+
+.edit-panel .param-label {
+  font-size: 12px;
+  color: var(--text-7);
+}
+
+.edit-panel .param-input {
+  width: 112px;
+  flex: 0 0 auto;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.edit-panel .param-static {
+  font-size: 12px;
+  color: var(--accent-palest);
+}
+
+.edit-panel .sketch-btn {
+  margin-top: 2px;
+}
+
+/* The boolean dialog holds three longer op labels (Union/Subtract/Intersect),
+   so it's a bit wider than the default mini-dialog and its op buttons get real
+   horizontal padding instead of the border crowding the text. */
+.feature-dialog.boolean-dialog {
+  width: 232px;
+}
+.boolean-dialog .ed-modes button {
+  padding: 6px 8px;
+}
+
+/* A small section label ("Base" / "Tools") in the subtract layout. */
+.bool-group-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-7);
+  margin-top: 2px;
+}
+
+/* A body's heading inside an accumulating list that spans several of them (a
+   chamfer picked across three parts commits as three features, so its picks are
+   shown grouped the way they'll commit). Set in from the rows it heads, and not
+   shouting: it's a divider, not a second section. */
+.ed-subgroup {
+  margin-top: 6px;
+  padding-left: 2px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  color: var(--text-6);
+}
+
+/* ARMED — the third pick-slot state (see the .ed-pick-btn block above, which
+   sets the metrics both share): a solid accent fill, the one look that means
+   "this slot is filled". Padded 4px shorter on the right for the ✕ that sits
+   there, so its label starts on the same 8px inset as the button's. */
+.bool-operand-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 4px;
+  border: 1px solid var(--accent);
+  background: var(--accent-surface);
+}
+
+/* A filled slot inside a labelled .ed-field (the reference-plane dialog's
+   Base/Second/Points) keeps the field control width, so it lines up with the
+   selects and inputs above it instead of hugging its own text. */
+.ed-field > .bool-operand-row {
+  width: 112px;
+}
+
+.bool-operand-name {
+  flex: 1 1 auto;
+  /* Without min-width:0 a flex item won't shrink below its text's intrinsic
+     width, so a long body name pushes the ✕ past the dialog edge and the
+     ellipsis never engages. */
+  min-width: 0;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bool-operand-x {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--accent-soft);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+
+.bool-operand-x:hover {
+  color: var(--danger-text);
+}

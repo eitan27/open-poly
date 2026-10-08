@@ -2036,7 +2036,9 @@ export default function App() {
             if (r.ok) nextMeshes.push({ id: r.id, mesh: r.mesh });
             else {
               regenErrors[r.id] = r.error;
-              const name = doc.features.find((f) => f.id === r.id)?.name ?? r.id;
+              // Through the ref: this lands after an async regen, so the current
+              // document is what names the feature, not the one this effect captured.
+              const name = docRef.current.features.find((f) => f.id === r.id)?.name ?? r.id;
               console.error(`[open-poly] feature "${name}" (${r.id}) failed:`, r.error);
             }
           }

@@ -1,0 +1,103 @@
+/* Topbar: document title, New/Open, the another-tab warning.
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px;
+  height: 48px;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.logo {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Document title in the topbar — a first-class title (sized close to the
+   logo), edits on click. The button/input pair share metrics so toggling
+   doesn't shift the layout. */
+.doc-title,
+.doc-title-input {
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: none;
+  max-width: 300px;
+}
+
+.doc-title {
+  color: var(--text-2);
+  cursor: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A clearly visible affordance that the title is click-to-rename. */
+.doc-title:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-raised);
+}
+
+/* New/Open pair sit tight together (the topbar's own 16px gap reads as two
+   unrelated controls). */
+.doc-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.doc-title-input {
+  color: var(--text-2);
+  border-color: var(--border-strong);
+  background: var(--bg-raised);
+  outline: none;
+  width: 220px;
+}
+
+/* Text-sized sibling of .tool-btn (which is a FIXED 28×26 icon button — text
+   inside it overflows). Shares the look, sizes to its label. */
+.text-btn {
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  color: var(--text-3);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.text-btn:hover:not(:disabled) {
+  background: var(--bg-control-hover);
+  border-color: var(--accent);
+}
+
+.text-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Same-document-in-another-tab warning (BroadcastChannel guard). */
+.tab-warning {
+  font-size: 12px;
+  color: var(--warn-text);
+  background: var(--warn-surface);
+  border-radius: 6px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}

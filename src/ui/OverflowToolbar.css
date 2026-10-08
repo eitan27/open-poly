@@ -1,0 +1,455 @@
+/* Overflow "More" button and its search flyout.
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+/* --- Overflow "More ▾" button + its search flyout --- */
+.tb-more {
+  position: relative;
+  display: flex;
+}
+
+/* Always on the bar, even with nothing hidden — it doubles as the "find me a
+   tool" search. A magnifier rather than a word so a control that isn't a tool
+   doesn't outweigh the tools beside it; the min-width keeps it a comfortable
+   target at that small a label. */
+.tb-more-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.model-toolbar .tb-more-btn {
+  flex: 1;
+  min-width: 34px;
+  white-space: nowrap;
+}
+
+.tb-more-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  display: flex;
+  flex-direction: column;
+  width: 232px;
+  padding: 5px;
+  background: rgba(var(--hud-rgb), 0.97);
+  border: 1px solid var(--border-control);
+  border-radius: 7px;
+  box-shadow: 0 8px 22px var(--shadow-soft);
+  z-index: 26;
+  backdrop-filter: blur(4px);
+}
+
+.tb-more-search {
+  width: 100%;
+  padding: 6px 8px;
+  margin-bottom: 5px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-2);
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border-control);
+  border-radius: 5px;
+  outline: none;
+}
+
+.tb-more-search:focus {
+  border-color: var(--accent);
+}
+
+.tb-more-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* Two class levels so the rows read as a menu wherever the flyout is used —
+   they must beat both `.model-toolbar button` and `.sketch-toolbar button`
+   (the latter is declared later in this file and would otherwise win). */
+.tb-more-menu .tb-more-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  text-align: left;
+  color: var(--text-3);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+/* Hover and keyboard highlight are the same state — the arrow keys move it. */
+.tb-more-menu .tb-more-list button.active:not(:disabled) {
+  background: var(--bg-control-hover);
+  border-color: var(--accent);
+}
+
+.tb-more-menu .tb-more-list button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tb-row-icon {
+  flex: 0 0 14px;
+  text-align: center;
+  color: var(--text-6);
+}
+
+.tb-row-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tb-row-kbd {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  font-size: 10px;
+  color: var(--text-6);
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: 4px;
+}
+
+.tb-more-empty {
+  padding: 8px;
+  font-size: 12px;
+  color: var(--text-8);
+}
+
+/* Anchors the column; the More flyout is a sibling of the column inside it, so
+   it escapes the column's clipping (see .tbc-more-menu). Shrink-wraps the
+   column, and passes clicks through anywhere it isn't. */
+.sketch-toolbar-wrap {
+  position: absolute;
+  left: 12px;
+  top: 58px;
+  pointer-events: none;
+}
+
+.tbc-wrap > * {
+  pointer-events: auto;
+}
+
+.sketch-toolbar {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  /* The column is given the exact height of what fits (OverflowColumn); the
+     tools below that are still laid out — so measuring stays stable — and are
+     hidden by the `visibility: hidden` that component puts on them. NOT an
+     `overflow: hidden` here: the group flyouts (circle / rectangle / pattern /
+     constraints) open to the RIGHT of the column, so clipping the box clipped
+     them away entirely and the ▸ arrows looked dead. Background + blur live on
+     .tb-blur for the same stacking-context reason as the modeling toolbar. */
+}
+
+/* The tool slots: positioned so they paint above the .tb-blur layer, and never
+   flex-shrunk — the column carries an explicit height, so without this the
+   slots would squeeze to fit it instead of overflowing to be clipped. */
+.sketch-toolbar > [data-slot] {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+/* The overflow button, pinned to the bottom of the visible column. A magnifier,
+   like the modelling bar's — it's a search box, not another tool. */
+.tbc-more {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 5px;
+  display: flex;
+}
+
+/* The magnifier has to fit inside the ~50px icon column: tight padding and no
+   wrapping. */
+.sketch-toolbar .tbc-more-btn {
+  flex: 1;
+  gap: 2px;
+  padding: 0 3px;
+  font-size: 11px;
+  letter-spacing: 0;
+  white-space: nowrap;
+  color: var(--text-6);
+}
+
+/* Open state matches the group arrows' expanded look. */
+.sketch-toolbar .tbc-more-btn.expanded {
+  background: var(--accent-surface);
+  border-color: var(--accent);
+  color: var(--accent-palest);
+}
+
+/* Beside the column (a sibling of it, so the column's overflow clip doesn't cut
+   it off), bottom-aligned with the More button it belongs to. */
+.tbc-more-menu {
+  right: auto;
+  top: auto;
+  left: calc(100% + 6px);
+  bottom: 0;
+}
+
+.sketch-toolbar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  padding: 0 7px;
+  height: 32px;
+  font-size: 16px;
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  color: var(--text-3);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sketch-toolbar button:hover {
+  background: var(--bg-control-hover);
+}
+
+.sketch-toolbar button.active {
+  background: var(--accent-surface);
+  border-color: var(--accent);
+  color: var(--accent-palest);
+}
+
+.sketch-toolbar button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Circle / rectangle / pattern group: a primary button (the last-used variant,
+   clickable to select it) plus a ▸ arrow that opens a vertical flyout of the
+   variants to the right of the toolbar — same UX as the constraint group. */
+.sketch-group {
+  position: relative;
+  display: flex;
+  gap: 2px;
+}
+.sketch-group .sketch-group-primary {
+  flex: 1;
+}
+.sketch-group .sketch-group-arrow {
+  min-width: 16px;
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-6);
+}
+.sketch-group .sketch-group-arrow.expanded {
+  background: var(--accent-surface);
+  border-color: var(--accent);
+  color: var(--accent-palest);
+}
+
+/* Groups drawing tools / dimension / constraints / solve in the sketch toolbar. */
+.sketch-toolbar-sep {
+  height: 1px;
+  margin: 2px 4px;
+  background: var(--border-control);
+}
+
+/* All seven geometric constraints behind one button: a primary (the last-used
+   constraint) plus a slim ▸ toggle that opens a vertical flyout of the rest to
+   the right of the toolbar column. */
+.constraint-group {
+  position: relative;
+  display: flex;
+  gap: 2px;
+}
+.constraint-group .constraint-primary {
+  flex: 1;
+}
+.constraint-group .constraint-arrow {
+  min-width: 16px;
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-6);
+}
+.constraint-group .constraint-arrow.expanded {
+  background: var(--accent-surface);
+  border-color: var(--accent);
+  color: var(--accent-palest);
+}
+/* Shared vertical flyout for both the constraint group and the drawing-tool
+   groups (circle/rect/pattern): a column of icon + name choices anchored just
+   right of the toolbar. */
+.constraint-flyout,
+.sketch-flyout {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px;
+  background: rgba(var(--hud-rgb), 0.95);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  /* Above `.feature-dialog` (30), because the active-edit panel IS one and it
+     is anchored at the viewport's top-left — exactly where these open. At a
+     lower z-index the panel covers the flyout and swallows the click, so
+     picking a variant lands on a constraint row instead. Still below
+     `.sketch-msg` (40) and `.modal-overlay` (50): a transient menu outranks a
+     panel, not a message or a modal. */
+  z-index: 35;
+}
+.constraint-flyout button,
+.sketch-flyout button {
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  white-space: nowrap;
+}
+.constraint-flyout .cf-icon,
+.sketch-flyout .cf-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+}
+.constraint-flyout .cf-name,
+.sketch-flyout .cf-name {
+  font-size: 13px;
+}
+
+.dim-input {
+  position: absolute;
+  /* left/top set inline to the line's screen position; the up-right nudge that
+     sits the box beside the line (rather than on top of it) is applied as
+     DraggableDialog's baseTransform so the box stays draggable by its label. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: rgba(var(--hud-rgb), 0.92);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  z-index: 20;
+}
+
+.context-actions {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+}
+
+.context-actions button {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--accent-palest);
+  background: rgba(var(--hud-accent-rgb), 0.95);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.context-actions button:hover {
+  background: rgba(var(--hud-accent-2-rgb), 0.95);
+}
+
+/* The shared shell for every feature's mini-dialog — extrude, dress-up, shell,
+   revolve, sweep, loft, pattern, mirror, transform and boolean all wear it, and
+   the two `.feature-dialog.<name>` rules further down are the only per-dialog
+   deviations. Anchored absolutely because most of these open AT the geometry
+   they act on; the ones you pick INTO (boolean, pattern, shell) override the
+   position so the dialog doesn't land on the faces you then have to click. */
+.feature-dialog {
+  position: absolute;
+  transform: translate(16px, -50%);
+  z-index: 30;
+  width: 190px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(var(--hud-rgb), 0.96);
+  border: 1px solid var(--accent);
+  border-radius: 9px;
+  backdrop-filter: blur(5px);
+}
+
+.ed-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+/* Title bars act as drag handles for movable dialogs. */
+[data-drag-handle] {
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+
+.ed-modes {
+  display: flex;
+  gap: 4px;
+}
+
+.ed-modes button {
+  flex: 1;
+  padding: 5px 0;
+  font-size: 12px;
+  color: var(--text-4);
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.ed-modes button.active {
+  background: var(--accent-surface);
+  border-color: var(--accent);
+  color: var(--accent-palest);
+}
+
+.ed-modes button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ed-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-7);
+}
+
+.ed-field input[type="text"],
+.ed-field input:not([type]) {
+  width: 90px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+
+.ed-field select {
+  width: 112px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 13px;
+}

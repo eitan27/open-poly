@@ -1,0 +1,162 @@
+/* Feature tree.
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+/* --- Feature tree --- */
+
+/* Scrolls internally at its own (resizable) height so a long timeline never
+   pushes the Parts/Parameters sections below it out of view. */
+.tree {
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+}
+
+/* Drag handle between the timeline and the Parts section, resizing .tree. */
+.panel-splitter {
+  height: 11px;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+}
+
+.panel-splitter::before {
+  content: "";
+  width: 36px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.panel-splitter:hover::before {
+  background: var(--accent);
+}
+
+.tree-add {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.add-btn {
+  flex: 1;
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  color: var(--text-3);
+  border-radius: 6px;
+  padding: 6px 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.add-btn:hover {
+  background: var(--bg-control-hover);
+  border-color: var(--accent);
+}
+
+.tree-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.tree-row:hover {
+  background: var(--bg-row-hover);
+}
+
+.tree-row.selected {
+  background: var(--accent-surface);
+  border-color: var(--accent);
+}
+
+.tree-row.dim {
+  opacity: 0.45;
+}
+
+.tree-row.error .row-name {
+  color: var(--danger-text-3);
+}
+
+/* Fixed base datums folded into the timeline: not clickable to select, slightly
+   muted so they read as permanent reference geometry rather than features. */
+.tree-row.datum-row {
+  cursor: default;
+}
+.tree-row.datum-row:hover {
+  background: transparent;
+}
+.tree-row.datum-row .row-name {
+  color: var(--text-5);
+}
+
+.row-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-8);
+  min-width: 54px;
+}
+
+.row-name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-badge {
+  background: var(--danger-border);
+  color: var(--danger-pale);
+  border-radius: 999px;
+  width: 16px;
+  height: 16px;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Non-fatal notice (a reference re-matched / partially lost): amber, not red. */
+.row-badge.warn {
+  background: var(--warn-surface);
+  color: var(--warn-text);
+  font-size: 10px;
+}
+
+.row-icon {
+  background: none;
+  border: none;
+  color: var(--text-7);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.row-icon:hover:not(:disabled) {
+  color: var(--text-2);
+}
+
+.row-icon:disabled {
+  opacity: 0.25;
+  cursor: default;
+}

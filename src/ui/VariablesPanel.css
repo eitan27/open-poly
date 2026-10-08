@@ -1,0 +1,78 @@
+/* Variables panel.
+ *
+ * Split out of App.css, which imports this in order — see its header. */
+
+/* --- Variables --- */
+
+.var-row {
+  display: grid;
+  grid-template-columns: 78px 10px 1fr 36px 18px;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 5px;
+}
+
+.var-name {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  color: var(--accent-pale);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  min-width: 0;
+}
+
+.var-eq {
+  color: var(--text-9);
+  text-align: center;
+}
+
+.var-expr {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  min-width: 0;
+}
+
+.var-name:focus,
+.var-expr:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.var-expr.invalid {
+  border-color: var(--danger-border-strong);
+}
+
+.var-name.invalid {
+  border-color: var(--danger-border-hot);
+  color: var(--danger-text-soft);
+}
+
+.var-expr:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.var-value {
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--ok);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.var-add {
+  flex: none;
+  width: 100%;
+  margin-top: 3px;
+  /* A touch of air before the Timeline heading that follows. */
+  margin-bottom: 4px;
+}
