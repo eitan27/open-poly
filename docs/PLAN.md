@@ -220,7 +220,15 @@ push cost enough to learn.
       `POST /api/report` with a description and no Turnstile token returns
       `403 failed spam check`, which is only reachable when the secret is set, and
       the request is rejected before it ever reaches GitHub. An empty body gets a
-      400 instead, which proves the Function is deployed at all.
+      400 instead, which proves the Function is deployed at all. **What that probe
+      does NOT prove is that the secret is correct** — `verifyTurnstile` returns
+      early on a missing token, so a token-less request never reaches Cloudflare's
+      siteverify endpoint and a wrong secret would 403 identically. Only item 7's
+      real submission distinguishes them. The same early return is why the Turnstile
+      dashboard warns that "siteverify isn't being called": with no real reports
+      filed there is nothing to call it with, and the warning is a false positive
+      rather than a misconfiguration. Do not let the dashboard's one-click "fix"
+      rewrite a working integration on the strength of it.
 - [ ] **3. Point `openpoly.dev` at the Pages project.** Three dashboard steps, in
       this order, because the middle one is only safe after the first: add
       `openpoly.dev` to the Turnstile widget's allowed hostnames (without it the
