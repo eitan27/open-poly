@@ -33,3 +33,9 @@ node_modules/.tmp/
 
 # Screenshots the verify scripts drop in the repo root
 /dxf-import.png
+
+# Maintainer deploy runbook. Deliberately untracked rather than deleted: the
+# commands, the Cloudflare traps and the Turnstile notes are needed to deploy this
+# project, but they are not useful to anyone reading the public repo. Keep your
+# local copy — `git rm --cached` left it on disk, not `git rm`.
+/docs/DEPLOY.md

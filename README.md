@@ -37,19 +37,6 @@ Open Poly comes with a built-in MCP server, so it can be driven by a local LLM a
 
 Everything stays local: the agent talks to your browser tab over `127.0.0.1`, and every action routes through undo, so you can revert anything it does. Because that is the only address the bridge ever dials, it is inert on the hosted build — <https://openpoly.dev> never attempts to reach an agent.
 
-## Other scripts
-
-| Command              | Description                                          |
-| -------------------- | ---------------------------------------------------- |
-| `npm run build`      | Type-check and build a production bundle.            |
-| `npm run preview`    | Serve the production build locally to preview it.    |
-| `npm test`           | Run the unit tests once (Vitest).                    |
-| `npm run test:watch` | Run the unit tests in watch mode (Vitest).           |
-| `npm run typecheck`  | Type-check the app and the MCP server.               |
-| `npm run lint`       | Lint with ESLint.                                    |
-| `npm run format`     | Format the tree with Prettier (`:check` to test).    |
-| `npm run verify`     | Browser acceptance checks — see `scripts/README.md`. |
-
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the codebase layout, dev

@@ -31,7 +31,7 @@ a single line. Keep the blank line.
 ## Before opening a PR
 
 - `npm test`, `npm run typecheck`, `npm run lint` and `npm run format:check`
-  must pass — CI runs all four.
+  must pass — CI runs all four. (`npm run test:watch` while you work.)
 - `npm run build` should succeed (catches anything the dev server tolerates
   but a production build won't).
 - If you touched anything rendering- or interaction-related in the viewport
