@@ -1,6 +1,8 @@
 # Open Poly
 
-An open source, locally runnable, in-browser CAD application, that stores your work locally.
+An open-source, in-browser CAD application that keeps your work on your own machine.
+
+**[Try it → openpoly.dev](https://openpoly.dev)** — no sign-up, no upload, nothing to install.
 
 Open Poly runs entirely in your browser — modeling is powered by the OpenCASCADE geometry kernel (via [replicad](https://replicad.xyz/)) compiled to WebAssembly, rendered with [three.js](https://threejs.org/), with parametric sketch constraints handled by [planegcs](https://github.com/Salusoft89/planegcs). Documents autosave to your browser's IndexedDB — nothing leaves your machine.
 
@@ -33,68 +35,20 @@ Open Poly comes with a built-in MCP server, so it can be driven by a local LLM a
 
 **Other clients** (Claude Desktop, Cursor, Cline, …): point them at the same command — `npx -y tsx <absolute-path>/mcp-server/src/index.ts`. See [`mcp-server/README.md`](mcp-server/README.md) for per-client config, the full tool list, and troubleshooting.
 
-Everything stays local: the agent talks to your browser tab over `127.0.0.1`, and every action routes through undo, so you can revert anything it does.
-
-## Deploy
-
-Open Poly is a fully static, client-side app, so it can be hosted on any static
-host. The public build is served from **Cloudflare Pages** at
-<https://openpoly.dev>.
-
-Deploys use Wrangler's **direct upload** — only the built `dist/` folder is
-uploaded, so no git integration is configured and Cloudflare never needs
-access to the repository.
-
-One-time setup:
-
-```bash
-npx wrangler login                                 # browser OAuth, once per machine
-npx wrangler pages project create open-poly --production-branch main
-```
-
-Deploy (or re-deploy after changes):
-
-```bash
-npm run build
-npx wrangler pages deploy dist --project-name open-poly
-```
-
-Notes:
-
-- **The site is served at `openpoly.dev`.** `open-poly.pages.dev` 301s there via
-  an account-level Bulk Redirect, so verify against the custom domain — a `curl`
-  at the old host returns the redirect, not the build, unless you pass `-L`.
-  Preview deployments keep their own `<hash>.open-poly.pages.dev` URLs and are
-  deliberately NOT redirected, so a preview stays testable in isolation.
-- **Verify a deploy with a cache-buster.** The production alias can serve a stale
-  `version.json` from an edge cache for a moment after a deploy, `Cache-Control:
-no-cache` notwithstanding — so a plain `curl` can show the previous build and
-  look like the deploy went to a preview instead of production.
-  `curl "https://openpoly.dev/version.json?cb=$RANDOM"` is the one that
-  tells the truth; `wrangler pages deployment list` says which environment the
-  upload actually landed in.
-- **A preview URL gets the dummy Turnstile key**, so a bug report filed from one
-  is rejected server-side by the real secret. That is correct — a preview is not
-  production — but it means the report flow can only be tested for real on
-  `openpoly.dev`.
-- The agent/MCP bridge auto-disables on deployed builds (it only dials the local
-  hub on `127.0.0.1`), so the public site never attempts to connect to an agent.
-- `public/_redirects` sends unknown paths to `index.html` so deep links and hard
-  refreshes resolve to the app.
-- Documents still live in each visitor's own browser IndexedDB — the deployment
-  is a shared app, not shared storage.
+Everything stays local: the agent talks to your browser tab over `127.0.0.1`, and every action routes through undo, so you can revert anything it does. Because that is the only address the bridge ever dials, it is inert on the hosted build — <https://openpoly.dev> never attempts to reach an agent.
 
 ## Other scripts
 
-| Command              | Description                                       |
-| -------------------- | ------------------------------------------------- |
-| `npm run build`      | Type-check and build a production bundle.         |
-| `npm run preview`    | Serve the production build locally to preview it. |
-| `npm test`           | Run the unit tests once (Vitest).                 |
-| `npm run test:watch` | Run the unit tests in watch mode (Vitest).        |
-| `npm run typecheck`  | Type-check the app and the MCP server.            |
-| `npm run lint`       | Lint with ESLint.                                 |
-| `npm run format`     | Format the tree with Prettier (`:check` to test). |
+| Command              | Description                                          |
+| -------------------- | ---------------------------------------------------- |
+| `npm run build`      | Type-check and build a production bundle.            |
+| `npm run preview`    | Serve the production build locally to preview it.    |
+| `npm test`           | Run the unit tests once (Vitest).                    |
+| `npm run test:watch` | Run the unit tests in watch mode (Vitest).           |
+| `npm run typecheck`  | Type-check the app and the MCP server.               |
+| `npm run lint`       | Lint with ESLint.                                    |
+| `npm run format`     | Format the tree with Prettier (`:check` to test).    |
+| `npm run verify`     | Browser acceptance checks — see `scripts/README.md`. |
 
 ## Contributing
 
