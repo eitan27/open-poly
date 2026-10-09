@@ -282,7 +282,7 @@
   <body>
     <nav class="nav">
       <div class="nav__inner">
-        <a class="nav__brand" href="https://open-poly.pages.dev">
+        <a class="nav__brand" href="https://openpoly.dev">
           <img class="nav__logo" src="logo.svg" alt="" width="26" height="26" />
           <span>Open Poly</span>
         </a>
@@ -299,7 +299,7 @@
         Powerful 3D modeling that runs entirely on your device — no account, no install, and no internet required.
       </p>
       <div class="cta">
-        <a class="btn btn--primary" href="https://open-poly.pages.dev">Start designing</a>
+        <a class="btn btn--primary" href="https://openpoly.dev">Start designing</a>
         <a class="btn btn--ghost" href="https://github.com/eitan27/open-poly">View on GitHub ›</a>
       </div>
     </header>
@@ -351,6 +351,7 @@
       // account, so the path narrows it to this one. The token is not a secret;
       // it is visible in any deployed page.
       const onPublicSite =
+        location.hostname === "openpoly.dev" ||
         location.hostname === "open-poly.pages.dev" ||
         (location.hostname === "eitan27.github.io" && location.pathname.startsWith("/open-poly"));
       if (onPublicSite) {

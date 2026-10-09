@@ -4,7 +4,7 @@ An open source, locally runnable, in-browser CAD application, that stores your w
 
 Open Poly runs entirely in your browser — modeling is powered by the OpenCASCADE geometry kernel (via [replicad](https://replicad.xyz/)) compiled to WebAssembly, rendered with [three.js](https://threejs.org/), with parametric sketch constraints handled by [planegcs](https://github.com/Salusoft89/planegcs). Documents autosave to your browser's IndexedDB — nothing leaves your machine.
 
-The public deployment at <https://open-poly.pages.dev> collects basic anonymous page analytics (no cookies, no personal data, nothing about your documents). Local and self-hosted builds send nothing.
+The public deployment at <https://openpoly.dev> collects basic anonymous page analytics (no cookies, no personal data, nothing about your documents). Local and self-hosted builds send nothing.
 
 ## Requirements
 
@@ -39,7 +39,7 @@ Everything stays local: the agent talks to your browser tab over `127.0.0.1`, an
 
 Open Poly is a fully static, client-side app, so it can be hosted on any static
 host. The public build is served from **Cloudflare Pages** at
-<https://open-poly.pages.dev>.
+<https://openpoly.dev>.
 
 Deploys use Wrangler's **direct upload** — only the built `dist/` folder is
 uploaded, so no git integration is configured and Cloudflare never needs
@@ -61,13 +61,22 @@ npx wrangler pages deploy dist --project-name open-poly
 
 Notes:
 
+- **The site is served at `openpoly.dev`.** `open-poly.pages.dev` 301s there via
+  an account-level Bulk Redirect, so verify against the custom domain — a `curl`
+  at the old host returns the redirect, not the build, unless you pass `-L`.
+  Preview deployments keep their own `<hash>.open-poly.pages.dev` URLs and are
+  deliberately NOT redirected, so a preview stays testable in isolation.
 - **Verify a deploy with a cache-buster.** The production alias can serve a stale
   `version.json` from an edge cache for a moment after a deploy, `Cache-Control:
 no-cache` notwithstanding — so a plain `curl` can show the previous build and
   look like the deploy went to a preview instead of production.
-  `curl "https://open-poly.pages.dev/version.json?cb=$RANDOM"` is the one that
+  `curl "https://openpoly.dev/version.json?cb=$RANDOM"` is the one that
   tells the truth; `wrangler pages deployment list` says which environment the
   upload actually landed in.
+- **A preview URL gets the dummy Turnstile key**, so a bug report filed from one
+  is rejected server-side by the real secret. That is correct — a preview is not
+  production — but it means the report flow can only be tested for real on
+  `openpoly.dev`.
 - The agent/MCP bridge auto-disables on deployed builds (it only dials the local
   hub on `127.0.0.1`), so the public site never attempts to connect to an agent.
 - `public/_redirects` sends unknown paths to `index.html` so deep links and hard
@@ -101,5 +110,5 @@ GPL-3.0-or-later — see [`LICENSE`](LICENSE). Third-party license notes
 
 The exhaustive per-package list, with each license verbatim, is generated at
 build time into `dist/third-party-licenses.txt` — served at
-<https://open-poly.pages.dev/third-party-licenses.txt> and linked from the
+<https://openpoly.dev/third-party-licenses.txt> and linked from the
 app's Settings dialog.

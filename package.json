@@ -6,7 +6,7 @@
   "description": "An open source, locally runnable, in-browser CAD application that stores your work locally.",
   "author": "Eitan Rosenfeld",
   "license": "GPL-3.0-or-later",
-  "homepage": "https://open-poly.pages.dev",
+  "homepage": "https://openpoly.dev",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/eitan27/open-poly.git"

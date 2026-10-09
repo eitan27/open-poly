@@ -8,17 +8,36 @@
 // of a form almost nobody opens. Same reasoning as the analytics beacon gate in
 // index.html.
 //
-// The sitekey is chosen by host, like that gate. The real widget is bound to
-// open-poly.pages.dev in the Cloudflare dashboard, so it only validates there;
-// everywhere else — localhost, a fork, a self-hosted copy — gets Cloudflare's
-// published always-passes dummy key, which works from any domain. That keeps
-// the dialog exercisable in development instead of being dead below production.
+// The sitekey is chosen by host, like that gate. The real widget is bound to the
+// production hosts in the Cloudflare dashboard, so it only validates there;
+// everywhere else — localhost, a fork, a self-hosted copy, and every
+// *.pages.dev preview deployment — gets Cloudflare's published always-passes
+// dummy key, which works from any domain. That keeps the dialog exercisable in
+// development instead of being dead below production.
+//
+// Note what that means for previews: a preview URL deliberately gets the dummy
+// key, so a report filed from one is rejected by the real secret server-side.
+// That is correct — a preview is not production — but it is why testing the
+// report flow for real has to happen on openpoly.dev.
 // The sitekey is public by design; it is in the page source of every deployed
 // site that uses Turnstile. The SECRET half lives only in the Pages environment
 // (TURNSTILE_SECRET) and is read by functions/api/report.ts.
 
-/** The one host where the real widget is registered. */
-export const PRODUCTION_HOST = "open-poly.pages.dev";
+/** The hosts where the real widget is registered.
+ *
+ *  Two, transitionally. `openpoly.dev` is canonical and `open-poly.pages.dev`
+ *  301s to it via an account-level Bulk Redirect — but the redirect, the custom
+ *  domain and this deploy land at different moments, and whichever host traffic
+ *  is on at the time must get the REAL key: hand it the dummy one and every bug
+ *  report 403s against the real secret, silently. Listing both removes the
+ *  window entirely, in any order.
+ *
+ *  Drop `open-poly.pages.dev` once the redirect is confirmed live — at that point
+ *  no real traffic reaches it, and keeping it only means a preview-like host
+ *  would get the real key. Preview deployments are unaffected either way: their
+ *  `<hash>.open-poly.pages.dev` names are not in this list, so they get the
+ *  dummy key, which is correct. */
+export const PRODUCTION_HOSTS = ["openpoly.dev", "open-poly.pages.dev"] as const;
 
 /** Cloudflare's dummy sitekey that always passes, usable from any domain. */
 const DUMMY_SITEKEY = "1x00000000000000000000AA";
@@ -27,7 +46,7 @@ const REAL_SITEKEY = "0x4AAAAAAEyoMOmBmVThqB_H";
 const SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 
 export function turnstileSitekey(hostname: string = location.hostname): string {
-  return hostname === PRODUCTION_HOST ? REAL_SITEKEY : DUMMY_SITEKEY;
+  return (PRODUCTION_HOSTS as readonly string[]).includes(hostname) ? REAL_SITEKEY : DUMMY_SITEKEY;
 }
 
 interface TurnstileApi {

@@ -12,7 +12,7 @@ browser/commit you saw it on. A minimal reproduction (a `.openpoly.json`
 document, a request, a patch) is worth more than a description.
 
 There are no releases and no version branches — `main` and the build deployed
-at <https://open-poly.pages.dev> are the only supported versions, and a fix
+at <https://openpoly.dev> are the only supported versions, and a fix
 lands on `main` and is re-deployed.
 
 ## Scope

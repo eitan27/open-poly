@@ -31,7 +31,7 @@ The three:
   binary regardless of the wrapper's declaration.
 
   Open Poly does redistribute a built bundle: the deployment at
-  <https://open-poly.pages.dev> conveys `dist/assets/replicad_single-*.wasm`,
+  <https://openpoly.dev> conveys `dist/assets/replicad_single-*.wasm`,
   which is OCCT in object form. That is LGPL-2.1 §4, and it is satisfied
   here without any special effort. The wasm is an unmodified, publicly
   published build (`replicad-opencascadejs` on npm) of unmodified upstream
@@ -68,7 +68,7 @@ every runtime dependency that ships in the bundle, with its license text
 verbatim, built from the packages actually installed for that build by
 [`scripts/third-party-licenses.ts`](./scripts/third-party-licenses.ts). It is
 emitted next to the bundles it describes and served at
-<https://open-poly.pages.dev/third-party-licenses.txt>, linked from the app's
+<https://openpoly.dev/third-party-licenses.txt>, linked from the app's
 Settings dialog, so a visitor who only ever receives the built site receives
 the notices with it. A package whose terms the generator cannot read fails the
 build rather than shipping unattributed.

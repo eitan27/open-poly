@@ -221,24 +221,35 @@ push cost enough to learn.
       `403 failed spam check`, which is only reachable when the secret is set, and
       the request is rejected before it ever reaches GitHub. An empty body gets a
       400 instead, which proves the Function is deployed at all.
-- [ ] **3. Flip the repository to public.** While in Settings: the repo has no
+- [ ] **3. Point `openpoly.dev` at the Pages project.** Three dashboard steps, in
+      this order, because the middle one is only safe after the first: add
+      `openpoly.dev` to the Turnstile widget's allowed hostnames (without it the
+      widget will not render there); deploy the code that moved `PRODUCTION_HOST`
+      and the analytics gates to `openpoly.dev`; then add the Bulk Redirect from
+      `open-poly.pages.dev`. **Leave "Include subdomains" OFF** — Cloudflare's own
+      instructions say to tick it, and it would redirect every
+      `<hash>.open-poly.pages.dev` preview to production, so you would be testing
+      the live build while believing you were testing a preview. `_redirects`
+      cannot do this at all (it matches paths, not hosts), and nor can a zone
+      Redirect Rule, since `pages.dev` is not in the zone.
+- [ ] **4. Flip the repository to public.** While in Settings: the repo has no
       `homepage` and no topics, so the deployed app is not linked from its own
       page. GPL-3.0 and the description are already set.
-- [ ] **4. Settings → Pages → Build and deployment → Source → "GitHub
+- [ ] **5. Settings → Pages → Build and deployment → Source → "GitHub
       Actions".** This also clears a standing red X:
       `.github/workflows/pages.yml` fires on every push touching `landing/**`
       (re-enabled in `b0578bd`) and has failed on every run since June, because
       Pages cannot publish from a private repo on the Free plan. Nothing is
       broken and nothing is being published — going public plus this setting
       resolves it, with no code change.
-- [ ] **5. Sanity-check the deployed site.** <https://open-poly.pages.dev> is a
+- [ ] **6. Sanity-check the deployed site.** <https://openpoly.dev> is a
       direct `wrangler pages deploy` upload, NOT git-integrated, so going public
       redeploys nothing — a deploy of `fd076d1` on 2026-10-08 confirmed the shell,
       both wasm bundles (served as `application/wasm`, which the kernel needs), the
       SPA deep-link fallback and the Function all serve correctly. What is left can
       only be done after the flip: file one real bug report and confirm the issue
       lands in a now-public repo.
-- [ ] **6. Then, and only then, delete the backups** in `~/Developer/`:
+- [ ] **7. Then, and only then, delete the backups** in `~/Developer/`:
       `open-poly-mirror`, `open-poly-backup`, and `open-poly-local-mirror.git`.
       The last holds pre-rewrite copies of everything, including the one
       never-pushed branch still worth keeping — `feat/step-assembly-split`,
