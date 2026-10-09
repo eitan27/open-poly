@@ -229,17 +229,19 @@ push cost enough to learn.
       filed there is nothing to call it with, and the warning is a false positive
       rather than a misconfiguration. Do not let the dashboard's one-click "fix"
       rewrite a working integration on the strength of it.
-- [ ] **3. Point `openpoly.dev` at the Pages project.** Three dashboard steps, in
-      this order, because the middle one is only safe after the first: add
-      `openpoly.dev` to the Turnstile widget's allowed hostnames (without it the
-      widget will not render there); deploy the code that moved `PRODUCTION_HOST`
-      and the analytics gates to `openpoly.dev`; then add the Bulk Redirect from
-      `open-poly.pages.dev`. **Leave "Include subdomains" OFF** — Cloudflare's own
-      instructions say to tick it, and it would redirect every
-      `<hash>.open-poly.pages.dev` preview to production, so you would be testing
-      the live build while believing you were testing a preview. `_redirects`
-      cannot do this at all (it matches paths, not hosts), and nor can a zone
-      Redirect Rule, since `pages.dev` is not in the zone.
+- [x] **3. `openpoly.dev` is live and canonical (2026-10-09).** Custom domain
+      active with SSL (apex CNAME to `open-poly.pages.dev`, flattened), and an
+      account-level Bulk Redirect 301s the old host with path and query preserved.
+      **"Include subdomains" is deliberately OFF**, against Cloudflare's own
+      instructions: it would redirect every `<hash>.open-poly.pages.dev` preview to
+      production, so you would be testing the live build believing it was a
+      preview. Verified that a preview still serves itself. `_redirects` cannot do
+      host-level redirects (it matches paths) and nor can a zone Redirect Rule,
+      since `pages.dev` is not in the zone — Bulk Redirects is the only route.
+      Both hosts are in `PRODUCTION_HOSTS` and in the Turnstile widget while the
+      migration settles; `open-poly.pages.dev` can be dropped from both now that
+      the redirect is confirmed. Note a POST to the old host 301s and browsers do
+      not re-POST — harmless, since the app only posts to its own origin.
 - [ ] **4. Flip the repository to public.** While in Settings: the repo has no
       `homepage` and no topics, so the deployed app is not linked from its own
       page. GPL-3.0 and the description are already set.
