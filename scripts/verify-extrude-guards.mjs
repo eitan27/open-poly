@@ -1,11 +1,20 @@
-// Extrude's two silent-failure guards: a degenerate DISTANCE, and a TARGET that
-// isn't there.
+// Extrude's silent-failure guards: a degenerate DISTANCE, a TARGET that isn't
+// there, and a cut that MISSES the target it was aimed at.
 //
 // Distance: `prismFromFace` passed the evaluated value straight to MakePrism, so
 // 0 surfaced as a raw OCCT exception (a decoded type name + a heap pointer) and a
 // NEGATIVE value silently built the body backwards. Validation now lives on the
 // resolve path (every route into the document shares it) plus a synchronous check
 // in the dialog, mirroring the dress-up and Shell fields.
+//
+// Missed cut: a `remove` whose tool doesn't overlap the target. OCCT's cut
+// returns the target UNCHANGED — a valid solid, no exception — so the feature
+// built, the badge stayed green and the op reported ok, leaving the model
+// believed to have a hole it doesn't have. A removal sweeps opposite the profile
+// normal ("into the body"), which is right on a body's own face and meaningless
+// on a datum plane: Top's normal is +Z wherever the body sits, so the tool dives
+// under a plate built up from Z=0. Note the live-target case above needs
+// `flip: true` for exactly this reason.
 //
 // Target: a `remove` whose target resolved to no body deleted its cut tool
 // silently — no error, no visible effect. The dialog can't produce that (Create
@@ -20,6 +29,7 @@
 //        on a good one — with no raw OCCT text on screen
 //   8.   a remove whose target is deleted fails the feature instead of vanishing
 //   9.   a remove with no target at all is refused
+//  10.   a remove that misses its target fails instead of reporting success
 import { launch, openPoly } from "./lib/harness.mjs";
 
 // Keeps its own results-array tally (it prints an "n/m checks passed" summary),
@@ -185,6 +195,43 @@ await page.waitForTimeout(400);
     "a remove with no target is refused, not silently dropped",
     /needs a target body/i.test(oMsg),
     `error=${JSON.stringify(oMsg).slice(0, 90)}`,
+  );
+}
+
+// --- The missed-cut guard -----------------------------------------------
+{
+  const doc = await read({ read: "document" });
+  for (const f of doc.features ?? []) await apply({ op: "delete", featureId: f.id });
+  await waitIdle();
+
+  const plate = await apply({ op: "addPrimitive", kind: "box", params: { width: 40, depth: 40, height: 10 } });
+  await waitIdle();
+  const missSketch = await apply({
+    op: "addSketch",
+    plane: { datum: "top" },
+    entities: [{ shape: "rect", center: [0, 0], w: 10, h: 10 }],
+  });
+  await waitIdle();
+  const facesOf = async (id) => (((await scene()).bodies ?? []).find((b) => b.id === id)?.faces ?? []).length;
+  const facesBefore = await facesOf(plate.createdId);
+
+  // No `flip`, so the tool sweeps DOWN, away from the plate: it removes nothing.
+  const miss = await apply({
+    op: "addExtrude",
+    profile: { sketchId: missSketch.createdId },
+    distance: 60,
+    extent: "throughAll",
+    mode: "remove",
+    targetId: plate.createdId,
+  });
+  await waitIdle();
+  const mErrs = miss?.featureErrors ?? {};
+  const mMsg = String(miss?.error ?? mErrs[miss?.createdId] ?? "");
+  const facesAfter = await facesOf(plate.createdId);
+  check(
+    "a remove that misses its target fails instead of reporting success",
+    /removed nothing/i.test(mMsg) && !/OCCT|Standard_/i.test(mMsg) && facesAfter === facesBefore,
+    `ok=${miss?.ok} faces ${facesBefore}\u2192${facesAfter} error=${JSON.stringify(mMsg).slice(0, 80)}`,
   );
 }
 

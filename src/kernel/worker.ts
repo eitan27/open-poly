@@ -3946,7 +3946,35 @@ function buildExtrudeFeature(feature: Extract<ResolvedFeature, { type: "extrude"
     } else {
       // remove: cut the tool from each target in place, preserving ids.
       for (const t of targets) {
+        // A cut that removes NOTHING used to be entirely silent: OCCT returns
+        // the target unchanged (a valid solid, no exception), so the feature
+        // built, the badge stayed green, and the agent's op reported ok — the
+        // model was believed to have a hole it did not have.
+        //
+        // The usual cause is direction. A removal sweeps OPPOSITE the profile
+        // normal ("into the body"), which is right for a sketch on a face of
+        // that body and meaningless for one on a datum plane: Top's normal is
+        // +Z wherever the body sits, so the tool dives under a plate built up
+        // from Z=0 and meets nothing. Hence `flip`.
+        //
+        // Fail the feature, like the dangling-target case above and like the
+        // boolean feature's own "Solids don't overlap — nothing to subtract."
+        // A cut aimed at a body it misses is a modelling mistake in every case
+        // we can construct, and the agent cannot see the viewport to notice.
+        const before = measureVolume(t.shape);
         const next = unifyBody(booleanNamed("cut", t, built));
+        // Scaled to the TARGET's volume: what a cut removes is bounded by it, so
+        // it is the right reference for "is this difference just noise". Using it
+        // alone (rather than max(target, tool) as combineBodies does) also saves
+        // integrating the tool, which is the expensive half on a complex solid.
+        if (measureVolume(next.shape) >= before - VOLUME_EPS_REL * Math.max(before, 1)) {
+          next.shape.delete();
+          built.shape.delete();
+          throw new Error(
+            "extrude: this cut removed nothing — the profile doesn't overlap the target body. " +
+              "Check the cut direction (Flip), the distance, or use Through All.",
+          );
+        }
         t.shape.delete();
         t.shape = next.shape;
         t.names = next.names;
