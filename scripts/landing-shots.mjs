@@ -55,7 +55,7 @@ const cutCircles = () => {
 // --- driver -----------------------------------------------------------------
 const browser = await chromium.launch();
 
-async function scene(name, build) {
+async function scene(name, build, { clipHeight } = {}) {
   // A narrower CSS viewport makes the fixed-size app chrome occupy more of the
   // frame (the "browser zoom" effect); deviceScaleFactor 2 keeps it retina-crisp.
   const ctx = await browser.newContext({ viewport: { width: 1360, height: 860 }, deviceScaleFactor: 2 });
@@ -78,13 +78,26 @@ async function scene(name, build) {
   const eyes = page.locator(".datum-row .row-icon");
   for (let i = 0, n = await eyes.count(); i < n; i++) await eyes.nth(i).click();
 
-  await page.getByRole("button", { name: "Iso", exact: true }).click();
+  // Iso via its keyboard shortcut, not a button: the Top/Front/Iso text buttons
+  // were replaced by the canvas view cube (src/viewport/viewCube.ts), which has
+  // no DOM role to query. Key from shortcuts.ts ("view.iso").
+  await page.keyboard.press("7");
   await page.waitForTimeout(700);
 
   // Full-page screenshot: the real app UI (toolbars, timeline panel, view
   // controls) framing the geometry — an app hero, not a bare model render.
+  //
+  // `clipHeight` (CSS px) letterboxes the frame for a README hero: GitHub renders
+  // a README at ~890px wide, so a full 1360×860 capture lands ~563px tall and
+  // pushes every word below the fold. Clipping to ~2.2:1 keeps the image and the
+  // first paragraph on screen together. Measured against the model, not guessed —
+  // the gear's lowest pixel is at 66% of frame height, so 620 leaves it intact
+  // with room to spare. Re-measure before lowering it.
   const out = `landing/${name}.png`;
-  await page.screenshot({ path: out });
+  await page.screenshot({
+    path: out,
+    ...(clipHeight ? { clip: { x: 0, y: 0, width: 1360, height: clipHeight } } : {}),
+  });
   console.log(`wrote ${out}`);
   await ctx.close();
 }
@@ -128,35 +141,47 @@ await scene("hero-heart", async ({ apply }) => {
   await apply({ op: "transform", targetId: h.createdId, axis: "z", angle: 45 });
 });
 
-await scene("hero-gear", async ({ apply, summary }) => {
-  const gs = await apply({ op: "addSketch", plane: { datum: "top" }, name: "GearProfile", entities: gearEntities() });
-  const gear = await apply({
-    op: "addExtrude",
-    profile: { sketchId: gs.createdId },
-    distance: 16,
-    mode: "new",
-    name: "Gear",
-  });
-  const hub = await apply({ op: "addPrimitive", kind: "cylinder", name: "Hub", params: { radius: 16, height: 24 } });
-  const uni = await apply({ op: "boolean", kind: "union", operands: [gear.createdId, hub.createdId] });
-  const cuts = await apply({ op: "addSketch", plane: { datum: "top" }, name: "Cuts", entities: cutCircles() });
-  const sk = (await summary()).sketches.find((x) => x.id === cuts.createdId);
-  let target = uni.createdId;
-  for (const region of sk.regions) {
-    const r = await apply({
+await scene(
+  "hero-gear",
+  async ({ apply, summary }) => {
+    const gs = await apply({ op: "addSketch", plane: { datum: "top" }, name: "GearProfile", entities: gearEntities() });
+    const gear = await apply({
       op: "addExtrude",
-      profile: { sketchId: cuts.createdId, regionId: region.id },
-      distance: 30,
-      extent: "throughAll",
-      mode: "remove",
-      targetId: target,
+      profile: { sketchId: gs.createdId },
+      distance: 16,
+      mode: "new",
+      name: "Gear",
     });
-    target = r.createdId;
-  }
-  // A boolean union OWNS its color (unlike a transform, which inherits from its
-  // source), and the later through-all removes inherit it — so set it on the
-  // union feature.
-  await apply({ op: "setAppearance", featureId: uni.createdId, color: GRAY });
-});
+    const hub = await apply({ op: "addPrimitive", kind: "cylinder", name: "Hub", params: { radius: 16, height: 24 } });
+    const uni = await apply({ op: "boolean", kind: "union", operands: [gear.createdId, hub.createdId] });
+    const cuts = await apply({ op: "addSketch", plane: { datum: "top" }, name: "Cuts", entities: cutCircles() });
+    const sk = (await summary()).sketches.find((x) => x.id === cuts.createdId);
+    for (const region of sk.regions) {
+      // Re-read the live body each pass rather than chaining the previous cut's
+      // `createdId`: a remove consumes its target and republishes the body under a
+      // new id, so the chained id names a body that no longer exists and every cut
+      // after the first fails ("the target body no longer exists").
+      const bodies = (await summary()).bodies;
+      const target = bodies[bodies.length - 1].id;
+      await apply({
+        op: "addExtrude",
+        profile: { sketchId: cuts.createdId, regionId: region.id },
+        distance: 30,
+        extent: "throughAll",
+        mode: "remove",
+        // The sketch is on Top (z=0) and the gear is built upward from it, so the
+        // default inward direction points away from the material and the cut
+        // removes nothing — silently, with ok:true. `flip` aims it at the body.
+        flip: true,
+        targetId: target,
+      });
+    }
+    // A boolean union OWNS its color (unlike a transform, which inherits from its
+    // source), and the later through-all removes inherit it — so set it on the
+    // union feature.
+    await apply({ op: "setAppearance", featureId: uni.createdId, color: GRAY });
+  },
+  { clipHeight: 620 },
+);
 
 await browser.close();
