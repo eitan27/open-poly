@@ -251,7 +251,9 @@ push cost enough to learn.
       (re-enabled in `b0578bd`) and has failed on every run since June, because
       Pages cannot publish from a private repo on the Free plan. Nothing is
       broken and nothing is being published — going public plus this setting
-      resolves it, with no code change.
+      resolves it, with no code change. **But decide what it would publish
+      first** — see _The landing page_ below; the answer may be to delete the
+      workflow rather than fix it.
 - [ ] **6. Sanity-check the deployed site.** <https://openpoly.dev> is a
       direct `wrangler pages deploy` upload, NOT git-integrated, so going public
       redeploys nothing — a deploy of `fd076d1` on 2026-10-08 confirmed the shell,
@@ -267,6 +269,29 @@ push cost enough to learn.
       and the `archive/split-body` tag were deleted on 2026-10-06; both are written
       up under **What's left** in enough detail to rebuild from, so the mirror's
       stale copies of them are not a reason to keep it.)
+
+**The landing page — publish it or delete it (open, 2026-10-10).** Item 5 is not
+only a settings flip: enabling Pages gives `landing/index.html` a public home, a
+second public face beside the app. That is new, because the landing page is
+deployed nowhere today — `openpoly.dev` serves the app itself.
+
+Two things make it unfit to go up as it stands. Its only screenshot,
+`landing/preview/app.png`, is a July capture of a UI that no longer exists (the
+title bar reads "Phase 3 · modeling"; there is no view cube, no Shell, no tool
+search), and **nothing generates the `preview/*.png` files** — they are hand-made
+and orphaned. The generator that does exist, `scripts/landing-shots.mjs`, writes
+`landing/hero-*.png` (repaired and re-run 2026-10-10, after the view-cube change
+had broken it outright), and `index.html` references none of those.
+
+So: either point `index.html` at a regenerated hero and enable Pages, or delete
+`landing/` together with `.github/workflows/pages.yml` and let `openpoly.dev` be
+the only public face. Deleting is the smaller surface, and is the recommendation
+unless a marketing page distinct from the app is actually wanted.
+
+**If you delete, keep `landing/hero-gear.png`.** The README's hero image points
+at that path (added 2026-10-10), so `rm -r landing/` breaks the first thing a
+visitor sees. Move it — `docs/` is the obvious home — and update the README in
+the same commit.
 
 **Do not undo these.** Three layers, because the first two depend on the machine:
 
