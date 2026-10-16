@@ -168,8 +168,9 @@ blocking, or persisting the import's built body across reloads, over deferring.
 - **Sweep/loft:** twist, multiple profiles, guide rails, ruled option.
 - **Measure:** the info pane reads a selection; no pick-two measure tool.
 - **STEP import:** drag-and-drop onto the viewport. Disjoint solids already split
-  into parts; their **names** are shelved on `feat/step-assembly-split`, blocked
-  on a wasm build with XCAF.
+  into parts, but unnamed — real part names need `STEPCAFControl_Reader`, which
+  this wasm build does not expose, so that is a kernel rebuild before it is a
+  feature.
 - **Export:** image snapshot.
 
 **Known rough edges**
