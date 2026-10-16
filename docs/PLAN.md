@@ -194,37 +194,13 @@ blocking, or persisting the import's built body across reloads, over deferring.
 
 ## Open-sourcing — only the switch remains
 
-**Going public — in order.**
-
-- [ ] **1. Flip the repository to public.** The only thing left in Settings. The
-      **About** panel is already filled in: `homepage` is <https://openpoly.dev>,
-      nine topics are set (`cad`, `parametric-cad`, `opencascade`, `webassembly`,
-      `threejs`, `3d-modeling`, `browser-based`, `constraint-solver`, `mcp`), and
-      GPL-3.0 and the description were set before that. **Leave Pages disabled** —
-      there is no landing page to publish, so enabling it would publish the
-      repository root.
-- [ ] **2. File one real bug report from <https://openpoly.dev>** and confirm the
-      issue lands in the now-public repo. This is the only check that proves
-      `TURNSTILE_SECRET` is _correct_ rather than merely set: `verifyTurnstile`
-      returns early on a missing token, so a token-less probe never reaches
-      Cloudflare's siteverify endpoint and 403s identically whether the secret is
-      right or wrong. Nothing else about the deploy needs re-checking —
-      <https://openpoly.dev> is a direct `wrangler pages deploy` upload, not
-      git-integrated, so going public redeploys nothing.
-- [ ] **3. Then, and only then, delete the backups** in `~/Developer/`:
-      `open-poly-mirror`, `open-poly-backup`, and `open-poly-local-mirror.git`.
-      The last holds pre-rewrite copies of everything, including the one
-      never-pushed branch still worth keeping — `feat/step-assembly-split`,
-      which is also in the working tree. (`shelved/viewport-geom-reuse-and-lazy-regen`
-      and the `archive/split-body` tag were deleted on 2026-10-06; both are written
-      up under **What's left** in enough detail to rebuild from, so the mirror's
-      stale copies of them are not a reason to keep it.)
-
-**Optional, whenever the old host stops being worth supporting:** drop
-`open-poly.pages.dev` from `PRODUCTION_HOSTS` (`src/ui/turnstile.ts`) and from the
-Turnstile widget in the Cloudflare dashboard — the 301 to `openpoly.dev` is
-confirmed. The two lists must agree, and `src/ui/turnstile.test.ts` asserts both
-hosts deliberately, so two assertions have to be edited in the same commit.
+- [ ] **Flip the repository to public.** The last step, and the only one left in
+      Settings. The **About** panel is already filled in: `homepage` is
+      <https://openpoly.dev>, nine topics are set (`cad`, `parametric-cad`,
+      `opencascade`, `webassembly`, `threejs`, `3d-modeling`, `browser-based`,
+      `constraint-solver`, `mcp`), and GPL-3.0 and the description were set before
+      that. **Leave Pages disabled** — there is no landing page to publish, so
+      enabling it would publish the repository root.
 
 **What it taught us, in order of how much it cost to find out:**
 
