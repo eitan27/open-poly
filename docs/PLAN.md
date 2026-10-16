@@ -192,80 +192,26 @@ blocking, or persisting the import's built body across reloads, over deferring.
 
 ---
 
-## Open-sourcing — the blocker is cleared; only the switch remains
-
-Harvesting the old branches, building the test infrastructure and crossing the
-first real module boundary are all done, on `main` and deployed. The per-item
-state that used to live here is in the git history; what remains is the
-going-public checklist, what must not be undone afterwards, and the things the
-push cost enough to learn.
+## Open-sourcing — only the switch remains
 
 **Going public — in order.**
 
-- [x] **1. The `refs/pull/*` purge is done and verified (2026-09-17).** The 417
-      commits were rewritten to the GitHub noreply address on 2026-09-14, but
-      `refs/pull/*` are read-only server-side refs a force-push cannot reach, so
-      all 10 still carried the old addresses until GitHub Support deleted the PRs.
-      Verified independently and by object reachability, not by the refs vanishing
-      from a listing — that would not have proved the objects were gone. One
-      cosmetic residue, recorded so it is not mistaken for damage later: eight
-      merge-commit messages on `main` now link to pull requests that no longer
-      exist.
-- [x] **2. `TURNSTILE_SECRET` is set (verified against the live endpoint,
-      2026-10-08).** Worth having checked, because `functions/api/report.ts`
-      enforces the spam check **only when that secret exists** — without it
-      `/api/report` is an open endpoint filing GitHub issues under
-      `GITHUB_ISSUES_TOKEN`, harmless while the repo is private and the app obscure
-      and an invitation once it is neither. Re-check it without filing anything:
-      `POST /api/report` with a description and no Turnstile token returns
-      `403 failed spam check`, which is only reachable when the secret is set, and
-      the request is rejected before it ever reaches GitHub. An empty body gets a
-      400 instead, which proves the Function is deployed at all. **What that probe
-      does NOT prove is that the secret is correct** — `verifyTurnstile` returns
-      early on a missing token, so a token-less request never reaches Cloudflare's
-      siteverify endpoint and a wrong secret would 403 identically. Only item 6's
-      real submission distinguishes them. The same early return is why the Turnstile
-      dashboard warns that "siteverify isn't being called": with no real reports
-      filed there is nothing to call it with, and the warning is a false positive
-      rather than a misconfiguration. Do not let the dashboard's one-click "fix"
-      rewrite a working integration on the strength of it.
-- [x] **3. `openpoly.dev` is live and canonical (2026-10-09).** Custom domain
-      active with SSL (apex CNAME to `open-poly.pages.dev`, flattened), and an
-      account-level Bulk Redirect 301s the old host with path and query preserved.
-      **"Include subdomains" is deliberately OFF**, against Cloudflare's own
-      instructions: it would redirect every `<hash>.open-poly.pages.dev` preview to
-      production, so you would be testing the live build believing it was a
-      preview. Verified that a preview still serves itself. `_redirects` cannot do
-      host-level redirects (it matches paths) and nor can a zone Redirect Rule,
-      since `pages.dev` is not in the zone — Bulk Redirects is the only route.
-      Both hosts are in `PRODUCTION_HOSTS` and in the Turnstile widget while the
-      migration settles; `open-poly.pages.dev` can be dropped from both now that
-      the redirect is confirmed. Note a POST to the old host 301s and browsers do
-      not re-POST — harmless, since the app only posts to its own origin.
-- [ ] **4. Flip the repository to public.** This is now the only thing left in
-      Settings. The rest of the **About** panel is filled in (2026-10-16):
-      `homepage` is <https://openpoly.dev> — without it the deployed app was not
-      linked from its own repo page — and nine topics are set (`cad`,
-      `parametric-cad`, `opencascade`, `webassembly`, `threejs`, `3d-modeling`,
-      `browser-based`, `constraint-solver`, `mcp`), which is close to the only
-      passive discovery a new public repo gets. GPL-3.0 (detected from `LICENSE`)
-      and the description were already set.
-- [x] **5. GitHub Pages is not needed — the landing page is gone (2026-10-16).**
-      This step used to read "Settings → Pages → Source → GitHub Actions", to give
-      `landing/index.html` a public home and clear the red X from
-      `.github/workflows/pages.yml`, which had failed on every run since June
-      (Pages cannot publish from a private repo on the Free plan). Both the page
-      and the workflow were deleted instead — see _No landing page_ below. The red
-      X is gone because the workflow is gone, and **Pages must stay disabled**:
-      turning it on now would publish the repository root, not a landing page.
-- [ ] **6. Sanity-check the deployed site.** <https://openpoly.dev> is a
-      direct `wrangler pages deploy` upload, NOT git-integrated, so going public
-      redeploys nothing — a deploy of `fd076d1` on 2026-10-08 confirmed the shell,
-      both wasm bundles (served as `application/wasm`, which the kernel needs), the
-      SPA deep-link fallback and the Function all serve correctly. What is left can
-      only be done after the flip: file one real bug report and confirm the issue
-      lands in a now-public repo.
-- [ ] **7. Then, and only then, delete the backups** in `~/Developer/`:
+- [ ] **1. Flip the repository to public.** The only thing left in Settings. The
+      **About** panel is already filled in: `homepage` is <https://openpoly.dev>,
+      nine topics are set (`cad`, `parametric-cad`, `opencascade`, `webassembly`,
+      `threejs`, `3d-modeling`, `browser-based`, `constraint-solver`, `mcp`), and
+      GPL-3.0 and the description were set before that. **Leave Pages disabled** —
+      there is no landing page to publish, so enabling it would publish the
+      repository root.
+- [ ] **2. File one real bug report from <https://openpoly.dev>** and confirm the
+      issue lands in the now-public repo. This is the only check that proves
+      `TURNSTILE_SECRET` is _correct_ rather than merely set: `verifyTurnstile`
+      returns early on a missing token, so a token-less probe never reaches
+      Cloudflare's siteverify endpoint and 403s identically whether the secret is
+      right or wrong. Nothing else about the deploy needs re-checking —
+      <https://openpoly.dev> is a direct `wrangler pages deploy` upload, not
+      git-integrated, so going public redeploys nothing.
+- [ ] **3. Then, and only then, delete the backups** in `~/Developer/`:
       `open-poly-mirror`, `open-poly-backup`, and `open-poly-local-mirror.git`.
       The last holds pre-rewrite copies of everything, including the one
       never-pushed branch still worth keeping — `feat/step-assembly-split`,
@@ -274,51 +220,11 @@ push cost enough to learn.
       up under **What's left** in enough detail to rebuild from, so the mirror's
       stale copies of them are not a reason to keep it.)
 
-**No landing page — `openpoly.dev` is the only public face (decided 2026-10-16).**
-`landing/` and `.github/workflows/pages.yml` are deleted. The page was deployed
-nowhere, so nothing regressed; what it would have cost was a second public face to
-keep true. It was also unfit to publish as it stood: its only screenshot,
-`landing/preview/app.png`, was a July capture of a UI that no longer existed (title
-bar reading "Phase 3 · modeling", no view cube, no Shell, no tool search), and
-nothing generated those `preview/*.png` files — they were hand-made and orphaned,
-which is exactly how they went stale unnoticed.
-
-The README is the landing page now: a one-line pitch, the **Try it** link, and a
-hero screenshot. That is the prevailing convention for a browser app that opens
-with nothing to sign up for. A separate marketing site is what you add when there
-is pricing, a self-host story or a docs site to funnel into — none of which exist
-here. If one is ever wanted, build it as its own deploy rather than reviving
-`landing/`; Pages publishing a repo root is not it.
-
-**The hero PNGs moved to `docs/images/`** (`hero-gear.png` is the one the README
-shows; `hero-cube` and `hero-heart` are alternates). `scripts/readme-shots.mjs`
-— renamed from `landing-shots.mjs` — regenerates all three there. Run it after any
-visible UI change, because it broke outright and silently once already when the
-view cube replaced the text view buttons.
-
-**Do not undo these.** Three layers, because the first two depend on the machine:
-
-- `user.email` is the GitHub noreply address in `~/.gitconfig` — **per
-  environment**, so a phone or cloud session, a fresh clone or a new collaborator
-  starts without it. This is the layer that silently does not apply.
-- _Settings → Emails → Keep my email addresses private_ plus _Block command line
-  pushes that expose my email_ is on. Server-side, so it covers every origin, and
-  it rejects the push rather than letting it land — the strongest of the three.
-  Its blind spot is an address GitHub does not know is yours.
-- CI's `identity` job runs `scripts/check-commit-identity.sh` on every push and
-  PR, failing if a commit carries one of the private addresses as author or
-  committer. It checks for **those specific addresses, never for "is this a
-  noreply"** — the first version did the latter and would have rejected any
-  contributor using their own real address, which is their business and no risk
-  here. The addresses live in the `PRIVATE_EMAILS` repository secret, never in the
-  repo; failures print the SHA and not the address, since the logs are public. On a
-  fork's PR the secret is absent, the step says so and passes — correct, because a
-  contributor's address is not what this guards. On a direct push to `main` it is
-  detection rather than prevention, and it only knows the addresses it is given: a
-  brand-new unknown address is GitHub's block to catch, not this.
-
-Collaborators must **re-clone, not pull** — a merge from a pre-rewrite clone pushes
-the old addresses straight back in, which is the one way this work can be undone.
+**Optional, whenever the old host stops being worth supporting:** drop
+`open-poly.pages.dev` from `PRODUCTION_HOSTS` (`src/ui/turnstile.ts`) and from the
+Turnstile widget in the Cloudflare dashboard — the 301 to `openpoly.dev` is
+confirmed. The two lists must agree, and `src/ui/turnstile.test.ts` asserts both
+hosts deliberately, so two assertions have to be edited in the same commit.
 
 **What it taught us, in order of how much it cost to find out:**
 
