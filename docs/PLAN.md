@@ -203,35 +203,6 @@ blocking, or persisting the import's built body across reloads, over deferring.
       that. **Leave Pages disabled** — there is no landing page to publish, so
       enabling it would publish the repository root.
 
-**What it taught us, in order of how much it cost to find out:**
-
-- **Re-apply a stale branch; never rebase or cherry-pick it.** Five month-old
-  `claude/*` branches were harvested and every one was re-done against main
-  instead. Two of them would have shipped bugs into the present: one's
-  `contentKey` had lost a dependency (a transform rotating about a body edge
-  would have served a stale body, silently), and another's tests were written
-  against two signatures that no longer existed. A stale branch is worth reading
-  for its idea and for the bug it is carrying.
-- **When a before/after run is your only proof, keep a control group.** The
-  `verify-*.mjs` migration was "verified" twice before it was verified once: the first runner used `timeout`, which macOS does not ship, so every
-  script reported nothing; the second ran while `npm test` competed for the CPU,
-  and scripts nobody had touched changed their answers. The fix that stuck: the
-  UNMIGRATED scripts are the control. If a file nobody edited moves, the run is
-  noise and nothing it says counts.
-- **A codemod that deletes a span will eat something you did not see.** The
-  first transformer matched a launch block with `.*?` and swallowed the
-  script-specific lines inside it — a fixture path, a console listener. Two
-  scripts died loudly; the dangerous case is the one that keeps passing while
-  testing less. Classify each line and keep what you do not recognise.
-- **Opt in to jsdom per file, never globally.** `environment: "node"` is still
-  the default and the ~800 tests that predate the jsdom work never had to move.
-  A file
-  that needs a DOM says `// @vitest-environment jsdom`; jsdom costs ~700ms of
-  setup per file that asks.
-- **Agent worktrees live inside the repo.** `.claude/` now has to be ignored by
-  git, vitest, eslint AND prettier — each learned separately, the last two
-  because a running agent doubled the lint count and it read as a regression.
-
 ## What exists
 
 **Sketching.** Datum planes + planar faces; line, rect (2-corner/center), circle
