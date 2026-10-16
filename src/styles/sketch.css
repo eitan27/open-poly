@@ -23,8 +23,7 @@
     display: none;
   }
 
-  .doc-title,
-  .doc-title-input {
+  .doc-title {
     max-width: 40vw;
   }
 

@@ -210,6 +210,7 @@ import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
 import { VariablesPanel } from "./ui/VariablesPanel";
 import { featureIdOf, sameSelection, type DatumId, type Selection, type SelectionFilter } from "./selection/types";
+import { isUntitled } from "./storage/docNames";
 import { Viewport } from "./viewport/Viewport";
 import type {
   ExtrudeGizmo,
@@ -710,6 +711,11 @@ export default function App() {
   const resolved = useMemo(() => resolveDocument(doc), [doc]);
   // Inline title editing in the topbar: null when idle, else the draft text.
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  // Escape has to tell the blur that follows it not to commit. It cannot do so
+  // through state: the blur handler reads `titleDraft` from the closure of the
+  // render it was created in, and React has not re-rendered yet.
+  const titleCancelled = useRef(false);
   const [docsDialogOpen, setDocsDialogOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -6332,33 +6338,50 @@ export default function App() {
    *  a uuid there reads as a bug. */
   const sketchName = (id: string) => doc.features.find((f) => f.id === id)?.name ?? "Sketch";
 
+  // The title field shows the draft while editing and the saved name otherwise.
+  // A name still at its default is styled as a placeholder rather than a value.
+  const titleValue = titleDraft ?? docName;
+
   return (
     <div className="app">
       <header className="topbar">
         <span className="logo">Open Poly</span>
-        {titleDraft === null ? (
-          <button className="doc-title" title="Rename document" onClick={() => setTitleDraft(docName)}>
-            {docName}
-          </button>
-        ) : (
-          <input
-            className="doc-title-input"
-            autoFocus
-            value={titleDraft}
-            onChange={(e) => setTitleDraft(e.target.value)}
-            onFocus={(e) => e.target.select()}
-            onBlur={() => {
-              // Commit on blur; an all-whitespace draft reverts.
-              const trimmed = titleDraft.trim();
-              if (trimmed) setDocName(trimmed);
-              setTitleDraft(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-              else if (e.key === "Escape") setTitleDraft(null);
-            }}
-          />
-        )}
+        {/* Always a live input, never a button that becomes one: the swap hid the
+            affordance behind hover and resized the control under the pointer. */}
+        <input
+          ref={titleRef}
+          className={`doc-title${isUntitled(titleValue) ? " doc-title--unnamed" : ""}`}
+          // Content-sized. `size` is in character units, so it tracks the font at
+          // any zoom or device pixel ratio where a fixed px width would not; CSS
+          // clamps it (300px, or 40vw on a narrow viewport).
+          size={Math.min(28, Math.max(8, titleValue.length + 1))}
+          value={titleValue}
+          aria-label="Document name"
+          title="Rename document"
+          onChange={(e) => setTitleDraft(e.target.value)}
+          onFocus={() => {
+            setTitleDraft(docName);
+            // A default name is a placeholder, so typing should replace it whole.
+            // Deferred: the mouseup after a click collapses a selection made now.
+            if (isUntitled(docName)) requestAnimationFrame(() => titleRef.current?.select());
+          }}
+          onBlur={() => {
+            // Commit on blur; an all-whitespace draft, or one Escape abandoned,
+            // reverts to the saved name.
+            const abandoned = titleCancelled.current;
+            titleCancelled.current = false;
+            const trimmed = titleDraft?.trim();
+            if (!abandoned && trimmed) setDocName(trimmed);
+            setTitleDraft(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            else if (e.key === "Escape") {
+              titleCancelled.current = true;
+              e.currentTarget.blur();
+            }
+          }}
+        />
         <div className="doc-actions">
           <button
             className="text-btn newdoc-btn"

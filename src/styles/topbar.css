@@ -24,33 +24,53 @@
   letter-spacing: 0.02em;
 }
 
-/* Document title in the topbar — a first-class title (sized close to the
-   logo), edits on click. The button/input pair share metrics so toggling
-   doesn't shift the layout. */
-.doc-title,
-.doc-title-input {
+/* Document title in the topbar — a first-class title (sized close to the logo)
+   and ALWAYS a live input. It used to be a button that swapped to an input on
+   click, which put the whole affordance behind :hover and resized the control
+   under the pointer.
+
+   The rest state carries its affordance only while the name is still a default:
+   muted + italic under a dotted underline, the way a placeholder reads. That is
+   the case worth advertising — once a document has a real name, both would be
+   permanent chrome under a title nobody is editing. Hover and focus promote
+   either state to a full bordered field. The 1px border exists (transparent) in
+   every state, so none of them move the text by a pixel. */
+.doc-title {
   font-size: 15px;
   font-weight: 600;
   font-family: inherit;
+  color: var(--text-2);
   padding: 2px 8px;
   border-radius: 6px;
   border: 1px solid transparent;
   background: none;
+  /* Deliberately no `width`: the `size` attribute sizes it to its content in
+     character units, so it scales with the font rather than with the device.
+     The old fixed 220px jumped the New/Open pair sideways on every click. */
   max-width: 300px;
-}
-
-.doc-title {
-  color: var(--text-2);
-  cursor: text;
-  white-space: nowrap;
-  overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* A clearly visible affordance that the title is click-to-rename. */
 .doc-title:hover {
-  border-color: var(--border-hover);
+  border: 1px solid var(--border-hover);
   background: var(--bg-raised);
+}
+
+/* After :hover, so a focused field keeps the stronger border while hovered. */
+.doc-title:focus {
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  outline: none;
+}
+
+/* Last, so it wins the colour against .doc-title at equal specificity. The
+   :hover and :focus rules above still beat it (0,2,0 vs 0,1,0), so an unnamed
+   title promotes to the same solid field as a named one. */
+.doc-title--unnamed {
+  color: var(--text-3);
+  font-style: italic;
+  border-bottom-color: var(--border-hover);
+  border-bottom-style: dotted;
 }
 
 /* New/Open pair sit tight together (the topbar's own 16px gap reads as two
@@ -58,14 +78,6 @@
 .doc-actions {
   display: flex;
   gap: 6px;
-}
-
-.doc-title-input {
-  color: var(--text-2);
-  border-color: var(--border-strong);
-  background: var(--bg-raised);
-  outline: none;
-  width: 220px;
 }
 
 /* Text-sized sibling of .tool-btn (which is a FIXED 28×26 icon button — text

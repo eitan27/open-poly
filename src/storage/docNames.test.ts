@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { copyName, dedupeName, nextUntitled, timeAgo } from "./docNames";
+import { copyName, dedupeName, isUntitled, nextUntitled, timeAgo } from "./docNames";
 
 describe("nextUntitled", () => {
   it("starts at plain Untitled", () => {
@@ -10,6 +10,20 @@ describe("nextUntitled", () => {
     expect(nextUntitled(["Untitled"])).toBe("Untitled 2");
     expect(nextUntitled(["Untitled", "Untitled 2"])).toBe("Untitled 3");
     expect(nextUntitled(["Untitled", "Untitled 3"])).toBe("Untitled 2");
+  });
+});
+
+describe("isUntitled", () => {
+  it("matches exactly what nextUntitled hands out", () => {
+    expect(isUntitled(nextUntitled([]))).toBe(true);
+    expect(isUntitled(nextUntitled(["Untitled"]))).toBe(true);
+    expect(isUntitled("Untitled 17")).toBe(true);
+  });
+
+  it("leaves a real name alone, including one that starts with Untitled", () => {
+    for (const name of ["Bracket", "Untitled Bracket", "untitled", "My Untitled", ""]) {
+      expect(isUntitled(name)).toBe(false);
+    }
   });
 });
 

@@ -12,6 +12,14 @@ export function nextUntitled(existing: readonly string[]): string {
   }
 }
 
+/** True for a name `nextUntitled` would hand out: "Untitled" or "Untitled N".
+ *  The topbar renders these as a placeholder rather than a value, so the
+ *  predicate sits next to the generator — one of them changing without the
+ *  other is the way that styling would silently stop matching. */
+export function isUntitled(name: string): boolean {
+  return /^Untitled(?: \d+)?$/.test(name);
+}
+
 /** "Copy of X", or the first free "Copy of X N" (N ≥ 2). */
 export function copyName(source: string, existing: readonly string[]): string {
   const taken = new Set(existing);

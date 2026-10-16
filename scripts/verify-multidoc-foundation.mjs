@@ -1,4 +1,4 @@
-// Multi-document foundation: editable topbar title, browser
+// Multi-document foundation: editable topbar title (an always-live input), browser
 // tab title, activeDocId pointer, rename persisted through autosave + reload.
 import { chromium } from "playwright";
 
@@ -28,22 +28,22 @@ const check = (label, ok, detail = "") => {
 };
 
 // 1. Title chip renders and mirrors to the browser tab.
-const initial = (await page.locator(".doc-title").textContent())?.trim();
+const initial = (await page.locator(".doc-title").inputValue()).trim();
 check("topbar shows the document title", Boolean(initial), `"${initial}"`);
 check("browser tab mirrors it", (await page.title()) === `${initial} — Open Poly`, await page.title());
 
-// 2. Rename inline: click → input → type → Enter.
+// 2. Rename inline: the title is always an input — click, type, Enter.
 await page.locator(".doc-title").click();
-await page.locator(".doc-title-input").fill("Test Bracket");
-await page.locator(".doc-title-input").press("Enter");
-check("title commits on Enter", (await page.locator(".doc-title").textContent())?.trim() === "Test Bracket");
+await page.locator(".doc-title").fill("Test Bracket");
+await page.locator(".doc-title").press("Enter");
+check("title commits on Enter", (await page.locator(".doc-title").inputValue()).trim() === "Test Bracket");
 check("tab title follows the rename", (await page.title()) === "Test Bracket — Open Poly", await page.title());
 
 // 3. Escape reverts a draft.
 await page.locator(".doc-title").click();
-await page.locator(".doc-title-input").fill("Should Not Stick");
-await page.locator(".doc-title-input").press("Escape");
-check("Escape reverts the draft", (await page.locator(".doc-title").textContent())?.trim() === "Test Bracket");
+await page.locator(".doc-title").fill("Should Not Stick");
+await page.locator(".doc-title").press("Escape");
+check("Escape reverts the draft", (await page.locator(".doc-title").inputValue()).trim() === "Test Bracket");
 
 // 4. activeDocId pointer is set.
 const activeId = await page.evaluate(() => localStorage.getItem("openpoly.activeDocId"));
@@ -53,7 +53,7 @@ check("activeDocId pointer set", Boolean(activeId), activeId ?? "");
 await page.waitForTimeout(1000); // let the 600 ms autosave debounce fire
 await page.reload({ waitUntil: "domcontentloaded" });
 await waitIdle();
-check("rename survives reload", (await page.locator(".doc-title").textContent())?.trim() === "Test Bracket");
+check("rename survives reload", (await page.locator(".doc-title").inputValue()).trim() === "Test Bracket");
 check(
   "same document restored (pointer, not just most-recent)",
   (await page.evaluate(() => localStorage.getItem("openpoly.activeDocId"))) === activeId,
