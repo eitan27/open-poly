@@ -41,7 +41,7 @@ Everything stays local: the agent talks to your browser tab over `127.0.0.1`, an
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the codebase layout, dev
+See [`CONTRIBUTING.md`](docs/CONTRIBUTING.md) for the codebase layout, dev
 workflow, and PR process. Design and architecture notes, the gotchas, and what
 is not built yet live in [`docs/PLAN.md`](docs/PLAN.md).
 
@@ -49,7 +49,7 @@ is not built yet live in [`docs/PLAN.md`](docs/PLAN.md).
 
 GPL-3.0-or-later — see [`LICENSE`](LICENSE). Third-party license notes
 (including the LGPL constraint solver and the OCCT geometry kernel) are in
-[`NOTICE.md`](NOTICE.md).
+[`NOTICE.md`](docs/NOTICE.md).
 
 The exhaustive per-package list, with each license verbatim, is generated at
 build time into `dist/third-party-licenses.txt` — served at

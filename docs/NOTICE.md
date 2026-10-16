@@ -1,7 +1,7 @@
 # Third-party licenses
 
 Open Poly is licensed under the GNU General Public License v3.0 or later
-(see [`LICENSE`](./LICENSE)). It depends on a small number of third-party
+(see [`LICENSE`](../LICENSE)). It depends on a small number of third-party
 packages with their own licenses, most of which are MIT, and it bundles one
 font.
 
@@ -51,7 +51,7 @@ The three:
   (https://github.com/rsms/inter)". The OFL asks that the notice and license
   accompany every copy of the font; the font's own machine-readable name
   table already carries both, which condition 2 expressly accepts, so
-  [`OFL.txt`](./OFL.txt) is here as a plain-text convenience rather than to
+  [`OFL.txt`](../OFL.txt) is here as a plain-text convenience rather than to
   close a gap — and the generated notices file now carries the same text into
   the download itself. The OFL covers the font file only — not Open Poly,
   and not anything you draw with it.
@@ -66,7 +66,7 @@ that did went out of date — the exhaustive list is generated:
 
 every runtime dependency that ships in the bundle, with its license text
 verbatim, built from the packages actually installed for that build by
-[`scripts/third-party-licenses.ts`](./scripts/third-party-licenses.ts). It is
+[`scripts/third-party-licenses.ts`](../scripts/third-party-licenses.ts). It is
 emitted next to the bundles it describes and served at
 <https://openpoly.dev/third-party-licenses.txt>, linked from the app's
 Settings dialog, so a visitor who only ever receives the built site receives

@@ -5,13 +5,13 @@
 // MIT, and MIT asks that its copyright notice travel with "all copies or
 // substantial portions of the Software". A production build minifies those
 // packages into `dist/assets/*.js` and strips the comments that carried their
-// notices, so the copy a visitor downloads has none — the repo's NOTICE.md is
+// notices, so the copy a visitor downloads has none — the repo's docs/NOTICE.md is
 // not a copy the visitor receives. This file is emitted into the same `dist/`
 // as those bundles, so the notices ship with the code they belong to.
 //
 // WHY NOT `public/`. Vite copies `public/` verbatim, which would mean a
 // hand-maintained list — exactly the thing that drifts out of date as
-// dependencies come and go (NOTICE.md did). Emitting from a build plugin means
+// dependencies come and go (docs/NOTICE.md did). Emitting from a build plugin means
 // the file is derived from the packages actually installed for that build, and
 // a dependency that turns up without a readable license breaks the build
 // instead of quietly shipping unattributed.
@@ -121,7 +121,7 @@ function sourceUrl(name: string, pkg: Record<string, unknown>): string {
   return `https://www.npmjs.com/package/${name}`;
 }
 
-/** Notes that say what a package.json can't. Distilled from NOTICE.md, which
+/** Notes that say what a package.json can't. Distilled from docs/NOTICE.md, which
  *  reasons about the same three at length. */
 const NOTES: Record<string, string> = {
   "@salusoft89/planegcs":

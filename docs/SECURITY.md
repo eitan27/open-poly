@@ -17,7 +17,7 @@ lands on `main` and is re-deployed.
 
 ## Scope
 
-**In scope — the server-side endpoint.** [`functions/api/report.ts`](functions/api/report.ts)
+**In scope — the server-side endpoint.** [`functions/api/report.ts`](../functions/api/report.ts)
 is the one piece of Open Poly that runs on a server: a Cloudflare Pages
 function that files GitHub issues with a server-side `GITHUB_ISSUES_TOKEN`,
 optionally gated by Turnstile and optionally writing blobs to an R2 bucket. If
@@ -41,6 +41,6 @@ perform in your own browser, or scanner output without a working repro.
 **The MCP agent bridge** is local-only by construction: the hub binds
 `127.0.0.1` and the in-app client auto-disables on deployed builds, so the
 public site never dials it. It has no auth token yet — a documented v1 limit
-(see [`mcp-server/README.md`](mcp-server/README.md)), not a finding. What _is_
+(see [`mcp-server/README.md`](../mcp-server/README.md)), not a finding. What _is_
 a finding: a way for a remote web page to reach the local hub anyway, such as
 DNS rebinding or a cross-origin WebSocket that the tab accepts.
