@@ -242,9 +242,14 @@ push cost enough to learn.
       migration settles; `open-poly.pages.dev` can be dropped from both now that
       the redirect is confirmed. Note a POST to the old host 301s and browsers do
       not re-POST — harmless, since the app only posts to its own origin.
-- [ ] **4. Flip the repository to public.** While in Settings: the repo has no
-      `homepage` and no topics, so the deployed app is not linked from its own
-      page. GPL-3.0 and the description are already set.
+- [ ] **4. Flip the repository to public.** This is now the only thing left in
+      Settings. The rest of the **About** panel is filled in (2026-10-16):
+      `homepage` is <https://openpoly.dev> — without it the deployed app was not
+      linked from its own repo page — and nine topics are set (`cad`,
+      `parametric-cad`, `opencascade`, `webassembly`, `threejs`, `3d-modeling`,
+      `browser-based`, `constraint-solver`, `mcp`), which is close to the only
+      passive discovery a new public repo gets. GPL-3.0 (detected from `LICENSE`)
+      and the description were already set.
 - [x] **5. GitHub Pages is not needed — the landing page is gone (2026-10-16).**
       This step used to read "Settings → Pages → Source → GitHub Actions", to give
       `landing/index.html` a public home and clear the red X from
