@@ -1,0 +1,10 @@
+# openpoly.dev is a single-page app: one indexable URL, and every unknown path
+# is rewritten to it by _redirects. This file exists so that path resolves to a
+# real robots.txt rather than to the app's own HTML, which is what a crawler
+# used to be served.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://openpoly.dev/sitemap.xml

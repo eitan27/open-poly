@@ -35,7 +35,8 @@ import {
   setThumb,
   type StoredDoc,
 } from "../storage/db";
-import { copyName, dedupeName, nextUntitled } from "../storage/docNames";
+import { copyName, dedupeName, isUntitled, nextUntitled } from "../storage/docNames";
+import { SITE_TITLE } from "../lib/site";
 import { parseDocFile, serializeDocFile } from "../storage/docFile";
 import { CorruptDocError } from "../storage/docErrors";
 import type { Selection } from "../selection/types";
@@ -240,9 +241,12 @@ export function usePersistedDocuments({
     return () => clearTimeout(t);
   }, [doc, rawMeshes, docName, persistLoaded, sectionView]);
 
-  // Mirror the document name to the browser tab.
+  // Mirror the document name to the browser tab — but only once there is a name
+  // worth mirroring. A first visit (and every crawl, which starts with an empty
+  // IndexedDB) would otherwise title the page "Untitled — Open Poly", which is
+  // exactly what Google indexed.
   useEffect(() => {
-    document.title = `${docName} — Open Poly`;
+    document.title = isUntitled(docName) ? SITE_TITLE : `${docName} — Open Poly`;
   }, [docName]);
 
   // --- Multi-document actions -----------------------------------------------

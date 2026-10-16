@@ -5,7 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="alternate icon" type="image/png" href="/favicon.png" />
-    <title>Open Poly</title>
+
+    <!-- The app rewrites document.title once a document loads, but only when
+         that document has a real name: a crawler starts with an empty IndexedDB,
+         so without that rule every search result read "Untitled — Open Poly".
+         This copy is asserted equal to SITE_TITLE in src/lib/site.test.ts. -->
+    <title>Open Poly — parametric CAD in your browser</title>
+    <meta
+      name="description"
+      content="Free, open-source CAD in your browser. Sketch, constrain and model 3D solids — no sign-up, no upload, nothing to install. Your work never leaves your machine."
+    />
+    <link rel="canonical" href="https://openpoly.dev/" />
+
+    <!-- Link previews. Absolute URLs: a scraper does not resolve relative ones. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Open Poly" />
+    <meta property="og:title" content="Open Poly — parametric CAD in your browser" />
+    <meta
+      property="og:description"
+      content="Free, open-source CAD in your browser. Sketch, constrain and model 3D solids — no sign-up, no upload, nothing to install."
+    />
+    <meta property="og:url" content="https://openpoly.dev/" />
+    <meta property="og:image" content="https://openpoly.dev/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The Open Poly app: a gear modelled from a sketch, with its feature timeline alongside."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
   </head>
   <body>
     <div id="root"></div>
