@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Modal, ModalHeader } from "./Modal";
 import { loadTurnstile, turnstileSitekey } from "./turnstile";
+import { REPO_ISSUES_URL } from "../lib/repo";
 
 interface Props {
   onClose: () => void;
@@ -164,7 +165,7 @@ export function ReportDialog({ onClose, getDocJson, getScreenshot, version }: Pr
           {check === "unavailable" && (
             <p className="report-note">
               The spam check couldn't load, so this form can't send. You can{" "}
-              <a href="https://github.com/eitan27/open-poly/issues/new" target="_blank" rel="noreferrer">
+              <a href={REPO_ISSUES_URL} target="_blank" rel="noreferrer">
                 open an issue on GitHub
               </a>{" "}
               instead.

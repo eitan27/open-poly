@@ -132,6 +132,17 @@
   cursor: pointer;
 }
 
+/* A .tool-btn that navigates is an <a>, which gets none of the box a <button>
+   gets from the UA stylesheet: it needs the border-box model to land on the same
+   28x26 as its neighbours, flex to centre the glyph, and no link underline. */
+a.tool-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .tool-btn:hover:not(:disabled) {
   background: var(--bg-control-hover);
   border-color: var(--accent);
