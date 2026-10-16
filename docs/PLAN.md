@@ -223,7 +223,7 @@ push cost enough to learn.
       400 instead, which proves the Function is deployed at all. **What that probe
       does NOT prove is that the secret is correct** — `verifyTurnstile` returns
       early on a missing token, so a token-less request never reaches Cloudflare's
-      siteverify endpoint and a wrong secret would 403 identically. Only item 7's
+      siteverify endpoint and a wrong secret would 403 identically. Only item 6's
       real submission distinguishes them. The same early return is why the Turnstile
       dashboard warns that "siteverify isn't being called": with no real reports
       filed there is nothing to call it with, and the warning is a false positive
@@ -245,15 +245,14 @@ push cost enough to learn.
 - [ ] **4. Flip the repository to public.** While in Settings: the repo has no
       `homepage` and no topics, so the deployed app is not linked from its own
       page. GPL-3.0 and the description are already set.
-- [ ] **5. Settings → Pages → Build and deployment → Source → "GitHub
-      Actions".** This also clears a standing red X:
-      `.github/workflows/pages.yml` fires on every push touching `landing/**`
-      (re-enabled in `b0578bd`) and has failed on every run since June, because
-      Pages cannot publish from a private repo on the Free plan. Nothing is
-      broken and nothing is being published — going public plus this setting
-      resolves it, with no code change. **But decide what it would publish
-      first** — see _The landing page_ below; the answer may be to delete the
-      workflow rather than fix it.
+- [x] **5. GitHub Pages is not needed — the landing page is gone (2026-10-16).**
+      This step used to read "Settings → Pages → Source → GitHub Actions", to give
+      `landing/index.html` a public home and clear the red X from
+      `.github/workflows/pages.yml`, which had failed on every run since June
+      (Pages cannot publish from a private repo on the Free plan). Both the page
+      and the workflow were deleted instead — see _No landing page_ below. The red
+      X is gone because the workflow is gone, and **Pages must stay disabled**:
+      turning it on now would publish the repository root, not a landing page.
 - [ ] **6. Sanity-check the deployed site.** <https://openpoly.dev> is a
       direct `wrangler pages deploy` upload, NOT git-integrated, so going public
       redeploys nothing — a deploy of `fd076d1` on 2026-10-08 confirmed the shell,
@@ -270,28 +269,27 @@ push cost enough to learn.
       up under **What's left** in enough detail to rebuild from, so the mirror's
       stale copies of them are not a reason to keep it.)
 
-**The landing page — publish it or delete it (open, 2026-10-10).** Item 5 is not
-only a settings flip: enabling Pages gives `landing/index.html` a public home, a
-second public face beside the app. That is new, because the landing page is
-deployed nowhere today — `openpoly.dev` serves the app itself.
+**No landing page — `openpoly.dev` is the only public face (decided 2026-10-16).**
+`landing/` and `.github/workflows/pages.yml` are deleted. The page was deployed
+nowhere, so nothing regressed; what it would have cost was a second public face to
+keep true. It was also unfit to publish as it stood: its only screenshot,
+`landing/preview/app.png`, was a July capture of a UI that no longer existed (title
+bar reading "Phase 3 · modeling", no view cube, no Shell, no tool search), and
+nothing generated those `preview/*.png` files — they were hand-made and orphaned,
+which is exactly how they went stale unnoticed.
 
-Two things make it unfit to go up as it stands. Its only screenshot,
-`landing/preview/app.png`, is a July capture of a UI that no longer exists (the
-title bar reads "Phase 3 · modeling"; there is no view cube, no Shell, no tool
-search), and **nothing generates the `preview/*.png` files** — they are hand-made
-and orphaned. The generator that does exist, `scripts/landing-shots.mjs`, writes
-`landing/hero-*.png` (repaired and re-run 2026-10-10, after the view-cube change
-had broken it outright), and `index.html` references none of those.
+The README is the landing page now: a one-line pitch, the **Try it** link, and a
+hero screenshot. That is the prevailing convention for a browser app that opens
+with nothing to sign up for. A separate marketing site is what you add when there
+is pricing, a self-host story or a docs site to funnel into — none of which exist
+here. If one is ever wanted, build it as its own deploy rather than reviving
+`landing/`; Pages publishing a repo root is not it.
 
-So: either point `index.html` at a regenerated hero and enable Pages, or delete
-`landing/` together with `.github/workflows/pages.yml` and let `openpoly.dev` be
-the only public face. Deleting is the smaller surface, and is the recommendation
-unless a marketing page distinct from the app is actually wanted.
-
-**If you delete, keep `landing/hero-gear.png`.** The README's hero image points
-at that path (added 2026-10-10), so `rm -r landing/` breaks the first thing a
-visitor sees. Move it — `docs/` is the obvious home — and update the README in
-the same commit.
+**The hero PNGs moved to `docs/images/`** (`hero-gear.png` is the one the README
+shows; `hero-cube` and `hero-heart` are alternates). `scripts/readme-shots.mjs`
+— renamed from `landing-shots.mjs` — regenerates all three there. Run it after any
+visible UI change, because it broke outright and silently once already when the
+view cube replaced the text view buttons.
 
 **Do not undo these.** Three layers, because the first two depend on the machine:
 

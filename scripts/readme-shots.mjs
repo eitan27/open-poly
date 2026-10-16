@@ -1,9 +1,12 @@
-// Generates landing-page hero PNGs by driving the app's dev-only window.__openpoly
+// Generates the README hero PNGs by driving the app's dev-only window.__openpoly
 // API to build each scene, hiding the datum planes for a clean model, then taking
 // a FULL-PAGE screenshot at 2× (retina) — so the shots show the real app (toolbars,
-// timeline panel, view controls) with the geometry. Outputs to landing/.
+// timeline panel, view controls) with the geometry. Outputs to docs/images/.
 //
-//   URL=http://localhost:5173/ node scripts/landing-shots.mjs
+// `hero-gear` is the one the README actually shows; the cube and heart are kept as
+// alternates, so swapping the hero is a path edit rather than a rebuild.
+//
+//   URL=http://localhost:5173/ node scripts/readme-shots.mjs
 import { chromium } from "playwright";
 
 const URL = process.env.URL ?? "http://localhost:5173/";
@@ -93,7 +96,7 @@ async function scene(name, build, { clipHeight } = {}) {
   // first paragraph on screen together. Measured against the model, not guessed —
   // the gear's lowest pixel is at 66% of frame height, so 620 leaves it intact
   // with room to spare. Re-measure before lowering it.
-  const out = `landing/${name}.png`;
+  const out = `docs/images/${name}.png`;
   await page.screenshot({
     path: out,
     ...(clipHeight ? { clip: { x: 0, y: 0, width: 1360, height: clipHeight } } : {}),

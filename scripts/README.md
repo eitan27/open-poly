@@ -105,7 +105,7 @@ the job.
 | `diagnose.mjs`            | Loads the dev server headless and reports console errors, page errors and whether regen completed. First thing to reach for when the app is broken and you don't know where. |
 | `bridge-e2e.mjs`          | Stands up the WebSocket hub and drives requests through the browser↔hub bridge.                                                                                              |
 | `mcp-e2e.mjs`             | Acts as an MCP client end to end: spawns the stdio server, drives tools through a live tab.                                                                                  |
-| `landing-shots.mjs`       | Regenerates the landing-page hero PNGs in `landing/`.                                                                                                                        |
+| `readme-shots.mjs`        | Regenerates the README hero PNGs in `docs/images/`.                                                                                                                          |
 | `third-party-licenses.ts` | Build-time: generates `dist/third-party-licenses.txt`. Runs from `vite.config.ts`, not by hand.                                                                              |
 | `tutorial/`               | Records the narrated "Getting started" video. Has its own deps — see `tutorial/record.mjs`.                                                                                  |
 | `fixtures/`               | Saved `.openpoly.json` documents some scripts load.                                                                                                                          |
