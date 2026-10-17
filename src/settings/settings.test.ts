@@ -68,6 +68,14 @@ describe("loadSettings", () => {
     expect(loadSettings().mouseRight).toBe(DEFAULT_SETTINGS.mouseRight);
   });
 
+  it("keeps camera inertia on unless it's switched off", () => {
+    expect(DEFAULT_SETTINGS.cameraInertia).toBe(true);
+    installStorage(JSON.stringify({ cameraInertia: false }));
+    expect(loadSettings().cameraInertia).toBe(false);
+    installStorage(JSON.stringify({ cameraInertia: "no" }));
+    expect(loadSettings().cameraInertia).toBe(true);
+  });
+
   it("dimensions circles as their diameter unless told otherwise", () => {
     expect(DEFAULT_SETTINGS.circleDimension).toBe("diameter");
     installStorage(JSON.stringify({ circleDimension: "radius" }));

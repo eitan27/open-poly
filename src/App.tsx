@@ -6809,6 +6809,7 @@ export default function App() {
             theme={resolvedTheme}
             mouseMiddle={settings.mouseMiddle}
             mouseRight={settings.mouseRight}
+            cameraInertia={settings.cameraInertia}
             apiRef={viewApiRef}
           />
           <OverflowToolbar
