@@ -37,7 +37,7 @@ const OP_DESCRIPTIONS: Record<string, string> = {
   addPattern:
     "Repeat a 3D body as rigid copies in ONE new compound body (seed kept, like add_mirror): kind 'linear' (dir1 world axis or sketch line + count1/spacing1, optional dir2/count2/spacing2 grid) or 'circular' (axis = world axis / sketch line / cylindrical face {bodyId, faceName} + count; angle default 360 = full circle, else the total sweep, symmetric spreads ±angle/2). Counts INCLUDE the seed; no radius input. For repeated holes prefer add_sketch_pattern + one cut.",
   addSweep:
-    "Sweep a sketch region (cross-section) along a path entity (line/arc/spline, possibly in another sketch) into a solid. Get the path entityId from get_scene_summary's sketch entities; the profile is placed perpendicular to the path start.",
+    "Sweep a sketch region (cross-section) along a path entity (line/arc/spline, possibly in another sketch) into a solid. Get the path entityId from get_scene_summary's sketch entities; the profile is swept from where it was drawn, so sketch it at the path start, perpendicular to the path.",
   addLoft:
     "Loft through 2+ sketch regions (sections, in the given order) into a solid. Put the sections on different planes (e.g. a base datum + an offset plane).",
   addPlane:
