@@ -14,8 +14,30 @@ body,
   width: 100%;
 }
 
+/* The app is a fixed full-window layout that never scrolls. `overflow: hidden`
+ * alone doesn't stop iOS Safari panning the page when something pokes past the
+ * edge, so pin the page to the window too. Desktop already fills it, so this
+ * changes nothing there. */
+html,
+body {
+  position: fixed;
+  inset: 0;
+  overscroll-behavior: none;
+}
+
 body {
   background: var(--bg-app);
   color: var(--text-2);
   overflow: hidden;
+}
+
+/* iOS zooms the page in when a field with text under 16px takes focus, and
+ * most feature dialogs focus their first field on open — so opening one shoved
+ * the app off screen. Touch screens only; desktop keeps its compact fields. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }

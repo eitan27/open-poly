@@ -6,6 +6,8 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* Nothing inside may widen the page and make it pannable (see index.css). */
+  overflow: clip;
 }
 
 .topbar {
