@@ -229,6 +229,16 @@ coalescing.
 files; multi-document workspace (dialog, thumbnails, BroadcastChannel multi-tab
 warning).
 
+**Offline.** A service worker (`src/sw.ts`, registered in `src/pwa.ts`, built by
+vite-plugin-pwa's injectManifest) precaches the shell and both wasm modules, so the
+hosted app opens and models offline after one visit, and installs as an app. Pages
+are network-first (3 s timeout, never cached), so online loads always get the latest
+deploy and the banner's Refresh is a plain reload; the cached copy is only the
+offline fallback. A new worker takes over once installed, which is safe only while
+the app has no lazily loaded chunks. Persistent storage is requested (not on
+Firefox, which would prompt). Checked by `scripts/verify-pwa-offline.mjs`
+(`REBUILD=1` for the update path) against a `vite preview` build or a preview URL.
+
 **Agent.** Local stdio MCP server driving the live tab — see below.
 
 ---

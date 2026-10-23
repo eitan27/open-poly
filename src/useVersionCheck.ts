@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { checkForServiceWorkerUpdate } from "./pwa";
 
 // How often to poll the deployed version.json while the tab is open+visible.
 const POLL_MS = 2 * 60 * 1000;
@@ -9,7 +10,11 @@ const POLL_MS = 2 * 60 * 1000;
  *  its `version` to the id baked into this bundle. Checks run on an interval and
  *  whenever the tab regains focus/visibility, so a long-idle tab notices the
  *  next time it's looked at. Production only — the dev server emits no
- *  version.json, and there's nothing to refresh to. */
+ *  version.json, and there's nothing to refresh to.
+ *
+ *  The service worker (src/sw.ts) doesn't change this: a reload still fetches the
+ *  page from the network. Finding a new version also tells the worker to fetch
+ *  the new build now, so it's cached for offline use without waiting. */
 export function useUpdateAvailable(): boolean {
   const [stale, setStale] = useState(false);
 
@@ -26,7 +31,9 @@ export function useUpdateAvailable(): boolean {
         const res = await fetch(`/version.json?t=${Date.now()}`, { cache: "no-store" });
         if (!res.ok) return;
         const { version } = (await res.json()) as { version?: string };
-        if (active && version && version !== current) setStale(true);
+        if (!active || !version || version === current) return;
+        checkForServiceWorkerUpdate();
+        setStale(true);
       } catch {
         // Offline or a transient failure — ignore and try again next tick.
       }
