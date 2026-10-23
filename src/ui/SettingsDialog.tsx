@@ -92,6 +92,11 @@ const MOUSE_ACTIONS: { value: MouseDragAction; label: string }[] = [
   { value: "zoom", label: "Zoom" },
 ];
 
+const ON_OFF: { value: "on" | "off"; label: string }[] = [
+  { value: "on", label: "On" },
+  { value: "off", label: "Off" },
+];
+
 const CIRCLE_DIMENSIONS: { value: CircleDimension; label: string }[] = [
   { value: "diameter", label: "Diameter (\u00d8)" },
   { value: "radius", label: "Radius (R)" },
@@ -257,6 +262,13 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
           value={settings.mouseRight}
           options={MOUSE_ACTIONS}
           onChange={(mouseRight) => onChange({ mouseRight })}
+        />
+        <Choice
+          label="Camera inertia"
+          hint="Default: on — orbit and pan glide to a stop after you let go"
+          value={settings.cameraInertia ? "on" : "off"}
+          options={ON_OFF}
+          onChange={(v) => onChange({ cameraInertia: v === "on" })}
         />
         <p className="set-note">
           Left drag always orbits, and also does selecting and sketching, so it isn't rebindable. The scroll wheel

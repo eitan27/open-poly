@@ -835,16 +835,11 @@ function sweepBody(
   }
   const spineWire = (spineDrawing.sketchOnPlane(pathPlane) as unknown as Sketch).wire;
 
-  // Place the profile at the spine start, perpendicular to the start tangent
-  // (a frame with normal = tangent), then sweep it along the spine.
-  const start = frameToWorld(path.frame, path.points[0]);
-  const next = frameToWorld(path.frame, path.points[1]);
-  const tangent = vunit([next[0] - start[0], next[1] - start[1], next[2] - start[2]]);
-  const ref: V3 = Math.abs(tangent[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
-  const uAxis = vunit(vcross(ref, tangent));
-  // MakePipeShell sweeps a profile WIRE (then MakeSolid caps it).
-  const profileWire = (profileDrawing(profile).sketchOnPlane(new Plane(start, uAxis, tangent)) as unknown as Sketch)
-    .wire;
+  // The profile is swept from where it was drawn, on its own sketch plane (as
+  // Onshape does). Re-placing it at the spine start by its sketch-local (u,v)
+  // counted its offset from the sketch origin twice and picked an arbitrary
+  // in-plane rotation. MakePipeShell sweeps a profile WIRE (then MakeSolid caps it).
+  const profileWire = (profileDrawing(profile).sketchOnPlane(planeOf(profile.frame)) as unknown as Sketch).wire;
 
   const builder = new oc.BRepOffsetAPI_MakePipeShell(spineWire.wrapped);
   builder.Add_1(profileWire.wrapped, false, true);

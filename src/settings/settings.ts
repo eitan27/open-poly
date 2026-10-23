@@ -27,6 +27,10 @@ export interface Settings {
    *  and entity dragging as well as orbit, so rebinding it would break them. */
   mouseMiddle: MouseDragAction;
   mouseRight: MouseDragAction;
+  /** Whether an orbit or pan keeps gliding for a moment after the mouse is
+   *  released (OrbitControls damping). On by default; off stops the camera
+   *  the instant the drag ends. */
+  cameraInertia: boolean;
   /** How a CIRCLE is dimensioned: as its diameter (the drafting convention, and
    *  the default) or its radius. Only the default for a NEW dimension — an
    *  existing one keeps, and reopens as, whichever it was created with. Arcs are
@@ -46,6 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
   newBodyColor: "random",
   mouseMiddle: "pan",
   mouseRight: "pan",
+  cameraInertia: true,
   circleDimension: "diameter",
 };
 
@@ -68,6 +73,7 @@ function coerce(raw: unknown): Settings {
   for (const k of ["mouseMiddle", "mouseRight"] as const) {
     if (MOUSE_ACTIONS.includes(o[k] as MouseDragAction)) out[k] = o[k] as MouseDragAction;
   }
+  if (typeof o.cameraInertia === "boolean") out.cameraInertia = o.cameraInertia;
   if (o.circleDimension === "diameter" || o.circleDimension === "radius") out.circleDimension = o.circleDimension;
   return out;
 }

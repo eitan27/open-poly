@@ -145,7 +145,8 @@ entityId}` (get the id from `get_scene_summary`); a plane `{plane: …}` (the ax
   `spline` (open through-point curve) for a freeform path (the path can be in a
   separate sketch). Then `add_sweep` with `profile` + `path: {sketchId, entityId}`
   (get the path's `entityId` from `get_scene_summary`'s sketch entities). The
-  profile is auto-oriented perpendicular to the path at its start.
+  profile is swept from where it was drawn: put it AT the path's start point, on a
+  plane perpendicular to the path there (an offset profile sweeps offset).
 - **Lofted / transitioning solid (e.g. round→square, a funnel):** sketch each
   **section region** on its own plane (use `add_plane` offsets so they're at
   different heights), then `add_loft` with `profiles: [{sketchId, regionId}, …]`

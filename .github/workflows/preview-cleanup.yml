@@ -1,0 +1,47 @@
+name: Preview cleanup
+
+# Deleting a branch on GitHub deletes its Pages preview deployments (made by the
+# deploy job in ci.yml), so <branch>.open-poly.pages.dev stops resolving.
+# Production is never touched: only deployments in the preview environment whose
+# branch is the deleted one are listed, and main can't be deleted anyway.
+#
+# The `delete` event always runs this file as it is on the default branch.
+
+on:
+  delete:
+
+jobs:
+  cleanup:
+    if: github.event.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the branch's preview deployments
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BRANCH: ${{ github.event.ref }}
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/open-poly/deployments"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+
+          # Collect every id first: deleting while paging would shift the pages.
+          ids=""
+          page=1
+          while :; do
+            body=$(curl -fsS -H "$auth" "$api?env=preview&page=$page")
+            ids="$ids $(jq -r --arg b "$BRANCH" \
+              '.result[] | select(.environment == "preview" and .deployment_trigger.metadata.branch == $b) | .id' <<<"$body")"
+            total=$(jq '.result_info.total_pages // 1' <<<"$body")
+            [ "$(jq '.result | length' <<<"$body")" -eq 0 ] || [ "$page" -ge "$total" ] && break
+            page=$((page + 1))
+          done
+
+          n=0
+          for id in $ids; do
+            # force=true: the newest deployment holds the branch alias and is
+            # otherwise refused.
+            curl -fsS -X DELETE -H "$auth" "$api/$id?force=true" >/dev/null
+            n=$((n + 1))
+          done
+          echo "Deleted $n preview deployment(s) for $BRANCH."

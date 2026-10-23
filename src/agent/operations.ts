@@ -258,8 +258,8 @@ export const operationSchema = z.discriminatedUnion("op", [
     profile: z.object({ sketchId: z.string(), regionId: z.string().optional() }),
     /** The path/spine: a single open entity (line, arc, or **spline**) in a
      *  sketch — get its entityId from get_scene_summary's sketch entities. May be
-     *  in a different sketch from the profile; the profile is placed perpendicular
-     *  to the path start. */
+     *  in a different sketch from the profile; the profile is swept from where it
+     *  was drawn, so draw it at the path start. */
     path: z.object({ sketchId: z.string(), entityId: z.string() }),
     name: z.string().optional(),
   }),

@@ -422,6 +422,7 @@ export function Viewport({
   theme,
   mouseMiddle,
   mouseRight,
+  cameraInertia,
   apiRef,
 }: {
   meshes: FeatureMesh[];
@@ -543,6 +544,8 @@ export function Viewport({
   /** What a middle / right drag does — see applyMouseBindings. */
   mouseMiddle: MouseDragAction;
   mouseRight: MouseDragAction;
+  /** Whether orbit/pan glide on after release (OrbitControls damping). */
+  cameraInertia: boolean;
   apiRef: { current: ViewportApi | null };
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -710,7 +713,7 @@ export function Viewport({
     };
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
+    controls.enableDamping = cameraInertia;
     applyMouseBindings(controls, mouseMiddle, mouseRight);
     controls.target.set(0, 0, 0);
     controls.update();
@@ -3410,7 +3413,8 @@ export function Viewport({
     state.scaleGripMaterial.color.setHex(t.scaleBoxColor);
     state.viewCube.setTheme(theme);
     applyMouseBindings(state.controls, mouseMiddle, mouseRight);
-  }, [theme, mouseMiddle, mouseRight]);
+    state.controls.enableDamping = cameraInertia;
+  }, [theme, mouseMiddle, mouseRight, cameraInertia]);
 
   // Rebuild the rendered bodies whenever the meshes or selection change.
   useEffect(() => {
