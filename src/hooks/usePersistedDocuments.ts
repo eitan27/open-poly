@@ -91,6 +91,14 @@ export interface UsePersistedDocumentsResult {
   renameDocument: (id: string, name: string) => Promise<void>;
   exportDocument: (id: string) => Promise<void>;
   importDocumentFile: (file: File) => Promise<string | null>;
+  /** Persist the working document now (Drive sync calls this before a pass). */
+  flushSave: () => Promise<void>;
+  /** True if the working document hasn't changed since it was last flushed or
+   *  adopted — the only time Drive sync may replace it under the user. */
+  canReplaceActive: () => boolean;
+  /** Show a record Drive sync just wrote for the working document. Clears undo,
+   *  like any other document boundary. */
+  adoptExternalRecord: (record: StoredDoc) => void;
 }
 
 export function usePersistedDocuments({
@@ -148,6 +156,11 @@ export function usePersistedDocuments({
   // Documents dialog's existing Export/Delete actions, rather than the app
   // silently falling back to a blank doc.
   const [docRecoveryBanner, setDocRecoveryBanner] = useState<DocRecoveryBanner>(null);
+  // What the last flush (or adoption) wrote, against the live values, for
+  // canReplaceActive. Refs, because Drive sync asks between renders.
+  const lastFlushedRef = useRef<{ doc: Document; name: string } | null>(null);
+  const liveRef = useRef({ doc, name: docName });
+  liveRef.current = { doc, name: docName };
 
   // Restore the working document from IndexedDB on first load: the tab's
   // active-document pointer (localStorage) first — NOT "most recent", which
@@ -257,6 +270,7 @@ export function usePersistedDocuments({
    *  and a double-write is harmless. */
   const flushSave = useCallback(() => {
     if (!persistLoaded) return Promise.resolve();
+    lastFlushedRef.current = { doc, name: docName };
     return putDoc({
       id: docIdRef.current!,
       name: docName,
@@ -330,6 +344,7 @@ export function usePersistedDocuments({
       const migrated = migrateDocument(record.doc);
       docIdRef.current = record.id;
       docCreatedAtRef.current = record.createdAt ?? record.updatedAt;
+      lastFlushedRef.current = { doc: migrated, name: record.name || "Untitled" };
       setDocName(record.name || "Untitled");
       setActiveId(record.id);
       setActiveDocId(record.id);
@@ -516,6 +531,22 @@ export function usePersistedDocuments({
     };
   }, [activeId]);
 
+  const canReplaceActive = useCallback(() => {
+    const flushed = lastFlushedRef.current;
+    return !!flushed && flushed.doc === liveRef.current.doc && flushed.name === liveRef.current.name;
+  }, []);
+
+  const adoptExternalRecord = useCallback(
+    (record: StoredDoc) => {
+      try {
+        adoptRecord(record);
+      } catch (err) {
+        console.warn("synced document could not be opened:", err);
+      }
+    },
+    [adoptRecord],
+  );
+
   return {
     docIdRef,
     docName,
@@ -531,5 +562,8 @@ export function usePersistedDocuments({
     renameDocument,
     exportDocument,
     importDocumentFile,
+    flushSave,
+    canReplaceActive,
+    adoptExternalRecord,
   };
 }

@@ -100,6 +100,17 @@ it at full volume. Clone Mirror's dialog and its two-step arming; the agent op i
 orphaned fragment ref falls through to `requireBody`'s generic error rather than
 `topoMatch`'s scored fallback, and there is no ghost preview.
 
+**Google Drive sync — built, not yet live.** Broker in `server/drive/` (setup in
+`functions/README.md`), engine + UI in `src/sync/` and `src/ui/DriveDialog.tsx`,
+tested end to end against a mock Google (`npm run dev:api`,
+`scripts/verify-drive-sync.mjs`). Left: the Google Cloud project and consent
+screen (published to Production), the KV namespace and secrets, and one pass
+against real Google — the mock can't prove Google's resumable-upload CORS
+headers or the COOP popup behaviour. Not built: Drive thumbnails
+(`contentHints.thumbnail`), incremental listing via the `changes` API (today
+each pass lists every doc, 100 quota units), and syncing view state (section
+view stays per-device).
+
 **Codebase structure** — the two boundaries that were scoped and deliberately
 not crossed. Both were looked at closely enough to know what stopped them, so
 neither is a blind guess. Everything else structural, `App.tsx` and `App.css`
@@ -334,6 +345,12 @@ Things that cost real time to learn and are not obvious from the code.
   "most recent", so a refresh reopens the tab's own doc.
 - **Undo is cleared on document switch**, by design: a document boundary is a
   history boundary.
+- **Drive sync keeps IndexedDB as the working copy** and decides "changed" by a
+  content hash of `{name, doc}`, never timestamps, so a regen re-saving
+  identical content can't masquerade as an edit. Any case where both sides hold
+  different content is a user decision, never last-writer-wins. Links live in
+  their own database (`open-poly-sync`), because bumping `open-poly`'s version
+  would hang a new tab while an old-build tab holds a connection.
 - Validate a record **before** mutating any state — an `adoptRecord` that threw
   after moving `docIdRef` left the app pointing at a broken doc and the next
   autosave overwrote it.

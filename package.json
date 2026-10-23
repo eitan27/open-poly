@@ -19,6 +19,8 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:api": "wrangler pages dev public --port 8788 --kv DRIVE_KV --binding DRIVE_MODE=mock --binding DRIVE_TRUST_FORWARDED=1 --compatibility-date 2025-09-01",
+    "dev:api:google": "wrangler pages dev public --port 8788 --kv DRIVE_KV --binding DRIVE_MODE=google --binding DRIVE_TRUST_FORWARDED=1 --compatibility-date 2025-09-01",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b && tsc --noEmit -p mcp-server/tsconfig.json",
@@ -67,6 +69,7 @@
     "typescript-eslint": "^8.66.0",
     "vite": "^8.0.16",
     "vitest": "^3.2.6",
+    "wrangler": "^4.151.1",
     "ws": "^8.21.0"
   }
 }

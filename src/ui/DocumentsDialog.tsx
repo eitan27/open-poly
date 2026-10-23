@@ -6,7 +6,39 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listMeta, type DocMeta } from "../storage/db";
 import { timeAgo } from "../storage/docNames";
 import { CorruptDocError } from "../storage/docErrors";
+import type { DocSyncState } from "../sync/engine";
+import type { RemoteDoc } from "../sync/driveApi";
 import { Modal } from "./Modal";
+
+/** Google Drive's view of the list, present only while Drive is connected. */
+export interface DocsDriveProps {
+  states: Record<string, DocSyncState>;
+  /** Documents in Drive that aren't on this device. */
+  cloudOnly: RemoteDoc[];
+  /** Open issues + pending first-connect choice, for the "needs attention" line. */
+  attention: number;
+  /** Bumped when sync changed local documents — the list re-reads. */
+  revision: number;
+  /** Download a Drive-only document and open it. */
+  onOpenCloud: (fileId: string) => Promise<void>;
+  onTrashCloud: (fileId: string) => Promise<void>;
+  /** Delete here AND move the Drive file to Drive's trash. */
+  onDeleteEverywhere: (id: string) => Promise<void>;
+  onUpload: (id: string) => Promise<void>;
+  /** Open the Drive dialog, where issues are resolved. */
+  onReview: () => void;
+}
+
+const SYNC_LABEL: Record<DocSyncState, string> = {
+  synced: "☁ In Drive",
+  pending: "☁ Syncing…",
+  unsynced: "Not in Drive",
+  localOnly: "This device only",
+  conflict: "⚠ Changed in two places",
+  nameCollision: "⚠ Same name in Drive",
+  remoteGone: "⚠ Deleted from Drive",
+};
+const IN_DRIVE: ReadonlySet<DocSyncState> = new Set(["synced", "pending", "conflict"]);
 
 interface Props {
   /** The document currently open in this tab (highlighted; can't be Opened). */
@@ -21,6 +53,7 @@ interface Props {
   /** Import a `.openpoly.json` file as a new document (opens it). Resolves an
    *  error message to display, or null on success. */
   onImport: (file: File) => Promise<string | null>;
+  drive?: DocsDriveProps | null;
 }
 
 export function DocumentsDialog({
@@ -32,6 +65,7 @@ export function DocumentsDialog({
   onRename,
   onExport,
   onImport,
+  drive,
 }: Props) {
   const [metas, setMetas] = useState<DocMeta[] | null>(null); // null = loading
   const [renaming, setRenaming] = useState<{ id: string; draft: string } | null>(null);
@@ -55,7 +89,8 @@ export function DocumentsDialog({
       .then(setMetas)
       .catch(() => setMetas([]));
   }, []);
-  useEffect(reload, [reload]);
+  const driveRevision = drive?.revision ?? 0;
+  useEffect(reload, [reload, driveRevision]);
 
   // Run an action with the list disarmed + refreshed afterwards. Actions that
   // switch the active document also close the dialog (via `closeAfter`). A
@@ -158,6 +193,15 @@ export function DocumentsDialog({
         </p>
       )}
 
+      {drive && drive.attention > 0 && (
+        <p className="docs-attention">
+          {drive.attention} document{drive.attention === 1 ? " needs" : "s need"} a decision before it can sync.{" "}
+          <button className="banner-link" onClick={drive.onReview}>
+            Review
+          </button>
+        </p>
+      )}
+
       {metas === null ? (
         <p className="hint">Loading…</p>
       ) : metas.length === 0 ? (
@@ -199,6 +243,14 @@ export function DocumentsDialog({
                   <span className="docs-sub">
                     edited {timeAgo(m.updatedAt)} · {m.featureCount} feature{m.featureCount === 1 ? "" : "s"} ·{" "}
                     {m.partCount} part{m.partCount === 1 ? "" : "s"}
+                    {drive?.states[m.id] && (
+                      <>
+                        {" · "}
+                        <span className={`docs-sync docs-sync--${drive.states[m.id]}`}>
+                          {SYNC_LABEL[drive.states[m.id]]}
+                        </span>
+                      </>
+                    )}
                   </span>
                 </div>
                 <div className="docs-row-actions">
@@ -218,7 +270,36 @@ export function DocumentsDialog({
                   >
                     Export as JSON
                   </button>
-                  {confirmDelete === m.id ? (
+                  {drive && (drive.states[m.id] === "unsynced" || drive.states[m.id] === "localOnly") && (
+                    <button
+                      className="text-btn"
+                      disabled={busy}
+                      title="Put this document in your Google Drive"
+                      onClick={() => void run(() => drive.onUpload(m.id))}
+                    >
+                      Put in Drive
+                    </button>
+                  )}
+                  {confirmDelete === m.id && drive && IN_DRIVE.has(drive.states[m.id]) ? (
+                    <>
+                      <button
+                        className="text-btn"
+                        disabled={busy}
+                        title="Delete the copy on this device. It stays in Google Drive and can be opened again."
+                        onClick={() => void run(() => onDelete(m.id))}
+                      >
+                        Remove from this device
+                      </button>
+                      <button
+                        className="text-btn docs-delete-confirm"
+                        disabled={busy}
+                        title="Delete it here and move it to Google Drive's trash"
+                        onClick={() => void run(() => drive.onDeleteEverywhere(m.id))}
+                      >
+                        Delete everywhere
+                      </button>
+                    </>
+                  ) : confirmDelete === m.id ? (
                     <button
                       className="text-btn docs-delete-confirm"
                       disabled={busy}
@@ -236,6 +317,45 @@ export function DocumentsDialog({
             );
           })}
         </ul>
+      )}
+
+      {drive && drive.cloudOnly.length > 0 && (
+        <>
+          <h3 className="docs-section-title">In Google Drive, not on this device</h3>
+          <ul className="docs-list">
+            {drive.cloudOnly.map((r) => (
+              <li key={r.fileId} className="docs-row cloud-only">
+                <div className="docs-thumb placeholder">☁</div>
+                <div className="docs-row-main">
+                  <span className="docs-name docs-name--static">{r.name}</span>
+                  <span className="docs-sub">edited {timeAgo(Date.parse(r.modifiedTime))} · in Google Drive</span>
+                </div>
+                <div className="docs-row-actions">
+                  <button
+                    className="text-btn"
+                    disabled={busy}
+                    onClick={() => void run(() => drive.onOpenCloud(r.fileId), true)}
+                  >
+                    Open
+                  </button>
+                  {confirmDelete === r.fileId ? (
+                    <button
+                      className="text-btn docs-delete-confirm"
+                      disabled={busy}
+                      onClick={() => void run(() => drive.onTrashCloud(r.fileId))}
+                    >
+                      Move to Drive's trash?
+                    </button>
+                  ) : (
+                    <button className="text-btn" disabled={busy} onClick={() => setConfirmDelete(r.fileId)}>
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </Modal>
   );

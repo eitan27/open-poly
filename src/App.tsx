@@ -149,6 +149,8 @@ import { extrudeProfilesFromPicks, isExtrudePick, toggleExtrudePick } from "./do
 import { dressUpPickBody, toggleDressUpPick } from "./document/dressUpTarget";
 import { FEATURE_DEFS, FEATURE_KINDS, featureTypeLabel } from "./document/featureDefs";
 import { DocumentsDialog } from "./ui/DocumentsDialog";
+import { DriveDialog, DriveStatusButton } from "./ui/DriveDialog";
+import { useDriveSync } from "./sync/useDriveSync";
 import { ReportDialog } from "./ui/ReportDialog";
 import { SettingsDialog } from "./ui/SettingsDialog";
 import { useSettings } from "./settings/useSettings";
@@ -1791,6 +1793,9 @@ export default function App() {
     renameDocument,
     exportDocument,
     importDocumentFile,
+    flushSave,
+    canReplaceActive,
+    adoptExternalRecord,
   } = usePersistedDocuments({
     doc,
     resetDoc,
@@ -1808,6 +1813,26 @@ export default function App() {
     downloadBlob,
     safeFilename,
   });
+  // Google Drive sync — hidden entirely where the /api/drive Functions aren't
+  // deployed (a static self-host, or `npm run dev` without `npm run dev:api`).
+  const drive = useDriveSync({
+    doc,
+    docName,
+    getActiveId: () => docIdRef.current,
+    flushSave,
+    canReplaceActive,
+    adoptExternalRecord,
+    deleteDocument,
+  });
+  const [driveDialogOpen, setDriveDialogOpen] = useState(false);
+  // The first-connect choice and auth outcomes need the user: bring the dialog
+  // up for them. Later issues (conflicts…) only badge the button — they never
+  // interrupt modelling.
+  const driveOnboarding = !!drive.snapshot?.onboarding;
+  const driveNoticeKind = drive.notice?.kind;
+  useEffect(() => {
+    if (driveOnboarding || driveNoticeKind === "error") setDriveDialogOpen(true);
+  }, [driveOnboarding, driveNoticeKind]);
   // When set, only this body is rendered (isolate); others are hidden until exit.
   const [isolatedBodyId, setIsolatedBodyId] = useState<string | null>(null);
   // Which geometry kinds clicking can pick (selection filters).
@@ -6418,6 +6443,7 @@ export default function App() {
             topbar's own 16px gap is meant to separate sections, and applied
             between the badge, the chip and the buttons it left them adrift. */}
         <div className="topbar-right">
+          <DriveStatusButton sync={drive} onClick={() => setDriveDialogOpen(true)} />
           {agentStatus === "connected" && (
             <span className="agent-badge" title="An LLM agent is connected to this tab">
               ● Agent connected
@@ -6571,7 +6597,28 @@ export default function App() {
           onRename={renameDocument}
           onExport={exportDocument}
           onImport={importDocumentFile}
+          drive={
+            drive.engine && drive.snapshot
+              ? {
+                  states: drive.snapshot.docStates,
+                  cloudOnly: drive.snapshot.cloudOnly,
+                  attention: drive.snapshot.issues.length + (drive.snapshot.onboarding ? 1 : 0),
+                  revision: drive.snapshot.localRevision,
+                  onOpenCloud: async (fileId) => openDocument(await drive.engine!.download(fileId)),
+                  onTrashCloud: (fileId) => drive.engine!.trashRemote(fileId),
+                  onDeleteEverywhere: (id) => drive.engine!.deleteEverywhere(id),
+                  onUpload: (id) => drive.engine!.upload(id),
+                  onReview: () => {
+                    setDocsDialogOpen(false);
+                    setDriveDialogOpen(true);
+                  },
+                }
+              : null
+          }
         />
+      )}
+      {driveDialogOpen && drive.config?.enabled && (
+        <DriveDialog sync={drive} onClose={() => setDriveDialogOpen(false)} />
       )}
       {settingsOpen && (
         <SettingsDialog settings={settings} onChange={updateSettings} onClose={() => setSettingsOpen(false)} />

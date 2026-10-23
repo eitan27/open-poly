@@ -1,0 +1,260 @@
+/* Google Drive sync: the topbar status button and the Drive dialog. The dialog
+ * reuses the Documents dialog's panel and row styles (.docs-dialog, .docs-row…)
+ * so the two read as one family. */
+
+/* --- topbar button --- */
+/* Like .shortcuts-btn, this opts out of .tool-btn's fixed square: it carries a
+   label when disconnected and a count when something needs attention. */
+.tool-btn.drive-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: auto;
+  min-width: 28px;
+  padding: 0 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.drive-btn-label {
+  font-size: 12px;
+}
+
+.drive-btn-mark {
+  font-size: 11px;
+  color: var(--ok);
+}
+
+.drive-btn-mark--problem {
+  color: var(--danger-text);
+  font-weight: 700;
+}
+
+.drive-btn .status-spinner {
+  width: 9px;
+  height: 9px;
+}
+
+.drive-btn--busy {
+  color: var(--text-5);
+}
+
+.drive-btn-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--warn-surface);
+  color: var(--warn-text);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* --- dialog --- */
+.drive-dialog {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.drive-dialog p {
+  margin: 0 0 10px;
+  line-height: 1.45;
+}
+
+.drive-points {
+  margin: 0 0 14px;
+  padding-left: 18px;
+  color: var(--text-5);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.drive-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.text-btn.drive-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.text-btn.drive-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.drive-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-5);
+  font-size: 12px;
+}
+
+.drive-info {
+  font-size: 12px;
+  color: var(--accent-palest);
+  background: var(--accent-surface-2);
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.drive-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.drive-status--offline,
+.drive-status--error,
+.drive-status--reauth {
+  color: var(--danger-text-soft);
+}
+
+.drive-issues {
+  margin-bottom: 12px;
+}
+
+.drive-issue {
+  align-items: flex-start;
+  border-color: var(--warn-border-2);
+  background: var(--warn-surface-2);
+}
+
+.drive-issue .docs-row-main {
+  gap: 4px;
+  white-space: normal;
+}
+
+.drive-issue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.drive-issue-actions .text-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.drive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-4);
+  margin: 4px 0 14px;
+}
+
+.drive-footer {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+}
+
+.drive-hint {
+  font-size: 11px;
+  color: var(--text-7);
+  margin-top: 10px !important;
+}
+
+.drive-ob-row {
+  align-items: flex-start;
+}
+
+.drive-doc-name {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.drive-collision {
+  color: var(--warn-text-2);
+}
+
+.drive-rename-input {
+  margin-top: 4px;
+  max-width: 260px;
+}
+
+.drive-select {
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-3);
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  padding: 3px 6px;
+  flex: 0 0 auto;
+  max-width: 220px;
+}
+
+/* --- Documents dialog additions --- */
+.docs-sync {
+  font-size: 11px;
+
+  white-space: nowrap;
+}
+
+.docs-sync--synced {
+  color: var(--ok);
+}
+
+.docs-sync--pending,
+.docs-sync--unsynced,
+.docs-sync--localOnly {
+  color: var(--text-8);
+}
+
+.docs-sync--conflict,
+.docs-sync--nameCollision,
+.docs-sync--remoteGone {
+  color: var(--warn-text-2);
+}
+
+.docs-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-6);
+  margin: 14px 0 6px;
+}
+
+.docs-row.cloud-only .docs-thumb.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-8);
+}
+
+.docs-attention {
+  font-size: 12px;
+  color: var(--warn-text);
+  background: var(--warn-surface-2);
+  border: 1px solid var(--warn-border-2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 0 0 10px;
+}
+
+@media (max-width: 600px) {
+  .drive-ob-row,
+  .drive-account {
+    flex-wrap: wrap;
+  }
+  .drive-select {
+    max-width: 100%;
+  }
+}
+
+.docs-name--static {
+  cursor: default;
+}
