@@ -211,6 +211,7 @@ import { SolidsList } from "./ui/SolidsList";
 import { VariablesPanel } from "./ui/VariablesPanel";
 import { featureIdOf, sameSelection, type DatumId, type Selection, type SelectionFilter } from "./selection/types";
 import { REPO_URL } from "./lib/repo";
+import { previewName } from "./lib/site";
 import { isUntitled } from "./storage/docNames";
 import { Viewport } from "./viewport/Viewport";
 import type {
@@ -225,6 +226,9 @@ import type {
   ViewportApi,
 } from "./viewport/types";
 import "./App.css";
+
+// Non-null on a Pages preview: the branch it was deployed from, shown in the topbar.
+const PREVIEW = typeof location !== "undefined" ? previewName(location.hostname) : null;
 
 /** Log each regen's end-to-end round-trip time to the console. Off by default;
  *  enable with `?perf` in the URL to objectively compare responsiveness. */
@@ -6347,6 +6351,11 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <span className="logo">Open Poly</span>
+        {PREVIEW && (
+          <span className="preview-badge" title={`Preview deployment of the "${PREVIEW}" branch — not openpoly.dev`}>
+            preview · {PREVIEW}
+          </span>
+        )}
         {/* Always a live input, never a button that becomes one: the swap hid the
             affordance behind hover and resized the control under the pointer. */}
         <input

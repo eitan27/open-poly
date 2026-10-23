@@ -6,10 +6,20 @@ name: CI
 # references, type errors, and formatting drift can't slip in. The build step
 # is separate from typecheck because it catches what only the production
 # bundler sees, and it costs about a second.
+#
+# A push that passes all of it is then deployed (the `deploy` job below): main to
+# production at openpoly.dev, any other branch to a preview at
+# <branch>.open-poly.pages.dev. Pull requests are checked but never deployed.
+#
+# A pull request from a branch of this repo is skipped: its push already ran the
+# same checks on the same commit. Only a fork's pull request — which has no push
+# run here — is checked on the pull_request event. (What's given up: the PR run
+# tests the branch merged into the current main, the push run tests the branch
+# alone; rebase or re-push after main moves if that matters.) Deleting a branch
+# deletes its preview — see preview-cleanup.yml.
 
 on:
   push:
-    branches: [main]
   pull_request:
 
 jobs:
@@ -26,6 +36,7 @@ jobs:
   # secret is absent and the step says so and passes, which is correct — a
   # contributor's own address is not what this guards against.
   identity:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +57,7 @@ jobs:
           sh scripts/check-commit-identity.sh "$RANGE"
 
   check:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,3 +71,42 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # The exact build that passed is the one deployed — a rebuild would carry a
+      # different build id (see versionStamp in vite.config.ts).
+      - if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 1
+
+  # Direct upload to the open-poly Pages project (it has no Git connection), the
+  # same command as a manual deploy. --branch decides the environment: main is the
+  # project's production branch, and any other name becomes a preview whose alias
+  # is the branch name with "/" turned into "-" (feat/x → feat-x.open-poly.pages.dev).
+  #
+  # Only `push` events deploy. A fork can't push here, and a fork's pull request
+  # gets no secrets, so the Cloudflare token is never reachable from outside code.
+  # One deploy per branch at a time, never cancelled midway, so an older run can't
+  # finish after a newer one and roll production back.
+  deploy:
+    if: github.event_name == 'push'
+    needs: [identity, check]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      # The checkout is for functions/, which wrangler bundles from the working
+      # directory alongside the uploaded dist/.
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.151.1"
+          command: pages deploy dist --project-name open-poly --branch ${{ github.ref_name }} --commit-hash ${{ github.sha }}

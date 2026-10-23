@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { SITE_TITLE } from "./site";
+import { SITE_TITLE, previewName } from "./site";
 
 // The tab title is set twice: statically in index.html, which is all a crawler
 // that does not execute JS ever sees, and at runtime once a document loads.
@@ -13,5 +13,18 @@ describe("SITE_TITLE", () => {
 
   it("stays inside what a search result will show", () => {
     expect(SITE_TITLE.length).toBeLessThanOrEqual(60);
+  });
+});
+
+describe("previewName", () => {
+  it("names the branch of a Pages preview", () => {
+    expect(previewName("feat-pwa-offline.open-poly.pages.dev")).toBe("feat-pwa-offline");
+    expect(previewName("staging.open-poly.pages.dev")).toBe("staging");
+  });
+
+  it("is null on production and local builds", () => {
+    expect(previewName("openpoly.dev")).toBeNull();
+    expect(previewName("open-poly.pages.dev")).toBeNull();
+    expect(previewName("localhost")).toBeNull();
   });
 });

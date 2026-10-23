@@ -24,6 +24,22 @@
   letter-spacing: 0.02em;
 }
 
+/* Only on a Pages preview (see previewName in src/lib/site.ts), so a test
+   deployment is never mistaken for openpoly.dev. Long branch names truncate. */
+.preview-badge {
+  margin-left: -8px;
+  padding: 2px 8px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--warn-text);
+  background: var(--warn-surface);
+  border: 1px solid var(--warn-border);
+  border-radius: 999px;
+}
+
 /* Document title in the topbar — a first-class title (sized close to the logo)
    and ALWAYS a live input. It used to be a button that swapped to an input on
    click, which put the whole affordance behind :hover and resized the control
