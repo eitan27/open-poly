@@ -1,7 +1,7 @@
 // Google Drive sync UI: the topbar status button, and the dialog behind it —
-// connect, the first-connect choice of what to upload, open issues (conflicts,
-// same-name documents, documents deleted in Drive) with their resolutions, and
-// disconnect. All decisions are the engine's (src/sync/engine.ts); this only
+// connect, the first-connect choice of what to upload (shown only when a name
+// clashes with Drive), open issues (conflicts, same-name documents, documents
+// deleted in Drive) with their resolutions, and disconnect. All decisions are the engine's (src/sync/engine.ts); this only
 // shows them and passes the user's choices back.
 import { useEffect, useState } from "react";
 import { Modal } from "./Modal";

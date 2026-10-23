@@ -9,7 +9,8 @@
 //   unlinked, Drive file with the same doc id → relink if equal, else CONFLICT
 //   unlinked, a Drive-only doc with the same NAME → NAME COLLISION
 //                                  (user picks: rename / replace Drive's / use Drive's / keep local)
-//   unlinked, otherwise          → upload (after first-connect onboarding)
+//   unlinked, otherwise          → upload (at first connect too, unless a name
+//                                  collision makes that connect ask first)
 //   in Drive, not on this device → listed "in Drive"; Open downloads it
 //
 // Nothing destructive happens without a choice: every case where both sides
@@ -272,21 +273,27 @@ export class SyncEngine {
     const cloudOnly = remotes.filter((r) => !claimed.has(r.fileId));
     const collisionFor = (name: string) => cloudOnly.find((r) => r.name === name);
 
+    // First connect asks only when there is something to decide: a document here
+    // shares its name with a different one already in Drive. Then every document
+    // is listed, so the choice is made with the whole picture. Otherwise this
+    // device's documents simply upload, like any document created later.
     let onboarding: OnboardingDoc[] | null = null;
-    if (!this.opts.isOnboarded()) {
-      if (unlinked.length === 0) this.opts.setOnboarded();
-      else {
-        onboarding = unlinked.map((m) => {
-          const c = collisionFor(m.name);
-          return {
-            id: m.id,
-            name: m.name,
-            updatedAt: m.updatedAt,
-            ...(c ? { collision: { fileId: c.fileId, remoteModifiedTime: c.modifiedTime } } : {}),
-          };
-        });
-        for (const m of unlinked) docStates[m.id] = "unsynced";
-      }
+    let onboarded = this.opts.isOnboarded();
+    if (!onboarded && !unlinked.some((m) => collisionFor(m.name))) {
+      this.opts.setOnboarded();
+      onboarded = true;
+    }
+    if (!onboarded) {
+      onboarding = unlinked.map((m) => {
+        const c = collisionFor(m.name);
+        return {
+          id: m.id,
+          name: m.name,
+          updatedAt: m.updatedAt,
+          ...(c ? { collision: { fileId: c.fileId, remoteModifiedTime: c.modifiedTime } } : {}),
+        };
+      });
+      for (const m of unlinked) docStates[m.id] = "unsynced";
     } else {
       const auto = this.opts.autoUpload?.() ?? true;
       for (const m of unlinked) {

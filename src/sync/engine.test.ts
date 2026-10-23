@@ -108,19 +108,17 @@ const driveVar = (name: string) => {
 const localVar = async (id: string) => (await loadDoc(id))?.doc.variables[0]?.expression ?? null;
 
 describe("first connect (onboarding)", () => {
-  it("offers existing local documents, and uploads the chosen ones", async () => {
+  it("with no name clash, uploads every local document without asking", async () => {
     const a = device();
     await on(a, async () => {
       await putDoc(rec("d1", "Bracket", withVar("10")));
       await putDoc(rec("d2", "Scratch"));
       await a.engine.sync();
-      expect(a.engine.snapshot.onboarding?.map((d) => d.name).sort()).toEqual(["Bracket", "Scratch"]);
-      expect(driveFiles()).toHaveLength(0); // nothing uploaded before the user chooses
-      await a.engine.completeOnboarding({ d1: { kind: "upload" }, d2: { kind: "localOnly" } });
+      expect(a.engine.snapshot.onboarding).toBeNull();
       expect(a.onboarded).toBe(true);
       expect(driveVar("Bracket")).toBe("10");
-      expect(driveVar("Scratch")).toBeUndefined();
-      expect(a.engine.snapshot.docStates).toEqual({ d1: "synced", d2: "localOnly" });
+      expect(driveVar("Scratch")).toBe(null);
+      expect(a.engine.snapshot.docStates).toEqual({ d1: "synced", d2: "synced" });
     });
   });
 
@@ -130,6 +128,32 @@ describe("first connect (onboarding)", () => {
       await a.engine.sync();
       expect(a.engine.snapshot.onboarding).toBeNull();
       expect(a.onboarded).toBe(true);
+    });
+  });
+
+  it("with a name clash, lists every local document and honours upload and keep-local", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("a1", "Bracket", withVar("1")));
+      await a.engine.sync();
+    });
+    const b = device();
+    await on(b, async () => {
+      await putDoc(rec("b1", "Bracket", withVar("2")));
+      await putDoc(rec("b2", "Plate"));
+      await putDoc(rec("b3", "Scratch"));
+      await b.engine.sync();
+      expect(b.engine.snapshot.onboarding?.map((d) => d.name).sort()).toEqual(["Bracket", "Plate", "Scratch"]);
+      expect(driveFiles().map((f) => f.name)).toEqual(["Bracket.openpoly.json"]); // nothing before the choice
+      await b.engine.completeOnboarding({
+        b1: { kind: "rename", name: "Bracket (laptop)" },
+        b2: { kind: "upload" },
+        b3: { kind: "localOnly" },
+      });
+      expect(b.onboarded).toBe(true);
+      expect(driveVar("Plate")).toBe(null);
+      expect(driveVar("Scratch")).toBeUndefined();
+      expect(b.engine.snapshot.docStates).toEqual({ b1: "synced", b2: "synced", b3: "localOnly" });
     });
   });
 
@@ -434,8 +458,10 @@ describe("accounts, failures, big files", () => {
     current = null;
     await on(other, async () => {
       await other.engine.sync();
-      // z's Drive is empty and d1 isn't linked for z, so it's offered again.
-      expect(other.engine.snapshot.onboarding?.map((d) => d.id)).toEqual(["d1"]);
+      // z's Drive is empty and a's link to d1 means nothing for z, so d1 uploads
+      // again as z's own file — a reused link would have found no such file.
+      expect(other.engine.snapshot.docStates).toEqual({ d1: "synced" });
+      expect(driveFiles().filter((f) => f.name === "Bracket.openpoly.json")).toHaveLength(2);
     });
   });
 

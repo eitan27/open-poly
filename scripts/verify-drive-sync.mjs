@@ -1,10 +1,10 @@
 // Google Drive sync, end to end, against the MOCK Google (no Google project or
 // account needed). Two browser contexts are two devices of one user:
-//   connect via the popup → first-connect upload → same-name collision on the
-//   second device (rename) → open a Drive-only document → an edit on one device
-//   reloads the open document on the other → offline edits on both sides become
-//   a conflict, resolved "keep both" → access revoked in "Google" surfaces as a
-//   reconnect → disconnect.
+//   connect via the popup → first-connect upload with nothing to ask → same-name
+//   collision on the second device (asked: rename) → open a Drive-only document
+//   → an edit on one device reloads the open document on the other → offline
+//   edits on both sides become a conflict, resolved "keep both" → access revoked
+//   in "Google" surfaces as a reconnect → disconnect.
 //
 // Needs BOTH dev servers:
 //   npm run dev:api        # Pages Functions + mock Google/Drive on :8788
@@ -89,11 +89,9 @@ const laptopTypes = await featureTypes(laptop.page);
 
 await openDriveDialog(laptop.page);
 await connect(laptop);
-await laptop.page.locator(".drive-onboarding").waitFor({ timeout: 15000 });
-const obRows = await laptop.page.locator(".drive-ob-row .drive-doc-name").allTextContents();
-check("first connect lists the local document for upload", obRows.includes("Bracket"), obRows.join(", "));
-await laptop.page.getByRole("button", { name: "Continue" }).click();
-check("after Continue the laptop is synced", await driveState(laptop.page, "ok"));
+// Nothing in Drive shares a name with it, so there's nothing to ask: it uploads.
+check("first connect with no name clash uploads without asking", await driveState(laptop.page, "ok"));
+check("…and shows no onboarding list", !(await laptop.page.locator(".drive-onboarding").isVisible()));
 await closeDialog(laptop.page);
 
 // --- desktop: same-name collision, then open the Drive-only doc --------------
