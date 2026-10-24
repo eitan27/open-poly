@@ -23,7 +23,10 @@ async function device() {
 }
 async function connect(d) {
   await d.page.locator(".drive-btn").click();
-  const [popup] = await Promise.all([d.context.waitForEvent("page"), d.page.getByRole("button", { name: "Connect Google Drive" }).click()]);
+  const [popup] = await Promise.all([
+    d.context.waitForEvent("page"),
+    d.page.getByRole("button", { name: "Connect Google Drive" }).click(),
+  ]);
   await popup.locator("#mock-email").fill(EMAIL);
   await popup.locator("#mock-allow").click();
   await popup.waitForEvent("close", { timeout: 10000 }).catch(() => {});
@@ -34,7 +37,9 @@ const title = (p) => p.locator(".doc-title").inputValue();
 const syncLabel = async (p) => {
   await p.locator(".docs-btn").click();
   await p.waitForTimeout(500);
-  const t = (await p.locator(".docs-row.active .docs-sync, .docs-row:not(.cloud-only) .docs-sync").first().textContent())?.trim();
+  const t = (
+    await p.locator(".docs-row.active .docs-sync, .docs-row:not(.cloud-only) .docs-sync").first().textContent()
+  )?.trim();
   await p.keyboard.press("Escape");
   return t;
 };
@@ -55,12 +60,21 @@ check("device B: the seed box is labelled empty", lbl === "Empty · syncs once e
 check("device B: still Untitled", (await title(b.page)) === "Untitled");
 
 await b.page.evaluate(() => window.__openpoly.apply({ op: "addPrimitive", kind: "cylinder" }));
-await b.page.waitForFunction(() => document.querySelector(".doc-title")?.value === "Untitled 2", null, { timeout: 20000 }).catch(() => {});
+await b.page
+  .waitForFunction(() => document.querySelector(".doc-title")?.value === "Untitled 2", null, { timeout: 20000 })
+  .catch(() => {});
 check("device B: edited, it is renamed Untitled 2", (await title(b.page)) === "Untitled 2", await title(b.page));
-await b.page.locator(".drive-btn--ok").waitFor({ timeout: 20000 }).catch(() => {});
+await b.page
+  .locator(".drive-btn--ok")
+  .waitFor({ timeout: 20000 })
+  .catch(() => {});
 check("device B: now in Drive", (await syncLabel(b.page)) === "☁ In Drive");
 const before = (await b.page.evaluate(() => window.__openpoly.read({ read: "document" }))).features.length;
-await b.page.locator("canvas").first().click({ position: { x: 5, y: 5 } }).catch(() => {});
+await b.page
+  .locator("canvas")
+  .first()
+  .click({ position: { x: 5, y: 5 } })
+  .catch(() => {});
 await b.page.keyboard.press("Meta+z");
 await b.page.waitForTimeout(500);
 const after = (await b.page.evaluate(() => window.__openpoly.read({ read: "document" }))).features.length;
