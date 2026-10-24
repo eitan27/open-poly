@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import { __resetDBForTests, listMeta, loadDoc, putDoc, renameDoc, deleteDoc, type StoredDoc } from "../storage/db";
-import { createDocument } from "../document/document";
+import { addFeature, createDocument, seedDocument } from "../document/document";
 import type { Document } from "../document/types";
 import { handleMockDrive } from "../../server/drive/mockDrive";
 import { memoryKV, type KVLike } from "../../server/drive/kv";
@@ -40,7 +40,7 @@ function apiFor(email: string, over: Partial<Parameters<typeof createDriveApi>[0
 interface Device {
   idb: IDBFactory;
   engine: SyncEngine;
-  host: SyncHost & { replaced: StoredDoc[]; active: string | null; dirty: boolean };
+  host: SyncHost & { replaced: StoredDoc[]; renamed: string[]; active: string | null; dirty: boolean };
   onboarded: boolean;
 }
 
@@ -61,12 +61,14 @@ function device(email = "a@example.com", api?: DriveApi, onboarded = false): Dev
   const d = { idb: new IDBFactory(), onboarded } as Device;
   const host = {
     replaced: [] as StoredDoc[],
+    renamed: [] as string[],
     active: null as string | null,
     dirty: false,
     getActiveId: () => host.active,
     flushActive: async () => {},
     canReplaceActive: () => !host.dirty,
     activeReplaced: (r: StoredDoc) => host.replaced.push(r),
+    activeRenamed: (name: string) => host.renamed.push(name),
     deleteDocument: (id: string) => deleteDoc(id),
   };
   d.host = host;
@@ -508,6 +510,134 @@ describe("accounts, failures, big files", () => {
       await b.engine.sync();
       await b.engine.download(b.engine.snapshot.cloudOnly[0].fileId);
       expect((await localVar("big"))?.length).toBe(5_000_000);
+    });
+  });
+});
+
+describe("auto-named documents", () => {
+  it("an untouched starter document stays on this device until it's edited", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("d1", "Untitled"));
+      await a.engine.sync();
+      expect(a.engine.snapshot.onboarding).toBeNull();
+      expect(a.engine.snapshot.docStates).toEqual({ d1: "blank" });
+      expect(driveFiles()).toHaveLength(0);
+      await edit("d1", "5");
+      await a.engine.sync();
+      expect(a.engine.snapshot.docStates).toEqual({ d1: "synced" });
+      expect(driveVar("Untitled")).toBe("5");
+    });
+  });
+
+  it("the first-load seed box counts as untouched; any change to it doesn't", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("d1", "Untitled", seedDocument()));
+      await a.engine.sync();
+      expect(a.engine.snapshot.docStates).toEqual({ d1: "blank" });
+      const r = (await loadDoc("d1"))!;
+      await putDoc({ ...r, doc: addFeature(r.doc, "sphere").doc, updatedAt: tick() });
+      await a.engine.sync();
+      expect(a.engine.snapshot.docStates).toEqual({ d1: "synced" });
+    });
+  });
+
+  it("a starter document renamed by the user uploads even while empty", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("d1", "Untitled"));
+      await a.engine.sync();
+      await renameDoc("d1", "Bracket");
+      await a.engine.sync();
+      expect(a.engine.snapshot.docStates).toEqual({ d1: "synced" });
+      expect(driveVar("Bracket")).toBe(null);
+    });
+  });
+
+  it("a second device's starter document neither asks nor clashes, and takes the next free name once edited", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("a1", "Untitled", withVar("1")));
+      await a.engine.sync();
+    });
+    const b = device();
+    await on(b, async () => {
+      await putDoc(rec("b1", "Untitled"));
+      b.host.active = "b1";
+      await b.engine.sync();
+      expect(b.engine.snapshot.onboarding).toBeNull();
+      expect(b.engine.snapshot.issues).toEqual([]);
+      expect(b.engine.snapshot.docStates).toEqual({ b1: "blank" });
+
+      await edit("b1", "2");
+      await b.engine.sync();
+      expect(b.engine.snapshot.issues).toEqual([]);
+      expect(b.engine.snapshot.docStates).toEqual({ b1: "synced" });
+      expect((await loadDoc("b1"))!.name).toBe("Untitled 2");
+      expect(b.host.renamed).toEqual(["Untitled 2"]);
+      expect(b.host.replaced).toEqual([]); // renamed in place: undo history kept
+      expect(driveVar("Untitled")).toBe("1");
+      expect(driveVar("Untitled 2")).toBe("2");
+    });
+  });
+
+  it("the next free name skips names taken on either side", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("a1", "Untitled", withVar("1")));
+      await putDoc(rec("a2", "Untitled 2", withVar("1")));
+      await a.engine.sync();
+    });
+    const b = device();
+    await on(b, async () => {
+      await putDoc(rec("b1", "Untitled", withVar("2")));
+      await putDoc(rec("b2", "Untitled 3", withVar("3")));
+      await b.engine.sync();
+      expect(b.engine.snapshot.onboarding).toBeNull();
+      expect((await loadDoc("b1"))!.name).toBe("Untitled 4");
+      expect(driveVar("Untitled 4")).toBe("2");
+      expect(driveVar("Untitled 3")).toBe("3");
+    });
+  });
+
+  it("the open document isn't renamed mid-edit; the next pass does it", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("a1", "Untitled", withVar("1")));
+      await a.engine.sync();
+    });
+    const b = device();
+    await on(b, async () => {
+      await putDoc(rec("b1", "Untitled", withVar("2")));
+      b.host.active = "b1";
+      b.host.dirty = true;
+      await b.engine.sync();
+      expect(b.engine.snapshot.docStates).toEqual({ b1: "pending" });
+      expect((await loadDoc("b1"))!.name).toBe("Untitled");
+      b.host.dirty = false;
+      await b.engine.sync();
+      expect(b.engine.snapshot.docStates).toEqual({ b1: "synced" });
+      expect(b.host.renamed).toEqual(["Untitled 2"]);
+    });
+  });
+
+  it("a real clash still asks at first connect; an auto-named clash in the same list is already renamed", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("a1", "Bracket", withVar("1")));
+      await putDoc(rec("a2", "Untitled", withVar("1")));
+      await a.engine.sync();
+    });
+    const b = device();
+    await on(b, async () => {
+      await putDoc(rec("b1", "Bracket", withVar("2")));
+      await putDoc(rec("b2", "Untitled", withVar("2")));
+      await b.engine.sync();
+      const list = b.engine.snapshot.onboarding!;
+      expect(list.find((d) => d.id === "b1")!.collision).toBeDefined();
+      expect(list.find((d) => d.id === "b2")).toMatchObject({ name: "Untitled 2" });
+      expect(list.find((d) => d.id === "b2")!.collision).toBeUndefined();
     });
   });
 });

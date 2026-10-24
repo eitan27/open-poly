@@ -9,6 +9,11 @@
 //   unlinked, Drive file with the same doc id → relink if equal, else CONFLICT
 //   unlinked, a Drive-only doc with the same NAME → NAME COLLISION
 //                                  (user picks: rename / replace Drive's / use Drive's / keep local)
+//                                  — except auto names ("Untitled N"): this
+//                                  device's doc just takes the next free one
+//   unlinked, untouched starter (auto name, empty) → BLANK: stays here until
+//                                  edited or renamed, so every new device
+//                                  doesn't push its own empty "Untitled"
 //   unlinked, otherwise          → upload (at first connect too, unless a name
 //                                  collision makes that connect ask first)
 //   in Drive, not on this device → listed "in Drive"; Open downloads it
@@ -21,8 +26,8 @@
 import type { StoredDoc } from "../storage/db";
 import { listMeta, loadDoc, putDoc, renameDoc, type DocMeta } from "../storage/db";
 import { parseDocFile, serializeDocFile } from "../storage/docFile";
-import { dedupeName } from "../storage/docNames";
-import { genId, migrateDocument } from "../document/document";
+import { dedupeName, isUntitled, nextUntitled } from "../storage/docNames";
+import { genId, isStarterDocument, migrateDocument } from "../document/document";
 import type { Document } from "../document/types";
 import { docHash } from "./docHash";
 import { DriveError, type DriveApi, type RemoteDoc } from "./driveApi";
@@ -32,6 +37,7 @@ export type DocSyncState =
   | "synced"
   | "pending" // has changes waiting for the next pass
   | "unsynced" // not in Drive yet (awaiting onboarding, or auto-upload is off)
+  | "blank" // an untouched starter document: uploads once edited or renamed
   | "localOnly"
   | "conflict"
   | "nameCollision"
@@ -108,6 +114,9 @@ export interface SyncHost {
   canReplaceActive(): boolean;
   /** The engine wrote a new version of the open document: show it. */
   activeReplaced(record: StoredDoc): void;
+  /** The engine renamed the open document (content untouched): show the new
+   *  name without resetting anything else — undo history survives. */
+  activeRenamed(name: string): void;
   /** Delete a document the way the app does (switching away if it's open). */
   deleteDocument(id: string): Promise<void>;
 }
@@ -267,11 +276,38 @@ export class SyncEngine {
         if (out.issue) issues.push(out.issue);
         continue;
       }
+      // An untouched starter document (an auto name, nothing in it) has
+      // nothing worth keeping: leave it here until it's edited or renamed.
+      if (isUntitled(meta.name) && (await this.isBlank(meta.id))) {
+        docStates[meta.id] = "blank";
+        continue;
+      }
       unlinked.push(meta);
     }
 
     const cloudOnly = remotes.filter((r) => !claimed.has(r.fileId));
     const collisionFor = (name: string) => cloudOnly.find((r) => r.name === name);
+
+    // Auto names identify nothing, so two "Untitled"s aren't the same document
+    // and there's nothing to ask: this device's one takes the next name free
+    // on both sides. The open document is renamed only between keystrokes.
+    const taken = new Set([...metas.map((m) => m.name), ...remotes.map((r) => r.name)]);
+    for (let i = 0; i < unlinked.length; i++) {
+      const m = unlinked[i];
+      if (!isUntitled(m.name) || !collisionFor(m.name)) continue;
+      const active = this.host.getActiveId() === m.id;
+      if (active && !this.host.canReplaceActive()) {
+        docStates[m.id] = "pending";
+        unlinked.splice(i--, 1);
+        continue;
+      }
+      const name = nextUntitled([...taken]);
+      taken.add(name);
+      await renameDoc(m.id, name);
+      if (active) this.host.activeRenamed(name);
+      unlinked[i] = { ...m, name };
+      this.touchedLocal();
+    }
 
     // First connect asks only when there is something to decide: a document here
     // shares its name with a different one already in Drive. Then every document
@@ -410,6 +446,12 @@ export class SyncEngine {
 
   // --- primitives ---------------------------------------------------------
 
+  private async isBlank(id: string): Promise<boolean> {
+    const record = await loadDoc(id);
+    if (!record) return false;
+    return isStarterDocument(record.doc);
+  }
+
   private async loadLocal(id: string): Promise<{ record: StoredDoc; hash: string } | null> {
     const record = await loadDoc(id);
     if (!record) return null;
@@ -547,10 +589,7 @@ export class SyncEngine {
           }
           case "rename":
             await renameDoc(docId, resolution.name);
-            if (this.host.getActiveId() === docId) {
-              const renamed = await loadDoc(docId);
-              if (renamed) this.host.activeReplaced(renamed);
-            }
+            if (this.host.getActiveId() === docId) this.host.activeRenamed(resolution.name);
             await this.uploadNew(docId);
             this.touchedLocal();
             break;
@@ -598,10 +637,7 @@ export class SyncEngine {
         if (choice.kind === "localOnly") await this.markLocalOnly(doc.id);
         else if (choice.kind === "rename") {
           await renameDoc(doc.id, choice.name);
-          if (this.host.getActiveId() === doc.id) {
-            const renamed = await loadDoc(doc.id);
-            if (renamed) this.host.activeReplaced(renamed);
-          }
+          if (this.host.getActiveId() === doc.id) this.host.activeRenamed(choice.name);
           await this.uploadNew(doc.id);
           this.touchedLocal();
         } else if ((choice.kind === "keepLocal" || choice.kind === "keepCloud") && doc.collision) {

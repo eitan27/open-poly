@@ -64,6 +64,35 @@ export function createDocument(): Document {
   return { features: [], variables: [], rollbackIndex: 0 };
 }
 
+/** The first-load document: one box, so there is something on screen. */
+export function seedDocument(): Document {
+  return addFeature(createDocument(), "box").doc;
+}
+
+/** True for a document nobody has worked on yet: empty (as "New" makes them)
+ *  or exactly what `seedDocument` makes, bar ids and colours (random per
+ *  seed). It compares against `seedDocument` itself, so changing the seed
+ *  changes this too. Sync leaves these on the device. */
+export function isStarterDocument(doc: Document): boolean {
+  if (doc.variables.length > 0 || Object.keys(doc.parts ?? {}).length > 0) return false;
+  if (doc.features.length === 0) return true;
+  const seed = seedDocument();
+  const bare = (f: Feature) => sortedJson({ ...f, id: "", color: 0 });
+  return (
+    doc.rollbackIndex === seed.rollbackIndex &&
+    doc.features.length === seed.features.length &&
+    doc.features.every((f, i) => bare(f) === bare(seed.features[i]))
+  );
+}
+
+function sortedJson(value: unknown): string {
+  return JSON.stringify(value, (_k, v: unknown) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1)))
+      : v,
+  );
+}
+
 /** Backfill fields that were added to a feature type after a document may have
  *  been persisted (IndexedDB / imported `.json`), so older documents stay valid.
  *  Run on load. Uses `in` checks (the static types say the fields are present,

@@ -46,6 +46,7 @@ export interface UseDriveSyncParams {
   flushSave: () => Promise<void>;
   canReplaceActive: () => boolean;
   adoptExternalRecord: (record: StoredDoc) => void;
+  renameDocument: (id: string, name: string) => Promise<void>;
   deleteDocument: (id: string) => Promise<void>;
 }
 
@@ -121,6 +122,10 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
         flushActive: () => host.current.flushSave(),
         canReplaceActive: () => host.current.canReplaceActive(),
         activeReplaced: (r) => host.current.adoptExternalRecord(r),
+        activeRenamed: (name) => {
+          const id = host.current.getActiveId();
+          if (id) void host.current.renameDocument(id, name);
+        },
         deleteDocument: (id) => host.current.deleteDocument(id),
       },
       {

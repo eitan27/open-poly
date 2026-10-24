@@ -211,6 +211,7 @@
 
 .docs-sync--pending,
 .docs-sync--unsynced,
+.docs-sync--blank,
 .docs-sync--localOnly {
   color: var(--text-8);
 }

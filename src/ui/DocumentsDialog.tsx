@@ -33,6 +33,7 @@ const SYNC_LABEL: Record<DocSyncState, string> = {
   synced: "☁ In Drive",
   pending: "☁ Syncing…",
   unsynced: "Not in Drive",
+  blank: "Empty · syncs once edited",
   localOnly: "This device only",
   conflict: "⚠ Changed in two places",
   nameCollision: "⚠ Same name in Drive",

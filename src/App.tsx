@@ -29,7 +29,7 @@ import {
   addSketchConstraints,
   addSketchEntities,
   addVariable,
-  createDocument,
+  seedDocument,
   genId,
   moveFeature,
   removeFeature,
@@ -693,11 +693,6 @@ const VIEW_BY_SHORTCUT: Partial<Record<ShortcutId, ViewName>> = {
   "view.iso": "iso",
 };
 
-function initialDocument(): Document {
-  // Seed with one box so there is something on screen on first load.
-  return addFeature(createDocument(), "box").doc;
-}
-
 export default function App() {
   const kernelRef = useRef<KernelClient | null>(null);
   const [ready, setReady] = useState(false);
@@ -711,7 +706,7 @@ export default function App() {
     redo,
     canUndo,
     canRedo,
-  } = useHistory<Document>(initialDocument);
+  } = useHistory<Document>(seedDocument);
 
   // Resolution (variables + params -> numbers) is synchronous and pure; memoize
   // it so the UI can read evaluated values without re-running the kernel.
@@ -1826,6 +1821,7 @@ export default function App() {
     flushSave,
     canReplaceActive,
     adoptExternalRecord,
+    renameDocument,
     deleteDocument,
   });
   const [driveDialogOpen, setDriveDialogOpen] = useState(false);
