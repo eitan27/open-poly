@@ -56,9 +56,16 @@ export function DriveStatusButton({ sync, onClick }: { sync: DriveSync; onClick:
     <button
       className={`tool-btn drive-btn drive-btn--${state}`}
       onClick={onClick}
-      title={connected ? driveStatusText(sync) : (sync.notice?.text ?? "Sync your documents with Google Drive")}
-      aria-label={connected ? driveStatusText(sync) : "Google Drive sync"}
+      title={
+        connected
+          ? driveStatusText(sync)
+          : (sync.notice?.text ?? "Open your documents on any device. Open Poly only sees the files it creates.")
+      }
+      aria-label={connected ? driveStatusText(sync) : "Sync with Google Drive"}
     >
+      {/* Disconnected, the button is an invitation, so it says what it does;
+          connected, it shrinks to a status glyph. */}
+      {state === "off" && <span className="drive-btn-label">Sync with</span>}
       <CloudIcon />
       {state === "off" && <span className="drive-btn-label">Drive</span>}
       {state === "busy" && <span className="status-spinner" aria-hidden />}
