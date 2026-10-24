@@ -175,16 +175,27 @@ export async function duplicateDoc(sourceId: string, newId: string, name: string
   return copy;
 }
 
+const thumbListeners = new Set<() => void>();
+
+/** Called after any thumbnail is replaced, so an open Documents list can
+ *  repaint its tiles: a document seen for the first time on this device has
+ *  none until it has drawn once, which is often just after the list opened. */
+export function onThumbChanged(fn: () => void): () => void {
+  thumbListeners.add(fn);
+  return () => thumbListeners.delete(fn);
+}
+
 /** Replace a document's list thumbnail (meta only — the full record doesn't
  *  carry it). No-op if the document vanished. */
-export function setThumb(id: string, thumb: Blob): Promise<void> {
-  return dualTx((_docs, meta) => {
+export async function setThumb(id: string, thumb: Blob): Promise<void> {
+  await dualTx((_docs, meta) => {
     const get = meta.get(id);
     get.onsuccess = () => {
       const row = get.result as DocMeta | undefined;
       if (row) meta.put({ ...row, thumb });
     };
   });
+  for (const fn of thumbListeners) fn();
 }
 
 export function loadDoc(id: string): Promise<StoredDoc | undefined> {

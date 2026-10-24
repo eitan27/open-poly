@@ -641,3 +641,52 @@ describe("auto-named documents", () => {
     });
   });
 });
+
+describe("a new device with only a starter document", () => {
+  async function driveWith(names: [string, string][]) {
+    const a = device();
+    await on(a, async () => {
+      for (const [id, name] of names) {
+        await putDoc(rec(id, name, withVar(name)));
+        await a.engine.sync();
+      }
+    });
+  }
+
+  it("brings down the Drive document edited most recently", async () => {
+    await driveWith([
+      ["x1", "Older"],
+      ["x2", "Newest"],
+    ]);
+    const b = device();
+    await on(b, async () => {
+      await putDoc(rec("s1", "Untitled", seedDocument()));
+      await b.engine.sync();
+      const latest = await b.engine.downloadLatestIfOnlyStarters();
+      expect(latest).toEqual({ id: "x2", name: "Newest", others: 1 });
+      expect(await localVar("x2")).toBe("Newest");
+      expect(b.engine.snapshot.docStates.x2).toBe("synced");
+    });
+  });
+
+  it("does nothing when this device has real work of its own", async () => {
+    await driveWith([["x1", "Older"]]);
+    const b = device();
+    await on(b, async () => {
+      await putDoc(rec("s1", "Untitled", seedDocument()));
+      await putDoc(rec("w1", "Mine", withVar("1")));
+      await b.engine.sync();
+      expect(await b.engine.downloadLatestIfOnlyStarters()).toBeNull();
+      expect(await loadDoc("x1")).toBeUndefined();
+    });
+  });
+
+  it("does nothing when Drive is empty", async () => {
+    const b = device();
+    await on(b, async () => {
+      await putDoc(rec("s1", "Untitled"));
+      await b.engine.sync();
+      expect(await b.engine.downloadLatestIfOnlyStarters()).toBeNull();
+    });
+  });
+});

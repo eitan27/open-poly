@@ -21,6 +21,20 @@ const EDIT_DELAY = 4000;
 const POLL_INTERVAL = 60_000;
 const AUTO_UPLOAD_KEY = "openpoly.drive.autoUpload";
 const onboardedKey = (account: string) => `openpoly.drive.onboarded:${account}`;
+// Set while a connect is in flight and until its first pass lands. In
+// sessionStorage, not a ref, so it survives the full-page sign-in redirect
+// (the fallback when a popup is blocked).
+const JUST_CONNECTED_KEY = "openpoly.drive.justConnected";
+
+function sessionFlag(value?: boolean): boolean {
+  try {
+    if (value === true) sessionStorage.setItem(JUST_CONNECTED_KEY, "1");
+    else if (value === false) sessionStorage.removeItem(JUST_CONNECTED_KEY);
+    return sessionStorage.getItem(JUST_CONNECTED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 function readFlag(key: string, fallback: boolean): boolean {
   try {
@@ -46,6 +60,7 @@ export interface UseDriveSyncParams {
   flushSave: () => Promise<void>;
   canReplaceActive: () => boolean;
   adoptExternalRecord: (record: StoredDoc) => void;
+  openDocument: (id: string) => Promise<void>;
   renameDocument: (id: string, name: string) => Promise<void>;
   deleteDocument: (id: string) => Promise<void>;
 }
@@ -177,9 +192,49 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
   }, [engine, syncSoon]);
 
   // Edits (and renames) schedule a pass; the engine flushes before reading.
+  // Only a real edit does: when `syncSoon` itself changes (a new engine, at
+  // connect) this would otherwise push the engine effect's immediate first
+  // pass back by EDIT_DELAY.
+  const lastEditRef = useRef({ doc: p.doc, name: p.docName });
   useEffect(() => {
+    const last = lastEditRef.current;
+    if (last.doc === p.doc && last.name === p.docName) return;
+    lastEditRef.current = { doc: p.doc, name: p.docName };
     syncSoon(EDIT_DELAY);
   }, [p.doc, p.docName, syncSoon]);
+
+  // The first pass after connecting. A device with only an untouched starter
+  // document opens the Drive document edited most recently in its place (the
+  // starter, empty, is removed); either way, say where Drive's documents are.
+  useEffect(() => {
+    if (!engine || !snapshot || snapshot.lastSyncedAt === null || !sessionFlag()) return;
+    sessionFlag(false);
+    const starterId = host.current.getActiveId();
+    const starterWasBlank = !!starterId && snapshot.docStates[starterId] === "blank";
+    void (async () => {
+      try {
+        const latest = await engine.downloadLatestIfOnlyStarters();
+        if (latest) {
+          await host.current.openDocument(latest.id);
+          if (starterWasBlank && starterId !== latest.id) await host.current.deleteDocument(starterId);
+          const rest =
+            latest.others > 0 ? ` ${latest.others === 1 ? "One more is" : `${latest.others} more are`} in Open…` : "";
+          setNotice({
+            kind: "info",
+            text: `Opened “${latest.name}” from your Google Drive, the document you edited most recently.${rest}`,
+          });
+        } else if (snapshot.cloudOnly.length > 0) {
+          const n = snapshot.cloudOnly.length;
+          setNotice({
+            kind: "info",
+            text: `${n === 1 ? "One document" : `${n} documents`} from your Google Drive ${n === 1 ? "is" : "are"} in Open…, ready to open on this device.`,
+          });
+        }
+      } catch {
+        /* the snapshot carries the error */
+      }
+    })();
+  }, [engine, snapshot, host]);
 
   const connect = useCallback(async () => {
     abortRef.current?.abort();
@@ -189,9 +244,16 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
     setNotice(null);
     try {
       await host.current.flushSave(); // a popup-blocked fallback navigates away
+      sessionFlag(true);
       const result = await connectDrive({ loginHint: config?.email ?? undefined, signal: ctrl.signal });
       if (result === "connected") await refreshConfig();
-      else if (result !== "cancelled") setNotice({ kind: "error", text: AUTH_MESSAGES[result] });
+      else {
+        sessionFlag(false);
+        if (result !== "cancelled") setNotice({ kind: "error", text: AUTH_MESSAGES[result] });
+      }
+    } catch (e) {
+      sessionFlag(false);
+      throw e;
     } finally {
       if (abortRef.current === ctrl) abortRef.current = null;
       setConnecting(false);

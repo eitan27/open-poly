@@ -1821,6 +1821,7 @@ export default function App() {
     flushSave,
     canReplaceActive,
     adoptExternalRecord,
+    openDocument,
     renameDocument,
     deleteDocument,
   });

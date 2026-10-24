@@ -150,7 +150,9 @@ const defaultLock = <T>(fn: () => Promise<T>): Promise<T> =>
 
 export class SyncEngine {
   private snap: SyncSnapshot = {
-    status: "idle",
+    // Nothing is known until the first pass, so don't claim "idle" (the button
+    // would show a tick for a sync that hasn't happened yet).
+    status: "syncing",
     error: null,
     lastSyncedAt: null,
     docStates: {},
@@ -676,19 +678,42 @@ export class SyncEngine {
   /** Bring a Drive-only document onto this device. Resolves its local id. */
   download(fileId: string): Promise<string> {
     return this.run(async () => {
-      const remote = await this.remoteFor(fileId);
-      const pulled = await this.fetchRemote(remote);
-      // Reuse the doc id it was uploaded under, so every device agrees on
-      // identity — unless that id is somehow taken here already.
-      const id = remote.docId && !(await loadDoc(remote.docId)) ? remote.docId : genId();
-      const now = this.now();
-      const record: StoredDoc = { id, name: pulled.name, doc: pulled.doc, createdAt: now, updatedAt: now };
-      await putDoc(record);
-      await this.linkTo(id, remote, pulled.hash, record);
-      this.touchedLocal();
+      const id = await this.downloadOne(fileId);
       await this.pass();
       return id;
     });
+  }
+
+  /** Right after connecting, a device holding nothing but untouched starter
+   *  documents has nothing worth showing: bring down the Drive document edited
+   *  most recently, to open in their place. Resolves its local id and how many
+   *  other Drive documents remain, or null when there's real local work (or
+   *  nothing in Drive). */
+  downloadLatestIfOnlyStarters(): Promise<{ id: string; name: string; others: number } | null> {
+    return this.run(async () => {
+      const states = Object.values(this.snap.docStates);
+      if (states.some((st) => st !== "blank") || this.snap.cloudOnly.length === 0) return null;
+      const latest = this.snap.cloudOnly.reduce((a, b) =>
+        Date.parse(b.modifiedTime) > Date.parse(a.modifiedTime) ? b : a,
+      );
+      const id = await this.downloadOne(latest.fileId);
+      await this.pass();
+      return { id, name: latest.name, others: this.snap.cloudOnly.length };
+    });
+  }
+
+  private async downloadOne(fileId: string): Promise<string> {
+    const remote = await this.remoteFor(fileId);
+    const pulled = await this.fetchRemote(remote);
+    // Reuse the doc id it was uploaded under, so every device agrees on
+    // identity — unless that id is somehow taken here already.
+    const id = remote.docId && !(await loadDoc(remote.docId)) ? remote.docId : genId();
+    const now = this.now();
+    const record: StoredDoc = { id, name: pulled.name, doc: pulled.doc, createdAt: now, updatedAt: now };
+    await putDoc(record);
+    await this.linkTo(id, remote, pulled.hash, record);
+    this.touchedLocal();
+    return id;
   }
 
   /** Delete a document here AND move its Drive file to Drive's trash. */

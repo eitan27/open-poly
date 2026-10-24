@@ -3,7 +3,7 @@
 // meshes) are NEVER loaded just to browse. All mutations are owned by App
 // (which owns the switch flow); the dialog re-lists after each action settles.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listMeta, type DocMeta } from "../storage/db";
+import { listMeta, onThumbChanged, type DocMeta } from "../storage/db";
 import { timeAgo } from "../storage/docNames";
 import { CorruptDocError } from "../storage/docErrors";
 import type { DocSyncState } from "../sync/engine";
@@ -92,6 +92,7 @@ export function DocumentsDialog({
   }, []);
   const driveRevision = drive?.revision ?? 0;
   useEffect(reload, [reload, driveRevision]);
+  useEffect(() => onThumbChanged(reload), [reload]);
 
   // Run an action with the list disarmed + refreshed afterwards. Actions that
   // switch the active document also close the dialog (via `closeAfter`). A
