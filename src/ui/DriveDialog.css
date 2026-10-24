@@ -35,7 +35,7 @@
   height: 9px;
 }
 
-.drive-btn--busy {
+.tool-btn.drive-btn--busy {
   color: var(--text-5);
 }
 
@@ -258,4 +258,22 @@
 
 .docs-name--static {
   cursor: default;
+}
+
+/* Connected, the status pill doubles as the Drive button: same pill, plus a
+   cloud, and clickable. */
+button.status-drive {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 4px 10px 4px 8px;
+}
+
+button.status-drive:hover {
+  filter: brightness(1.15);
+}
+
+button.status-drive:focus-visible {
+  outline: 2px solid var(--accent, currentColor);
+  outline-offset: 2px;
 }

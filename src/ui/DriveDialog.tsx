@@ -1,4 +1,5 @@
-// Google Drive sync UI: the topbar status button, and the dialog behind it —
+// Google Drive sync UI: the topbar status button (merged into the app's status
+// pill while connected), and the dialog behind it —
 // connect, the first-connect choice of what to upload (shown only when a name
 // clashes with Drive), open issues (conflicts, same-name documents, documents
 // deleted in Drive) with their resolutions, and disconnect. All decisions are the engine's (src/sync/engine.ts); this only
@@ -40,34 +41,105 @@ function driveStatusText(sync: DriveSync): string {
   return s.lastSyncedAt ? `Synced with Google Drive ${timeAgo(s.lastSyncedAt)}` : "Connected to Google Drive";
 }
 
-export function DriveStatusButton({ sync, onClick }: { sync: DriveSync; onClick: () => void }) {
+type DriveState = "off" | "ok" | "busy" | "attention" | "problem";
+
+/** Where the modelling kernel stands, for the merged status pill. */
+export interface KernelStatus {
+  busy: boolean;
+  /** Meshing progress, when a long mesh reports it. */
+  percent: number | null;
+  /** The sentence the plain status pill would read out. */
+  text: string;
+}
+
+/** The topbar's Drive indicator. Disconnected, it's a "☁ Drive sync" button.
+ *  Connected, and given the kernel's status, it BECOMES the app's status pill:
+ *  one cloud and one glyph answer "is my work safe?" — a spinner while the
+ *  model regenerates or Drive syncs, a tick only once both are done — rather
+ *  than two ticks and two spinners side by side. Without `kernel` (the app
+ *  is showing a modelling error, which keeps its own pill and words) it falls
+ *  back to a compact cloud with Drive's state alone. */
+export function DriveStatusButton({
+  sync,
+  kernel,
+  onClick,
+}: {
+  sync: DriveSync;
+  kernel?: KernelStatus;
+  onClick: () => void;
+}) {
   if (!sync.config?.enabled) return null;
   const s = sync.snapshot;
   const connected = !!sync.config.connected && !!s;
   const attention = connected ? s!.issues.length + (s!.onboarding ? 1 : 0) : 0;
-  let state = sync.notice?.kind === "warn" ? "problem" : "off";
+  let state: DriveState = sync.notice?.kind === "warn" ? "problem" : "off";
   if (connected) {
     if (attention) state = "attention";
     else if (s!.status === "syncing") state = "busy";
     else if (s!.status === "offline" || s!.status === "error" || s!.status === "reauth") state = "problem";
     else state = "ok";
   }
+
+  if (!connected) {
+    return (
+      <button
+        className={`tool-btn drive-btn drive-btn--${state}`}
+        onClick={onClick}
+        title={sync.notice?.text ?? "Open your documents on any device. Open Poly only sees the files it creates."}
+        aria-label="Google Drive sync"
+      >
+        <CloudIcon />
+        <span className="drive-btn-label">Drive sync</span>
+        {state === "problem" && (
+          <span className="drive-btn-mark drive-btn-mark--problem" aria-hidden>
+            !
+          </span>
+        )}
+      </button>
+    );
+  }
+
+  const driveText = driveStatusText(sync);
+  if (kernel) {
+    // Drive's problems outrank the kernel's spinner; a busy kernel outranks
+    // Drive's tick, since the tick has to mean "all of it is done".
+    const shown: DriveState = state === "ok" && kernel.busy ? "busy" : state;
+    const tone = shown === "ok" ? "idle" : shown === "problem" ? "err" : "busy";
+    const summary = `Model ${kernel.text} · ${driveText}`;
+    return (
+      <button
+        className={`status ${tone} status-drive drive-btn drive-btn--${state}`}
+        onClick={onClick}
+        title={summary}
+        aria-label={summary}
+      >
+        <CloudIcon />
+        {shown === "busy" && <span className="status-spinner" aria-hidden />}
+        {shown === "ok" && (
+          <span className="status-check" aria-hidden>
+            ✓
+          </span>
+        )}
+        {shown === "attention" && <span className="drive-btn-count">{attention}</span>}
+        {shown === "problem" && (
+          <span className="status-check" aria-hidden>
+            !
+          </span>
+        )}
+        {kernel.percent !== null && <span aria-hidden>{kernel.percent}%</span>}
+        <span className="sr-only">{kernel.text}</span>
+      </button>
+    );
+  }
+
   return (
     <button
       className={`tool-btn drive-btn drive-btn--${state}`}
       onClick={onClick}
-      title={
-        connected
-          ? driveStatusText(sync)
-          : (sync.notice?.text ?? "Open your documents on any device. Open Poly only sees the files it creates.")
-      }
-      aria-label={connected ? driveStatusText(sync) : "Sync with Google Drive"}
+      title={driveText}
+      aria-label={driveText}
     >
-      {/* Disconnected, the button is an invitation, so it says what it does;
-          connected, it shrinks to a status glyph. */}
-      {state === "off" && <span className="drive-btn-label">Sync with</span>}
       <CloudIcon />
-      {state === "off" && <span className="drive-btn-label">Drive</span>}
       {state === "busy" && <span className="status-spinner" aria-hidden />}
       {state === "ok" && (
         <span className="drive-btn-mark" aria-hidden>

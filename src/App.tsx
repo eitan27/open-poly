@@ -5663,6 +5663,8 @@ export default function App() {
         ? `${errorCount} error${errorCount > 1 ? "s" : ""}`
         : "up to date";
   const statusClass = fatal || errorCount > 0 ? "err" : busy ? "busy" : "idle";
+  const driveOwnsStatus =
+    !!drive.config?.enabled && !!drive.config.connected && !!drive.snapshot && statusClass !== "err";
 
   const handleAdd = (kind: FeatureKind) => {
     const { doc: next, id } = addFeature(doc, kind);
@@ -6448,7 +6450,7 @@ export default function App() {
             topbar's own 16px gap is meant to separate sections, and applied
             between the badge, the chip and the buttons it left them adrift. */}
         <div className="topbar-right">
-          <DriveStatusButton sync={drive} onClick={() => setDriveDialogOpen(true)} />
+          {!driveOwnsStatus && <DriveStatusButton sync={drive} onClick={() => setDriveDialogOpen(true)} />}
           {agentStatus === "connected" && (
             <span className="agent-badge" title="An LLM agent is connected to this tab">
               ● Agent connected
@@ -6459,23 +6461,36 @@ export default function App() {
               up. Errors keep their words — those you do read. The sentence
               rides along hidden for screen readers, and as the hover title,
               since a lone tick doesn't say what it's the tick for. */}
-          <span className={`status ${statusClass}`} title={fatal ?? (errorDetail || status)}>
-            {statusClass === "err" ? (
-              status
-            ) : (
-              <>
-                {statusClass === "busy" ? (
-                  <span className="status-spinner" aria-hidden />
-                ) : (
-                  <span className="status-check" aria-hidden>
-                    ✓
-                  </span>
-                )}
-                {meshPercent !== null && <span aria-hidden>{meshPercent}%</span>}
-                <span className="sr-only">{status}</span>
-              </>
-            )}
-          </span>
+          {/* Connected, Drive's indicator takes over the status pill, in its
+              place (one cloud, one spinner-or-tick for model + sync); a
+              modelling error keeps the plain pill, with words, and Drive goes
+              back to its own button. */}
+          {driveOwnsStatus && (
+            <DriveStatusButton
+              sync={drive}
+              kernel={{ busy: statusClass === "busy", percent: meshPercent, text: status }}
+              onClick={() => setDriveDialogOpen(true)}
+            />
+          )}
+          {!driveOwnsStatus && (
+            <span className={`status ${statusClass}`} title={fatal ?? (errorDetail || status)}>
+              {statusClass === "err" ? (
+                status
+              ) : (
+                <>
+                  {statusClass === "busy" ? (
+                    <span className="status-spinner" aria-hidden />
+                  ) : (
+                    <span className="status-check" aria-hidden>
+                      ✓
+                    </span>
+                  )}
+                  {meshPercent !== null && <span aria-hidden>{meshPercent}%</span>}
+                  <span className="sr-only">{status}</span>
+                </>
+              )}
+            </span>
+          )}
           {/* App-level chrome, parked at the right edge past the status: none of
               it belongs to the document, and mixed in with New/Open/undo on the
               left it read as five unrelated things in a row. Icons only — these
