@@ -5,7 +5,16 @@
 // one Drive; `on(device, fn)` swaps the globals the storage modules read.
 import { beforeEach, describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
-import { __resetDBForTests, listMeta, loadDoc, putDoc, renameDoc, deleteDoc, type StoredDoc } from "../storage/db";
+import {
+  __resetDBForTests,
+  listMeta,
+  loadDoc,
+  putDoc,
+  renameDoc,
+  deleteDoc,
+  setThumb,
+  type StoredDoc,
+} from "../storage/db";
 import { addFeature, createDocument, seedDocument } from "../document/document";
 import type { Document } from "../document/types";
 import { handleMockDrive } from "../../server/drive/mockDrive";
@@ -687,6 +696,37 @@ describe("a new device with only a starter document", () => {
       await putDoc(rec("s1", "Untitled"));
       await b.engine.sync();
       expect(await b.engine.downloadLatestIfOnlyStarters()).toBeNull();
+    });
+  });
+});
+
+describe("thumbnails", () => {
+  it("a document's thumbnail goes to Drive with it, and another device gets a link to it", async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 250, 251, 252]);
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("d1", "Bracket", withVar("1")));
+      await setThumb("d1", new Blob([jpeg], { type: "image/jpeg" }));
+      await a.engine.sync();
+    });
+    const b = device();
+    await on(b, async () => {
+      await b.engine.sync();
+      const [remote] = b.engine.snapshot.cloudOnly;
+      expect(remote.thumbnailUrl).toMatch(/\/thumbnail\//);
+      const res = await driveFetch()(`http://drive.test${remote.thumbnailUrl}`);
+      expect(res.headers.get("content-type")).toBe("image/jpeg");
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(jpeg);
+    });
+  });
+
+  it("a document without a thumbnail uploads without one", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("d1", "Bracket", withVar("1")));
+      await a.engine.sync();
+      const [remote] = await apiFor("a@example.com").listDocs();
+      expect(remote.thumbnailUrl).toBeUndefined();
     });
   });
 });

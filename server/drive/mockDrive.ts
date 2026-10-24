@@ -25,6 +25,8 @@ export interface MockFile {
   modifiedTime: string;
   size?: string;
   content?: string;
+  /** The contentHints thumbnail, served back at `thumbnailLink`. */
+  thumbnail?: { image: string; mimeType: string };
 }
 
 interface Meta {
@@ -33,6 +35,7 @@ interface Meta {
   parents?: string[];
   appProperties?: Record<string, string | null>;
   trashed?: boolean;
+  contentHints?: { thumbnail?: { image: string; mimeType: string } };
 }
 
 const error = (code: number, message: string, reason = "error") =>
@@ -67,6 +70,19 @@ export async function handleMockDrive(
     return ok({ ok: true });
   }
 
+  // A file's thumbnailLink. Like Google's, it's a plain URL an <img> can load
+  // without a bearer token (Google's are short-lived and unguessable; this is
+  // a local mock).
+  const thumbMatch = path.match(/^\/thumbnail\/([^/]+)\/([^/]+)$/);
+  if (thumbMatch && request.method === "GET") {
+    const raw = await kv.get(`mockdrive:${decodeURIComponent(thumbMatch[1])}:${thumbMatch[2]}`);
+    const thumb = raw ? (JSON.parse(raw) as MockFile).thumbnail : undefined;
+    if (!thumb) return error(404, "No thumbnail", "notFound");
+    const b64 = thumb.image.replace(/-/g, "+").replace(/_/g, "/");
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new Response(bytes, { status: 200, headers: { "content-type": thumb.mimeType } });
+  }
+
   const auth = request.headers.get("authorization") ?? "";
   const user = auth.startsWith("Bearer ") ? parseMockAccessToken(auth.slice(7), now()) : null;
   if (!user) return error(401, "Invalid Credentials", "authError");
@@ -88,8 +104,8 @@ export async function handleMockDrive(
   };
   const save = (f: MockFile) => kv.put(prefix + f.id, JSON.stringify(f));
   const publicView = (f: MockFile) => {
-    const { content: _content, ...rest } = f;
-    return rest;
+    const { content: _content, thumbnail, ...rest } = f;
+    return thumbnail ? { ...rest, thumbnailLink: `${base}/thumbnail/${encodeURIComponent(user)}/${f.id}` } : rest;
   };
   const stamp = () => new Date(now()).toISOString();
 
@@ -105,6 +121,7 @@ export async function handleMockDrive(
       createdTime: stamp(),
       modifiedTime: stamp(),
     };
+    if (meta.contentHints?.thumbnail) f.thumbnail = meta.contentHints.thumbnail;
     if (content !== undefined) {
       f.content = content;
       f.size = String(new TextEncoder().encode(content).length);
@@ -117,6 +134,7 @@ export async function handleMockDrive(
     if (meta.mimeType !== undefined) f.mimeType = meta.mimeType;
     if (meta.trashed !== undefined) f.trashed = meta.trashed;
     if (meta.appProperties) f.appProperties = cleanProps({ ...f.appProperties, ...meta.appProperties });
+    if (meta.contentHints?.thumbnail) f.thumbnail = meta.contentHints.thumbnail;
     if (content !== undefined) {
       f.content = content;
       f.size = String(new TextEncoder().encode(content).length);

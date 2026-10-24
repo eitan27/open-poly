@@ -24,13 +24,13 @@
 // regen re-saving identical content (or Drive bumping its version for its own
 // reasons) is never mistaken for an edit.
 import type { StoredDoc } from "../storage/db";
-import { listMeta, loadDoc, putDoc, renameDoc, type DocMeta } from "../storage/db";
+import { listMeta, loadDoc, loadThumb, putDoc, renameDoc, type DocMeta } from "../storage/db";
 import { parseDocFile, serializeDocFile } from "../storage/docFile";
 import { dedupeName, isUntitled, nextUntitled } from "../storage/docNames";
 import { genId, isStarterDocument, migrateDocument } from "../document/document";
 import type { Document } from "../document/types";
 import { docHash } from "./docHash";
-import { DriveError, type DriveApi, type RemoteDoc } from "./driveApi";
+import { DriveError, type DocThumbnail, type DriveApi, type RemoteDoc } from "./driveApi";
 import { deleteSyncLink, listSyncLinks, putSyncLink, type SyncLink } from "./syncStore";
 
 export type DocSyncState =
@@ -448,6 +448,23 @@ export class SyncEngine {
 
   // --- primitives ---------------------------------------------------------
 
+  /** The document's list thumbnail, as a Drive preview. It rides along with
+   *  content uploads only, so Drive's copy can trail a recapture by an edit. */
+  private async thumbnailFor(id: string): Promise<DocThumbnail | undefined> {
+    try {
+      const thumb = await loadThumb(id);
+      if (!thumb) return undefined;
+      const bytes = new Uint8Array(await thumb.arrayBuffer());
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      }
+      return { image: btoa(binary).replace(/\+/g, "-").replace(/\//g, "_"), mimeType: "image/jpeg" };
+    } catch {
+      return undefined; // a preview is never worth failing an upload over
+    }
+  }
+
   private async isBlank(id: string): Promise<boolean> {
     const record = await loadDoc(id);
     if (!record) return false;
@@ -493,6 +510,7 @@ export class SyncEngine {
       name: record.name,
       docId: record.id,
       content: serializeDocFile(record.name, record.doc),
+      thumbnail: await this.thumbnailFor(record.id),
     });
     await this.linkTo(record.id, updated, hash, record);
     return true;
@@ -505,6 +523,7 @@ export class SyncEngine {
       name: local.record.name,
       docId,
       content: serializeDocFile(local.record.name, local.record.doc),
+      thumbnail: await this.thumbnailFor(docId),
     });
     await this.linkTo(docId, created, local.hash, local.record);
   }

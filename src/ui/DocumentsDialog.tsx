@@ -327,7 +327,7 @@ export function DocumentsDialog({
           <ul className="docs-list">
             {drive.cloudOnly.map((r) => (
               <li key={r.fileId} className="docs-row cloud-only">
-                <div className="docs-thumb placeholder">☁</div>
+                <CloudThumb url={r.thumbnailUrl} />
                 <div className="docs-row-main">
                   <span className="docs-name docs-name--static">{r.name}</span>
                   <span className="docs-sub">edited {timeAgo(Date.parse(r.modifiedTime))} · in Google Drive</span>
@@ -361,6 +361,15 @@ export function DocumentsDialog({
       )}
     </Modal>
   );
+}
+
+/** A Drive-only document's preview, from Drive's thumbnail link. Those links
+ *  are short-lived and Google may refuse one, so any failure falls back to the
+ *  cloud placeholder rather than a broken image. */
+function CloudThumb({ url }: { url?: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!url || failed) return <div className="docs-thumb placeholder">☁</div>;
+  return <img className="docs-thumb" src={url} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
 }
 
 /** Thumbnail Blob → object URL, revoked on unmount/replace. A document that has

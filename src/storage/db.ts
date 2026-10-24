@@ -198,6 +198,11 @@ export async function setThumb(id: string, thumb: Blob): Promise<void> {
   for (const fn of thumbListeners) fn();
 }
 
+/** A document's list thumbnail, if it has been captured. */
+export async function loadThumb(id: string): Promise<Blob | undefined> {
+  return (await readTx<DocMeta | undefined>(META, (s) => s.get(id)))?.thumb;
+}
+
 export function loadDoc(id: string): Promise<StoredDoc | undefined> {
   return readTx<StoredDoc | undefined>(DOCS, (s) => s.get(id));
 }

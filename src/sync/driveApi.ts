@@ -11,7 +11,7 @@ export const DOC_SUFFIX = ".openpoly.json";
 const KIND = "openpolyKind";
 const DOC_ID = "openpolyDocId";
 const FOLDER_NAME = "Open Poly";
-const FIELDS = "id,name,version,modifiedTime,appProperties,size";
+const FIELDS = "id,name,version,modifiedTime,appProperties,size,thumbnailLink";
 // Google's simple multipart upload tops out at 5 MB; STEP imports can push a
 // document past that, so larger bodies go through a resumable session.
 const MULTIPART_MAX = 4 * 1024 * 1024;
@@ -24,6 +24,17 @@ export interface RemoteDoc {
   version: string;
   modifiedTime: string;
   docId?: string;
+  /** Drive's short-lived link to the preview image we supplied (see
+   *  `thumbnail` on createDoc/updateDoc). Shown in an <img>, which needs no
+   *  CORS; absent until Drive has processed one. */
+  thumbnailUrl?: string;
+}
+
+/** A document's preview for Drive: a JPEG, as Drive's contentHints want it. */
+export interface DocThumbnail {
+  /** URL-safe base64 (RFC 4648 §5), no data: prefix. */
+  image: string;
+  mimeType: "image/jpeg";
 }
 
 export class DriveError extends Error {
@@ -52,6 +63,7 @@ interface RawFile {
   version: string;
   modifiedTime: string;
   appProperties?: Record<string, string>;
+  thumbnailLink?: string;
 }
 
 export function displayName(fileName: string): string {
@@ -67,8 +79,14 @@ function toRemote(f: RawFile): RemoteDoc {
     version: String(f.version),
     modifiedTime: f.modifiedTime,
     docId: f.appProperties?.[DOC_ID],
+    ...(f.thumbnailLink ? { thumbnailUrl: f.thumbnailLink } : {}),
   };
 }
+
+/** Drive files are JSON, which Drive can't preview itself, so it shows the
+ *  image an app hints instead — in Drive's own UI, and back to us as
+ *  `thumbnailLink`. */
+const hints = (thumbnail?: DocThumbnail) => (thumbnail ? { contentHints: { thumbnail } } : {});
 
 export function createDriveApi(opts: DriveApiOptions) {
   const doFetch = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
@@ -206,7 +224,7 @@ export function createDriveApi(opts: DriveApiOptions) {
       return res.text();
     },
 
-    async createDoc(p: { name: string; docId: string; content: string }): Promise<RemoteDoc> {
+    async createDoc(p: { name: string; docId: string; content: string; thumbnail?: DocThumbnail }): Promise<RemoteDoc> {
       const parent = await ensureFolder();
       return upload(
         null,
@@ -215,15 +233,23 @@ export function createDriveApi(opts: DriveApiOptions) {
           mimeType: "application/json",
           parents: [parent],
           appProperties: { [KIND]: "doc", [DOC_ID]: p.docId },
+          ...hints(p.thumbnail),
         },
         p.content,
       );
     },
 
-    async updateDoc(fileId: string, p: { name: string; docId: string; content: string }): Promise<RemoteDoc> {
+    async updateDoc(
+      fileId: string,
+      p: { name: string; docId: string; content: string; thumbnail?: DocThumbnail },
+    ): Promise<RemoteDoc> {
       return upload(
         fileId,
-        { name: `${p.name}${DOC_SUFFIX}`, appProperties: { [KIND]: "doc", [DOC_ID]: p.docId } },
+        {
+          name: `${p.name}${DOC_SUFFIX}`,
+          appProperties: { [KIND]: "doc", [DOC_ID]: p.docId },
+          ...hints(p.thumbnail),
+        },
         p.content,
       );
     },

@@ -190,7 +190,12 @@ await laptop.page.evaluate(
   EMAIL,
 );
 await openDriveDialog(laptop.page);
-await laptop.page.getByRole("button", { name: "Sync now" }).click();
+// A routine pass (the keep-both above replaced the open document) may find
+// the dead grant before this click does; either way the Connect view follows.
+await laptop.page
+  .getByRole("button", { name: "Sync now" })
+  .click({ timeout: 3000 })
+  .catch(() => {});
 await laptop.page.getByRole("button", { name: "Connect Google Drive" }).waitFor({ timeout: 15000 });
 check(
   "a revoked grant explains itself and offers Connect again",

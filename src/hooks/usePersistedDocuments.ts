@@ -314,9 +314,20 @@ export function usePersistedDocuments({
   // document (never per keystroke — regens can settle several times a second
   // while dragging a dimension). Switch-away also captures (see openDocument).
   const thumbAtRef = useRef<{ id: string; at: number } | null>(null);
+  // Set when a document is switched in: its first settle frames it (Home view),
+  // so the model starts in view and so does its thumbnail — the camera would
+  // otherwise keep the previous document's framing. Not on boot (the default
+  // camera is what it was), and not when sync swaps in a new version of the
+  // open document (the camera stays where the user left it).
+  const fitOnSettleRef = useRef(false);
   useEffect(() => {
     if (!persistLoaded || regenSettledSeq === 0) return;
     const id = docIdRef.current!;
+    if (fitOnSettleRef.current) {
+      fitOnSettleRef.current = false;
+      viewApiRefRef.current.current?.homeView();
+      thumbAtRef.current = null; // recapture in the new framing
+    }
     const last = thumbAtRef.current;
     if (last && last.id === id && Date.now() - last.at < 30_000) return;
     thumbAtRef.current = { id, at: Date.now() };
@@ -351,6 +362,7 @@ export function usePersistedDocuments({
       setSelectionRef.current([]);
       setRawMeshesRef.current(record.meshes ?? []);
       resetDoc(migrated); // clears undo history — a document boundary
+      fitOnSettleRef.current = true;
       setSectionViewRef.current(record.sectionView ?? DEFAULT_SECTION_VIEW);
       onDocumentAdoptedRef.current(migrated);
     },
@@ -540,6 +552,7 @@ export function usePersistedDocuments({
     (record: StoredDoc) => {
       try {
         adoptRecord(record);
+        fitOnSettleRef.current = false; // a new version of the open doc: keep the camera
       } catch (err) {
         console.warn("synced document could not be opened:", err);
       }
