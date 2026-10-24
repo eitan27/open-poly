@@ -52,7 +52,7 @@ export interface KernelStatus {
   text: string;
 }
 
-/** The topbar's Drive indicator. Disconnected, it's a "☁ Drive sync" button.
+/** The topbar's Drive indicator. Disconnected, it's a "☁ Sync with Drive" button.
  *  Connected, and given the kernel's status, it BECOMES the app's status pill:
  *  one cloud and one glyph answer "is my work safe?" — a spinner while the
  *  model regenerates or Drive syncs, a tick only once both are done — rather
@@ -86,10 +86,10 @@ export function DriveStatusButton({
         className={`tool-btn drive-btn drive-btn--${state}`}
         onClick={onClick}
         title={sync.notice?.text ?? "Open your documents on any device. Open Poly only sees the files it creates."}
-        aria-label="Google Drive sync"
+        aria-label="Sync with Google Drive"
       >
         <CloudIcon />
-        <span className="drive-btn-label">Drive sync</span>
+        <span className="drive-btn-label">Sync with Drive</span>
         {state === "problem" && (
           <span className="drive-btn-mark drive-btn-mark--problem" aria-hidden>
             !

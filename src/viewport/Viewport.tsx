@@ -657,6 +657,11 @@ export function Viewport({
   sectionViewRef.current = sectionView;
   const onSectionOffsetChangeRef = useRef(onSectionOffsetChange);
   onSectionOffsetChangeRef.current = onSectionOffsetChange;
+  // The settings as they were at mount, for the scene-building effect below:
+  // it runs once, so it reads them here rather than closing over props it
+  // would then have to re-run for. Later changes go through the appearance
+  // effect, in place.
+  const mountSettingsRef = useRef({ theme, mouseMiddle, mouseRight, cameraInertia });
 
   useEffect(() => {
     const container = containerRef.current;
@@ -678,7 +683,8 @@ export function Viewport({
     // rebuilding the whole scene on a theme flip would drop the camera, the
     // selection and every cached mesh — so later changes are applied in place
     // by the appearance effect below.
-    const theme0 = VIEWPORT_THEMES[theme];
+    const mountSettings = mountSettingsRef.current;
+    const theme0 = VIEWPORT_THEMES[mountSettings.theme];
     scene.background = new THREE.Color(theme0.background);
 
     // `let` (not const): the perspective/orthographic toggle swaps this binding.
@@ -713,8 +719,8 @@ export function Viewport({
     };
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = cameraInertia;
-    applyMouseBindings(controls, mouseMiddle, mouseRight);
+    controls.enableDamping = mountSettings.cameraInertia;
+    applyMouseBindings(controls, mountSettings.mouseMiddle, mountSettings.mouseRight);
     controls.target.set(0, 0, 0);
     controls.update();
 
@@ -723,7 +729,7 @@ export function Viewport({
     // It tracks whichever camera is current (perspective/orthographic) since
     // `render` is passed `state.camera` each frame; clicks route through
     // `goToView` below so its up-vectors match the named views exactly.
-    const viewCube = createViewCube(theme);
+    const viewCube = createViewCube(mountSettings.theme);
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.65));
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
