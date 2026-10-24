@@ -658,6 +658,7 @@ describe("a new device with only a starter document", () => {
       for (const [id, name] of names) {
         await putDoc(rec(id, name, withVar(name)));
         await a.engine.sync();
+        await new Promise((r) => setTimeout(r, 5)); // distinct Drive modifiedTimes
       }
     });
   }
@@ -727,6 +728,79 @@ describe("thumbnails", () => {
       await a.engine.sync();
       const [remote] = await apiFor("a@example.com").listDocs();
       expect(remote.thumbnailUrl).toBeUndefined();
+    });
+  });
+});
+
+describe("thumbnail catch-up", () => {
+  const jpeg = (n: number) =>
+    new Blob([new Uint8Array(Array.from({ length: n }, (_, i) => i % 256))], { type: "image/jpeg" });
+  const driveThumbLen = (name: string) => {
+    const f = driveFiles().find((x) => x.name === `${name}.openpoly.json`) as
+      { thumbnail?: { image: string } } | undefined;
+    return f?.thumbnail ? atob(f.thumbnail.image.replace(/-/g, "+").replace(/_/g, "/")).length : 0;
+  };
+
+  it("a thumbnail captured after the upload follows on its own, without re-uploading the content", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("d1", "Bracket", withVar("1")));
+      await a.engine.sync();
+      expect(driveThumbLen("Bracket")).toBe(0);
+      const before = driveFiles().find((x) => x.name === "Bracket.openpoly.json")!.content;
+      await setThumb("d1", jpeg(40));
+      await a.engine.sync();
+      expect(driveThumbLen("Bracket")).toBe(40);
+      expect(driveFiles().find((x) => x.name === "Bracket.openpoly.json")!.content).toBe(before);
+      // Recorded: the next pass neither resends it nor mistakes the version bump for an edit.
+      await a.engine.sync();
+      expect(a.engine.snapshot.docStates.d1).toBe("synced");
+      expect(await localVar("d1")).toBe("1");
+    });
+  });
+
+  it("a document pulled from Drive doesn't push its stale local thumbnail over Drive's", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("d1", "Bracket", withVar("1")));
+      await setThumb("d1", jpeg(40));
+      await a.engine.sync();
+    });
+    const b = device();
+    await on(b, async () => {
+      await b.engine.sync();
+      await b.engine.download(b.engine.snapshot.cloudOnly[0].fileId);
+      await setThumb("d1", jpeg(25)); // B's picture of the same version
+    });
+    await on(a, async () => {
+      await edit("d1", "2");
+      await setThumb("d1", jpeg(60)); // A's picture of the new version
+      await a.engine.sync();
+    });
+    await on(b, async () => {
+      await b.engine.sync(); // pulls v2; B's thumbnail (25) still shows v1
+      expect(await localVar("d1")).toBe("2");
+      await b.engine.sync();
+      expect(driveThumbLen("Bracket")).toBe(60);
+    });
+  });
+
+  it("a thumbnail Drive rejects never blocks the document", async () => {
+    const reject400: typeof fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (typeof init?.body === "string" && init.body.includes("contentHints")) {
+        return new Response(JSON.stringify({ error: { code: 400, message: "Bad thumbnail" } }), { status: 400 });
+      }
+      return driveFetch()(input, init);
+    }) as typeof fetch;
+    const a = device("a@example.com", apiFor("a@example.com", { fetch: reject400 }));
+    await on(a, async () => {
+      await putDoc(rec("d1", "Bracket", withVar("1")));
+      await setThumb("d1", jpeg(40));
+      await a.engine.sync();
+      expect(a.engine.snapshot.docStates.d1).toBe("synced");
+      expect(driveVar("Bracket")).toBe("1");
+      await a.engine.sync(); // and the rejected preview isn't retried into an error
+      expect(a.engine.snapshot.status).toBe("idle");
     });
   });
 });

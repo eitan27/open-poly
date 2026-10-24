@@ -286,7 +286,19 @@ export function usePersistedDocuments({
    *  to ~256 px (offscreen canvas — capturePNG is Retina-sized, and a 2×/4×
    *  thumbnail would quadruple the stored bytes for no visible gain in a 56 px
    *  slot). Fire-and-forget: a failed capture just keeps the old thumb. */
+  // When the open document's thumbnail was last captured (throttles recapture).
+  const thumbAtRef = useRef<{ id: string; at: number } | null>(null);
+  // A capture that couldn't be taken (tab hidden) or came back empty: the
+  // document still owes a thumbnail, taken when the tab is next visible.
+  const thumbOwedRef = useRef<string | null>(null);
   const captureThumb = useCallback((docId: string) => {
+    // A hidden tab may not keep a WebGL drawing buffer, so its capture can
+    // read back empty — and an empty capture saved as JPEG is a black tile
+    // (that would also be sent to Drive).
+    if (document.visibilityState !== "visible") {
+      thumbOwedRef.current = docId;
+      return;
+    }
     // `plain` suppresses selection/hover highlights for the capture frame — a
     // thumbnail with an orange "selected" part would be misleading in the list.
     const dataUrl = viewApiRefRef.current.current?.capturePNG({ plain: true });
@@ -298,7 +310,18 @@ export function usePersistedDocuments({
       const canvas = document.createElement("canvas");
       canvas.width = w;
       canvas.height = h;
-      canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0, w, h);
+      // The scene's background is opaque and never pure black, so a real
+      // capture has opaque, lit pixels; transparent or all-black means the
+      // render didn't reach the buffer. Keep the old thumbnail and owe one.
+      if (isBlankCapture(ctx.getImageData(0, 0, w, h).data)) {
+        thumbOwedRef.current = docId;
+        if (thumbAtRef.current?.id === docId) thumbAtRef.current = null; // next settle retries
+        return;
+      }
+      if (thumbOwedRef.current === docId) thumbOwedRef.current = null;
       canvas.toBlob(
         (blob) => {
           if (blob) setThumb(docId, blob).catch(() => {});
@@ -310,10 +333,9 @@ export function usePersistedDocuments({
     img.src = dataUrl;
   }, []);
 
-  // Refresh the thumbnail when a regen settles, throttled to once per 30 s per
+  // Refresh the thumbnail when a regen settles, at most once per 30 s per
   // document (never per keystroke — regens can settle several times a second
   // while dragging a dimension). Switch-away also captures (see openDocument).
-  const thumbAtRef = useRef<{ id: string; at: number } | null>(null);
   // Set when a document is switched in: its first settle frames it (Home view),
   // so the model starts in view and so does its thumbnail — the camera would
   // otherwise keep the previous document's framing. Not on boot (the default
@@ -328,13 +350,33 @@ export function usePersistedDocuments({
       viewApiRefRef.current.current?.homeView();
       thumbAtRef.current = null; // recapture in the new framing
     }
+    // Throttled, not dropped: a settle inside the window is captured when the
+    // window ends, so the thumbnail always catches up with the latest state.
+    // (Each later settle re-arms the same deadline; switching documents clears it.)
     const last = thumbAtRef.current;
-    if (last && last.id === id && Date.now() - last.at < 30_000) return;
-    thumbAtRef.current = { id, at: Date.now() };
+    const wait = last && last.id === id ? Math.max(0, 30_000 - (Date.now() - last.at)) : 0;
     // Give the freshly settled meshes one frame to actually paint.
-    const t = setTimeout(() => captureThumb(id), 300);
+    const t = setTimeout(() => {
+      thumbAtRef.current = { id, at: Date.now() };
+      captureThumb(id);
+    }, wait + 300);
     return () => clearTimeout(t);
   }, [regenSettledSeq, persistLoaded, captureThumb]);
+
+  // Pay an owed thumbnail once the tab is visible again (after a frame paints).
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || thumbOwedRef.current !== docIdRef.current) return;
+      const id = thumbOwedRef.current!;
+      t = setTimeout(() => captureThumb(id), 300);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      clearTimeout(t);
+    };
+  }, [captureThumb]);
 
   /** Make `record` the working document. Ordering is load-bearing in TWO ways:
    *  1. `migrateDocument` runs FIRST, before anything is mutated — it throws on
@@ -579,4 +621,18 @@ export function usePersistedDocuments({
     canReplaceActive,
     adoptExternalRecord,
   };
+}
+
+/** True when an RGBA readback holds no picture: every sampled pixel fully
+ *  transparent, or every one pure black. Samples a sparse grid — a real
+ *  capture is the opaque, dark-grey-or-lighter viewport background at least. */
+export function isBlankCapture(rgba: Uint8ClampedArray): boolean {
+  let opaque = false;
+  let lit = false;
+  for (let i = 0; i < rgba.length; i += 4 * 37) {
+    if (rgba[i + 3] > 0) opaque = true;
+    if (rgba[i] > 8 || rgba[i + 1] > 8 || rgba[i + 2] > 8) lit = true;
+    if (opaque && lit) return false;
+  }
+  return true;
 }

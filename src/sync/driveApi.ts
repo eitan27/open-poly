@@ -165,6 +165,23 @@ export function createDriveApi(opts: DriveApiOptions) {
     return (folderId = ((await res.json()) as RawFile).id);
   }
 
+  /** `upload`, but a preview Drive rejects never costs the document: on a 400
+   *  with a thumbnail attached, the same upload goes again without it. */
+  async function uploadWithHints(
+    fileId: string | null,
+    meta: Record<string, unknown>,
+    content: string,
+    thumbnail?: DocThumbnail,
+  ): Promise<RemoteDoc> {
+    if (!thumbnail) return upload(fileId, meta, content);
+    try {
+      return await upload(fileId, { ...meta, ...hints(thumbnail) }, content);
+    } catch (e) {
+      if (e instanceof DriveError && e.status === 400) return upload(fileId, meta, content);
+      throw e;
+    }
+  }
+
   /** Create (no fileId) or replace (fileId) a document's content + metadata. */
   async function upload(fileId: string | null, meta: Record<string, unknown>, content: string): Promise<RemoteDoc> {
     const path = fileId ? `/upload/drive/v3/files/${fileId}` : "/upload/drive/v3/files";
@@ -226,31 +243,38 @@ export function createDriveApi(opts: DriveApiOptions) {
 
     async createDoc(p: { name: string; docId: string; content: string; thumbnail?: DocThumbnail }): Promise<RemoteDoc> {
       const parent = await ensureFolder();
-      return upload(
+      return uploadWithHints(
         null,
         {
           name: `${p.name}${DOC_SUFFIX}`,
           mimeType: "application/json",
           parents: [parent],
           appProperties: { [KIND]: "doc", [DOC_ID]: p.docId },
-          ...hints(p.thumbnail),
         },
         p.content,
+        p.thumbnail,
       );
+    },
+
+    /** Replace just the preview, leaving the content alone. */
+    async setThumbnail(fileId: string, thumbnail: DocThumbnail): Promise<RemoteDoc> {
+      const res = await request(`${base}/drive/v3/files/${fileId}?fields=${FIELDS}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(hints(thumbnail)),
+      });
+      return toRemote((await res.json()) as RawFile);
     },
 
     async updateDoc(
       fileId: string,
       p: { name: string; docId: string; content: string; thumbnail?: DocThumbnail },
     ): Promise<RemoteDoc> {
-      return upload(
+      return uploadWithHints(
         fileId,
-        {
-          name: `${p.name}${DOC_SUFFIX}`,
-          appProperties: { [KIND]: "doc", [DOC_ID]: p.docId },
-          ...hints(p.thumbnail),
-        },
+        { name: `${p.name}${DOC_SUFFIX}`, appProperties: { [KIND]: "doc", [DOC_ID]: p.docId } },
         p.content,
+        p.thumbnail,
       );
     },
 

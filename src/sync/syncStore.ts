@@ -33,6 +33,9 @@ export interface SyncLink {
   syncedName?: string;
   /** The user chose to keep this document off Drive. */
   localOnly?: boolean;
+  /** Byte size of the thumbnail Drive's copy carries (0 = none), standing in
+   *  for its identity: a different local size means a newer capture to send. */
+  thumbSize?: number;
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;

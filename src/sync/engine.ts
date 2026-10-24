@@ -263,6 +263,7 @@ export class SyncEngine {
           continue;
         }
         const out = await this.syncLinked(meta, link, remote);
+        if (out.state === "synced") await this.catchUpThumbnail(meta.id);
         docStates[meta.id] = out.state;
         if (out.issue) issues.push(out.issue);
         continue;
@@ -450,7 +451,7 @@ export class SyncEngine {
 
   /** The document's list thumbnail, as a Drive preview. It rides along with
    *  content uploads only, so Drive's copy can trail a recapture by an edit. */
-  private async thumbnailFor(id: string): Promise<DocThumbnail | undefined> {
+  private async thumbnailFor(id: string): Promise<{ hint: DocThumbnail; size: number } | undefined> {
     try {
       const thumb = await loadThumb(id);
       if (!thumb) return undefined;
@@ -459,7 +460,10 @@ export class SyncEngine {
       for (let i = 0; i < bytes.length; i += 0x8000) {
         binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
       }
-      return { image: btoa(binary).replace(/\+/g, "-").replace(/\//g, "_"), mimeType: "image/jpeg" };
+      return {
+        hint: { image: btoa(binary).replace(/\+/g, "-").replace(/\//g, "_"), mimeType: "image/jpeg" },
+        size: thumb.size,
+      };
     } catch {
       return undefined; // a preview is never worth failing an upload over
     }
@@ -485,7 +489,11 @@ export class SyncEngine {
     return { name: remote.name, doc, hash: await docHash(remote.name, doc) };
   }
 
-  private async linkTo(docId: string, remote: RemoteDoc, hash: string, record: StoredDoc) {
+  /** Record that `docId` and `remote` now hold the same content. `thumbSize`
+   *  is the preview Drive has from us; left out (content came FROM Drive), the
+   *  local thumbnail counts as sent — it still shows the old geometry, so it
+   *  mustn't overwrite Drive's until a fresh capture replaces it. */
+  private async linkTo(docId: string, remote: RemoteDoc, hash: string, record: StoredDoc, thumbSize?: number) {
     await putSyncLink({
       docId,
       account: this.account,
@@ -494,7 +502,27 @@ export class SyncEngine {
       syncedHash: hash,
       syncedUpdatedAt: record.updatedAt,
       syncedName: record.name,
+      thumbSize: thumbSize ?? (await loadThumb(docId).catch(() => undefined))?.size ?? 0,
     });
+  }
+
+  /** A synced document whose newest thumbnail Drive hasn't got (it was
+   *  captured after the last content upload): send the preview alone. */
+  private async catchUpThumbnail(docId: string): Promise<void> {
+    const link = (await listSyncLinks()).find((l) => l.docId === docId && l.account === this.account);
+    if (!link?.fileId) return;
+    const thumb = await this.thumbnailFor(docId);
+    if (!thumb || thumb.size === (link.thumbSize ?? 0)) return;
+    try {
+      const updated = await this.api.setThumbnail(link.fileId, thumb.hint);
+      // Drive bumps the version for metadata too; it's our own change.
+      await putSyncLink({ ...link, remoteVersion: updated.version, thumbSize: thumb.size });
+    } catch (e) {
+      // Rejected outright (not auth, not transient): don't retry every pass.
+      if (e instanceof DriveError && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 429) {
+        await putSyncLink({ ...link, thumbSize: thumb.size });
+      } else throw e;
+    }
   }
 
   /** Overwrite a Drive file with a local record. With `expectVersion`, first
@@ -506,26 +534,28 @@ export class SyncEngine {
       const current = await this.api.getDoc(fileId);
       if (current && current.version !== expectVersion) return false;
     }
+    const thumb = await this.thumbnailFor(record.id);
     const updated = await this.api.updateDoc(fileId, {
       name: record.name,
       docId: record.id,
       content: serializeDocFile(record.name, record.doc),
-      thumbnail: await this.thumbnailFor(record.id),
+      thumbnail: thumb?.hint,
     });
-    await this.linkTo(record.id, updated, hash, record);
+    await this.linkTo(record.id, updated, hash, record, thumb?.size ?? 0);
     return true;
   }
 
   private async uploadNew(docId: string): Promise<void> {
     const local = await this.loadLocal(docId);
     if (!local) return;
+    const thumb = await this.thumbnailFor(docId);
     const created = await this.api.createDoc({
       name: local.record.name,
       docId,
       content: serializeDocFile(local.record.name, local.record.doc),
-      thumbnail: await this.thumbnailFor(docId),
+      thumbnail: thumb?.hint,
     });
-    await this.linkTo(docId, created, local.hash, local.record);
+    await this.linkTo(docId, created, local.hash, local.record, thumb?.size ?? 0);
   }
 
   /** Write Drive's version into local document `docId` and link them. The open
