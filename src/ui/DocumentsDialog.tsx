@@ -336,9 +336,10 @@ export function DocumentsDialog({
                   <button
                     className="text-btn"
                     disabled={busy}
+                    title="Bring it onto this device and keep it in sync with Google Drive"
                     onClick={() => void run(() => drive.onOpenCloud(r.fileId), true)}
                   >
-                    Open
+                    Sync and Open
                   </button>
                   {confirmDelete === r.fileId ? (
                     <button
@@ -372,18 +373,27 @@ function CloudThumb({ url }: { url?: string }) {
   return <img className="docs-thumb" src={url} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
 }
 
-/** Thumbnail Blob → object URL, revoked on unmount/replace. A document that has
- *  not been captured yet has no blob, and renders the empty placeholder. */
+/** Thumbnail Blob → data: URL. Not an object URL: the list re-reads its rows
+ *  (after a rename, a sync, every thumbnail capture), handing each tile a NEW
+ *  Blob of the same picture, and revoking the old object URL while the <img>
+ *  still showed it flashed a broken image. A data URL can't be revoked, and
+ *  the old picture stays up until the new one is read (a few KB). A document
+ *  that has not been captured yet has no blob: the empty placeholder. */
 function Thumb({ thumb }: { thumb?: Blob }) {
   const [url, setUrl] = useState<string | null>(null);
-  const urlRef = useRef<string | null>(null);
   useEffect(() => {
-    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-    urlRef.current = thumb ? URL.createObjectURL(thumb) : null;
-    setUrl(urlRef.current);
+    if (!thumb) {
+      setUrl(null);
+      return;
+    }
+    let live = true;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (live && typeof reader.result === "string") setUrl(reader.result);
+    };
+    reader.readAsDataURL(thumb);
     return () => {
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-      urlRef.current = null;
+      live = false;
     };
   }, [thumb]);
   return url ? <img className="docs-thumb" src={url} alt="" /> : <div className="docs-thumb placeholder" />;

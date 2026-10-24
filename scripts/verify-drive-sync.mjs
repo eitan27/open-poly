@@ -123,7 +123,7 @@ check(
   cloudNames.includes("Bracket"),
   cloudNames.join(),
 );
-await desktop.page.locator(".docs-row.cloud-only").getByRole("button", { name: "Open" }).click();
+await desktop.page.locator(".docs-row.cloud-only").getByRole("button", { name: "Sync and Open" }).click();
 await desktop.page.waitForFunction(() => document.querySelector(".doc-title")?.value === "Bracket", null, {
   timeout: 15000,
 });
