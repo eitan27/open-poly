@@ -68,9 +68,11 @@ interface StoredUser {
   email: string;
   updatedAt: number;
 }
+/** One connected browser. Deliberately no email: the address lives only in
+ *  the account record (StoredUser), so removing access — which deletes that
+ *  record — deletes it everywhere, as the privacy policy says. */
 interface StoredSession {
   sub: string;
-  email: string;
   createdAt: number;
 }
 interface AuthState {
@@ -116,7 +118,7 @@ export async function handleDriveRequest(request: Request, env: DriveEnv, deps: 
       mode,
       apiBase: mode === "mock" ? MOCK_API_BASE : GOOGLE_API_BASE,
       connected: !!(session && user),
-      email: session && user ? session.email : null,
+      email: user ? (JSON.parse(user) as StoredUser).email : null,
     });
   }
   if (!mode) return json(404, { error: "drive sync is not configured" });
@@ -221,7 +223,7 @@ export async function handleDriveRequest(request: Request, env: DriveEnv, deps: 
     await kv.put(userKey, JSON.stringify(user));
 
     const sid = randomToken(32);
-    const session: StoredSession = { sub: grant.sub, email: grant.email, createdAt: now() };
+    const session: StoredSession = { sub: grant.sub, createdAt: now() };
     await kv.put(`sess:${await sha256Hex(sid)}`, JSON.stringify(session), { expirationTtl: SESSION_TTL });
     return finishAuth(state, "connected", secure, [
       cookie(SESSION_COOKIE, sid, { path: "/api/drive", maxAge: SESSION_TTL, secure }),
@@ -255,7 +257,8 @@ export async function handleDriveRequest(request: Request, env: DriveEnv, deps: 
       await kv.delete(`user:${session.sub}`);
       return json(401, { error: "reauth" });
     }
-    return json(200, { accessToken: grant.accessToken, expiresIn: grant.expiresIn, email: session.email });
+    const email = (JSON.parse(userRaw) as StoredUser).email;
+    return json(200, { accessToken: grant.accessToken, expiresIn: grant.expiresIn, email });
   }
 
   if (path === "disconnect" && request.method === "POST") {

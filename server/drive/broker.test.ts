@@ -183,6 +183,25 @@ describe("mock mode, full round trip", () => {
     await laptop.post("/api/drive/disconnect", { revoke: true });
     expect((await desktop.post("/api/drive/token")).status).toBe(401);
   });
+
+  it("removing access leaves the email address nowhere in storage (as the privacy policy says)", async () => {
+    const env = mockEnv();
+    const kv = env.DRIVE_KV as ReturnType<typeof memoryKV>;
+    const laptop = browser(env);
+    const desktop = browser(env);
+    await laptop.connect(allow("private@example.com"));
+    await desktop.connect(allow("private@example.com"));
+    // Both browsers still show which account is connected…
+    expect(await (await desktop.send("/api/drive/config")).json()).toMatchObject({ email: "private@example.com" });
+    // Records holding an email field. (Not a substring search: the mock's
+    // account ID is "mock-<email>", where Google's is an opaque number.)
+    const withEmail = () =>
+      [...kv.data].filter(([k, v]) => /^(user|sess):/.test(k) && "email" in (JSON.parse(v) as object)).map(([k]) => k);
+    expect(withEmail()).toEqual(["user:mock-private@example.com"]); // the account record only
+    // …and "Remove access on all devices" from one of them deletes it everywhere.
+    await laptop.post("/api/drive/disconnect", { revoke: true });
+    expect(withEmail()).toEqual([]);
+  });
 });
 
 describe("google mode", () => {
