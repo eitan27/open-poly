@@ -29,7 +29,7 @@ import {
   addSketchConstraints,
   addSketchEntities,
   addVariable,
-  createDocument,
+  seedDocument,
   genId,
   moveFeature,
   removeFeature,
@@ -149,6 +149,8 @@ import { extrudeProfilesFromPicks, isExtrudePick, toggleExtrudePick } from "./do
 import { dressUpPickBody, toggleDressUpPick } from "./document/dressUpTarget";
 import { FEATURE_DEFS, FEATURE_KINDS, featureTypeLabel } from "./document/featureDefs";
 import { DocumentsDialog } from "./ui/DocumentsDialog";
+import { DriveDialog, DriveStatusButton } from "./ui/DriveDialog";
+import { useDriveSync } from "./sync/useDriveSync";
 import { ReportDialog } from "./ui/ReportDialog";
 import { SettingsDialog } from "./ui/SettingsDialog";
 import { useSettings } from "./settings/useSettings";
@@ -691,11 +693,6 @@ const VIEW_BY_SHORTCUT: Partial<Record<ShortcutId, ViewName>> = {
   "view.iso": "iso",
 };
 
-function initialDocument(): Document {
-  // Seed with one box so there is something on screen on first load.
-  return addFeature(createDocument(), "box").doc;
-}
-
 export default function App() {
   const kernelRef = useRef<KernelClient | null>(null);
   const [ready, setReady] = useState(false);
@@ -709,7 +706,7 @@ export default function App() {
     redo,
     canUndo,
     canRedo,
-  } = useHistory<Document>(initialDocument);
+  } = useHistory<Document>(seedDocument);
 
   // Resolution (variables + params -> numbers) is synchronous and pure; memoize
   // it so the UI can read evaluated values without re-running the kernel.
@@ -1795,6 +1792,9 @@ export default function App() {
     renameDocument,
     exportDocument,
     importDocumentFile,
+    flushSave,
+    canReplaceActive,
+    adoptExternalRecord,
   } = usePersistedDocuments({
     doc,
     resetDoc,
@@ -1812,6 +1812,28 @@ export default function App() {
     downloadBlob,
     safeFilename,
   });
+  // Google Drive sync — hidden entirely where the /api/drive Functions aren't
+  // deployed (a static self-host, or `npm run dev` without `npm run dev:api`).
+  const drive = useDriveSync({
+    doc,
+    docName,
+    getActiveId: () => docIdRef.current,
+    flushSave,
+    canReplaceActive,
+    adoptExternalRecord,
+    openDocument,
+    renameDocument,
+    deleteDocument,
+  });
+  const [driveDialogOpen, setDriveDialogOpen] = useState(false);
+  // The first-connect choice and auth outcomes need the user: bring the dialog
+  // up for them. Later issues (conflicts…) only badge the button — they never
+  // interrupt modelling.
+  const driveOnboarding = !!drive.snapshot?.onboarding;
+  const driveNoticeKind = drive.notice?.kind;
+  useEffect(() => {
+    if (driveOnboarding || driveNoticeKind === "error") setDriveDialogOpen(true);
+  }, [driveOnboarding, driveNoticeKind]);
   // When set, only this body is rendered (isolate); others are hidden until exit.
   const [isolatedBodyId, setIsolatedBodyId] = useState<string | null>(null);
   // Which geometry kinds clicking can pick (selection filters).
@@ -5642,6 +5664,8 @@ export default function App() {
         ? `${errorCount} error${errorCount > 1 ? "s" : ""}`
         : "up to date";
   const statusClass = fatal || errorCount > 0 ? "err" : busy ? "busy" : "idle";
+  const driveOwnsStatus =
+    !!drive.config?.enabled && !!drive.config.connected && !!drive.snapshot && statusClass !== "err";
 
   const handleAdd = (kind: FeatureKind) => {
     const { doc: next, id } = addFeature(doc, kind);
@@ -6427,6 +6451,7 @@ export default function App() {
             topbar's own 16px gap is meant to separate sections, and applied
             between the badge, the chip and the buttons it left them adrift. */}
         <div className="topbar-right">
+          {!driveOwnsStatus && <DriveStatusButton sync={drive} onClick={() => setDriveDialogOpen(true)} />}
           {agentStatus === "connected" && (
             <span className="agent-badge" title="An LLM agent is connected to this tab">
               ● Agent connected
@@ -6437,23 +6462,36 @@ export default function App() {
               up. Errors keep their words — those you do read. The sentence
               rides along hidden for screen readers, and as the hover title,
               since a lone tick doesn't say what it's the tick for. */}
-          <span className={`status ${statusClass}`} title={fatal ?? (errorDetail || status)}>
-            {statusClass === "err" ? (
-              status
-            ) : (
-              <>
-                {statusClass === "busy" ? (
-                  <span className="status-spinner" aria-hidden />
-                ) : (
-                  <span className="status-check" aria-hidden>
-                    ✓
-                  </span>
-                )}
-                {meshPercent !== null && <span aria-hidden>{meshPercent}%</span>}
-                <span className="sr-only">{status}</span>
-              </>
-            )}
-          </span>
+          {/* Connected, Drive's indicator takes over the status pill, in its
+              place (one cloud, one spinner-or-tick for model + sync); a
+              modelling error keeps the plain pill, with words, and Drive goes
+              back to its own button. */}
+          {driveOwnsStatus && (
+            <DriveStatusButton
+              sync={drive}
+              kernel={{ busy: statusClass === "busy", percent: meshPercent, text: status }}
+              onClick={() => setDriveDialogOpen(true)}
+            />
+          )}
+          {!driveOwnsStatus && (
+            <span className={`status ${statusClass}`} title={fatal ?? (errorDetail || status)}>
+              {statusClass === "err" ? (
+                status
+              ) : (
+                <>
+                  {statusClass === "busy" ? (
+                    <span className="status-spinner" aria-hidden />
+                  ) : (
+                    <span className="status-check" aria-hidden>
+                      ✓
+                    </span>
+                  )}
+                  {meshPercent !== null && <span aria-hidden>{meshPercent}%</span>}
+                  <span className="sr-only">{status}</span>
+                </>
+              )}
+            </span>
+          )}
           {/* App-level chrome, parked at the right edge past the status: none of
               it belongs to the document, and mixed in with New/Open/undo on the
               left it read as five unrelated things in a row. Icons only — these
@@ -6580,6 +6618,35 @@ export default function App() {
           onRename={renameDocument}
           onExport={exportDocument}
           onImport={importDocumentFile}
+          drive={
+            drive.engine && drive.snapshot
+              ? {
+                  states: drive.snapshot.docStates,
+                  driveThumbs: drive.snapshot.driveThumbs,
+                  cloudOnly: drive.snapshot.cloudOnly,
+                  attention: drive.snapshot.issues.length + (drive.snapshot.onboarding ? 1 : 0),
+                  revision: drive.snapshot.localRevision,
+                  onOpenCloud: async (fileId) => openDocument(await drive.engine!.download(fileId)),
+                  onTrashCloud: (fileId) => drive.engine!.trashRemote(fileId),
+                  onDeleteEverywhere: (id) => drive.engine!.deleteEverywhere(id),
+                  onUpload: (id) => drive.engine!.upload(id),
+                  onReview: () => {
+                    setDocsDialogOpen(false);
+                    setDriveDialogOpen(true);
+                  },
+                }
+              : null
+          }
+        />
+      )}
+      {driveDialogOpen && drive.config?.enabled && (
+        <DriveDialog
+          sync={drive}
+          onClose={() => setDriveDialogOpen(false)}
+          onShowDocuments={() => {
+            setDriveDialogOpen(false);
+            setDocsDialogOpen(true);
+          }}
         />
       )}
       {settingsOpen && (

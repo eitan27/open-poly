@@ -4,4 +4,8 @@
     <loc>https://openpoly.dev/</loc>
     <changefreq>weekly</changefreq>
   </url>
+  <url>
+    <loc>https://openpoly.dev/privacy</loc>
+    <changefreq>yearly</changefreq>
+  </url>
 </urlset>

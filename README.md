@@ -6,7 +6,7 @@ An open-source, in-browser CAD application that keeps your work on your own mach
 
 ![The Open Poly app: a gear with five lightening holes and a central bore, built from a sketch, an extrude, a cylinder and a boolean union — each step listed in the feature timeline on the left.](docs/images/hero-gear.png)
 
-Open Poly runs entirely in your browser — modeling is powered by the OpenCASCADE geometry kernel (via [replicad](https://replicad.xyz/)) compiled to WebAssembly, rendered with [three.js](https://threejs.org/), with parametric sketch constraints handled by [planegcs](https://github.com/Salusoft89/planegcs). Documents autosave to your browser's IndexedDB — nothing leaves your machine.
+Open Poly runs entirely in your browser — modeling is powered by the OpenCASCADE geometry kernel (via [replicad](https://replicad.xyz/)) compiled to WebAssembly, rendered with [three.js](https://threejs.org/), with parametric sketch constraints handled by [planegcs](https://github.com/Salusoft89/planegcs). Documents autosave to your browser's IndexedDB — nothing leaves your machine. After your first visit it works offline too, and your browser can install it as an app.
 
 The public deployment at <https://openpoly.dev> collects basic anonymous page analytics (no cookies, no personal data, nothing about your documents). Local and self-hosted builds send nothing.
 

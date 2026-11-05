@@ -100,6 +100,17 @@ it at full volume. Clone Mirror's dialog and its two-step arming; the agent op i
 orphaned fragment ref falls through to `requireBody`'s generic error rather than
 `topoMatch`'s scored fallback, and there is no ghost preview.
 
+**Google Drive sync — built, not yet live.** Broker in `server/drive/` (setup in
+`functions/README.md`), engine + UI in `src/sync/` and `src/ui/DriveDialog.tsx`,
+tested end to end against a mock Google (`npm run dev:api`,
+`scripts/verify-drive-sync.mjs`). Left: the Google Cloud project and consent
+screen (published to Production), the KV namespace and secrets, and one pass
+against real Google — the mock can't prove Google's resumable-upload CORS
+headers or the COOP popup behaviour. Not built: Drive thumbnails
+(`contentHints.thumbnail`), incremental listing via the `changes` API (today
+each pass lists every doc, 100 quota units), and syncing view state (section
+view stays per-device).
+
 **Codebase structure** — the two boundaries that were scoped and deliberately
 not crossed. Both were looked at closely enough to know what stopped them, so
 neither is a blind guess. Everything else structural, `App.tsx` and `App.css`
@@ -193,16 +204,6 @@ blocking, or persisting the import's built body across reloads, over deferring.
 
 ---
 
-## Open-sourcing — only the switch remains
-
-- [ ] **Flip the repository to public.** The last step, and the only one left in
-      Settings. The **About** panel is already filled in: `homepage` is
-      <https://openpoly.dev>, nine topics are set (`cad`, `parametric-cad`,
-      `opencascade`, `webassembly`, `threejs`, `3d-modeling`, `browser-based`,
-      `constraint-solver`, `mcp`), and GPL-3.0 and the description were set before
-      that. **Leave Pages disabled** — there is no landing page to publish, so
-      enabling it would publish the repository root.
-
 ## What exists
 
 **Sketching.** Datum planes + planar faces; line, rect (2-corner/center), circle
@@ -228,6 +229,16 @@ coalescing.
 **I/O.** STEP + STL export per part; STEP + DXF import; `.openpoly.json` document
 files; multi-document workspace (dialog, thumbnails, BroadcastChannel multi-tab
 warning).
+
+**Offline.** A service worker (`src/sw.ts`, registered in `src/pwa.ts`, built by
+vite-plugin-pwa's injectManifest) precaches the shell and both wasm modules, so the
+hosted app opens and models offline after one visit, and installs as an app. Pages
+are network-first (3 s timeout, never cached), so online loads always get the latest
+deploy and the banner's Refresh is a plain reload; the cached copy is only the
+offline fallback. A new worker takes over once installed, which is safe only while
+the app has no lazily loaded chunks. Persistent storage is requested (not on
+Firefox, which would prompt). Checked by `scripts/verify-pwa-offline.mjs`
+(`REBUILD=1` for the update path) against a `vite preview` build or a preview URL.
 
 **Agent.** Local stdio MCP server driving the live tab — see below.
 
@@ -334,6 +345,12 @@ Things that cost real time to learn and are not obvious from the code.
   "most recent", so a refresh reopens the tab's own doc.
 - **Undo is cleared on document switch**, by design: a document boundary is a
   history boundary.
+- **Drive sync keeps IndexedDB as the working copy** and decides "changed" by a
+  content hash of `{name, doc}`, never timestamps, so a regen re-saving
+  identical content can't masquerade as an edit. Any case where both sides hold
+  different content is a user decision, never last-writer-wins. Links live in
+  their own database (`open-poly-sync`), because bumping `open-poly`'s version
+  would hang a new tab while an old-build tab holds a connection.
 - Validate a record **before** mutating any state — an `adoptRecord` that threw
   after moving `docIdRef` left the app pointing at a broken doc and the next
   autosave overwrote it.
