@@ -291,6 +291,10 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
         <a href="/third-party-licenses.txt" target="_blank" rel="noreferrer">
           Third-party licenses
         </a>
+        {" · "}
+        <a href="/privacy" target="_blank" rel="noreferrer">
+          Privacy policy
+        </a>
       </p>
     </Modal>
   );
