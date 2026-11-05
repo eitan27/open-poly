@@ -190,6 +190,8 @@ describe("google mode", () => {
    *  the first consent — or on prompt=consent, as Google does. */
   function fakeGoogle() {
     const granted = new Set<string>();
+    const issued = new Map<string, number>();
+    const dead = new Set(["rt-dead"]);
     let forceNext = false;
     const calls: string[] = [];
     const idToken = (sub: string) =>
@@ -204,17 +206,26 @@ describe("google mode", () => {
         const first = !granted.has(sub) || forceNext;
         granted.add(sub);
         forceNext = false;
+        // A fresh refresh token each time one is issued (the first keeps the plain name).
+        const n = (issued.get(sub) ?? 0) + (first ? 1 : 0);
+        issued.set(sub, n);
         return Response.json({
           access_token: "at",
           id_token: idToken(sub),
           scope: "openid email https://www.googleapis.com/auth/drive.file",
-          ...(first ? { refresh_token: `rt-${sub}` } : {}),
+          ...(first ? { refresh_token: n > 1 ? `rt-${sub}-${n}` : `rt-${sub}` } : {}),
         });
       }
-      if (body.get("refresh_token") === "rt-dead") return Response.json({ error: "invalid_grant" }, { status: 400 });
+      if (dead.has(body.get("refresh_token") ?? "")) return Response.json({ error: "invalid_grant" }, { status: 400 });
       return Response.json({ access_token: `at-for-${body.get("refresh_token")}`, expires_in: 3599 });
     }) as typeof fetch;
-    return { fetchFn, calls, forceConsent: () => (forceNext = true) };
+    return {
+      fetchFn,
+      calls,
+      forceConsent: () => (forceNext = true),
+      /** Expire a refresh token, as Google does (revoked, or a Testing-mode grant's 7 days). */
+      kill: (rt: string) => dead.add(rt),
+    };
   }
 
   const googleEnv = (): DriveEnv => ({
@@ -291,6 +302,32 @@ describe("google mode", () => {
     g.forceConsent();
     res = await c.send(`/api/drive/auth/callback?state=${l2.searchParams.get("state")}&code=u2`);
     expect(await res.text()).toContain('"result":"connected"');
+  });
+
+  it("reconnecting after expiry never reuses the dead token, even when a stale read still returns it", async () => {
+    const g = fakeGoogle();
+    const env = googleEnv();
+    const kv = env.DRIVE_KV as ReturnType<typeof memoryKV>;
+    const b = browser(env, { fetch: g.fetchFn });
+    await connectAs(b, "u3");
+    const stale = kv.data.get("user:u3")!;
+    g.kill("rt-u3"); // the grant expires
+    expect((await b.post("/api/drive/token")).status).toBe(401); // reauth: the record is deleted…
+    kv.data.set("user:u3", stale); // …but KV is eventually consistent: a read can still return it
+    // Reconnect. Google remembers the consent and omits a refresh token; the
+    // stored one is dead, so the broker must ask again with prompt=consent.
+    let res = await b.send("/api/drive/auth/start");
+    const loc = new URL(res.headers.get("location")!);
+    res = await b.send(`/api/drive/auth/callback?state=${loc.searchParams.get("state")}&code=u3`);
+    const again = new URL(res.headers.get("location")!);
+    expect(again.host).toBe("accounts.google.com");
+    expect(again.searchParams.get("prompt")).toBe("consent");
+    g.forceConsent();
+    res = await b.send(`/api/drive/auth/callback?state=${again.searchParams.get("state")}&code=u3`);
+    expect(await res.text()).toContain('"result":"connected"');
+    const tok = await b.post("/api/drive/token");
+    expect(tok.status).toBe(200);
+    expect(await tok.json()).toMatchObject({ accessToken: "at-for-rt-u3-2" });
   });
 
   it("an invalid_grant on refresh drops the record and answers reauth", async () => {

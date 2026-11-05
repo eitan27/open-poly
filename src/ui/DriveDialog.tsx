@@ -188,12 +188,12 @@ export function DriveDialog({ sync, onClose }: { sync: DriveSync; onClose: () =>
 function ConnectView({ sync }: { sync: DriveSync }) {
   return (
     <div className="drive-connect">
-      <p>
-        Keep your documents in your own Google Drive, in an <strong>Open Poly</strong> folder, and pick them up in any
-        browser you sign in from.
-      </p>
+      <p>Keep your documents in your own Google Drive, and pick them up in any browser you sign in from.</p>
       <ul className="drive-points">
-        <li>Open Poly can only see the files it creates — nothing else in your Drive.</li>
+        <li>
+          They go in an <strong>Open Poly</strong> folder, and Open Poly can only see the files it creates — nothing
+          else in your Drive.
+        </li>
         <li>Your documents stay on this device too. Editing never waits for the network.</li>
         <li>You sign in once per browser.</li>
       </ul>

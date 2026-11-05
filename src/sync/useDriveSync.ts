@@ -104,6 +104,12 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
   const [autoUpload, setAutoUploadState] = useState(() => readFlag(AUTO_UPLOAD_KEY, true));
   const autoUploadRef = useLatest(autoUpload);
   const abortRef = useRef<AbortController | null>(null);
+  // Bumped by every successful connect, so it always gets a fresh engine. The
+  // account alone isn't enough: when Google's grant dies, the config read that
+  // should report "not connected" can still see the old record (KV is
+  // eventually consistent), the account never changes, and the old engine —
+  // stuck in "reauth" — would outlive the reconnect that fixed it.
+  const [connectEpoch, setConnectEpoch] = useState(0);
 
   const refreshConfig = useCallback(async () => setConfig(await fetchDriveConfig()), []);
 
@@ -149,7 +155,8 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
         setOnboarded: () => writeFlag(onboardedKey(account), true),
       },
     );
-  }, [account, apiBase, host, autoUploadRef]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- connectEpoch only forces a rebuild
+  }, [account, apiBase, host, autoUploadRef, connectEpoch]);
 
   // Scheduling. `syncSoon` collapses bursts: one pending timer at most.
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -246,8 +253,10 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
       await host.current.flushSave(); // a popup-blocked fallback navigates away
       sessionFlag(true);
       const result = await connectDrive({ loginHint: config?.email ?? undefined, signal: ctrl.signal });
-      if (result === "connected") await refreshConfig();
-      else {
+      if (result === "connected") {
+        await refreshConfig();
+        setConnectEpoch((n) => n + 1);
+      } else {
         sessionFlag(false);
         if (result !== "cancelled") setNotice({ kind: "error", text: AUTH_MESSAGES[result] });
       }

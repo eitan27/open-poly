@@ -174,6 +174,18 @@ export async function handleDriveRequest(request: Request, env: DriveEnv, deps: 
           refreshToken = undefined;
         }
       }
+      // The stored token may be dead: revoked, or expired (a Testing-mode
+      // grant lasts 7 days) — and even one the token endpoint just deleted can
+      // still be READ here, because KV is eventually consistent. Reusing a dead
+      // one would report "connected" and then fail at the first sync, so prove
+      // it first. A transient failure keeps it (the token endpoint copes later).
+      if (refreshToken) {
+        try {
+          if ((await provider.refresh(refreshToken)) === "invalid_grant") refreshToken = undefined;
+        } catch (e) {
+          console.warn("drive: couldn't check the stored refresh token", e);
+        }
+      }
       if (!refreshToken) {
         if (state.consentForced) return finishAuth(state, "failed", secure, []);
         return startAuth(
