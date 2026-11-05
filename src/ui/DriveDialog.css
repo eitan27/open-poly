@@ -158,6 +158,18 @@
   margin-bottom: 10px;
 }
 
+.drive-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.drive-status .status-spinner {
+  width: 10px;
+  height: 10px;
+  color: var(--accent);
+}
+
 .drive-status--offline,
 .drive-status--error,
 .drive-status--reauth {

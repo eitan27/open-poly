@@ -376,7 +376,12 @@ function ConnectedView({ sync, snapshot }: { sync: DriveSync; snapshot: SyncSnap
           <span>
             Connected as <strong>{sync.config?.email}</strong>
           </span>
-          <span className={`docs-sub drive-status drive-status--${snapshot.status}`}>{driveStatusText(sync)}</span>
+          <span className={`docs-sub drive-status drive-status--${snapshot.status}`}>
+            {/* The pill's spinner sits behind this dialog — show one here too:
+                a first sync (and its downloads) can take a while. */}
+            {snapshot.status === "syncing" && <span className="status-spinner" aria-hidden />}
+            {driveStatusText(sync)}
+          </span>
         </div>
         <button className="text-btn" disabled={snapshot.status === "syncing"} onClick={sync.syncNow}>
           Sync now
