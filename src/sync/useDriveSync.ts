@@ -74,7 +74,13 @@ export interface UseDriveSyncParams {
 /** "error" = the outcome of something the user just did (the dialog opens for
  *  it); "warn" = something that happened in the background (only the button
  *  shows it — modelling is never interrupted). */
-export type DriveNotice = { kind: "info" | "error" | "warn"; text: string } | null;
+/** "success"/"info" just report; "warn"/"error" need the user (and offer
+ *  Dismiss). `action: "showDocuments"` adds a button to the Documents list. */
+export type DriveNotice = {
+  kind: "success" | "info" | "error" | "warn";
+  text: string;
+  action?: "showDocuments";
+} | null;
 
 export interface DriveSync {
   config: DriveConfig | null;
@@ -235,17 +241,21 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
         if (latest) {
           await host.current.openDocument(latest.id);
           if (starterWasBlank && starterId !== latest.id) await host.current.deleteDocument(starterId);
-          const rest =
-            latest.others > 0 ? ` ${latest.others === 1 ? "One more is" : `${latest.others} more are`} in Open…` : "";
-          setNotice({
-            kind: "info",
-            text: `Opened “${latest.name}” from your Google Drive, the document you edited most recently.${rest}`,
-          });
+          setNotice(
+            latest.others > 0
+              ? {
+                  kind: "success",
+                  text: `Found ${latest.others + 1} documents in your Google Drive and opened “${latest.name}”, the one you edited most recently.`,
+                  action: "showDocuments",
+                }
+              : { kind: "success", text: `Found “${latest.name}” in your Google Drive and opened it.` },
+          );
         } else if (snapshot.cloudOnly.length > 0) {
           const n = snapshot.cloudOnly.length;
           setNotice({
-            kind: "info",
-            text: `${n === 1 ? "One document" : `${n} documents`} from your Google Drive ${n === 1 ? "is" : "are"} in Open…, ready to open on this device.`,
+            kind: "success",
+            text: `Connected. ${n === 1 ? "One document" : `${n} documents`} from your Google Drive ${n === 1 ? "is" : "are"} ready to open here.`,
+            action: "showDocuments",
           });
         }
       } catch {

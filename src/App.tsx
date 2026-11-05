@@ -6639,7 +6639,14 @@ export default function App() {
         />
       )}
       {driveDialogOpen && drive.config?.enabled && (
-        <DriveDialog sync={drive} onClose={() => setDriveDialogOpen(false)} />
+        <DriveDialog
+          sync={drive}
+          onClose={() => setDriveDialogOpen(false)}
+          onShowDocuments={() => {
+            setDriveDialogOpen(false);
+            setDocsDialogOpen(true);
+          }}
+        />
       )}
       {settingsOpen && (
         <SettingsDialog settings={settings} onChange={updateSettings} onClose={() => setSettingsOpen(false)} />

@@ -114,16 +114,21 @@ check(
 );
 const notice =
   (await c.page
-    .locator(".drive-info")
+    .locator(".drive-success")
     .textContent()
     .catch(() => "")) ?? "";
 check(
-  "device C: says what it opened and where the rest are",
-  /Opened “Untitled 2”.*more are in Open…/.test(notice),
+  "device C: says how many it found and which it opened",
+  /Found 3 documents in your Google Drive and opened “Untitled 2”/.test(notice),
   notice,
 );
-await c.page.keyboard.press("Escape");
-await c.page.locator(".docs-btn").click();
+check("…as a report, with no Dismiss", !/Dismiss/.test(notice));
+await c.page.getByRole("button", { name: "See all documents" }).click();
+await c.page.locator(".docs-dialog").waitFor({ timeout: 5000 });
+check(
+  "device C: “See all documents” swaps the Drive dialog for the Documents list",
+  !(await c.page.locator(".drive-dialog").isVisible()),
+);
 await c.page.waitForTimeout(400);
 const local = await c.page.locator(".docs-row:not(.cloud-only) .docs-name").allTextContents();
 check("device C: the empty starter it replaced is gone", local.length === 1, local.join(" | "));

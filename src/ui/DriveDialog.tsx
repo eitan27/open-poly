@@ -156,7 +156,16 @@ export function DriveStatusButton({
   );
 }
 
-export function DriveDialog({ sync, onClose }: { sync: DriveSync; onClose: () => void }) {
+export function DriveDialog({
+  sync,
+  onClose,
+  onShowDocuments,
+}: {
+  sync: DriveSync;
+  onClose: () => void;
+  /** Close this dialog and open the Documents list. */
+  onShowDocuments?: () => void;
+}) {
   const connected = !!sync.config?.connected && !!sync.snapshot;
   return (
     <Modal onClose={onClose} ariaLabel="Google Drive" className="docs-dialog drive-dialog" escapeCapture>
@@ -166,14 +175,32 @@ export function DriveDialog({ sync, onClose }: { sync: DriveSync; onClose: () =>
           ✕
         </button>
       </div>
-      {sync.notice && (
-        <p className={sync.notice.kind === "info" ? "drive-info" : "docs-error"}>
-          {sync.notice.text}{" "}
-          <button className="banner-link" onClick={sync.dismissNotice}>
-            Dismiss
-          </button>
-        </p>
-      )}
+      {sync.notice &&
+        (sync.notice.kind === "success" || sync.notice.kind === "info" ? (
+          // A report, not a question: no Dismiss — closing the dialog does that.
+          <div className={sync.notice.kind === "success" ? "drive-success" : "drive-info"}>
+            <p>
+              {sync.notice.kind === "success" && (
+                <span className="drive-success-mark" aria-hidden>
+                  ✓{" "}
+                </span>
+              )}
+              {sync.notice.text}
+            </p>
+            {sync.notice.action === "showDocuments" && onShowDocuments && (
+              <button className="text-btn" onClick={onShowDocuments}>
+                See all documents
+              </button>
+            )}
+          </div>
+        ) : (
+          <p className="docs-error">
+            {sync.notice.text}{" "}
+            <button className="banner-link" onClick={sync.dismissNotice}>
+              Dismiss
+            </button>
+          </p>
+        ))}
       {!connected ? (
         <ConnectView sync={sync} />
       ) : sync.snapshot!.onboarding ? (

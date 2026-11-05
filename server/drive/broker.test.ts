@@ -330,6 +330,22 @@ describe("google mode", () => {
     expect(await tok.json()).toMatchObject({ accessToken: "at-for-rt-u3-2" });
   });
 
+  it("a callback requested twice reports the sign-in that worked, not a failure", async () => {
+    const g = fakeGoogle();
+    let clock = 1_000_000;
+    const env = googleEnv();
+    const b = browser(env, { fetch: g.fetchFn, now: () => clock });
+    const { res, seen } = await connectAs(b, "u4");
+    expect(await res.text()).toContain('"result":"connected"');
+    // The same URL again: its state cookie is spent and Google's code is used.
+    const replay = `/api/drive/auth/callback?state=${new URL(seen[0]).searchParams.get("state")}&code=u4`;
+    expect(await (await b.send(replay)).text()).toContain('"result":"connected"');
+    // …but only for this browser, holding a session minted moments ago.
+    expect(await (await browser(env, { fetch: g.fetchFn }).send(replay)).text()).toContain('"result":"failed"');
+    clock += 5 * 60_000;
+    expect(await (await b.send(replay)).text()).toContain('"result":"failed"');
+  });
+
   it("an invalid_grant on refresh drops the record and answers reauth", async () => {
     const g = fakeGoogle();
     const env = googleEnv();

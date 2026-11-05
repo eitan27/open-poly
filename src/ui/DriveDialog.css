@@ -96,6 +96,38 @@
   font-size: 12px;
 }
 
+.drive-success,
+.drive-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 10px; /* like .docs-error, the other notice */
+}
+
+.drive-success p,
+.drive-info p {
+  margin: 0;
+  flex: 1;
+}
+
+.drive-success {
+  font-size: 13px;
+  color: var(--text-2);
+  background: var(--ok-surface);
+  border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.drive-success-mark {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.drive-success .text-btn {
+  flex: none;
+}
+
 .drive-info {
   font-size: 12px;
   color: var(--accent-palest);

@@ -52,6 +52,9 @@ export interface BrokerDeps {
 const SESSION_COOKIE = "op_drive_sid";
 const STATE_COOKIE = "op_drive_state";
 const SESSION_TTL = 400 * 24 * 3600; // browsers cap cookie lifetime at 400 days
+// How recent a session must be for a failed duplicate callback to count as
+// the sign-in that just worked (see auth/callback).
+const JUST_CONNECTED_MS = 2 * 60_000;
 const STATE_TTL = 600;
 // A fixed key for mock mode only, so `npm run dev:api` works with no secrets.
 // Mock refresh tokens are fake; sealing them is just exercising the code path.
@@ -140,9 +143,20 @@ export async function handleDriveRequest(request: Request, env: DriveEnv, deps: 
   }
 
   if (path === "auth/callback" && request.method === "GET") {
+    // A browser can request this URL twice for one sign-in (Brave did): the
+    // first copy uses up the state cookie and Google's one-time code and
+    // connects; the second then fails those checks and would tell the user it
+    // failed. A session minted moments ago in this browser means the sign-in
+    // worked, so report that. Nothing is granted here — the state check still
+    // guards every sign-in that actually creates a session.
+    const failedUnlessJustConnected = async (st: Pick<AuthState, "mode" | "returnTo">) => {
+      const session = await readSession(request, kv);
+      const fresh = !!session && now() - session.createdAt < JUST_CONNECTED_MS;
+      return finishAuth(st, fresh ? "connected" : "failed", secure, []);
+    };
     const state = readStateCookie(request);
     if (!state || state.state !== url.searchParams.get("state")) {
-      return finishAuth({ mode: "popup", returnTo: "/" }, "failed", secure, []);
+      return failedUnlessJustConnected({ mode: "popup", returnTo: "/" });
     }
     const err = url.searchParams.get("error");
     if (err) return finishAuth(state, err === "access_denied" ? "denied" : "failed", secure, []);
@@ -154,7 +168,7 @@ export async function handleDriveRequest(request: Request, env: DriveEnv, deps: 
       grant = await provider.exchangeCode(code, redirectUri);
     } catch (e) {
       console.warn("drive: code exchange failed", e);
-      return finishAuth(state, "failed", secure, []);
+      return failedUnlessJustConnected(state);
     }
     // Google's consent screen lets the user untick individual scopes.
     if (!grant.scope.split(" ").includes(DRIVE_FILE_SCOPE)) return finishAuth(state, "scope", secure, []);
@@ -339,6 +353,7 @@ function finishAuth(
   const html = `<!doctype html><meta charset="utf-8"><title>Open Poly</title>
 <body style="font:15px system-ui;padding:32px;color:#222">
 <p>${message}</p>
+<p><a href="/?driveAuth=${result}" style="color:#2563eb">Back to Open Poly</a></p>
 <script>
 try { const c = new BroadcastChannel("openpoly-drive-auth"); c.postMessage(${payload}); c.close(); } catch {}
 try { window.opener && window.opener.postMessage(${payload}, location.origin); } catch {}
