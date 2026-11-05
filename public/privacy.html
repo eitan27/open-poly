@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy policy — Open Poly</title>
+    <meta
+      name="description"
+      content="What Open Poly does with your data: your documents stay in your browser, and Google Drive sync only touches files Open Poly creates."
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="canonical" href="https://openpoly.dev/privacy" />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --text: #1d2129;
+        --muted: #5b6270;
+        --rule: #e3e6eb;
+        --accent: #2f6fe4;
+        --panel: #f5f7fa;
+        color-scheme: light;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1b1d23;
+          --text: #e6e8ec;
+          --muted: #9aa1ad;
+          --rule: #2e323b;
+          --accent: #6ea0ff;
+          --panel: #23262e;
+          color-scheme: dark;
+        }
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          16px/1.6 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 40px 16px 64px;
+      }
+      header a {
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 14px;
+      }
+      header a:hover {
+        color: var(--text);
+      }
+      h1 {
+        font-size: 30px;
+        line-height: 1.2;
+        margin: 20px 0 4px;
+      }
+      .updated {
+        color: var(--muted);
+        font-size: 14px;
+        margin: 0 0 28px;
+      }
+      .summary {
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        padding: 16px 20px;
+      }
+      .summary ul {
+        margin: 0;
+        padding-left: 20px;
+      }
+      h2 {
+        font-size: 20px;
+        margin: 36px 0 8px;
+        padding-top: 20px;
+        border-top: 1px solid var(--rule);
+      }
+      a {
+        color: var(--accent);
+      }
+      li + li {
+        margin-top: 4px;
+      }
+      code {
+        font-size: 14px;
+        background: var(--panel);
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header><a href="/">← Open Poly</a></header>
+      <h1>Privacy policy</h1>
+      <p class="updated">Last updated 5 November 2026</p>
+
+      <div class="summary">
+        <ul>
+          <li>Open Poly runs in your browser. Your documents are stored on your device, not on our servers.</li>
+          <li>There are no accounts, no ads and no tracking cookies, and we never sell or share your data.</li>
+          <li>
+            If you choose to sync with Google Drive, Open Poly can see only the files it creates, and your documents go
+            directly between your browser and Google.
+          </li>
+        </ul>
+      </div>
+
+      <h2>Your documents and settings</h2>
+      <p>
+        Documents you create, import or open, and your settings, are saved in your browser's own storage on your device.
+        They are not sent to Open Poly. Clearing your browser's data for openpoly.dev deletes them, so export anything
+        you want to keep (Export as JSON), or sync it with Google Drive.
+      </p>
+
+      <h2>Google Drive sync (optional)</h2>
+      <p>
+        Syncing is off until you choose to connect Google Drive. When you connect, Open Poly asks Google for permission
+        to:
+      </p>
+      <ul>
+        <li>know your Google account's email address, to show which account is connected; and</li>
+        <li>
+          see, create and edit <strong>only the files Open Poly creates</strong> in your Drive (Google's
+          <code>drive.file</code> permission). It cannot see anything else in your Drive.
+        </li>
+      </ul>
+      <p>
+        Your documents are saved as files in an "Open Poly" folder in your Drive. They travel directly between your
+        browser and Google; their contents, and their preview images, never pass through Open Poly's servers.
+      </p>
+      <p>So that you don't have to sign in every time, Open Poly's server keeps:</p>
+      <ul>
+        <li>
+          your Google account ID and email address, and a Google <em>refresh token</em> that lets your browser get
+          short-lived access to your Drive. The token is stored encrypted;
+        </li>
+        <li>
+          a record of each browser you've connected, identified by a random cookie set on openpoly.dev for this purpose
+          only. It lasts up to 400 days, or until you disconnect.
+        </li>
+      </ul>
+      <p>You can stop at any time:</p>
+      <ul>
+        <li><strong>Disconnect this browser</strong> (in the Google Drive dialog) deletes that browser's record.</li>
+        <li>
+          <strong>Remove access on all devices</strong> also revokes Open Poly's access with Google and deletes the
+          stored token and email address. You can also remove access from your
+          <a href="https://myaccount.google.com/permissions">Google Account</a>.
+        </li>
+        <li>Neither deletes your documents, on your device or in your Drive.</li>
+      </ul>
+      <p>
+        Open Poly's use and transfer of information received from Google APIs adheres to the
+        <a href="https://developers.google.com/terms/api-services-user-data-policy"
+          >Google API Services User Data Policy</a
+        >, including the Limited Use requirements. That information is used only to sync your documents with your Drive.
+        It is not used for advertising, not sold, not used to train AI models, and not shared with anyone.
+      </p>
+
+      <h2>Reporting an issue</h2>
+      <p>
+        The 🐞 button files a report as a <strong>public</strong> issue on Open Poly's GitHub repository. A report
+        contains what you write and its category, plus the app's version, the page address, your browser's name and
+        version, and the time. Your current document and a screenshot are included only if you tick those boxes. To
+        block spam, a Cloudflare Turnstile check runs when you send a report.
+      </p>
+
+      <h2>Analytics and hosting</h2>
+      <p>
+        openpoly.dev counts visits with Cloudflare Web Analytics, which uses no cookies and doesn't track you across
+        sites. The site is hosted by Cloudflare, which processes standard request information (such as IP addresses) to
+        serve and protect it.
+      </p>
+
+      <h2>Children</h2>
+      <p>Open Poly isn't directed at children under 13, and doesn't knowingly collect their personal information.</p>
+
+      <h2>Changes</h2>
+      <p>
+        If this policy changes, the new version will be posted here with a new date. The full history is public in Open
+        Poly's source repository.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        Questions or requests about your data: open an issue at
+        <a href="https://github.com/eitan27/open-poly/issues">github.com/eitan27/open-poly/issues</a>.
+      </p>
+    </main>
+  </body>
+</html>
