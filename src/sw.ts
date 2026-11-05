@@ -66,9 +66,12 @@ async function networkFirst(event: FetchEvent, url: URL): Promise<Response> {
   } catch {
     // Offline, or too slow — use the cached copy.
   }
-  // A precached file opened directly (third-party-licenses.txt) is itself;
+  // A precached file opened directly (third-party-licenses.txt) is itself, as
+  // is a page served without its extension (/privacy → privacy.html);
   // anything else is the app.
-  const cached = (url.pathname !== "/" && (await matchPrecache(url.pathname))) || (await matchPrecache("/index.html"));
+  const cached =
+    (url.pathname !== "/" && ((await matchPrecache(url.pathname)) || (await matchPrecache(`${url.pathname}.html`)))) ||
+    (await matchPrecache("/index.html"));
   return cached ?? Response.error();
 }
 

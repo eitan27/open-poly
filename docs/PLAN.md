@@ -204,16 +204,6 @@ blocking, or persisting the import's built body across reloads, over deferring.
 
 ---
 
-## Open-sourcing — only the switch remains
-
-- [ ] **Flip the repository to public.** The last step, and the only one left in
-      Settings. The **About** panel is already filled in: `homepage` is
-      <https://openpoly.dev>, nine topics are set (`cad`, `parametric-cad`,
-      `opencascade`, `webassembly`, `threejs`, `3d-modeling`, `browser-based`,
-      `constraint-solver`, `mcp`), and GPL-3.0 and the description were set before
-      that. **Leave Pages disabled** — there is no landing page to publish, so
-      enabling it would publish the repository root.
-
 ## What exists
 
 **Sketching.** Datum planes + planar faces; line, rect (2-corner/center), circle
