@@ -14,6 +14,7 @@ import { assertNever } from "./lib/assertNever";
 import { clamp } from "./lib/clamp";
 import { formatRounded3 } from "./lib/format";
 import { useUpdateAvailable } from "./useVersionCheck";
+import { WhatsNewLine } from "./ui/WhatsNewLine";
 import {
   addBoolean,
   addExtrude,
@@ -6563,7 +6564,11 @@ export default function App() {
       </header>
       {updateAvailable && (
         <div className="update-banner">
-          <span>A new version of Open Poly is available.</span>
+          {updateAvailable.items.length > 0 ? (
+            <WhatsNewLine items={updateAvailable.items} />
+          ) : (
+            <span>A new version of Open Poly is available.</span>
+          )}
           <button className="banner-link" onClick={() => location.reload()}>
             Refresh
           </button>
