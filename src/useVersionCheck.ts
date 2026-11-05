@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { checkForServiceWorkerUpdate } from "./pwa";
+import { newSince, parseWhatsNew } from "./whatsNew";
 
 // How often to poll the deployed version.json while the tab is open+visible.
 const POLL_MS = 2 * 60 * 1000;
@@ -15,8 +16,13 @@ const POLL_MS = 2 * 60 * 1000;
  *  The service worker (src/sw.ts) doesn't change this: a reload still fetches the
  *  page from the network. Finding a new version also tells the worker to fetch
  *  the new build now, so it's cached for offline use without waiting. */
-export function useUpdateAvailable(): boolean {
-  const [stale, setStale] = useState(false);
+/** What a newer deploy brings: null while this build is the latest; else the
+ *  "what's new" items this tab's bundle didn't have — empty when the deploy
+ *  added none, and the banner reads as it always did. */
+export type UpdateInfo = { items: string[] } | null;
+
+export function useUpdateAvailable(): UpdateInfo {
+  const [stale, setStale] = useState<UpdateInfo>(null);
 
   useEffect(() => {
     if (!import.meta.env.PROD) return;
@@ -30,10 +36,16 @@ export function useUpdateAvailable(): boolean {
       try {
         const res = await fetch(`/version.json?t=${Date.now()}`, { cache: "no-store" });
         if (!res.ok) return;
-        const { version } = (await res.json()) as { version?: string };
+        const { version, whatsNew } = (await res.json()) as { version?: string; whatsNew?: unknown };
         if (!active || !version || version === current) return;
         checkForServiceWorkerUpdate();
-        setStale(true);
+        let items: string[] = [];
+        try {
+          items = whatsNew === undefined ? [] : newSince(parseWhatsNew(whatsNew), __WHATS_NEW__);
+        } catch {
+          // A list this build can't read never costs the banner itself.
+        }
+        setStale({ items });
       } catch {
         // Offline or a transient failure — ignore and try again next tick.
       }

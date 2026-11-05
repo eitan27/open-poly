@@ -43,6 +43,11 @@ a single line. Keep the blank line.
   browser and are the only coverage `src/kernel/worker.ts` and
   `src/viewport/` have. See [`scripts/README.md`](../scripts/README.md), which
   also records which of them are currently green.
+- If the change is something users would notice, add one short line for it
+  to [`whatsnew.json`](../whatsnew.json): a new entry at the top, dated today,
+  phrased as a user would say it ("Sync documents with Google Drive"). Tabs
+  left open when it deploys show it in their update banner; a deploy with no
+  new entry keeps the plain "A new version is available" banner.
 - Keep PRs focused. Unrelated cleanup, formatting-only changes, or drive-by
   refactors belong in a separate PR unless they're in files you're already
   touching for the main change.

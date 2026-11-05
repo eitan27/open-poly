@@ -1,13 +1,20 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { readFileSync } from "node:fs";
 import { thirdPartyLicenses } from "./scripts/third-party-licenses";
+import { parseWhatsNew } from "./src/whatsNew";
 
 // A build id that changes on every build. It's baked into the app bundle (as
 // `__BUILD_ID__`) AND emitted to `dist/version.json`, so the running app can
 // poll the deployed version.json and prompt a refresh when a newer build is
 // live (see src/useVersionCheck.ts).
 const BUILD_ID = new Date().toISOString();
+
+// The hand-written "what's new" list (see src/whatsNew.ts), validated here so a
+// malformed file fails the build. Baked into the bundle as __WHATS_NEW__ and
+// served in version.json: an open tab shows the entries it didn't have.
+const WHATS_NEW = parseWhatsNew(JSON.parse(readFileSync(new URL("./whatsnew.json", import.meta.url), "utf8")));
 
 // Emits version.json into the build output alongside the hashed assets.
 function versionStamp(): Plugin {
@@ -17,7 +24,7 @@ function versionStamp(): Plugin {
       this.emitFile({
         type: "asset",
         fileName: "version.json",
-        source: JSON.stringify({ version: BUILD_ID }),
+        source: JSON.stringify({ version: BUILD_ID, whatsNew: WHATS_NEW }),
       });
     },
   };
@@ -69,7 +76,7 @@ const pwa = VitePWA({
 export default defineConfig({
   server: { proxy: API_PROXY },
   preview: { proxy: API_PROXY },
-  define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
+  define: { __BUILD_ID__: JSON.stringify(BUILD_ID), __WHATS_NEW__: JSON.stringify(WHATS_NEW) },
   plugins: [react(), versionStamp(), thirdPartyLicenses(), pwa],
   worker: { format: "es" },
   optimizeDeps: { exclude: ["replicad-opencascadejs", "@salusoft89/planegcs"] },
