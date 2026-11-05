@@ -12,8 +12,8 @@ export interface ConnectOutcome {
   downloaded: number;
   /** The document opened in place of an untouched starter, if one was. */
   opened: string | null;
-  /** This device had documents of its own, now in Drive too. */
-  hadLocalWork: boolean;
+  /** How many of this device's own documents are now synced with Drive. */
+  localSynced: number;
 }
 
 const SYNCED = "Synced with Google Drive";
@@ -48,26 +48,16 @@ export function connectNotice(o: ConnectOutcome): NonNullable<DriveNotice> {
   }
 
   // This device kept its own document open.
-  const ownToo = "Your documents here are now in Drive too";
-  if (o.inDrive === 0) {
-    return o.hadLocalWork ? { kind: "success", title, text: `${ownToo}.` } : { kind: "success", title };
-  }
-  const lead = o.hadLocalWork ? `${ownToo}. ` : "";
-  if (partial) {
-    return {
-      kind: "success",
-      title,
-      text: `${lead}The ${o.downloaded} most recently edited from Drive were added to this device; ${restSync}.`,
-      action: "showDocuments",
-    };
-  }
-  const added = o.downloaded === 1 ? "1 from Drive was added" : `${o.downloaded} from Drive were added`;
-  return {
-    kind: "success",
-    title,
-    text: o.hadLocalWork
-      ? `${ownToo}, and ${added} to this device.`
-      : `${added.charAt(0).toUpperCase()}${added.slice(1)} to this device.`,
-    action: "showDocuments",
-  };
+  const docs = (n: number) => (n === 1 ? "1 document" : `${n} documents`);
+  const mine =
+    o.localSynced > 0
+      ? `${docs(o.localSynced)} from this device ${o.localSynced === 1 ? "is" : "are"} now synced with Google Drive`
+      : "";
+  if (o.inDrive === 0) return mine ? { kind: "success", title, text: `${mine}.` } : { kind: "success", title };
+  const theirs = partial
+    ? `the ${o.downloaded} you edited most recently in Google Drive are now available on this device`
+    : `${docs(o.downloaded)} from Google Drive ${o.downloaded === 1 ? "is" : "are"} now available on this device`;
+  const sentence = mine ? `${mine}, and ${theirs}.` : `${theirs.charAt(0).toUpperCase()}${theirs.slice(1)}.`;
+  const tail = partial ? ` ${restSync.charAt(0).toUpperCase()}${restSync.slice(1)}.` : "";
+  return { kind: "success", title, text: sentence + tail, action: "showDocuments" };
 }

@@ -243,7 +243,7 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
     const starterId = host.current.getActiveId();
     const starterWasBlank = !!starterId && snapshot.docStates[starterId] === "blank";
     // Documents of this device's own that the first pass put in Drive.
-    const hadLocalWork = Object.values(snapshot.docStates).some((st) => st === "synced" || st === "pending");
+    const localSynced = Object.values(snapshot.docStates).filter((st) => st === "synced" || st === "pending").length;
     void (async () => {
       try {
         const r = await engine.downloadRecent(RECENT_ON_CONNECT);
@@ -254,7 +254,7 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
           if (starterWasBlank && starterId !== newest.id) await host.current.deleteDocument(starterId);
           opened = newest.name;
         }
-        setNotice(connectNotice({ inDrive: r.inDrive, downloaded: r.downloaded.length, opened, hadLocalWork }));
+        setNotice(connectNotice({ inDrive: r.inDrive, downloaded: r.downloaded.length, opened, localSynced }));
       } catch {
         /* the snapshot carries the error */
       }
