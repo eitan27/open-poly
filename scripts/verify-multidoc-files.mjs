@@ -31,7 +31,7 @@ await page.waitForFunction(() => window.__openpoly);
 
 const apply = (op) => page.evaluate((o) => window.__openpoly.apply(o), op);
 const featureCount = () => page.evaluate(() => window.__openpoly.read({ read: "document" }).features.length);
-const title = async () => (await page.locator(".doc-title").textContent())?.trim();
+const title = async () => (await page.locator(".doc-title").inputValue())?.trim();
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -43,8 +43,8 @@ const check = (label, ok, detail = "") => {
 const doc0 = await page.evaluate(() => window.__openpoly.read({ read: "document" }));
 for (const f of [...doc0.features].reverse()) await apply({ op: "delete", featureId: f.id });
 await page.locator(".doc-title").click();
-await page.locator(".doc-title-input").fill("ThumbDoc");
-await page.locator(".doc-title-input").press("Enter");
+await page.locator(".doc-title").fill("ThumbDoc");
+await page.locator(".doc-title").press("Enter");
 await apply({ op: "addPrimitive", kind: "box" });
 await waitIdle();
 await page.waitForTimeout(800); // regen-settle thumb capture (300 ms delay + encode)

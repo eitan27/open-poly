@@ -36,9 +36,23 @@ sw.addEventListener("activate", (event) => {
 sw.addEventListener("fetch", (event) => {
   if (event.request.mode !== "navigate") return;
   const url = new URL(event.request.url);
-  if (url.origin !== location.origin || url.pathname.startsWith("/api/")) return;
+  if (url.origin !== location.origin) return;
+  // The Drive sign-in pages (/api/drive/auth/…) are navigations too, and the
+  // browser has already sent each one as a navigation preload. Returning
+  // without respondWith would make it send the request a SECOND time — and the
+  // sign-in callback must run exactly once: Google's code can be exchanged only
+  // once, so one copy connected and the other answered "failed", whichever the
+  // popup happened to show. Answer with the preload itself; never cached.
+  if (url.pathname.startsWith("/api/")) {
+    event.respondWith(passThrough(event));
+    return;
+  }
   event.respondWith(networkFirst(event, url));
 });
+
+async function passThrough(event: FetchEvent): Promise<Response> {
+  return ((await event.preloadResponse) as Response | undefined) ?? fetch(event.request);
+}
 
 async function networkFirst(event: FetchEvent, url: URL): Promise<Response> {
   const network = (async () => ((await event.preloadResponse) as Response | undefined) ?? fetch(event.request))();

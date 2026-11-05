@@ -30,7 +30,14 @@ const check = (label, ok, detail = "") => {
 // 1. Title chip renders and mirrors to the browser tab.
 const initial = (await page.locator(".doc-title").inputValue()).trim();
 check("topbar shows the document title", Boolean(initial), `"${initial}"`);
-check("browser tab mirrors it", (await page.title()) === `${initial} — Open Poly`, await page.title());
+// An auto name ("Untitled", "Untitled N") is a placeholder, so the tab keeps
+// the site's own title; a real name is shown.
+const tab = await page.title();
+check(
+  "browser tab mirrors it",
+  /^Untitled(?: \d+)?$/.test(initial) ? !tab.startsWith("Untitled") : tab === `${initial} — Open Poly`,
+  tab,
+);
 
 // 2. Rename inline: the title is always an input — click, type, Enter.
 await page.locator(".doc-title").click();
