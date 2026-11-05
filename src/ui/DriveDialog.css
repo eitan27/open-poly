@@ -333,12 +333,10 @@ button.status-drive:focus-visible {
   outline-offset: 2px;
 }
 
-.drive-legal {
+/* The plain link style of Settings' "Third-party licenses", set apart from
+   the button so the two don't read as one control. */
+.drive-privacy {
+  margin-left: 8px; /* + the row's 8px gap */
   font-size: 12px;
-  color: var(--text-6);
-  margin: -4px 0 14px;
-}
-
-.drive-legal a {
-  color: inherit;
+  color: var(--accent-pale-2);
 }
