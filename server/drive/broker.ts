@@ -143,6 +143,11 @@ export async function handleDriveRequest(request: Request, env: DriveEnv, deps: 
   }
 
   if (path === "auth/callback" && request.method === "GET") {
+    if (mode === "mock") {
+      // Test hook: count arrivals per sign-in (see mock/callback-hits).
+      const hitsKey = `mock:callback-hits:${url.searchParams.get("state") ?? ""}`;
+      await kv.put(hitsKey, String(Number((await kv.get(hitsKey)) ?? 0) + 1));
+    }
     // A browser can request this URL twice for one sign-in (Brave did): the
     // first copy uses up the state cookie and Google's one-time code and
     // connects; the second then fails those checks and would tell the user it
@@ -289,6 +294,13 @@ export async function handleDriveRequest(request: Request, env: DriveEnv, deps: 
     if (url.searchParams.get("decision") === "deny") q.set("error", "access_denied");
     else q.set("code", mockCode(url.searchParams.get("email") || "tester@example.com", url.searchParams.has("drive")));
     return redirectTo(`${redirect}?${q}`);
+  }
+  if (mode === "mock" && path === "mock/callback-hits" && request.method === "GET") {
+    // Test hook: how many times one sign-in's callback arrived — it must be
+    // exactly once (a service worker once made it twice; see src/sw.ts).
+    return json(200, {
+      hits: Number((await kv.get(`mock:callback-hits:${url.searchParams.get("state") ?? ""}`)) ?? 0),
+    });
   }
   if (mode === "mock" && path === "mock/revoke" && request.method === "POST") {
     // Test hook: "the user removed Open Poly from their Google account".
