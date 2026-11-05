@@ -179,14 +179,28 @@ export function DriveDialog({
         (sync.notice.kind === "success" || sync.notice.kind === "info" ? (
           // A report, not a question: no Dismiss — closing the dialog does that.
           <div className={sync.notice.kind === "success" ? "drive-success" : "drive-info"}>
-            <p>
-              {sync.notice.kind === "success" && (
-                <span className="drive-success-mark" aria-hidden>
-                  ✓{" "}
-                </span>
+            <div className="drive-notice-body">
+              {sync.notice.title && (
+                <p className="drive-notice-title">
+                  {sync.notice.kind === "success" && (
+                    <span className="drive-success-mark" aria-hidden>
+                      ✓{" "}
+                    </span>
+                  )}
+                  {sync.notice.title}
+                </p>
               )}
-              {sync.notice.text}
-            </p>
+              {sync.notice.text && (
+                <p>
+                  {!sync.notice.title && sync.notice.kind === "success" && (
+                    <span className="drive-success-mark" aria-hidden>
+                      ✓{" "}
+                    </span>
+                  )}
+                  {sync.notice.text}
+                </p>
+              )}
+            </div>
             {sync.notice.action === "showDocuments" && onShowDocuments && (
               <button className="text-btn" onClick={onShowDocuments}>
                 See all documents

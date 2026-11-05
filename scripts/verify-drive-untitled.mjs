@@ -2,9 +2,10 @@
 //   B (has work of its own): an untouched "Untitled" neither uploads nor
 //     clashes with A's "Untitled"; once edited it renames itself "Untitled 2"
 //     (keeping its undo history) and uploads.
-//   C (nothing but the seed box): connecting opens the Drive document edited
-//     most recently in place of the starter, which is removed, and says so;
-//     the opened document's thumbnail fills in while Documents is open.
+//   C (nothing but the seed box): connecting brings down the recent Drive
+//     documents and opens the one edited most recently in place of the
+//     starter, which is removed, and says so; the opened document's thumbnail
+//     fills in while Documents is open.
 //
 // Needs BOTH dev servers, like verify-drive-sync.mjs:
 //   npm run dev:api
@@ -95,8 +96,12 @@ check("device B: undo history survived the rename", after === before - 1, `${bef
 
 await b.page.locator(".docs-btn").click();
 await b.page.waitForTimeout(800);
-const cloud = await b.page.locator(".docs-row.cloud-only .docs-name").allTextContents();
-check("device B: A's Untitled is listed as in Drive", cloud.includes("Untitled"), cloud.join());
+const here = await b.page.locator(".docs-row:not(.cloud-only) .docs-name").allTextContents();
+check(
+  "device B: A's Untitled came down at connect, beside B's own Untitled 2",
+  here.some((n) => n.trim() === "Untitled") && here.some((n) => n.startsWith("Untitled 2")),
+  here.join(" | "),
+);
 await b.page.keyboard.press("Escape");
 
 // --- C: nothing but the seed box ---------------------------------------------
@@ -118,8 +123,8 @@ const notice =
     .textContent()
     .catch(() => "")) ?? "";
 check(
-  "device C: says how many it found and which it opened",
-  /Found 3 documents in your Google Drive and opened “Untitled 2”/.test(notice),
+  "device C: says it synced and which it opened",
+  /Synced with Google Drive.*Opened “Untitled 2”, the document you edited most recently/.test(notice),
   notice,
 );
 check("…as a report, with no Dismiss", !/Dismiss/.test(notice));
@@ -131,7 +136,11 @@ check(
 );
 await c.page.waitForTimeout(400);
 const local = await c.page.locator(".docs-row:not(.cloud-only) .docs-name").allTextContents();
-check("device C: the empty starter it replaced is gone", local.length === 1, local.join(" | "));
+check(
+  "device C: all three Drive documents came down, and the empty starter is gone",
+  local.length === 3 && (await c.page.locator(".docs-row.cloud-only").count()) === 0,
+  local.join(" | "),
+);
 await c.page
   .locator(".docs-row.active img.docs-thumb")
   .waitFor({ timeout: 15000 })

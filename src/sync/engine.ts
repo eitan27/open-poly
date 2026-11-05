@@ -101,6 +101,10 @@ export interface SyncSnapshot {
   onboarding: OnboardingDoc[] | null;
   /** Bumped whenever the engine changed local documents, so lists re-read. */
   localRevision: number;
+  /** Drive's preview for each linked document, by local id — shown where a
+   *  document has no thumbnail of its own yet (downloaded, never opened). The
+   *  links are short-lived; every pass refreshes them. */
+  driveThumbs: Record<string, string>;
 }
 
 /** The app side of sync: the working document lives in React state, so the
@@ -160,6 +164,7 @@ export class SyncEngine {
     issues: [],
     onboarding: null,
     localRevision: 0,
+    driveThumbs: {},
   };
   private listeners = new Set<(s: SyncSnapshot) => void>();
   private queue: Promise<unknown> = Promise.resolve();
@@ -292,12 +297,17 @@ export class SyncEngine {
     const collisionFor = (name: string) => cloudOnly.find((r) => r.name === name);
 
     // Auto names identify nothing, so two "Untitled"s aren't the same document
-    // and there's nothing to ask: this device's one takes the next name free
-    // on both sides. The open document is renamed only between keystrokes.
+    // and there's nothing to ask: this device's unsynced one takes the next
+    // name free on both sides. "Two" counts a document already on this device
+    // as much as one still in Drive — connecting brings recent ones down, so
+    // another device's "Untitled" may be here, linked, by the time this one is
+    // edited. The open document is renamed only between keystrokes.
     const taken = new Set([...metas.map((m) => m.name), ...remotes.map((r) => r.name)]);
+    const localName = new Map(metas.map((m) => [m.id, m.name]));
+    const sharedLocally = (m: DocMeta) => [...localName].some(([id, name]) => id !== m.id && name === m.name);
     for (let i = 0; i < unlinked.length; i++) {
       const m = unlinked[i];
-      if (!isUntitled(m.name) || !collisionFor(m.name)) continue;
+      if (!isUntitled(m.name) || (!collisionFor(m.name) && !sharedLocally(m))) continue;
       const active = this.host.getActiveId() === m.id;
       if (active && !this.host.canReplaceActive()) {
         docStates[m.id] = "pending";
@@ -306,6 +316,7 @@ export class SyncEngine {
       }
       const name = nextUntitled([...taken]);
       taken.add(name);
+      localName.set(m.id, name);
       await renameDoc(m.id, name);
       if (active) this.host.activeRenamed(name);
       unlinked[i] = { ...m, name };
@@ -356,7 +367,13 @@ export class SyncEngine {
     }
 
     // Uploads above don't change the cloud-only set (they're new files).
-    this.set({ docStates, issues, cloudOnly, onboarding });
+    const driveThumbs: Record<string, string> = {};
+    for (const l of await listSyncLinks()) {
+      if (l.account !== this.account || !l.fileId) continue;
+      const url = remoteById.get(l.fileId)?.thumbnailUrl;
+      if (url) driveThumbs[l.docId] = url;
+    }
+    this.set({ docStates, issues, cloudOnly, onboarding, driveThumbs });
   }
 
   private async syncLinked(
@@ -514,7 +531,7 @@ export class SyncEngine {
     const thumb = await this.thumbnailFor(docId);
     if (!thumb || thumb.size === (link.thumbSize ?? 0)) return;
     try {
-      const updated = await this.api.setThumbnail(link.fileId, thumb.hint);
+      const updated = await this.api.setThumbnail(link.fileId, thumb.hint, link.syncedUpdatedAt);
       // Drive bumps the version for metadata too; it's our own change.
       await putSyncLink({ ...link, remoteVersion: updated.version, thumbSize: thumb.size });
     } catch (e) {
@@ -540,6 +557,7 @@ export class SyncEngine {
       docId: record.id,
       content: serializeDocFile(record.name, record.doc),
       thumbnail: thumb?.hint,
+      editedAt: record.updatedAt,
     });
     await this.linkTo(record.id, updated, hash, record, thumb?.size ?? 0);
     return true;
@@ -554,6 +572,7 @@ export class SyncEngine {
       docId,
       content: serializeDocFile(local.record.name, local.record.doc),
       thumbnail: thumb?.hint,
+      editedAt: local.record.updatedAt,
     });
     await this.linkTo(docId, created, local.hash, local.record, thumb?.size ?? 0);
   }
@@ -733,21 +752,34 @@ export class SyncEngine {
     });
   }
 
-  /** Right after connecting, a device holding nothing but untouched starter
-   *  documents has nothing worth showing: bring down the Drive document edited
-   *  most recently, to open in their place. Resolves its local id and how many
-   *  other Drive documents remain, or null when there's real local work (or
-   *  nothing in Drive). */
-  downloadLatestIfOnlyStarters(): Promise<{ id: string; name: string; others: number } | null> {
+  /** Right after connecting: bring down the `limit` Drive documents edited
+   *  most recently that aren't on this device yet (the rest stay listed, and
+   *  sync when opened). Resolves what came down, newest first, plus what the
+   *  connect message needs: how many were in Drive, and whether this device
+   *  had real work of its own or only untouched starters (then the caller
+   *  opens the newest in their place). */
+  downloadRecent(limit: number): Promise<{
+    downloaded: { id: string; name: string }[];
+    inDrive: number;
+    onlyStarters: boolean;
+  }> {
     return this.run(async () => {
       const states = Object.values(this.snap.docStates);
-      if (states.some((st) => st !== "blank") || this.snap.cloudOnly.length === 0) return null;
-      const latest = this.snap.cloudOnly.reduce((a, b) =>
-        Date.parse(b.modifiedTime) > Date.parse(a.modifiedTime) ? b : a,
-      );
-      const id = await this.downloadOne(latest.fileId);
-      await this.pass();
-      return { id, name: latest.name, others: this.snap.cloudOnly.length };
+      const onlyStarters = states.every((st) => st === "blank");
+      // A Drive document whose name clashes with one here waits for the user's
+      // choice (the first-connect list, or the issue it raised) — bringing it
+      // down now would make that choice for them.
+      const clashing = new Set(this.snap.onboarding?.map((d) => d.collision?.fileId) ?? []);
+      for (const issue of this.snap.issues) if (issue.kind === "nameCollision") clashing.add(issue.fileId);
+      const recent = this.snap.cloudOnly
+        .filter((r) => !clashing.has(r.fileId))
+        .sort((a, b) => Date.parse(b.modifiedTime) - Date.parse(a.modifiedTime))
+        .slice(0, limit);
+      const inDrive = this.snap.cloudOnly.length;
+      const downloaded: { id: string; name: string }[] = [];
+      for (const r of recent) downloaded.push({ id: await this.downloadOne(r.fileId), name: r.name });
+      if (downloaded.length) await this.pass();
+      return { downloaded, inDrive, onlyStarters };
     });
   }
 
@@ -758,7 +790,10 @@ export class SyncEngine {
     // identity — unless that id is somehow taken here already.
     const id = remote.docId && !(await loadDoc(remote.docId)) ? remote.docId : genId();
     const now = this.now();
-    const record: StoredDoc = { id, name: pulled.name, doc: pulled.doc, createdAt: now, updatedAt: now };
+    // Dated by its last edit (Drive's modifiedTime, which uploads set to the
+    // edit time), not by this download: "edited 3d ago", and in edit order.
+    const edited = Date.parse(remote.modifiedTime) || now;
+    const record: StoredDoc = { id, name: pulled.name, doc: pulled.doc, createdAt: edited, updatedAt: edited };
     await putDoc(record);
     await this.linkTo(id, remote, pulled.hash, record);
     this.touchedLocal();

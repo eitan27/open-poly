@@ -86,6 +86,8 @@ function toRemote(f: RawFile): RemoteDoc {
 /** Drive files are JSON, which Drive can't preview itself, so it shows the
  *  image an app hints instead — in Drive's own UI, and back to us as
  *  `thumbnailLink`. */
+const edited = (at?: number) => (at ? { modifiedTime: new Date(at).toISOString() } : {});
+
 const hints = (thumbnail?: DocThumbnail) => (thumbnail ? { contentHints: { thumbnail } } : {});
 
 export function createDriveApi(opts: DriveApiOptions) {
@@ -241,7 +243,16 @@ export function createDriveApi(opts: DriveApiOptions) {
       return res.text();
     },
 
-    async createDoc(p: { name: string; docId: string; content: string; thumbnail?: DocThumbnail }): Promise<RemoteDoc> {
+    /** `editedAt` (ms) becomes Drive's modifiedTime, which otherwise records
+     *  the UPLOAD — and a connect uploads in bulk, so "most recently edited"
+     *  would follow upload order instead of edits. */
+    async createDoc(p: {
+      name: string;
+      docId: string;
+      content: string;
+      thumbnail?: DocThumbnail;
+      editedAt?: number;
+    }): Promise<RemoteDoc> {
       const parent = await ensureFolder();
       return uploadWithHints(
         null,
@@ -250,6 +261,7 @@ export function createDriveApi(opts: DriveApiOptions) {
           mimeType: "application/json",
           parents: [parent],
           appProperties: { [KIND]: "doc", [DOC_ID]: p.docId },
+          ...edited(p.editedAt),
         },
         p.content,
         p.thumbnail,
@@ -257,22 +269,23 @@ export function createDriveApi(opts: DriveApiOptions) {
     },
 
     /** Replace just the preview, leaving the content alone. */
-    async setThumbnail(fileId: string, thumbnail: DocThumbnail): Promise<RemoteDoc> {
+    async setThumbnail(fileId: string, thumbnail: DocThumbnail, editedAt?: number): Promise<RemoteDoc> {
       const res = await request(`${base}/drive/v3/files/${fileId}?fields=${FIELDS}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(hints(thumbnail)),
+        // Keep modifiedTime on the content's edit: a new preview isn't an edit.
+        body: JSON.stringify({ ...hints(thumbnail), ...edited(editedAt) }),
       });
       return toRemote((await res.json()) as RawFile);
     },
 
     async updateDoc(
       fileId: string,
-      p: { name: string; docId: string; content: string; thumbnail?: DocThumbnail },
+      p: { name: string; docId: string; content: string; thumbnail?: DocThumbnail; editedAt?: number },
     ): Promise<RemoteDoc> {
       return uploadWithHints(
         fileId,
-        { name: `${p.name}${DOC_SUFFIX}`, appProperties: { [KIND]: "doc", [DOC_ID]: p.docId } },
+        { name: `${p.name}${DOC_SUFFIX}`, appProperties: { [KIND]: "doc", [DOC_ID]: p.docId }, ...edited(p.editedAt) },
         p.content,
         p.thumbnail,
       );

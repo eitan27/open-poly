@@ -115,21 +115,28 @@ check("desktop synced after onboarding", await driveState(desktop.page, "ok"));
 check("the renamed document is the open one", (await title(desktop.page)) === "Bracket (desktop)");
 await closeDialog(desktop.page);
 
+// Once the clash was settled, connecting brought the laptop's Bracket down too.
 await desktop.page.locator(".docs-btn").click();
-await desktop.page.locator(".docs-row.cloud-only").first().waitFor({ timeout: 10000 });
-const cloudNames = await desktop.page.locator(".docs-row.cloud-only .docs-name").allTextContents();
+const laptopRow = desktop.page
+  .locator(".docs-row:not(.active):not(.cloud-only)")
+  .filter({ has: desktop.page.locator("button.docs-name", { hasText: /^Bracket$/ }) });
+await laptopRow
+  .first()
+  .waitFor({ timeout: 10000 })
+  .catch(() => {});
+const localNames = await desktop.page.locator(".docs-row:not(.cloud-only) .docs-name").allTextContents();
 check(
-  "the laptop's Bracket is listed as in Drive, not on this device",
-  cloudNames.includes("Bracket"),
-  cloudNames.join(),
+  "the laptop's Bracket came down once the clash was settled",
+  localNames.some((n) => n.trim() === "Bracket") && (await desktop.page.locator(".docs-row.cloud-only").count()) === 0,
+  localNames.join(" | "),
 );
-await desktop.page.locator(".docs-row.cloud-only").getByRole("button", { name: "Sync and Open" }).click();
+await laptopRow.first().getByRole("button", { name: "Open", exact: true }).click();
 await desktop.page.waitForFunction(() => document.querySelector(".doc-title")?.value === "Bracket", null, {
   timeout: 15000,
 });
 await waitIdle(desktop.page);
 check(
-  "opening it downloads the laptop's version",
+  "opening it shows the laptop's version",
   JSON.stringify(await featureTypes(desktop.page)) === JSON.stringify(laptopTypes),
 );
 

@@ -15,6 +15,7 @@ import {
   type DriveConfig,
 } from "./brokerClient";
 import { createDriveApi } from "./driveApi";
+import { connectNotice, RECENT_ON_CONNECT } from "./connectNotice";
 import { SyncEngine, type OnboardingChoice, type Resolution, type SyncSnapshot } from "./engine";
 
 const EDIT_DELAY = 4000;
@@ -78,7 +79,9 @@ export interface UseDriveSyncParams {
  *  Dismiss). `action: "showDocuments"` adds a button to the Documents list. */
 export type DriveNotice = {
   kind: "success" | "info" | "error" | "warn";
-  text: string;
+  /** A short headline above `text` (the connect message has one). */
+  title?: string;
+  text?: string;
   action?: "showDocuments";
 } | null;
 
@@ -227,37 +230,31 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
     syncSoon(EDIT_DELAY);
   }, [p.doc, p.docName, syncSoon]);
 
-  // The first pass after connecting. A device with only an untouched starter
-  // document opens the Drive document edited most recently in its place (the
-  // starter, empty, is removed); either way, say where Drive's documents are.
+  // The first pass after connecting: bring down the Drive documents edited most
+  // recently (RECENT_ON_CONNECT). A device with only an untouched starter opens
+  // the newest in its place (the starter, empty, is removed); a device with
+  // work of its own keeps it open. Then say what happened (connectNotice.ts).
   useEffect(() => {
     if (!engine || !snapshot || snapshot.lastSyncedAt === null || !sessionFlag()) return;
+    // A first-connect choice is pending: wait for it (the pass that follows
+    // the user's answer comes back through here).
+    if (snapshot.onboarding) return;
     sessionFlag(false);
     const starterId = host.current.getActiveId();
     const starterWasBlank = !!starterId && snapshot.docStates[starterId] === "blank";
+    // Documents of this device's own that the first pass put in Drive.
+    const hadLocalWork = Object.values(snapshot.docStates).some((st) => st === "synced" || st === "pending");
     void (async () => {
       try {
-        const latest = await engine.downloadLatestIfOnlyStarters();
-        if (latest) {
-          await host.current.openDocument(latest.id);
-          if (starterWasBlank && starterId !== latest.id) await host.current.deleteDocument(starterId);
-          setNotice(
-            latest.others > 0
-              ? {
-                  kind: "success",
-                  text: `Found ${latest.others + 1} documents in your Google Drive and opened “${latest.name}”, the one you edited most recently.`,
-                  action: "showDocuments",
-                }
-              : { kind: "success", text: `Found “${latest.name}” in your Google Drive and opened it.` },
-          );
-        } else if (snapshot.cloudOnly.length > 0) {
-          const n = snapshot.cloudOnly.length;
-          setNotice({
-            kind: "success",
-            text: `Connected. ${n === 1 ? "One document" : `${n} documents`} from your Google Drive ${n === 1 ? "is" : "are"} ready to open here.`,
-            action: "showDocuments",
-          });
+        const r = await engine.downloadRecent(RECENT_ON_CONNECT);
+        const newest = r.downloaded[0];
+        let opened: string | null = null;
+        if (r.onlyStarters && newest) {
+          await host.current.openDocument(newest.id);
+          if (starterWasBlank && starterId !== newest.id) await host.current.deleteDocument(starterId);
+          opened = newest.name;
         }
+        setNotice(connectNotice({ inDrive: r.inDrive, downloaded: r.downloaded.length, opened, hadLocalWork }));
       } catch {
         /* the snapshot carries the error */
       }

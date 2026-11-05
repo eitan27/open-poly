@@ -36,6 +36,8 @@ interface Meta {
   appProperties?: Record<string, string | null>;
   trashed?: boolean;
   contentHints?: { thumbnail?: { image: string; mimeType: string } };
+  /** Writable, like Google's: an app may say when the content was edited. */
+  modifiedTime?: string;
 }
 
 const error = (code: number, message: string, reason = "error") =>
@@ -119,7 +121,7 @@ export async function handleMockDrive(
       trashed: false,
       version: "1",
       createdTime: stamp(),
-      modifiedTime: stamp(),
+      modifiedTime: meta.modifiedTime ?? stamp(),
     };
     if (meta.contentHints?.thumbnail) f.thumbnail = meta.contentHints.thumbnail;
     if (content !== undefined) {
@@ -140,7 +142,7 @@ export async function handleMockDrive(
       f.size = String(new TextEncoder().encode(content).length);
     }
     f.version = String(Number(f.version) + 1);
-    f.modifiedTime = stamp();
+    f.modifiedTime = meta.modifiedTime ?? stamp();
     await save(f);
     return f;
   };

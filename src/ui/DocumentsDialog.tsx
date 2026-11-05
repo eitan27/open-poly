@@ -13,6 +13,8 @@ import { Modal } from "./Modal";
 /** Google Drive's view of the list, present only while Drive is connected. */
 export interface DocsDriveProps {
   states: Record<string, DocSyncState>;
+  /** Drive's preview per local document, for those without their own yet. */
+  driveThumbs: Record<string, string>;
   /** Documents in Drive that aren't on this device. */
   cloudOnly: RemoteDoc[];
   /** Open issues + pending first-connect choice, for the "needs attention" line. */
@@ -214,7 +216,12 @@ export function DocumentsDialog({
             const active = m.id === activeId;
             return (
               <li key={m.id} className={"docs-row" + (active ? " active" : "")}>
-                <Thumb thumb={m.thumb} />
+                {m.thumb || !drive?.driveThumbs[m.id] ? (
+                  <Thumb thumb={m.thumb} />
+                ) : (
+                  // Keyed by the link: a refreshed one gets a fresh try.
+                  <CloudThumb key={drive.driveThumbs[m.id]} url={drive.driveThumbs[m.id]} glyph="" />
+                )}
                 <div className="docs-row-main">
                   {renaming?.id === m.id ? (
                     <input
@@ -243,8 +250,8 @@ export function DocumentsDialog({
                     </button>
                   )}
                   <span className="docs-sub">
-                    edited {timeAgo(m.updatedAt)} · {m.featureCount} feature{m.featureCount === 1 ? "" : "s"} ·{" "}
-                    {m.partCount} part{m.partCount === 1 ? "" : "s"}
+                    edited {timeAgo(m.updatedAt)} · {m.featureCount} feature{m.featureCount === 1 ? "" : "s"}
+                    {!m.unbuilt && ` · ${m.partCount} part${m.partCount === 1 ? "" : "s"}`}
                     {drive?.states[m.id] && (
                       <>
                         {" · "}
@@ -327,7 +334,7 @@ export function DocumentsDialog({
           <ul className="docs-list">
             {drive.cloudOnly.map((r) => (
               <li key={r.fileId} className="docs-row cloud-only">
-                <CloudThumb url={r.thumbnailUrl} />
+                <CloudThumb key={r.thumbnailUrl} url={r.thumbnailUrl} />
                 <div className="docs-row-main">
                   <span className="docs-name docs-name--static">{r.name}</span>
                   <span className="docs-sub">edited {timeAgo(Date.parse(r.modifiedTime))} · in Google Drive</span>
@@ -367,9 +374,9 @@ export function DocumentsDialog({
 /** A Drive-only document's preview, from Drive's thumbnail link. Those links
  *  are short-lived and Google may refuse one, so any failure falls back to the
  *  cloud placeholder rather than a broken image. */
-function CloudThumb({ url }: { url?: string }) {
+function CloudThumb({ url, glyph = "☁" }: { url?: string; glyph?: string }) {
   const [failed, setFailed] = useState(false);
-  if (!url || failed) return <div className="docs-thumb placeholder">☁</div>;
+  if (!url || failed) return <div className="docs-thumb placeholder">{glyph}</div>;
   return <img className="docs-thumb" src={url} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
 }
 

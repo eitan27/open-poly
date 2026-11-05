@@ -651,52 +651,67 @@ describe("auto-named documents", () => {
   });
 });
 
-describe("a new device with only a starter document", () => {
-  async function driveWith(names: [string, string][]) {
+describe("connecting brings down the most recent Drive documents", () => {
+  /** Device A puts `names` in Drive, oldest first (distinct modifiedTimes). */
+  async function driveWith(names: string[]) {
     const a = device();
     await on(a, async () => {
-      for (const [id, name] of names) {
-        await putDoc(rec(id, name, withVar(name)));
+      for (const name of names) {
+        await putDoc(rec(`x-${name}`, name, withVar(name)));
         await a.engine.sync();
-        await new Promise((r) => setTimeout(r, 5)); // distinct Drive modifiedTimes
+        await new Promise((r) => setTimeout(r, 5));
       }
     });
   }
 
-  it("brings down the Drive document edited most recently", async () => {
-    await driveWith([
-      ["x1", "Older"],
-      ["x2", "Newest"],
-    ]);
+  it("a device with only a starter gets the newest, newest first, and is told so", async () => {
+    await driveWith(["Older", "Middle", "Newest"]);
     const b = device();
     await on(b, async () => {
       await putDoc(rec("s1", "Untitled", seedDocument()));
       await b.engine.sync();
-      const latest = await b.engine.downloadLatestIfOnlyStarters();
-      expect(latest).toEqual({ id: "x2", name: "Newest", others: 1 });
-      expect(await localVar("x2")).toBe("Newest");
-      expect(b.engine.snapshot.docStates.x2).toBe("synced");
+      const r = await b.engine.downloadRecent(10);
+      expect(r.onlyStarters).toBe(true);
+      expect(r.inDrive).toBe(3);
+      expect(r.downloaded.map((d) => d.name)).toEqual(["Newest", "Middle", "Older"]);
+      expect(await localVar("x-Newest")).toBe("Newest");
+      expect(b.engine.snapshot.cloudOnly).toEqual([]);
+      expect(b.engine.snapshot.docStates["x-Older"]).toBe("synced");
     });
   });
 
-  it("does nothing when this device has real work of its own", async () => {
-    await driveWith([["x1", "Older"]]);
+  it("only the `limit` most recent come down; the rest stay listed", async () => {
+    await driveWith(["d1", "d2", "d3", "d4"]);
+    const b = device();
+    await on(b, async () => {
+      await b.engine.sync();
+      const r = await b.engine.downloadRecent(2);
+      expect(r.inDrive).toBe(4);
+      expect(r.downloaded.map((d) => d.name)).toEqual(["d4", "d3"]);
+      expect(b.engine.snapshot.cloudOnly.map((c) => c.name).sort()).toEqual(["d1", "d2"]);
+      expect(await loadDoc("x-d1")).toBeUndefined();
+    });
+  });
+
+  it("a device with work of its own gets them too, and says it had work", async () => {
+    await driveWith(["Older"]);
     const b = device();
     await on(b, async () => {
       await putDoc(rec("s1", "Untitled", seedDocument()));
       await putDoc(rec("w1", "Mine", withVar("1")));
       await b.engine.sync();
-      expect(await b.engine.downloadLatestIfOnlyStarters()).toBeNull();
-      expect(await loadDoc("x1")).toBeUndefined();
+      const r = await b.engine.downloadRecent(10);
+      expect(r.onlyStarters).toBe(false);
+      expect(r.downloaded.map((d) => d.name)).toEqual(["Older"]);
     });
   });
 
-  it("does nothing when Drive is empty", async () => {
+  it("an empty Drive brings nothing", async () => {
     const b = device();
     await on(b, async () => {
       await putDoc(rec("s1", "Untitled"));
       await b.engine.sync();
-      expect(await b.engine.downloadLatestIfOnlyStarters()).toBeNull();
+      expect(await b.engine.downloadRecent(10)).toEqual({ downloaded: [], inDrive: 0, onlyStarters: true });
     });
   });
 });
@@ -801,6 +816,65 @@ describe("thumbnail catch-up", () => {
       expect(driveVar("Bracket")).toBe("1");
       await a.engine.sync(); // and the rejected preview isn't retried into an error
       expect(a.engine.snapshot.status).toBe("idle");
+    });
+  });
+});
+
+describe("recent downloads and the existing rules", () => {
+  it("an auto-named document clashing with one already on this device takes the next free name", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("a1", "Untitled", withVar("1")));
+      await a.engine.sync();
+    });
+    const b = device();
+    await on(b, async () => {
+      await putDoc(rec("w1", "Mine", withVar("w")));
+      await putDoc(rec("b1", "Untitled")); // untouched: stays local for now
+      await b.engine.sync();
+      await b.engine.downloadRecent(10); // A's "Untitled" is now here, linked
+      await edit("b1", "2");
+      await b.engine.sync();
+      expect((await loadDoc("b1"))!.name).toBe("Untitled 2");
+      expect((await loadDoc("a1"))!.name).toBe("Untitled");
+      expect(driveVar("Untitled 2")).toBe("2");
+    });
+  });
+
+  it("a Drive document in a name clash isn't brought down before the user chooses", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc(rec("a1", "Bracket", withVar("1")));
+      await putDoc(rec("a2", "Plate", withVar("1")));
+      await a.engine.sync();
+    });
+    const b = device("a@example.com", undefined, true); // onboarded: the clash becomes an issue
+    await on(b, async () => {
+      await putDoc(rec("b1", "Bracket", withVar("2")));
+      await b.engine.sync();
+      expect(b.engine.snapshot.issues.map((i) => i.kind)).toEqual(["nameCollision"]);
+      const r = await b.engine.downloadRecent(10);
+      expect(r.downloaded.map((d) => d.name)).toEqual(["Plate"]);
+      expect(await loadDoc("a1")).toBeUndefined();
+    });
+  });
+});
+
+describe("recency follows edits, not uploads", () => {
+  it("documents uploaded together at connect keep their edit order in Drive", async () => {
+    const a = device();
+    await on(a, async () => {
+      // Edited oldest → newest, but all uploaded in one pass at connect.
+      await putDoc({ ...rec("p1", "First edited", withVar("1")), updatedAt: Date.UTC(2026, 0, 1) });
+      await putDoc({ ...rec("p2", "Edited since", withVar("1")), updatedAt: Date.UTC(2026, 0, 2) });
+      await putDoc({ ...rec("p3", "Edited last", withVar("1")), updatedAt: Date.UTC(2026, 0, 3) });
+      await a.engine.sync();
+    });
+    const b = device();
+    await on(b, async () => {
+      await b.engine.sync();
+      const r = await b.engine.downloadRecent(2);
+      expect(r.downloaded.map((d) => d.name)).toEqual(["Edited last", "Edited since"]);
     });
   });
 });

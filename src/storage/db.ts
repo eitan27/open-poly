@@ -50,6 +50,9 @@ export interface DocMeta {
   createdAt: number;
   featureCount: number;
   partCount: number;
+  /** Never built on this device (no cached meshes yet: it came from Drive and
+   *  hasn't been opened), so `partCount` isn't known — the list omits it. */
+  unbuilt?: true;
   /** Small downscaled snapshot for the Documents dialog, written by the
    *  thumbnail capture in usePersistedDocuments. */
   thumb?: Blob;
@@ -65,6 +68,7 @@ function metaOf(record: StoredDoc): DocMeta {
     createdAt: record.createdAt ?? record.updatedAt,
     featureCount: record.doc.features.length,
     partCount: record.meshes?.length ?? 0,
+    ...(record.meshes ? {} : { unbuilt: true as const }),
   };
 }
 

@@ -6622,6 +6622,7 @@ export default function App() {
             drive.engine && drive.snapshot
               ? {
                   states: drive.snapshot.docStates,
+                  driveThumbs: drive.snapshot.driveThumbs,
                   cloudOnly: drive.snapshot.cloudOnly,
                   attention: drive.snapshot.issues.length + (drive.snapshot.onboarding ? 1 : 0),
                   revision: drive.snapshot.localRevision,
