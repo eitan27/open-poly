@@ -20,6 +20,12 @@ import { SyncEngine, type OnboardingChoice, type Resolution, type SyncSnapshot }
 const EDIT_DELAY = 4000;
 const POLL_INTERVAL = 60_000;
 const AUTO_UPLOAD_KEY = "openpoly.drive.autoUpload";
+// Set when Google access ends under a connected browser, cleared by a working
+// reconnect, a disconnect, or dismissing the message: sync has stopped, and
+// the reminder has to survive a reload, which is when nothing else says so.
+const LAPSED_KEY = "openpoly.drive.lapsed";
+const LAPSED_TEXT =
+  "Open Poly's access to your Google Drive ended (it was removed, or expired). Connect again to keep syncing — your documents are safe on this device.";
 const onboardedKey = (account: string) => `openpoly.drive.onboarded:${account}`;
 // Set while a connect is in flight and until its first pass lands. In
 // sessionStorage, not a ref, so it survives the full-page sign-in redirect
@@ -100,7 +106,9 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
   const [config, setConfig] = useState<DriveConfig | null>(null);
   const [snapshot, setSnapshot] = useState<SyncSnapshot | null>(null);
   const [connecting, setConnecting] = useState(false);
-  const [notice, setNotice] = useState<DriveNotice>(null);
+  const [notice, setNotice] = useState<DriveNotice>(() =>
+    readFlag(LAPSED_KEY, false) ? { kind: "warn", text: LAPSED_TEXT } : null,
+  );
   const [autoUpload, setAutoUploadState] = useState(() => readFlag(AUTO_UPLOAD_KEY, true));
   const autoUploadRef = useLatest(autoUpload);
   const abortRef = useRef<AbortController | null>(null);
@@ -121,7 +129,10 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
     if (result) {
       url.searchParams.delete("driveAuth");
       history.replaceState(history.state, "", url.toString());
-      if (result !== "connected" && result in AUTH_MESSAGES) {
+      if (result === "connected") {
+        writeFlag(LAPSED_KEY, false);
+        setNotice(null);
+      } else if (result in AUTH_MESSAGES) {
         setNotice({ kind: "error", text: AUTH_MESSAGES[result as keyof typeof AUTH_MESSAGES] });
       }
     }
@@ -248,12 +259,16 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     setConnecting(true);
-    setNotice(null);
+    // Keep the "access ended" reminder up until a connect actually works: a
+    // cancelled popup leaves this browser exactly as disconnected as before.
+    setNotice((n) => (n?.kind === "warn" ? n : null));
     try {
       await host.current.flushSave(); // a popup-blocked fallback navigates away
       sessionFlag(true);
       const result = await connectDrive({ loginHint: config?.email ?? undefined, signal: ctrl.signal });
       if (result === "connected") {
+        writeFlag(LAPSED_KEY, false);
+        setNotice(null);
         await refreshConfig();
         setConnectEpoch((n) => n + 1);
       } else {
@@ -274,6 +289,7 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
   const disconnect = useCallback(
     async (revoke: boolean) => {
       await disconnectDrive(revoke);
+      writeFlag(LAPSED_KEY, false); // stopping was the user's choice
       await refreshConfig();
       setNotice({
         kind: "info",
@@ -289,10 +305,8 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
   // so re-read config (it reports not-connected) to put the Connect UI back.
   useEffect(() => {
     if (snapshot?.status !== "reauth") return;
-    setNotice({
-      kind: "warn",
-      text: "Open Poly's access to your Google Drive ended (it was removed, or expired). Connect again to keep syncing — your documents are safe on this device.",
-    });
+    writeFlag(LAPSED_KEY, true);
+    setNotice({ kind: "warn", text: LAPSED_TEXT });
     void refreshConfig();
   }, [snapshot?.status, refreshConfig]);
 
@@ -312,7 +326,10 @@ export function useDriveSync(p: UseDriveSyncParams): DriveSync {
     snapshot,
     connecting,
     notice,
-    dismissNotice: () => setNotice(null),
+    dismissNotice: () => {
+      if (notice?.kind === "warn") writeFlag(LAPSED_KEY, false); // acknowledged
+      setNotice(null);
+    },
     autoUpload,
     setAutoUpload,
     connect,

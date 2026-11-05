@@ -203,9 +203,33 @@ check(
     "access to your Google Drive ended",
   ) ?? false,
 );
+const lapsedText = async () =>
+  (await laptop.page
+    .locator(".drive-dialog .docs-error")
+    .textContent()
+    .catch(() => "")) ?? "";
+// The reminder survives a reload — just when nothing else would say sync stopped…
+await laptop.page.reload({ waitUntil: "domcontentloaded" });
+await laptop.page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
+await waitIdle(laptop.page);
+check("after a reload, the button still flags the ended access", await driveState(laptop.page, "problem"));
+await openDriveDialog(laptop.page);
+check("…and the dialog still explains it", (await lapsedText()).includes("access to your Google Drive ended"));
+// …and a connect that's cancelled leaves it up: nothing changed.
+const [abandoned] = await Promise.all([
+  laptop.context.waitForEvent("page"),
+  laptop.page.getByRole("button", { name: "Connect Google Drive" }).click(),
+]);
+await abandoned.close();
+await laptop.page.getByRole("button", { name: "Cancel" }).click();
+check("a cancelled connect keeps the reminder", (await lapsedText()).includes("access to your Google Drive ended"));
 await connect(laptop);
 check("reconnecting resumes without asking to onboard again", await driveState(laptop.page, "ok"));
 check("…and without reopening onboarding", !(await laptop.page.locator(".drive-onboarding").isVisible()));
+check("…and the reminder is gone", !(await lapsedText()).includes("access to your Google Drive ended"));
+await laptop.page.reload({ waitUntil: "domcontentloaded" });
+await laptop.page.waitForFunction(() => window.__openpoly, null, { timeout: 30000 });
+check("…for good: a reload after reconnecting shows it synced", await driveState(laptop.page, "ok"));
 
 // --- disconnect -------------------------------------------------------------
 if (!(await laptop.page.locator(".drive-dialog").isVisible())) await openDriveDialog(laptop.page);
