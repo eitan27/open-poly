@@ -238,6 +238,13 @@ function ConnectView({ sync }: { sync: DriveSync }) {
         <li>Your documents stay on this device too. Editing never waits for the network.</li>
         <li>You sign in once per browser.</li>
       </ul>
+      <p className="drive-legal">
+        What's stored and how to remove it:{" "}
+        <a href="/privacy" target="_blank" rel="noreferrer">
+          privacy policy
+        </a>
+        .
+      </p>
       {sync.connecting ? (
         <div className="drive-actions">
           <span className="drive-waiting">
