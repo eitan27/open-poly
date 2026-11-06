@@ -100,16 +100,8 @@ it at full volume. Clone Mirror's dialog and its two-step arming; the agent op i
 orphaned fragment ref falls through to `requireBody`'s generic error rather than
 `topoMatch`'s scored fallback, and there is no ghost preview.
 
-**Google Drive sync — built, not yet live.** Broker in `server/drive/` (setup in
-`functions/README.md`), engine + UI in `src/sync/` and `src/ui/DriveDialog.tsx`,
-tested end to end against a mock Google (`npm run dev:api`,
-`scripts/verify-drive-sync.mjs`). Left: the Google Cloud project and consent
-screen (published to Production), the KV namespace and secrets, and one pass
-against real Google — the mock can't prove Google's resumable-upload CORS
-headers or the COOP popup behaviour. Not built: Drive thumbnails
-(`contentHints.thumbnail`), incremental listing via the `changes` API (today
-each pass lists every doc, 100 quota units), and syncing view state (section
-view stays per-device).
+**Drive sync gaps.** Each pass lists every document (100 quota units) instead of
+reading Drive's `changes` API, and view state (section view) stays per-device.
 
 **Codebase structure** — the two boundaries that were scoped and deliberately
 not crossed. Both were looked at closely enough to know what stopped them, so
