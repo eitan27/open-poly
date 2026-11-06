@@ -9,6 +9,7 @@ import {
   isRightAngle,
   legFits,
   unit,
+  wedgeRunOut,
   type V3,
 } from "./chamferWedge";
 
@@ -201,5 +202,43 @@ describe("chamferTriangle", () => {
     const ac: V3 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
     const n: V3 = [ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]];
     expect(Math.hypot(...n) / 2).toBeCloseTo(2, 12); // half of 2x2
+  });
+});
+
+// The top/front edge of a box, looking out of its +x end. Cross-section corners
+// run 8 back along the top (+y) and 8 down the front (−z).
+describe("wedgeRunOut", () => {
+  const out: V3 = [1, 0, 0];
+  const corners: V3[] = [
+    [0, 8, 0],
+    [0, 0, -8],
+  ];
+  const slope45 = unit([1, 0, 1]) as V3;
+
+  it("needs nothing when the end face is square to the edge", () => {
+    expect(wedgeRunOut(out, corners, [[1, 0, 0]])).toBeCloseTo(0);
+  });
+
+  it("runs out as far as a 45° chamfer at the end carries the material", () => {
+    expect(wedgeRunOut(out, corners, [slope45])).toBeCloseTo(8);
+  });
+
+  it("scales with the slope: shallower reaches further", () => {
+    const shallow = unit([1, 0, 2]) as V3; // falls 1 for every 2 outward
+    expect(wedgeRunOut(out, corners, [shallow])).toBeCloseTo(16);
+  });
+
+  it("is never negative, even if the end face leans back over the wedge", () => {
+    expect(wedgeRunOut(out, corners, [unit([1, 0, -1]) as V3])).toBeGreaterThanOrEqual(0);
+  });
+
+  it("does not run into a wall the edge meets: the material continues there", () => {
+    expect(wedgeRunOut(out, corners, [[-1, 0, 0]])).toBe(0);
+    expect(wedgeRunOut(out, corners, [unit([-1, 0, 1]) as V3])).toBe(0);
+  });
+
+  it("takes the nearest face a corner leaves through", () => {
+    // Facets at a seam: the corner has left the solid at the first it crosses.
+    expect(wedgeRunOut(out, corners, [slope45, [1, 0, 0]])).toBeCloseTo(0);
   });
 });
