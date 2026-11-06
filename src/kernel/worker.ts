@@ -59,6 +59,8 @@ import {
   isConvexEdge,
   isRightAngle,
   legFits,
+  scaleAdd,
+  wedgeRunOut,
 } from "../geom/chamferWedge";
 import {
   matchEdges,
@@ -1851,6 +1853,36 @@ function filletFace(onEdge: V3, towardRef: V3, towardOther: V3, r: number): Face
   }
 }
 
+/** What a wedge needs to know about the rest of the body to run out past its
+ *  edge's ends: the faces at a vertex, and a limit on how far it could usefully go. */
+interface WedgeEnds {
+  facesAt(vertex: V3): Face[];
+  diagonal: number;
+}
+
+function wedgeEndsOf(shape: Shape3D, adj: Map<number, Face[]>): WedgeEnds {
+  const ends = shape.edges.flatMap((e) => {
+    const faces = adj.get(e.hashCode) ?? [];
+    return [
+      { at: e.startPoint.toTuple() as V3, faces },
+      { at: e.endPoint.toTuple() as V3, faces },
+    ];
+  });
+  return {
+    facesAt(vertex) {
+      const found = new Map<number, Face>();
+      for (const { at, faces } of ends) {
+        // A fuzzy boolean's edges can disagree about a shared vertex by up to its
+        // tolerance, so this can't be an exact match.
+        if (Math.hypot(at[0] - vertex[0], at[1] - vertex[1], at[2] - vertex[2]) > BOOL_FUZZY) continue;
+        for (const f of faces) found.set(f.hashCode, f);
+      }
+      return [...found.values()];
+    },
+    diagonal: bboxDiagonal(shape),
+  };
+}
+
 /** The solid a chamfer or fillet removes (or adds), for the one configuration
  *  where it can be built exactly by hand: a STRAIGHT edge between two PLANAR faces
  *  meeting at a right angle. `convex` says whether the caller should CUT it away or
@@ -1876,7 +1908,8 @@ function dressUpWedgeFor(
   angleDeg: number,
   flip: boolean,
   id: string,
-): { wedge: NamedShape; convex: boolean } | null {
+  ends: WedgeEnds,
+): { wedge: NamedShape; convex: boolean; ranOut: boolean } | null {
   if (edge.geomType !== "LINE" || adjacent.length !== 2) return null;
   if (adjacent.some((f) => f.geomType !== "PLANE")) return null;
 
@@ -1934,23 +1967,48 @@ function dressUpWedgeFor(
 
   // Sweep the cross-section triangle along the edge, a hair past both ends so the
   // booleans intersect transversally instead of exactly touching at the endpoints.
+  // A convex wedge also runs out past any end whose face slopes away (see
+  // wedgeRunOut). A concave one is left alone: it fills a notch, and is bounded by
+  // the two faces' extents below.
   const pad = Math.max(len * 1e-3, 1e-4);
-  const o: V3 = [a[0] - along[0] * pad, a[1] - along[1] * pad, a[2] - along[2] * pad];
+  const corners: V3[] = [scaleAdd([0, 0, 0], tRef, legs.ref), scaleAdd([0, 0, 0], tOther, legs.other)];
+  const runOutAt = (vertex: V3, alongOut: V3): number | null => {
+    if (!convex) return 0;
+    const normals: V3[] = [];
+    for (const f of ends.facesAt(vertex)) {
+      if (f.hashCode === adjacent[0].hashCode || f.hashCode === adjacent[1].hashCode) continue;
+      let n: V3 | null;
+      try {
+        n = f.geomType === "PLANE" ? faceOutwardNormal(f) : vunit(f.normalAt(new Vector(vertex)).toTuple() as V3);
+      } catch {
+        n = null;
+      }
+      if (!n) return null;
+      normals.push(n);
+    }
+    const dist = Math.min(wedgeRunOut(alongOut, corners, normals), ends.diagonal);
+    return dist > pad ? dist : 0;
+  };
+  const atStart = runOutAt(a, [-along[0], -along[1], -along[2]]);
+  const atEnd = runOutAt(b, along);
+  if (atStart === null || atEnd === null) return null;
+  const o = scaleAdd(a, along, -(pad + atStart));
   const tri =
     op === "fillet" ? filletFace(o, tRef, tOther, legs.ref) : polygonFace(chamferTriangle(o, tRef, tOther, legs));
   if (!tri) return null;
 
   let wedge: NamedShape;
   try {
-    wedge = prismFromFace(tri, new Vector(along), len + 2 * pad, `${id}/wedge`);
+    wedge = prismFromFace(tri, new Vector(along), len + 2 * pad + atStart + atEnd, `${id}/wedge`);
   } catch {
     return null;
   }
+  const ranOut = atStart > 0 || atEnd > 0;
 
   // A tool's names must not leak into the result: leaving the new faces unnamed
   // lets the caller name them `${id}/chamfer`, as the OCCT path does.
   const bare = (s: NamedShape): NamedShape => ({ shape: s.shape, names: new Map() });
-  if (convex) return { wedge: bare(wedge), convex };
+  if (convex) return { wedge: bare(wedge), convex, ranOut };
 
   // Concave: the notch lies OUTSIDE the body, so the body can't bound the wedge.
   // Bound it by the two faces' own extents swept outwards — the notch exists
@@ -1977,7 +2035,7 @@ function dressUpWedgeFor(
       return null;
     }
     if (bounded !== wedge) wedge.shape.delete();
-    return { wedge: bare(bounded), convex };
+    return { wedge: bare(bounded), convex, ranOut };
   } catch {
     return null;
   }
@@ -2397,10 +2455,11 @@ function dressUpNamed(
   for (const rep of chainOf.values()) chainSize.set(rep, (chainSize.get(rep) ?? 0) + 1);
   const standalone = hits.every((e) => (chainSize.get(chainOf.get(e.hashCode) ?? e.hashCode) ?? 1) === 1);
   if (hits.length > 0 && standalone && !edgesShareAVertex(hits)) {
-    const wedges: { wedge: NamedShape; convex: boolean }[] = [];
+    const wedges: { wedge: NamedShape; convex: boolean; ranOut: boolean }[] = [];
+    const ends = wedgeEndsOf(target.shape, adj);
     let all = true;
     for (const e of hits) {
-      const w = dressUpWedgeFor(op, e, adj.get(e.hashCode) ?? [], size, angle ?? 45, flip ?? false, id);
+      const w = dressUpWedgeFor(op, e, adj.get(e.hashCode) ?? [], size, angle ?? 45, flip ?? false, id, ends);
       if (!w) {
         all = false;
         break;
@@ -2412,14 +2471,20 @@ function dressUpNamed(
         let acc: NamedShape = { shape: target.shape, names: target.names };
         let owns = false;
         for (const kind of ["cut", "fuse"] as const) {
-          const group = wedges.filter((w) => (kind === "cut") === w.convex).map((w) => w.wedge);
+          const inKind = wedges.filter((w) => (kind === "cut") === w.convex);
+          const group = inKind.map((w) => w.wedge);
           if (group.length === 0) continue;
-          const tool = group.length === 1 ? group[0] : compoundOf(group);
-          const next = booleanNamed(kind, acc, tool);
-          if (tool !== group[0]) tool.shape.delete();
-          if (owns) acc.shape.delete();
-          acc = next;
-          owns = true;
+          // Wedges that ran out past their edges can overlap each other, even
+          // though the edges don't touch, and a boolean's tool mustn't self-overlap.
+          // So those are applied one at a time.
+          const tools = inKind.some((w) => w.ranOut) ? group : [group.length === 1 ? group[0] : compoundOf(group)];
+          for (const tool of tools) {
+            const next = booleanNamed(kind, acc, tool);
+            if (!group.includes(tool)) tool.shape.delete();
+            if (owns) acc.shape.delete();
+            acc = next;
+            owns = true;
+          }
         }
         for (const w of wedges) w.wedge.shape.delete();
         // A concave wedge is bounded by the extents of the two faces it lies

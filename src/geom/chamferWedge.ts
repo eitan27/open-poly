@@ -99,6 +99,30 @@ export function chamferTriangle(
   return [onEdge, scaleAdd(onEdge, towardRef, legs.ref), scaleAdd(onEdge, towardOther, legs.other)];
 }
 
+/** How far a convex wedge must run on past one end of its edge.
+ *
+ *  A wedge swept only between the edge's endpoints is enough when the face at the
+ *  end is square to the edge, as on a plain box. But when that face slopes outward
+ *  — an earlier chamfer did it — the material widens beyond the endpoint, and a
+ *  wedge stopping there leaves it behind as a protruding tab.
+ *
+ *  `alongOut` points out of the edge at this end, `corners` are the cross-section's
+ *  corners relative to the end vertex, and `endNormals` are the outward normals of
+ *  the other faces at that vertex. A point has left the solid once it is outside
+ *  ANY face it is heading out through, so each corner needs the NEAREST crossing,
+ *  and the wedge needs the farthest of those. A face turned back toward the edge
+ *  (a wall the edge runs into) bounds nothing: the material continues there, so it
+ *  must not be cut. */
+export function wedgeRunOut(alongOut: V3, corners: V3[], endNormals: V3[]): number {
+  const bounding = endNormals.filter((n) => dot(alongOut, n) > 1e-6);
+  if (bounding.length === 0) return 0;
+  let need = 0;
+  for (const c of corners) {
+    need = Math.max(need, Math.min(...bounding.map((n) => -dot(c, n) / dot(alongOut, n))));
+  }
+  return need;
+}
+
 /** Where a fillet's arc sits, relative to the corner, as a fraction of the
  *  radius. The arc of radius r tangent to both faces is centred at (r, r) in the
  *  corner's own frame, so its nearest point to the corner lies on the diagonal at
