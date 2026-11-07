@@ -85,3 +85,49 @@
   display: flex;
   justify-content: flex-end;
 }
+
+/* Mates: a type glyph where an instance row has its colour swatch. */
+.asm-mate-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  text-align: center;
+  color: var(--accent-soft);
+}
+
+/* The Mate dialog. Its six types wrap to two rows of three. */
+.feature-dialog.asm-mate {
+  width: 280px;
+}
+.ed-modes.asm-mate-types {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+.asm-mate-types button {
+  padding: 5px 4px;
+  font-size: 12px;
+}
+.asm-mate-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.asm-mate-dof {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.asm-mate-limits {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-6);
+}
+.asm-mate-limits span {
+  flex: 1 1 auto;
+}
+.asm-mate-limits input {
+  width: 52px;
+  font: inherit;
+}

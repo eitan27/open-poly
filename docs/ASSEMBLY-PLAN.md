@@ -124,12 +124,20 @@ fast path A3 animation will need; see the Viewport section.
   against what's loaded. **As built:** sources are re-checked against `listMeta`
   on window focus / visibility, and only those whose `updatedAt` moved are
   re-read (`useAssemblySources`).
-- **Connector frames need more than the mesh has today.** `FaceSurface` is
-  `cylinder | disc | annulus` with a radius only. Mating needs each face's
-  frame: plane origin + normal, cylinder axis point + direction, circle centre +
-  normal for circular edges. Extend the kernel's face/edge tagging to emit these
-  (cheap — OCCT has the analytic surface in hand when it tags). Old cached
-  meshes lack them → rebuild the source once on first use in an assembly.
+- **Connector frames come from the mesh, not the kernel (decided in A2).** The
+  first plan was to have the kernel emit analytic frames. That would have
+  missed most of what people mate: nearly every round wall here is a faceted
+  96-gon prism (cylinders, extruded circles, revolves), so OCCT has no analytic
+  cylinder to report. `frames.ts` fits them from the tessellation instead:
+  - a flat face → area-weighted centroid + normal;
+  - a facet cluster → the axis perpendicular to every facet normal, and a
+    circle fit to its vertices. A cluster that also holds tangent flats (a
+    slot's round end, a fillet) is grown out from the picked facet, and only a
+    narrow facet (< 20° of arc) may stand for the wall;
+  - a rim's edge chain → a circle, with Z taken from the flat face it bounds;
+  - a straight edge → its midpoint and direction.
+    No kernel change and no rebuild: meshes saved before assemblies work as they
+    are. Nothing outside `src/assembly/` and App's assembly branches changed.
 
 ---
 
@@ -140,9 +148,16 @@ and frames are inferred from what you hover.
 
 - Hovering a face shows candidate connector points: a planar face's centroid,
   a circular edge's centre, a cylinder's axis endpoints/midpoint, a vertex. Snap
-  to the nearest; click picks it. The frame's Z is the face normal / cylinder
+  to the nearest; click picks it. **As built (A2):** an ordinary face/edge
+  click picks the entity, which is then highlighted as the selection. A
+  cylinder's Middle / Start / End is chosen in the dialog, and a ghost marker
+  (ring + Z arrow, drawn through parts) shows the frame. Hover candidates and
+  vertex connectors are not built yet. The frame's Z is the face normal / cylinder
   axis; X is chosen deterministically (a straight edge of that face if any,
-  else world-projected) so the result doesn't flip between rebuilds.
+  else world-projected) so the result doesn't flip between rebuilds. (A2 uses
+  world X projected onto the plane, in part coordinates, so it is stable.) By
+  default the two Z axes are opposed, so two faces touch. **Flip** aligns them,
+  and **Rotate 90°** adds quarter turns about Z (`Mate.flip` / `Mate.turns`).
 - A small dialog lets the user flip Z, rotate X by 90°, or add an offset — the
   same "Select …" arming vocabulary as the other dialogs, and an armed slot
   must not look filled.
@@ -188,11 +203,26 @@ Pure TypeScript in `src/assembly/solve.ts` with no DOM or kernel deps, so it is
 fully vitest-testable (every mate type, BFS re-orientation, loop detection,
 limits clamping).
 
+**Built in A2** (`solve.ts`) as described here. `valuesForPose` is the inverse
+used by dragging. Revolute values unwrap past ±180° from the previous value.
+
 **Dragging** a mated part moves it _along its free DOFs_: project the pointer
 drag onto the mate's motion (angle about the axis for revolute, distance along
 the axis for slider, plane for planar) and write the resulting value. Limits
 clamp. A dragged value that came from a variable/expression is not overwritten —
-the drag is refused with the usual "driven by `x`" hint.
+the drag is refused with the usual "driven by `x`" hint. **As built:** a
+revolute (and a planar/cylindrical part in Rotate mode) gets the rotate gizmo on
+the mate's own axis, so its preview is exact. A ball rotates about world X/Y/Z
+through its centre. Translation uses the ordinary translate gizmo: its preview
+moves freely, then the commit projects onto the mate. Constraining that
+preview is still to do. A fastened part has no gizmo. A part a mate positions
+(the mate's far end from the grounded side) can be moved only through that one
+mate.
+
+**Keeping placements:** every edit that changes what mates hold (add, edit or
+delete a mate, ground, remove an instance) stores the solved placements as
+the instances' own (`keepPlacements`), so a part whose mate is deleted stays
+put.
 
 **Later — closed loops:** solve all instance poses with Levenberg–Marquardt
 over the loop-closing mates' residuals, seeded from the tree solution (so a
@@ -299,9 +329,13 @@ Add an assembly section to `src/agent/modeling-guide.md`.
   gizmo; Instances list (ground, hide, colour, open source); missing-source
   ⚠; stale-source reload; delete-a-used-part warning. (Rendering went baked
   meshes, not shared geometry; see the Viewport section.)
-- **A2 — Connectors + mates.** Kernel emits face/edge frames; inferred connector
-  hover/snap; the six mate types; tree solver; drag along DOFs; limits; ⚠ for
-  broken refs and closed loops. Unit tests for every mate type.
+- **A2 — Connectors + mates.** _Done (2026-11-07)._ Browser check:
+  `scripts/verify-assembly-a2.mjs`. Mesh-fitted connector frames (no kernel
+  change); the six mate types; tree solver; Mate dialog with live preview;
+  drag along DOFs; limits; ⚠ for broken refs and closed loops; mates list. Not
+  built: hover/snap candidates, vertex connectors, a constrained translate
+  preview, and an amber ⚠ when a connector was re-found by fingerprint (it is
+  re-found silently).
 - **A3 — Motion.** Animate dialog; gear / rack-and-pinion / screw relations;
   mate values from variables.
 - **A4 — Agent.** The MCP tools above + modeling-guide section.

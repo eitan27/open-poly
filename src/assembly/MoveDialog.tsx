@@ -1,7 +1,9 @@
 // Moving a placed instance with the transform gizmo: translate along the world
 // axes, or rotate about a world axis through its centre. The gizmo is the same
-// one a part's Transform uses; this is its panel.
+// one a part's Transform uses; this is its panel. A mated instance moves only
+// along what its mate leaves free (a hinge about its axis, a slider along it).
 import { DraggableDialog } from "../ui/DraggableDialog";
+import type { MateType } from "./types";
 
 export type MoveMode = "translate" | "rotate";
 export type WorldAxis = "x" | "y" | "z";
@@ -11,6 +13,12 @@ interface Props {
   grounded: boolean;
   mode: MoveMode;
   axis: WorldAxis;
+  /** The mate that positions it, if one does. */
+  mate: { name: string; type: MateType } | null;
+  canTranslate: boolean;
+  canRotate: boolean;
+  /** Why the last drag couldn't be applied. */
+  message: string | null;
   onMode: (mode: MoveMode) => void;
   onAxis: (axis: WorldAxis) => void;
   onUnground: () => void;
@@ -33,17 +41,21 @@ export function MoveDialog(p: Props) {
             Unground to move it
           </button>
         </>
+      ) : p.mate?.type === "fastened" ? (
+        <p className="ed-hint">Fastened by {p.mate.name}: it moves with the part it's fastened to.</p>
       ) : (
         <>
-          <div className="ed-modes">
-            <button className={p.mode === "translate" ? "active" : ""} onClick={() => p.onMode("translate")}>
-              Move
-            </button>
-            <button className={p.mode === "rotate" ? "active" : ""} onClick={() => p.onMode("rotate")}>
-              Rotate
-            </button>
-          </div>
-          {p.mode === "rotate" && (
+          {p.canTranslate && p.canRotate && (
+            <div className="ed-modes">
+              <button className={p.mode === "translate" ? "active" : ""} onClick={() => p.onMode("translate")}>
+                Move
+              </button>
+              <button className={p.mode === "rotate" ? "active" : ""} onClick={() => p.onMode("rotate")}>
+                Rotate
+              </button>
+            </div>
+          )}
+          {p.mode === "rotate" && (!p.mate || p.mate.type === "ball") && (
             <>
               <div className="bool-group-label">About</div>
               <div className="ed-modes">
@@ -55,7 +67,11 @@ export function MoveDialog(p: Props) {
               </div>
             </>
           )}
-          <p className="ed-hint">Drag the gizmo to {p.mode === "rotate" ? "turn" : "move"} it.</p>
+          <p className="ed-hint">
+            Drag the gizmo to {p.mode === "rotate" ? "turn" : "move"} it
+            {p.mate ? ` along ${p.mate.name}.` : "."}
+          </p>
+          {p.message && <p className="ed-warning">{p.message}</p>}
         </>
       )}
     </DraggableDialog>

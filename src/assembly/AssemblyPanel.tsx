@@ -2,7 +2,7 @@
 // Timeline / Parts: what the assembly places, and how those are joined. Rows
 // follow the Parts list's (colour, name, eye, ✕) so the two read alike.
 import { EyeIcon } from "../ui/icons";
-import type { AssemblyDoc, Instance } from "./types";
+import type { AssemblyDoc, Instance, MateType } from "./types";
 import type { SourceState } from "./useAssemblySources";
 import "./AssemblyPanel.css";
 
@@ -19,7 +19,25 @@ interface Props {
   /** Open the instance's source document, to edit the part itself. */
   onOpenSource: (docId: string) => void;
   onInsert: () => void;
+  /** Mates the solver couldn't apply, and why. */
+  mateProblems: ReadonlyMap<string, string>;
+  /** Instances a mate positions. */
+  drivenIds: ReadonlyMap<string, unknown>;
+  editingMateId: string | null;
+  onNewMate: () => void;
+  onEditMate: (id: string) => void;
+  onRenameMate: (id: string, name: string) => void;
+  onRemoveMate: (id: string) => void;
 }
+
+const MATE_ICONS: Record<MateType, string> = {
+  fastened: "▣",
+  revolute: "↻",
+  slider: "⇕",
+  cylindrical: "⟳",
+  planar: "▱",
+  ball: "◉",
+};
 
 const hex = (c: number) => `#${c.toString(16).padStart(6, "0")}`;
 
@@ -88,6 +106,7 @@ export function AssemblyPanel(p: Props) {
                       : src?.status === "building"
                         ? `${src.name} · building…`
                         : (srcName ?? "loading…")}
+                    {!bad && p.drivenIds.has(inst.id) && " · mated"}
                   </span>
                 </span>
                 <button
@@ -130,8 +149,64 @@ export function AssemblyPanel(p: Props) {
           })}
         </div>
       )}
-      <h2>Mates ({assembly.mates.length})</h2>
-      {assembly.mates.length === 0 && <p className="asm-empty">No mates yet.</p>}
+      <div className="parts-header">
+        <h2>Mates ({assembly.mates.length})</h2>
+        <div className="parts-import">
+          <button
+            type="button"
+            className="asm-new-mate"
+            title="Join two parts with a mate"
+            disabled={assembly.instances.length < 2}
+            onClick={p.onNewMate}
+          >
+            ＋ Mate
+          </button>
+        </div>
+      </div>
+      {assembly.mates.length === 0 ? (
+        <p className="asm-empty">
+          {assembly.instances.length < 2 ? "Insert two parts to mate them." : "No mates yet."}
+        </p>
+      ) : (
+        <div className="tree-list asm-list">
+          {assembly.mates.map((m) => {
+            const name = (id: string) => assembly.instances.find((i) => i.id === id)?.name ?? "?";
+            const bad = p.mateProblems.get(m.id);
+            return (
+              <div
+                key={m.id}
+                className={
+                  "solid-row asm-row asm-mate-row" +
+                  (p.editingMateId === m.id ? " selected" : "") +
+                  (m.suppressed ? " dim" : "")
+                }
+                onClick={() => p.onEditMate(m.id)}
+              >
+                <span className="asm-mate-icon" title={m.type}>
+                  {MATE_ICONS[m.type]}
+                </span>
+                <span className="asm-name">
+                  <input className="solid-name" value={m.name} onChange={(e) => p.onRenameMate(m.id, e.target.value)} />
+                  <span className={"asm-source" + (bad ? " bad" : "")} title={bad}>
+                    {bad ? `⚠ ${bad}` : `${name(m.a.instanceId)} ↔ ${name(m.b.instanceId)}`}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  className="row-icon"
+                  title="Delete the mate"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    p.onRemoveMate(m.id);
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </>
   );
 }

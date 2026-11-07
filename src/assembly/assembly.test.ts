@@ -9,7 +9,13 @@ import {
   referencedDocIds,
   removeInstances,
   updateInstance,
+  addMate,
+  keepPlacements,
+  nextMateName,
+  removeMates,
+  updateMate,
 } from "./assembly";
+import type { Mate } from "./types";
 import { IDENTITY, translation } from "./placement";
 
 let n = 0;
@@ -89,5 +95,63 @@ describe("migrateAssembly", () => {
   it("rejects an instance without a placement", () => {
     const bad = { instances: [{ id: "x", name: "X", source: { docId: "d", partId: "p" }, transform: [1, 2] }] };
     expect(() => migrateAssembly(bad)).toThrow(/corrupt/);
+  });
+
+  it("rejects a mate of an unknown type", () => {
+    const m = { id: "m", name: "M", type: "glue", a: side("x"), b: side("y") };
+    expect(() => migrateAssembly({ instances: [], mates: [m] })).toThrow(/corrupt/);
+  });
+
+  it("keeps well-formed mates", () => {
+    const m = mateOf("m", "x", "y");
+    expect(migrateAssembly({ instances: [], mates: [m] }).mates).toEqual([m]);
+  });
+});
+
+const side = (instanceId: string) => ({
+  instanceId,
+  ref: { kind: "face" as const, name: "f" },
+  anchor: "center" as const,
+});
+const mateOf = (id: string, a: string, b: string): Mate => ({
+  id,
+  name: id,
+  type: "revolute",
+  a: side(a),
+  b: side(b),
+});
+
+describe("mates", () => {
+  it("names mates by type, lowest number free", () => {
+    let a = addMate(createAssembly(), { ...mateOf("m1", "x", "y"), name: "Revolute 1" });
+    a = addMate(a, { ...mateOf("m2", "x", "y"), name: "Revolute 3" });
+    expect(nextMateName(a, "revolute")).toBe("Revolute 2");
+    expect(nextMateName(a, "slider")).toBe("Slider 1");
+  });
+
+  it("updates and removes mates by id", () => {
+    let a = addMate(createAssembly(), mateOf("m1", "x", "y"));
+    a = updateMate(a, { ...a.mates[0], values: { rz: "45" } });
+    expect(a.mates[0].values).toEqual({ rz: "45" });
+    expect(updateMate(a, mateOf("nope", "x", "y"))).toBe(a);
+    expect(removeMates(a, ["m1"]).mates).toEqual([]);
+  });
+
+  it("removing an instance removes its mates", () => {
+    let { assembly: a } = insert(createAssembly(), "d1", ["A", "B", "C"]);
+    const [x, y, z] = a.instances.map((i) => i.id);
+    a = addMate(addMate(a, mateOf("m1", x, y)), mateOf("m2", y, z));
+    a = removeInstances(a, [x]);
+    expect(a.mates.map((m) => m.id)).toEqual(["m2"]);
+  });
+
+  it("keeps solved placements as the instances' own", () => {
+    const { assembly: a } = insert(createAssembly(), "d1", ["A", "B"]);
+    const moved = translation([0, 0, 20]);
+    const kept = keepPlacements(a, new Map([[a.instances[1].id, moved]]));
+    expect(kept.instances[1].transform).toEqual(moved);
+    expect(kept.instances[0]).toBe(a.instances[0]);
+    // Nothing moved: the same object back.
+    expect(keepPlacements(a, new Map([[a.instances[0].id, IDENTITY]]))).toBe(a);
   });
 });

@@ -1,7 +1,9 @@
 // Pure operations on an AssemblyDoc. No DOM, no storage, no kernel — like
 // document/document.ts is for parts.
-import type { AssemblyDoc, Instance, Mat4 } from "./types";
+import type { AssemblyDoc, Instance, Mat4, Mate, MateType } from "./types";
 import { multiply } from "./placement";
+
+const MATE_TYPES: MateType[] = ["fastened", "revolute", "slider", "cylindrical", "planar", "ball"];
 
 export function createAssembly(): AssemblyDoc {
   return { instances: [], mates: [], variables: [] };
@@ -32,9 +34,16 @@ export function migrateAssembly(raw: unknown): AssemblyDoc {
       i.transform.length === 16;
     if (!ok) throw new Error("Assembly data is missing or corrupt.");
   }
+  const mates = Array.isArray(a.mates) ? (a.mates as Partial<Mate>[]) : [];
+  const side = (c: Mate["a"] | undefined) =>
+    !!c && typeof c.instanceId === "string" && typeof c.ref?.name === "string" && typeof c.anchor === "string";
+  for (const m of mates) {
+    const ok = m && typeof m.id === "string" && MATE_TYPES.includes(m.type as MateType) && side(m.a) && side(m.b);
+    if (!ok) throw new Error("Assembly data is missing or corrupt.");
+  }
   return {
     instances: a.instances,
-    mates: Array.isArray(a.mates) ? a.mates : [],
+    mates: mates as Mate[],
     variables: Array.isArray(a.variables) ? a.variables : [],
   };
 }
@@ -109,7 +118,59 @@ export function moveInstance(a: AssemblyDoc, id: string, motion: Mat4): Assembly
   return updateInstance(a, id, { transform: multiply(motion, inst.transform) });
 }
 
+/** Remove instances, and the mates that joined them to anything. */
 export function removeInstances(a: AssemblyDoc, ids: string[]): AssemblyDoc {
   const drop = new Set(ids);
-  return { ...a, instances: a.instances.filter((i) => !drop.has(i.id)) };
+  return {
+    ...a,
+    instances: a.instances.filter((i) => !drop.has(i.id)),
+    mates: a.mates.filter((m) => !drop.has(m.a.instanceId) && !drop.has(m.b.instanceId)),
+  };
+}
+
+const TYPE_NAMES: Record<MateType, string> = {
+  fastened: "Fastened",
+  revolute: "Revolute",
+  slider: "Slider",
+  cylindrical: "Cylindrical",
+  planar: "Planar",
+  ball: "Ball",
+};
+
+/** "Revolute 2": the type and the lowest number not taken. */
+export function nextMateName(a: AssemblyDoc, type: MateType): string {
+  const used = new Set(a.mates.map((m) => m.name));
+  for (let n = 1; ; n++) {
+    const name = `${TYPE_NAMES[type]} ${n}`;
+    if (!used.has(name)) return name;
+  }
+}
+
+export function addMate(a: AssemblyDoc, mate: Mate): AssemblyDoc {
+  return { ...a, mates: [...a.mates, mate] };
+}
+
+/** Replace one mate (matched by id). Unknown ids leave the assembly as it is. */
+export function updateMate(a: AssemblyDoc, mate: Mate): AssemblyDoc {
+  if (!a.mates.some((m) => m.id === mate.id)) return a;
+  return { ...a, mates: a.mates.map((m) => (m.id === mate.id ? mate : m)) };
+}
+
+export function removeMates(a: AssemblyDoc, ids: string[]): AssemblyDoc {
+  const drop = new Set(ids);
+  return { ...a, mates: a.mates.filter((m) => !drop.has(m.id)) };
+}
+
+/** Store solved placements as the instances' own, so a part a mate was
+ *  holding stays where it is when that mate goes (rather than jumping back to
+ *  wherever it was before it was mated). */
+export function keepPlacements(a: AssemblyDoc, placements: ReadonlyMap<string, Mat4>): AssemblyDoc {
+  let changed = false;
+  const instances = a.instances.map((i) => {
+    const p = placements.get(i.id);
+    if (!p || p === i.transform || p.every((v, k) => v === i.transform[k])) return i;
+    changed = true;
+    return { ...i, transform: p };
+  });
+  return changed ? { ...a, instances } : a;
 }

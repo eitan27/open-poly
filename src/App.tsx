@@ -223,7 +223,17 @@ import type { AssemblyDoc } from "./assembly/types";
 import { AssemblyPanel } from "./assembly/AssemblyPanel";
 import { InsertDialog } from "./assembly/InsertDialog";
 import { MoveDialog, type MoveMode, type WorldAxis } from "./assembly/MoveDialog";
-import { insertInstances, moveInstance, referencedDocIds, removeInstances, updateInstance } from "./assembly/assembly";
+import {
+  insertInstances,
+  keepPlacements,
+  moveInstance,
+  referencedDocIds,
+  removeInstances,
+  updateInstance,
+  updateMate,
+} from "./assembly/assembly";
+import { MateDialog } from "./assembly/MateDialog";
+import { useMates } from "./assembly/useMates";
 import { boundsCenter, IDENTITY, meshBounds, placeMesh, translation } from "./assembly/placement";
 import { useAssemblySources, type BuildDocument, type SourcePart } from "./assembly/useAssemblySources";
 import { transformMatrix } from "./viewport/sceneMath";
@@ -709,9 +719,10 @@ const VIEW_BY_SHORTCUT: Partial<Record<ShortcutId, ViewName>> = {
  *  that edits a part, so no tool keys and no delete. */
 /** The clearance an inserted part keeps from what's already placed. */
 const INSERT_GAP_MM = 10;
-const NO_GHOSTS: GhostMesh[] = [];
+const NO_PROBLEMS: ReadonlyMap<string, never> = new Map<string, never>();
 const NO_SELECTION: Selection[] = [];
 const ignoreTransformPreview = () => {};
+const sameMatrix = (a: number[], b: number[]) => a === b || a.every((v, i) => v === b[i]);
 
 const ASSEMBLY_SHORTCUTS: ReadonlySet<ShortcutId> = new Set<ShortcutId>([
   "app.undo",
@@ -1935,6 +1946,8 @@ export default function App() {
     docIds: asmDocIds,
     build: buildDocument,
   });
+  const mates = useMates({ assembly, setAssembly, sources: asmSources, genId });
+  const asmPlacements = mates.solution?.placements;
   const [asmSelected, setAsmSelected] = useState<string[]>([]);
   const asmSelectedSet = useMemo(() => new Set(asmSelected), [asmSelected]);
   useEffect(() => setAsmSelected([]), [activeId]);
@@ -1944,27 +1957,29 @@ export default function App() {
   // Each instance's part mesh with its placement baked in (see placement.ts),
   // kept while neither the part's mesh nor the placement changes, so editing
   // one instance doesn't re-bake the rest.
-  const placedCache = useRef(new Map<string, { mesh: unknown; transform: unknown; placed: FeatureMesh["mesh"] }>());
+  const placedCache = useRef(new Map<string, { mesh: unknown; transform: number[]; placed: FeatureMesh["mesh"] }>());
   const assemblyMeshes = useMemo<FeatureMesh[]>(() => {
     if (!assembly) return [];
-    const next = new Map<string, { mesh: unknown; transform: unknown; placed: FeatureMesh["mesh"] }>();
+    const next = new Map<string, { mesh: unknown; transform: number[]; placed: FeatureMesh["mesh"] }>();
     const out: FeatureMesh[] = [];
     for (const inst of assembly.instances) {
       const src = asmSources.get(inst.source.docId);
       const part = src?.status === "ready" ? src.parts.find((x) => x.partId === inst.source.partId) : undefined;
       if (!part) continue;
+      // Where the mates put it (or its own placement, when nothing does).
+      const transform = asmPlacements?.get(inst.id) ?? inst.transform;
       const hit = placedCache.current.get(inst.id);
       const placed =
-        hit && hit.mesh === part.mesh && hit.transform === inst.transform
+        hit && hit.mesh === part.mesh && sameMatrix(hit.transform, transform)
           ? hit.placed
-          : placeMesh(part.mesh, inst.transform);
-      next.set(inst.id, { mesh: part.mesh, transform: inst.transform, placed });
+          : placeMesh(part.mesh, transform);
+      next.set(inst.id, { mesh: part.mesh, transform, placed });
       if (inst.hidden) continue;
       out.push({ id: inst.id, mesh: placed, color: inst.color ?? part.color, opacity: part.opacity });
     }
     placedCache.current = next;
     return out;
-  }, [assembly, asmSources]);
+  }, [assembly, asmSources, asmPlacements]);
   useEffect(() => {
     if (isAssembly && asmSourcesSettled) setPaintSeq((s) => s + 1);
   }, [isAssembly, asmSourcesSettled, assemblyMeshes]);
@@ -1992,12 +2007,21 @@ export default function App() {
     setAssembly(r.assembly);
     setAsmSelected(r.ids);
   };
+  // Edits that change what the mates hold start from where everything is now
+  // (see keepPlacements), so a part a removed mate held stays put.
+  const asmNow = () => (assembly && asmPlacements ? keepPlacements(assembly, asmPlacements) : assembly);
   const removeSelectedInstances = () => {
-    if (!assembly || asmSelected.length === 0) return;
-    setAssembly(removeInstances(assembly, asmSelected));
+    const now = asmNow();
+    if (!now || asmSelected.length === 0) return;
+    setAssembly(removeInstances(now, asmSelected));
     setAsmSelected([]);
   };
+  const openMateDialog = () => {
+    setAsmSelected([]);
+    mates.openNew();
+  };
   const handleAssemblyPick = (picked: Selection | null) => {
+    if (mates.pick(picked)) return;
     const id = picked ? featureIdOf(picked) : null;
     setAsmSelected(id && assembly?.instances.some((i) => i.id === id) ? [id] : []);
   };
@@ -2007,12 +2031,29 @@ export default function App() {
   const asmMoveTarget =
     assembly && asmSelected.length === 1 ? assembly.instances.find((i) => i.id === asmSelected[0]) : undefined;
   const asmMoveMesh = asmMoveTarget ? assemblyMeshes.find((m) => m.id === asmMoveTarget.id) : undefined;
+  // A mated instance moves only along what its mate leaves free: a hinge turns
+  // about its own axis, a slider's drag is projected onto its axis.
+  const asmDrag = asmMoveTarget && !asmMoveTarget.grounded ? mates.dragFor(asmMoveTarget.id) : null;
+  const asmDragRotates = !asmDrag || asmDrag.dofs.some((d) => d[0] === "r");
+  const asmDragTranslates = !asmDrag || asmDrag.dofs.some((d) => d[0] === "t");
+  const asmMode: MoveMode = !asmDragTranslates ? "rotate" : !asmDragRotates ? "translate" : moveMode;
+  const [asmDragMessage, setAsmDragMessage] = useState<string | null>(null);
+  useEffect(() => setAsmDragMessage(null), [asmMoveTarget?.id]);
   const asmTransformEdit = useMemo<TransformEdit | null>(() => {
-    if (!asmMoveTarget || asmMoveTarget.grounded || !asmMoveMesh) return null;
+    if (!asmMoveTarget || asmMoveTarget.grounded || !asmMoveMesh || mates.sessionOpen) return null;
+    if (asmDrag && asmDrag.dofs.length === 0) return null; // fastened
     const b = meshBounds(asmMoveMesh.mesh);
     if (!b) return null;
-    const pivot = boundsCenter(b);
-    const dir: [number, number, number] = rotateAxis === "x" ? [1, 0, 0] : rotateAxis === "y" ? [0, 1, 0] : [0, 0, 1];
+    const worldDir = (): [number, number, number] =>
+      rotateAxis === "x" ? [1, 0, 0] : rotateAxis === "y" ? [0, 1, 0] : [0, 0, 1];
+    let pivot = boundsCenter(b);
+    let axis = { origin: pivot, dir: worldDir() };
+    if (asmDrag && asmMode === "rotate") {
+      // About the mate's own axis (a ball: any world axis through its centre).
+      const f = asmDrag.axisWorld;
+      pivot = [f[12], f[13], f[14]];
+      axis = { origin: pivot, dir: asmDrag.mate.type === "ball" ? worldDir() : [f[8], f[9], f[10]] };
+    }
     return {
       featureId: asmMoveTarget.id,
       bodyId: asmMoveTarget.id,
@@ -2021,15 +2062,18 @@ export default function App() {
       ty: 0,
       tz: 0,
       angle: 0,
-      axis: { origin: pivot, dir },
+      axis,
       scale: 1,
     };
-  }, [asmMoveTarget, asmMoveMesh, rotateAxis]);
+    // asmDrag is rebuilt every render; what it depends on is listed instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asmMoveTarget, asmMoveMesh, rotateAxis, asmMode, mates.solution, mates.sessionOpen]);
   const commitInstanceMove = (d: TransformDelta) => {
     const te = asmTransformEdit;
     if (!te || !assembly || (d.tx === 0 && d.ty === 0 && d.tz === 0 && d.angle === 0)) return;
-    const motion = transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, 1).elements;
-    setAssembly(moveInstance(assembly, te.featureId, Array.from(motion)));
+    const motion = Array.from(transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, 1).elements);
+    if (asmDrag) setAsmDragMessage(mates.commitDrag(te.featureId, motion));
+    else setAssembly(moveInstance(assembly, te.featureId, motion));
   };
   // The first-connect choice and auth outcomes need the user: bring the dialog
   // up for them. Later issues (conflicts…) only badge the button — they never
@@ -3520,7 +3564,8 @@ export default function App() {
     // with the dialog object.
     onCancel: () => {
       if (isAssembly) {
-        setAsmSelected([]);
+        if (mates.sessionOpen) mates.close();
+        else setAsmSelected([]);
         return;
       }
       if (offsetSessionRef.current) {
@@ -6981,11 +7026,10 @@ export default function App() {
                 )
               }
               onRename={(id, name) => setAssembly(updateInstance(assembly, id, { name }), `asm-name:${id}`)}
-              onToggleGrounded={(id) =>
-                setAssembly(
-                  updateInstance(assembly, id, { grounded: !assembly.instances.find((i) => i.id === id)?.grounded }),
-                )
-              }
+              onToggleGrounded={(id) => {
+                const now = asmNow() ?? assembly;
+                setAssembly(updateInstance(now, id, { grounded: !now.instances.find((i) => i.id === id)?.grounded }));
+              }}
               onToggleHidden={(id) =>
                 setAssembly(
                   updateInstance(assembly, id, { hidden: !assembly.instances.find((i) => i.id === id)?.hidden }),
@@ -6993,11 +7037,24 @@ export default function App() {
               }
               onColor={(id, color) => setAssembly(updateInstance(assembly, id, { color }), `asm-color:${id}`)}
               onDelete={(id) => {
-                setAssembly(removeInstances(assembly, [id]));
+                setAssembly(removeInstances(asmNow() ?? assembly, [id]));
                 setAsmSelected((cur) => cur.filter((x) => x !== id));
               }}
               onOpenSource={(docId) => void openDocument(docId).catch(() => {})}
               onInsert={() => setInsertOpen(true)}
+              mateProblems={mates.solution?.problems ?? NO_PROBLEMS}
+              drivenIds={mates.solution?.drivenBy ?? NO_PROBLEMS}
+              editingMateId={mates.editingId}
+              onNewMate={openMateDialog}
+              onEditMate={(id) => {
+                setAsmSelected([]);
+                mates.openEdit(id);
+              }}
+              onRenameMate={(id, name) => {
+                const m = assembly.mates.find((x) => x.id === id);
+                if (m) setAssembly(updateMate(assembly, { ...m, name }), `asm-mate-name:${id}`);
+              }}
+              onRemoveMate={mates.remove}
             />
           ) : (
             <>
@@ -7153,8 +7210,8 @@ export default function App() {
             // shown as the whole-body highlight, and the gizmo moves the one
             // selected (see asmTransformEdit).
             meshes={isAssembly ? assemblyMeshes : viewportMeshes}
-            ghostMeshes={isAssembly ? NO_GHOSTS : ghostMeshes}
-            selection={isAssembly ? NO_SELECTION : (dialogPicks ?? selection)}
+            ghostMeshes={isAssembly ? mates.glyphs : ghostMeshes}
+            selection={isAssembly ? (mates.picks ?? NO_SELECTION) : (dialogPicks ?? selection)}
             emphasize={constraintEmphasis}
             highlightBodyIds={isAssembly ? asmSelectedSet : highlightBodyIds}
             booleanHighlight={booleanHighlight}
@@ -7164,7 +7221,7 @@ export default function App() {
             userPlanes={visibleUserPlanes}
             ghostPlane={ghostPlaneFrame}
             transformEdit={isAssembly ? asmTransformEdit : transformEdit}
-            transformMode={isAssembly ? moveMode : transform.mode}
+            transformMode={isAssembly ? asmMode : transform.mode}
             onTransformInput={isAssembly ? commitInstanceMove : transform.applyDrag}
             onTransformPreview={isAssembly ? ignoreTransformPreview : transform.previewDrag}
             extrudeGizmo={extrudeGizmo}
@@ -7215,12 +7272,16 @@ export default function App() {
             cameraInertia={settings.cameraInertia}
             apiRef={viewApiRef}
           />
-          {asmMoveTarget && (
+          {asmMoveTarget && !mates.sessionOpen && (
             <MoveDialog
               name={asmMoveTarget.name}
               grounded={!!asmMoveTarget.grounded}
-              mode={moveMode}
+              mode={asmMode}
               axis={rotateAxis}
+              mate={asmDrag ? { name: asmDrag.mate.name, type: asmDrag.mate.type } : null}
+              canTranslate={asmDragTranslates}
+              canRotate={asmDragRotates}
+              message={asmDragMessage}
               onMode={setMoveMode}
               onAxis={setRotateAxis}
               onUnground={() =>
@@ -7228,6 +7289,7 @@ export default function App() {
               }
             />
           )}
+          {mates.dialog && <MateDialog {...mates.dialog} />}
           {insertOpen && (
             <InsertDialog onClose={() => setInsertOpen(false)} onInsert={insertParts} build={buildDocument} />
           )}
