@@ -1,0 +1,74 @@
+/* Circle size field: rides just above-right of the cursor — below-right is
+   where the snap-inference badge draws (.guide-badge, +14px) — so it never
+   covers the point being placed, and reads as a live, focused input. */
+.draft-size {
+  position: absolute;
+  transform: translate(16px, calc(-100% - 12px));
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  /* Never intercept the canvas: the click that places the circle lands on the
+     sketch, not the field. Only the box itself takes the pointer. */
+  pointer-events: none;
+}
+
+.draft-size-box {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 7px;
+  background: rgba(var(--hud-rgb), 0.94);
+  border: 1.5px solid var(--accent);
+  border-radius: 7px;
+  /* The affordance: a focus halo that says "the keyboard goes here". */
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent),
+    0 4px 14px var(--shadow-soft);
+  backdrop-filter: blur(4px);
+  pointer-events: auto;
+}
+
+.draft-size-kind {
+  min-width: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-pale);
+  text-align: center;
+}
+
+.draft-size .dim-value input {
+  width: 72px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-2);
+  caret-color: var(--accent);
+  font-size: 13px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  padding: 2px 2px;
+}
+/* The live size, shown until something is typed: grey, so it reads as a
+   placeholder the first keystroke replaces, not a value already entered. */
+.draft-size .dim-value input::placeholder {
+  color: var(--text-9);
+  opacity: 1;
+}
+
+.draft-size-hint {
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--text-5);
+  background: rgba(var(--hud-rgb), 0.85);
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.draft-size-hint kbd {
+  font-family: inherit;
+  font-size: 10px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-2);
+}

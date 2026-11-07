@@ -204,6 +204,8 @@ import { PickSlot } from "./ui/PickSlot";
 import { DraggableDialog } from "./ui/DraggableDialog";
 import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
 import { DimValueInput, type VarOption } from "./ui/DimValueInput";
+import { DraftSizeField } from "./ui/DraftSizeField";
+import { draftCursorStore } from "./ui/draftCursorStore";
 import { FeatureTree } from "./ui/FeatureTree";
 import { EditPanel } from "./ui/EditPanel";
 import { OverflowColumn, type ColumnSlot } from "./ui/OverflowColumn";
@@ -1230,6 +1232,33 @@ export default function App() {
   const [editingSketchId, setEditingSketchId] = useState<string | null>(null);
   const [sketchTool, setSketchToolState] = useState<SketchTool>("line");
   const [draft, setDraft] = useState<Vec2[]>([]);
+  // Circle (centre + radius) tool: the size typed into the field that rides the
+  // cursor once the centre is down (empty = follow the cursor), and whether it
+  // means a radius or a diameter. The kind starts from the "Dimension circles
+  // as" setting and Tab flips it; the flip is remembered for the next circle.
+  const [circleSizeText, setCircleSizeText] = useState("");
+  const [circleSizeKind, setCircleSizeKind] = useState<"radius" | "diameter">(settings.circleDimension);
+  useEffect(() => setCircleSizeKind(settings.circleDimension), [settings.circleDimension]);
+  const circleSizeActive = sketchTool === "circle-center" && draft.length === 1;
+  // A typed size only lives for the circle it was typed for.
+  useEffect(() => {
+    if (!circleSizeActive) setCircleSizeText("");
+  }, [circleSizeActive]);
+  // The typed size, evaluated (numbers, expressions and variables all work), or
+  // null while it's empty / not yet a positive number — the preview then keeps
+  // following the cursor.
+  const typedCircleSize = useMemo(() => {
+    if (!circleSizeActive || circleSizeText.trim() === "") return null;
+    let value = NaN;
+    try {
+      value = evaluateExpression(circleSizeText, resolved.scope);
+    } catch {
+      value = NaN;
+    }
+    if (!Number.isFinite(value) || value <= 0) return null;
+    const expr = isVariableExpression(circleSizeText) ? circleSizeText.trim() : undefined;
+    return { kind: circleSizeKind, value, expr, r: circleSizeKind === "diameter" ? value / 2 : value };
+  }, [circleSizeActive, circleSizeText, circleSizeKind, resolved.scope]);
   // Line tool: the active-sketch entity (if any) that the *current* draft start
   // point landed on, and whether it was that entity's midpoint — so the first
   // segment's start gets a point-on-line / midpoint constraint (the end of each
@@ -3337,6 +3366,9 @@ export default function App() {
       // (like ending a polyline); every other tool just abandons the draft.
       // finishSpline() returns false unless the spline tool has ≥2 points, so
       // non-spline drafts fall through to setDraft([]).
+      // The circle size field: the first Esc clears what was typed (back to
+      // following the cursor), the next drops the centre.
+      else if (circleSizeActive && circleSizeText) setCircleSizeText("");
       else if (draft.length > 0) {
         if (!finishSpline()) setDraft([]);
       } else if (editingSketchId) finishSketch();
@@ -4427,23 +4459,38 @@ export default function App() {
           setDraft([uv]);
           circleCenterFixedRef.current = onFixed; // centre may pin to a hole centre
         } else {
-          const r = Math.hypot(uv[0] - draft[0][0], uv[1] - draft[0][1]);
+          // A typed size wins over where the click landed (the size field's Enter
+          // comes through here too), and lands as a driving R/Ø dimension — the
+          // same constraint dimensioning it afterwards would have made, so a
+          // typed variable stays linked.
+          const typed = typedCircleSize;
+          const r = typed ? typed.r : Math.hypot(uv[0] - draft[0][0], uv[1] - draft[0][1]);
           if (r < MIN_SEGMENT) break; // a second click on the centre → no circle
           const circle = mark({ type: "circle" as const, id: genId(), c: draft[0], r });
           let next = addSketchEntities(base, sketchId, [circle]);
+          const cons: SketchConstraint[] = [];
           // Pin the centre to the body circle it snapped to (concentric that LASTS).
           if (circleCenterFixedRef.current) {
-            next = addSketchConstraints(next, sketchId, [
-              {
-                id: genId(),
-                type: "coincident",
-                a: { entity: circle.id, at: "c" },
-                b: { fixed: circleCenterFixedRef.current },
-              },
-            ]);
+            cons.push({
+              id: genId(),
+              type: "coincident",
+              a: { entity: circle.id, at: "c" },
+              b: { fixed: circleCenterFixedRef.current },
+            });
           }
+          if (typed) {
+            cons.push({
+              id: genId(),
+              type: typed.kind,
+              entity: circle.id,
+              value: typed.value,
+              ...(typed.expr ? { expr: typed.expr } : {}),
+            });
+          }
+          if (cons.length) next = addSketchConstraints(next, sketchId, cons);
           void applyAndSolve(next);
           circleCenterFixedRef.current = undefined;
+          setCircleSizeText("");
           setDraft([]);
         }
         break;
@@ -6872,6 +6919,8 @@ export default function App() {
             activeSketchId={editingSketchId}
             sketchFullyConstrained={fullyConstrained}
             draft={draft}
+            draftRadius={typedCircleSize?.r ?? null}
+            onDraftCursor={draftCursorStore.set}
             polygonSides={polygonSides}
             onSketchClick={handleSketchClick}
             onSketchToolHover={setTrimHover}
@@ -6965,6 +7014,19 @@ export default function App() {
               openRequest={sketchMoreRequest}
               showShortcuts={showShortcuts}
               searchPlaceholder="Search sketch tools…"
+            />
+          )}
+          {editingSketch && circleSizeActive && (
+            <DraftSizeField
+              center={draft[0]}
+              kind={circleSizeKind}
+              value={circleSizeText}
+              onChange={setCircleSizeText}
+              onToggleKind={() => setCircleSizeKind((k) => (k === "diameter" ? "radius" : "diameter"))}
+              onSubmit={() => {
+                if (typedCircleSize) handleSketchClick(draft[0]);
+              }}
+              variables={dimVarOptions}
             />
           )}
           {dimPending && <div className="dim-hint">Pick a line or circle to dimension · Esc to cancel</div>}
