@@ -12,6 +12,7 @@
 import type { Document } from "../document/types";
 import type { ShapeMeshPayload } from "../kernel/types";
 import type { SectionViewState } from "../document/sectionView";
+import type { AssemblyDoc } from "../assembly/types";
 
 const DB_NAME = "open-poly";
 const DB_VERSION = 2;
@@ -22,7 +23,14 @@ const META = "meta";
 export interface StoredDoc {
   id: string;
   name: string;
+  /** The part model. An assembly's is always empty (`createDocument()`): it
+   *  stays required so the many paths that read a record's `doc` need no
+   *  branch, and an assembly is told apart by `assembly` alone. */
   doc: Document;
+  /** Present iff this is an assembly document (see assembly/types.ts). Every
+   *  path that rebuilds a record — autosave, import, a Drive pull — must carry
+   *  it, or the assembly silently becomes an empty part. */
+  assembly?: AssemblyDoc;
   updatedAt: number;
   /** Absent on records written before DB v2. */
   createdAt?: number;
@@ -50,6 +58,10 @@ export interface DocMeta {
   createdAt: number;
   featureCount: number;
   partCount: number;
+  /** Absent = a part document. */
+  kind?: "assembly";
+  /** Assemblies only: how many instances it places. */
+  instanceCount?: number;
   /** Never built on this device (no cached meshes yet: it came from Drive and
    *  hasn't been opened), so `partCount` isn't known — the list omits it. */
   unbuilt?: true;
@@ -68,7 +80,12 @@ function metaOf(record: StoredDoc): DocMeta {
     createdAt: record.createdAt ?? record.updatedAt,
     featureCount: record.doc.features.length,
     partCount: record.meshes?.length ?? 0,
-    ...(record.meshes ? {} : { unbuilt: true as const }),
+    // An assembly has no build of its own, so it is never "unbuilt".
+    ...(record.assembly
+      ? { kind: "assembly" as const, instanceCount: record.assembly.instances.length }
+      : record.meshes
+        ? {}
+        : { unbuilt: true as const }),
   };
 }
 

@@ -1,0 +1,15 @@
+/* The gap below a section stands in for .params-heading's margin-top, which
+   `.panel h2` out-specifies. */
+.asm-empty {
+  margin: 0 0 22px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.asm-list {
+  margin: 0 0 22px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-3);
+}

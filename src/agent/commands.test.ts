@@ -1244,3 +1244,25 @@ describe("applyOperation — multi-document ops", () => {
     expect(docs.find((d) => d.id === "a")?.active).toBe(false);
   });
 });
+
+describe("while an assembly is open", () => {
+  function assemblyCtx() {
+    const made = makeCtx();
+    made.ctx.documents = { ...stubDocuments(), info: () => ({ id: "asm", name: "Arm", kind: "assembly" }) };
+    return made;
+  }
+
+  it("refuses part edits, leaving the empty part model untouched", async () => {
+    const { ctx, doc } = assemblyCtx();
+    const r = await apply(ctx, { op: "addPrimitive", kind: "box" });
+    expect(r).toMatchObject({ ok: false, errorKind: "invalid_op" });
+    expect(r.error).toMatch(/assembly/);
+    expect(doc().features).toHaveLength(0);
+  });
+
+  it("still lets the agent switch to another document", async () => {
+    const { ctx } = assemblyCtx();
+    const r = await apply(ctx, { op: "newDocument" });
+    expect(r.ok).toBe(true);
+  });
+});

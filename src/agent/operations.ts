@@ -614,6 +614,7 @@ export interface DocumentListing {
   id: string;
   name: string;
   updatedAt: number;
+  kind: "part" | "assembly";
   featureCount: number;
   partCount: number;
   /** True for the document currently open in the tab. */

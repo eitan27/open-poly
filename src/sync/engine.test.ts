@@ -23,6 +23,9 @@ import { mockAccessToken } from "../../server/drive/oauth";
 import { createDriveApi, DriveError, type DriveApi } from "./driveApi";
 import { __resetSyncStoreForTests, listSyncLinks } from "./syncStore";
 import { ReauthError, SyncEngine, type SyncHost } from "./engine";
+import { docHash } from "./docHash";
+import type { AssemblyDoc } from "../assembly/types";
+import { createAssembly } from "../assembly/assembly";
 
 const BASE = "http://drive.test/api/mock-drive";
 
@@ -876,5 +879,61 @@ describe("recency follows edits, not uploads", () => {
       const r = await b.engine.downloadRecent(2);
       expect(r.downloaded.map((d) => d.name)).toEqual(["Edited last", "Edited since"]);
     });
+  });
+});
+
+describe("assemblies", () => {
+  const withInstances = (n: number): AssemblyDoc => ({
+    ...createAssembly(),
+    instances: Array.from({ length: n }, (_, i) => ({
+      id: `i${i}`,
+      name: `Bracket <${i + 1}>`,
+      source: { docId: "p1", partId: "ext1" },
+      transform: [],
+    })),
+  });
+
+  it("travel to another device as assemblies, and their edits follow", async () => {
+    const a = device();
+    const b = device();
+    await on(a, async () => {
+      await putDoc({ ...rec("asm", "Arm"), assembly: withInstances(1) });
+      await a.engine.sync();
+    });
+    await on(b, async () => {
+      await b.engine.sync();
+      await b.engine.download(b.engine.snapshot.cloudOnly[0].fileId);
+      expect((await loadDoc("asm"))?.assembly).toEqual(withInstances(1));
+      expect((await listMeta())[0].kind).toBe("assembly");
+    });
+    await on(a, async () => {
+      const r = (await loadDoc("asm"))!;
+      await putDoc({ ...r, assembly: withInstances(2), updatedAt: tick() });
+      await a.engine.sync();
+    });
+    await on(b, async () => {
+      await b.engine.sync();
+      expect((await loadDoc("asm"))?.assembly).toEqual(withInstances(2));
+      expect(b.engine.snapshot.docStates.asm).toBe("synced");
+    });
+  });
+
+  it("an untouched new assembly stays on this device; a placed part makes it upload", async () => {
+    const a = device();
+    await on(a, async () => {
+      await putDoc({ ...rec("asm", "Untitled"), assembly: createAssembly() });
+      await a.engine.sync();
+      expect(a.engine.snapshot.docStates.asm).toBe("blank");
+      const r = (await loadDoc("asm"))!;
+      await putDoc({ ...r, assembly: withInstances(1), updatedAt: tick() });
+      await a.engine.sync();
+      expect(a.engine.snapshot.docStates.asm).toBe("synced");
+    });
+  });
+
+  it("a part's hash is unchanged by the assembly field existing", async () => {
+    const doc = withVar("10");
+    expect(await docHash("Bracket", doc)).toBe(await docHash("Bracket", doc, undefined));
+    expect(await docHash("Bracket", doc, createAssembly())).not.toBe(await docHash("Bracket", doc));
   });
 });

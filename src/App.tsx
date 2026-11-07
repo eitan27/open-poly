@@ -219,6 +219,8 @@ import { REPO_URL } from "./lib/repo";
 import { previewName } from "./lib/site";
 import { isUntitled } from "./storage/docNames";
 import { Viewport } from "./viewport/Viewport";
+import type { AssemblyDoc } from "./assembly/types";
+import { AssemblyPanel } from "./assembly/AssemblyPanel";
 import type {
   ExtrudeGizmo,
   FeatureMesh,
@@ -696,6 +698,16 @@ const VIEW_BY_SHORTCUT: Partial<Record<ShortcutId, ViewName>> = {
   "view.iso": "iso",
 };
 
+/** The bindings that still mean something while an assembly is open: nothing
+ *  that edits a part, so no tool keys and no delete. */
+const ASSEMBLY_SHORTCUTS: ReadonlySet<ShortcutId> = new Set<ShortcutId>([
+  "app.undo",
+  "app.redo",
+  "app.toggleHints",
+  "view.home",
+  ...(Object.keys(VIEW_BY_SHORTCUT) as ShortcutId[]),
+]);
+
 export default function App() {
   const kernelRef = useRef<KernelClient | null>(null);
   const [ready, setReady] = useState(false);
@@ -705,11 +717,27 @@ export default function App() {
     set: setDoc,
     replace: replaceDoc,
     reset: resetDoc,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
+    undo: undoPart,
+    redo: redoPart,
+    canUndo: canUndoPart,
+    canRedo: canRedoPart,
   } = useHistory<Document>(seedDocument);
+  // The working assembly, when the open document is one (null for a part). It
+  // keeps its own undo history; `doc` above is then the record's empty part
+  // model, and the part UI — panel, toolbar, modelling shortcuts — stands down.
+  const {
+    state: assembly,
+    reset: resetAssembly,
+    undo: undoAssembly,
+    redo: redoAssembly,
+    canUndo: canUndoAssembly,
+    canRedo: canRedoAssembly,
+  } = useHistory<AssemblyDoc | null>(null);
+  const isAssembly = assembly !== null;
+  const undo = isAssembly ? undoAssembly : undoPart;
+  const redo = isAssembly ? redoAssembly : redoPart;
+  const canUndo = isAssembly ? canUndoAssembly : canUndoPart;
+  const canRedo = isAssembly ? canRedoAssembly : canRedoPart;
 
   // Resolution (variables + params -> numbers) is synchronous and pure; memoize
   // it so the UI can read evaluated values without re-running the kernel.
@@ -1669,6 +1697,9 @@ export default function App() {
   // The "Import ▾" flyout (STEP part / DXF sketch) in the Parts panel.
   const [importMenuOpen, setImportMenuOpen] = useState(false);
   const importMenuRef = useRef<HTMLDivElement>(null);
+  // The topbar's "New ▾" kind menu (Part / Assembly).
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const newMenuRef = useRef<HTMLDivElement>(null);
   // The DXF placement dialog: raw file text + a live parse preview (counts), plus
   // the chosen destination plane and unit scale. Held open until the user
   // confirms; the sketch is built from `text` re-parsed at the chosen scale.
@@ -1828,6 +1859,8 @@ export default function App() {
   } = usePersistedDocuments({
     doc,
     resetDoc,
+    assembly,
+    resetAssembly,
     rawMeshes,
     setRawMeshes,
     regenSettledSeq,
@@ -1845,7 +1878,8 @@ export default function App() {
   // Google Drive sync — hidden entirely where the /api/drive Functions aren't
   // deployed (a static self-host, or `npm run dev` without `npm run dev:api`).
   const drive = useDriveSync({
-    doc,
+    // A change signal only: whichever model the open document edits.
+    doc: assembly ?? doc,
     docName,
     getActiveId: () => docIdRef.current,
     flushSave,
@@ -1987,6 +2021,16 @@ export default function App() {
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
   }, [importMenuOpen]);
+
+  // …and the topbar's "New ▾" menu.
+  useEffect(() => {
+    if (!newMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!newMenuRef.current?.contains(e.target as Node)) setNewMenuOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [newMenuOpen]);
 
   // Latest doc/resolved for effects that fire off async kernel builds (the
   // reproject effect runs after a regen and must read the current state, not a
@@ -2455,14 +2499,14 @@ export default function App() {
   // render, so the stable AgentContext always calls the latest switch-flow
   // closures (openDocument etc. close over doc/docName/rawMeshes).
   const agentDocApiRef = useRef({
-    info: () => ({ id: docIdRef.current!, name: docName }),
+    info: () => ({ id: docIdRef.current!, name: docName, ...(isAssembly ? { kind: "assembly" as const } : {}) }),
     open: openDocument,
     create: newDocument,
     duplicate: duplicateDocument,
     rename: renameDocument,
   });
   agentDocApiRef.current = {
-    info: () => ({ id: docIdRef.current!, name: docName }),
+    info: () => ({ id: docIdRef.current!, name: docName, ...(isAssembly ? { kind: "assembly" as const } : {}) }),
     open: openDocument,
     create: newDocument,
     duplicate: duplicateDocument,
@@ -3311,6 +3355,7 @@ export default function App() {
   // useShortcutHandler. This only says what each id *does*. No key letter is here.
   useShortcutHandler({
     mode: editingSketchId ? "sketch" : "modeling",
+    only: isAssembly ? ASSEMBLY_SHORTCUTS : undefined,
     picking,
     views: VIEW_BY_SHORTCUT,
     onView: (view) => viewApiRef.current?.setView(view),
@@ -6465,13 +6510,50 @@ export default function App() {
           }}
         />
         <div className="doc-actions">
-          <button
-            className="text-btn newdoc-btn"
-            title="Create and open a new empty document"
-            onClick={() => void newDocument()}
-          >
-            ＋ New
-          </button>
+          {/* Split: the main half keeps what New always did (a part), the ▾
+              half picks the kind. */}
+          <div className="split-btn" ref={newMenuRef}>
+            <button
+              className="text-btn newdoc-btn"
+              title="Create and open a new empty part document"
+              onClick={() => void newDocument()}
+            >
+              ＋ New
+            </button>
+            <button
+              className="text-btn split-btn-caret"
+              title="Create a new part or assembly"
+              aria-label="Choose what to create"
+              aria-expanded={newMenuOpen}
+              onClick={() => setNewMenuOpen((o) => !o)}
+            >
+              ▾
+            </button>
+            {newMenuOpen && (
+              <div className="mt-menu">
+                <button
+                  type="button"
+                  title="A document you model parts in"
+                  onClick={() => {
+                    setNewMenuOpen(false);
+                    void newDocument("part");
+                  }}
+                >
+                  Part
+                </button>
+                <button
+                  type="button"
+                  title="A document that places parts from other documents and joins them with mates"
+                  onClick={() => {
+                    setNewMenuOpen(false);
+                    void newDocument("assembly");
+                  }}
+                >
+                  Assembly
+                </button>
+              </div>
+            )}
+          </div>
           <button className="text-btn docs-btn" title="Open a document" onClick={() => setDocsDialogOpen(true)}>
             Open…
           </button>
@@ -6737,145 +6819,155 @@ export default function App() {
           {sidebarOpen ? "‹" : "›"}
         </button>
         <aside className="panel">
-          <button
-            className="params-heading collapsible"
-            aria-expanded={variablesOpen}
-            onClick={() => setVariablesOpen((o) => !o)}
-          >
-            <span className={"collapse-caret" + (variablesOpen ? " open" : "")}>▶</span>
-            Variables ({doc.variables.length})
-          </button>
-          {variablesOpen && (
-            <VariablesPanel
-              variables={doc.variables}
-              scope={resolved.scope}
-              errors={resolved.variableErrors}
-              nameErrors={resolved.variableNameErrors}
-              onAdd={() => {
-                const { doc: next } = addVariable(doc);
-                setDoc(next);
-              }}
-              onChange={(id, field, value) => setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)}
-              onDelete={(id) => setDoc(removeVariable(doc, id))}
-            />
-          )}
-          <button
-            className="params-heading collapsible"
-            aria-expanded={timelineOpen}
-            onClick={() => setTimelineOpen((o) => !o)}
-          >
-            <span className={"collapse-caret" + (timelineOpen ? " open" : "")}>▶</span>
-            Timeline
-          </button>
-          {timelineOpen && (
+          {assembly ? (
+            <AssemblyPanel assembly={assembly} />
+          ) : (
             <>
-              <FeatureTree
-                doc={doc}
-                height={timelineHeight}
-                busy={busy}
-                datums={DATUM_ROWS}
-                datumVisibility={datumVisibility}
-                onToggleDatum={(id) => setDatumVisibility((v) => ({ ...v, [id]: !v[id] }))}
-                selectedIds={selectedFeatureIds}
-                errors={errors}
-                warnings={warnings}
-                onSelect={selectFeature}
-                onDoubleClick={handleTreeDoubleClick}
-                onDelete={handleDelete}
-                onToggleSuppress={(id) =>
-                  setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
-                }
-                onToggleHidden={(id, hidden) => setDoc(setFeatureHidden(doc, id, hidden))}
-                // A scrub commits at every position it passes (so the model
-                // rolls with the bar) but coalesces into ONE undo step; a plain
-                // click on a gutter is its own step, as before. Functional form:
-                // the drag captures this callback once, so it must not close
-                // over a `doc` that goes stale under it.
-                onSetRollback={(index, draggingBar) =>
-                  setDoc((prev) => setRollbackIndex(prev, index), draggingBar ? "rollback-drag" : undefined)
-                }
-                onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
-              />
-              <div className="panel-splitter" title="Drag to resize the timeline" onPointerDown={startTimelineResize} />
-            </>
-          )}
-          <div className="parts-header">
-            <button
-              className="params-heading collapsible"
-              aria-expanded={partsOpen}
-              onClick={() => setPartsOpen((o) => !o)}
-            >
-              <span className={"collapse-caret" + (partsOpen ? " open" : "")}>▶</span>
-              Parts
-            </button>
-            <div className="parts-import" ref={importMenuRef}>
               <button
-                type="button"
-                title="Import a STEP part or a DXF sketch"
-                onClick={() => setImportMenuOpen((o) => !o)}
+                className="params-heading collapsible"
+                aria-expanded={variablesOpen}
+                onClick={() => setVariablesOpen((o) => !o)}
               >
-                ⤓ Import ▾
+                <span className={"collapse-caret" + (variablesOpen ? " open" : "")}>▶</span>
+                Variables ({doc.variables.length})
               </button>
-              {importMenuOpen && (
-                <div className="mt-menu mt-menu-right">
-                  <button
-                    type="button"
-                    title="Import a STEP file as a new part (⌘I / Ctrl+I)"
-                    onClick={() => {
-                      setImportMenuOpen(false);
-                      importInputRef.current?.click();
-                    }}
-                  >
-                    STEP part…
-                  </button>
-                  <button
-                    type="button"
-                    title="Import a DXF drawing as an editable sketch"
-                    onClick={() => {
-                      setImportMenuOpen(false);
-                      dxfInputRef.current?.click();
-                    }}
-                  >
-                    DXF sketch…
-                  </button>
-                </div>
+              {variablesOpen && (
+                <VariablesPanel
+                  variables={doc.variables}
+                  scope={resolved.scope}
+                  errors={resolved.variableErrors}
+                  nameErrors={resolved.variableNameErrors}
+                  onAdd={() => {
+                    const { doc: next } = addVariable(doc);
+                    setDoc(next);
+                  }}
+                  onChange={(id, field, value) => setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)}
+                  onDelete={(id) => setDoc(removeVariable(doc, id))}
+                />
               )}
-            </div>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept=".step,.stp,.STEP,.STP"
-              style={{ display: "none" }}
-              onChange={handleImportFile}
-            />
-            <input
-              ref={dxfInputRef}
-              type="file"
-              accept=".dxf,.DXF"
-              style={{ display: "none" }}
-              onChange={handleDxfFile}
-            />
-          </div>
-          {partsOpen && (
-            <SolidsList
-              doc={doc}
-              partIds={partIds}
-              selectedIds={selectedFeatureIds}
-              onSelect={selectFeature}
-              onRename={handleSolidRename}
-              onDelete={handleDelete}
-              onColorChange={handleSolidColor}
-              onOpacityChange={handleSolidOpacity}
-              onToggleHidden={handleSolidHidden}
-              onExportStep={handleExportStep}
-              onExportStl={handleExportStl}
-              isolatedId={isolatedBodyId}
-              onIsolate={handleIsolate}
-            />
-          )}
-          {/* Constraints + Parameters used to live here, below Parts, where the
+              <button
+                className="params-heading collapsible"
+                aria-expanded={timelineOpen}
+                onClick={() => setTimelineOpen((o) => !o)}
+              >
+                <span className={"collapse-caret" + (timelineOpen ? " open" : "")}>▶</span>
+                Timeline
+              </button>
+              {timelineOpen && (
+                <>
+                  <FeatureTree
+                    doc={doc}
+                    height={timelineHeight}
+                    busy={busy}
+                    datums={DATUM_ROWS}
+                    datumVisibility={datumVisibility}
+                    onToggleDatum={(id) => setDatumVisibility((v) => ({ ...v, [id]: !v[id] }))}
+                    selectedIds={selectedFeatureIds}
+                    errors={errors}
+                    warnings={warnings}
+                    onSelect={selectFeature}
+                    onDoubleClick={handleTreeDoubleClick}
+                    onDelete={handleDelete}
+                    onToggleSuppress={(id) =>
+                      setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
+                    }
+                    onToggleHidden={(id, hidden) => setDoc(setFeatureHidden(doc, id, hidden))}
+                    // A scrub commits at every position it passes (so the model
+                    // rolls with the bar) but coalesces into ONE undo step; a plain
+                    // click on a gutter is its own step, as before. Functional form:
+                    // the drag captures this callback once, so it must not close
+                    // over a `doc` that goes stale under it.
+                    onSetRollback={(index, draggingBar) =>
+                      setDoc((prev) => setRollbackIndex(prev, index), draggingBar ? "rollback-drag" : undefined)
+                    }
+                    onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
+                  />
+                  <div
+                    className="panel-splitter"
+                    title="Drag to resize the timeline"
+                    onPointerDown={startTimelineResize}
+                  />
+                </>
+              )}
+              <div className="parts-header">
+                <button
+                  className="params-heading collapsible"
+                  aria-expanded={partsOpen}
+                  onClick={() => setPartsOpen((o) => !o)}
+                >
+                  <span className={"collapse-caret" + (partsOpen ? " open" : "")}>▶</span>
+                  Parts
+                </button>
+                <div className="parts-import" ref={importMenuRef}>
+                  <button
+                    type="button"
+                    title="Import a STEP part or a DXF sketch"
+                    onClick={() => setImportMenuOpen((o) => !o)}
+                  >
+                    ⤓ Import ▾
+                  </button>
+                  {importMenuOpen && (
+                    <div className="mt-menu mt-menu-right">
+                      <button
+                        type="button"
+                        title="Import a STEP file as a new part (⌘I / Ctrl+I)"
+                        onClick={() => {
+                          setImportMenuOpen(false);
+                          importInputRef.current?.click();
+                        }}
+                      >
+                        STEP part…
+                      </button>
+                      <button
+                        type="button"
+                        title="Import a DXF drawing as an editable sketch"
+                        onClick={() => {
+                          setImportMenuOpen(false);
+                          dxfInputRef.current?.click();
+                        }}
+                      >
+                        DXF sketch…
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".step,.stp,.STEP,.STP"
+                  style={{ display: "none" }}
+                  onChange={handleImportFile}
+                />
+                <input
+                  ref={dxfInputRef}
+                  type="file"
+                  accept=".dxf,.DXF"
+                  style={{ display: "none" }}
+                  onChange={handleDxfFile}
+                />
+              </div>
+              {partsOpen && (
+                <SolidsList
+                  doc={doc}
+                  partIds={partIds}
+                  selectedIds={selectedFeatureIds}
+                  onSelect={selectFeature}
+                  onRename={handleSolidRename}
+                  onDelete={handleDelete}
+                  onColorChange={handleSolidColor}
+                  onOpacityChange={handleSolidOpacity}
+                  onToggleHidden={handleSolidHidden}
+                  onExportStep={handleExportStep}
+                  onExportStl={handleExportStl}
+                  isolatedId={isolatedBodyId}
+                  onIsolate={handleIsolate}
+                />
+              )}
+              {/* Constraints + Parameters used to live here, below Parts, where the
               thing you were editing was easy to miss. They're now the floating
               EditPanel over the viewport (see below). */}
+            </>
+          )}
         </aside>
         <main className="viewport" ref={viewportElRef}>
           <Viewport
@@ -6942,12 +7034,14 @@ export default function App() {
             cameraInertia={settings.cameraInertia}
             apiRef={viewApiRef}
           />
-          <OverflowToolbar
-            className="model-toolbar"
-            items={modelTools}
-            showShortcuts={showShortcuts}
-            openRequest={modelMoreRequest}
-          />
+          {!isAssembly && (
+            <OverflowToolbar
+              className="model-toolbar"
+              items={modelTools}
+              showShortcuts={showShortcuts}
+              openRequest={modelMoreRequest}
+            />
+          )}
           {/* The floating edit panel. It shows in two cases only (never on a
               plain selection — that just highlights): the constraints of the
               sketch being edited, and the parameters of a double-clicked

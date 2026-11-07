@@ -131,3 +131,22 @@
   padding: 2px 8px;
   white-space: nowrap;
 }
+
+/* New ▾ — two .text-btn halves joined into one control; the ▾ half opens the
+   kind menu (an .mt-menu, positioned against this wrapper). */
+.split-btn {
+  position: relative;
+  display: flex;
+}
+
+.split-btn > .text-btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.split-btn > .split-btn-caret {
+  margin-left: -1px;
+  padding: 4px 6px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}

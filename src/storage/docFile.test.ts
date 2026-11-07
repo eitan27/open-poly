@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseDocFile, serializeDocFile, DOC_FILE_VERSION } from "./docFile";
 import { createDocument } from "../document/document";
+import { createAssembly } from "../assembly/assembly";
 
 describe("docFile round-trip", () => {
   it("serializes and parses back name + doc", () => {
@@ -19,6 +20,29 @@ describe("docFile round-trip", () => {
   it("defaults a missing/blank name to Imported", () => {
     const raw = JSON.parse(serializeDocFile("  ", createDocument()));
     expect(parseDocFile(JSON.stringify(raw)).name).toBe("Imported");
+  });
+});
+
+describe("assembly files", () => {
+  it("round-trip the assembly", () => {
+    const assembly = { ...createAssembly(), mates: [] };
+    const parsed = parseDocFile(serializeDocFile("Arm", createDocument(), assembly));
+    expect(parsed.assembly).toEqual(assembly);
+  });
+
+  it("are version 2, while a part file stays version 1 for older builds", () => {
+    expect(JSON.parse(serializeDocFile("Arm", createDocument(), createAssembly())).version).toBe(2);
+    expect(JSON.parse(serializeDocFile("Bracket", createDocument())).version).toBe(1);
+  });
+
+  it("a part file parses with no assembly key at all", () => {
+    expect("assembly" in parseDocFile(serializeDocFile("Bracket", createDocument()))).toBe(false);
+  });
+
+  it("reject corrupt assembly data", () => {
+    const raw = JSON.parse(serializeDocFile("Arm", createDocument(), createAssembly()));
+    raw.assembly = { instances: 3 };
+    expect(() => parseDocFile(JSON.stringify(raw))).toThrow(/Assembly data is missing or corrupt/);
   });
 });
 

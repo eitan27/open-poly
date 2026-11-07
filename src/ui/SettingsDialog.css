@@ -445,3 +445,20 @@
   padding: 6px 10px;
   margin: 0 0 10px;
 }
+
+/* All · Parts · Assemblies, above the list. */
+.docs-tabs {
+  margin-bottom: 10px;
+}
+
+/* "Assembly" beside a document's name in the list. */
+.docs-kind {
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-palest);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+}

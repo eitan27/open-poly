@@ -139,8 +139,8 @@ export interface AgentContext {
    *  App's switch flow (flush → load → adopt) — NEVER a raw setDoc — so
    *  autosave/undo/meshes stay consistent across the boundary. */
   documents: {
-    /** Active document identity (id + display name). */
-    info(): { id: string; name: string };
+    /** Active document identity (id + display name). `kind` absent = a part. */
+    info(): { id: string; name: string; kind?: "assembly" };
     open(id: string): Promise<void>;
     /** Create + open an empty document (name auto-deduped "Untitled N"). */
     create(): Promise<void>;
@@ -587,8 +587,23 @@ async function addConstraintSolved(
  *  are returned in `OpResult`). Mutations go through `ctx.setDoc` (undoable) and
  *  then **await the kernel regen** so the result reflects settled geometry (and a
  *  follow-up read/screenshot sees it). */
+/** The ops that act on the WORKSPACE (which document is open) rather than on
+ *  the open part — the only ones that make sense while an assembly is open. */
+const DOCUMENT_OPS: ReadonlySet<Operation["op"]> = new Set([
+  "openDocument",
+  "newDocument",
+  "renameDocument",
+  "duplicateDocument",
+]);
+
 export async function applyOperation(ctx: AgentContext, op: Operation): Promise<OpResult> {
   try {
+    if (ctx.documents.info().kind === "assembly" && !DOCUMENT_OPS.has(op.op)) {
+      throw new OpError(
+        "invalid_op",
+        "The open document is an assembly; assembly editing isn't exposed to the agent yet. Open a part document to model.",
+      );
+    }
     const doc = ctx.getDoc();
     let next: Document;
     let createdId: string | undefined;
@@ -1397,6 +1412,7 @@ export async function listDocuments(ctx: AgentContext): Promise<DocumentListing[
     id: m.id,
     name: m.name,
     updatedAt: m.updatedAt,
+    kind: m.kind ?? "part",
     featureCount: m.featureCount,
     partCount: m.partCount,
     active: m.id === activeId,

@@ -59,6 +59,9 @@ export interface ShortcutHandlerConfig {
   whilePicking: ActionMap;
   /** Modeling feature bindings: suppressed during a pick, `preventDefault`ed. */
   modelingActions: ActionMap;
+  /** When set, only these bindings (and Escape) run — an assembly is open, and
+   *  the part bindings would act on the empty part model behind it. */
+  only?: ReadonlySet<ShortcutId>;
 }
 
 /** Run `id`'s action from `map`, and say whether that settles the key. An action
@@ -87,6 +90,7 @@ export function useShortcutHandler(config: ShortcutHandlerConfig): void {
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
       const id = matchShortcut(e, c.mode)?.id;
+      if (c.only && !(id && c.only.has(id))) return;
 
       // 2. The bindings that survive the modifier, then the bail-out.
       if (handled(c.withModifier, id, e)) return;
