@@ -39,9 +39,10 @@ site must do the same.
   localStorage. **Drive-only documents appear on the All tab only,** because
   their kind isn't known until they are downloaded. Putting the kind in the
   Drive file's appProperties would fix this; that's deferred.
-- **Thumbnails:** an assembly is captured on the same settle signal as a part,
-  which fires once, from the empty part model's regen. A1 needs its own trigger
-  (the instances' meshes loaded) or tiles show the empty scene.
+- **Thumbnails:** captured on `paintSeq` in App, which replaced the
+  persistence hook's `regenSettledSeq`. A part bumps it when its regen settles,
+  an assembly when every source has loaded (or failed to). The switch-in home
+  view uses the same signal. (Built in A1.)
 
 ```ts
 interface AssemblyDoc {
@@ -105,20 +106,24 @@ Rules that fall out of this:
 Assembly rendering and mating need **no OCCT** in the common case. Each part
 document's `StoredDoc.meshes` already has the tessellation plus `faceGroups` /
 `edgeGroups` with persistent `name`s and analytic `surface` tags. The assembly
-loads those meshes once per source part, uploads one `BufferGeometry` per part,
-and draws each instance as a `Mesh` sharing that geometry with its own matrix.
-Moving, dragging and animating are matrix updates only — this is what makes
-animation smooth.
+loads those meshes once per source part. **As built in A1**, each instance's
+placement is baked into a copy of the part's mesh (`placement.ts` `placeMesh`,
+cached per instance + transform), so the Viewport sees ordinary world-space
+bodies: picking, highlights, section view and the gizmo drag preview needed no
+changes. Shared geometry + per-instance matrices (the original idea) is the
+fast path A3 animation will need; see the Viewport section.
 
 - **Unbuilt sources** (`DocMeta.unbuilt`, came from Drive and never opened):
   regenerate in the kernel worker in the background, write the meshes back into
-  that part's record, then show it. The worker currently holds one document's
-  state; building a second document must not clobber the active one — either a
-  stateless "build this doc, return meshes" message or a second worker. Decide
-  in A1.
+  that part's record, then show it. **Decided in A1:** the same worker, via
+  `kernel.regenerate(resolveDocument(doc).features)`. Its caches are
+  content-keyed and the open model (an assembly's empty part) has nothing to
+  clobber. The write-back is `putMeshesIfUnchanged`, which writes only if the
+  record's `updatedAt` hasn't moved since it was read.
 - **Staleness:** when an assembly opens, compare each source's `updatedAt`
-  against what's loaded; when a part is edited in another tab, the existing
-  cross-tab doc-change notice can trigger a reload of that source only.
+  against what's loaded. **As built:** sources are re-checked against `listMeta`
+  on window focus / visibility, and only those whose `updatedAt` moved are
+  re-read (`useAssemblySources`).
 - **Connector frames need more than the mesh has today.** `FaceSurface` is
   `cylinder | disc | annulus` with a radius only. Mating needs each face's
   frame: plane origin + normal, cylinder axis point + direction, circle centre +
@@ -238,10 +243,13 @@ Its left panel replaces the feature tree with two lists:
 - **Mates** — name, type icon, current values, ⚠ if broken or over-constrained.
   Click to edit; selecting a mate highlights its two connectors.
 
-**Insert dialog:** the Documents grid filtered to parts, with a per-part list
-when the document has several. Inserted instances drop at the origin (first,
-grounded) or near the camera focus (later), then can be dragged freely before
-mating.
+**Insert dialog:** the Documents list filtered to parts, with a per-part
+checklist (all ticked) when the document has several. **As built:** the first
+instance lands where the part was modelled and is grounded. Each later insert
+is shifted along +X so it starts 10 mm past everything already placed (all
+parts of one insert move together, keeping their relative layout), then can be
+dragged freely before mating. A missing source has no placeholder box: its row
+shows ⚠ with the reason and nothing draws.
 
 **Viewport reuse.** `Viewport.tsx` is built around one document's bodies. The
 assembly needs per-body matrices and shared geometry across instances. A0 must
@@ -257,6 +265,14 @@ so most of the per-instance path exists. A1 adds an optional `matrix` to
 `FeatureMesh` and reuses geometry between meshes that share one payload
 object. The assembly keeps the single Viewport App already mounts: no second
 WebGL context, and no remount when switching between kinds.
+
+**Revised in A1:** the single Viewport stays, but A1 doesn't use a matrix.
+Instances are baked world-space meshes (see "Geometry comes from the cache"),
+so no Viewport code changed. Moving an instance reuses the transform gizmo
+(`TransformEdit` with zero values, pivoting at the placed bounds' centre) and
+commits `motion · transform` through `moveInstance`. The `matrix` +
+shared-geometry path is deferred to A3, where per-frame animation makes
+re-baking too slow.
 
 ---
 
@@ -277,10 +293,12 @@ Add an assembly section to `src/agent/modeling-guide.md`.
   `scripts/verify-assembly-a0.mjs`. `kind` on records/meta/file export/Drive; New split
   button; Open tabs; an empty assembly workspace that saves, reopens, renames,
   duplicates and syncs. Viewport reuse decision made.
-- **A1 — Instances.** Insert dialog; render from cached meshes with shared
+- **A1 — Instances.** _Done (2026-11-07)._ Browser check:
+  `scripts/verify-assembly-a1.mjs`. Insert dialog; render from cached meshes with shared
   geometry; unbuilt-source build path; free-drag with the existing transform
   gizmo; Instances list (ground, hide, colour, open source); missing-source
-  placeholder; stale-source reload; delete-a-used-part warning.
+  ⚠; stale-source reload; delete-a-used-part warning. (Rendering went baked
+  meshes, not shared geometry; see the Viewport section.)
 - **A2 — Connectors + mates.** Kernel emits face/edge frames; inferred connector
   hover/snap; the six mate types; tree solver; drag along DOFs; limits; ⚠ for
   broken refs and closed loops. Unit tests for every mate type.

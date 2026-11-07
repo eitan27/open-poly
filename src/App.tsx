@@ -221,6 +221,12 @@ import { isUntitled } from "./storage/docNames";
 import { Viewport } from "./viewport/Viewport";
 import type { AssemblyDoc } from "./assembly/types";
 import { AssemblyPanel } from "./assembly/AssemblyPanel";
+import { InsertDialog } from "./assembly/InsertDialog";
+import { MoveDialog, type MoveMode, type WorldAxis } from "./assembly/MoveDialog";
+import { insertInstances, moveInstance, referencedDocIds, removeInstances, updateInstance } from "./assembly/assembly";
+import { boundsCenter, IDENTITY, meshBounds, placeMesh, translation } from "./assembly/placement";
+import { useAssemblySources, type BuildDocument, type SourcePart } from "./assembly/useAssemblySources";
+import { transformMatrix } from "./viewport/sceneMath";
 import type {
   ExtrudeGizmo,
   FeatureMesh,
@@ -229,6 +235,7 @@ import type {
   SketchTool,
   TransformEdit,
   TransformMode,
+  TransformDelta,
   ViewName,
   ViewportApi,
 } from "./viewport/types";
@@ -700,10 +707,18 @@ const VIEW_BY_SHORTCUT: Partial<Record<ShortcutId, ViewName>> = {
 
 /** The bindings that still mean something while an assembly is open: nothing
  *  that edits a part, so no tool keys and no delete. */
+/** The clearance an inserted part keeps from what's already placed. */
+const INSERT_GAP_MM = 10;
+const NO_GHOSTS: GhostMesh[] = [];
+const NO_SELECTION: Selection[] = [];
+const ignoreTransformPreview = () => {};
+
 const ASSEMBLY_SHORTCUTS: ReadonlySet<ShortcutId> = new Set<ShortcutId>([
   "app.undo",
   "app.redo",
   "app.toggleHints",
+  "app.delete",
+  "app.deleteBack",
   "view.home",
   ...(Object.keys(VIEW_BY_SHORTCUT) as ShortcutId[]),
 ]);
@@ -727,6 +742,7 @@ export default function App() {
   // model, and the part UI — panel, toolbar, modelling shortcuts — stands down.
   const {
     state: assembly,
+    set: setAssembly,
     reset: resetAssembly,
     undo: undoAssembly,
     redo: redoAssembly,
@@ -1832,6 +1848,16 @@ export default function App() {
   // (the associative Project reproject) key off this instead of `rawMeshes`, so
   // they don't fire against a half-streamed model.
   const [regenSettledSeq, setRegenSettledSeq] = useState(0);
+  // "The open document has finished drawing" — what the thumbnail capture and
+  // the switch-in framing wait for. A part's is its regen settling; an
+  // assembly's is its sources having loaded (the empty part model behind it
+  // settles too, before anything is drawn, so it mustn't count).
+  const [paintSeq, setPaintSeq] = useState(0);
+  useEffect(() => {
+    if (regenSettledSeq && !isAssembly) setPaintSeq((s) => s + 1);
+    // isAssembly is read, not a trigger: switching kinds isn't a paint.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [regenSettledSeq]);
 
   // Document persistence: IndexedDB boot-restore, debounced autosave, thumbnails,
   // the multi-document actions and the multi-tab guard. Called HERE rather than
@@ -1863,7 +1889,7 @@ export default function App() {
     resetAssembly,
     rawMeshes,
     setRawMeshes,
-    regenSettledSeq,
+    regenSettledSeq: paintSeq,
     sectionView,
     setSectionView,
     setSelection,
@@ -1890,6 +1916,121 @@ export default function App() {
     deleteDocument,
   });
   const [driveDialogOpen, setDriveDialogOpen] = useState(false);
+
+  // --- The assembly workspace (src/assembly/, docs/ASSEMBLY-PLAN.md) ---------
+  // Builds a part document that has never been built on this device, through
+  // the same worker (its caches are content-keyed, so this can't disturb the
+  // open document's).
+  const buildDocument = useMemo<BuildDocument | null>(() => {
+    const kernel = kernelRef.current;
+    if (!ready || !kernel) return null;
+    return async (d) => {
+      const { results } = await kernel.regenerate(resolveDocument(d).features);
+      return results.flatMap((r) => (r.ok ? [{ id: r.id, mesh: r.mesh }] : []));
+    };
+  }, [ready]);
+  const asmDocIds = useMemo(() => (assembly ? referencedDocIds(assembly) : []), [assembly]);
+  const { sources: asmSources, settled: asmSourcesSettled } = useAssemblySources({
+    assemblyId: isAssembly ? activeId : null,
+    docIds: asmDocIds,
+    build: buildDocument,
+  });
+  const [asmSelected, setAsmSelected] = useState<string[]>([]);
+  const asmSelectedSet = useMemo(() => new Set(asmSelected), [asmSelected]);
+  useEffect(() => setAsmSelected([]), [activeId]);
+  const [insertOpen, setInsertOpen] = useState(false);
+  const [moveMode, setMoveMode] = useState<MoveMode>("translate");
+  const [rotateAxis, setRotateAxis] = useState<WorldAxis>("z");
+  // Each instance's part mesh with its placement baked in (see placement.ts),
+  // kept while neither the part's mesh nor the placement changes, so editing
+  // one instance doesn't re-bake the rest.
+  const placedCache = useRef(new Map<string, { mesh: unknown; transform: unknown; placed: FeatureMesh["mesh"] }>());
+  const assemblyMeshes = useMemo<FeatureMesh[]>(() => {
+    if (!assembly) return [];
+    const next = new Map<string, { mesh: unknown; transform: unknown; placed: FeatureMesh["mesh"] }>();
+    const out: FeatureMesh[] = [];
+    for (const inst of assembly.instances) {
+      const src = asmSources.get(inst.source.docId);
+      const part = src?.status === "ready" ? src.parts.find((x) => x.partId === inst.source.partId) : undefined;
+      if (!part) continue;
+      const hit = placedCache.current.get(inst.id);
+      const placed =
+        hit && hit.mesh === part.mesh && hit.transform === inst.transform
+          ? hit.placed
+          : placeMesh(part.mesh, inst.transform);
+      next.set(inst.id, { mesh: part.mesh, transform: inst.transform, placed });
+      if (inst.hidden) continue;
+      out.push({ id: inst.id, mesh: placed, color: inst.color ?? part.color, opacity: part.opacity });
+    }
+    placedCache.current = next;
+    return out;
+  }, [assembly, asmSources]);
+  useEffect(() => {
+    if (isAssembly && asmSourcesSettled) setPaintSeq((s) => s + 1);
+  }, [isAssembly, asmSourcesSettled, assemblyMeshes]);
+
+  const insertParts = (docId: string, parts: SourcePart[]) => {
+    if (!assembly) return;
+    // Land the insert just past everything already placed, along +X, so it
+    // never appears inside another part. The parts of one document move
+    // together, keeping the arrangement they were modelled in.
+    let shift = 0;
+    const placedBounds = assemblyMeshes.map((m) => meshBounds(m.mesh)).filter((b) => b !== null);
+    const partBounds = parts.map((p) => meshBounds(p.mesh)).filter((b) => b !== null);
+    if (placedBounds.length && partBounds.length) {
+      const placedMaxX = Math.max(...placedBounds.map((b) => b.max[0]));
+      const partMinX = Math.min(...partBounds.map((b) => b.min[0]));
+      shift = placedMaxX - partMinX + INSERT_GAP_MM;
+    }
+    const transform = shift ? translation([shift, 0, 0]) : IDENTITY;
+    const r = insertInstances(
+      assembly,
+      docId,
+      parts.map((p) => ({ partId: p.partId, name: p.name, transform })),
+      genId,
+    );
+    setAssembly(r.assembly);
+    setAsmSelected(r.ids);
+  };
+  const removeSelectedInstances = () => {
+    if (!assembly || asmSelected.length === 0) return;
+    setAssembly(removeInstances(assembly, asmSelected));
+    setAsmSelected([]);
+  };
+  const handleAssemblyPick = (picked: Selection | null) => {
+    const id = picked ? featureIdOf(picked) : null;
+    setAsmSelected(id && assembly?.instances.some((i) => i.id === id) ? [id] : []);
+  };
+  // The gizmo sits on the one selected instance, at the centre of its bounds;
+  // a grounded one gets none. Every drag commits as a motion applied after the
+  // instance's placement, so the edit always starts from zero.
+  const asmMoveTarget =
+    assembly && asmSelected.length === 1 ? assembly.instances.find((i) => i.id === asmSelected[0]) : undefined;
+  const asmMoveMesh = asmMoveTarget ? assemblyMeshes.find((m) => m.id === asmMoveTarget.id) : undefined;
+  const asmTransformEdit = useMemo<TransformEdit | null>(() => {
+    if (!asmMoveTarget || asmMoveTarget.grounded || !asmMoveMesh) return null;
+    const b = meshBounds(asmMoveMesh.mesh);
+    if (!b) return null;
+    const pivot = boundsCenter(b);
+    const dir: [number, number, number] = rotateAxis === "x" ? [1, 0, 0] : rotateAxis === "y" ? [0, 1, 0] : [0, 0, 1];
+    return {
+      featureId: asmMoveTarget.id,
+      bodyId: asmMoveTarget.id,
+      pivot,
+      tx: 0,
+      ty: 0,
+      tz: 0,
+      angle: 0,
+      axis: { origin: pivot, dir },
+      scale: 1,
+    };
+  }, [asmMoveTarget, asmMoveMesh, rotateAxis]);
+  const commitInstanceMove = (d: TransformDelta) => {
+    const te = asmTransformEdit;
+    if (!te || !assembly || (d.tx === 0 && d.ty === 0 && d.tz === 0 && d.angle === 0)) return;
+    const motion = transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, 1).elements;
+    setAssembly(moveInstance(assembly, te.featureId, Array.from(motion)));
+  };
   // The first-connect choice and auth outcomes need the user: bring the dialog
   // up for them. Later issues (conflicts…) only badge the button — they never
   // interrupt modelling.
@@ -3338,6 +3479,12 @@ export default function App() {
   /** Delete/Backspace only claim the key when something is selected; with an empty
    *  selection they decline it, so the browser's own behaviour is left alone. */
   const deleteSelectionIfAny = (e: KeyboardEvent) => {
+    if (isAssembly) {
+      if (asmSelected.length === 0) return false;
+      e.preventDefault();
+      removeSelectedInstances();
+      return;
+    }
     if (selection.length === 0) return false;
     e.preventDefault();
     handleDeleteSelection();
@@ -3372,6 +3519,10 @@ export default function App() {
     // closeExtrudeDialog clears pickingUpFace), and a slot armed in dialog state goes
     // with the dialog object.
     onCancel: () => {
+      if (isAssembly) {
+        setAsmSelected([]);
+        return;
+      }
       if (offsetSessionRef.current) {
         setOffsetSession(null);
         setSketchToolState("select");
@@ -6820,7 +6971,34 @@ export default function App() {
         </button>
         <aside className="panel">
           {assembly ? (
-            <AssemblyPanel assembly={assembly} />
+            <AssemblyPanel
+              assembly={assembly}
+              sources={asmSources}
+              selectedIds={asmSelectedSet}
+              onSelect={(id, additive) =>
+                setAsmSelected((cur) =>
+                  additive ? (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]) : [id],
+                )
+              }
+              onRename={(id, name) => setAssembly(updateInstance(assembly, id, { name }), `asm-name:${id}`)}
+              onToggleGrounded={(id) =>
+                setAssembly(
+                  updateInstance(assembly, id, { grounded: !assembly.instances.find((i) => i.id === id)?.grounded }),
+                )
+              }
+              onToggleHidden={(id) =>
+                setAssembly(
+                  updateInstance(assembly, id, { hidden: !assembly.instances.find((i) => i.id === id)?.hidden }),
+                )
+              }
+              onColor={(id, color) => setAssembly(updateInstance(assembly, id, { color }), `asm-color:${id}`)}
+              onDelete={(id) => {
+                setAssembly(removeInstances(assembly, [id]));
+                setAsmSelected((cur) => cur.filter((x) => x !== id));
+              }}
+              onOpenSource={(docId) => void openDocument(docId).catch(() => {})}
+              onInsert={() => setInsertOpen(true)}
+            />
           ) : (
             <>
               <button
@@ -6971,21 +7149,24 @@ export default function App() {
         </aside>
         <main className="viewport" ref={viewportElRef}>
           <Viewport
-            meshes={viewportMeshes}
-            ghostMeshes={ghostMeshes}
-            selection={dialogPicks ?? selection}
+            // An assembly's instances are whole-body picks: the selection is
+            // shown as the whole-body highlight, and the gizmo moves the one
+            // selected (see asmTransformEdit).
+            meshes={isAssembly ? assemblyMeshes : viewportMeshes}
+            ghostMeshes={isAssembly ? NO_GHOSTS : ghostMeshes}
+            selection={isAssembly ? NO_SELECTION : (dialogPicks ?? selection)}
             emphasize={constraintEmphasis}
-            highlightBodyIds={highlightBodyIds}
+            highlightBodyIds={isAssembly ? asmSelectedSet : highlightBodyIds}
             booleanHighlight={booleanHighlight}
-            onSelect={handlePick}
+            onSelect={isAssembly ? handleAssemblyPick : handlePick}
             onSketchEntityDouble={handleSketchEntityDouble}
             datumVisibility={datumVisibility}
             userPlanes={visibleUserPlanes}
             ghostPlane={ghostPlaneFrame}
-            transformEdit={transformEdit}
-            transformMode={transform.mode}
-            onTransformInput={transform.applyDrag}
-            onTransformPreview={transform.previewDrag}
+            transformEdit={isAssembly ? asmTransformEdit : transformEdit}
+            transformMode={isAssembly ? moveMode : transform.mode}
+            onTransformInput={isAssembly ? commitInstanceMove : transform.applyDrag}
+            onTransformPreview={isAssembly ? ignoreTransformPreview : transform.previewDrag}
             extrudeGizmo={extrudeGizmo}
             onExtrudeDistanceChange={handleExtrudeGizmoDistance}
             picking={picking}
@@ -7034,6 +7215,22 @@ export default function App() {
             cameraInertia={settings.cameraInertia}
             apiRef={viewApiRef}
           />
+          {asmMoveTarget && (
+            <MoveDialog
+              name={asmMoveTarget.name}
+              grounded={!!asmMoveTarget.grounded}
+              mode={moveMode}
+              axis={rotateAxis}
+              onMode={setMoveMode}
+              onAxis={setRotateAxis}
+              onUnground={() =>
+                assembly && setAssembly(updateInstance(assembly, asmMoveTarget.id, { grounded: false }))
+              }
+            />
+          )}
+          {insertOpen && (
+            <InsertDialog onClose={() => setInsertOpen(false)} onInsert={insertParts} build={buildDocument} />
+          )}
           {!isAssembly && (
             <OverflowToolbar
               className="model-toolbar"

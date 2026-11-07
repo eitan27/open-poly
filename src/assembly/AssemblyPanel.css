@@ -6,10 +6,82 @@
   color: var(--text-3);
 }
 
-.asm-list {
-  margin: 0 0 22px;
-  padding: 0;
+/* Compound, to beat .tree-list's own margin. */
+.tree-list.asm-list {
+  margin-bottom: 22px;
+}
+
+/* Name over source document, so a row says what it is a copy of. */
+.asm-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.asm-source {
+  font-size: 10px;
+  color: var(--text-7);
+  padding-left: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asm-source.bad {
+  color: var(--warn-text);
+}
+
+/* An instance whose part can't be found has no colour to show. */
+.asm-color-none {
+  border-style: dashed;
+}
+
+.asm-ground {
+  font-size: 13px;
+}
+
+/* Insert: a document row is a button in this list. */
+.insert-doc {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  cursor: pointer;
+}
+
+.insert-doc:hover {
+  border-color: var(--accent);
+}
+
+.insert-parts {
   list-style: none;
-  font-size: 12px;
-  color: var(--text-3);
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.insert-parts label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.insert-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--border-control);
+}
+
+.insert-actions {
+  display: flex;
+  justify-content: flex-end;
 }

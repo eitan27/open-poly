@@ -26,6 +26,7 @@ import { ReauthError, SyncEngine, type SyncHost } from "./engine";
 import { docHash } from "./docHash";
 import type { AssemblyDoc } from "../assembly/types";
 import { createAssembly } from "../assembly/assembly";
+import { IDENTITY } from "../assembly/placement";
 
 const BASE = "http://drive.test/api/mock-drive";
 
@@ -889,7 +890,7 @@ describe("assemblies", () => {
       id: `i${i}`,
       name: `Bracket <${i + 1}>`,
       source: { docId: "p1", partId: "ext1" },
-      transform: [],
+      transform: IDENTITY,
     })),
   });
 

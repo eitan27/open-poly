@@ -462,3 +462,8 @@
   border: 1px solid var(--accent);
   border-radius: 4px;
 }
+
+/* "Used in Arm" — shown while deleting a part an assembly places. */
+.docs-used {
+  color: var(--warn-text);
+}

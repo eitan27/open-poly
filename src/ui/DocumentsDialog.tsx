@@ -266,6 +266,12 @@ export function DocumentsDialog({
         <ul className="docs-list">
           {shown.map((m) => {
             const active = m.id === activeId;
+            // Deleting a part an assembly uses leaves its instances with nothing
+            // to show, so the confirm step names who'd be affected.
+            const usedIn =
+              confirmDelete === m.id && m.kind !== "assembly"
+                ? (metas ?? []).filter((x) => x.referencedDocIds?.includes(m.id)).map((x) => x.name)
+                : [];
             return (
               <li key={m.id} className={"docs-row" + (active ? " active" : "")}>
                 {m.thumb || !drive?.driveThumbs[m.id] ? (
@@ -311,6 +317,11 @@ export function DocumentsDialog({
                         {plural(m.featureCount, "feature")}
                         {!m.unbuilt && ` · ${plural(m.partCount, "part")}`}
                       </>
+                    )}
+                    {usedIn.length > 0 && (
+                      <span className="docs-used">
+                        {" · "}⚠ Used in {usedIn.join(", ")}
+                      </span>
                     )}
                     {drive?.states[m.id] && (
                       <>
@@ -448,7 +459,7 @@ function CloudThumb({ url, glyph = "☁" }: { url?: string; glyph?: string }) {
  *  still showed it flashed a broken image. A data URL can't be revoked, and
  *  the old picture stays up until the new one is read (a few KB). A document
  *  that has not been captured yet has no blob: the empty placeholder. */
-function Thumb({ thumb }: { thumb?: Blob }) {
+export function Thumb({ thumb }: { thumb?: Blob }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     if (!thumb) {

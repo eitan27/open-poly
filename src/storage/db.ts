@@ -62,6 +62,9 @@ export interface DocMeta {
   kind?: "assembly";
   /** Assemblies only: how many instances it places. */
   instanceCount?: number;
+  /** Assemblies only: the documents its instances come from — what lets a
+   *  delete warn "used in …" without loading every assembly. */
+  referencedDocIds?: string[];
   /** Never built on this device (no cached meshes yet: it came from Drive and
    *  hasn't been opened), so `partCount` isn't known — the list omits it. */
   unbuilt?: true;
@@ -81,8 +84,16 @@ function metaOf(record: StoredDoc): DocMeta {
     featureCount: record.doc.features.length,
     partCount: record.meshes?.length ?? 0,
     // An assembly has no build of its own, so it is never "unbuilt".
+    // Tolerant of a corrupt assembly: its meta row must still be writable, or
+    // the record couldn't even be listed for Export / Delete.
     ...(record.assembly
-      ? { kind: "assembly" as const, instanceCount: record.assembly.instances.length }
+      ? {
+          kind: "assembly" as const,
+          instanceCount: Array.isArray(record.assembly.instances) ? record.assembly.instances.length : 0,
+          referencedDocIds: Array.isArray(record.assembly.instances)
+            ? [...new Set(record.assembly.instances.map((i) => i?.source?.docId).filter((d) => typeof d === "string"))]
+            : [],
+        }
       : record.meshes
         ? {}
         : { unbuilt: true as const }),
@@ -194,6 +205,39 @@ export async function duplicateDoc(sourceId: string, newId: string, name: string
     meta.put(metaOf(copy));
   });
   return copy;
+}
+
+/** Save meshes built for a document that isn't open (an assembly building a
+ *  part it uses), but only if the record hasn't been saved since it was read —
+ *  checked inside the write transaction, so a newer edit from another tab is
+ *  never replaced by the older content these meshes were built from. Keeps
+ *  `updatedAt`: building isn't editing, and sync must not see a change.
+ *  Resolves whether it wrote. */
+export async function putMeshesIfUnchanged(
+  id: string,
+  updatedAt: number,
+  meshes: { id: string; mesh: ShapeMeshPayload }[],
+): Promise<boolean> {
+  let wrote = false;
+  await dualTx((docs, meta) => {
+    const get = docs.get(id);
+    get.onsuccess = () => {
+      const rec = get.result as StoredDoc | undefined;
+      if (!rec || rec.updatedAt !== updatedAt || rec.assembly) return;
+      const next = { ...rec, meshes };
+      docs.put(next);
+      const getMeta = meta.get(id);
+      getMeta.onsuccess = () => {
+        const prev = getMeta.result as DocMeta | undefined;
+        const row = metaOf(next);
+        if (prev?.createdAt) row.createdAt = prev.createdAt;
+        if (prev?.thumb) row.thumb = prev.thumb;
+        meta.put(row);
+      };
+      wrote = true;
+    };
+  });
+  return wrote;
 }
 
 const thumbListeners = new Set<() => void>();

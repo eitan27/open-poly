@@ -4,7 +4,17 @@
 // __resetDBForTests hook drops it).
 import { beforeEach, describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
-import { __resetDBForTests, deleteDoc, duplicateDoc, listMeta, loadDoc, putDoc, renameDoc, type StoredDoc } from "./db";
+import {
+  __resetDBForTests,
+  deleteDoc,
+  duplicateDoc,
+  listMeta,
+  loadDoc,
+  putDoc,
+  putMeshesIfUnchanged,
+  renameDoc,
+  type StoredDoc,
+} from "./db";
 import { createDocument } from "../document/document";
 
 function record(id: string, name: string, overrides: Partial<StoredDoc> = {}): StoredDoc {
@@ -197,5 +207,42 @@ describe("setThumb", () => {
     expect(meta.updatedAt).toBe(2);
     // The full record never carries a thumb.
     expect(await loadDoc("a")).not.toHaveProperty("thumb");
+  });
+});
+
+describe("putMeshesIfUnchanged", () => {
+  const mesh = { name: "b", faces: { vertices: [], triangles: [] }, edges: { lines: [] } };
+
+  it("fills in an unbuilt document's meshes without touching its edit time", async () => {
+    await putDoc(record("p", "Part", { updatedAt: 5 }));
+    expect((await listMeta())[0].unbuilt).toBe(true);
+    expect(await putMeshesIfUnchanged("p", 5, [{ id: "b", mesh }])).toBe(true);
+    const rec = await loadDoc("p");
+    expect(rec?.meshes).toHaveLength(1);
+    expect(rec?.updatedAt).toBe(5);
+    const meta = (await listMeta())[0];
+    expect(meta).toMatchObject({ partCount: 1, updatedAt: 5 });
+    expect(meta.unbuilt).toBeUndefined();
+  });
+
+  it("writes nothing when the document was saved since it was read", async () => {
+    await putDoc(record("p", "Part", { updatedAt: 9 }));
+    expect(await putMeshesIfUnchanged("p", 5, [{ id: "b", mesh }])).toBe(false);
+    expect((await loadDoc("p"))?.meshes).toBeUndefined();
+  });
+
+  it("an assembly's meta lists the documents it uses, once each", async () => {
+    const inst = (id: string, docId: string) => ({
+      id,
+      name: id,
+      source: { docId, partId: "x" },
+      transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    });
+    await putDoc(
+      record("a", "Arm", {
+        assembly: { instances: [inst("1", "p1"), inst("2", "p2"), inst("3", "p1")], mates: [], variables: [] },
+      }),
+    );
+    expect((await listMeta())[0].referencedDocIds).toEqual(["p1", "p2"]);
   });
 });

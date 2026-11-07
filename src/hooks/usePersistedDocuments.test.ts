@@ -22,6 +22,7 @@ import type { Document } from "../document/types";
 import type { ViewportApi } from "../viewport/types";
 import type { AssemblyDoc } from "../assembly/types";
 import { createAssembly } from "../assembly/assembly";
+import { IDENTITY } from "../assembly/placement";
 
 const record = (id: string, name: string, over: Partial<StoredDoc> = {}): StoredDoc => ({
   id,
@@ -399,7 +400,7 @@ describe("assembly documents", () => {
   const anAssembly = (): AssemblyDoc => ({
     ...createAssembly(),
     instances: [
-      { id: "i1", name: "Bracket <1>", source: { docId: "p", partId: "ext1" }, transform: [], grounded: true },
+      { id: "i1", name: "Bracket <1>", source: { docId: "p", partId: "ext1" }, transform: IDENTITY, grounded: true },
     ],
   });
 
