@@ -226,7 +226,6 @@ import { MoveDialog, type MoveMode, type WorldAxis } from "./assembly/MoveDialog
 import {
   insertInstances,
   keepPlacements,
-  moveInstance,
   referencedDocIds,
   removeInstances,
   updateInstance,
@@ -2039,6 +2038,9 @@ export default function App() {
   const asmMode: MoveMode = !asmDragTranslates ? "rotate" : !asmDragRotates ? "translate" : moveMode;
   const [asmDragMessage, setAsmDragMessage] = useState<string | null>(null);
   useEffect(() => setAsmDragMessage(null), [asmMoveTarget?.id]);
+  // Bumped on every drag commit, so the gizmo resets onto the instance even
+  // when the drag changed nothing (pushing a planar part off its plane).
+  const [asmDragSeq, setAsmDragSeq] = useState(0);
   const asmTransformEdit = useMemo<TransformEdit | null>(() => {
     if (!asmMoveTarget || asmMoveTarget.grounded || !asmMoveMesh || mates.sessionOpen) return null;
     if (asmDrag && asmDrag.dofs.length === 0) return null; // fastened
@@ -2067,13 +2069,21 @@ export default function App() {
     };
     // asmDrag is rebuilt every render; what it depends on is listed instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asmMoveTarget, asmMoveMesh, rotateAxis, asmMode, mates.solution, mates.sessionOpen]);
+  }, [asmMoveTarget, asmMoveMesh, rotateAxis, asmMode, mates.solution, mates.sessionOpen, asmDragSeq]);
   const commitInstanceMove = (d: TransformDelta) => {
     const te = asmTransformEdit;
     if (!te || !assembly || (d.tx === 0 && d.ty === 0 && d.tz === 0 && d.angle === 0)) return;
     const motion = Array.from(transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, 1).elements);
-    if (asmDrag) setAsmDragMessage(mates.commitDrag(te.featureId, motion));
-    else setAssembly(moveInstance(assembly, te.featureId, motion));
+    setAsmDragMessage(mates.commitDrag(te.featureId, motion));
+    setAsmDragSeq((n) => n + 1);
+  };
+  // Mid-drag, the viewport poses every instance the drag moves — the dragged
+  // one only as its mate lets it go, and whatever is mated to it along with it.
+  const asmDragPoses = (d: TransformDelta) => {
+    const te = asmTransformEdit;
+    if (!te) return null;
+    const motion = Array.from(transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, 1).elements);
+    return mates.dragPoses(te.featureId, motion);
   };
   // The first-connect choice and auth outcomes need the user: bring the dialog
   // up for them. Later issues (conflicts…) only badge the button — they never
@@ -7224,6 +7234,7 @@ export default function App() {
             transformMode={isAssembly ? asmMode : transform.mode}
             onTransformInput={isAssembly ? commitInstanceMove : transform.applyDrag}
             onTransformPreview={isAssembly ? ignoreTransformPreview : transform.previewDrag}
+            transformDragPoses={isAssembly ? asmDragPoses : undefined}
             extrudeGizmo={extrudeGizmo}
             onExtrudeDistanceChange={handleExtrudeGizmoDistance}
             picking={picking}

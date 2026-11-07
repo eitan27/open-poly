@@ -81,6 +81,9 @@ const _scaleTmp = new THREE.Vector3();
 /** Scratch vector for moving highlight vertices with a dragged body (same
  *  reason: this runs once per highlighted vertex, every drag frame). */
 const _highlightTmp = new THREE.Vector3();
+const _identity = new THREE.Matrix4();
+/** A drag motion that, to rounding, goes nowhere. */
+const isIdentity = (m: THREE.Matrix4) => m.elements.every((v, i) => Math.abs(v - _identity.elements[i]) < 1e-9);
 /** The proxy's local rotate axis, and a scratch for aligning it to a world one. */
 const _unitZ = new THREE.Vector3(0, 0, 1);
 const _axisTmp = new THREE.Vector3();
@@ -197,13 +200,16 @@ interface SceneState {
      *  which the drag never touches, so they have to be moved by this to travel
      *  with the body instead of hanging in the air where it started. */
     delta: THREE.Matrix4;
+    /** Other bodies the drag moves (see the transformDragPoses prop), each
+     *  posed by its own motion. */
+    followers: Map<string, { objects: THREE.Object3D[]; delta: THREE.Matrix4 }>;
   } | null;
   /** A just-released drag whose kernel regenerate is still in flight. The commit
    *  changes the document immediately, which rebuilds the body's objects from the
    *  STILL-STALE meshes (original position) before the new geometry lands — so we
    *  re-pin the dragged matrix onto each rebuild until the body's mesh reference
    *  actually changes (the real geometry), avoiding a flash back to the origin. */
-  pendingCommit: { bodyId: string; delta: THREE.Matrix4; meshRef: unknown } | null;
+  pendingCommits: { bodyId: string; delta: THREE.Matrix4; meshRef: unknown }[];
   // The rubber-band preview while drawing (line/rect/arc/polygon), as a fat line
   // so it reads as clearly as a committed sketch line.
   previewLine: Line2;
@@ -396,6 +402,7 @@ export function Viewport({
   transformMode,
   onTransformInput,
   onTransformPreview,
+  transformDragPoses,
   extrudeGizmo,
   onExtrudeDistanceChange,
   picking,
@@ -474,6 +481,12 @@ export function Viewport({
   /** Per-frame numeric values during a drag, for display only (the floating
    *  panel's live readout). Must not trigger a regenerate. */
   onTransformPreview: (delta: TransformDelta) => void;
+  /** When given, a gizmo drag poses what this returns instead of just the
+   *  gizmo's own body: for each body id, the world motion (new · committed⁻¹)
+   *  the drag gives it, so dependants follow and a constrained body moves only
+   *  as it may. Bodies left out stay put. What it returns for the release
+   *  position must be exactly what the commit then bakes. */
+  transformDragPoses?: (delta: TransformDelta) => ReadonlyMap<string, readonly number[]> | null;
   /** The active extrude-distance gizmo (null = hidden). */
   extrudeGizmo: ExtrudeGizmo | null;
   /** Fired while the gizmo arrow is dragged (throttled — each change costs a
@@ -582,6 +595,8 @@ export function Viewport({
   onTransformInputRef.current = onTransformInput;
   const onTransformPreviewRef = useRef(onTransformPreview);
   onTransformPreviewRef.current = onTransformPreview;
+  const transformDragPosesRef = useRef(transformDragPoses);
+  transformDragPosesRef.current = transformDragPoses;
   const extrudeGizmoRef = useRef(extrudeGizmo);
   extrudeGizmoRef.current = extrudeGizmo;
   const onExtrudeDistanceChangeRef = useRef(onExtrudeDistanceChange);
@@ -1190,7 +1205,13 @@ export function Viewport({
         const m0 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, te.scale);
         const objects = state.group.children.filter((c) => c.userData.featureId === te.bodyId);
         for (const o of objects) o.matrixAutoUpdate = false;
-        state.liveDrag = { bodyId: te.bodyId, objects, m0Inverse: m0.clone().invert(), delta: new THREE.Matrix4() };
+        state.liveDrag = {
+          bodyId: te.bodyId,
+          objects,
+          m0Inverse: m0.clone().invert(),
+          delta: new THREE.Matrix4(),
+          followers: new Map(),
+        };
       } else {
         // Drag end: commit the final values once — that is the only regenerate.
         const ld = state.liveDrag;
@@ -1203,9 +1224,21 @@ export function Viewport({
           // by the body's current mesh ref, which changes only when regenerate
           // returns — so the pin releases exactly when the new geometry lands.
           const m1 = transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, d.scale);
-          const delta = m1.multiply(ld.m0Inverse);
-          const entry = meshesRef.current.find((m) => m.id === te.bodyId);
-          state.pendingCommit = { bodyId: te.bodyId, delta, meshRef: entry?.mesh ?? null };
+          poseDraggedBody(ld, m1, d);
+          const pin = (bodyId: string, objects: THREE.Object3D[], delta: THREE.Matrix4) => {
+            if (isIdentity(delta)) {
+              // It ends where it started, so nothing will re-bake it: hand
+              // it straight back rather than pinning it for good.
+              for (const o of objects) o.matrixAutoUpdate = true;
+              return;
+            }
+            const entry = meshesRef.current.find((m) => m.id === bodyId);
+            state.pendingCommits.push({ bodyId, delta: delta.clone(), meshRef: entry?.mesh ?? null });
+          };
+          state.pendingCommits = [];
+          pin(ld.bodyId, ld.objects, ld.delta);
+          for (const [id, f] of ld.followers) pin(id, f.objects, f.delta);
+          applyHighlights();
         }
         onTransformInputRef.current(d);
       }
@@ -1218,7 +1251,7 @@ export function Viewport({
       if (!te) return;
       const d = proxyDelta(te, transformModeRef.current);
       const ld = state.liveDrag;
-      if (ld) poseDraggedBody(ld, transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, d.scale));
+      if (ld) poseDraggedBody(ld, transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, d.scale), d);
       onTransformPreviewRef.current(d);
     });
 
@@ -1334,7 +1367,7 @@ export function Viewport({
       transformControls,
       gizmoProxy,
       liveDrag: null,
-      pendingCommit: null,
+      pendingCommits: [],
       ghostGroup,
       ghostMaterial,
       ghostLineMaterial,
@@ -1372,11 +1405,31 @@ export function Viewport({
      *  cursor when the drag started floats in place while the body slides out
      *  from under it. Cheap: the rebuild only walks the ranges actually
      *  highlighted, which is one face or edge. */
-    const poseDraggedBody = (ld: NonNullable<SceneState["liveDrag"]>, m1: THREE.Matrix4) => {
-      ld.delta.copy(m1).multiply(ld.m0Inverse); // current · committed⁻¹
-      for (const o of ld.objects) {
-        o.matrix.copy(ld.delta);
-        o.matrixWorldNeedsUpdate = true; // matrixAutoUpdate is off; force the world recompute
+    const poseDraggedBody = (ld: NonNullable<SceneState["liveDrag"]>, m1: THREE.Matrix4, d?: TransformDelta) => {
+      const setPose = (objects: THREE.Object3D[], delta: THREE.Matrix4) => {
+        for (const o of objects) {
+          o.matrix.copy(delta);
+          o.matrixWorldNeedsUpdate = true; // matrixAutoUpdate is off; force the world recompute
+        }
+      };
+      const poses = d && transformDragPosesRef.current?.(d);
+      if (!poses) {
+        ld.delta.copy(m1).multiply(ld.m0Inverse); // current · committed⁻¹
+        setPose(ld.objects, ld.delta);
+      } else {
+        // Each body the drag moves, by its own motion; the rest back home.
+        const motion = (id: string, into: THREE.Matrix4) => {
+          const m = poses.get(id);
+          return m ? into.fromArray(m) : into.identity();
+        };
+        setPose(ld.objects, motion(ld.bodyId, ld.delta));
+        for (const id of poses.keys()) {
+          if (id === ld.bodyId || ld.followers.has(id)) continue;
+          const objects = state.group.children.filter((c) => c.userData.featureId === id);
+          for (const o of objects) o.matrixAutoUpdate = false;
+          ld.followers.set(id, { objects, delta: new THREE.Matrix4() });
+        }
+        for (const [id, f] of ld.followers) setPose(f.objects, motion(id, f.delta));
       }
       applyHighlights();
     };
@@ -1446,12 +1499,15 @@ export function Viewport({
       // not carry (see SceneState.liveDrag), so anything copied out of that
       // geometry has to be moved by the same matrix — otherwise the outline of a
       // hovered or selected face hangs in the air where the body used to be. The
-      // same holds for the released-but-not-yet-rebuilt window that pendingCommit
+      // same holds for the released-but-not-yet-rebuilt window that pendingCommits
       // pins, which is why it answers here too.
       const ld = state.liveDrag;
-      const pc = state.pendingCommit;
       const dragMotion = (featureId: string): THREE.Matrix4 | null =>
-        ld?.bodyId === featureId ? ld.delta : pc?.bodyId === featureId ? pc.delta : null;
+        ld?.bodyId === featureId
+          ? ld.delta
+          : (ld?.followers.get(featureId)?.delta ??
+            state.pendingCommits.find((p) => p.bodyId === featureId)?.delta ??
+            null);
       const pushRange = (
         geom: THREE.BufferGeometry,
         start: number,
@@ -2848,11 +2904,13 @@ export function Viewport({
           if (ld) {
             const m1 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, live);
             const entry = meshesRef.current.find((m) => m.id === te.bodyId);
-            state.pendingCommit = {
-              bodyId: te.bodyId,
-              delta: m1.multiply(ld.m0Inverse),
-              meshRef: entry?.mesh ?? null,
-            };
+            state.pendingCommits = [
+              {
+                bodyId: te.bodyId,
+                delta: m1.multiply(ld.m0Inverse),
+                meshRef: entry?.mesh ?? null,
+              },
+            ];
           }
           onTransformInputRef.current({ tx: te.tx, ty: te.ty, tz: te.tz, angle: te.angle, scale: live });
         } else if (ld) {
@@ -3002,7 +3060,13 @@ export function Viewport({
           const m0 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, te.scale);
           const objects = state.group.children.filter((c) => c.userData.featureId === te.bodyId);
           for (const o of objects) o.matrixAutoUpdate = false;
-          state.liveDrag = { bodyId: te.bodyId, objects, m0Inverse: m0.clone().invert(), delta: new THREE.Matrix4() };
+          state.liveDrag = {
+            bodyId: te.bodyId,
+            objects,
+            m0Inverse: m0.clone().invert(),
+            delta: new THREE.Matrix4(),
+            followers: new Map(),
+          };
           e.stopImmediatePropagation();
           return;
         }
@@ -3529,21 +3593,18 @@ export function Viewport({
     // (original position) before the regenerate returns; re-pin the dragged
     // matrix so it doesn't flash back. Once the body's mesh ref changes (real
     // geometry baked at the new position), release the pin.
-    const pc = state.pendingCommit;
-    if (pc) {
+    state.pendingCommits = state.pendingCommits.filter((pc) => {
       const entry = meshes.find((m) => m.id === pc.bodyId);
-      if (entry && entry.mesh === pc.meshRef) {
-        for (const o of state.group.children) {
-          if (o.userData.featureId === pc.bodyId) {
-            o.matrixAutoUpdate = false;
-            o.matrix.copy(pc.delta);
-            o.matrixWorldNeedsUpdate = true;
-          }
+      if (!entry || entry.mesh !== pc.meshRef) return false; // real geometry arrived (or body gone)
+      for (const o of state.group.children) {
+        if (o.userData.featureId === pc.bodyId) {
+          o.matrixAutoUpdate = false;
+          o.matrix.copy(pc.delta);
+          o.matrixWorldNeedsUpdate = true;
         }
-      } else {
-        state.pendingCommit = null; // real geometry arrived (or body gone)
       }
-    }
+      return true;
+    });
     applyHighlightsRef.current();
     // sectionView.enabled is included so toggling section view rebuilds the
     // stencil-cap group (which must be absent, not just hidden, when off — see

@@ -213,9 +213,14 @@ clamp. A dragged value that came from a variable/expression is not overwritten �
 the drag is refused with the usual "driven by `x`" hint. **As built:** a
 revolute (and a planar/cylindrical part in Rotate mode) gets the rotate gizmo on
 the mate's own axis, so its preview is exact. A ball rotates about world X/Y/Z
-through its centre. Translation uses the ordinary translate gizmo: its preview
-moves freely, then the commit projects onto the mate. Constraining that
-preview is still to do. A fastened part has no gizmo. A part a mate positions
+through its centre. Translation uses the ordinary translate gizmo. Each drag
+frame re-solves the assembly with the drag applied (`useMates.dragPoses`) and
+the viewport poses every instance that moves by a matrix (the
+`transformDragPoses` prop). So a mated part moves only as its mate lets it
+(pushing a planar part off its plane leaves it where it is), and everything
+mated to a dragged part follows it during the drag, not only after it. The
+preview uses the same rounded values the release commits, so letting go never
+jumps. A fastened part has no gizmo. A part a mate positions
 (the mate's far end from the grounded side) can be moved only through that one
 mate.
 
@@ -333,8 +338,7 @@ Add an assembly section to `src/agent/modeling-guide.md`.
   `scripts/verify-assembly-a2.mjs`. Mesh-fitted connector frames (no kernel
   change); the six mate types; tree solver; Mate dialog with live preview;
   drag along DOFs; limits; ⚠ for broken refs and closed loops; mates list. Not
-  built: hover/snap candidates, vertex connectors, a constrained translate
-  preview, and an amber ⚠ when a connector was re-found by fingerprint (it is
+  built: hover/snap candidates, vertex connectors, and an amber ⚠ when a connector was re-found by fingerprint (it is
   re-found silently).
 - **A3 — Motion.** Animate dialog; gear / rack-and-pinion / screw relations;
   mate values from variables.
