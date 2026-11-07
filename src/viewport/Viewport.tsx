@@ -410,6 +410,8 @@ export function Viewport({
   sketchFullyConstrained,
   draft,
   polygonSides,
+  draftRadius = null,
+  onDraftCursor,
   onSketchClick,
   onSketchToolHover,
   trimPreview,
@@ -500,6 +502,13 @@ export function Viewport({
   sketchFullyConstrained: boolean;
   draft: Vec2[];
   polygonSides: number;
+  /** Circle (centre + radius) tool: a typed radius that overrides the cursor's,
+   *  so the preview shows the size being entered. null = follow the cursor. */
+  draftRadius?: number | null;
+  /** While a draw tool is active: the snapped cursor (uv) and its position in
+   *  canvas pixels, for overlays that ride beside the cursor (the circle size
+   *  field). Fires on every move over the sketch plane — keep it cheap. */
+  onDraftCursor?: (c: { uv: Vec2; x: number; y: number }) => void;
   onSketchClick: (
     uv: Vec2,
     hv?: "horizontal" | "vertical",
@@ -611,6 +620,14 @@ export function Viewport({
   });
   const polygonSidesRef = useRef(polygonSides);
   polygonSidesRef.current = polygonSides;
+  const draftRadiusRef = useRef(draftRadius);
+  draftRadiusRef.current = draftRadius;
+  const onDraftCursorRef = useRef(onDraftCursor);
+  onDraftCursorRef.current = onDraftCursor;
+  // The last snapped draw-cursor, so the preview can be redrawn when something
+  // other than the mouse changes it (a typed circle size) — see drawPreviewRef.
+  const lastDraftUvRef = useRef<Vec2 | null>(null);
+  const drawPreviewRef = useRef<(uv: Vec2) => void>(() => {});
   const sketchFullyConstrainedRef = useRef(sketchFullyConstrained);
   sketchFullyConstrainedRef.current = sketchFullyConstrained;
   const activeSketchIdRef = useRef(activeSketchId);
@@ -2476,6 +2493,35 @@ export function Viewport({
       renderer.domElement.style.cursor = "";
     };
 
+    // Draw (or hide) the in-progress tool's preview for a snapped cursor `uv`.
+    const drawPreview = (uv: Vec2) => {
+      const frame = activeFrameRef.current;
+      lastDraftUvRef.current = uv;
+      const poly = frame
+        ? previewPolyline(sketchToolRef.current, draftRef.current, uv, polygonSidesRef.current, draftRadiusRef.current)
+        : null;
+      if (frame && poly && poly.length >= 2) {
+        const flat: number[] = [];
+        for (const p of poly) {
+          const w = uvToWorld(frame, p[0], p[1]);
+          flat.push(w[0], w[1], w[2]);
+        }
+        // Rebuild the geometry fresh rather than setPositions on the reused one:
+        // a fat LineGeometry doesn't grow its instance count when the point count
+        // increases (same gotcha as the highlight overlay), so a spline preview
+        // that gains points per click would otherwise render only its first
+        // segment.
+        const g = new LineGeometry();
+        g.setPositions(flat);
+        state.previewLine.geometry.dispose();
+        state.previewLine.geometry = g;
+        state.previewLine.visible = true;
+      } else {
+        state.previewLine.visible = false;
+      }
+    };
+    drawPreviewRef.current = drawPreview;
+
     const onMove = (e: PointerEvent) => {
       // A scale-grip drag owns the pointer: the factor is how far along the
       // pivot→corner line the pointer now sits, as a fraction of where the grab
@@ -2629,25 +2675,10 @@ export function Viewport({
         }
         const { uv, kind, seg, on, guideLines, meanings, construction, circle } = snap(raw, e.clientX, e.clientY);
         armFromSnap(kind, uv, seg, on?.id);
-        const poly = previewPolyline(sketchToolRef.current, draftRef.current, uv, polygonSidesRef.current);
-        if (poly && poly.length >= 2) {
-          const flat: number[] = [];
-          for (const p of poly) {
-            const w = uvToWorld(frame, p[0], p[1]);
-            flat.push(w[0], w[1], w[2]);
-          }
-          // Rebuild the geometry fresh rather than setPositions on the reused one:
-          // a fat LineGeometry doesn't grow its instance count when the point count
-          // increases (same gotcha as the highlight overlay), so a spline preview
-          // that gains points per click would otherwise render only its first
-          // segment.
-          const g = new LineGeometry();
-          g.setPositions(flat);
-          state.previewLine.geometry.dispose();
-          state.previewLine.geometry = g;
-          state.previewLine.visible = true;
-        } else {
-          state.previewLine.visible = false;
+        drawPreview(uv);
+        if (onDraftCursorRef.current) {
+          const rect = renderer.domElement.getBoundingClientRect();
+          onDraftCursorRef.current({ uv, x: e.clientX - rect.left, y: e.clientY - rect.top });
         }
         if (kind === "point" || kind === "edge" || kind === "guide") {
           const w = uvToWorld(frame, uv[0], uv[1]);
@@ -3422,6 +3453,12 @@ export function Viewport({
     state.controls.enableDamping = cameraInertia;
   }, [theme, mouseMiddle, mouseRight, cameraInertia]);
 
+  // A typed circle size changes the preview without the mouse moving: redraw
+  // it at the last cursor position.
+  useEffect(() => {
+    if (draft.length > 0 && lastDraftUvRef.current) drawPreviewRef.current(lastDraftUvRef.current);
+  }, [draftRadius, draft]);
+
   // Rebuild the rendered bodies whenever the meshes or selection change.
   useEffect(() => {
     const state = stateRef.current;
@@ -4155,7 +4192,14 @@ function entitySegments(e: SketchEntity, frame: PlaneFrameData, out: number[]) {
 }
 
 /** Live preview polyline (in uv) for the in-progress tool, or null. */
-function previewPolyline(tool: SketchTool, draft: Vec2[], cursor: Vec2, sides: number): Vec2[] | null {
+function previewPolyline(
+  tool: SketchTool,
+  draft: Vec2[],
+  cursor: Vec2,
+  sides: number,
+  /** A typed circle radius, overriding the cursor's distance from the centre. */
+  fixedRadius: number | null = null,
+): Vec2[] | null {
   const closed = (pts: Vec2[]): Vec2[] => [...pts, pts[0]];
   switch (tool) {
     case "line":
@@ -4166,7 +4210,7 @@ function previewPolyline(tool: SketchTool, draft: Vec2[], cursor: Vec2, sides: n
       return draft.length === 1 ? closed(rectangleFromCenter(draft[0], cursor)) : null;
     case "circle-center":
       return draft.length === 1
-        ? sampleCircle(draft[0], Math.hypot(cursor[0] - draft[0][0], cursor[1] - draft[0][1]))
+        ? sampleCircle(draft[0], fixedRadius ?? Math.hypot(cursor[0] - draft[0][0], cursor[1] - draft[0][1]))
         : null;
     case "circle-3p":
       if (draft.length === 1) return [draft[0], cursor];

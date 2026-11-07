@@ -1,5 +1,9 @@
 [
   {
+    "date": "2026-11-07",
+    "items": ["Type a circle's radius or diameter while drawing it"]
+  },
+  {
     "date": "2026-11-05",
     "items": ["Sync documents with Google Drive", "Improved mobile device support"]
   },

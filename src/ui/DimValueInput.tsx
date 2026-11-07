@@ -16,13 +16,16 @@ interface Props {
   onCancel: () => void;
   /** Variables offered as autocomplete suggestions. */
   variables: VarOption[];
+  /** Tab with no suggestion pending (otherwise Tab completes the suggestion). */
+  onTab?: () => void;
+  placeholder?: string;
 }
 
 /** Dimension value field: accepts a number or an expression, and autocompletes
  *  variable names. As the user types an identifier at the end of the value, a
  *  dropdown of matching variables appears; Enter/Tab/click completes it, and a
  *  plain Enter (no pending suggestion) commits the dimension. */
-export function DimValueInput({ value, onChange, onSubmit, onCancel, variables }: Props) {
+export function DimValueInput({ value, onChange, onSubmit, onCancel, variables, onTab, placeholder }: Props) {
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -49,6 +52,7 @@ export function DimValueInput({ value, onChange, onSubmit, onCancel, variables }
         ref={inputRef}
         autoFocus
         value={value}
+        placeholder={placeholder}
         onChange={(e) => {
           onChange(e.target.value);
           setHighlight(0);
@@ -71,7 +75,10 @@ export function DimValueInput({ value, onChange, onSubmit, onCancel, variables }
               return;
             }
           }
-          if (e.key === "Enter") onSubmit();
+          if (e.key === "Tab" && onTab) {
+            e.preventDefault();
+            onTab();
+          } else if (e.key === "Enter") onSubmit();
           else if (e.key === "Escape") onCancel();
         }}
       />
