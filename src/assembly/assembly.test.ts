@@ -102,6 +102,13 @@ describe("migrateAssembly", () => {
     expect(() => migrateAssembly({ instances: [], mates: [m] })).toThrow(/corrupt/);
   });
 
+  it("requires a width mate's second faces", () => {
+    const m = { ...mateOf("m", "x", "y"), type: "width" as const };
+    expect(() => migrateAssembly({ instances: [], mates: [m] })).toThrow(/corrupt/);
+    const both = { ...m, a: { ...m.a, ref2: { kind: "face" as const, name: "g" } }, b: { ...m.b, ref2: m.a.ref } };
+    expect(migrateAssembly({ instances: [], mates: [both] }).mates).toEqual([both]);
+  });
+
   it("keeps well-formed mates", () => {
     const m = mateOf("m", "x", "y");
     expect(migrateAssembly({ instances: [], mates: [m] }).mates).toEqual([m]);

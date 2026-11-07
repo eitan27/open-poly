@@ -9,9 +9,11 @@ import {
   anchorsOf,
   connectorRefOf,
   frameMatrix,
+  midplaneShape,
   resolveConnector,
   shapeFrame,
   type Anchor,
+  type ConnectorRef,
   type ConnectorShape,
 } from "./frames";
 import { connectorGlyph } from "./glyph";
@@ -41,6 +43,31 @@ interface Session {
 }
 
 const DRAFT_ID = "__draft";
+
+/** A draft's side as its type reads it: a width mate needs both faces, and
+ *  any other type drops a second face left over from trying Width. */
+const sideOf = (d: Draft, c: MateConnector | undefined): MateConnector | undefined => {
+  if (!c) return undefined;
+  if (d.type === "width") return c.ref2 ? c : undefined;
+  return c.ref2 ? { instanceId: c.instanceId, ref: c.ref, anchor: c.anchor } : c;
+};
+const draftMate = (d: Draft, id: string, name: string): Mate | null => {
+  const a = sideOf(d, d.a);
+  const b = sideOf(d, d.b);
+  return a && b
+    ? {
+        id,
+        name,
+        type: d.type,
+        a,
+        b,
+        ...(Object.keys(d.values).length ? { values: d.values } : {}),
+        ...(Object.keys(d.limits).length ? { limits: d.limits } : {}),
+        ...(d.flip ? { flip: true } : {}),
+        ...(d.turns ? { turns: d.turns } : {}),
+      }
+    : null;
+};
 
 /** A mate that a drag can move along: the instance's driving mate and both
  *  ends' frames. */
@@ -74,15 +101,24 @@ export function useMates({
     const src = inst ? sources.get(inst.source.docId) : undefined;
     return src?.status === "ready" ? src.parts.find((p) => p.partId === inst!.source.partId)?.mesh : undefined;
   };
-  const shapeOf = (a: AssemblyDoc, c: MateConnector): ConnectorShape | null | undefined => {
-    const mesh = partMesh(a, c.instanceId);
+  const refShape = (a: AssemblyDoc, instanceId: string, ref: ConnectorRef): ConnectorShape | null | undefined => {
+    const mesh = partMesh(a, instanceId);
     if (!mesh) return undefined;
-    const key = `${c.instanceId}|${c.ref.kind}|${c.ref.name}`;
+    const key = `${instanceId}|${ref.kind}|${ref.name}`;
     const hit = shapeCache.current.get(key);
     if (hit && hit.mesh === mesh) return hit.shape;
-    const shape = resolveConnector(mesh, c.ref)?.shape ?? null;
+    const shape = resolveConnector(mesh, ref)?.shape ?? null;
     shapeCache.current.set(key, { mesh, shape });
     return shape;
+  };
+  /** What a connector is: its face or edge, or for a width mate's pair of
+   *  faces the plane midway between them (null if they've stopped being
+   *  parallel). */
+  const shapeOf = (a: AssemblyDoc, c: MateConnector): ConnectorShape | null | undefined => {
+    const p = refShape(a, c.instanceId, c.ref);
+    if (!c.ref2 || !p) return p;
+    const q = refShape(a, c.instanceId, c.ref2);
+    return q && midplaneShape(p, q);
   };
   const frameFor =
     (a: AssemblyDoc) =>
@@ -90,24 +126,12 @@ export function useMates({
       const shape = shapeOf(a, c);
       const name = a.instances.find((i) => i.id === c.instanceId)?.name ?? "a removed instance";
       if (shape === undefined) return `${name}'s part isn't available.`;
-      if (shape === null) return `Can't find the ${c.ref.kind} it was mated to on ${name}.`;
+      if (shape === null)
+        return c.ref2
+          ? `The two faces it was mated to on ${name} are gone or no longer parallel.`
+          : `Can't find the ${c.ref.kind} it was mated to on ${name}.`;
       return frameMatrix(shapeFrame(shape, c.anchor));
     };
-
-  const draftMate = (d: Draft, id: string, name: string): Mate | null =>
-    d.a && d.b
-      ? {
-          id,
-          name,
-          type: d.type,
-          a: d.a,
-          b: d.b,
-          ...(Object.keys(d.values).length ? { values: d.values } : {}),
-          ...(Object.keys(d.limits).length ? { limits: d.limits } : {}),
-          ...(d.flip ? { flip: true } : {}),
-          ...(d.turns ? { turns: d.turns } : {}),
-        }
-      : null;
 
   // What the viewport shows: the assembly, with the mate being made applied.
   const display = useMemo(() => {
@@ -129,7 +153,12 @@ export function useMates({
   const commit = (next: AssemblyDoc) => setAssembly(keepPlacements(next, solve(next, frameFor(next)).placements));
 
   const blank = (type: MateType = "fastened"): Draft => ({ type, values: {}, limits: {}, flip: false, turns: 0 });
-  const openNew = () => setSession({ editingId: null, draft: blank(session?.draft.type), armed: 0, message: null });
+  // The type a new mate starts as: the one last chosen (M reopens it).
+  const lastType = useRef<MateType>("fastened");
+  const openNew = (type: MateType = lastType.current) => {
+    lastType.current = type;
+    setSession({ editingId: null, draft: blank(type), armed: 0, message: null });
+  };
   const openEdit = (id: string) => {
     const m = assembly?.mates.find((x) => x.id === id);
     if (!m) return;
@@ -172,9 +201,35 @@ export function useMates({
       setSession({ ...session, message: "Pick a face or edge on a different part." });
       return true;
     }
-    const conn: MateConnector = { instanceId: picked.featureId, ref: c.ref, anchor: "center" };
+    const width = session.draft.type === "width";
+    let conn: MateConnector = { instanceId: picked.featureId, ref: c.ref, anchor: "center" };
+    if (width) {
+      if (c.shape.kind !== "plane") {
+        setSession({ ...session, message: "A width mate needs two flat faces on each part." });
+        return true;
+      }
+      // A second flat face on the same part completes the pair; a third
+      // replaces the second. A face on another part starts the slot over.
+      const cur = slot === 0 ? session.draft.a : session.draft.b;
+      const first = cur?.instanceId === picked.featureId ? refShape(assembly, cur.instanceId, cur.ref) : null;
+      if (cur && first?.kind === "plane") {
+        if (cur.ref.name === c.ref.name) {
+          setSession({ ...session, message: "Pick the face on the other side." });
+          return true;
+        }
+        if (!midplaneShape(first, c.shape)) {
+          setSession({
+            ...session,
+            message: "Those two faces aren't parallel and apart. Pick the face on the other side.",
+          });
+          return true;
+        }
+        conn = { ...cur, ref2: c.ref };
+      }
+    }
     const draft = slot === 0 ? { ...session.draft, a: conn } : { ...session.draft, b: conn };
-    const nextArmed = slot === 0 && !draft.b ? 1 : null;
+    const done = (x: MateConnector | undefined) => !!x && (!width || !!x.ref2);
+    const nextArmed = !done(conn) ? slot : slot === 0 && !done(draft.b) ? 1 : null;
     setSession({ ...session, draft, armed: nextArmed, message: null });
     return true;
   };
@@ -212,7 +267,7 @@ export function useMates({
     }
     const glyphSize = Math.min(40, Math.max(4, size * 0.25));
     const out: GhostMesh[] = [];
-    for (const c of [session.draft.a, session.draft.b]) {
+    for (const c of [sideOf(session.draft, session.draft.a), sideOf(session.draft, session.draft.b)]) {
       if (!c) continue;
       const f = frameFor(display)(c);
       const place = solution.placements.get(c.instanceId);
@@ -230,12 +285,15 @@ export function useMates({
     for (const c of [session.draft.a, session.draft.b]) {
       const mesh = c && partMesh(display, c.instanceId);
       if (!c || !mesh) continue;
-      if (c.ref.kind === "face") {
-        const g = mesh.faces.faceGroups?.find((x) => x.name === c.ref.name);
-        if (g) out.push({ kind: "face", featureId: c.instanceId, faceId: g.faceId });
-      } else {
-        const g = mesh.edges.edgeGroups?.find((x) => x.name === c.ref.name);
-        if (g) out.push({ kind: "edge", featureId: c.instanceId, edgeId: g.edgeId });
+      const refs = session.draft.type === "width" && c.ref2 ? [c.ref, c.ref2] : [c.ref];
+      for (const ref of refs) {
+        if (ref.kind === "face") {
+          const g = mesh.faces.faceGroups?.find((x) => x.name === ref.name);
+          if (g) out.push({ kind: "face", featureId: c.instanceId, faceId: g.faceId });
+        } else {
+          const g = mesh.edges.edgeGroups?.find((x) => x.name === ref.name);
+          if (g) out.push({ kind: "edge", featureId: c.instanceId, edgeId: g.edgeId });
+        }
       }
     }
     return out;
@@ -243,11 +301,18 @@ export function useMates({
   }, [session, display]);
 
   const slotView = (i: 0 | 1): MateDialogProps["slots"][number] => {
-    const c = i === 0 ? session?.draft.a : session?.draft.b;
+    const raw = i === 0 ? session?.draft.a : session?.draft.b;
+    const width = session?.draft.type === "width";
+    // Width reads a half-picked slot as started only if its face is flat (a
+    // leftover edge from another type isn't a start).
+    const half = width && raw && !raw.ref2 && display && refShape(display, raw.instanceId, raw.ref)?.kind !== "plane";
+    const c = session && !half ? (width ? raw : sideOf(session.draft, raw)) : undefined;
     const inst = c && display?.instances.find((x) => x.id === c.instanceId);
     const shape = c && display ? shapeOf(display, c) : null;
+    const what = width ? (c?.ref2 ? "2 faces" : "1 of 2 faces") : shape ? SHAPE_WORDS[shape.kind] : (c?.ref.kind ?? "");
     return {
-      label: c ? `${inst?.name ?? "?"} · ${shape ? SHAPE_WORDS[shape.kind] : c.ref.kind}` : null,
+      label: c ? `${inst?.name ?? "?"} · ${what}` : null,
+      noun: width && c && !c.ref2 ? `the opposite face of ${inst?.name ?? "the part"}` : undefined,
       armed: session?.armed === i,
       anchors: shape ? anchorsOf(shape) : ["center"],
       anchor: c?.anchor ?? "center",
@@ -267,7 +332,17 @@ export function useMates({
       ? {
           editing: session.editingId !== null,
           type: session.draft.type,
-          onType: (type) => patch((d) => ({ ...d, type })),
+          onType: (type) => {
+            lastType.current = type;
+            setSession((s) => {
+              if (!s) return s;
+              const draft = { ...s.draft, type };
+              // Switching to Width leaves the slots a face short: listen for it.
+              const short = (c: MateConnector | undefined) => type === "width" && !c?.ref2;
+              const armed = short(draft.a) ? 0 : short(draft.b) ? 1 : s.armed;
+              return { ...s, draft, armed, message: null };
+            });
+          },
           slots: [slotView(0), slotView(1)],
           flip: session.draft.flip,
           onFlip: () => patch((d) => ({ ...d, flip: !d.flip })),
@@ -284,7 +359,7 @@ export function useMates({
               return { ...d, limits };
             }),
           message: session.message ?? problem ?? null,
-          canConfirm: !!(session.draft.a && session.draft.b) && !problem,
+          canConfirm: !!(sideOf(session.draft, session.draft.a) && sideOf(session.draft, session.draft.b)) && !problem,
           onConfirm: confirm,
           onCancel: close,
         }

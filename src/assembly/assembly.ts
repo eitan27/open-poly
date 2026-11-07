@@ -3,7 +3,7 @@
 import type { AssemblyDoc, Instance, Mat4, Mate, MateType } from "./types";
 import { multiply } from "./placement";
 
-const MATE_TYPES: MateType[] = ["fastened", "revolute", "slider", "cylindrical", "planar", "ball"];
+const MATE_TYPES: MateType[] = ["fastened", "revolute", "slider", "cylindrical", "planar", "ball", "width"];
 
 export function createAssembly(): AssemblyDoc {
   return { instances: [], mates: [], variables: [] };
@@ -35,10 +35,16 @@ export function migrateAssembly(raw: unknown): AssemblyDoc {
     if (!ok) throw new Error("Assembly data is missing or corrupt.");
   }
   const mates = Array.isArray(a.mates) ? (a.mates as Partial<Mate>[]) : [];
-  const side = (c: Mate["a"] | undefined) =>
-    !!c && typeof c.instanceId === "string" && typeof c.ref?.name === "string" && typeof c.anchor === "string";
+  const side = (c: Mate["a"] | undefined, width: boolean) =>
+    !!c &&
+    typeof c.instanceId === "string" &&
+    typeof c.ref?.name === "string" &&
+    typeof c.anchor === "string" &&
+    (width ? typeof c.ref2?.name === "string" : c.ref2 === undefined || typeof c.ref2.name === "string");
   for (const m of mates) {
-    const ok = m && typeof m.id === "string" && MATE_TYPES.includes(m.type as MateType) && side(m.a) && side(m.b);
+    const width = m?.type === "width";
+    const ok =
+      m && typeof m.id === "string" && MATE_TYPES.includes(m.type as MateType) && side(m.a, width) && side(m.b, width);
     if (!ok) throw new Error("Assembly data is missing or corrupt.");
   }
   return {
@@ -135,6 +141,7 @@ const TYPE_NAMES: Record<MateType, string> = {
   cylindrical: "Cylindrical",
   planar: "Planar",
   ball: "Ball",
+  width: "Width",
 };
 
 /** "Revolute 2": the type and the lowest number not taken. */

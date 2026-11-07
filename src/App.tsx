@@ -219,7 +219,7 @@ import { REPO_URL } from "./lib/repo";
 import { previewName } from "./lib/site";
 import { isUntitled } from "./storage/docNames";
 import { Viewport } from "./viewport/Viewport";
-import type { AssemblyDoc } from "./assembly/types";
+import type { AssemblyDoc, MateType } from "./assembly/types";
 import { AssemblyPanel } from "./assembly/AssemblyPanel";
 import { InsertDialog } from "./assembly/InsertDialog";
 import { MoveDialog, type MoveMode, type WorldAxis } from "./assembly/MoveDialog";
@@ -232,6 +232,7 @@ import {
   updateMate,
 } from "./assembly/assembly";
 import { MateDialog } from "./assembly/MateDialog";
+import { MATE_TYPES } from "./assembly/mateTypes";
 import { useMates } from "./assembly/useMates";
 import { boundsCenter, IDENTITY, meshBounds, placeMesh, translation } from "./assembly/placement";
 import { useAssemblySources, type BuildDocument, type SourcePart } from "./assembly/useAssemblySources";
@@ -722,16 +723,6 @@ const NO_PROBLEMS: ReadonlyMap<string, never> = new Map<string, never>();
 const NO_SELECTION: Selection[] = [];
 const ignoreTransformPreview = () => {};
 const sameMatrix = (a: number[], b: number[]) => a === b || a.every((v, i) => v === b[i]);
-
-const ASSEMBLY_SHORTCUTS: ReadonlySet<ShortcutId> = new Set<ShortcutId>([
-  "app.undo",
-  "app.redo",
-  "app.toggleHints",
-  "app.delete",
-  "app.deleteBack",
-  "view.home",
-  ...(Object.keys(VIEW_BY_SHORTCUT) as ShortcutId[]),
-]);
 
 export default function App() {
   const kernelRef = useRef<KernelClient | null>(null);
@@ -2015,9 +2006,17 @@ export default function App() {
     setAssembly(removeInstances(now, asmSelected));
     setAsmSelected([]);
   };
-  const openMateDialog = () => {
+  const canMate = (assembly?.instances.length ?? 0) >= 2;
+  /** A new mate (of `type`, else the last type used) — or, with the dialog
+   *  already open, switch it to `type`, keeping its picks. */
+  const openMateDialog = (type?: MateType) => {
+    if (mates.dialog) {
+      if (type) mates.dialog.onType(type);
+      return;
+    }
+    if (!canMate || insertOpen) return;
     setAsmSelected([]);
-    mates.openNew();
+    mates.openNew(type);
   };
   const handleAssemblyPick = (picked: Selection | null) => {
     if (mates.pick(picked)) return;
@@ -3555,8 +3554,7 @@ export default function App() {
   // src/settings/shortcuts.ts; the ORDER the groups below are tried in lives in
   // useShortcutHandler. This only says what each id *does*. No key letter is here.
   useShortcutHandler({
-    mode: editingSketchId ? "sketch" : "modeling",
-    only: isAssembly ? ASSEMBLY_SHORTCUTS : undefined,
+    mode: isAssembly ? "assembly" : editingSketchId ? "sketch" : "modeling",
     picking,
     views: VIEW_BY_SHORTCUT,
     onView: (view) => viewApiRef.current?.setView(view),
@@ -3699,6 +3697,14 @@ export default function App() {
       "feature.moveDown": (e) => moveFeatureIfAny(e, 1),
       // New Body ignores `picking`, matching the toolbar button itself.
       "model.newBody": () => setNewSolidOpen((o) => !o),
+    },
+    assemblyActions: {
+      "view.home": () => viewApiRef.current?.homeView(),
+      "asm.insert": () => {
+        if (!mates.sessionOpen) setInsertOpen(true);
+      },
+      "asm.mate": () => openMateDialog(),
+      ...Object.fromEntries(MATE_TYPES.map((t) => [t.key, () => openMateDialog(t.type)])),
     },
     modelingActions: {
       "model.sketch": () => {
@@ -6480,6 +6486,31 @@ export default function App() {
   // The modeling toolbar as data: <OverflowToolbar> renders as many of these as
   // fit and collapses the rest into its searchable "More ▾" flyout. `keywords`
   // are the search-only synonyms (they never show in the UI).
+  // An open assembly's toolbar: Insert, then a button per mate type (each opens
+  // the Mate dialog on that type, or switches the open one).
+  const assemblyTools: ToolbarItem[] = [
+    {
+      id: "insert",
+      icon: "⤓",
+      label: "Insert",
+      shortcut: shortcutHint("asm.insert"),
+      title: `Insert (${shortcutName("asm.insert")}): place parts from a part document`,
+      keywords: ["add", "part", "instance", "place"],
+      disabled: mates.sessionOpen,
+      onSelect: () => setInsertOpen(true),
+    },
+    ...MATE_TYPES.map((t): ToolbarItem => ({
+      id: `mate-${t.type}`,
+      icon: t.icon,
+      label: t.label,
+      shortcut: shortcutHint(t.key),
+      title: `${t.label} mate (${shortcutName(t.key)}): ${t.title}`,
+      keywords: ["mate", "joint", "constraint"],
+      disabled: !canMate,
+      onSelect: () => openMateDialog(t.type),
+    })),
+  ];
+
   const modelTools: ToolbarItem[] = [
     {
       id: "sketch",
@@ -7028,6 +7059,7 @@ export default function App() {
           {assembly ? (
             <AssemblyPanel
               assembly={assembly}
+              showShortcuts={showShortcuts}
               sources={asmSources}
               selectedIds={asmSelectedSet}
               onSelect={(id, additive) =>
@@ -7055,7 +7087,7 @@ export default function App() {
               mateProblems={mates.solution?.problems ?? NO_PROBLEMS}
               drivenIds={mates.solution?.drivenBy ?? NO_PROBLEMS}
               editingMateId={mates.editingId}
-              onNewMate={openMateDialog}
+              onNewMate={() => openMateDialog()}
               onEditMate={(id) => {
                 setAsmSelected([]);
                 mates.openEdit(id);
@@ -7300,18 +7332,17 @@ export default function App() {
               }
             />
           )}
-          {mates.dialog && <MateDialog {...mates.dialog} />}
+          {mates.dialog && <MateDialog {...mates.dialog} showShortcuts={showShortcuts} />}
           {insertOpen && (
             <InsertDialog onClose={() => setInsertOpen(false)} onInsert={insertParts} build={buildDocument} />
           )}
-          {!isAssembly && (
-            <OverflowToolbar
-              className="model-toolbar"
-              items={modelTools}
-              showShortcuts={showShortcuts}
-              openRequest={modelMoreRequest}
-            />
-          )}
+          <OverflowToolbar
+            key={isAssembly ? "assembly" : "model"}
+            className="model-toolbar"
+            items={isAssembly ? assemblyTools : modelTools}
+            showShortcuts={showShortcuts}
+            openRequest={modelMoreRequest}
+          />
           {/* The floating edit panel. It shows in two cases only (never on a
               plain selection — that just highlights): the constraints of the
               sketch being edited, and the parameters of a double-clicked

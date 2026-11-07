@@ -408,6 +408,18 @@ function adjacentPlane(faces: MeshedFaces, edgeName: string, axis: Vec3): Vec3 |
   return null;
 }
 
+/** The plane midway between two parallel flat faces: a width mate's
+ *  connector. Its normal is made canonical, so the slot's and the tab's
+ *  mid-planes point the same way whichever wall was picked first. Null unless
+ *  both are planes, parallel and apart. */
+export function midplaneShape(p: ConnectorShape, q: ConnectorShape): ConnectorShape | null {
+  if (p.kind !== "plane" || q.kind !== "plane") return null;
+  if (Math.abs(dot(p.normal, q.normal)) < 0.999) return null;
+  const normal = canonical(p.normal);
+  if (Math.abs(dot(sub(q.origin, p.origin), normal)) < 1e-6) return null;
+  return { kind: "plane", origin: scale(add(p.origin, q.origin), 0.5), normal };
+}
+
 /** The anchors an entity offers, in the order a picker should present them. */
 export function anchorsOf(shape: ConnectorShape): Anchor[] {
   return shape.kind === "cylinder" ? ["center", "start", "end"] : ["center"];

@@ -1,8 +1,10 @@
 // The side panel of an open assembly, in place of a part's Variables /
 // Timeline / Parts: what the assembly places, and how those are joined. Rows
 // follow the Parts list's (colour, name, eye, ✕) so the two read alike.
+import { shortcutHint, shortcutName } from "../settings/shortcuts";
 import { EyeIcon } from "../ui/icons";
-import type { AssemblyDoc, Instance, MateType } from "./types";
+import { mateIcon } from "./mateTypes";
+import type { AssemblyDoc, Instance } from "./types";
 import type { SourceState } from "./useAssemblySources";
 import "./AssemblyPanel.css";
 
@@ -28,16 +30,9 @@ interface Props {
   onEditMate: (id: string) => void;
   onRenameMate: (id: string, name: string) => void;
   onRemoveMate: (id: string) => void;
+  /** Show the shortcut keys on the buttons (the ? toggle). */
+  showShortcuts: boolean;
 }
-
-const MATE_ICONS: Record<MateType, string> = {
-  fastened: "▣",
-  revolute: "↻",
-  slider: "⇕",
-  cylindrical: "⟳",
-  planar: "▱",
-  ball: "◉",
-};
 
 const hex = (c: number) => `#${c.toString(16).padStart(6, "0")}`;
 
@@ -57,8 +52,14 @@ export function AssemblyPanel(p: Props) {
       <div className="parts-header">
         <h2>Instances ({assembly.instances.length})</h2>
         <div className="parts-import">
-          <button type="button" className="asm-insert" title="Insert parts from a part document" onClick={p.onInsert}>
+          <button
+            type="button"
+            className="asm-insert"
+            title={`Insert parts from a part document (${shortcutName("asm.insert")})`}
+            onClick={p.onInsert}
+          >
             ＋ Insert
+            {p.showShortcuts && <span className="kbd-hint">{shortcutHint("asm.insert")}</span>}
           </button>
         </div>
       </div>
@@ -155,11 +156,12 @@ export function AssemblyPanel(p: Props) {
           <button
             type="button"
             className="asm-new-mate"
-            title="Join two parts with a mate"
+            title={`Join two parts with a mate (${shortcutName("asm.mate")})`}
             disabled={assembly.instances.length < 2}
             onClick={p.onNewMate}
           >
             ＋ Mate
+            {p.showShortcuts && <span className="kbd-hint">{shortcutHint("asm.mate")}</span>}
           </button>
         </div>
       </div>
@@ -183,7 +185,7 @@ export function AssemblyPanel(p: Props) {
                 onClick={() => p.onEditMate(m.id)}
               >
                 <span className="asm-mate-icon" title={m.type}>
-                  {MATE_ICONS[m.type]}
+                  {mateIcon(m.type)}
                 </span>
                 <span className="asm-name">
                   <input className="solid-name" value={m.name} onChange={(e) => p.onRenameMate(m.id, e.target.value)} />

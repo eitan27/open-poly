@@ -27,7 +27,7 @@ export interface Instance {
   color?: number;
 }
 
-export type MateType = "fastened" | "revolute" | "slider" | "cylindrical" | "planar" | "ball";
+export type MateType = "fastened" | "revolute" | "slider" | "cylindrical" | "planar" | "ball" | "width";
 
 /** A mate's free degrees of freedom, in the frame of its first connector:
  *  translations along and rotations about that frame's axes. */
@@ -38,6 +38,10 @@ export type Dof = "tx" | "ty" | "tz" | "rx" | "ry" | "rz";
 export interface MateConnector {
   instanceId: string;
   ref: ConnectorRef;
+  /** A width mate's second face: the connector is then the plane midway
+   *  between `ref` and this (see frames.ts midplaneShape). Other types ignore
+   *  it. */
+  ref2?: ConnectorRef;
   anchor: Anchor;
 }
 
@@ -56,7 +60,8 @@ export interface Mate {
   values?: Partial<Record<Dof, string>>;
   limits?: Partial<Record<Dof, { min?: string; max?: string }>>;
   /** By default the two Z axes face each other (two faces touching); flipped,
-   *  they point the same way. */
+   *  they point the same way. A width mate is the other way round: its two
+   *  mid-planes point the same way unless flipped. */
   flip?: boolean;
   /** Quarter turns of `b` about Z (0–3), for orienting a fastened part. */
   turns?: number;

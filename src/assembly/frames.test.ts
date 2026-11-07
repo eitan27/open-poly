@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ShapeMeshPayload } from "../kernel/types";
 import type { Vec3 } from "./placement";
-import { connectorRefOf, edgeShape, faceShape, resolveConnector, shapeFrame } from "./frames";
+import { connectorRefOf, edgeShape, faceShape, midplaneShape, resolveConnector, shapeFrame } from "./frames";
 
 /** A tiny mesh builder: faces as polygons (fan-triangulated, wound so the
  *  normal follows the right-hand rule), edges as polylines. */
@@ -191,6 +191,31 @@ describe("edgeShape", () => {
       close(s.mid, [0, 5, 0]);
       close(s.dir, [0, 1, 0]);
     }
+  });
+});
+
+describe("midplaneShape", () => {
+  const plane = (origin: Vec3, normal: Vec3) => ({ kind: "plane" as const, origin, normal });
+
+  it("lies midway between two facing walls, its normal the same whichever is first", () => {
+    const left = plane([0, 3, 7], [1, 0, 0]);
+    const right = plane([10, -1, 7], [-1, 0, 0]);
+    for (const [p, q] of [
+      [left, right],
+      [right, left],
+    ]) {
+      const m = midplaneShape(p, q)!;
+      expect(m.kind).toBe("plane");
+      if (m.kind !== "plane") continue;
+      close(m.origin, [5, 1, 7]);
+      close(m.normal, [1, 0, 0]);
+    }
+  });
+
+  it("refuses faces that aren't parallel, are the same plane, or aren't flat", () => {
+    expect(midplaneShape(plane([0, 0, 0], [1, 0, 0]), plane([5, 0, 0], [0, 1, 0]))).toBeNull();
+    expect(midplaneShape(plane([0, 0, 0], [1, 0, 0]), plane([0, 9, 0], [-1, 0, 0]))).toBeNull();
+    expect(midplaneShape(plane([0, 0, 0], [1, 0, 0]), { kind: "line", mid: [5, 0, 0], dir: [0, 0, 1] })).toBeNull();
   });
 });
 

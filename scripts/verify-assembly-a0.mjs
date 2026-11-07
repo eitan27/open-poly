@@ -34,7 +34,9 @@ const check = (label, ok, detail = "") => {
 };
 const title = async () => (await page.locator(".doc-title").inputValue())?.trim();
 const inAssembly = async () => (await page.locator(".panel h2", { hasText: "Instances" }).count()) === 1;
-const toolbarShown = async () => (await page.locator(".model-toolbar").count()) === 1;
+// The part toolbar (an assembly has its own). Counted with `> 0`: the bar keeps
+// a hidden measuring copy of its buttons.
+const toolbarShown = async () => (await page.locator(".model-toolbar button", { hasText: "Extrude" }).count()) > 0;
 
 check("starts in a part (model toolbar shown)", (await toolbarShown()) && !(await inAssembly()));
 
@@ -43,7 +45,10 @@ await page.locator(".split-btn-caret").click();
 await page.locator(".split-btn .mt-menu button", { hasText: "Assembly" }).click();
 await waitIdle();
 check("New ▾ → Assembly opens an assembly", await inAssembly());
-check("the part toolbar is gone", !(await toolbarShown()));
+check(
+  "the part toolbar gives way to the assembly's",
+  !(await toolbarShown()) && (await page.locator(".model-toolbar button", { hasText: "Insert" }).count()) > 0,
+);
 check(
   "the part panel (Timeline) is gone",
   (await page.locator(".params-heading", { hasText: "Timeline" }).count()) === 0,

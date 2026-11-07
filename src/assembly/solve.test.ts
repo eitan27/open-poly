@@ -177,6 +177,30 @@ describe("solve", () => {
     closeV(applyPoint(s.placements.get("B")!, [10, 10, 0]), [10, 110, 20]);
   });
 
+  it("centres a tab between a slot's walls with a width mate", () => {
+    // A slot in A with walls at x = 0 and x = 20 (facing in); a 6 mm tab in B
+    // with sides at x = 100 and x = 106 (facing out), modelled far away.
+    const walls: Record<string, Mat4> = {
+      slot: frame([10, 5, 8], [1, 0, 0]),
+      tab: frame([103, 40, 2], [1, 0, 0]),
+    };
+    const s = solve(
+      asm(
+        [inst("A", { grounded: true }), inst("B")],
+        [mate("m", "width", conn("A", "slot"), conn("B", "tab"), { values: { tx: "4" } })],
+      ),
+      (c) => walls[c.ref.name],
+    );
+    expect(s.problems.size).toBe(0);
+    const b = s.placements.get("B")!;
+    // The tab's sides land 3 mm either side of the slot's middle, the same
+    // way round (not flipped over). An X offset slides it within the
+    // mid-plane: along the frame's X, which for a normal along world X is
+    // world Y.
+    closeV(applyPoint(b, [100, 40, 2]), [7, 5 + 4, 8]);
+    closeV(applyPoint(b, [106, 40, 2]), [13, 5 + 4, 8]);
+  });
+
   it("ignores a suppressed mate", () => {
     const s = solve(
       asm(

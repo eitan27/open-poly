@@ -28,7 +28,7 @@
 // join it). Reading through a ref removes the whole class of bug instead.
 import { useEffect, useRef } from "react";
 import type { SketchTool, ViewName } from "../viewport/types";
-import { isShortcut, matchShortcut, type ShortcutId } from "./shortcuts";
+import { isShortcut, matchShortcut, type ActiveMode, type ShortcutId } from "./shortcuts";
 
 /** What a shortcut does. Returning `false` means "not handled after all, keep
  *  looking" — only `feature.moveUp`/`moveDown` need it, because they apply to the
@@ -38,9 +38,9 @@ export type ShortcutAction = (e: KeyboardEvent) => boolean | void;
 type ActionMap = Partial<Record<ShortcutId, ShortcutAction>>;
 
 export interface ShortcutHandlerConfig {
-  /** Which toolbar's bindings are live. The two are mutually exclusive, which is
-   *  what lets a letter mean different things in each. */
-  mode: "sketch" | "modeling";
+  /** Which toolbar's bindings are live. The modes are mutually exclusive, which
+   *  is what lets a letter mean different things in each. */
+  mode: ActiveMode;
   /** True while a viewport pick is armed. */
   picking: boolean;
   /** Escape: back out of whatever is innermost. The cascade is the caller's. */
@@ -59,9 +59,10 @@ export interface ShortcutHandlerConfig {
   whilePicking: ActionMap;
   /** Modeling feature bindings: suppressed during a pick, `preventDefault`ed. */
   modelingActions: ActionMap;
-  /** When set, only these bindings (and Escape) run — an assembly is open, and
-   *  the part bindings would act on the empty part model behind it. */
-  only?: ReadonlySet<ShortcutId>;
+  /** An open assembly's bindings (its mode admits only those and the shared
+   *  ones it opts into — see shortcuts.ts). `preventDefault`ed like the
+   *  modeling ones, since they open dialogs too. */
+  assemblyActions: ActionMap;
 }
 
 /** Run `id`'s action from `map`, and say whether that settles the key. An action
@@ -90,7 +91,6 @@ export function useShortcutHandler(config: ShortcutHandlerConfig): void {
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
       const id = matchShortcut(e, c.mode)?.id;
-      if (c.only && !(id && c.only.has(id))) return;
 
       // 2. The bindings that survive the modifier, then the bail-out.
       if (handled(c.withModifier, id, e)) return;
@@ -98,6 +98,15 @@ export function useShortcutHandler(config: ShortcutHandlerConfig): void {
 
       if (id && c.views[id]) {
         c.onView(c.views[id]!);
+        return;
+      }
+
+      // An assembly's own keys are the rest of its story.
+      if (c.mode === "assembly") {
+        if (id && c.assemblyActions[id]) {
+          e.preventDefault();
+          c.assemblyActions[id]!(e);
+        }
         return;
       }
 

@@ -176,6 +176,18 @@ and frames are inferred from what you hover.
 | Cylindrical | rz, tz     | shaft in bushing        |
 | Planar      | tx, ty, rz | part sliding on a table |
 | Ball        | rx, ry, rz | ball joint              |
+| Width       | tx, ty, rz | tab centred in a slot   |
+
+**Width** (added after A2) takes two parallel faces on each part. Each pair's
+connector is the plane midway between them (`midplaneShape`, normal made
+canonical so pick order doesn't matter, origin at the midpoint of the two face
+centroids), stored as `ref` + `ref2` on the connector. It then solves as Planar
+between the two mid-planes, except that by default they point the same way (a
+tab sits in its slot the way up both were modelled) and Flip turns it over. The
+first face half-fills a slot and the prompt asks for "the opposite face of …";
+a face that isn't parallel is refused, and a third face replaces the second.
+Combining Width with a second mate between the same two parts (the usual
+Onshape pairing) is a loop to this solver and is deferred: see Open questions.
 
 Child placement: `T_b = T_a · C_a · M(values) · C_b⁻¹`, where `C` are the
 connector frames in part space and `M` is the mate's motion built from its DOF
@@ -334,12 +346,18 @@ Add an assembly section to `src/agent/modeling-guide.md`.
   gizmo; Instances list (ground, hide, colour, open source); missing-source
   ⚠; stale-source reload; delete-a-used-part warning. (Rendering went baked
   meshes, not shared geometry; see the Viewport section.)
-- **A2 — Connectors + mates.** _Done (2026-11-07)._ Browser check:
-  `scripts/verify-assembly-a2.mjs`. Mesh-fitted connector frames (no kernel
+- **A2 — Connectors + mates.** _Done (2026-11-07)._ Browser checks:
+  `scripts/verify-assembly-a2.mjs`, `scripts/verify-assembly-drag.mjs`,
+  `scripts/verify-assembly-width.mjs`. Mesh-fitted connector frames (no kernel
   change); the six mate types; tree solver; Mate dialog with live preview;
   drag along DOFs; limits; ⚠ for broken refs and closed loops; mates list. Not
   built: hover/snap candidates, vertex connectors, and an amber ⚠ when a connector was re-found by fingerprint (it is
   re-found silently).
+- **After A2:** the Width mate; an assembly toolbar (Insert, then one button
+  per mate type, each opening the Mate dialog on that type or switching the
+  open one); keys I (Insert), M (Mate, last type used) and F R S C P B W (the
+  types), in an "assembly" shortcut mode with its own collision test. The Mate
+  dialog moved to the top left of the view so it doesn't cover the middle.
 - **A3 — Motion.** Animate dialog; gear / rack-and-pinion / screw relations;
   mate values from variables.
 - **A4 — Agent.** The MCP tools above + modeling-guide section.
@@ -370,3 +388,8 @@ pinning.
 - When a source part's part count changes (a cut now splits a body), what
   happens to instances of `ext1#1`? Proposed: instance resolves by partId; a
   vanished partId is a missing source with ⚠.
+- Two or more mates between the same two parts (Width + Planar for a tab in a
+  slot, Slider + Revolute on one axis). The tree solver treats the second as a
+  loop and only checks it. Options: compose such mates into one joint where the
+  combination is itself a mate type, or a real numeric solver for the cases
+  where it isn't. To be discussed in depth before building.

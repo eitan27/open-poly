@@ -2,15 +2,20 @@
 // each part, picked in the viewport), how they face each other, and the values
 // of whatever the mate leaves free. The assembly previews the mate live while
 // this is open.
+import { shortcutHint, shortcutName } from "../settings/shortcuts";
 import { DraggableDialog } from "../ui/DraggableDialog";
 import { PickSlot } from "../ui/PickSlot";
 import type { Anchor } from "./frames";
+import { MATE_TYPES } from "./mateTypes";
 import { MATE_DOFS } from "./solve";
 import type { Dof, MateType } from "./types";
 
 export interface MateSlotView {
   /** "Bracket <1> · face" once picked, else null. */
   label: string | null;
+  /** What the slot still needs, when it's part-filled (a width mate's
+   *  second face): replaces its usual prompt. */
+  noun?: string;
   armed: boolean;
   /** The anchors the picked entity offers (a cylinder: middle and both ends). */
   anchors: Anchor[];
@@ -35,16 +40,9 @@ export interface MateDialogProps {
   canConfirm: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Show the type keys on their buttons (the ? toggle). */
+  showShortcuts?: boolean;
 }
-
-const TYPES: { type: MateType; label: string; title: string }[] = [
-  { type: "fastened", label: "Fastened", title: "Fixed together: no motion" },
-  { type: "revolute", label: "Revolute", title: "Turns about the axis: a hinge, a wheel on an axle" },
-  { type: "slider", label: "Slider", title: "Slides along the axis: a drawer, a piston" },
-  { type: "cylindrical", label: "Cylindrical", title: "Slides along and turns about the axis: a shaft in a bushing" },
-  { type: "planar", label: "Planar", title: "Slides and turns on the plane: a part on a table" },
-  { type: "ball", label: "Ball", title: "Turns any way about the point: a ball joint" },
-];
 
 const ANCHOR_LABELS: Record<Anchor, string> = { center: "Middle", start: "Start", end: "End" };
 
@@ -65,29 +63,36 @@ export function MateDialog(p: MateDialogProps) {
   return (
     <DraggableDialog
       className="feature-dialog asm-mate"
-      style={{ left: "50%", top: 64 }}
-      baseTransform="translateX(-50%)"
+      // Top left of the view, under the toolbar: clear of the middle, where the
+      // faces to pick usually are.
+      style={{ left: 16, top: 72 }}
     >
       <div className="ed-title" data-drag-handle>
         {p.editing ? "Edit mate" : "Mate"}
       </div>
       <div className="ed-modes asm-mate-types">
-        {TYPES.map((t) => (
+        {MATE_TYPES.map((t) => (
           <button
             key={t.type}
             type="button"
             className={p.type === t.type ? "active" : ""}
-            title={t.title}
+            title={`${t.title} (${shortcutName(t.key)})`}
             onClick={() => p.onType(t.type)}
           >
             {t.label}
+            {p.showShortcuts && <span className="kbd-hint">{shortcutHint(t.key)}</span>}
           </button>
         ))}
       </div>
       {p.slots.map((s, i) => (
         <div key={i} className="asm-mate-slot">
           <PickSlot
-            noun={i === 0 ? "a face or edge of the first part" : "a face or edge of the second part"}
+            noun={
+              s.noun ??
+              (p.type === "width"
+                ? `two faces of the ${i === 0 ? "first" : "second"} part`
+                : `a face or edge of the ${i === 0 ? "first" : "second"} part`)
+            }
             armed={s.armed}
             value={s.label}
             wide

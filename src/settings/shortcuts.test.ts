@@ -8,6 +8,7 @@ import {
   shortcutName,
   matchShortcut,
   isShortcut,
+  liveIn,
 } from "./shortcuts";
 import type { Shortcut } from "./shortcuts";
 
@@ -23,21 +24,18 @@ const chordsOf = (s: Shortcut): string[] => {
   return [spell([...modsOf(s)].sort())];
 };
 
-/** Every mode a shortcut is live in — "both" is live in each of them. */
-const livesIn = (s: Shortcut) => (s.mode === "both" ? (["modeling", "sketch"] as const) : ([s.mode] as const));
-
 /**
  * The reason this table exists. Two tools sharing a chord inside one mode means
  * one of them silently never fires; the doc this replaced checked that by eye,
  * and got it wrong.
  */
 describe("no two shortcuts collide within a mode", () => {
-  for (const mode of ["modeling", "sketch"] as const) {
+  for (const mode of ["modeling", "sketch", "assembly"] as const) {
     it(`${mode} mode`, () => {
       const seen = new Map<string, string>();
       const collisions: string[] = [];
       for (const s of SHORTCUTS) {
-        if (!livesIn(s).includes(mode)) continue;
+        if (!liveIn(s, mode)) continue;
         for (const c of chordsOf(s)) {
           const previous = seen.get(c);
           if (previous) collisions.push(`${c} is claimed by both ${previous} and ${s.id}`);
@@ -47,6 +45,17 @@ describe("no two shortcuts collide within a mode", () => {
       expect(collisions).toEqual([]);
     });
   }
+});
+
+describe("an open assembly", () => {
+  it("runs its own keys and the shared ones it opts into, nothing else", () => {
+    expect(matchShortcut(press("m"), "assembly")?.id).toBe("asm.mate");
+    expect(matchShortcut(press("m"), "modeling")?.id).toBe("model.mirror");
+    expect(matchShortcut(press("z", { metaKey: true }), "assembly")?.id).toBe("app.undo");
+    expect(matchShortcut(press("h"), "assembly")?.id).toBe("view.home");
+    expect(matchShortcut(press("e"), "assembly")).toBeUndefined();
+    expect(matchShortcut(press("i", { metaKey: true }), "assembly")?.id).not.toBe("app.importStep");
+  });
 });
 
 describe("the table itself", () => {

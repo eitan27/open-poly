@@ -23,6 +23,7 @@ export const MATE_DOFS: Record<MateType, Dof[]> = {
   cylindrical: ["tz", "rz"],
   planar: ["tx", "ty", "rz"],
   ball: ["rx", "ry", "rz"],
+  width: ["tx", "ty", "rz"],
 };
 
 export const isRotation = (d: Dof) => d[0] === "r";
@@ -125,6 +126,7 @@ export function mateMotion(type: MateType, v: Partial<Record<Dof, number>>): Mat
     case "cylindrical":
       return multiply(translate(0, 0, g("tz")), rotZ(g("rz") * DEG));
     case "planar":
+    case "width":
       return multiply(translate(g("tx"), g("ty"), 0), rotZ(g("rz") * DEG));
     case "ball":
       return rotVec([g("rx") * DEG, g("ry") * DEG, g("rz") * DEG]);
@@ -132,10 +134,12 @@ export function mateMotion(type: MateType, v: Partial<Record<Dof, number>>): Mat
 }
 
 /** The fixed part of a mate after its motion: face-to-face unless flipped,
- *  then its quarter turns about Z. */
-function mateTwist(mate: Pick<Mate, "flip" | "turns">): Mat4 {
+ *  then its quarter turns about Z. A width mate's mid-planes start aligned
+ *  instead: a tab sits in its slot the way up both were modelled. */
+function mateTwist(mate: Pick<Mate, "type" | "flip" | "turns">): Mat4 {
   const q = rotZ((((mate.turns ?? 0) % 4) * Math.PI) / 2);
-  return mate.flip ? q : multiply(FLIP, q);
+  const aligned = mate.type === "width" ? !mate.flip : !!mate.flip;
+  return aligned ? q : multiply(FLIP, q);
 }
 
 /** `b`'s part coordinates → `a`'s part coordinates. */
@@ -177,6 +181,7 @@ export function valuesForPose(
     case "cylindrical":
       return { tz: m[14], rz: angleZ() };
     case "planar":
+    case "width":
       return { tx: m[12], ty: m[13], rz: angleZ() };
     case "ball": {
       const r = logRot(m);
