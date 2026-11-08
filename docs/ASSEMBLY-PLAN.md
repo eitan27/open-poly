@@ -229,10 +229,16 @@ through its centre. Translation uses the ordinary translate gizmo. Each drag
 frame re-solves the assembly with the drag applied (`useMates.dragPoses`) and
 the viewport poses every instance that moves by a matrix (the
 `transformDragPoses` prop). So a mated part moves only as its mate lets it
-(pushing a planar part off its plane leaves it where it is), and everything
-mated to a dragged part follows it during the drag, not only after it. The
-preview uses the same rounded values the release commits, so letting go never
-jumps. A fastened part has no gizmo. A part a mate positions
+(pushing a planar part off its plane leaves it where it is). What a drag does
+follows Onshape's rule (`drag.ts`, chosen 2026-11-08): each part mated to the
+dragged one stays where it is wherever its mate allows, and only the motion
+that mate forbids carries it along, live during the drag. Dragging a base
+along a planar mate's plane, or turning it about the plane's normal, slides it
+under the part on top; lifting the base carries that part up. This doesn't
+depend on which part was picked first. Parts further along keep their mates'
+values and follow their own neighbour. A neighbour whose mate value is an
+expression is carried rather than rewritten. The preview uses the same rounded
+values the release commits, so letting go never jumps. A fastened part has no gizmo. A part a mate positions
 (the mate's far end from the grounded side) can be moved only through that one
 mate.
 

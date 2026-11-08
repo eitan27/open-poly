@@ -4,7 +4,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { GhostMesh } from "../viewport/types";
 import type { Selection } from "../selection/types";
-import { addMate, keepPlacements, moveInstance, nextMateName, removeMates, updateMate } from "./assembly";
+import { addMate, keepPlacements, nextMateName, removeMates, updateMate } from "./assembly";
 import {
   anchorsOf,
   connectorRefOf,
@@ -16,10 +16,11 @@ import {
   type ConnectorRef,
   type ConnectorShape,
 } from "./frames";
+import { dragAssembly } from "./drag";
 import { connectorGlyph } from "./glyph";
 import type { MateDialogProps } from "./MateDialog";
 import { meshBounds, multiply } from "./placement";
-import { invertRigid, isRotation, MATE_DOFS, mateValues, solve, valuesForPose, type Solution } from "./solve";
+import { invertRigid, MATE_DOFS, solve, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector, MateType } from "./types";
 import type { SourceState } from "./useAssemblySources";
 
@@ -378,46 +379,12 @@ export function useMates({
     return { mate, reversed: by.reversed, dofs: MATE_DOFS[mate.type], axisWorld: multiply(pa, ca) };
   };
 
-  /** The assembly a drag (a world motion of one instance) leads to. A mated
-   *  instance's drag is written back as the mate values that come closest,
-   *  clamped to its limits and rounded as they're stored, so a preview of this
-   *  is exactly what letting go commits; anything else just moves, and what is
-   *  mated to it follows. An error when the drag can't be written: a value given
-   *  as an expression is the user's, and a drag doesn't overwrite it. */
-  const dragResult = (instanceId: string, motion: Mat4): { next: AssemblyDoc | null; error: string | null } => {
-    const none = { next: null, error: null };
-    if (!assembly || !solution) return none;
-    const drag = dragFor(instanceId);
-    if (!drag) return { next: moveInstance(assembly, instanceId, motion), error: null };
-    const { mate } = drag;
-    const ca = frameFor(assembly)(mate.a);
-    const cb = frameFor(assembly)(mate.b);
-    const pa = solution.placements.get(mate.a.instanceId);
-    const pb = solution.placements.get(mate.b.instanceId);
-    if (typeof ca === "string" || typeof cb === "string" || !pa || !pb) return none;
-    const fixedText = drag.dofs.find((d) => {
-      const t = mate.values?.[d]?.trim();
-      return t && !Number.isFinite(Number(t));
-    });
-    if (fixedText)
-      return {
-        next: null,
-        error: `${mate.name}'s ${fixedText} is set by "${mate.values![fixedText]}", so dragging can't change it.`,
-      };
-    const prev = solution.values.get(mate.id) ?? {};
-    const ta = drag.reversed ? multiply(motion, pa) : pa;
-    const tb = drag.reversed ? pb : multiply(motion, pb);
-    const got = valuesForPose(mate, ca, cb, ta, tb, prev);
-    const values: Partial<Record<Dof, string>> = {};
-    let clamped: Partial<Record<Dof, number>>;
-    try {
-      clamped = mateValues({ ...mate, values: Object.fromEntries(drag.dofs.map((d) => [d, String(got[d] ?? 0)])) });
-    } catch {
-      return none;
-    }
-    for (const d of drag.dofs) values[d] = formatValue(clamped[d] ?? 0, isRotation(d));
-    return { next: updateMate(assembly, { ...mate, values }), error: null };
-  };
+  /** The assembly a drag (a world motion of one instance) leads to: see
+   *  drag.ts. */
+  const dragResult = (instanceId: string, motion: Mat4): { next: AssemblyDoc | null; error: string | null } =>
+    assembly && solution
+      ? dragAssembly(assembly, solution, frameFor(assembly), instanceId, motion)
+      : { next: null, error: null };
 
   /** Commit a drag (see dragResult); the error, if it couldn't be. */
   const commitDrag = (instanceId: string, motion: Mat4): string | null => {
@@ -475,10 +442,4 @@ function setOrDrop<K extends string>(rec: Partial<Record<K, string>>, k: K, text
   if (text.trim()) next[k] = text;
   else delete next[k];
   return next;
-}
-
-/** A dragged value as text: 3 decimals for mm, 2 for degrees, no trailing zeros. */
-function formatValue(v: number, rotation: boolean): string {
-  const s = v.toFixed(rotation ? 2 : 3);
-  return String(Number(s) === 0 ? 0 : Number(s));
 }

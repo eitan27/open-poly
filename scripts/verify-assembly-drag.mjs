@@ -1,7 +1,8 @@
-// Assemblies: dragging mated parts. A planar mate holds the arm on the base:
-// pushing the arm off the plane moves nothing (and leaves nothing behind once
-// let go), and turning or lifting the base carries the arm with it during the
-// drag, not only after it. NB if the local open-poly MCP hub is running, this headless tab
+// Assemblies: dragging mated parts, by Onshape's rule. A planar mate holds the
+// arm on the base: pushing the arm off the plane moves nothing (and leaves
+// nothing behind once let go); lifting the base carries the arm with it, during
+// the drag and not only after; sliding or turning the base within the plane
+// leaves the arm where it is. NB if the local open-poly MCP hub is running, this headless tab
 // connects to it and can take the bridge from your own tab; reload yours after.
 import { chromium } from "playwright";
 
@@ -190,7 +191,8 @@ check(
     .join(","),
 );
 
-// Lift the base straight up the screen: the arm rides along mid-drag.
+// Lift the base straight up the screen: off the plane, so the arm rides along
+// (the mid-drag screenshot shows it riding).
 await page.locator(".asm-row").nth(0).click();
 await page.waitForTimeout(300);
 await page.locator(".asm-move button", { hasText: "Unground" }).click();
@@ -204,18 +206,40 @@ const lift = T("Base")[14] - base0[14];
 check("dragging the base moves it", Math.abs(lift) > 1, `dz = ${lift.toFixed(2)}`);
 check("…and the arm stays on it", Math.abs(apply4(T("Arm"), armBottom)[2] - apply4(T("Base"), baseTop)[2]) < 1e-3);
 
-// Turn the base about Z with the rotate ring: the arm turns with it.
+// The arm's corner in the world, to see it stay put.
+const armCorner = () => apply4(T("Arm"), [armBottom[0] + 15, armBottom[1] + 4, armBottom[2]]);
+const samePoint = (p, q) => p.every((v, i) => Math.abs(v - q[i]) < 1e-3);
+
+// Slide the base within the plane (from the top, the gizmo's centre drags in
+// the plane): it slides under the arm, which stays put.
+await view("1");
+{
+  const arm0 = armCorner();
+  const b0 = T("Base");
+  await drag(apply4(b0, [baseTop[0], baseTop[1], baseTop[2] - 5]), 80, 30, "drag-slide-mid.png");
+  rec = await saved();
+  const slid = Math.hypot(T("Base")[12] - b0[12], T("Base")[13] - b0[13]);
+  check(
+    "sliding the base moves it within the plane",
+    slid > 1 && Math.abs(T("Base")[14] - b0[14]) < 1e-3,
+    slid.toFixed(2),
+  );
+  check(
+    "…and leaves the arm where it is",
+    samePoint(armCorner(), arm0),
+    armCorner()
+      .map((v) => v.toFixed(2))
+      .join(","),
+  );
+}
+await view("7");
+
+// Turn the base about Z with the rotate ring: a turn the planar mate allows,
+// so the arm stays where it is.
 await page.locator(".asm-move .ed-modes button", { hasText: "Rotate" }).click();
 await page.waitForTimeout(300);
 await page.screenshot({ path: `${S}/drag-rotate-0.png` });
-// The arm's corner as seen from the base, before and after: it should not change.
-const armInBase = () => {
-  const b = T("Base");
-  const w = apply4(T("Arm"), [armBottom[0] + 15, armBottom[1] + 4, armBottom[2]]).map((v, i) => v - b[12 + i]);
-  // Undo the base's rotation (its columns are orthonormal).
-  return [0, 1, 2].map((c) => b[c * 4] * w[0] + b[c * 4 + 1] * w[1] + b[c * 4 + 2] * w[2]);
-};
-const rel0 = armInBase();
+const rel0 = armCorner();
 {
   // The ring's near edge, below the gizmo's centre on screen (found from a
   // screenshot of this view); drag it sideways.
@@ -233,10 +257,10 @@ const rel0 = armInBase();
   const b = T("Base");
   const turned = (Math.atan2(b[1], b[0]) * 180) / Math.PI;
   check("dragging the ring turns the base", Math.abs(turned) > 2, `${turned.toFixed(1)}°`);
-  const rel1 = armInBase();
+  const rel1 = armCorner();
   check(
-    "…and the arm turns with it",
-    rel1.every((v, i) => Math.abs(v - rel0[i]) < 1e-3),
+    "…and the arm stays where it is",
+    samePoint(rel1, rel0),
     `${rel0.map((v) => v.toFixed(2))} → ${rel1.map((v) => v.toFixed(2))}`,
   );
 }
