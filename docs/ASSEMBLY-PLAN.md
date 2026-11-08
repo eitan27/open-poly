@@ -394,8 +394,87 @@ pinning.
 - When a source part's part count changes (a cut now splits a body), what
   happens to instances of `ext1#1`? Proposed: instance resolves by partId; a
   vanished partId is a missing source with ⚠.
-- Two or more mates between the same two parts (Width + Planar for a tab in a
-  slot, Slider + Revolute on one axis). The tree solver treats the second as a
-  loop and only checks it. Options: compose such mates into one joint where the
-  combination is itself a mate type, or a real numeric solver for the cases
-  where it isn't. To be discussed in depth before building.
+- Two or more mates between the same two parts, and closed loops: see
+  "Discussion: multiple mates and a real solver" below. Not decided yet.
+
+---
+
+## Discussion: multiple mates and a real solver (in progress, 2026-11-08)
+
+A record of the design discussion so far, to pick it up again. Nothing here is
+decided until the two questions at the end are answered.
+
+**Where it started.** After the Width mate, the user asked about a rigid joint
+between two parts: doesn't that take three mates, e.g. three planar mates?
+
+**Constraints vs. joints.** In SolidWorks-style assembly, a mate is a
+constraint that removes some freedom. A face-on-face coincident removes 3 of
+the 6 (no moving off the face, no tilting); a second face pair at right angles
+removes 2 more, leaving one slide; a third removes the last. So a rigid joint
+takes three mates, built up one constraint at a time. In Onshape-style
+assembly, which is what Open Poly built, a mate is a joint: it holds two
+frames together and says which motions are left free. Fastened leaves none,
+so one Fastened mate makes a rigid joint. Three planar mates are three
+overlapping descriptions of one joint.
+
+**Where the joint model falls short today.**
+
+1. Placing the frame. Fastening a box into the corner of another needs the
+   frames at the corners. Frames are only at a face's centre or along an edge
+   or axis; anything else means typing offsets. Onshape has mate connectors on
+   vertices, edge midpoints and offsets. ("Vertex connectors" is on A2's
+   not-built list.)
+2. Partial mates. Width ("centre between these faces") says nothing about the
+   other directions. Onshape expects it to be combined with another mate
+   between the same two parts, which the tree solver can't do: the second mate
+   is a loop to it, only checked, and usually shows the over-constrained ⚠.
+3. Closed loops (a four-bar linkage, a slider-crank) can't be a tree at all.
+   The user wants these eventually.
+
+**Options.**
+
+|     | Approach                                                                                                                                                | Covers                         | Catch                                      |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------ |
+| A   | Joint-only, plus vertex/offset connectors so one mate always suffices                                                                                   | Most open chains               | No Width combos, no loops                  |
+| B   | Compose mates on the same pair into one joint (Planar + perpendicular Planar → Slider; Width + Planar → Slider; three perpendicular Planars → Fastened) | Common pairings                | A growing table of special cases; no loops |
+| C   | Numeric solver: every mate becomes equations between the two parts' poses, solved together (least squares, Levenberg–Marquardt)                         | Everything, including linkages | Real work, mostly behaviour and tests      |
+
+**Recommendation: C, as a hybrid.** Keep the tree for plain open chains with
+one mate per pair (exact, instant, predictable, and most assemblies), and use
+the numeric solver only for groups of parts joined by a loop or by more than
+one mate. Each mate already says "frame A against frame B, these motions
+free", which turns directly into equations, so the mate types, the dialog and
+the saved data stay the same. Mates the tree can't solve stop showing ⚠. B is
+not worth building: closed linkages need C anyway, so B would be replaced.
+
+**The drag rule points the same way.** The user chose Onshape's drag rule
+(parts mated to a dragged one stay put wherever their mates allow; see the
+Solver section and `drag.ts`). That is "move the other parts as little as
+possible", which a numeric solver does naturally, including inside loops. The
+tree only approximates it one step out from the dragged part.
+
+**What C involves.**
+
+- A 3D solver. No maintained browser library for this is known: planegcs
+  (the sketch solver) is 2D only. SolveSpace's solver handles 3D; whether a
+  usable WebAssembly build exists needs checking. Otherwise write a
+  Levenberg–Marquardt solver, a well-understood few hundred lines.
+- The hard parts are behaviour:
+  - not letting a linkage flip to its other solution (elbow up vs. elbow
+    down): solve from the current pose;
+  - telling a redundant but consistent mate from a conflicting one (a rank
+    check on the equations), so the ⚠ names the right mate;
+  - solving every frame while a part inside a loop is dragged;
+  - staying fast: solve each linked group separately.
+- Size: roughly A2 plus half again, most of it tests of tricky linkages.
+- Acceptance tests: the three-planar box in a corner, Width + Planar (tab in a
+  slot), a four-bar linkage, a slider-crank.
+
+**Suggested order.** Vertex/offset connectors first (small, useful under any
+option), then the hybrid solver with the acceptance tests above.
+
+**Open questions for the user (where the discussion stopped).**
+
+1. Should three planar mates holding a box in a corner just work? With C,
+   yes. With A, the answer is "use one Fastened mate on a vertex connector."
+2. Vertex/offset connectors first, or straight to the solver?
