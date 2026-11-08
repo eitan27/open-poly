@@ -166,7 +166,10 @@ and frames are inferred from what you hover.
   Esc clears them), as in a part document, while the part clicked last still
   gets the move gizmo. Opening a mate (toolbar, M, or a type key) fills its
   slots from them in order, grouped by part, so two faces then P is a planar
-  mate ready to confirm.
+  mate ready to confirm. It's all or nothing: if any pick can't go in a slot
+  (two faces of one part, more faces than the mate takes, a face nothing
+  anchors to, Width given one face a part), none are used, the dialog opens
+  empty as usual, and a note says the picks were let go.
 - **Turned to fit.** When a new mate's slots fill (or its type changes), and
   it would be over-constrained the way it faces, the dialog tries Flip (and,
   for Fastened and Slider, the quarter turns) and keeps the first that holds,

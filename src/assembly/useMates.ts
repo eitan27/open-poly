@@ -19,6 +19,7 @@ import {
 import { dragAssembly } from "./drag";
 import { connectorGlyph } from "./glyph";
 import type { MateDialogProps } from "./MateDialog";
+import { MATE_TYPES } from "./mateTypes";
 import { meshBounds, multiply } from "./placement";
 import { invertRigid, MATE_DOFS, solve, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector, MateType } from "./types";
@@ -174,12 +175,36 @@ export function useMates({
    *  mate type leave it ready to confirm. */
   const openNew = (type: MateType = lastType.current, preselected: Selection[] = []) => {
     lastType.current = type;
-    let s = fresh(type);
+    const start = fresh(type);
+    let s = start;
     if (assembly && preselected.length) {
       const owner = (p: Selection) => ("featureId" in p ? p.featureId : "");
       const parts = [...new Set(preselected.map(owner))];
       const ordered = parts.flatMap((id) => preselected.filter((p) => owner(p) === id));
-      for (const p of ordered) if (s.armed !== null) s = step(assembly, s, p);
+      // All or nothing: every pick must land in a slot. Two faces of one part,
+      // more faces than the mate takes, a face nothing can anchor to, or a
+      // width mate given one face a part: start empty instead, as if nothing
+      // had been picked, and say why.
+      let refused = false;
+      for (const p of ordered) {
+        if (s.armed === null) {
+          refused = true;
+          break;
+        }
+        const before = s.draft;
+        s = step(assembly, s, p);
+        // A refused pick leaves the draft as it was (its message says why).
+        if (s.draft === before) {
+          refused = true;
+          break;
+        }
+      }
+      const used = [s.draft.a?.ref, s.draft.a?.ref2, s.draft.b?.ref, s.draft.b?.ref2].filter(Boolean).length;
+      if (refused || used !== ordered.length)
+        s = {
+          ...start,
+          message: `The ${ordered.length === 1 ? "picked face doesn't" : "picked faces don't"} make a ${MATE_TYPES.find((t) => t.type === type)?.label ?? type} mate, so they were let go. Pick its faces here.`,
+        };
     }
     setSession(s);
   };

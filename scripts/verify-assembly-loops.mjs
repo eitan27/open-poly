@@ -276,6 +276,27 @@ await page.waitForTimeout(1000);
 check("after reload both mates are listed", (await page.locator(".asm-mate-row").count()) === 2);
 check("…with no ⚠", (await page.locator(".asm-mate-row .asm-source.bad").count()) === 0);
 
+// --- Pre-picked faces that can't make the mate are let go -----------------------
+await view("7");
+await clickWorld(apply4(T("Base"), [baseTop[0] - 15, baseTop[1] - 15, baseTop[2]]));
+await view("5");
+await clickWorld(apply4(T("Base"), [baseLeft[0], baseLeft[1] + 12, baseLeft[2] - 2]));
+await hoverView();
+await page.keyboard.press("p");
+await page.waitForTimeout(400);
+check(
+  "two faces of one part leave the mate empty",
+  (await page.locator(".asm-mate .bool-operand-name").count()) === 0,
+  (await page.locator(".asm-mate .bool-operand-name").allTextContents()).join(" | "),
+);
+check(
+  "…listening for the first face as usual",
+  /first part/.test((await page.locator(".asm-mate .ed-pick-btn.active").textContent()) ?? ""),
+);
+check("…and says why", /let go/.test((await warning()) ?? ""), (await warning()) ?? "");
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+
 // --- A third mate from two pre-picked faces ------------------------------------
 rec = await saved();
 await view("5"); // left: both left ends face the camera
