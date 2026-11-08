@@ -144,6 +144,14 @@
   border-bottom-right-radius: 0;
 }
 
+/* The halves overlap by a pixel, so the later one would paint over the other's
+   right border; the hovered or focused half is raised to show its whole edge. */
+.split-btn > .text-btn:hover,
+.split-btn > .text-btn:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
 .split-btn > .split-btn-caret {
   margin-left: -1px;
   padding: 4px 6px;

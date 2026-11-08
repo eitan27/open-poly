@@ -2044,6 +2044,39 @@ export default function App() {
   // instance's placement, so the edit always starts from zero.
   const asmMoveTarget =
     assembly && asmSelected.length === 1 ? assembly.instances.find((i) => i.id === asmSelected[0]) : undefined;
+  // The Move panel: one part selected, not mid-mate, and not two or more faces
+  // gathered (those are being picked for a mate, so nothing would move).
+  const asmMoveOpen = !!asmMoveTarget && !mates.sessionOpen && asmFaces.length < 2;
+  // Where everything was when the Move panel opened on this part: Esc puts it
+  // back, as Esc cancels a part's Transform.
+  const asmMoveStart = useRef<{ id: string; assembly: AssemblyDoc } | null>(null);
+  useEffect(() => {
+    asmMoveStart.current = asmMoveOpen && asmMoveTarget && assembly ? { id: asmMoveTarget.id, assembly } : null;
+    // Only a new session (another part, or the panel reopening) takes a snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asmMoveOpen, asmMoveTarget?.id]);
+  const clearAssemblySelection = () => {
+    setAsmSelected([]);
+    setAsmFaces([]);
+  };
+  /** Esc in the Move panel: undo what this session moved (placements and the
+   *  mate values drags wrote), leaving any other edit alone. */
+  const cancelInstanceMove = () => {
+    const start = asmMoveStart.current;
+    if (!start || !assembly || start.assembly === assembly) return;
+    const was = new Map(start.assembly.instances.map((i) => [i.id, i.transform]));
+    const wasMate = new Map(start.assembly.mates.map((m) => [m.id, m.values]));
+    setAssembly({
+      ...assembly,
+      instances: assembly.instances.map((i) => (was.has(i.id) ? { ...i, transform: was.get(i.id)! } : i)),
+      mates: assembly.mates.map((m) => {
+        if (!wasMate.has(m.id)) return m;
+        const values = wasMate.get(m.id);
+        const { values: _drop, ...rest } = m;
+        return values ? { ...rest, values } : rest;
+      }),
+    });
+  };
   const asmMoveMesh = asmMoveTarget ? assemblyMeshes.find((m) => m.id === asmMoveTarget.id) : undefined;
   // A mated instance moves only along what its mate leaves free: a hinge turns
   // about its own axis, a slider's drag is projected onto its axis.
@@ -3660,8 +3693,8 @@ export default function App() {
       if (isAssembly) {
         if (mates.sessionOpen) mates.close();
         else {
-          setAsmSelected([]);
-          setAsmFaces([]);
+          if (asmMoveOpen) cancelInstanceMove();
+          clearAssemblySelection();
         }
         return;
       }
@@ -7404,7 +7437,7 @@ export default function App() {
             cameraInertia={settings.cameraInertia}
             apiRef={viewApiRef}
           />
-          {asmMoveTarget && !mates.sessionOpen && (
+          {asmMoveOpen && asmMoveTarget && (
             <MoveDialog
               name={asmMoveTarget.name}
               grounded={!!asmMoveTarget.grounded}
@@ -7420,6 +7453,11 @@ export default function App() {
               onUnground={() =>
                 assembly && setAssembly(updateInstance(assembly, asmMoveTarget.id, { grounded: false }))
               }
+              onDone={clearAssemblySelection}
+              onCancel={() => {
+                cancelInstanceMove();
+                clearAssemblySelection();
+              }}
             />
           )}
           {mates.dialog && <MateDialog {...mates.dialog} showShortcuts={showShortcuts} />}

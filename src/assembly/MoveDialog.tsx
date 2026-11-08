@@ -5,7 +5,8 @@
 //
 // Like a part's Transform panel, it reads out the numbers live while the gizmo
 // is dragged and takes typed ones: how far the part has moved since it was
-// selected, or, for a part one mate positions, that mate's own values.
+// selected, or, for a part one mate positions, that mate's own values. Done
+// keeps the move; Cancel (or Esc) puts back what this session moved.
 import { useRef, useState } from "react";
 import { DraggableDialog } from "../ui/DraggableDialog";
 import type { MateType } from "./types";
@@ -38,14 +39,19 @@ interface Props {
   onMode: (mode: MoveMode) => void;
   onAxis: (axis: WorldAxis) => void;
   onUnground: () => void;
+  /** Keep what this session moved, and close. */
+  onDone: () => void;
+  /** Put back what this session moved, and close. */
+  onCancel: () => void;
 }
 
 export function MoveDialog(p: Props) {
   return (
     <DraggableDialog
       className="feature-dialog asm-move"
-      style={{ left: "50%", top: 64 }}
-      baseTransform="translateX(-50%)"
+      // Top left of the view, like the Mate dialog: clear of the middle, where
+      // the gizmo and the part are.
+      style={{ left: 16, top: 72 }}
     >
       <div className="ed-title" data-drag-handle>
         {p.name}
@@ -91,6 +97,12 @@ export function MoveDialog(p: Props) {
             or type exact values.
           </p>
           {p.message && <p className="ed-warning">{p.message}</p>}
+          <div className="ed-actions">
+            <button className="ed-primary" onClick={p.onDone}>
+              Done
+            </button>
+            <button onClick={p.onCancel}>Cancel</button>
+          </div>
         </>
       )}
     </DraggableDialog>

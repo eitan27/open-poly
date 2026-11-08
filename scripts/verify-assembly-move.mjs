@@ -282,6 +282,59 @@ check(
 );
 await page.screenshot({ path: "/tmp/asm-move-mated.png" });
 
+// --- Esc cancels the move session, as in a part's Transform ----------------------
+await page.keyboard.press("Escape");
+await page.locator(".asm-list > .asm-row").nth(1).click();
+await page.waitForTimeout(300);
+rec = await saved();
+const tBefore = T("Arm");
+const vBefore = JSON.stringify(rec.assembly.mates[0].values);
+{
+  const p = await toScreen(apply4(tBefore, armCentre));
+  const s0 = { x: p.x, y: p.y - 70 };
+  await page.mouse.move(s0.x, s0.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(s0.x, s0.y - i * 8, { steps: 2 });
+  await page.mouse.up();
+}
+rec = await saved();
+check(
+  "a drag moved it",
+  JSON.stringify(rec.assembly.mates[0].values) !== vBefore,
+  JSON.stringify(rec.assembly.mates[0].values),
+);
+await page.keyboard.press("Escape");
+rec = await saved();
+check(
+  "Esc puts the mate's values back",
+  JSON.stringify(rec.assembly.mates[0].values) === vBefore,
+  JSON.stringify(rec.assembly.mates[0].values),
+);
+check(
+  "…and the part where it was",
+  T("Arm").every((v, i) => near(v, tBefore[i])),
+);
+check("…and closes the panel", (await page.locator(".asm-move").count()) === 0);
+// Done keeps a move instead.
+await page.locator(".asm-list > .asm-row").nth(1).click();
+await page.waitForTimeout(300);
+await typeInto("Distance", "7");
+await page.locator(".asm-move .ed-primary", { hasText: "Done" }).click();
+rec = await saved();
+check(
+  "Done keeps the move and closes the panel",
+  rec.assembly.mates[0].values?.tz === "7" && (await page.locator(".asm-move").count()) === 0,
+  JSON.stringify(rec.assembly.mates[0].values),
+);
+
+// --- Two faces gathered for a mate: no Move panel --------------------------------
+const baseTopFace = await faceCentre("Base", 1);
+await clickWorld(apply4(T("Base"), [baseTopFace[0] + 15, baseTopFace[1] - 15, baseTopFace[2]]));
+check("one face picked still shows its part's panel", (await page.locator(".asm-move").count()) === 1);
+await clickWorld(apply4(T("Arm"), [armBottom[0], armBottom[1], armBottom[2] + 4]));
+check("two faces gathered show no Move panel", (await page.locator(".asm-move").count()) === 0);
+await page.keyboard.press("Escape");
+
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL PASS");
 await browser.close();
 process.exit(failures ? 1 : 0);

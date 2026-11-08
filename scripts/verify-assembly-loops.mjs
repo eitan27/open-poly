@@ -251,7 +251,7 @@ check("…keeping it on the top", Math.abs(onTop() - topZ) < 1e-3, onTop().toFix
 check("…and centred", Math.abs(centred() - baseMid[1]) < 1e-3, centred().toFixed(3));
 check("…with no ⚠", (await page.locator(".asm-mate-row .asm-source.bad").count()) === 0);
 await page.screenshot({ path: "/tmp/asm-loops-dragged.png" });
-await page.keyboard.press("Escape");
+await page.locator(".asm-move .ed-primary", { hasText: "Done" }).click(); // keep the drag (Esc would undo it)
 
 // --- Delete the planar mate: the arm stays where the pair held it ---------------
 const before = T("Arm");
