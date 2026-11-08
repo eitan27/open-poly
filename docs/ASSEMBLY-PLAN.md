@@ -161,6 +161,21 @@ and frames are inferred from what you hover.
 - A small dialog lets the user flip Z, rotate X by 90°, or add an offset — the
   same "Select …" arming vocabulary as the other dialogs, and an armed slot
   must not look filled.
+- **Pre-picking (built 2026-11-08).** With no dialog open, clicking faces and
+  edges in an assembly gathers them (a second click drops one; empty space or
+  Esc clears them), as in a part document, while the part clicked last still
+  gets the move gizmo. Opening a mate (toolbar, M, or a type key) fills its
+  slots from them in order, grouped by part, so two faces then P is a planar
+  mate ready to confirm.
+- **Turned to fit.** When a new mate's slots fill (or its type changes), and
+  it would be over-constrained the way it faces, the dialog tries Flip (and,
+  for Fastened and Slider, the quarter turns) and keeps the first that holds,
+  saying so. The usual case: flush ends, which default to touching. Pressing
+  Flip afterwards is respected.
+- **One mate after another.** Once a new mate is complete and holds,
+  clicking another face makes it and starts the next mate (same type) from
+  that face; the title counts them and Cancel reads Close. Create still
+  makes the mate and closes.
 - Connectors are stored by **persistent face/edge name + fingerprint**, so they
   survive part edits the same way chamfer refs do (`topoMatch` fallback). An
   unresolvable connector puts ⚠ on the mate and in the mate list, like a broken

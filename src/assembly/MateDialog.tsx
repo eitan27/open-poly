@@ -42,6 +42,9 @@ export interface MateDialogProps {
   onCancel: () => void;
   /** Show the type keys on their buttons (the ? toggle). */
   showShortcuts?: boolean;
+  /** Mates made since it opened (by clicking on to the next face): Cancel
+   *  then reads Close, as those are kept. */
+  made?: number;
 }
 
 const ANCHOR_LABELS: Record<Anchor, string> = { center: "Middle", start: "Start", end: "End" };
@@ -69,6 +72,7 @@ export function MateDialog(p: MateDialogProps) {
     >
       <div className="ed-title" data-drag-handle>
         {p.editing ? "Edit mate" : "Mate"}
+        {!!p.made && <span className="asm-mate-made"> · {p.made} made</span>}
       </div>
       <div className="ed-modes asm-mate-types">
         {MATE_TYPES.map((t) => (
@@ -161,7 +165,7 @@ export function MateDialog(p: MateDialogProps) {
         <button className="ed-primary" onClick={p.onConfirm} disabled={!p.canConfirm}>
           {p.editing ? "Done" : "Create"}
         </button>
-        <button onClick={p.onCancel}>Cancel</button>
+        <button onClick={p.onCancel}>{p.made ? "Close" : "Cancel"}</button>
       </div>
     </DraggableDialog>
   );

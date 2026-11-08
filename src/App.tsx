@@ -720,7 +720,6 @@ const VIEW_BY_SHORTCUT: Partial<Record<ShortcutId, ViewName>> = {
 /** The clearance an inserted part keeps from what's already placed. */
 const INSERT_GAP_MM = 10;
 const NO_PROBLEMS: ReadonlyMap<string, never> = new Map<string, never>();
-const NO_SELECTION: Selection[] = [];
 const ignoreTransformPreview = () => {};
 const sameMatrix = (a: number[], b: number[]) => a === b || a.every((v, i) => v === b[i]);
 
@@ -1940,7 +1939,13 @@ export default function App() {
   const asmPlacements = mates.solution?.placements;
   const [asmSelected, setAsmSelected] = useState<string[]>([]);
   const asmSelectedSet = useMemo(() => new Set(asmSelected), [asmSelected]);
-  useEffect(() => setAsmSelected([]), [activeId]);
+  // Faces and edges clicked with no Mate dialog open: they pre-fill the next
+  // one, so picking two faces and then a mate type leaves it ready to confirm.
+  const [asmFaces, setAsmFaces] = useState<Selection[]>([]);
+  useEffect(() => {
+    setAsmSelected([]);
+    setAsmFaces([]);
+  }, [activeId]);
   const [insertOpen, setInsertOpen] = useState(false);
   const [moveMode, setMoveMode] = useState<MoveMode>("translate");
   const [rotateAxis, setRotateAxis] = useState<WorldAxis>("z");
@@ -2016,12 +2021,22 @@ export default function App() {
     }
     if (!canMate || insertOpen) return;
     setAsmSelected([]);
-    mates.openNew(type);
+    mates.openNew(type, asmFaces);
+    setAsmFaces([]);
   };
   const handleAssemblyPick = (picked: Selection | null) => {
     if (mates.pick(picked)) return;
     const id = picked ? featureIdOf(picked) : null;
-    setAsmSelected(id && assembly?.instances.some((i) => i.id === id) ? [id] : []);
+    const isInstance = !!id && !!assembly?.instances.some((i) => i.id === id);
+    // The part clicked last is the one the gizmo moves; its faces and edges
+    // gather (a second click on one drops it), as in a part document.
+    setAsmSelected(isInstance ? [id] : []);
+    if (!picked || !isInstance || (picked.kind !== "face" && picked.kind !== "edge")) setAsmFaces([]);
+    else
+      setAsmFaces((prev) => {
+        const i = prev.findIndex((s) => sameSelection(s, picked));
+        return i >= 0 ? prev.filter((_, j) => j !== i) : [...prev, picked];
+      });
   };
   // The gizmo sits on the one selected instance, at the centre of its bounds;
   // a grounded one gets none. Every drag commits as a motion applied after the
@@ -3573,7 +3588,10 @@ export default function App() {
     onCancel: () => {
       if (isAssembly) {
         if (mates.sessionOpen) mates.close();
-        else setAsmSelected([]);
+        else {
+          setAsmSelected([]);
+          setAsmFaces([]);
+        }
         return;
       }
       if (offsetSessionRef.current) {
@@ -7253,7 +7271,7 @@ export default function App() {
             // selected (see asmTransformEdit).
             meshes={isAssembly ? assemblyMeshes : viewportMeshes}
             ghostMeshes={isAssembly ? mates.glyphs : ghostMeshes}
-            selection={isAssembly ? (mates.picks ?? NO_SELECTION) : (dialogPicks ?? selection)}
+            selection={isAssembly ? (mates.picks ?? asmFaces) : (dialogPicks ?? selection)}
             emphasize={constraintEmphasis}
             highlightBodyIds={isAssembly ? asmSelectedSet : highlightBodyIds}
             booleanHighlight={booleanHighlight}

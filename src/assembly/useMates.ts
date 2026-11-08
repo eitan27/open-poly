@@ -41,7 +41,13 @@ interface Session {
   /** Which slot the next viewport click fills. */
   armed: 0 | 1 | null;
   message: string | null;
+  /** Mates made by clicking on to the next face since the dialog opened. */
+  made: number;
 }
+
+/** Mate types that hold every rotation, so a quarter turn changes whether
+ *  they fit; for the rest only Flip can. */
+const TURNS_MATTER: ReadonlySet<MateType> = new Set(["fastened", "slider"]);
 
 const DRAFT_ID = "__draft";
 
@@ -156,9 +162,26 @@ export function useMates({
   const blank = (type: MateType = "fastened"): Draft => ({ type, values: {}, limits: {}, flip: false, turns: 0 });
   // The type a new mate starts as: the one last chosen (M reopens it).
   const lastType = useRef<MateType>("fastened");
-  const openNew = (type: MateType = lastType.current) => {
+  const fresh = (type: MateType, made = 0): Session => ({
+    editingId: null,
+    draft: blank(type),
+    armed: 0,
+    message: null,
+    made,
+  });
+  /** A new mate dialog. `preselected` faces/edges (picked before it opened)
+   *  fill its slots in order, grouped by part, so two faces picked then a
+   *  mate type leave it ready to confirm. */
+  const openNew = (type: MateType = lastType.current, preselected: Selection[] = []) => {
     lastType.current = type;
-    setSession({ editingId: null, draft: blank(type), armed: 0, message: null });
+    let s = fresh(type);
+    if (assembly && preselected.length) {
+      const owner = (p: Selection) => ("featureId" in p ? p.featureId : "");
+      const parts = [...new Set(preselected.map(owner))];
+      const ordered = parts.flatMap((id) => preselected.filter((p) => owner(p) === id));
+      for (const p of ordered) if (s.armed !== null) s = step(assembly, s, p);
+    }
+    setSession(s);
   };
   const openEdit = (id: string) => {
     const m = assembly?.mates.find((x) => x.id === id);
@@ -176,79 +199,115 @@ export function useMates({
       },
       armed: null,
       message: null,
+      made: 0,
     });
   };
   const close = () => setSession(null);
   const patch = (fn: (d: Draft) => Draft) => setSession((s) => (s ? { ...s, draft: fn(s.draft), message: null } : s));
 
-  /** A viewport click while the dialog listens. True if it was used. */
-  const pick = (picked: Selection | null): boolean => {
-    if (!session || !assembly) return false;
-    if (session.armed === null) return true; // the dialog owns clicks while open
-    if (!picked || (picked.kind !== "face" && picked.kind !== "edge")) return true;
-    const mesh = partMesh(assembly, picked.featureId);
-    if (!mesh) return true;
+  /** `d` turned the way that fits, if the way it is doesn't: a new mate
+   *  between parts that other mates already hold (a loop group) is often only
+   *  over-constrained because its faces default to touching where they
+   *  should be flush. Tries Flip, and for types that hold every rotation the
+   *  quarter turns too. Unchanged if nothing fits, or if it already does. */
+  const autoOrient = (a: AssemblyDoc, s: Session): Session => {
+    const existing = s.editingId ? a.mates.find((m) => m.id === s.editingId) : undefined;
+    const id = existing?.id ?? DRAFT_ID;
+    const fits = (d: Draft) => {
+      const m = draftMate(d, id, existing?.name ?? "");
+      if (!m) return true;
+      const shown = existing ? updateMate(a, m) : addMate(a, m);
+      return !solve(shown, frameFor(shown)).problems.has(id);
+    };
+    const d = s.draft;
+    if (fits(d)) return s;
+    const turns = TURNS_MATTER.has(d.type) ? [0, 1, 2, 3] : [d.turns];
+    for (const flip of [d.flip, !d.flip])
+      for (const t of turns) {
+        const v = { ...d, flip, turns: (d.turns + t) % 4 };
+        if ((v.flip !== d.flip || v.turns !== d.turns) && fits(v))
+          return { ...s, draft: v, message: "Turned round to fit the other mates (Flip undoes it)." };
+      }
+    return s;
+  };
+
+  /** What a click on `picked` does to the session: fills the armed slot (a
+   *  width mate's two faces one at a time), or says why it can't. */
+  const step = (a: AssemblyDoc, session: Session, picked: Selection | null): Session => {
+    if (session.armed === null) return session;
+    if (!picked || (picked.kind !== "face" && picked.kind !== "edge")) return session;
+    const mesh = partMesh(a, picked.featureId);
+    if (!mesh) return session;
     const c = connectorRefOf(
       mesh,
       picked.kind === "face" ? { kind: "face", faceId: picked.faceId } : { kind: "edge", edgeId: picked.edgeId },
     );
-    if (!c) {
-      setSession({ ...session, message: "That can't anchor a mate. Pick a flat face, a round wall, or an edge." });
-      return true;
-    }
+    if (!c) return { ...session, message: "That can't anchor a mate. Pick a flat face, a round wall, or an edge." };
     const slot = session.armed;
     const other = slot === 0 ? session.draft.b : session.draft.a;
-    if (other?.instanceId === picked.featureId) {
-      setSession({ ...session, message: "Pick a face or edge on a different part." });
-      return true;
-    }
+    if (other?.instanceId === picked.featureId)
+      return { ...session, message: "Pick a face or edge on a different part." };
     const width = session.draft.type === "width";
     let conn: MateConnector = { instanceId: picked.featureId, ref: c.ref, anchor: "center" };
     if (width) {
-      if (c.shape.kind !== "plane") {
-        setSession({ ...session, message: "A width mate needs two flat faces on each part." });
-        return true;
-      }
+      if (c.shape.kind !== "plane") return { ...session, message: "A width mate needs two flat faces on each part." };
       // A second flat face on the same part completes the pair; a third
       // replaces the second. A face on another part starts the slot over.
       const cur = slot === 0 ? session.draft.a : session.draft.b;
-      const first = cur?.instanceId === picked.featureId ? refShape(assembly, cur.instanceId, cur.ref) : null;
+      const first = cur?.instanceId === picked.featureId ? refShape(a, cur.instanceId, cur.ref) : null;
       if (cur && first?.kind === "plane") {
-        if (cur.ref.name === c.ref.name) {
-          setSession({ ...session, message: "Pick the face on the other side." });
-          return true;
-        }
-        if (!midplaneShape(first, c.shape)) {
-          setSession({
-            ...session,
-            message: "Those two faces aren't parallel and apart. Pick the face on the other side.",
-          });
-          return true;
-        }
+        if (cur.ref.name === c.ref.name) return { ...session, message: "Pick the face on the other side." };
+        if (!midplaneShape(first, c.shape))
+          return { ...session, message: "Those two faces aren't parallel and apart. Pick the face on the other side." };
         conn = { ...cur, ref2: c.ref };
       }
     }
     const draft = slot === 0 ? { ...session.draft, a: conn } : { ...session.draft, b: conn };
     const done = (x: MateConnector | undefined) => !!x && (!width || !!x.ref2);
     const nextArmed = !done(conn) ? slot : slot === 0 && !done(draft.b) ? 1 : null;
-    setSession({ ...session, draft, armed: nextArmed, message: null });
+    const next = { ...session, draft, armed: nextArmed, message: null };
+    return nextArmed === null ? autoOrient(a, next) : next;
+  };
+
+  /** A new mate that's complete and holds: what a click on another face
+   *  commits before starting the next one. */
+  const ready = (s: Session) =>
+    s.editingId === null && s.armed === null && !!draftMate(s.draft, DRAFT_ID, "") && !solution?.problems.has(DRAFT_ID);
+
+  /** A viewport click while the dialog listens. True if it was used. */
+  const pick = (picked: Selection | null): boolean => {
+    if (!session || !assembly) return false;
+    if (session.armed === null) {
+      // A finished new mate: clicking on to the next face makes it, and
+      // starts the next mate (same type) from that face.
+      if (ready(session) && picked && (picked.kind === "face" || picked.kind === "edge")) {
+        const next = make(assembly, session);
+        if (next) setSession(step(next, fresh(session.draft.type, session.made + 1), picked));
+      }
+      return true; // the dialog owns clicks while open
+    }
+    setSession(step(assembly, session, picked));
     return true;
   };
 
+  /** Commit the session's mate; the assembly it leads to (null if incomplete). */
+  const make = (a: AssemblyDoc, s: Session): AssemblyDoc | null => {
+    const existing = s.editingId ? a.mates.find((m) => m.id === s.editingId) : undefined;
+    const m = draftMate(s.draft, existing?.id ?? genId(), existing?.name ?? nextMateName(a, s.draft.type));
+    if (!m) return null;
+    // A mate's name follows its type until the user renames it.
+    if (existing && existing.type !== m.type && /^\w+ \d+$/.test(existing.name)) m.name = nextMateName(a, m.type);
+    const added = existing ? updateMate(a, m) : addMate(a, m);
+    const next = keepSolved(added, solve(added, frameFor(added)));
+    setAssembly(next);
+    return next;
+  };
+
+  /** Create (or finish editing), and close. To keep going without it, click
+   *  on to the next face (see pick). */
   const confirm = () => {
     if (!assembly || !session) return;
-    const existing = session.editingId ? assembly.mates.find((m) => m.id === session.editingId) : undefined;
-    const m = draftMate(
-      session.draft,
-      existing?.id ?? genId(),
-      existing?.name ?? nextMateName(assembly, session.draft.type),
-    );
-    if (!m) return;
-    // A mate's name follows its type until the user renames it.
-    if (existing && existing.type !== m.type && /^\w+ \d+$/.test(existing.name))
-      m.name = nextMateName(assembly, m.type);
-    commit(existing ? updateMate(assembly, m) : addMate(assembly, m));
-    setSession(null);
+    if (make(assembly, session)) setSession(null);
   };
 
   const remove = (id: string) => {
@@ -341,7 +400,8 @@ export function useMates({
               // Switching to Width leaves the slots a face short: listen for it.
               const short = (c: MateConnector | undefined) => type === "width" && !c?.ref2;
               const armed = short(draft.a) ? 0 : short(draft.b) ? 1 : s.armed;
-              return { ...s, draft, armed, message: null };
+              const next = { ...s, draft, armed, message: null };
+              return armed === null && assembly ? autoOrient(assembly, next) : next;
             });
           },
           slots: [slotView(0), slotView(1)],
@@ -363,6 +423,7 @@ export function useMates({
           canConfirm: !!(sideOf(session.draft, session.draft.a) && sideOf(session.draft, session.draft.b)) && !problem,
           onConfirm: confirm,
           onCancel: close,
+          made: session.made,
         }
       : null;
 

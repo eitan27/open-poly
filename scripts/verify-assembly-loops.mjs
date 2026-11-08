@@ -2,7 +2,10 @@
 // mate centring an arm between a base's front and back, then a planar mate
 // laying it on the base's top — used to be refused as a loop. Now the pair is
 // solved together: no ⚠, the arm lies on the top and stays centred, a drag
-// slides it along the base and nowhere else, and reload keeps it all.
+// slides it along the base and nowhere else, and reload keeps it all. Then a
+// third mate, made from two faces picked BEFORE the dialog opens: it opens
+// ready to confirm, turned to fit (flush ends need Flip), and clicking on to
+// another face makes it and starts the next mate from that face.
 // NB if the local open-poly MCP hub is running, this headless tab connects to
 // it and can take the bridge from your own tab; reload yours after.
 import { chromium } from "playwright";
@@ -139,6 +142,8 @@ const baseFront = await faceCentre("Base", -1, 1);
 const baseBack = await faceCentre("Base", 1, 1);
 const baseTop = await faceCentre("Base", 1, 2);
 const armBottom = await faceCentre("Arm", -1, 2);
+const baseLeft = await faceCentre("Base", -1, 0);
+const armLeft = await faceCentre("Arm", -1, 0);
 const armFront = await faceCentre("Arm", -1, 1);
 const armBack = await faceCentre("Arm", 1, 1);
 let rec = await saved();
@@ -270,6 +275,50 @@ await waitIdle();
 await page.waitForTimeout(1000);
 check("after reload both mates are listed", (await page.locator(".asm-mate-row").count()) === 2);
 check("…with no ⚠", (await page.locator(".asm-mate-row .asm-source.bad").count()) === 0);
+
+// --- A third mate from two pre-picked faces ------------------------------------
+rec = await saved();
+await view("5"); // left: both left ends face the camera
+await clickWorld(apply4(T("Base"), [baseLeft[0], baseLeft[1] + 12, baseLeft[2] - 2]));
+await clickWorld(apply4(T("Arm"), armLeft));
+await hoverView();
+await page.keyboard.press("p");
+await page.waitForTimeout(400);
+const filled = await page.locator(".asm-mate .bool-operand-name").allTextContents();
+check(
+  "two faces picked first fill both slots",
+  filled.length === 2 && filled.every((t) => /face/.test(t)),
+  filled.join(" | "),
+);
+check("…with nothing left armed", (await page.locator(".asm-mate .ed-pick-btn.active").count()) === 0);
+const msg = (await warning()) ?? "";
+check("flush ends are turned to fit, not flagged", !/Over-constrained/.test(msg) && /Turned round/.test(msg), msg);
+check("…so it's ready to create", !(await page.locator(".asm-mate .ed-primary").isDisabled()));
+
+// Clicking on to another face makes this mate and starts the next from it.
+await view("7");
+await clickWorld(apply4(T("Base"), [baseTop[0] - 15, baseTop[1] - 15, baseTop[2]]));
+rec = await saved();
+check("clicking on makes the mate", rec.assembly.mates.length === 3, String(rec.assembly.mates.length));
+check(
+  "…the arm's left end flush with the base's",
+  Math.abs(apply4(T("Arm"), armLeft)[0] - apply4(T("Base"), baseLeft)[0]) < 1e-3,
+);
+check(
+  "…and the dialog stays open, counting it",
+  /1 made/.test(await page.locator(".asm-mate .ed-title").textContent()),
+);
+const next = await page.locator(".asm-mate .bool-operand-name").allTextContents();
+check("…with the clicked face starting the next mate", next.length === 1, next.join(" | "));
+check(
+  "Cancel reads Close once a mate is made",
+  (await page.locator(".asm-mate button", { hasText: "Close" }).count()) === 1,
+);
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+check("Esc closes it", (await page.locator(".asm-mate").count()) === 0);
+check("no ⚠ with three mates", (await page.locator(".asm-mate-row .asm-source.bad").count()) === 0);
+await page.screenshot({ path: "/tmp/asm-loops-three.png" });
 
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL PASS");
 await browser.close();
