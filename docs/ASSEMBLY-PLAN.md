@@ -169,7 +169,10 @@ and frames are inferred from what you hover.
   mate ready to confirm. It's all or nothing: if any pick can't go in a slot
   (two faces of one part, more faces than the mate takes, a face nothing
   anchors to, Width given one face a part), none are used, the dialog opens
-  empty as usual, and a note says the picks were let go.
+  empty as usual, and a note says the picks were let go. Three faces start a
+  Width mate (both of one part, one of the other, in either click order);
+  for any other type they're one too many. With two or more faces gathered
+  the move gizmo is hidden, so its arrows don't cover the next face.
 - **Turned to fit.** When a new mate's slots fill (or its type changes), and
   it would be over-constrained the way it faces, the dialog tries Flip (and,
   for Fastened and Slider, the quarter turns) and keeps the first that holds,

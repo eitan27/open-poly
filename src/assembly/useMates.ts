@@ -179,7 +179,11 @@ export function useMates({
     let s = start;
     if (assembly && preselected.length) {
       const owner = (p: Selection) => ("featureId" in p ? p.featureId : "");
-      const parts = [...new Set(preselected.map(owner))];
+      // Grouped by part, the part with more picks first: a width mate's three
+      // faces fill the first slot from the part that has both, whichever
+      // order they were clicked in.
+      const count = (id: string) => preselected.filter((p) => owner(p) === id).length;
+      const parts = [...new Set(preselected.map(owner))].sort((x, y) => count(y) - count(x));
       const ordered = parts.flatMap((id) => preselected.filter((p) => owner(p) === id));
       // All or nothing: every pick must land in a slot. Two faces of one part,
       // more faces than the mate takes, a face nothing can anchor to, or a

@@ -2057,6 +2057,9 @@ export default function App() {
   const [asmDragSeq, setAsmDragSeq] = useState(0);
   const asmTransformEdit = useMemo<TransformEdit | null>(() => {
     if (!asmMoveTarget || asmMoveTarget.grounded || !asmMoveMesh || mates.sessionOpen) return null;
+    // Two or more faces gathered: they're being picked for a mate, not moved,
+    // and the gizmo's arrows would cover the next face to pick.
+    if (asmFaces.length >= 2) return null;
     if (asmDrag && asmDrag.dofs.length === 0) return null; // fastened
     const b = meshBounds(asmMoveMesh.mesh);
     if (!b) return null;
@@ -2083,7 +2086,7 @@ export default function App() {
     };
     // asmDrag is rebuilt every render; what it depends on is listed instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asmMoveTarget, asmMoveMesh, rotateAxis, asmMode, mates.solution, mates.sessionOpen, asmDragSeq]);
+  }, [asmMoveTarget, asmMoveMesh, rotateAxis, asmMode, mates.solution, mates.sessionOpen, asmDragSeq, asmFaces.length]);
   const commitInstanceMove = (d: TransformDelta) => {
     const te = asmTransformEdit;
     if (!te || !assembly || (d.tx === 0 && d.ty === 0 && d.tz === 0 && d.angle === 0)) return;

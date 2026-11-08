@@ -297,6 +297,43 @@ check("…and says why", /let go/.test((await warning()) ?? ""), (await warning(
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);
 
+// Three faces are one too many for a planar mate: let go too.
+await view("7");
+await clickWorld(apply4(T("Base"), [baseTop[0] - 15, baseTop[1] - 15, baseTop[2]]));
+await view("5");
+await clickWorld(apply4(T("Base"), [baseLeft[0], baseLeft[1] + 12, baseLeft[2] - 2]));
+await clickWorld(apply4(T("Arm"), armLeft));
+await hoverView();
+await page.keyboard.press("p");
+await page.waitForTimeout(400);
+check("three faces for a planar mate are let go", (await page.locator(".asm-mate .bool-operand-name").count()) === 0);
+check("…and it says why", /let go/.test((await warning()) ?? ""));
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+
+// …but three can start a width mate: both faces of one part and one of the
+// other, in whichever order they were clicked.
+await view("2");
+await clickWorld(apply4(T("Base"), [baseFront[0] + 12, baseFront[1], baseFront[2] - 3]));
+// Two faces gathered hide the move gizmo, so the arm's back (clicked third)
+// isn't covered by its arrows.
+await clickWorld(apply4(T("Arm"), [armFront[0] + 10, armFront[1], armFront[2]]));
+await view("4");
+await clickWorld(apply4(T("Arm"), [armBack[0] + 10, armBack[1], armBack[2]]));
+await hoverView();
+await page.keyboard.press("w");
+await page.waitForTimeout(400);
+const w3 = await page.locator(".asm-mate .bool-operand-name").allTextContents();
+check(
+  "three faces start a width mate from the part with both",
+  w3.length === 1 && w3[0] === `${names[1]} · 2 faces`,
+  w3.join(" | "),
+);
+const want4 = (await page.locator(".asm-mate .ed-pick-btn.active").textContent()) ?? "";
+check("…waiting for the base's other face", want4 === `Select the opposite face of ${names[0]}`, want4);
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+
 // --- A third mate from two pre-picked faces ------------------------------------
 rec = await saved();
 await view("5"); // left: both left ends face the camera
