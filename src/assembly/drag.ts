@@ -8,24 +8,26 @@
 // off the plane takes the neighbour with it. Instances further along the tree
 // keep their mates' values, so they follow their own neighbour.
 //
-// Everything a drag writes is mate values (rounded as they're stored) or the
-// dragged root's placement, so a preview of the result is exactly what letting
-// go commits.
-import { moveInstance, updateMate } from "./assembly";
+// A part inside a loop group (solve.ts) has no one mate to move along: the
+// group is re-solved with the part pulled toward the drag and every other part
+// of the group held, softly, where it was. So a four-bar's coupler drags the
+// crank and rocker round as far as their mates let it, and moves them as
+// little as it can.
+//
+// Everything a drag writes is mate values (rounded as they're stored) or
+// placements, so a preview of the result is exactly what letting go commits.
+import { keepPlacements, moveInstance, updateMate } from "./assembly";
 import { multiply } from "./placement";
-import { isRotation, MATE_DOFS, mateValues, solve, valuesForPose, type Solution } from "./solve";
+import { formatValue, isDriven, isRotation, MATE_DOFS, mateValues, solve, valuesForPose, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector } from "./types";
+
+export { formatValue };
 
 type FrameOf = (c: MateConnector) => Mat4 | string;
 
 /** The first free DOF of `mate` whose value is an expression: the user's, which
  *  a drag doesn't overwrite. */
-function expressionDof(mate: Mate): Dof | undefined {
-  return MATE_DOFS[mate.type].find((d) => {
-    const t = mate.values?.[d]?.trim();
-    return t && !Number.isFinite(Number(t));
-  });
-}
+const expressionDof = (mate: Mate): Dof | undefined => MATE_DOFS[mate.type].find((d) => isDriven(mate, d));
 
 /** `mate`'s values that put its `b` side at `tb` against `a` at `ta`, projected
  *  onto its free DOFs, clamped to its limits and rounded as stored. Null when
@@ -65,6 +67,14 @@ export function dragAssembly(
 ): { next: AssemblyDoc | null; error: string | null } {
   const before = (id: string) => solution.placements.get(id);
   let next: AssemblyDoc;
+
+  // Inside a loop group: re-solve with a pull toward the drag. Every
+  // placement is stored, so the next solve starts (and stays) there.
+  const was = before(instanceId);
+  if (was && solution.loops.some((l) => l.free.includes(instanceId))) {
+    const s = solve(assembly, frameOf, {}, { goals: new Map([[instanceId, multiply(motion, was)]]) });
+    return { next: keepPlacements(assembly, s.placements), error: null };
+  }
 
   // The dragged instance: along its own mate, or freely when nothing drives it.
   const by = solution.drivenBy.get(instanceId);
@@ -109,10 +119,4 @@ export function dragAssembly(
     if (values) next = updateMate(next, { ...mate, values });
   }
   return { next, error: null };
-}
-
-/** A dragged value as text: 3 decimals for mm, 2 for degrees, no trailing zeros. */
-export function formatValue(v: number, rotation: boolean): string {
-  const s = v.toFixed(rotation ? 2 : 3);
-  return String(Number(s) === 0 ? 0 : Number(s));
 }

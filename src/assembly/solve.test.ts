@@ -129,16 +129,34 @@ describe("solve", () => {
     closeV(applyPoint(s.placements.get("C")!, [10, 10, 0]), [10, 10, 45]);
   });
 
-  it("accepts a redundant loop that agrees, and flags one that doesn't", () => {
+  it("accepts redundant mates on one pair, and reports a plain value where the part is", () => {
     const base = [inst("A", { grounded: true }), inst("B")];
     const m1 = mate("m1", "fastened", conn("A", "top"), conn("B", "bottom"));
-    const agree = solve(asm(base, [m1, mate("m2", "slider", conn("A", "top"), conn("B", "bottom"))]), lookup);
-    expect(agree.problems.size).toBe(0);
-    const clash = solve(
+    // A slider alongside a fastened mate is redundant; its typed 3 only
+    // reports, so it reads back 0 rather than fighting the fastened mate.
+    const s = solve(
       asm(base, [m1, mate("m2", "slider", conn("A", "top"), conn("B", "bottom"), { values: { tz: "3" } })]),
       lookup,
     );
-    expect(clash.problems.get("m2")).toMatch(/loop/);
+    expect(s.problems.size).toBe(0);
+    expect(s.values.get("m2")!.tz).toBeCloseTo(0, 6);
+    expect(s.loops).toEqual([{ free: ["B"], mateIds: ["m1", "m2"] }]);
+    expect(s.mated.has("B")).toBe(true);
+  });
+
+  it("flags the later of two mates that disagree", () => {
+    const base = [inst("A", { grounded: true }), inst("B")];
+    const s = solve(
+      asm(base, [
+        mate("m1", "fastened", conn("A", "top"), conn("B", "bottom")),
+        mate("m2", "fastened", conn("A", "top"), conn("B", "bottom"), { turns: 1 }),
+      ]),
+      lookup,
+    );
+    expect(s.problems.get("m2")).toMatch(/Over-constrained/);
+    expect(s.problems.has("m1")).toBe(false);
+    // The rest still holds: B sits on A as m1 says.
+    closeV(applyPoint(s.placements.get("B")!, [10, 10, 0]), [10, 10, 20]);
   });
 
   it("checks a mate between two grounded instances instead of moving one", () => {

@@ -4,7 +4,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { GhostMesh } from "../viewport/types";
 import type { Selection } from "../selection/types";
-import { addMate, keepPlacements, nextMateName, removeMates, updateMate } from "./assembly";
+import { addMate, keepSolved, nextMateName, removeMates, updateMate } from "./assembly";
 import {
   anchorsOf,
   connectorRefOf,
@@ -151,7 +151,7 @@ export function useMates({
   );
 
   /** Store `next`, with every instance kept where the solver puts it. */
-  const commit = (next: AssemblyDoc) => setAssembly(keepPlacements(next, solve(next, frameFor(next)).placements));
+  const commit = (next: AssemblyDoc) => setAssembly(keepSolved(next, solve(next, frameFor(next))));
 
   const blank = (type: MateType = "fastened"): Draft => ({ type, values: {}, limits: {}, flip: false, turns: 0 });
   // The type a new mate starts as: the one last chosen (M reopens it).

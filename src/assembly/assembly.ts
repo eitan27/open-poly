@@ -1,7 +1,8 @@
 // Pure operations on an AssemblyDoc. No DOM, no storage, no kernel — like
 // document/document.ts is for parts.
-import type { AssemblyDoc, Instance, Mat4, Mate, MateType } from "./types";
+import type { AssemblyDoc, Dof, Instance, Mat4, Mate, MateType } from "./types";
 import { multiply } from "./placement";
+import { formatValue, isDriven, isRotation, MATE_DOFS, type Solution } from "./solve";
 
 const MATE_TYPES: MateType[] = ["fastened", "revolute", "slider", "cylindrical", "planar", "ball", "width"];
 
@@ -180,4 +181,28 @@ export function keepPlacements(a: AssemblyDoc, placements: ReadonlyMap<string, M
     return { ...i, transform: p };
   });
   return changed ? { ...a, instances } : a;
+}
+
+/** `a` with what the solver found kept: every instance's placement (see
+ *  keepPlacements), and each loop mate's plain-number values set to where its
+ *  parts now are. Inside a loop those values only report (solve.ts), so
+ *  without this they'd go stale, and a part would jump when a deleted mate
+ *  turns the loop back into a tree. Expressions are left alone. */
+export function keepSolved(a: AssemblyDoc, solution: Pick<Solution, "placements" | "loops" | "values">): AssemblyDoc {
+  let out = keepPlacements(a, solution.placements);
+  const inLoop = new Set(solution.loops.flatMap((l) => l.mateIds));
+  for (const m of out.mates) {
+    const got = inLoop.has(m.id) ? solution.values.get(m.id) : undefined;
+    if (!got) continue;
+    let values: Partial<Record<Dof, string>> | undefined;
+    for (const d of MATE_DOFS[m.type]) {
+      if (isDriven(m, d)) continue;
+      const text = formatValue(got[d] ?? 0, isRotation(d));
+      const cur = m.values?.[d]?.trim();
+      if (Number(cur ?? 0) === Number(text)) continue;
+      values = { ...(values ?? m.values), [d]: text };
+    }
+    if (values) out = updateMate(out, { ...m, values });
+  }
+  return out;
 }

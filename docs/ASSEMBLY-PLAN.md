@@ -4,9 +4,9 @@ Plan for assemblies: documents that place **instances** of parts from other
 documents and relate them with **mates**, which can then be driven and animated.
 Same rules as `PLAN.md`: decisions, gotchas and what's not built — not a changelog.
 
-**Scope of v1:** open-chain mechanisms — hinges, sliders, arms, turntables, gear
-trains. **Closed linkages (four-bar, crank-slider) are explicitly out of v1** but
-the data model must not preclude them (see "Solver").
+**Scope:** open-chain mechanisms (hinges, sliders, arms, turntables, gear
+trains) and, since the hybrid solver, closed linkages (four-bar, slider-crank)
+and several mates between one pair of parts (see "Solver").
 
 ---
 
@@ -187,7 +187,8 @@ tab sits in its slot the way up both were modelled) and Flip turns it over. The
 first face half-fills a slot and the prompt asks for "the opposite face of …";
 a face that isn't parallel is refused, and a third face replaces the second.
 Combining Width with a second mate between the same two parts (the usual
-Onshape pairing) is a loop to this solver and is deferred: see Open questions.
+Onshape pairing, e.g. Width + Planar for a tab in a slot) is solved by the
+loop solver.
 
 Child placement: `T_b = T_a · C_a · M(values) · C_b⁻¹`, where `C` are the
 connector frames in part space and `M` is the mate's motion built from its DOF
@@ -198,25 +199,59 @@ doesn't gimbal-lock.
 
 ## Solver
 
-**v1 is a kinematic tree, solved by composition — no numeric solver.**
+**A hybrid (decided 2026-11-08): exact composition for the tree, numeric for
+loops.** `src/assembly/solve.ts`, pure TypeScript with no DOM or kernel deps.
 
-1. Grounded instances are roots (the first inserted instance is grounded by
-   default, as in Onshape).
-2. Mates are edges. BFS from the roots; each mate places its child with the
-   formula above. Mate direction (`a` parent, `b` child) is re-oriented as the
-   BFS reaches it — the user shouldn't have to pick the "right" order.
-3. Instances not reached keep their stored `transform` and can be dragged freely.
-4. **A mate that closes a loop** (both ends already placed) is checked, not
-   solved: if it's satisfied within tolerance it's fine (redundant), otherwise
-   ⚠ "over-constrained — closed loops aren't supported yet". This is exactly the
-   seam where the v2 loop solver plugs in.
+1. The mate graph gets one extra node, WORLD, with an edge to each grounded
+   instance, so two grounded instances joined by mates are a loop like any
+   other.
+2. The graph is split into biconnected blocks (Tarjan, on the multigraph, so
+   two mates between one pair are a block of their own).
+3. Walking out from WORLD (then from the first instance of each ungrounded
+   group, at its stored transform): a block that is **one mate** is a tree
+   edge and places its far end by composition, as before. Mate direction is
+   re-oriented as the walk reaches it.
+4. A block with **more than one mate** (a loop, or a pair joined twice) is a
+   **loop group**, solved numerically, anchored at the instance the walk
+   reached it from (and any grounded instances in it). Everything hanging off
+   it is composed again. So one four-bar in a mechanism is the only part
+   solved numerically.
 
-Pure TypeScript in `src/assembly/solve.ts` with no DOM or kernel deps, so it is
-fully vitest-testable (every mate type, BFS re-orientation, loop detection,
-limits clamping).
+**The numeric part.** Each mate becomes residuals that vanish exactly when it
+holds: the relative motion `(T_a·C_a)⁻¹ · T_b·C_b·F⁻¹` must have zero
+translation and rotation in the directions the mate type forbids (`HELD`).
+Rotations use matrix-column differences (zero only at the right orientation,
+not at a half turn), scaled by the group's size so they weigh like mm.
+Levenberg–Marquardt (`lm.ts`: numeric Jacobian, dense Cholesky, damping λ·I)
+solves for a small motion of each free part about the middle of its
+connectors. λ·I gives no step in directions the mates leave free, so the
+answer is the one nearest the start: **start from where the parts are** (their
+stored placements, carried along with the anchor), which keeps a linkage on
+its branch (elbow up stays up). If that start doesn't converge, the group is
+retried from a tree composition of its mates' stored values.
 
-**Built in A2** (`solve.ts`) as described here. `valuesForPose` is the inverse
-used by dragging. Revolute values unwrap past ±180° from the previous value.
+- **Values inside a loop group.** A plain number only reports where the mate
+  is: the solver reads values back from the solved poses (`Solution.values`),
+  and `keepSolved` writes them into the mates on every commit, so deleting a
+  mate that turns the loop back into a tree doesn't make anything jump. An
+  **expression** drives: it becomes a residual, which is how a crank angle on a
+  variable turns a four-bar (and how A3 animation will drive loops). Limits are
+  one-sided residuals, active only when crossed.
+- **Conflicts.** Redundant but consistent mates (Width + Planar, three planars
+  into a corner, a slider beside a fastened) solve to zero and raise nothing.
+  If the group can't be satisfied, the latest mate (in list order) whose
+  removal lets the rest hold is flagged "Over-constrained", and the group is
+  shown solved without it. If no single mate explains it, every mate left
+  unsatisfied is flagged.
+- **Cost.** Groups are a few parts; solving an already-satisfied group is one
+  residual evaluation. LM stops once the cost stops falling, and the
+  conflict search uses one start per try, since it reruns on every solve
+  while a conflict stands.
+
+`Solution.loops` lists each group (`free` instances, `mateIds`), and
+`Solution.mated` every instance a mate positions, tree or loop (the panel's
+"· mated"). `valuesForPose` is the inverse used by dragging. Revolute values
+unwrap past ±180° from the previous value.
 
 **Dragging** a mated part moves it _along its free DOFs_: project the pointer
 drag onto the mate's motion (angle about the axis for revolute, distance along
@@ -238,19 +273,24 @@ under the part on top; lifting the base carries that part up. This doesn't
 depend on which part was picked first. Parts further along keep their mates'
 values and follow their own neighbour. A neighbour whose mate value is an
 expression is carried rather than rewritten. The preview uses the same rounded
-values the release commits, so letting go never jumps. A fastened part has no gizmo. A part a mate positions
+values the release commits, so letting go never jumps. A fastened part has no gizmo. A part a tree mate positions
 (the mate's far end from the grounded side) can be moved only through that one
 mate.
+
+**Dragging inside a loop group** (`drag.ts`): the part gets the free gizmo,
+and the group is re-solved with a soft pull toward the drag and a weaker pull
+holding each other part of the group where it was (`SolveOptions.goals`),
+then once more with the mates alone so they hold exactly. Every placement is
+stored, so the next solve starts, and stays, there. A four-bar's coupler drags
+the crank and rocker round as far as their hinges allow. Parts hanging off the
+group by a tree mate follow their mate's values (Onshape's "stay where your
+mate allows" rule is only applied one step out from a tree-dragged part).
+Dragging the group's anchor moves the whole group rigidly with it.
 
 **Keeping placements:** every edit that changes what mates hold (add, edit or
 delete a mate, ground, remove an instance) stores the solved placements as
 the instances' own (`keepPlacements`), so a part whose mate is deleted stays
 put.
-
-**Later — closed loops:** solve all instance poses with Levenberg–Marquardt
-over the loop-closing mates' residuals, seeded from the tree solution (so a
-mostly-tree assembly converges in a couple of iterations). Assemblies are tiny
-(tens of instances), so dense JS is fine.
 
 ---
 
@@ -259,7 +299,8 @@ mostly-tree assembly converges in a couple of iterations). Assemblies are tiny
 **Relations** couple two DOF values linearly: gear (`rz_b = −ratio · rz_a`),
 rack-and-pinion (`tz_b = r · rz_a`), screw (`tz_b = pitch · rz_a / 2π`). In a
 tree these are just evaluated in dependency order after the driver is set; a
-relation cycle is an error. Mate values can already be expressions over
+relation cycle is an error. Inside a loop group a relation is one more
+residual. Mate values can already be expressions over
 assembly variables, which covers ad-hoc couplings for free.
 
 **Animation** (v1): "Animate" on a mate — pick a DOF, from/to (defaulting to
@@ -368,7 +409,16 @@ Add an assembly section to `src/agent/modeling-guide.md`.
   mate values from variables.
 - **A4 — Agent.** The MCP tools above + modeling-guide section.
 
-**Later, roughly in order:** closed-loop solver · sub-assemblies · exploded
+- **Hybrid solver.** _Done (2026-11-08)._ Loop groups solved numerically
+  (`lm.ts`, `solve.ts`), drag inside a loop, values kept on commit. Tests:
+  `src/assembly/loops.test.ts` (box in a corner by three planars, Width +
+  Planar tab in a slot, a four-bar turned a full revolution without flipping
+  and dragged by its coupler, a slider-crank, a conflicting fifth mate).
+  Browser check: `scripts/verify-assembly-loops.mjs` (Width + Planar made in
+  the app, dragged, a mate deleted, reload). `verify-assembly-a2.mjs` now
+  expects a redundant second mate to be accepted rather than refused.
+
+**Later, roughly in order:** vertex/offset connectors · sub-assemblies · exploded
 views · BOM · interference/collision check (mesh BVH, per frame during
 animation) · STEP assembly export/import (needs the XCAF rebuild that also
 unblocks `feat/step-assembly-split`) · in-context part editing · version
@@ -394,87 +444,29 @@ pinning.
 - When a source part's part count changes (a cut now splits a body), what
   happens to instances of `ext1#1`? Proposed: instance resolves by partId; a
   vanished partId is a missing source with ⚠.
-- Two or more mates between the same two parts, and closed loops: see
-  "Discussion: multiple mates and a real solver" below. Not decided yet.
+- Should the Mate dialog say when a mate sits in a loop group (its typed
+  plain values only report there)? Not built yet; a one-line note would do.
 
 ---
 
-## Discussion: multiple mates and a real solver (in progress, 2026-11-08)
+## Decision: multiple mates and a real solver (2026-11-08)
 
-A record of the design discussion so far, to pick it up again. Nothing here is
-decided until the two questions at the end are answered.
+The question was whether a rigid joint should take three mates, as in
+SolidWorks-style assembly (each mate a constraint removing some freedom), or
+one, as in Onshape-style assembly (each mate a joint saying which motions are
+left free), which is what Open Poly built. Three options were weighed:
 
-**Where it started.** After the Width mate, the user asked about a rigid joint
-between two parts: doesn't that take three mates, e.g. three planar mates?
+- **A** — joint-only, plus vertex/offset connectors so one mate always
+  suffices. No Width combos, no loops.
+- **B** — compose mates on the same pair into one joint by special cases
+  (Planar + perpendicular Planar → Slider, …). A growing table, no loops.
+- **C** — a numeric solver: every mate becomes equations between its parts'
+  poses, solved together.
 
-**Constraints vs. joints.** In SolidWorks-style assembly, a mate is a
-constraint that removes some freedom. A face-on-face coincident removes 3 of
-the 6 (no moving off the face, no tilting); a second face pair at right angles
-removes 2 more, leaving one slide; a third removes the last. So a rigid joint
-takes three mates, built up one constraint at a time. In Onshape-style
-assembly, which is what Open Poly built, a mate is a joint: it holds two
-frames together and says which motions are left free. Fastened leaves none,
-so one Fastened mate makes a rigid joint. Three planar mates are three
-overlapping descriptions of one joint.
-
-**Where the joint model falls short today.**
-
-1. Placing the frame. Fastening a box into the corner of another needs the
-   frames at the corners. Frames are only at a face's centre or along an edge
-   or axis; anything else means typing offsets. Onshape has mate connectors on
-   vertices, edge midpoints and offsets. ("Vertex connectors" is on A2's
-   not-built list.)
-2. Partial mates. Width ("centre between these faces") says nothing about the
-   other directions. Onshape expects it to be combined with another mate
-   between the same two parts, which the tree solver can't do: the second mate
-   is a loop to it, only checked, and usually shows the over-constrained ⚠.
-3. Closed loops (a four-bar linkage, a slider-crank) can't be a tree at all.
-   The user wants these eventually.
-
-**Options.**
-
-|     | Approach                                                                                                                                                | Covers                         | Catch                                      |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------ |
-| A   | Joint-only, plus vertex/offset connectors so one mate always suffices                                                                                   | Most open chains               | No Width combos, no loops                  |
-| B   | Compose mates on the same pair into one joint (Planar + perpendicular Planar → Slider; Width + Planar → Slider; three perpendicular Planars → Fastened) | Common pairings                | A growing table of special cases; no loops |
-| C   | Numeric solver: every mate becomes equations between the two parts' poses, solved together (least squares, Levenberg–Marquardt)                         | Everything, including linkages | Real work, mostly behaviour and tests      |
-
-**Recommendation: C, as a hybrid.** Keep the tree for plain open chains with
-one mate per pair (exact, instant, predictable, and most assemblies), and use
-the numeric solver only for groups of parts joined by a loop or by more than
-one mate. Each mate already says "frame A against frame B, these motions
-free", which turns directly into equations, so the mate types, the dialog and
-the saved data stay the same. Mates the tree can't solve stop showing ⚠. B is
-not worth building: closed linkages need C anyway, so B would be replaced.
-
-**The drag rule points the same way.** The user chose Onshape's drag rule
-(parts mated to a dragged one stay put wherever their mates allow; see the
-Solver section and `drag.ts`). That is "move the other parts as little as
-possible", which a numeric solver does naturally, including inside loops. The
-tree only approximates it one step out from the dragged part.
-
-**What C involves.**
-
-- A 3D solver. No maintained browser library for this is known: planegcs
-  (the sketch solver) is 2D only. SolveSpace's solver handles 3D; whether a
-  usable WebAssembly build exists needs checking. Otherwise write a
-  Levenberg–Marquardt solver, a well-understood few hundred lines.
-- The hard parts are behaviour:
-  - not letting a linkage flip to its other solution (elbow up vs. elbow
-    down): solve from the current pose;
-  - telling a redundant but consistent mate from a conflicting one (a rank
-    check on the equations), so the ⚠ names the right mate;
-  - solving every frame while a part inside a loop is dragged;
-  - staying fast: solve each linked group separately.
-- Size: roughly A2 plus half again, most of it tests of tricky linkages.
-- Acceptance tests: the three-planar box in a corner, Width + Planar (tab in a
-  slot), a four-bar linkage, a slider-crank.
-
-**Suggested order.** Vertex/offset connectors first (small, useful under any
-option), then the hybrid solver with the acceptance tests above.
-
-**Open questions for the user (where the discussion stopped).**
-
-1. Should three planar mates holding a box in a corner just work? With C,
-   yes. With A, the answer is "use one Fastened mate on a vertex connector."
-2. Vertex/offset connectors first, or straight to the solver?
+**Chosen: C, as a hybrid** (built: see "Solver"). The tree stays for plain
+open chains, so most assemblies are exact and instant. B was skipped because
+closed linkages need C anyway. The mate types, the dialog and the saved data
+didn't change. Answers to the two open questions: three planar mates holding
+a box in a corner just work, and the solver came before vertex/offset
+connectors, which are still worth doing (they make a single Fastened mate
+enough where today it takes offsets).

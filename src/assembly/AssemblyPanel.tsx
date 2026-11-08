@@ -24,7 +24,7 @@ interface Props {
   /** Mates the solver couldn't apply, and why. */
   mateProblems: ReadonlyMap<string, string>;
   /** Instances a mate positions. */
-  drivenIds: ReadonlyMap<string, unknown>;
+  drivenIds: { has(id: string): boolean };
   editingMateId: string | null;
   onNewMate: () => void;
   onEditMate: (id: string) => void;

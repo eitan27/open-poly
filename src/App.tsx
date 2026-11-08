@@ -225,7 +225,7 @@ import { InsertDialog } from "./assembly/InsertDialog";
 import { MoveDialog, type MoveMode, type WorldAxis } from "./assembly/MoveDialog";
 import {
   insertInstances,
-  keepPlacements,
+  keepSolved,
   referencedDocIds,
   removeInstances,
   updateInstance,
@@ -1998,8 +1998,8 @@ export default function App() {
     setAsmSelected(r.ids);
   };
   // Edits that change what the mates hold start from where everything is now
-  // (see keepPlacements), so a part a removed mate held stays put.
-  const asmNow = () => (assembly && asmPlacements ? keepPlacements(assembly, asmPlacements) : assembly);
+  // (see keepSolved), so a part a removed mate held stays put.
+  const asmNow = () => (assembly && mates.solution ? keepSolved(assembly, mates.solution) : assembly);
   const removeSelectedInstances = () => {
     const now = asmNow();
     if (!now || asmSelected.length === 0) return;
@@ -7085,7 +7085,7 @@ export default function App() {
               onOpenSource={(docId) => void openDocument(docId).catch(() => {})}
               onInsert={() => setInsertOpen(true)}
               mateProblems={mates.solution?.problems ?? NO_PROBLEMS}
-              drivenIds={mates.solution?.drivenBy ?? NO_PROBLEMS}
+              drivenIds={mates.solution?.mated ?? NO_PROBLEMS}
               editingMateId={mates.editingId}
               onNewMate={() => openMateDialog()}
               onEditMate={(id) => {

@@ -1,6 +1,7 @@
 // Assemblies A2: mates. Picks connectors by clicking faces in the viewport,
 // makes a revolute (turntable) and a slider, edits a value, drags a slider
-// along its axis with the gizmo, checks a loop is refused, deletes a mate
+// along its axis with the gizmo, checks a second, agreeing mate on the same
+// pair is accepted (the loop solver takes it), deletes a mate
 // (the part stays put), undo, reload, and a live part edit carried through a
 // mate. NB if the local open-poly MCP hub is running, this headless tab
 // connects to it and can take the bridge from your own tab; reload yours after.
@@ -247,7 +248,9 @@ check(
 await page.screenshot({ path: "/tmp/asm-a2-dragged.png" });
 await page.keyboard.press("Escape");
 
-// --- A loop is refused ---------------------------------------------------------
+// --- A second mate on the same pair that agrees is accepted --------------------
+// The same face pair again: redundant, not conflicting, so the loop solver
+// takes it without a warning (it used to be refused as a loop).
 await page.locator(".asm-new-mate").click();
 await clickWorld(apply4(T("Base"), [baseTop[0] - 15, baseTop[1] + 15, baseTop[2]]));
 await view("6");
@@ -256,10 +259,10 @@ await view("7");
 const loopMsg =
   (await page
     .locator(".asm-mate .ed-warning")
-    .textContent()
+    .textContent({ timeout: 500 })
     .catch(() => "")) ?? "";
-check("a mate that closes a loop is explained", /loop/.test(loopMsg), loopMsg);
-check("…and can't be created", await page.locator(".asm-mate .ed-primary").isDisabled());
+check("a redundant second mate isn't flagged", !/Over-constrained/.test(loopMsg), loopMsg);
+check("…and could be created", !(await page.locator(".asm-mate .ed-primary").isDisabled()));
 await page.locator(".asm-mate button", { hasText: "Cancel" }).click();
 
 // --- Delete a mate: the part stays where it was ---------------------------------
