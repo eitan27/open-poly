@@ -350,7 +350,11 @@ check(
 );
 check("…with nothing left armed", (await page.locator(".asm-mate .ed-pick-btn.active").count()) === 0);
 const msg = (await warning()) ?? "";
-check("flush ends are turned to fit, not flagged", !/Over-constrained/.test(msg) && /Turned round/.test(msg), msg);
+check("flush ends are turned to fit, not flagged", !msg, msg);
+check(
+  "…which shows as Flip pressed",
+  (await page.locator(".asm-mate .ed-modes button.active", { hasText: "Flip" }).count()) === 1,
+);
 check("…so it's ready to create", !(await page.locator(".asm-mate .ed-primary").isDisabled()));
 
 // Clicking on to another face makes this mate and starts the next from it.

@@ -238,7 +238,9 @@ export function useMates({
    *  between parts that other mates already hold (a loop group) is often only
    *  over-constrained because its faces default to touching where they
    *  should be flush. Tries Flip, and for types that hold every rotation the
-   *  quarter turns too. Unchanged if nothing fits, or if it already does. */
+   *  quarter turns too. Unchanged if nothing fits, or if it already does.
+   *  Silent: the mate never existed the other way round, so there's nothing
+   *  to point at; the Flip button shows as pressed. */
   const autoOrient = (a: AssemblyDoc, s: Session): Session => {
     const existing = s.editingId ? a.mates.find((m) => m.id === s.editingId) : undefined;
     const id = existing?.id ?? DRAFT_ID;
@@ -254,8 +256,7 @@ export function useMates({
     for (const flip of [d.flip, !d.flip])
       for (const t of turns) {
         const v = { ...d, flip, turns: (d.turns + t) % 4 };
-        if ((v.flip !== d.flip || v.turns !== d.turns) && fits(v))
-          return { ...s, draft: v, message: "Turned round to fit the other mates (Flip undoes it)." };
+        if ((v.flip !== d.flip || v.turns !== d.turns) && fits(v)) return { ...s, draft: v };
       }
     return s;
   };

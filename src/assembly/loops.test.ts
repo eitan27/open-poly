@@ -84,6 +84,53 @@ describe("three planar mates hold a box in a corner", () => {
   });
 });
 
+describe("dragging two parts locked together by three mates", () => {
+  // The corner case again, with nothing grounded: B can't move against A, so
+  // dragging either moves both.
+  const frames = {
+    floor: frame([50, 50, 0], [0, 0, 1]),
+    wallX: frame([0, 50, 25], [1, 0, 0]),
+    wallY: frame([50, 0, 25], [0, 1, 0]),
+    bottom: frame([10, 10, 0], [0, 0, -1]),
+    left: frame([0, 10, 10], [-1, 0, 0]),
+    front: frame([10, 0, 10], [0, -1, 0]),
+  };
+  const lookup = lookupIn(frames);
+  const locked = (grounded: boolean): AssemblyDoc => ({
+    instances: [inst("A", { grounded }), inst("B")],
+    mates: [
+      mate("m1", "planar", conn("A", "floor"), conn("B", "bottom")),
+      mate("m2", "planar", conn("A", "wallX"), conn("B", "left")),
+      mate("m3", "planar", conn("A", "wallY"), conn("B", "front")),
+    ],
+    variables: [],
+  });
+  const move = translation([12, -7, 5]);
+
+  for (const id of ["A", "B"])
+    it(`moves both when ${id} is dragged`, () => {
+      const a = locked(false);
+      const before = solve(a, lookup);
+      const { next } = dragAssembly(a, before, lookup, id, move);
+      const after = solve(next!, lookup);
+      expect(after.problems.size).toBe(0);
+      for (const n of ["A", "B"]) {
+        const off = dist(at(after, n, [0, 0, 0]), applyPoint(move, at(before, n, [0, 0, 0])));
+        expect(off).toBeLessThan(0.01);
+      }
+      // Still in the corner.
+      closeV(at(after, "B", [0, 0, 0]), at(after, "A", [0, 0, 0]), 5);
+    });
+
+  it("leaves both put when the one it's locked to is grounded", () => {
+    const a = locked(true);
+    const before = solve(a, lookup);
+    const { next } = dragAssembly(a, before, lookup, "B", move);
+    const after = solve(next!, lookup);
+    closeV(at(after, "B", [0, 0, 0]), at(before, "B", [0, 0, 0]), 5);
+  });
+});
+
 describe("width + planar: a tab in a slot", () => {
   // A: a slot with walls at x = 0 and x = 20 (the width connector is their
   // mid-plane) and a floor at z = 0. B: a 6 mm tab, sides at x = 100 and 106,

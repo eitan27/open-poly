@@ -175,8 +175,9 @@ and frames are inferred from what you hover.
   the move gizmo is hidden, so its arrows don't cover the next face.
 - **Turned to fit.** When a new mate's slots fill (or its type changes), and
   it would be over-constrained the way it faces, the dialog tries Flip (and,
-  for Fastened and Slider, the quarter turns) and keeps the first that holds,
-  saying so. The usual case: flush ends, which default to touching. Pressing
+  for Fastened and Slider, the quarter turns) and keeps the first that holds.
+  Silently: the mate never existed the other way, so a note had nothing to
+  point at and read as an error; the Flip button shows as pressed. The usual case: flush ends, which default to touching. Pressing
   Flip afterwards is respected.
 - **One mate after another.** Once a new mate is complete and holds,
   clicking another face makes it and starts the next mate (same type) from
@@ -306,7 +307,13 @@ stored, so the next solve starts, and stays, there. A four-bar's coupler drags
 the crank and rocker round as far as their hinges allow. Parts hanging off the
 group by a tree mate follow their mate's values (Onshape's "stay where your
 mate allows" rule is only applied one step out from a tree-dragged part).
-Dragging the group's anchor moves the whole group rigidly with it.
+Dragging the group's anchor moves the whole group rigidly with it. When
+the anchor is held by nothing (not grounded, and not placed by a mate further
+back), it is free in the drag solve too, with the same weak stay pull as the
+rest, so dragging any part of a locked group moves it all, as dragging the
+anchor does (a lag under 0.01 mm: pulls are squared, so a stay 100× weaker
+than the drag counts 10⁴× less). A group anchored to a grounded part, or to
+one a tree mate places, keeps its anchor fixed.
 
 **Keeping placements:** every edit that changes what mates hold (add, edit or
 delete a mate, ground, remove an instance) stores the solved placements as

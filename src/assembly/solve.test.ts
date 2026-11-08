@@ -140,7 +140,7 @@ describe("solve", () => {
     );
     expect(s.problems.size).toBe(0);
     expect(s.values.get("m2")!.tz).toBeCloseTo(0, 6);
-    expect(s.loops).toEqual([{ free: ["B"], mateIds: ["m1", "m2"] }]);
+    expect(s.loops).toEqual([{ anchor: "A", free: ["B"], mateIds: ["m1", "m2"] }]);
     expect(s.mated.has("B")).toBe(true);
   });
 

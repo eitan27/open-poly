@@ -200,6 +200,8 @@ export function valuesForPose(
 }
 
 export interface Loop {
+  /** The instance it was solved against (null: the grounded ones). */
+  anchor: string | null;
   /** The instances the numeric solver placed (not the one it was anchored to,
    *  nor grounded ones). */
   free: string[];
@@ -357,6 +359,9 @@ export function solve(
 
   const mateOrder = new Map(assembly.mates.map((m, k) => [m.id, k]));
   const done = new Set<number>();
+  /** Instances placed from their own stored transform, with nothing holding
+   *  them: the first of each ungrounded group. */
+  const roots = new Set<string>();
   const expand = (start: string) => {
     const queue = [start];
     while (queue.length) {
@@ -382,14 +387,23 @@ export function solve(
 
         // A loop group, anchored at `id`.
         const members = [...new Set(block.flatMap((e) => [e.u, e.w]))].filter((n) => n !== WORLD);
+        // While a part of the group is dragged, an anchor that nothing holds
+        // (not grounded, and not placed by a mate further back) moves too, so
+        // dragging either of two locked-together parts moves both — the same
+        // as dragging the anchor itself does.
+        const loose =
+          id !== WORLD && roots.has(id) && !!opts.goals && members.some((n) => n !== id && opts.goals!.has(n));
         const fixed = new Map<string, Mat4>();
-        if (id !== WORLD) fixed.set(id, placements.get(id)!);
+        if (id !== WORLD && !loose) fixed.set(id, placements.get(id)!);
         for (const n of members) if (byId.get(n)!.grounded && !fixed.has(n)) fixed.set(n, byId.get(n)!.transform);
         const free = members.filter((n) => !fixed.has(n));
         // Start from the stored placements, carried along with the anchor.
         const carry = id === WORLD ? null : multiply(placements.get(id)!, invertRigid(byId.get(id)!.transform));
         const seed = new Map(
-          free.map((n) => [n, carry ? multiply(carry, byId.get(n)!.transform) : byId.get(n)!.transform]),
+          free.map((n) => [
+            n,
+            n === id ? placements.get(id)! : carry ? multiply(carry, byId.get(n)!.transform) : byId.get(n)!.transform,
+          ]),
         );
         const group = block
           .filter((e) => e.usable)
@@ -400,7 +414,11 @@ export function solve(
         for (const [n, p] of r.poses) placements.set(n, p);
         for (const [m, why] of r.blamed) problems.set(m, why);
         for (const [m, v] of r.values) values.set(m, v);
-        loops.push({ free, mateIds: group.map((u) => u.mate.id) });
+        loops.push({
+          anchor: id === WORLD ? null : id,
+          free: free.filter((n) => n !== id),
+          mateIds: group.map((u) => u.mate.id),
+        });
         for (const n of members) if (n !== id) queue.push(n);
       }
     }
@@ -412,10 +430,11 @@ export function solve(
   for (const inst of assembly.instances)
     if (!placements.has(inst.id)) {
       placements.set(inst.id, inst.transform);
+      roots.add(inst.id);
       expand(inst.id);
     }
   const mated = new Set<string>(drivenBy.keys());
-  for (const l of loops) for (const n of l.free) mated.add(n);
+  for (const l of loops) for (const n of [...l.free, ...(l.anchor ? [l.anchor] : [])]) mated.add(n);
   return { placements, drivenBy, problems, values, loops, mated };
 }
 
@@ -470,7 +489,7 @@ const SATISFIED = 1e-6;
 /** Weights of the soft pulls while dragging: toward the drag, and each other
  *  part toward where it was. Small against the mates' 1. */
 const GOAL_WEIGHT = 1e-2;
-const STAY_WEIGHT = 1e-3;
+const STAY_WEIGHT = 1e-4;
 
 /** `T` moved by a small motion: a turn `w` (rotation vector, radians) about
  *  `pivot`, then a shift `t` (mm). */
