@@ -6,7 +6,7 @@ import { shortcutHint, shortcutName } from "../settings/shortcuts";
 import { DraggableDialog } from "../ui/DraggableDialog";
 import { PickSlot } from "../ui/PickSlot";
 import type { Anchor } from "./frames";
-import { MATE_TYPES } from "./mateTypes";
+import { dofLabel, MATE_TYPES } from "./mateTypes";
 import { MATE_DOFS } from "./solve";
 import type { Dof, MateType } from "./types";
 
@@ -48,13 +48,6 @@ export interface MateDialogProps {
 }
 
 const ANCHOR_LABELS: Record<Anchor, string> = { center: "Middle", start: "Start", end: "End" };
-
-function dofLabel(type: MateType, d: Dof): string {
-  if (type === "ball") return `Turn ${d[1].toUpperCase()} (°)`;
-  if (d === "rz") return "Angle (°)";
-  if (d === "tz") return "Distance (mm)";
-  return `Offset ${d[1].toUpperCase()} (mm)`;
-}
 
 const selectAll = (e: React.FocusEvent<HTMLInputElement>) => e.target.select();
 

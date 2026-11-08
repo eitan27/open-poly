@@ -219,10 +219,10 @@ import { REPO_URL } from "./lib/repo";
 import { previewName } from "./lib/site";
 import { isUntitled } from "./storage/docNames";
 import { Viewport } from "./viewport/Viewport";
-import type { AssemblyDoc, MateType } from "./assembly/types";
+import type { AssemblyDoc, Mate, MateType } from "./assembly/types";
 import { AssemblyPanel } from "./assembly/AssemblyPanel";
 import { InsertDialog } from "./assembly/InsertDialog";
-import { MoveDialog, type MoveMode, type WorldAxis } from "./assembly/MoveDialog";
+import { MoveDialog, type MoveField, type MoveMode, type WorldAxis } from "./assembly/MoveDialog";
 import {
   insertInstances,
   keepSolved,
@@ -232,7 +232,9 @@ import {
   updateMate,
 } from "./assembly/assembly";
 import { MateDialog } from "./assembly/MateDialog";
-import { MATE_TYPES } from "./assembly/mateTypes";
+import { addMoves, moveReadout, NO_MOVE, type MoveReadout } from "./assembly/moveReadout";
+import { formatValue } from "./assembly/solve";
+import { dofLabel, MATE_TYPES } from "./assembly/mateTypes";
 import { useMates } from "./assembly/useMates";
 import { boundsCenter, IDENTITY, meshBounds, placeMesh, translation } from "./assembly/placement";
 import { useAssemblySources, type BuildDocument, type SourcePart } from "./assembly/useAssemblySources";
@@ -720,7 +722,6 @@ const VIEW_BY_SHORTCUT: Partial<Record<ShortcutId, ViewName>> = {
 /** The clearance an inserted part keeps from what's already placed. */
 const INSERT_GAP_MM = 10;
 const NO_PROBLEMS: ReadonlyMap<string, never> = new Map<string, never>();
-const ignoreTransformPreview = () => {};
 const sameMatrix = (a: number[], b: number[]) => a === b || a.every((v, i) => v === b[i]);
 
 export default function App() {
@@ -2087,21 +2088,88 @@ export default function App() {
     // asmDrag is rebuilt every render; what it depends on is listed instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asmMoveTarget, asmMoveMesh, rotateAxis, asmMode, mates.solution, mates.sessionOpen, asmDragSeq, asmFaces.length]);
+  // The Move panel's numbers. `asmMoved` is how far the selected part has
+  // moved since it was selected (or its mode or axis changed); `asmLive` is
+  // the drag in progress, read from where the solver puts the part, and for a
+  // part one mate positions, that mate's values mid-drag.
+  const [asmMoved, setAsmMoved] = useState<MoveReadout>(NO_MOVE);
+  const [asmLive, setAsmLive] = useState<{ move: MoveReadout; mateValues?: Mate["values"] } | null>(null);
+  useEffect(() => {
+    setAsmMoved(NO_MOVE);
+    setAsmLive(null);
+  }, [asmMoveTarget?.id, asmMode, rotateAxis]);
+  const gizmoMotion = (te: TransformEdit, d: Pick<TransformDelta, "tx" | "ty" | "tz" | "angle">) =>
+    Array.from(transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, 1).elements);
+  /** How far `motion` actually moves the gizmo's part, after its mates. */
+  const actualMove = (te: TransformEdit, motion: number[]): MoveReadout =>
+    moveReadout(mates.dragPoses(te.featureId, motion).get(te.featureId) ?? IDENTITY, te.pivot, te.axis.dir);
+  /** Apply a world motion to the gizmo's part, as a drag would, counting it. */
+  const applyInstanceMotion = (motion: number[]) => {
+    const te = asmTransformEdit;
+    if (!te || !assembly) return;
+    const moved = actualMove(te, motion);
+    setAsmMoved((m) => addMoves(m, moved));
+    setAsmLive(null);
+    setAsmDragMessage(mates.commitDrag(te.featureId, motion));
+    setAsmDragSeq((n) => n + 1);
+  };
   const commitInstanceMove = (d: TransformDelta) => {
     const te = asmTransformEdit;
     if (!te || !assembly || (d.tx === 0 && d.ty === 0 && d.tz === 0 && d.angle === 0)) return;
-    const motion = Array.from(transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, 1).elements);
-    setAsmDragMessage(mates.commitDrag(te.featureId, motion));
-    setAsmDragSeq((n) => n + 1);
+    applyInstanceMotion(gizmoMotion(te, d));
+  };
+  const previewInstanceMove = (d: TransformDelta) => {
+    const te = asmTransformEdit;
+    if (!te) return;
+    const motion = gizmoMotion(te, d);
+    const mateId = asmDrag?.mate.id;
+    const next = mateId ? mates.dragResult(te.featureId, motion).next : null;
+    setAsmLive({
+      move: actualMove(te, motion),
+      mateValues: next?.mates.find((m) => m.id === mateId)?.values,
+    });
   };
   // Mid-drag, the viewport poses every instance the drag moves — the dragged
   // one only as its mate lets it go, and whatever is mated to it along with it.
   const asmDragPoses = (d: TransformDelta) => {
     const te = asmTransformEdit;
     if (!te) return null;
-    const motion = Array.from(transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, 1).elements);
-    return mates.dragPoses(te.featureId, motion);
+    return mates.dragPoses(te.featureId, gizmoMotion(te, d));
   };
+  const asmMoveFields: MoveField[] = (() => {
+    const te = asmTransformEdit;
+    if (!te || !asmMoveTarget) return [];
+    // A part one mate positions: that mate's own values.
+    if (asmDrag) {
+      const values = asmLive?.mateValues ?? asmDrag.mate.values ?? {};
+      return asmDrag.dofs.map((dof) => ({
+        key: dof,
+        label: dofLabel(asmDrag.mate.type, dof),
+        value: values[dof]?.trim() || "0",
+        onCommit: (text: string) => mates.setMateValue(asmDrag.mate.id, dof, text),
+      }));
+    }
+    // Anything else: how far it has moved, live while dragging.
+    const shown = asmLive ? addMoves(asmMoved, asmLive.move) : asmMoved;
+    const keys = asmMode === "rotate" ? (["angle"] as const) : (["tx", "ty", "tz"] as const);
+    return keys.map((k) => ({
+      key: k,
+      label: k === "angle" ? "Angle (°)" : `Move ${k[1].toUpperCase()} (mm)`,
+      value: formatValue(shown[k], k === "angle"),
+      onCommit: (text: string) => {
+        let v: number;
+        try {
+          v = evaluateExpression(text, {});
+        } catch (e) {
+          setAsmDragMessage(`Not a number: ${(e as Error).message}`);
+          return;
+        }
+        const by = v - asmMoved[k];
+        if (!Number.isFinite(by) || by === 0) return;
+        applyInstanceMotion(gizmoMotion(te, k === "angle" ? { ...NO_MOVE, angle: by } : { ...NO_MOVE, [k]: by }));
+      },
+    }));
+  })();
   // The first-connect choice and auth outcomes need the user: bring the dialog
   // up for them. Later issues (conflicts…) only badge the button — they never
   // interrupt modelling.
@@ -7286,7 +7354,7 @@ export default function App() {
             transformEdit={isAssembly ? asmTransformEdit : transformEdit}
             transformMode={isAssembly ? asmMode : transform.mode}
             onTransformInput={isAssembly ? commitInstanceMove : transform.applyDrag}
-            onTransformPreview={isAssembly ? ignoreTransformPreview : transform.previewDrag}
+            onTransformPreview={isAssembly ? previewInstanceMove : transform.previewDrag}
             transformDragPoses={isAssembly ? asmDragPoses : undefined}
             extrudeGizmo={extrudeGizmo}
             onExtrudeDistanceChange={handleExtrudeGizmoDistance}
@@ -7346,6 +7414,7 @@ export default function App() {
               canTranslate={asmDragTranslates}
               canRotate={asmDragRotates}
               message={asmDragMessage}
+              fields={asmMoveFields}
               onMode={setMoveMode}
               onAxis={setRotateAxis}
               onUnground={() =>

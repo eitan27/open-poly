@@ -2,7 +2,7 @@
 // one-line explanation, an icon and a key. The Mate dialog's type grid and the assembly
 // toolbar both read this.
 import type { ShortcutId } from "../settings/shortcuts";
-import type { MateType } from "./types";
+import type { Dof, MateType } from "./types";
 
 export const MATE_TYPES: { type: MateType; label: string; icon: string; title: string; key: ShortcutId }[] = [
   { type: "fastened", icon: "▣", label: "Fastened", title: "Fixed together: no motion", key: "asm.mateFastened" },
@@ -46,3 +46,11 @@ export const MATE_TYPES: { type: MateType; label: string; icon: string; title: s
 
 /** A mate type's icon, as the mates list and the toolbar draw it. */
 export const mateIcon = (type: MateType) => MATE_TYPES.find((t) => t.type === type)!.icon;
+
+/** A free DOF's name in the UI, with its unit. */
+export function dofLabel(type: MateType, d: Dof): string {
+  if (type === "ball") return `Turn ${d[1].toUpperCase()} (°)`;
+  if (d === "rz") return "Angle (°)";
+  if (d === "tz") return "Distance (mm)";
+  return `Offset ${d[1].toUpperCase()} (mm)`;
+}

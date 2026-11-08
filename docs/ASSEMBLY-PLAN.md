@@ -315,6 +315,18 @@ anchor does (a lag under 0.01 mm: pulls are squared, so a stay 100× weaker
 than the drag counts 10⁴× less). A group anchored to a grounded part, or to
 one a tree mate places, keeps its anchor fixed.
 
+**The Move panel's numbers** (built 2026-11-08, `MoveDialog`,
+`moveReadout.ts`). Like a part's Transform panel, it reads out live while the
+gizmo is dragged (1 mm / 5° snap, as in modelling) and takes typed values,
+committed on Enter or leaving the field (Escape abandons). A part one tree
+mate positions shows that mate's own values (Distance, Angle, Offset X/Y,
+Turn X/Y/Z), live mid-drag from the drag's result; typing one sets the mate
+(an expression drives it). Any other part shows Move X/Y/Z (mm) or Angle (°)
+about the chosen axis: how far it has moved since it was selected (reset when
+the selection, mode or axis changes), measured from where the solver actually
+put it, so a part in a loop group reads what its mates let it do. Typing one
+moves it by the difference, through the same path as a drag.
+
 **Keeping placements:** every edit that changes what mates hold (add, edit or
 delete a mate, ground, remove an instance) stores the solved placements as
 the instances' own (`keepPlacements`), so a part whose mate is deleted stays

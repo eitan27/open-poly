@@ -2,8 +2,23 @@
 // axes, or rotate about a world axis through its centre. The gizmo is the same
 // one a part's Transform uses; this is its panel. A mated instance moves only
 // along what its mate leaves free (a hinge about its axis, a slider along it).
+//
+// Like a part's Transform panel, it reads out the numbers live while the gizmo
+// is dragged and takes typed ones: how far the part has moved since it was
+// selected, or, for a part one mate positions, that mate's own values.
+import { useRef, useState } from "react";
 import { DraggableDialog } from "../ui/DraggableDialog";
 import type { MateType } from "./types";
+
+/** One number in the panel: shown live, typed to set. */
+export interface MoveField {
+  key: string;
+  label: string;
+  /** The current value, already formatted (live while dragging). */
+  value: string;
+  /** A typed value, on Enter or leaving the field. */
+  onCommit: (text: string) => void;
+}
 
 export type MoveMode = "translate" | "rotate";
 export type WorldAxis = "x" | "y" | "z";
@@ -19,6 +34,7 @@ interface Props {
   canRotate: boolean;
   /** Why the last drag couldn't be applied. */
   message: string | null;
+  fields: MoveField[];
   onMode: (mode: MoveMode) => void;
   onAxis: (axis: WorldAxis) => void;
   onUnground: () => void;
@@ -67,13 +83,50 @@ export function MoveDialog(p: Props) {
               </div>
             </>
           )}
+          {p.fields.map((f) => (
+            <NumField key={f.key} field={f} />
+          ))}
           <p className="ed-hint">
-            Drag the gizmo to {p.mode === "rotate" ? "turn" : "move"} it
-            {p.mate ? ` along ${p.mate.name}.` : "."}
+            Drag the gizmo to {p.mate ? `move it along ${p.mate.name}` : p.mode === "rotate" ? "turn it" : "move it"},
+            or type exact values.
           </p>
           {p.message && <p className="ed-warning">{p.message}</p>}
         </>
       )}
     </DraggableDialog>
+  );
+}
+
+/** Shows the live value until it's being typed in; Enter or leaving commits,
+ *  Escape puts it back. */
+function NumField({ field }: { field: MoveField }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const cancelled = useRef(false);
+  const commit = () => {
+    if (!cancelled.current && draft !== null && draft.trim() && draft !== field.value) field.onCommit(draft);
+    cancelled.current = false;
+    setDraft(null);
+  };
+  return (
+    <label className="ed-field">
+      <span>{field.label}</span>
+      <input
+        value={draft ?? field.value}
+        onFocus={(e) => {
+          setDraft(field.value);
+          e.target.select();
+        }}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          else if (e.key === "Escape") {
+            cancelled.current = true;
+            (e.target as HTMLInputElement).blur();
+          }
+          e.stopPropagation();
+        }}
+      />
+    </label>
   );
 }

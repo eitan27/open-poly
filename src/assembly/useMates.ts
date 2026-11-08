@@ -499,7 +499,17 @@ export function useMates({
     return out;
   };
 
+  /** Type a value into one of a mate's free DOFs (the Move panel's fields
+   *  for a part that mate positions). Empty clears it to 0. */
+  const setMateValue = (mateId: string, dof: Dof, text: string) => {
+    const m = assembly?.mates.find((x) => x.id === mateId);
+    if (!assembly || !m) return;
+    commit(updateMate(assembly, { ...m, values: setOrDrop(m.values ?? {}, dof, text) }));
+  };
+
   return {
+    setMateValue,
+    dragResult,
     solution,
     display,
     sessionOpen: session !== null,
