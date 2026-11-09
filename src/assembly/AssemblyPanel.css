@@ -131,3 +131,9 @@
   width: 52px;
   font: inherit;
 }
+
+/* The mate icons (MateIcon.tsx), in the toolbar and the mates list: centred
+   on the label's text rather than sitting on its baseline. */
+.mate-icon {
+  vertical-align: -2px;
+}

@@ -232,6 +232,7 @@ import {
   updateMate,
 } from "./assembly/assembly";
 import { MateDialog } from "./assembly/MateDialog";
+import { MateIcon } from "./assembly/MateIcon";
 import { addMoves, moveReadout, NO_MOVE, type MoveReadout } from "./assembly/moveReadout";
 import { formatValue } from "./assembly/solve";
 import { dofLabel, MATE_TYPES } from "./assembly/mateTypes";
@@ -6623,7 +6624,7 @@ export default function App() {
     },
     ...MATE_TYPES.map((t): ToolbarItem => ({
       id: `mate-${t.type}`,
-      icon: t.icon,
+      icon: <MateIcon type={t.type} />,
       label: t.label,
       shortcut: shortcutHint(t.key),
       title: `${t.label} mate (${shortcutName(t.key)}): ${t.title}`,
@@ -6898,7 +6899,7 @@ export default function App() {
                     void newDocument("part");
                   }}
                 >
-                  Part
+                  Parts
                 </button>
                 <button
                   type="button"

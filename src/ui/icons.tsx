@@ -160,3 +160,22 @@ export function SuppressIcon({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
+
+/** The electrical ground symbol: a stem down into three bars, each shorter
+ *  than the one above. An assembly instance's ground toggle. */
+export function GroundIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M8 1.5V7M2.5 7h11M4.75 10h6.5M6.75 13h2.5" />
+    </svg>
+  );
+}

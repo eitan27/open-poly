@@ -451,7 +451,8 @@
   margin-bottom: 10px;
 }
 
-/* "Assembly" beside a document's name in the list. */
+/* "Assembly" or "Parts" beside a document's name in the list: what kind of
+   document it is. Parts in a quieter outline, as the usual kind. */
 .docs-kind {
   margin-left: 6px;
   padding: 0 5px;
@@ -461,6 +462,10 @@
   color: var(--accent-palest);
   border: 1px solid var(--accent);
   border-radius: 4px;
+}
+.docs-kind-parts {
+  color: var(--text-6);
+  border-color: var(--border-hover);
 }
 
 /* "Used in Arm" — shown while deleting a part an assembly places. */

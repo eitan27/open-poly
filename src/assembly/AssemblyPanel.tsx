@@ -2,8 +2,8 @@
 // Timeline / Parts: what the assembly places, and how those are joined. Rows
 // follow the Parts list's (colour, name, eye, ✕) so the two read alike.
 import { shortcutHint, shortcutName } from "../settings/shortcuts";
-import { EyeIcon } from "../ui/icons";
-import { mateIcon } from "./mateTypes";
+import { EyeIcon, GroundIcon } from "../ui/icons";
+import { MateIcon } from "./MateIcon";
 import type { AssemblyDoc, Instance } from "./types";
 import type { SourceState } from "./useAssemblySources";
 import "./AssemblyPanel.css";
@@ -120,7 +120,7 @@ export function AssemblyPanel(p: Props) {
                     p.onToggleGrounded(inst.id);
                   }}
                 >
-                  ⏚
+                  <GroundIcon />
                 </button>
                 <button
                   type="button"
@@ -185,7 +185,7 @@ export function AssemblyPanel(p: Props) {
                 onClick={() => p.onEditMate(m.id)}
               >
                 <span className="asm-mate-icon" title={m.type}>
-                  {mateIcon(m.type)}
+                  <MateIcon type={m.type} />
                 </span>
                 <span className="asm-name">
                   <input className="solid-name" value={m.name} onChange={(e) => p.onRenameMate(m.id, e.target.value)} />

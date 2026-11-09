@@ -464,23 +464,21 @@ animation) · STEP assembly export/import (needs the XCAF rebuild that also
 unblocks `feat/step-assembly-split`) · in-context part editing · version
 pinning.
 
-**Polish (cosmetic, requested 2026-11-09):**
+**Polish (cosmetic, requested 2026-11-09).** _Done (2026-11-09)._
 
-- **Ground icon.** Use the classic electronic ground symbol: three horizontal
-  lines, each shorter than the one above, with a vertical stem coming down into
-  the top one. Today the instance row's ground toggle is the text glyph `⏚`,
-  which renders small and font-dependent. Draw it as an SVG icon so it reads
-  clearly at row size, in both the grounded (active) and ungrounded states.
-- **Mate icons.** Improve the icons for **Width** (`⇹`), **Cylindrical** (`⟳`),
-  **Slider** (`⇕`) and **Fastened** (`▣`). They're text glyphs in
-  `src/assembly/mateTypes.ts`, used by the toolbar and the mates list; they
-  render small and unevenly and don't say much about the motion. Replace them
-  with SVG icons drawn as a set (the others, Revolute `↻`, Planar `▱` and
-  Ball `◉`, can join the set so all seven match).
-- **New ▾ menu.** "Part" becomes "Parts": a part document holds any number of
-  parts, so the singular undersells it.
-- **Open dialog.** Only assemblies wear a kind pill on their card, which looks
-  odd. Give part documents one too ("Parts"), so every card says what it is.
+- **Ground icon.** The instance row's ground toggle is `GroundIcon`
+  (`src/ui/icons.tsx`): the electrical ground symbol, a stem down into three
+  bars each shorter than the one above, replacing the `⏚` glyph.
+- **Mate icons.** All seven are drawn as one set of line icons
+  (`src/assembly/MateIcon.tsx`, in the `ui/icons.tsx` style), each showing the
+  motion the mate leaves free: Fastened two plates and a bolt, Revolute a turn
+  about a pin, Slider a block between two arrows, Cylindrical a shaft with
+  arrows and a turn, Planar a block on a plane with a sideways arrow, Ball a
+  ball in its socket, Width a tab between two walls. The toolbar and the mates
+  list use them; `MATE_TYPES` no longer carries a glyph.
+- **New ▾ menu.** "Part" is now "Parts".
+- **Open dialog.** Part documents carry a "Parts" pill too, quieter than the
+  "Assembly" one, so every row says what it is.
 
 **Assembly variables (not cosmetic, requested 2026-11-09).** Assemblies should
 support variables the way parts do, UI included: a Variables panel in the

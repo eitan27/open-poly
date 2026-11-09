@@ -304,7 +304,11 @@ export function DocumentsDialog({
                       onClick={() => setRenaming({ id: m.id, draft: m.name })}
                     >
                       {m.name}
-                      {m.kind === "assembly" && <span className="docs-kind">Assembly</span>}
+                      {m.kind === "assembly" ? (
+                        <span className="docs-kind">Assembly</span>
+                      ) : (
+                        <span className="docs-kind docs-kind-parts">Parts</span>
+                      )}
                       {active && <span className="docs-current"> · current</span>}
                     </button>
                   )}
