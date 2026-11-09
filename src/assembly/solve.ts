@@ -19,6 +19,7 @@
 // them, starting from where the parts are so a linkage doesn't flip to its
 // other solution. Inside such a group a mate's plain-number values only report
 // where it is; an expression drives it.
+import { evaluateVariables } from "../document/document";
 import { evaluateExpression, type Scope } from "../document/expression";
 import { levenbergMarquardt } from "./lm";
 import { applyPoint, multiply, type Vec3 } from "./placement";
@@ -287,7 +288,8 @@ interface Edge {
 const WORLD = "\u0000world";
 
 /** Solve the assembly. `connectorFrame` returns a connector's frame in its
- *  part's coordinates, or a reason it can't be found.
+ *  part's coordinates, or a reason it can't be found. Mate values and limits
+ *  are evaluated against `scope`: by default the assembly's own variables.
  *
  *  The mate graph (with grounded instances tied to one WORLD node) is split
  *  into its biconnected blocks. A block that is one mate is a tree edge and is
@@ -298,7 +300,7 @@ const WORLD = "\u0000world";
 export function solve(
   assembly: AssemblyDoc,
   connectorFrame: (c: MateConnector) => Mat4 | string,
-  scope: Scope = {},
+  scope: Scope = evaluateVariables(assembly.variables).scope,
   opts: SolveOptions = {},
 ): Solution {
   const placements = new Map<string, Mat4>();

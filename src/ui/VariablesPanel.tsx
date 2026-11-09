@@ -54,3 +54,17 @@ export function VariablesPanel({ variables, scope, errors, nameErrors, onAdd, on
     </div>
   );
 }
+
+/** The side panel's collapsible "Variables (n)" section around the panel: a
+ *  part document's, and an assembly's (which starts collapsed). */
+export function VariablesSection({ open, onToggle, ...panel }: Props & { open: boolean; onToggle: () => void }) {
+  return (
+    <>
+      <button className="params-heading collapsible" aria-expanded={open} onClick={onToggle}>
+        <span className={"collapse-caret" + (open ? " open" : "")}>▶</span>
+        Variables ({panel.variables.length})
+      </button>
+      {open && <VariablesPanel {...panel} />}
+    </>
+  );
+}

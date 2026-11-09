@@ -33,6 +33,15 @@ must do the same.
   `AssemblyPanel`, the model toolbar gives way to the assembly's, shortcuts
   are limited to the assembly mode's, and agent part ops are refused
   (`DOCUMENT_OPS` in `agent/commands.ts`).
+- **Variables** are the part document's: the same `Variable` type, the same
+  `VariablesSection` / `VariablesPanel`, and the same add/rename/edit/delete
+  and evaluation helpers in `document.ts`, which take anything that holds
+  `variables`. The section starts collapsed whenever an assembly opens, since
+  assemblies use them less than parts do. `solve` evaluates mate values and
+  limits against the assembly's variables by default, so the tree, loop
+  groups and dragging all see them. Editing one goes through `useMates.commit`
+  like a mate edit, so the placements it leads to are kept (delete the mate
+  afterwards and the part stays put).
 - **Thumbnails** are captured on `paintSeq` in App: a part bumps it when its
   regen settles, an assembly when every source has loaded (or failed to).
 
@@ -42,7 +51,7 @@ The persisted shape is `src/assembly/types.ts`:
 interface AssemblyDoc {
   instances: Instance[];
   mates: Mate[];
-  variables: Variable[]; // the parts' Variable type; meant to drive mate values
+  variables: Variable[]; // the parts' Variable type; mate values and limits name them
 }
 
 interface Instance {
@@ -313,16 +322,6 @@ mates' values. A grounded part can't be moved by its gizmo; unground it first.
 
 ## Not built yet
 
-**Assembly variables (next, before motion).** A Variables panel in the
-assembly's side panel reusing the part document's (`src/ui/VariablesPanel.tsx`,
-same `Variable` type, same add/rename/edit and expression behaviour), and
-variables usable in mate values and limits with the name autocomplete the
-part tools offer. `AssemblyDoc.variables` is stored and migrated, and
-`solve(…, scope)` / `mateValues(mate, scope)` already evaluate against a scope;
-what's missing is the UI, and `useMates` building that scope from the
-assembly's variables (it passes an empty one, so an expression can only use
-numbers today).
-
 **Motion.**
 
 - **Relations** couple two DOF values linearly: gear
@@ -348,6 +347,9 @@ numbers today).
 
 **Smaller gaps.**
 
+- No name autocomplete where expressions are typed, in assemblies or parts.
+- Renaming a variable doesn't rename it in the expressions that use it (as in
+  a part document): they show ⚠ until edited.
 - Drive-only documents appear on the Open dialog's All tab only, since their
   kind isn't known until downloaded. The kind in the Drive file's
   `appProperties` would fix it.

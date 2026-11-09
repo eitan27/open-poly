@@ -16,6 +16,8 @@
 //
 // Everything a drag writes is mate values (rounded as they're stored) or
 // placements, so a preview of the result is exactly what letting go commits.
+import { evaluateVariables } from "../document/document";
+import type { Scope } from "../document/expression";
 import { keepPlacements, moveInstance, updateMate } from "./assembly";
 import { multiply } from "./placement";
 import { formatValue, isDriven, isRotation, MATE_DOFS, mateValues, solve, valuesForPose, type Solution } from "./solve";
@@ -38,6 +40,7 @@ function fitValues(
   ta: Mat4,
   tb: Mat4,
   previous: Partial<Record<Dof, number>>,
+  scope: Scope,
 ): Partial<Record<Dof, string>> | null {
   const ca = frameOf(mate.a);
   const cb = frameOf(mate.b);
@@ -46,7 +49,8 @@ function fitValues(
   const got = valuesForPose(mate, ca, cb, ta, tb, previous);
   let clamped: Partial<Record<Dof, number>>;
   try {
-    clamped = mateValues({ ...mate, values: Object.fromEntries(dofs.map((d) => [d, String(got[d] ?? 0)])) });
+    // Limits may name the assembly's variables.
+    clamped = mateValues({ ...mate, values: Object.fromEntries(dofs.map((d) => [d, String(got[d] ?? 0)])) }, scope);
   } catch {
     return null;
   }
@@ -66,13 +70,14 @@ export function dragAssembly(
   motion: Mat4,
 ): { next: AssemblyDoc | null; error: string | null } {
   const before = (id: string) => solution.placements.get(id);
+  const scope = evaluateVariables(assembly.variables).scope;
   let next: AssemblyDoc;
 
   // Inside a loop group: re-solve with a pull toward the drag. Every
   // placement is stored, so the next solve starts (and stays) there.
   const was = before(instanceId);
   if (was && solution.loops.some((l) => l.free.includes(instanceId))) {
-    const s = solve(assembly, frameOf, {}, { goals: new Map([[instanceId, multiply(motion, was)]]) });
+    const s = solve(assembly, frameOf, scope, { goals: new Map([[instanceId, multiply(motion, was)]]) });
     return { next: keepPlacements(assembly, s.placements), error: null };
   }
 
@@ -91,7 +96,7 @@ export function dragAssembly(
     if (!pa || !pb) return { next: null, error: null };
     const ta = by.reversed ? multiply(motion, pa) : pa;
     const tb = by.reversed ? pb : multiply(motion, pb);
-    const values = fitValues(own, frameOf, ta, tb, solution.values.get(own.id) ?? {});
+    const values = fitValues(own, frameOf, ta, tb, solution.values.get(own.id) ?? {}, scope);
     if (!values) return { next: null, error: null };
     next = updateMate(assembly, { ...own, values });
   } else {
@@ -115,6 +120,7 @@ export function dragAssembly(
       cb.reversed ? stay : moved,
       cb.reversed ? moved : stay,
       solution.values.get(mate.id) ?? {},
+      scope,
     );
     if (values) next = updateMate(next, { ...mate, values });
   }

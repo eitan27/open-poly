@@ -157,8 +157,12 @@ export function useMates({
     [display, sources],
   );
 
-  /** Store `next`, with every instance kept where the solver puts it. */
-  const commit = (next: AssemblyDoc) => setAssembly(keepSolved(next, solve(next, frameFor(next))));
+  /** Store `next`, with every instance kept where the solver puts it. Any
+   *  edit that changes what the mates hold goes through here (a variable a
+   *  mate names included), so a later edit starts from where things are.
+   *  `coalesceKey` merges a run of keystrokes into one undo step. */
+  const commit = (next: AssemblyDoc, coalesceKey?: string) =>
+    setAssembly(keepSolved(next, solve(next, frameFor(next))), coalesceKey);
 
   const blank = (type: MateType = "fastened"): Draft => ({ type, values: {}, limits: {}, flip: false, turns: 0 });
   // The type a new mate starts as: the one last chosen (M reopens it).

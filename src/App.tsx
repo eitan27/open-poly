@@ -30,6 +30,7 @@ import {
   addSketchConstraints,
   addSketchEntities,
   addVariable,
+  evaluateVariables,
   seedDocument,
   genId,
   moveFeature,
@@ -50,6 +51,7 @@ import {
   updateParam,
   updatePlane,
   updateVariable,
+  validateVariableNames,
 } from "./document/document";
 import {
   bodyCenter,
@@ -213,7 +215,7 @@ import { OverflowToolbar } from "./ui/OverflowToolbar";
 import type { ToolbarItem, ToolbarRow } from "./ui/toolbarOverflow";
 import { ParamEditor } from "./ui/ParamEditor";
 import { SolidsList } from "./ui/SolidsList";
-import { VariablesPanel } from "./ui/VariablesPanel";
+import { VariablesSection } from "./ui/VariablesPanel";
 import { featureIdOf, sameSelection, type DatumId, type Selection, type SelectionFilter } from "./selection/types";
 import { REPO_URL } from "./lib/repo";
 import { previewName } from "./lib/site";
@@ -1941,6 +1943,14 @@ export default function App() {
   const asmPlacements = mates.solution?.placements;
   const [asmSelected, setAsmSelected] = useState<string[]>([]);
   const asmSelectedSet = useMemo(() => new Set(asmSelected), [asmSelected]);
+  // An assembly's variables (the part document's panel, reused). Collapsed
+  // when an assembly opens: assemblies use them less than parts do.
+  const [asmVariablesOpen, setAsmVariablesOpen] = useState(false);
+  useEffect(() => setAsmVariablesOpen(false), [activeId]);
+  const asmVariables = useMemo(() => {
+    const variables = assembly?.variables ?? [];
+    return { ...evaluateVariables(variables), nameErrors: validateVariableNames(variables) };
+  }, [assembly?.variables]);
   // Faces and edges clicked with no Mate dialog open: they pre-fill the next
   // one, so picking two faces and then a mate type leaves it ready to confirm.
   const [asmFaces, setAsmFaces] = useState<Selection[]>([]);
@@ -2193,7 +2203,7 @@ export default function App() {
       onCommit: (text: string) => {
         let v: number;
         try {
-          v = evaluateExpression(text, {});
+          v = evaluateExpression(text, asmVariables.scope);
         } catch (e) {
           setAsmDragMessage(`Not a number: ${(e as Error).message}`);
           return;
@@ -7180,71 +7190,80 @@ export default function App() {
         </button>
         <aside className="panel">
           {assembly ? (
-            <AssemblyPanel
-              assembly={assembly}
-              showShortcuts={showShortcuts}
-              sources={asmSources}
-              selectedIds={asmSelectedSet}
-              onSelect={(id, additive) =>
-                setAsmSelected((cur) =>
-                  additive ? (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]) : [id],
-                )
-              }
-              onRename={(id, name) => setAssembly(updateInstance(assembly, id, { name }), `asm-name:${id}`)}
-              onToggleGrounded={(id) => {
-                const now = asmNow() ?? assembly;
-                setAssembly(updateInstance(now, id, { grounded: !now.instances.find((i) => i.id === id)?.grounded }));
-              }}
-              onToggleHidden={(id) =>
-                setAssembly(
-                  updateInstance(assembly, id, { hidden: !assembly.instances.find((i) => i.id === id)?.hidden }),
-                )
-              }
-              onColor={(id, color) => setAssembly(updateInstance(assembly, id, { color }), `asm-color:${id}`)}
-              onDelete={(id) => {
-                setAssembly(removeInstances(asmNow() ?? assembly, [id]));
-                setAsmSelected((cur) => cur.filter((x) => x !== id));
-              }}
-              onOpenSource={(docId) => void openDocument(docId).catch(() => {})}
-              onInsert={() => setInsertOpen(true)}
-              mateProblems={mates.solution?.problems ?? NO_PROBLEMS}
-              drivenIds={mates.solution?.mated ?? NO_PROBLEMS}
-              editingMateId={mates.editingId}
-              onNewMate={() => openMateDialog()}
-              onEditMate={(id) => {
-                setAsmSelected([]);
-                mates.openEdit(id);
-              }}
-              onRenameMate={(id, name) => {
-                const m = assembly.mates.find((x) => x.id === id);
-                if (m) setAssembly(updateMate(assembly, { ...m, name }), `asm-mate-name:${id}`);
-              }}
-              onRemoveMate={mates.remove}
-            />
+            <>
+              <VariablesSection
+                open={asmVariablesOpen}
+                onToggle={() => setAsmVariablesOpen((o) => !o)}
+                variables={assembly.variables}
+                scope={asmVariables.scope}
+                errors={asmVariables.errors}
+                nameErrors={asmVariables.nameErrors}
+                onAdd={() => setAssembly(addVariable(assembly).doc)}
+                // Through the mates' commit: a mate may name the variable, and
+                // the placements it leads to are kept like any mate edit's.
+                onChange={(id, field, value) =>
+                  mates.commit(updateVariable(assembly, id, field, value), `asm-var:${id}:${field}`)
+                }
+                onDelete={(id) => mates.commit(removeVariable(assembly, id))}
+              />
+              <AssemblyPanel
+                assembly={assembly}
+                showShortcuts={showShortcuts}
+                sources={asmSources}
+                selectedIds={asmSelectedSet}
+                onSelect={(id, additive) =>
+                  setAsmSelected((cur) =>
+                    additive ? (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]) : [id],
+                  )
+                }
+                onRename={(id, name) => setAssembly(updateInstance(assembly, id, { name }), `asm-name:${id}`)}
+                onToggleGrounded={(id) => {
+                  const now = asmNow() ?? assembly;
+                  setAssembly(updateInstance(now, id, { grounded: !now.instances.find((i) => i.id === id)?.grounded }));
+                }}
+                onToggleHidden={(id) =>
+                  setAssembly(
+                    updateInstance(assembly, id, { hidden: !assembly.instances.find((i) => i.id === id)?.hidden }),
+                  )
+                }
+                onColor={(id, color) => setAssembly(updateInstance(assembly, id, { color }), `asm-color:${id}`)}
+                onDelete={(id) => {
+                  setAssembly(removeInstances(asmNow() ?? assembly, [id]));
+                  setAsmSelected((cur) => cur.filter((x) => x !== id));
+                }}
+                onOpenSource={(docId) => void openDocument(docId).catch(() => {})}
+                onInsert={() => setInsertOpen(true)}
+                mateProblems={mates.solution?.problems ?? NO_PROBLEMS}
+                drivenIds={mates.solution?.mated ?? NO_PROBLEMS}
+                editingMateId={mates.editingId}
+                onNewMate={() => openMateDialog()}
+                onEditMate={(id) => {
+                  setAsmSelected([]);
+                  mates.openEdit(id);
+                }}
+                onRenameMate={(id, name) => {
+                  const m = assembly.mates.find((x) => x.id === id);
+                  if (m) setAssembly(updateMate(assembly, { ...m, name }), `asm-mate-name:${id}`);
+                }}
+                onRemoveMate={mates.remove}
+              />
+            </>
           ) : (
             <>
-              <button
-                className="params-heading collapsible"
-                aria-expanded={variablesOpen}
-                onClick={() => setVariablesOpen((o) => !o)}
-              >
-                <span className={"collapse-caret" + (variablesOpen ? " open" : "")}>▶</span>
-                Variables ({doc.variables.length})
-              </button>
-              {variablesOpen && (
-                <VariablesPanel
-                  variables={doc.variables}
-                  scope={resolved.scope}
-                  errors={resolved.variableErrors}
-                  nameErrors={resolved.variableNameErrors}
-                  onAdd={() => {
-                    const { doc: next } = addVariable(doc);
-                    setDoc(next);
-                  }}
-                  onChange={(id, field, value) => setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)}
-                  onDelete={(id) => setDoc(removeVariable(doc, id))}
-                />
-              )}
+              <VariablesSection
+                open={variablesOpen}
+                onToggle={() => setVariablesOpen((o) => !o)}
+                variables={doc.variables}
+                scope={resolved.scope}
+                errors={resolved.variableErrors}
+                nameErrors={resolved.variableNameErrors}
+                onAdd={() => {
+                  const { doc: next } = addVariable(doc);
+                  setDoc(next);
+                }}
+                onChange={(id, field, value) => setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)}
+                onDelete={(id) => setDoc(removeVariable(doc, id))}
+              />
               <button
                 className="params-heading collapsible"
                 aria-expanded={timelineOpen}

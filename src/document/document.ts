@@ -993,7 +993,11 @@ function letterName(n: number): string {
   return s;
 }
 
-export function addVariable(doc: Document): { doc: Document; id: string } {
+// The variable operations work on anything that holds variables: a part
+// document, or an assembly (AssemblyDoc), whose Variables panel is the same.
+type WithVariables = { variables: Variable[] };
+
+export function addVariable<T extends WithVariables>(doc: T): { doc: T; id: string } {
   const used = new Set(doc.variables.map((v) => v.name));
   let i = 0;
   while (used.has(letterName(i)) || RESERVED_NAMES.has(letterName(i))) i++;
@@ -1022,14 +1026,19 @@ export function validateVariableNames(variables: Variable[]): Record<string, str
   return errors;
 }
 
-export function updateVariable(doc: Document, id: string, field: "name" | "expression", value: string): Document {
+export function updateVariable<T extends WithVariables>(
+  doc: T,
+  id: string,
+  field: "name" | "expression",
+  value: string,
+): T {
   return {
     ...doc,
     variables: doc.variables.map((v) => (v.id === id ? { ...v, [field]: value } : v)),
   };
 }
 
-export function removeVariable(doc: Document, id: string): Document {
+export function removeVariable<T extends WithVariables>(doc: T, id: string): T {
   return { ...doc, variables: doc.variables.filter((v) => v.id !== id) };
 }
 
@@ -1050,8 +1059,9 @@ export interface ResolveResult {
 }
 
 /** Evaluate variables in dependency order via fixpoint iteration; whatever can't
- *  resolve after no further progress is a cycle or an undefined reference. */
-function evaluateVariables(doc: Document): {
+ *  resolve after no further progress is a cycle or an undefined reference.
+ *  A part document's and an assembly's variables alike. */
+export function evaluateVariables(variables: Variable[]): {
   scope: Scope;
   errors: Record<string, string>;
 } {
@@ -1059,8 +1069,8 @@ function evaluateVariables(doc: Document): {
   const errors: Record<string, string> = {};
   // Only well-named variables enter scope; an invalid name is flagged on the
   // name field separately (variableNameErrors) and isn't evaluated.
-  const nameErrors = validateVariableNames(doc.variables);
-  let remaining = doc.variables.filter((v) => !nameErrors[v.id]);
+  const nameErrors = validateVariableNames(variables);
+  let remaining = variables.filter((v) => !nameErrors[v.id]);
 
   let progressed = true;
   while (remaining.length > 0 && progressed) {
@@ -1089,7 +1099,7 @@ function evaluateVariables(doc: Document): {
 
 /** Resolve the active (non-suppressed, pre-rollback) features to numeric params. */
 export function resolveDocument(doc: Document): ResolveResult {
-  const { scope, errors: variableErrors } = evaluateVariables(doc);
+  const { scope, errors: variableErrors } = evaluateVariables(doc.variables);
   const variableNameErrors = validateVariableNames(doc.variables);
   const planeFrames = resolvePlanes(doc, scope);
 
