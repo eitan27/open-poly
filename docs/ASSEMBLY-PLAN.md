@@ -347,6 +347,11 @@ mates' values. A grounded part can't be moved by its gizmo; unground it first.
 
 **Smaller gaps.**
 
+- The "+ Variable" button sits below the variables list (`VariablesPanel`),
+  so it is hidden while the section is collapsed. It belongs beside the
+  "Variables (n)" heading, as "＋ Insert" and "＋ Mate" sit beside theirs,
+  in both part and assembly documents (they share `VariablesSection`).
+  Adding a variable from a collapsed section should expand it.
 - No name autocomplete where expressions are typed, in assemblies or parts.
 - Renaming a variable doesn't rename it in the expressions that use it (as in
   a part document): they show ⚠ until edited.
