@@ -46,7 +46,7 @@ const PATHS: Record<MateType, ReactNode> = {
       <path d={head(8, 1.5, 0, -1)} />
       <path d={head(8, 14.5, 0, 1)} />
       <path d="M3 7.6C3.4 9.3 5.5 10.4 8 10.4s4.6-1.1 5-2.8" />
-      <path d={head(13, 7.6, 0.45, -0.9)} />
+      <path d={head(13, 7.6, 0.82, -0.57)} />
     </>
   ),
   // A block that slides anywhere on a plane.
