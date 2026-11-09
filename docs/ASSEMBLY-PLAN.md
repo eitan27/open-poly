@@ -1,54 +1,48 @@
 # Open Poly — Assemblies
 
-Plan for assemblies: documents that place **instances** of parts from other
-documents and relate them with **mates**, which can then be driven and animated.
-Same rules as `PLAN.md`: decisions, gotchas and what's not built — not a changelog.
-
-**Scope:** open-chain mechanisms (hinges, sliders, arms, turntables, gear
-trains) and, since the hybrid solver, closed linkages (four-bar, slider-crank)
-and several mates between one pair of parts (see "Solver").
+Assemblies are documents that place **instances** of parts from other
+documents and relate them with **mates**, which can then be driven and
+animated. Same rules as `PLAN.md`: this file holds the decisions, the gotchas
+and what is not built yet. It is not a changelog: git is the record of what
+shipped when.
 
 ---
 
 ## Model
 
-**Two document kinds** (built in A0). A record is an assembly iff it has
+**Two document kinds.** A record is an assembly iff it has
 `StoredDoc.assembly`; there is no separate `kind` field on the record to drift
 from it. `doc` stays required and is always an empty `Document` on an
 assembly, so the many paths that read `record.doc` need no branch. `DocMeta`
-gains `kind?: "assembly"` (absent = part) plus `instanceCount`, derived in
-`metaOf`. No migration and no DB version bump. **The hazard:** any path that
+has `kind?: "assembly"` (absent = part) plus `instanceCount` and
+`referencedDocIds`, derived in `metaOf`. **The hazard:** any path that
 rebuilds a record from parts (`{ name, doc }`) drops `assembly` and silently
 turns the assembly into an empty part. Every such site in the persistence hook
-and the sync engine now carries it, and tests cover the round trips. A new
-site must do the same.
+and the sync engine carries it, and tests cover the round trips. A new site
+must do the same.
 
-- **Document file:** assembly files are envelope version 2, while part files
-  are still written as version 1. A build from before assemblies refuses an
+- **Document file:** assembly files are envelope version 2, part files are
+  still written as version 1, so a build from before assemblies refuses an
   assembly file ("saved by a newer version") instead of importing it as an
   empty part.
 - **Sync hash:** `docHash(name, doc, assembly?)` drops an absent `assembly`, so
   every synced part keeps its old hash. An untouched new assembly counts as
   "blank" and stays local until edited, like a starter part.
 - **App:** the assembly has its own `useHistory`, and undo/redo route to it.
-  While an assembly is open, the part UI stands down: the side panel becomes
-  `AssemblyPanel`, the model toolbar is hidden, shortcuts are limited to
-  `ASSEMBLY_SHORTCUTS` (undo/redo, views, hints), and agent part ops are refused
+  While an assembly is open the part UI stands down: the side panel becomes
+  `AssemblyPanel`, the model toolbar gives way to the assembly's, shortcuts
+  are limited to the assembly mode's, and agent part ops are refused
   (`DOCUMENT_OPS` in `agent/commands.ts`).
-- **Documents dialog:** the All · Parts · Assemblies tabs are remembered in
-  localStorage. **Drive-only documents appear on the All tab only,** because
-  their kind isn't known until they are downloaded. Putting the kind in the
-  Drive file's appProperties would fix this; that's deferred.
-- **Thumbnails:** captured on `paintSeq` in App, which replaced the
-  persistence hook's `regenSettledSeq`. A part bumps it when its regen settles,
-  an assembly when every source has loaded (or failed to). The switch-in home
-  view uses the same signal. (Built in A1.)
+- **Thumbnails** are captured on `paintSeq` in App: a part bumps it when its
+  regen settles, an assembly when every source has loaded (or failed to).
+
+The persisted shape is `src/assembly/types.ts`:
 
 ```ts
 interface AssemblyDoc {
   instances: Instance[];
   mates: Mate[];
-  variables: Variable[]; // same Variable type as parts; drives mate values
+  variables: Variable[]; // the parts' Variable type; meant to drive mate values
 }
 
 interface Instance {
@@ -56,48 +50,46 @@ interface Instance {
   name: string; // "Bracket <1>", editable
   source: { docId: string; partId: string }; // partId = "<featureId>" or "<featureId>#<n>" (parts.ts)
   grounded?: boolean; // fixed in world space
-  transform: Mat4; // placement for instances NOT positioned by a mate chain
+  transform: Mat4; // its placement; for a mated part, the last solved one
   hidden?: boolean;
-  color?: string; // override; default = the part's own colour
+  color?: number; // 0xRRGGBB override; absent = the part's own colour
 }
 
 interface MateConnector {
-  // a frame on a part, in PART coordinates
   instanceId: string;
-  ref: { kind: "face" | "edge" | "vertex"; name: string; fingerprint?: FaceFingerprint };
-  anchor: "center" | "axis" | "point"; // which inferred frame on that entity
-  offset?: Mat4; // user nudge (flip, rotate 90°, translate)
+  ref: { kind: "face" | "edge"; name: string; center?: Vec3; normal?: Vec3 }; // name + fingerprint
+  ref2?: ConnectorRef; // a width mate's second face
+  anchor: "center" | "start" | "end"; // where along a cylinder or edge
 }
 
 interface Mate {
   id: string;
   name: string;
-  type: "fastened" | "revolute" | "slider" | "cylindrical" | "planar" | "ball";
-  a: MateConnector; // parent side
-  b: MateConnector; // child side
-  values: Record<string, Expr>; // one per free DOF: "rz", "tz", "tx", "ty", "rx", "ry"
-  limits?: Record<string, { min?: Expr; max?: Expr }>;
+  type: "fastened" | "revolute" | "slider" | "cylindrical" | "planar" | "ball" | "width";
+  a: MateConnector;
+  b: MateConnector; // values are always b relative to a
+  values?: Partial<Record<Dof, string>>; // one per free DOF, text (mm, degrees); absent = 0
+  limits?: Partial<Record<Dof, { min?: string; max?: string }>>;
+  flip?: boolean; // Z axes aligned instead of opposed (width: the other way round)
+  turns?: number; // quarter turns of b about Z
   suppressed?: boolean;
 }
 ```
 
 **An instance is one part, not one document.** A part document can produce
 several parts (`ext1`, `ext1#1`, … — `parts.ts`). Inserting a document inserts
-one instance per visible part, each independently movable; that's what users
-expect when they modelled a gear pair in one file. Insert-a-single-part is an
-option in the Insert dialog.
+one instance per ticked part, each independently movable; that's what users
+expect when they modelled a gear pair in one file.
 
 **References are live.** An instance follows the latest saved state of its part
-document. Pinning to a version is a later feature (we have no part versions yet).
-Rules that fall out of this:
+document. Rules that fall out of this:
 
-- **No cycles.** v1 assemblies may only insert _part_ documents. Sub-assemblies
-  (assembly-in-assembly) are later and need a cycle check at insert time.
-- **Missing source** (deleted, or not yet synced from Drive) renders as a
-  placeholder bbox with ⚠, never a crash; mates on it are skipped, with ⚠.
-- **Deleting a part document that an assembly uses** warns and names the
-  assembly. Needs a reverse lookup — store `referencedDocIds` on the assembly's
-  `DocMeta` so the check doesn't load every assembly.
+- **No cycles:** assemblies may only insert _part_ documents.
+- **A missing source** (deleted, or not yet synced from Drive) draws nothing;
+  its row shows ⚠ with the reason, and its mates are skipped with ⚠.
+- **Deleting a part document an assembly uses** warns and names the assembly,
+  found through `referencedDocIds` on the assemblies' metas without loading
+  them.
 
 ---
 
@@ -105,30 +97,25 @@ Rules that fall out of this:
 
 Assembly rendering and mating need **no OCCT** in the common case. Each part
 document's `StoredDoc.meshes` already has the tessellation plus `faceGroups` /
-`edgeGroups` with persistent `name`s and analytic `surface` tags. The assembly
-loads those meshes once per source part. **As built in A1**, each instance's
-placement is baked into a copy of the part's mesh (`placement.ts` `placeMesh`,
-cached per instance + transform), so the Viewport sees ordinary world-space
-bodies: picking, highlights, section view and the gizmo drag preview needed no
-changes. Shared geometry + per-instance matrices (the original idea) is the
-fast path A3 animation will need; see the Viewport section.
+`edgeGroups` with persistent `name`s and analytic `surface` tags. Each
+instance's placement is baked into a copy of its part's mesh (`placement.ts`
+`placeMesh`, cached per instance and transform), so the Viewport sees ordinary
+world-space bodies: picking, highlights, section view and the gizmo's drag
+preview work on them unchanged, in the one Viewport App already mounts.
 
-- **Unbuilt sources** (`DocMeta.unbuilt`, came from Drive and never opened):
-  regenerate in the kernel worker in the background, write the meshes back into
-  that part's record, then show it. **Decided in A1:** the same worker, via
-  `kernel.regenerate(resolveDocument(doc).features)`. Its caches are
-  content-keyed and the open model (an assembly's empty part) has nothing to
-  clobber. The write-back is `putMeshesIfUnchanged`, which writes only if the
-  record's `updatedAt` hasn't moved since it was read.
-- **Staleness:** when an assembly opens, compare each source's `updatedAt`
-  against what's loaded. **As built:** sources are re-checked against `listMeta`
-  on window focus / visibility, and only those whose `updatedAt` moved are
-  re-read (`useAssemblySources`).
-- **Connector frames come from the mesh, not the kernel (decided in A2).** The
-  first plan was to have the kernel emit analytic frames. That would have
-  missed most of what people mate: nearly every round wall here is a faceted
-  96-gon prism (cylinders, extruded circles, revolves), so OCCT has no analytic
-  cylinder to report. `frames.ts` fits them from the tessellation instead:
+- **Unbuilt sources** (`DocMeta.unbuilt`: came from Drive, never opened) are
+  regenerated in the same kernel worker in the background and their meshes
+  written back with `putMeshesIfUnchanged`, which writes only if the record's
+  `updatedAt` hasn't moved since it was read. The worker's caches are
+  content-keyed, and the open model (an assembly's empty part) has nothing to
+  clobber.
+- **Staleness:** sources are re-checked against `listMeta` on window focus and
+  visibility, and only those whose `updatedAt` moved are re-read
+  (`useAssemblySources`).
+- **Connector frames come from the mesh, not the kernel.** Nearly every round
+  wall here is a faceted 96-gon prism (cylinders, extruded circles, revolves),
+  so OCCT has no analytic cylinder to report; asking the kernel would miss most
+  of what people mate. `frames.ts` fits them from the tessellation:
   - a flat face → area-weighted centroid + normal;
   - a facet cluster → the axis perpendicular to every facet normal, and a
     circle fit to its vertices. A cluster that also holds tangent flats (a
@@ -136,59 +123,35 @@ fast path A3 animation will need; see the Viewport section.
     narrow facet (< 20° of arc) may stand for the wall;
   - a rim's edge chain → a circle, with Z taken from the flat face it bounds;
   - a straight edge → its midpoint and direction.
-    No kernel change and no rebuild: meshes saved before assemblies work as they
-    are. Nothing outside `src/assembly/` and App's assembly branches changed.
+
+  So meshes saved before assemblies existed work as they are.
+
+**Not built: per-instance matrices.** Re-baking every moved instance's mesh is
+fine for a drag but will be too slow for per-frame animation. The Viewport
+already poses bodies by matrix during a gizmo drag (`transformDragPoses`), so
+the likely path is an optional `matrix` on `FeatureMesh` plus geometry shared
+between instances of one part.
 
 ---
 
-## Mate connectors (the main UX)
+## Mates
 
-Onshape's model, because it's the one that works: **every mate joins two frames**,
-and frames are inferred from what you hover.
+**A mate is a joint, not a constraint.** This is Onshape's model, not
+SolidWorks': each mate holds two frames together and says which motions are
+left free, so one Fastened mate makes a rigid joint (in the constraint model
+it takes three, each removing some freedom). Mates between the same parts
+still combine, through the loop solver (see "Solver"), so three planar mates
+holding a box into a corner also work.
 
-- Hovering a face shows candidate connector points: a planar face's centroid,
-  a circular edge's centre, a cylinder's axis endpoints/midpoint, a vertex. Snap
-  to the nearest; click picks it. **As built (A2):** an ordinary face/edge
-  click picks the entity, which is then highlighted as the selection. A
-  cylinder's Middle / Start / End is chosen in the dialog, and a ghost marker
-  (ring + Z arrow, drawn through parts) shows the frame. Hover candidates and
-  vertex connectors are not built yet. The frame's Z is the face normal / cylinder
-  axis; X is chosen deterministically (a straight edge of that face if any,
-  else world-projected) so the result doesn't flip between rebuilds. (A2 uses
-  world X projected onto the plane, in part coordinates, so it is stable.) By
-  default the two Z axes are opposed, so two faces touch. **Flip** aligns them,
-  and **Rotate 90°** adds quarter turns about Z (`Mate.flip` / `Mate.turns`).
-- A small dialog lets the user flip Z, rotate X by 90°, or add an offset — the
-  same "Select …" arming vocabulary as the other dialogs, and an armed slot
-  must not look filled.
-- **Pre-picking (built 2026-11-08).** With no dialog open, clicking faces and
-  edges in an assembly gathers them (a second click drops one; empty space or
-  Esc clears them), as in a part document, while the part clicked last still
-  gets the move gizmo. Opening a mate (toolbar, M, or a type key) fills its
-  slots from them in order, grouped by part, so two faces then P is a planar
-  mate ready to confirm. It's all or nothing: if any pick can't go in a slot
-  (two faces of one part, more faces than the mate takes, a face nothing
-  anchors to, Width given one face a part), none are used, the dialog opens
-  empty as usual, and a note says the picks were let go. Three faces start a
-  Width mate (both of one part, one of the other, in either click order);
-  for any other type they're one too many. With two or more faces gathered
-  the move gizmo is hidden, so its arrows don't cover the next face.
-- **Turned to fit.** When a new mate's slots fill (or its type changes), and
-  it would be over-constrained the way it faces, the dialog tries Flip (and,
-  for Fastened and Slider, the quarter turns) and keeps the first that holds.
-  Silently: the mate never existed the other way, so a note had nothing to
-  point at and read as an error; the Flip button shows as pressed. The usual case: flush ends, which default to touching. Pressing
-  Flip afterwards is respected.
-- **One mate after another.** Once a new mate is complete and holds,
-  clicking another face makes it and starts the next mate (same type) from
-  that face; the title counts them and Cancel reads Close. Create still
-  makes the mate and closes.
-- Connectors are stored by **persistent face/edge name + fingerprint**, so they
-  survive part edits the same way chamfer refs do (`topoMatch` fallback). An
-  unresolvable connector puts ⚠ on the mate and in the mate list, like a broken
-  feature ref.
-
-**Mate types and their free DOFs** (in the connector frame of `a`):
+**Every mate joins two frames**, inferred from the face or edge picked. Z is
+the face normal, cylinder axis or edge direction; X is world X projected onto
+the plane, in part coordinates, so it doesn't flip between rebuilds. By
+default the two Z axes are opposed, so two faces touch. **Flip** aligns them
+and **Rotate 90°** adds quarter turns about Z. A cylinder or edge offers
+Middle / Start / End, shown by a ghost marker (ring and Z arrow, drawn through
+parts). Connectors are stored by **persistent face/edge name + fingerprint**,
+so they survive part edits the way chamfer refs do; an unresolvable one puts
+⚠ on the mate.
 
 | Mate        | Free DOFs  | Typical use             |
 | ----------- | ---------- | ----------------------- |
@@ -200,342 +163,227 @@ and frames are inferred from what you hover.
 | Ball        | rx, ry, rz | ball joint              |
 | Width       | tx, ty, rz | tab centred in a slot   |
 
-**Width** (added after A2) takes two parallel faces on each part. Each pair's
-connector is the plane midway between them (`midplaneShape`, normal made
-canonical so pick order doesn't matter, origin at the midpoint of the two face
-centroids), stored as `ref` + `ref2` on the connector. It then solves as Planar
-between the two mid-planes, except that by default they point the same way (a
-tab sits in its slot the way up both were modelled) and Flip turns it over. The
-first face half-fills a slot and the prompt asks for "the opposite face of …";
-a face that isn't parallel is refused, and a third face replaces the second.
-Combining Width with a second mate between the same two parts (the usual
-Onshape pairing, e.g. Width + Planar for a tab in a slot) is solved by the
-loop solver.
+DOFs are in the frame of `a`'s connector. Ball uses a rotation vector, not
+Euler angles, so motion through it can't gimbal-lock.
 
-Child placement: `T_b = T_a · C_a · M(values) · C_b⁻¹`, where `C` are the
-connector frames in part space and `M` is the mate's motion built from its DOF
-values. Ball uses a rotation vector (not Euler angles) so animation through it
-doesn't gimbal-lock.
+**Width** takes two parallel faces on each part. Each pair's connector is the
+plane midway between them (`midplaneShape`: normal made canonical so pick
+order doesn't matter, origin at the midpoint of the two face centroids),
+stored as `ref` + `ref2`. It solves as Planar between the two mid-planes,
+except that by default they point the same way (a tab sits in its slot the
+way up both were modelled) and Flip turns it over. Paired with a second mate
+on the same parts (Width + Planar for a tab in a slot) it goes to the loop
+solver.
+
+**Making mates** (`useMates`, `MateDialog`):
+
+- **Picking first.** With no dialog open, clicked faces and edges gather as a
+  selection, as in a part document (click one again to drop it; empty space
+  or Esc clears them), while the part clicked last keeps the move gizmo. With
+  two or more gathered the gizmo is hidden, or its arrows cover the next face.
+  Opening a mate fills its slots from them, grouped by part with the part that
+  has more picks first. **All or nothing:** if any pick can't go in a slot
+  (two faces of one part, more faces than the mate takes, a face nothing
+  anchors to, Width without two parallel faces a part), none are used and the
+  dialog opens empty with a note. Three faces can start a Width mate.
+- **Turned to fit.** When a new mate's slots fill, or its type changes, and it
+  would be over-constrained the way it faces (flush ends default to
+  touching), the dialog tries Flip and, for Fastened and Slider, the quarter
+  turns, and keeps the first that holds. Silently: the mate never existed the
+  other way round, so a note pointed at nothing and read as an error; the
+  Flip button shows as pressed. A Flip pressed afterwards is respected.
+- **One after another.** Once a new mate is complete and holds, clicking
+  another face makes it and starts the next (same type) from that face; the
+  title counts them and Cancel reads Close. Create makes the mate and closes.
+
+**Not built:**
+
+- Hover candidates: a face showing its snap points (centroid, circle centre,
+  axis ends, vertices) before the click.
+- Vertex and offset connectors. Today a frame sits only at a face's centre or
+  along an edge or axis, so fastening a box into another's corner takes three
+  planars rather than one Fastened mate on a vertex.
+- An amber ⚠ when a connector was re-found by fingerprint (today it's silent).
+- The mates list shows the two parts, not the mate's values, and selecting a
+  mate in the list doesn't highlight its connectors outside the Mate dialog.
 
 ---
 
 ## Solver
 
-**A hybrid (decided 2026-11-08): exact composition for the tree, numeric for
-loops.** `src/assembly/solve.ts`, pure TypeScript with no DOM or kernel deps.
+**A hybrid: exact composition for the tree, numeric for loops**
+(`src/assembly/solve.ts`, `lm.ts`; pure TypeScript, no DOM or kernel).
+Plain open chains, which are most assemblies, stay exact and instant; only
+the parts a loop joins are solved numerically. Special-casing combinations of
+mates on one pair (Planar + perpendicular Planar → Slider, …) was rejected:
+closed linkages need the numeric solver anyway.
 
-1. The mate graph gets one extra node, WORLD, with an edge to each grounded
-   instance, so two grounded instances joined by mates are a loop like any
-   other.
-2. The graph is split into biconnected blocks (Tarjan, on the multigraph, so
-   two mates between one pair are a block of their own).
+1. The mate graph gets a WORLD node with an edge to each grounded instance,
+   so two grounded instances joined by mates are a loop like any other.
+2. It's split into biconnected blocks (Tarjan, on the multigraph, so two
+   mates between one pair are a block of their own).
 3. Walking out from WORLD (then from the first instance of each ungrounded
-   group, at its stored transform): a block that is **one mate** is a tree
-   edge and places its far end by composition, as before. Mate direction is
-   re-oriented as the walk reaches it.
-4. A block with **more than one mate** (a loop, or a pair joined twice) is a
-   **loop group**, solved numerically, anchored at the instance the walk
-   reached it from (and any grounded instances in it). Everything hanging off
-   it is composed again. So one four-bar in a mechanism is the only part
-   solved numerically.
+   group, at its stored transform), a block that is **one mate** places its
+   far end by composition, `T_b = T_a · C_a · M(values) · F · C_b⁻¹` (`C` the
+   connector frames, `M` the motion from the DOF values, `F` the face-to-face
+   turn plus quarter turns), reversed when reached from `b`.
+4. A block with **more than one mate** is a **loop group**, solved
+   numerically, anchored at the instance the walk reached it from (and any
+   grounded instances in it). Whatever hangs off it is composed again.
 
 **The numeric part.** Each mate becomes residuals that vanish exactly when it
-holds: the relative motion `(T_a·C_a)⁻¹ · T_b·C_b·F⁻¹` must have zero
-translation and rotation in the directions the mate type forbids (`HELD`).
+holds: the relative motion `(T_a·C_a)⁻¹ · T_b·C_b·F⁻¹` must have no
+translation or rotation in the directions its type forbids (`HELD`).
 Rotations use matrix-column differences (zero only at the right orientation,
 not at a half turn), scaled by the group's size so they weigh like mm.
-Levenberg–Marquardt (`lm.ts`: numeric Jacobian, dense Cholesky, damping λ·I)
-solves for a small motion of each free part about the middle of its
-connectors. λ·I gives no step in directions the mates leave free, so the
-answer is the one nearest the start: **start from where the parts are** (their
-stored placements, carried along with the anchor), which keeps a linkage on
+Levenberg–Marquardt (numeric Jacobian, dense Cholesky, damping λ·I) solves for
+a small motion of each free part about the middle of its connectors. λ·I
+takes no step in directions the mates leave free, so the answer is the one
+nearest the start, and the start is **where the parts are** (their stored
+placements, carried along with the anchor): that's what keeps a linkage on
 its branch (elbow up stays up). If that start doesn't converge, the group is
 retried from a tree composition of its mates' stored values.
 
-- **Values inside a loop group.** A plain number only reports where the mate
-  is: the solver reads values back from the solved poses (`Solution.values`),
-  and `keepSolved` writes them into the mates on every commit, so deleting a
-  mate that turns the loop back into a tree doesn't make anything jump. An
-  **expression** drives: it becomes a residual, which is how a crank angle on a
-  variable turns a four-bar (and how A3 animation will drive loops). Limits are
-  one-sided residuals, active only when crossed.
-- **Conflicts.** Redundant but consistent mates (Width + Planar, three planars
-  into a corner, a slider beside a fastened) solve to zero and raise nothing.
-  If the group can't be satisfied, the latest mate (in list order) whose
+- **Values inside a loop group** only report where the mate is: they're read
+  back from the solved poses, and `keepSolved` writes them into the mates on
+  every commit, so deleting a mate that turns the loop back into a tree
+  doesn't make anything jump. An **expression** drives instead: it becomes a
+  residual, which is how a crank angle on a variable turns a four-bar. Limits
+  are one-sided residuals, active only when crossed.
+- **Conflicts.** Redundant but consistent mates solve to zero and raise
+  nothing. If a group can't be satisfied, the latest mate in list order whose
   removal lets the rest hold is flagged "Over-constrained", and the group is
-  shown solved without it. If no single mate explains it, every mate left
+  shown solved without it; if no single mate explains it, every mate left
   unsatisfied is flagged.
-- **Cost.** Groups are a few parts; solving an already-satisfied group is one
-  residual evaluation. LM stops once the cost stops falling, and the
-  conflict search uses one start per try, since it reruns on every solve
-  while a conflict stands.
+- **Cost.** A satisfied group costs one residual evaluation. LM stops once the
+  cost stops falling, and the conflict search uses one start per try, since it
+  reruns on every solve while a conflict stands.
+- **Keeping placements:** every edit that changes what mates hold (add, edit
+  or delete a mate, ground, remove an instance) stores the solved placements
+  as the instances' own (`keepSolved`), so a part whose mate is deleted stays
+  put.
 
-`Solution.loops` lists each group (`free` instances, `mateIds`), and
-`Solution.mated` every instance a mate positions, tree or loop (the panel's
-"· mated"). `valuesForPose` is the inverse used by dragging. Revolute values
-unwrap past ±180° from the previous value.
+---
 
-**Dragging** a mated part moves it _along its free DOFs_: project the pointer
-drag onto the mate's motion (angle about the axis for revolute, distance along
-the axis for slider, plane for planar) and write the resulting value. Limits
-clamp. A dragged value that came from a variable/expression is not overwritten —
-the drag is refused with the usual "driven by `x`" hint. **As built:** a
-revolute (and a planar/cylindrical part in Rotate mode) gets the rotate gizmo on
-the mate's own axis, so its preview is exact. A ball rotates about world X/Y/Z
-through its centre. Translation uses the ordinary translate gizmo. Each drag
-frame re-solves the assembly with the drag applied (`useMates.dragPoses`) and
-the viewport poses every instance that moves by a matrix (the
-`transformDragPoses` prop). So a mated part moves only as its mate lets it
-(pushing a planar part off its plane leaves it where it is). What a drag does
-follows Onshape's rule (`drag.ts`, chosen 2026-11-08): each part mated to the
+## Moving parts
+
+**Dragging a tree-mated part** moves it along its mate's free DOFs: the drag
+is projected onto the mate's motion (`valuesForPose`) and written as its
+values, clamped to its limits. A revolute (and a planar or cylindrical part in
+Rotate mode) gets the rotate gizmo on the mate's own axis; a ball turns about
+world X/Y/Z through its centre. A fastened part has no gizmo, and a part a
+tree mate positions moves only through that mate. A value that is an
+expression is the user's: the drag is refused, with a "set by" hint. Revolute
+values unwrap past ±180° from the previous value.
+
+**What else moves** follows Onshape's rule (`drag.ts`): each part mated to the
 dragged one stays where it is wherever its mate allows, and only the motion
 that mate forbids carries it along, live during the drag. Dragging a base
 along a planar mate's plane, or turning it about the plane's normal, slides it
-under the part on top; lifting the base carries that part up. This doesn't
-depend on which part was picked first. Parts further along keep their mates'
-values and follow their own neighbour. A neighbour whose mate value is an
-expression is carried rather than rewritten. The preview uses the same rounded
-values the release commits, so letting go never jumps. A fastened part has no gizmo. A part a tree mate positions
-(the mate's far end from the grounded side) can be moved only through that one
-mate.
+under the part on top; lifting it carries that part up. Parts further along
+keep their mates' values and follow their own neighbour; a neighbour whose
+value is an expression is carried, not rewritten. Each drag frame re-solves
+the assembly with the drag applied, and the preview uses the same rounded
+values the release commits, so letting go never jumps.
 
-**Dragging inside a loop group** (`drag.ts`): the part gets the free gizmo,
-and the group is re-solved with a soft pull toward the drag and a weaker pull
-holding each other part of the group where it was (`SolveOptions.goals`),
-then once more with the mates alone so they hold exactly. Every placement is
-stored, so the next solve starts, and stays, there. A four-bar's coupler drags
-the crank and rocker round as far as their hinges allow. Parts hanging off the
-group by a tree mate follow their mate's values (Onshape's "stay where your
-mate allows" rule is only applied one step out from a tree-dragged part).
-Dragging the group's anchor moves the whole group rigidly with it. When
-the anchor is held by nothing (not grounded, and not placed by a mate further
-back), it is free in the drag solve too, with the same weak stay pull as the
-rest, so dragging any part of a locked group moves it all, as dragging the
-anchor does (a lag under 0.01 mm: pulls are squared, so a stay 100× weaker
-than the drag counts 10⁴× less). A group anchored to a grounded part, or to
-one a tree mate places, keeps its anchor fixed.
+**Dragging inside a loop group:** the part gets the free gizmo, and the group
+is re-solved with a soft pull toward the drag and a far weaker pull holding
+each other part where it was (`SolveOptions.goals`), then once more with the
+mates alone so they hold exactly. A four-bar's coupler drags the crank and
+rocker round as far as their hinges allow. An anchor that nothing holds (not
+grounded, not placed by a mate further back) is free in that solve too, so
+dragging either of two parts locked together moves both. Pulls are squared,
+so a stay 100× weaker than the drag counts 10⁴× less: the lag is under
+0.01 mm.
 
-**The Move panel's numbers** (built 2026-11-08, `MoveDialog`,
-`moveReadout.ts`). Like a part's Transform panel, it reads out live while the
-gizmo is dragged (1 mm / 5° snap, as in modelling) and takes typed values,
-committed on Enter or leaving the field (Escape abandons). A part one tree
-mate positions shows that mate's own values (Distance, Angle, Offset X/Y,
-Turn X/Y/Z), live mid-drag from the drag's result; typing one sets the mate
-(an expression drives it). Any other part shows Move X/Y/Z (mm) or Angle (°)
-about the chosen axis: how far it has moved since it was selected (reset when
-the selection, mode or axis changes), measured from where the solver actually
-put it, so a part in a loop group reads what its mates let it do. Typing one
-moves it by the difference, through the same path as a drag.
+**The Move panel** (`MoveDialog`, `moveReadout.ts`) reads out live while the
+gizmo is dragged (1 mm / 5° snap, as in modelling) and takes typed values on
+Enter or leaving the field; Esc cancels. A part one tree mate positions shows
+that mate's own values (Distance, Angle, Offset, Turn), and typing one sets
+the mate. Any other part shows Move X/Y/Z or Angle about the chosen axis: how
+far it has moved since it was selected, measured from where the solver
+actually put it, so a part in a loop reads what its mates let it do. Typing
+one moves it by the difference, through the same path as a drag.
 
-**Keeping placements:** every edit that changes what mates hold (add, edit or
-delete a mate, ground, remove an instance) stores the solved placements as
-the instances' own (`keepPlacements`), so a part whose mate is deleted stays
-put.
+**Not built:** Onshape's "stay where your mate allows" applies one step out
+from a tree-dragged part only; parts hanging off a loop group follow their
+mates' values. A grounded part can't be moved by its gizmo; unground it first.
 
 ---
 
-## Mate relations and animation
+## Not built yet
 
-**Relations** couple two DOF values linearly: gear (`rz_b = −ratio · rz_a`),
-rack-and-pinion (`tz_b = r · rz_a`), screw (`tz_b = pitch · rz_a / 2π`). In a
-tree these are just evaluated in dependency order after the driver is set; a
-relation cycle is an error. Inside a loop group a relation is one more
-residual. Mate values can already be expressions over
-assembly variables, which covers ad-hoc couplings for free.
+**Assembly variables (next, before motion).** A Variables panel in the
+assembly's side panel reusing the part document's (`src/ui/VariablesPanel.tsx`,
+same `Variable` type, same add/rename/edit and expression behaviour), and
+variables usable in mate values and limits with the name autocomplete the
+part tools offer. `AssemblyDoc.variables` is stored and migrated, and
+`solve(…, scope)` / `mateValues(mate, scope)` already evaluate against a scope;
+what's missing is the UI, and `useMates` building that scope from the
+assembly's variables (it passes an empty one, so an expression can only use
+numbers today).
 
-**Animation** (v1): "Animate" on a mate — pick a DOF, from/to (defaulting to
-its limits), duration, and once/loop/bounce. It runs on `requestAnimationFrame`,
-writing the DOF value into a **transient view state, not the document** (no undo
-spam, no autosave per frame); Stop restores the original value. Relations make
-one driver move a whole gear train.
+**Motion.**
 
-Later: a timeline with keyframes over several mates; GIF/video export (reuse
-the frame capture in `scripts/tutorial/gif.mjs`, but in-app via
-`canvas.captureStream` / a GIF encoder).
+- **Relations** couple two DOF values linearly: gear
+  (`rz_b = −ratio · rz_a`), rack-and-pinion (`tz_b = r · rz_a`), screw
+  (`tz_b = pitch · rz_a / 2π`). In a tree they're evaluated in dependency
+  order after the driver is set, and a relation cycle is an error; inside a
+  loop group a relation is one more residual.
+- **Animate** on a mate: pick a DOF, from/to (defaulting to its limits),
+  duration, and once/loop/bounce. It runs on `requestAnimationFrame`, writing
+  the value into **transient view state, not the document** (no undo spam, no
+  autosave per frame), and Stop restores the original. Relations make one
+  driver move a whole gear train. Needs the per-instance matrices above.
+- Later: a timeline with keyframes over several mates; GIF/video export (the
+  frame capture in `scripts/tutorial/gif.mjs`, in-app via
+  `canvas.captureStream` or a GIF encoder).
 
----
+**Agent / MCP** (the agent drives the same document ops): `new_document` gains
+`kind`; `list_documents` reports kind; new tools `insert_instance`, `add_mate`
+(connector refs by face name, as dress-up refs are), `set_mate_value`,
+`ground_instance`, `animate_mate` (returns a screenshot strip).
+`get_scene_summary` on an assembly reports instances, mates, free DOFs and
+⚠s. An assembly section in `src/agent/modeling-guide.md`.
 
-## UI
+**Smaller gaps.**
 
-**Top bar.** `＋ New` becomes a split button: the main click keeps today's
-behaviour (new part — muscle memory and the agent's `new_document` depend on
-it), and a ▾ menu offers **Part** and **Assembly**.
+- Drive-only documents appear on the Open dialog's All tab only, since their
+  kind isn't known until downloaded. The kind in the Drive file's
+  `appProperties` would fix it.
+- The assembly UI lives in `App.tsx`'s assembly branches. Extracting an
+  `AssemblyWorkspace` component was planned and not done.
+- An assembly card's subtitle could read "4 parts · 3 mates"; it gives the
+  part count only.
 
-**Open dialog.** Tabs **All · Parts · Assemblies** over the existing grid
-(default All, remembered in localStorage). Cards get a small kind badge so All
-is readable. Suggestion: an assembly card's subtitle reads "4 parts · 3 mates".
-
-**Assembly workspace** is a separate component (`src/assembly/AssemblyWorkspace.tsx`),
-not more branches in `App.tsx` (8k lines). It shares the top bar, document
-switching, Viewport, view cube, section view and the persistence hook. Its own
-toolbar: **Insert**, **Mate** (with a type picker), **Animate**, **Ground**.
-Its left panel replaces the feature tree with two lists:
-
-- **Instances** — name, source doc, grounded 📌, hide, colour. Double-click
-  opens the source part document (Onshape's "edit part"); coming back reloads
-  that source's meshes.
-- **Mates** — name, type icon, current values, ⚠ if broken or over-constrained.
-  Click to edit; selecting a mate highlights its two connectors.
-
-**Insert dialog:** the Documents list filtered to parts, with a per-part
-checklist (all ticked) when the document has several. **As built:** the first
-instance lands where the part was modelled and is grounded. Each later insert
-is shifted along +X so it starts 10 mm past everything already placed (all
-parts of one insert move together, keeping their relative layout), then can be
-dragged freely before mating. A missing source has no placeholder box: its row
-shows ⚠ with the reason and nothing draws.
-
-**Viewport reuse.** `Viewport.tsx` is built around one document's bodies. The
-assembly needs per-body matrices and shared geometry across instances. A0 must
-decide between (a) a `transforms` + `sharedGeometry` prop on the existing
-Viewport, or (b) extracting its scene/camera/picking core and giving the
-assembly a thin viewport of its own. Prefer (a) if the picking code doesn't
-assume identity transforms everywhere; check before committing.
-
-**Decided in A0: (a).** The Viewport already poses bodies by matrix during a
-transform-gizmo drag (`matrixAutoUpdate = false`, with highlights and outlines
-re-posed by the same motion, and hit normals transformed through `matrixWorld`),
-so most of the per-instance path exists. A1 adds an optional `matrix` to
-`FeatureMesh` and reuses geometry between meshes that share one payload
-object. The assembly keeps the single Viewport App already mounts: no second
-WebGL context, and no remount when switching between kinds.
-
-**Revised in A1:** the single Viewport stays, but A1 doesn't use a matrix.
-Instances are baked world-space meshes (see "Geometry comes from the cache"),
-so no Viewport code changed. Moving an instance reuses the transform gizmo
-(`TransformEdit` with zero values, pivoting at the placed bounds' centre) and
-commits `motion · transform` through `moveInstance`. The `matrix` +
-shared-geometry path is deferred to A3, where per-frame animation makes
-re-baking too slow.
-
----
-
-## Agent / MCP
-
-After the UI exists (the agent drives the same document ops): `new_document`
-gains `kind`; `list_documents` reports kind; new tools `insert_instance`,
-`add_mate` (connector refs by face name, same as dress-up refs),
-`set_mate_value`, `ground_instance`, `animate_mate` (returns a screenshot strip).
-`get_scene_summary` on an assembly reports instances, mates, free DOFs and ⚠s.
-Add an assembly section to `src/agent/modeling-guide.md`.
-
----
-
-## Phases
-
-- **A0 — Kind + shell.** _Done (2026-11-07)._ Browser check:
-  `scripts/verify-assembly-a0.mjs`. `kind` on records/meta/file export/Drive; New split
-  button; Open tabs; an empty assembly workspace that saves, reopens, renames,
-  duplicates and syncs. Viewport reuse decision made.
-- **A1 — Instances.** _Done (2026-11-07)._ Browser check:
-  `scripts/verify-assembly-a1.mjs`. Insert dialog; render from cached meshes with shared
-  geometry; unbuilt-source build path; free-drag with the existing transform
-  gizmo; Instances list (ground, hide, colour, open source); missing-source
-  ⚠; stale-source reload; delete-a-used-part warning. (Rendering went baked
-  meshes, not shared geometry; see the Viewport section.)
-- **A2 — Connectors + mates.** _Done (2026-11-07)._ Browser checks:
-  `scripts/verify-assembly-a2.mjs`, `scripts/verify-assembly-drag.mjs`,
-  `scripts/verify-assembly-width.mjs`. Mesh-fitted connector frames (no kernel
-  change); the six mate types; tree solver; Mate dialog with live preview;
-  drag along DOFs; limits; ⚠ for broken refs and closed loops; mates list. Not
-  built: hover/snap candidates, vertex connectors, and an amber ⚠ when a connector was re-found by fingerprint (it is
-  re-found silently).
-- **After A2:** the Width mate; an assembly toolbar (Insert, then one button
-  per mate type, each opening the Mate dialog on that type or switching the
-  open one); keys I (Insert), M (Mate, last type used) and F R S C P B W (the
-  types), in an "assembly" shortcut mode with its own collision test. The Mate
-  dialog moved to the top left of the view so it doesn't cover the middle.
-- **A3 — Motion.** Animate dialog; gear / rack-and-pinion / screw relations;
-  mate values from variables.
-- **A4 — Agent.** The MCP tools above + modeling-guide section.
-
-- **Hybrid solver.** _Done (2026-11-08)._ Loop groups solved numerically
-  (`lm.ts`, `solve.ts`), drag inside a loop, values kept on commit. Tests:
-  `src/assembly/loops.test.ts` (box in a corner by three planars, Width +
-  Planar tab in a slot, a four-bar turned a full revolution without flipping
-  and dragged by its coupler, a slider-crank, a conflicting fifth mate).
-  Browser check: `scripts/verify-assembly-loops.mjs` (Width + Planar made in
-  the app, dragged, a mate deleted, reload). `verify-assembly-a2.mjs` now
-  expects a redundant second mate to be accepted rather than refused.
-
-**Later, roughly in order:** vertex/offset connectors · sub-assemblies · exploded
-views · BOM · interference/collision check (mesh BVH, per frame during
-animation) · STEP assembly export/import (needs the XCAF rebuild that also
-unblocks `feat/step-assembly-split`) · in-context part editing · version
-pinning.
-
-**Polish (cosmetic, requested 2026-11-09).** _Done (2026-11-09)._
-
-- **Ground icon.** The instance row's ground toggle is `GroundIcon`
-  (`src/ui/icons.tsx`): the electrical ground symbol, a stem down into three
-  bars each shorter than the one above, replacing the `⏚` glyph.
-- **Mate icons.** All seven are drawn as one set of line icons
-  (`src/assembly/MateIcon.tsx`, in the `ui/icons.tsx` style), each showing the
-  motion the mate leaves free: Fastened two plates and a bolt, Revolute a turn
-  about a pin, Slider a block between two arrows, Cylindrical a shaft with
-  arrows and a turn, Planar a block on a plane with a sideways arrow, Ball a
-  ball in its socket, Width a tab between two walls. The toolbar and the mates
-  list use them; `MATE_TYPES` no longer carries a glyph.
-- **New ▾ menu.** "Part" is now "Parts".
-- **Open dialog.** Part documents carry a "Parts" pill too, quieter than the
-  "Assembly" one, so every row says what it is.
-
-**Assembly variables (not cosmetic, requested 2026-11-09).** Assemblies should
-support variables the way parts do, UI included: a Variables panel in the
-assembly's side panel that reuses the part document's own
-(`src/ui/VariablesPanel.tsx`, same `Variable` type, same add/rename/edit and
-expression behaviour), and variables usable in mate values and limits, with
-the same name autocomplete the part tools offer where they take expressions. What exists: `AssemblyDoc.variables` is stored and
-migrated, and the solver's `solve(…, scope)` / `mateValues(mate, scope)`
-already evaluate expressions against a scope. What's missing: any UI to
-create or edit a variable, and `useMates` building that scope from the
-assembly's variables (it always passes an empty one, so an expression can
-only use numbers today). A3's "mate values from variables" and animating a
-mate through a variable build on this, so it comes before A3.
+**Later, roughly in order:** sub-assemblies (need a cycle check at insert) ·
+exploded views · BOM · interference/collision check (mesh BVH, per frame
+during animation) · STEP assembly export/import (needs the XCAF rebuild that
+also unblocks `feat/step-assembly-split`) · in-context part editing · version
+pinning (parts have no versions yet).
 
 ---
 
 ## Testing
 
-- `src/assembly/solve.test.ts`: composition per mate type against hand-computed
-  poses, BFS order independence, loop detection, limit clamping, relations.
-- Connector inference unit-tested on synthetic face frames (no OCCT in Node).
-- Playwright harness per phase: make two part docs, make an assembly, insert,
-  mate revolute, drag, animate, screenshot before/after — and reload to prove
-  the assembly persisted and the references resolved.
+- Unit tests in `src/assembly/`: `solve.test.ts` (composition per mate type,
+  order independence, limits), `loops.test.ts` (box in a corner by three
+  planars, Width + Planar, a four-bar turned a full revolution and dragged by
+  its coupler, a slider-crank, conflicts, locked parts dragged from either
+  side), `drag.test.ts`, `frames.test.ts` (connector fitting on synthetic
+  meshes, no OCCT in Node), `moveReadout.test.ts`.
+- Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
+  `width`, `loops`, `move`), against `npm run dev`; set `PW_EXE` to use a
+  pre-installed Chromium. **`a0` fails two steps** ("＋ New makes a part
+  again" and the agent step after it), and has since before the loop solver;
+  not yet looked into. `verify-all` doesn't run the assembly checks.
 
 ## Open questions
 
-- Should a grounded instance be re-movable by its gizmo (Onshape: no — unground
-  first)? Proposed: no.
-- Mate offsets in the mate dialog vs. only on connectors? Proposed: connectors
-  only — one place to look.
-- When a source part's part count changes (a cut now splits a body), what
-  happens to instances of `ext1#1`? Proposed: instance resolves by partId; a
-  vanished partId is a missing source with ⚠.
-- Should the Mate dialog say when a mate sits in a loop group (its typed
-  plain values only report there)? Not built yet; a one-line note would do.
-
----
-
-## Decision: multiple mates and a real solver (2026-11-08)
-
-The question was whether a rigid joint should take three mates, as in
-SolidWorks-style assembly (each mate a constraint removing some freedom), or
-one, as in Onshape-style assembly (each mate a joint saying which motions are
-left free), which is what Open Poly built. Three options were weighed:
-
-- **A** — joint-only, plus vertex/offset connectors so one mate always
-  suffices. No Width combos, no loops.
-- **B** — compose mates on the same pair into one joint by special cases
-  (Planar + perpendicular Planar → Slider, …). A growing table, no loops.
-- **C** — a numeric solver: every mate becomes equations between its parts'
-  poses, solved together.
-
-**Chosen: C, as a hybrid** (built: see "Solver"). The tree stays for plain
-open chains, so most assemblies are exact and instant. B was skipped because
-closed linkages need C anyway. The mate types, the dialog and the saved data
-didn't change. Answers to the two open questions: three planar mates holding
-a box in a corner just work, and the solver came before vertex/offset
-connectors, which are still worth doing (they make a single Fastened mate
-enough where today it takes offsets).
+- Mate offsets in the Mate dialog, or only on connectors (one place to look)?
+  Proposed: connectors only.
+- When a source part's part count changes (a cut splits a body), what happens
+  to instances of `ext1#1`? Proposed: an instance resolves by `partId`; a
+  vanished `partId` is a missing source with ⚠.
+- Should the Mate dialog say when a mate sits in a loop group, where its typed
+  plain values only report? A one-line note would do.

@@ -1,6 +1,6 @@
 // The assembly document: instances of parts from OTHER documents, placed in
 // one space and related by mates. See docs/ASSEMBLY-PLAN.md for the model and
-// the phases; this file is the persisted shape only.
+// what is not built yet; this file is the persisted shape only.
 //
 // An assembly never holds geometry of its own. Each instance names a part of a
 // part document (`source`), and its shape is whatever that document's latest
