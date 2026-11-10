@@ -245,4 +245,22 @@ describe("putMeshesIfUnchanged", () => {
     );
     expect((await listMeta())[0].referencedDocIds).toEqual(["p1", "p2"]);
   });
+
+  it("an assembly's meta counts its instances and mates", async () => {
+    const conn = (instanceId: string) => ({
+      instanceId,
+      ref: { kind: "face" as const, name: "f" },
+      anchor: "center" as const,
+    });
+    const mate = (id: string) => ({ id, name: id, type: "revolute" as const, a: conn("1"), b: conn("2") });
+    await putDoc(
+      record("a", "Arm", {
+        assembly: { instances: [], mates: [mate("m1"), mate("m2"), mate("m3")], variables: [] },
+      }),
+    );
+    expect((await listMeta())[0]).toMatchObject({ instanceCount: 0, mateCount: 3 });
+    // A corrupt assembly still gets a meta row (so it can be exported or deleted).
+    await putDoc(record("b", "Broken", { assembly: { instances: [], mates: "nope", variables: [] } as never }));
+    expect((await listMeta()).find((m) => m.id === "b")).toMatchObject({ mateCount: 0 });
+  });
 });

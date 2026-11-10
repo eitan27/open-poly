@@ -315,7 +315,11 @@ export function DocumentsDialog({
                   <span className="docs-sub">
                     edited {timeAgo(m.updatedAt)} ·{" "}
                     {m.kind === "assembly" ? (
-                      `${plural(m.instanceCount ?? 0, "part")} placed`
+                      // "4 parts · 3 mates", as a part's reads "1 feature · 1 part".
+                      <>
+                        {plural(m.instanceCount ?? 0, "part")}
+                        {m.mateCount !== undefined && ` · ${plural(m.mateCount, "mate")}`}
+                      </>
                     ) : (
                       <>
                         {plural(m.featureCount, "feature")}

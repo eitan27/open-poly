@@ -14,8 +14,8 @@ shipped when.
 `StoredDoc.assembly`; there is no separate `kind` field on the record to drift
 from it. `doc` stays required and is always an empty `Document` on an
 assembly, so the many paths that read `record.doc` need no branch. `DocMeta`
-has `kind?: "assembly"` (absent = part) plus `instanceCount` and
-`referencedDocIds`, derived in `metaOf`. **The hazard:** any path that
+has `kind?: "assembly"` (absent = part) plus `instanceCount`, `mateCount`
+and `referencedDocIds`, derived in `metaOf`. **The hazard:** any path that
 rebuilds a record from parts (`{ name, doc }`) drops `assembly` and silently
 turns the assembly into an empty part. Every such site in the persistence hook
 and the sync engine carries it, and tests cover the round trips. A new site
@@ -355,8 +355,6 @@ mates' values. A grounded part can't be moved by its gizmo; unground it first.
   `appProperties` would fix it.
 - The assembly UI lives in `App.tsx`'s assembly branches. Extracting an
   `AssemblyWorkspace` component was planned and not done.
-- An assembly card's subtitle could read "4 parts · 3 mates"; it gives the
-  part count only.
 
 **Later, roughly in order:** sub-assemblies (need a cycle check at insert) ·
 exploded views · BOM · interference/collision check (mesh BVH, per frame

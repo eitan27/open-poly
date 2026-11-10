@@ -110,7 +110,7 @@ check(
   asms.join(" | "),
 );
 const sub = await page.locator(".docs-row", { hasText: "Arm" }).locator(".docs-sub").textContent();
-check("an assembly's subtitle counts placed parts", /0 parts placed/.test(sub ?? ""), sub ?? "");
+check("an assembly's subtitle counts its parts and mates", /0 parts · 0 mates/.test(sub ?? ""), sub ?? "");
 await page.screenshot({ path: "/tmp/asm-a0-docs.png" });
 await page.locator(".docs-tabs button", { hasText: "Parts" }).click();
 const parts = await rowNames();

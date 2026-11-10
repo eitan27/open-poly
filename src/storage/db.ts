@@ -60,8 +60,10 @@ export interface DocMeta {
   partCount: number;
   /** Absent = a part document. */
   kind?: "assembly";
-  /** Assemblies only: how many instances it places. */
+  /** Assemblies only: how many instances it places, and how many mates join
+   *  them (absent on a meta row written before mates were counted). */
   instanceCount?: number;
+  mateCount?: number;
   /** Assemblies only: the documents its instances come from — what lets a
    *  delete warn "used in …" without loading every assembly. */
   referencedDocIds?: string[];
@@ -90,6 +92,7 @@ function metaOf(record: StoredDoc): DocMeta {
       ? {
           kind: "assembly" as const,
           instanceCount: Array.isArray(record.assembly.instances) ? record.assembly.instances.length : 0,
+          mateCount: Array.isArray(record.assembly.mates) ? record.assembly.mates.length : 0,
           referencedDocIds: Array.isArray(record.assembly.instances)
             ? [...new Set(record.assembly.instances.map((i) => i?.source?.docId).filter((d) => typeof d === "string"))]
             : [],

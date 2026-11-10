@@ -468,7 +468,7 @@ describe("assembly documents", () => {
     expect(rec?.assembly).toEqual(anAssembly());
     expect(rec?.meshes).toBeUndefined();
     const meta = (await listMeta()).find((m) => m.id === id);
-    expect(meta).toMatchObject({ kind: "assembly", instanceCount: 1, partCount: 0 });
+    expect(meta).toMatchObject({ kind: "assembly", instanceCount: 1, mateCount: 0, partCount: 0 });
     expect(meta?.unbuilt).toBeUndefined();
   });
 
