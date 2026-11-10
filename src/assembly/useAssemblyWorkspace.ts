@@ -47,6 +47,9 @@ export function useAssemblyWorkspace({
   onPainted: () => void;
 }) {
   const isAssembly = assembly !== null;
+  // Called from an effect keyed on the sources, not on the callback.
+  const onPaintedRef = useRef(onPainted);
+  onPaintedRef.current = onPainted;
   const asmDocIds = useMemo(() => (assembly ? referencedDocIds(assembly) : []), [assembly]);
   const { sources: asmSources, settled: asmSourcesSettled } = useAssemblySources({
     assemblyId: isAssembly ? activeId : null,
@@ -102,7 +105,7 @@ export function useAssemblyWorkspace({
     return out;
   }, [assembly, asmSources, asmPlacements]);
   useEffect(() => {
-    if (isAssembly && asmSourcesSettled) onPainted();
+    if (isAssembly && asmSourcesSettled) onPaintedRef.current();
   }, [isAssembly, asmSourcesSettled, assemblyMeshes]);
 
   const insertParts = (docId: string, parts: SourcePart[]) => {
