@@ -634,6 +634,8 @@ export function useMates({
     dragFor,
     commitDrag,
     dragPoses,
+    /** A connector's frame in its part, for `a` (see solve's connectorFrame). */
+    frameFor,
   };
 }
 

@@ -234,6 +234,10 @@ export interface SolveOptions {
    *  pose as far as the group's mates allow, while the rest of the group moves
    *  as little as it can — what dragging a part inside a loop does. */
   goals?: ReadonlyMap<string, Mat4>;
+  /** One free DOF of one mate set to `value` for this solve only, and driving
+   *  it as an expression would: inside a loop the group follows it (what
+   *  animating a mate does). Limits don't clamp it. */
+  drive?: { mateId: string; dof: Dof; value: number };
 }
 
 /** A free DOF whose value is an expression (a variable, a formula) rather than
@@ -273,6 +277,8 @@ interface Usable {
   cb: Mat4;
   v: Partial<Record<Dof, number>>;
   rel: Mat4;
+  /** The DOF SolveOptions.drive sets, on that mate. */
+  drive?: Dof;
 }
 
 /** An edge of the mate graph: a mate, or (no `usable`) an instance's
@@ -334,8 +340,10 @@ export function solve(
       problems.set(mate.id, `Bad value: ${(e as Error).message}`);
       continue;
     }
+    const drive = opts.drive?.mateId === mate.id && MATE_DOFS[mate.type].includes(opts.drive.dof) ? opts.drive : null;
+    if (drive) v = { ...v, [drive.dof]: drive.value };
     values.set(mate.id, v);
-    usable.push({ mate, ca, cb, v, rel: mateRelative(mate, ca, cb, v) });
+    usable.push({ mate, ca, cb, v, rel: mateRelative(mate, ca, cb, v), drive: drive?.dof });
   }
 
   const edges: Edge[] = [];
@@ -544,7 +552,7 @@ function solveGroup(
     const driven: GroupMate["driven"] = [];
     const limits: GroupMate["limits"] = [];
     for (const d of MATE_DOFS[u.mate.type]) {
-      if (isDriven(u.mate, d)) {
+      if (u.drive === d || isDriven(u.mate, d)) {
         driven.push({ d, value: u.v[d] ?? 0 });
         continue;
       }

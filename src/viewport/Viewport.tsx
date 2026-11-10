@@ -213,6 +213,10 @@ interface SceneState {
    *  re-pin the dragged matrix onto each rebuild until the body's mesh reference
    *  actually changes (the real geometry), avoiding a flash back to the origin. */
   pendingCommits: { bodyId: string; delta: THREE.Matrix4; meshRef: unknown }[];
+  /** Bodies posed by ViewportApi.poseBodies (an assembly animation): each one's
+   *  motion from where its mesh was baked. Re-applied after a rebuild, like
+   *  pendingCommits. Empty when nothing is posed. */
+  bodyPoses: Map<string, THREE.Matrix4>;
   // The rubber-band preview while drawing (line/rect/arc/polygon), as a fat line
   // so it reads as clearly as a committed sketch line.
   previewLine: Line2;
@@ -1386,6 +1390,7 @@ export function Viewport({
       gizmoProxy,
       liveDrag: null,
       pendingCommits: [],
+      bodyPoses: new Map(),
       ghostGroup,
       ghostMaterial,
       ghostLineMaterial,
@@ -1526,6 +1531,7 @@ export function Viewport({
           ? ld.delta
           : (ld?.followers.get(featureId)?.delta ??
             state.pendingCommits.find((p) => p.bodyId === featureId)?.delta ??
+            state.bodyPoses.get(featureId) ??
             null);
       const pushRange = (
         geom: THREE.BufferGeometry,
@@ -1927,6 +1933,27 @@ export function Viewport({
           const dist = Math.max(halfH, halfW / aspect) / t;
           startTween(center.clone().add(N.clone().multiplyScalar(dist)), new THREE.Vector3(...frame.vAxis), center);
         }
+      },
+      poseBodies(poses) {
+        const next = new Map<string, THREE.Matrix4>();
+        for (const [id, m] of poses ?? []) next.set(id, new THREE.Matrix4().fromArray(m));
+        for (const o of state.group.children) {
+          const id = o.userData.featureId as string | undefined;
+          if (!id || state.liveDrag?.bodyId === id) continue;
+          const m = next.get(id);
+          if (m) {
+            o.matrixAutoUpdate = false;
+            o.matrix.copy(m);
+            o.matrixWorldNeedsUpdate = true;
+          } else if (state.bodyPoses.has(id) && !state.pendingCommits.some((pc) => pc.bodyId === id)) {
+            // Back where its mesh was baked.
+            o.matrix.identity();
+            o.matrixAutoUpdate = true;
+            o.matrixWorldNeedsUpdate = true;
+          }
+        }
+        state.bodyPoses = next;
+        applyHighlights();
       },
       worldToScreen(p) {
         const v = new THREE.Vector3(p[0], p[1], p[2]).project(camera);
@@ -3636,6 +3663,14 @@ export function Viewport({
       }
       return true;
     });
+    // An animation's poses, onto the rebuilt objects.
+    for (const o of state.group.children) {
+      const m = state.bodyPoses.get(o.userData.featureId as string);
+      if (!m) continue;
+      o.matrixAutoUpdate = false;
+      o.matrix.copy(m);
+      o.matrixWorldNeedsUpdate = true;
+    }
     applyHighlightsRef.current();
     // sectionView.enabled is included so toggling section view rebuilds the
     // stencil-cap group (which must be absent, not just hidden, when off — see

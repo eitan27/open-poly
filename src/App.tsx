@@ -226,6 +226,8 @@ import type { AssemblyDoc } from "./assembly/types";
 import { AssemblyPanel } from "./assembly/AssemblyPanel";
 import { InsertDialog } from "./assembly/InsertDialog";
 import { MoveDialog } from "./assembly/MoveDialog";
+import { AnimateDialog } from "./assembly/AnimateDialog";
+import { animatableDofs } from "./assembly/animate";
 import { renameInMates, removeInstances, updateInstance, updateMate } from "./assembly/assembly";
 import { MateDialog } from "./assembly/MateDialog";
 import { useAssemblyWorkspace } from "./assembly/useAssemblyWorkspace";
@@ -1937,6 +1939,8 @@ export default function App() {
     asmTransformEdit,
     asmVariables,
     asmVariablesOpen,
+    animation: mateAnimation,
+    openAnimation,
     assemblyMeshes,
     canMate,
     cancelInstanceMove,
@@ -1962,6 +1966,7 @@ export default function App() {
     genId,
     buildDocument,
     onPainted: () => setPaintSeq((s) => s + 1),
+    viewApi: viewApiRef,
   });
   // The first-connect choice and auth outcomes need the user: bring the dialog
   // up for them. Later issues (conflicts…) only badge the button — they never
@@ -7008,8 +7013,11 @@ export default function App() {
                   onNewMate={() => openMateDialog()}
                   onEditMate={(id) => {
                     setAsmSelected([]);
+                    mateAnimation.close();
                     mates.openEdit(id);
                   }}
+                  onAnimateMate={openAnimation}
+                  animatingMateId={mateAnimation.mateId}
                   onRenameMate={(id, name) => {
                     const m = assembly.mates.find((x) => x.id === id);
                     if (m) setAssembly(updateMate(assembly, { ...m, name }), `asm-mate-name:${id}`);
@@ -7232,6 +7240,11 @@ export default function App() {
               cameraInertia={settings.cameraInertia}
               apiRef={viewApiRef}
             />
+            {isAssembly &&
+              (() => {
+                const m = mateAnimation.mateId ? assembly?.mates.find((x) => x.id === mateAnimation.mateId) : undefined;
+                return m ? <AnimateDialog mate={m} anim={mateAnimation} dofs={animatableDofs(m)} /> : null;
+              })()}
             {asmMoveOpen && asmMoveTarget && (
               <MoveDialog
                 name={asmMoveTarget.name}

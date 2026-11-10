@@ -12,7 +12,7 @@ import { evaluateVariables, validateVariableNames } from "../document/document";
 import { evaluateExpression } from "../document/expression";
 import { featureIdOf, sameSelection, type Selection } from "../selection/types";
 import { transformMatrix } from "../viewport/sceneMath";
-import type { FeatureMesh, TransformDelta, TransformEdit } from "../viewport/types";
+import type { FeatureMesh, TransformDelta, TransformEdit, ViewportApi } from "../viewport/types";
 import { insertInstances, keepSolved, referencedDocIds, removeInstances } from "./assembly";
 import { dofLabel } from "./mateTypes";
 import type { MoveField, MoveMode, WorldAxis } from "./MoveDialog";
@@ -21,6 +21,7 @@ import { boundsCenter, IDENTITY, meshBounds, placeMesh, translation } from "./pl
 import { formatValue } from "./solve";
 import type { AssemblyDoc, Mate, MateType } from "./types";
 import { useAssemblySources, type BuildDocument, type SourcePart } from "./useAssemblySources";
+import { useMateAnimation } from "./useMateAnimation";
 import { useMates } from "./useMates";
 
 /** The clearance an inserted part keeps from what's already placed. */
@@ -34,6 +35,7 @@ export function useAssemblyWorkspace({
   genId,
   buildDocument,
   onPainted,
+  viewApi,
 }: {
   /** The open assembly, or null when the open document is a part. */
   assembly: AssemblyDoc | null;
@@ -45,6 +47,8 @@ export function useAssemblyWorkspace({
   buildDocument: BuildDocument | null;
   /** Every source has loaded (or failed to): the assembly has painted, for its thumbnail. */
   onPainted: () => void;
+  /** The viewport, which an animation poses parts through. */
+  viewApi: { current: ViewportApi | null };
 }) {
   const isAssembly = assembly !== null;
   // Called from an effect keyed on the sources, not on the callback.
@@ -58,6 +62,22 @@ export function useAssemblyWorkspace({
   });
   const mates = useMates({ assembly, setAssembly, sources: asmSources, genId });
   const asmPlacements = mates.solution?.placements;
+  const animation = useMateAnimation({
+    assembly,
+    solution: mates.solution,
+    frameFor: mates.frameFor,
+    viewApi,
+  });
+  // While the Animate dialog is open, the view is its: nothing is picked or
+  // moved, so no frame is drawn over a part the gizmo is on.
+  const animating = animation.mateId !== null;
+  /** Open the Animate dialog on a mate, closing what would compete with it. */
+  const openAnimation = (mateId: string) => {
+    mates.close();
+    setAsmSelected([]);
+    setAsmFaces([]);
+    animation.open(mateId);
+  };
   const [asmSelected, setAsmSelected] = useState<string[]>([]);
   const asmSelectedSet = useMemo(() => new Set(asmSelected), [asmSelected]);
   // An assembly's variables (the part document's panel, reused). Collapsed
@@ -149,11 +169,13 @@ export function useAssemblyWorkspace({
       return;
     }
     if (!canMate || insertOpen) return;
+    animation.close();
     setAsmSelected([]);
     mates.openNew(type, asmFaces);
     setAsmFaces([]);
   };
   const handleAssemblyPick = (picked: Selection | null) => {
+    if (animating) return;
     if (mates.pick(picked)) return;
     const id = picked ? featureIdOf(picked) : null;
     const isInstance = !!id && !!assembly?.instances.some((i) => i.id === id);
@@ -350,6 +372,8 @@ export function useAssemblyWorkspace({
     asmTransformEdit,
     asmVariables,
     asmVariablesOpen,
+    animation,
+    openAnimation,
     assemblyMeshes,
     canMate,
     cancelInstanceMove,

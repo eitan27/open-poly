@@ -5,6 +5,7 @@ import { shortcutHint, shortcutName } from "../settings/shortcuts";
 import { EyeIcon, GroundIcon } from "../ui/icons";
 import { MateIcon } from "./MateIcon";
 import { mateValuesText } from "./mateTypes";
+import { MATE_DOFS } from "./solve";
 import type { AssemblyDoc, Dof, Instance } from "./types";
 import type { SourceState } from "./useAssemblySources";
 import "./AssemblyPanel.css";
@@ -38,6 +39,10 @@ interface Props {
   onEditMate: (id: string) => void;
   onRenameMate: (id: string, name: string) => void;
   onRemoveMate: (id: string) => void;
+  /** Open the Animate dialog on a mate with free DOFs. */
+  onAnimateMate: (id: string) => void;
+  /** The mate the Animate dialog is open on. */
+  animatingMateId: string | null;
   /** Show the shortcut keys on the buttons (the ? toggle). */
   showShortcuts: boolean;
 }
@@ -187,7 +192,7 @@ export function AssemblyPanel(p: Props) {
                 key={m.id}
                 className={
                   "solid-row asm-row asm-mate-row" +
-                  (p.editingMateId === m.id ? " selected" : "") +
+                  (p.editingMateId === m.id || p.animatingMateId === m.id ? " selected" : "") +
                   (m.suppressed ? " dim" : "")
                 }
                 onClick={() => p.onEditMate(m.id)}
@@ -211,6 +216,19 @@ export function AssemblyPanel(p: Props) {
                   <span className="row-badge warn asm-mate-warn" title={p.mateWarnings.get(m.id)}>
                     ⚠
                   </span>
+                )}
+                {!bad && !m.suppressed && MATE_DOFS[m.type].length > 0 && (
+                  <button
+                    type="button"
+                    className="row-icon asm-mate-animate"
+                    title="Animate the mate"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      p.onAnimateMate(m.id);
+                    }}
+                  >
+                    ▶
+                  </button>
                 )}
                 <button
                   type="button"

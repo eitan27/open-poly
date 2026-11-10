@@ -154,11 +154,11 @@ preview work on them unchanged, in the one Viewport App already mounts.
 
   So any saved mesh can be mated as it is, with no rebuild.
 
-**Not built: per-instance matrices.** Re-baking every moved instance's mesh is
-fine for a drag but will be too slow for per-frame animation. The Viewport
-already poses bodies by matrix during a gizmo drag (`transformDragPoses`), so
-the likely path is an optional `matrix` on `FeatureMesh` plus geometry shared
-between instances of one part.
+**Not built: per-instance matrices.** Every instance's mesh is baked where
+the solver puts it. Animation doesn't need more: it poses the baked meshes by
+matrix (see Motion). Geometry shared between instances of one part, with an
+optional `matrix` on `FeatureMesh`, would save memory and the re-bake after an
+edit, but nothing is slow enough yet to need it.
 
 ---
 
@@ -362,6 +362,35 @@ mates' values.
 
 ---
 
+## Motion
+
+**Animate** (▶ on a mate's row, `AnimateDialog`, `useMateAnimation`,
+`animate.ts`) sweeps one free DOF from a value to another in a time, once,
+looping or bouncing. It starts between the DOF's limits when both are set,
+else from where it is: a full turn for a rotation (looping), 20 mm for a
+translation (bouncing).
+
+- **Nothing is written to the document.** Each frame is a `solve` with
+  `SolveOptions.drive` setting the DOF, and the parts are posed through
+  `ViewportApi.poseBodies`: a matrix per part, from where its mesh was baked to
+  where the frame puts it, as a gizmo drag poses bodies. No mesh is re-baked and
+  React doesn't re-render per frame; only the readout updates, ten times a
+  second. Stop, Close, or any edit to the assembly releases the poses. A
+  finished Once holds its last frame until then.
+- **A driven DOF drives a loop.** Inside a loop group a plain-number value
+  only reports where its parts are (see Solver), so `drive` counts as an
+  expression would, and animating a four-bar's crank turns the linkage. Each
+  frame is seeded from the one before (`animator`), so a loop stays on the
+  branch it's on. Limits don't clamp `drive`: the sweep was chosen with them in
+  view, and a sweep past them is what the user typed.
+- **Connector frames are fitted once per Play**, cached by connector:
+  nothing that moves them can change while the dialog is open.
+- **The view is the dialog's** while it's open: picks are ignored, and the
+  selection, the Move panel and the Mate dialog are closed. Opening a Mate
+  dialog or editing a mate closes it.
+- If a frame leaves a mate the solver can't satisfy, the animation stops there
+  and says which.
+
 ## Not built yet
 
 **Motion.**
@@ -371,11 +400,8 @@ mates' values.
   (`tz_b = pitch · rz_a / 2π`). In a tree they're evaluated in dependency
   order after the driver is set, and a relation cycle is an error; inside a
   loop group a relation is one more residual.
-- **Animate** on a mate: pick a DOF, from/to (defaulting to its limits),
-  duration, and once/loop/bounce. It runs on `requestAnimationFrame`, writing
-  the value into **transient view state, not the document** (no undo spam, no
-  autosave per frame), and Stop restores the original. Relations make one
-  driver move a whole gear train. Needs the per-instance matrices above.
+  Animate then makes one driver move a whole gear train: a relation's
+  driven mates take their value from the driver's in each frame's solve.
 - Later: a timeline with keyframes over several mates; GIF/video export (the
   frame capture in `scripts/tutorial/gif.mjs`, in-app via
   `canvas.captureStream` or a GIF encoder).
@@ -408,7 +434,8 @@ pinning (parts have no versions yet).
   planars, Width + Planar, a four-bar turned a full revolution and dragged by
   its coupler, a slider-crank, conflicts, locked parts dragged from either
   side, a box seated in a corner by one Fastened mate on vertices),
-  `drag.test.ts`, `frames.test.ts` (connector fitting, vertices, offsets and
+  `drag.test.ts`, `animate.test.ts` (timing, default sweeps, a four-bar's
+  crank turned a full revolution by `drive`), `frames.test.ts` (connector fitting, vertices, offsets and
   candidate points on synthetic meshes, no OCCT in Node), `variables.test.ts`
   (mate values and limits naming variables, in the tree, a loop and a drag),
   `assembly.test.ts` (including `connectorWarnings`), `mateTypes.test.ts`
@@ -416,7 +443,7 @@ pinning (parts have no versions yet).
   uses is `src/document/renameVariable.test.ts`; the mate count is in
   `src/storage/db.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
-  `width`, `loops`, `move`, `variables`, `pin`, `vertex`), against `npm run dev`; set
+  `width`, `loops`, `move`, `variables`, `pin`, `vertex`, `animate`), against `npm run dev`; set
   `PW_EXE` to use a pre-installed Chromium (scripts on `scripts/lib/harness.mjs`
   read `CHROMIUM_PATH` instead). `pin` is the one Cylindrical mate
   between real faceted parts (a cylinder primitive in an extruded-circle

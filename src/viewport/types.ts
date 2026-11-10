@@ -165,6 +165,11 @@ export interface ViewportApi {
   frameSketchBounds(frame: PlaneFrameData, min: [number, number], max: [number, number]): void;
   /** Project a world point to pixel coords relative to the canvas top-left. */
   worldToScreen(p: [number, number, number]): { x: number; y: number };
+  /** Pose bodies by matrix, without re-baking their meshes: each id's motion
+   *  from where its mesh was baked (column-major 4×4). Bodies left out go back
+   *  to their meshes; null releases them all. For assembly animation, which
+   *  calls this every frame. */
+  poseBodies(poses: ReadonlyMap<string, readonly number[]> | null): void;
   /** The ordered world-space polyline of a body edge (by feature + edge id), as
    *  drawn — the source geometry the Project/Convert sketch tool projects onto
    *  the active plane. Null if that edge isn't currently rendered. */
