@@ -217,6 +217,14 @@ shows its type as one button opening a menu of all seven, not the whole row.
 A custom menu, not a `<select>`: on macOS a select's native popup swallows the
 next click on the canvas, which here is the first face pick.
 
+- **Where it could anchor.** While a slot listens, the face, edge or vertex
+  under the pointer shows its candidate connector points (`candidatePoints`):
+  a face's centre (a cylinder's middle and ends) and its corners, an edge's
+  middle and ends, a vertex itself. Small opaque markers on top of everything
+  (the "marker" ghost); the one a click takes, the entity's centre or the
+  vertex, is larger. A click near a corner already picks the vertex, so the
+  markers show what's there rather than snap. The view's hover clears when
+  the pointer leaves it, so nothing stays lit under a dialog.
 - **Picking first.** With no dialog open, clicked faces and edges gather as a
   selection, as in a part document (click one again to drop it; empty space
   or Esc clears them), while the part clicked last keeps the move gizmo. With
@@ -239,11 +247,6 @@ next click on the canvas, which here is the first face pick.
 - **One after another.** Once a new mate is complete and holds, clicking
   another face makes it and starts the next (same type) from that face; the
   title counts them and Cancel reads Close. Create makes the mate and closes.
-
-**Not built:**
-
-- Hover candidates: a face showing its snap points (centroid, circle centre,
-  axis ends, vertices) before the click.
 
 ---
 

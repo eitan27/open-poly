@@ -177,6 +177,9 @@ interface SceneState {
   ghostFillLineMaterial: THREE.LineBasicMaterial;
   ghostCutMaterial: THREE.MeshStandardMaterial;
   ghostCutLineMaterial: THREE.LineBasicMaterial;
+  /** Small point markers (an assembly's candidate connector points): opaque
+   *  and on top of everything, so they read against any part colour. */
+  ghostMarkerMaterial: THREE.MeshBasicMaterial;
   /** A whole body a Boolean subtract will consume — the removal red as an
    *  ordinary, occluded ghost (see the material's own comment). */
   ghostCutBodyMaterial: THREE.MeshStandardMaterial;
@@ -285,6 +288,8 @@ export const GHOST_CUT_COLOR = 0xff6b5a;
  *  delta pair is read as a pair, and green/red carries "gained/lost" with no
  *  legend, where cyan/red would just look like two unrelated previews. */
 export const GHOST_FILL_COLOR = 0x51e08a;
+/** Point markers (variant "marker"): a near-white that shows on any part. */
+const GHOST_MARKER_COLOR = 0xf4f7ff;
 const EDGE_SEL_COLOR = new THREE.Color(SELECT_COLOR);
 const EDGE_HOV_COLOR = new THREE.Color(0x36d6c3);
 // Small persistent dots drawn at every selectable/draggable vertex of the ACTIVE
@@ -421,6 +426,7 @@ export function Viewport({
   onDraftCursor,
   onSketchClick,
   onSketchToolHover,
+  onHoverPick,
   trimPreview,
   onSketchDragMove,
   onSketchDragEnd,
@@ -540,6 +546,10 @@ export function Viewport({
    *  cursor and where, so App can work out the piece that would go. Fires with
    *  null when the cursor is over nothing. */
   onSketchToolHover?: (hit: { entityId: string; uv: Vec2 } | null) => void;
+  /** The face, edge or vertex under the pointer changed, as a selection would
+   *  see it (null: none). Idle selection hover only — what an assembly's Mate
+   *  dialog shows candidate connector points from. */
+  onHoverPick?: (sel: Selection | null) => void;
   /** The span Trim would remove (or the stretch Extend would add), in sketch uv
    *  — drawn on the active sketch plane in the "this is going" colour. */
   trimPreview?: Vec2[] | null;
@@ -655,6 +665,8 @@ export function Viewport({
   onSketchDragMoveRef.current = onSketchDragMove;
   const onSketchToolHoverRef = useRef(onSketchToolHover);
   onSketchToolHoverRef.current = onSketchToolHover;
+  const onHoverPickRef = useRef(onHoverPick);
+  onHoverPickRef.current = onHoverPick;
   const onSketchDragEndRef = useRef(onSketchDragEnd);
   onSketchDragEndRef.current = onSketchDragEnd;
   // derived from sketches + activeSketchId in the render effect
@@ -891,6 +903,12 @@ export function Viewport({
     const ghostFillLineMaterial = ghostLineMat(GHOST_FILL_COLOR, true);
     const ghostCutMaterial = ghostFaceMat(GHOST_CUT_COLOR, true);
     const ghostCutLineMaterial = ghostLineMat(GHOST_CUT_COLOR, true);
+    const ghostMarkerMaterial = new THREE.MeshBasicMaterial({
+      color: GHOST_MARKER_COLOR,
+      depthTest: false,
+      depthWrite: false,
+      clippingPlanes: sectionClipPlanes,
+    });
     // A whole BODY about to be subtracted away wears the removal red too — but
     // as an ordinary depth-tested ghost, not the drawn-on-top `inside` one: a
     // subtract tool is a solid standing in the scene, not a sliver buried in
@@ -1374,6 +1392,7 @@ export function Viewport({
       ghostFillMaterial,
       ghostFillLineMaterial,
       ghostCutMaterial,
+      ghostMarkerMaterial,
       ghostCutLineMaterial,
       ghostCutBodyMaterial,
       previewLine,
@@ -2853,6 +2872,7 @@ export function Viewport({
         hoverSelRef.current = sel;
         renderer.domElement.style.cursor = sel ? "pointer" : "";
         applyHighlights();
+        onHoverPickRef.current?.(sel);
       }
     };
     const onDown = (e: PointerEvent) => {
@@ -3073,7 +3093,17 @@ export function Viewport({
       }
       cubeHit = viewCube.pick(renderer, e.clientX, e.clientY);
     };
-    const onGizmoLeave = () => viewCube.clearHover();
+    // Leaving the canvas (onto a panel, say) ends any hover: otherwise the last
+    // face or vertex stays lit under a dialog, and hover listeners (the Mate
+    // dialog's candidate points) keep showing it.
+    const onGizmoLeave = () => {
+      viewCube.clearHover();
+      if (hoverSelRef.current) {
+        hoverSelRef.current = null;
+        applyHighlights();
+        onHoverPickRef.current?.(null);
+      }
+    };
     // Double-click on a sketch entity (Select tool only): grab its whole
     // connected chain in one gesture. The two constituent single clicks still
     // toggle the entity via onUp; the chain-select that follows replaces it.
@@ -3446,6 +3476,7 @@ export function Viewport({
       ghostFillMaterial.dispose();
       ghostFillLineMaterial.dispose();
       ghostCutMaterial.dispose();
+      ghostMarkerMaterial.dispose();
       ghostCutLineMaterial.dispose();
       ghostCutBodyMaterial.dispose();
       previewLine.geometry.dispose();
@@ -3629,6 +3660,12 @@ export function Viewport({
       // Depth-testless delta ghosts also need an explicit renderOrder — with the
       // depth buffer out of the picture, draw order is all that separates them
       // (fill below cut, both above the model).
+      if (ghost.variant === "marker") {
+        const marker = new THREE.Mesh(geometry.faces, state.ghostMarkerMaterial);
+        marker.renderOrder = 4;
+        state.ghostGroup.add(marker);
+        return;
+      }
       const [faceMat, lineMat, order] =
         ghost.variant === "cut"
           ? [state.ghostCutMaterial, state.ghostCutLineMaterial, 3]

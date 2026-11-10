@@ -81,7 +81,7 @@ export function MateDialog(p: MateDialogProps) {
               s.noun ??
               (p.type === "width"
                 ? `two faces of the ${i === 0 ? "first" : "second"} part`
-                : `a face or edge of the ${i === 0 ? "first" : "second"} part`)
+                : `a face, edge or vertex of the ${i === 0 ? "first" : "second"} part`)
             }
             armed={s.armed}
             value={s.label}

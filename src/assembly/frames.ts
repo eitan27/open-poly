@@ -479,6 +479,40 @@ export function shapeFrame(shape: ConnectorShape, anchor: Anchor): Frame {
   }
 }
 
+/** Where a mate could anchor on an entity under the pointer, in part
+ *  coordinates, for the Mate dialog's hover markers: a face's centre (a
+ *  cylinder's middle and both ends) and the corners where its edges meet; an
+ *  edge's middle (a circle's centre) and its ends; a vertex itself. `taken`
+ *  is the one a click there would take: the entity's own centre, or the
+ *  vertex. Null when the entity can't anchor a mate. */
+export function candidatePoints(
+  mesh: ShapeMeshPayload,
+  pick: { kind: "face"; faceId: number } | { kind: "edge"; edgeId: number } | { kind: "vertex"; point: Vec3 },
+): { points: Vec3[]; taken: number } | null {
+  const tol = Math.max(1e-4, 1e-3 * partSize(mesh));
+  const points: Vec3[] = [];
+  const add = (p: Vec3) => {
+    if (!points.some((q) => len(sub(p, q)) < tol)) points.push(p);
+  };
+  if (pick.kind === "vertex") {
+    const end = nearestEdgeEnd(mesh.edges, pick.point, tol);
+    return end ? { points: [end.point], taken: 0 } : null;
+  }
+  const c = connectorRefOf(mesh, pick);
+  if (!c) return null;
+  for (const a of anchorsOf(c.shape)) add(shapeFrame(c.shape, a).origin);
+  // The corners: the ends of the face's own edges (named "faceA∩faceB"), or
+  // of the edge itself.
+  for (const g of mesh.edges.edgeGroups ?? []) {
+    const mine = pick.kind === "face" ? !!g.name && g.name.split("∩").includes(c.ref.name) : g.edgeId === pick.edgeId;
+    if (!mine) continue;
+    // A circle's chords end all round it: only a straight edge has corners.
+    if (edgeShape(mesh.edges, g.edgeId)?.kind !== "line") continue;
+    for (const p of edgePoints(mesh.edges, g.edgeId)) add(p);
+  }
+  return { points, taken: 0 };
+}
+
 /** A connector's frame as a matrix, in part coordinates: the entity's frame
  *  at `anchor`, moved within itself by `offset` (mm along its own X/Y/Z, as
  *  expressions evaluated against `scope`). Throws on a bad offset. */

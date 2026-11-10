@@ -39,8 +39,10 @@ export interface GhostMesh {
    *  (two of its faces exactly coplanar with the body's), and while editing —
    *  where the change is already applied to the model — the added material
    *  likewise lies inside the finished body. Drawn on top, the delta reads as a
-   *  translucent band hugging the edge in both cases. */
-  variant?: "add" | "fill" | "cut";
+   *  translucent band hugging the edge in both cases.
+   *   • "marker" — a small opaque point marker drawn on top of everything (an
+   *     assembly Mate dialog's candidate connector points). */
+  variant?: "add" | "fill" | "cut" | "marker";
 }
 
 export interface RenderSketch {

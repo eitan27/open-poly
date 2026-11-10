@@ -8,6 +8,7 @@ import { evaluateVariables } from "../document/document";
 import { addMate, connectorWarnings, keepSolved, nextMateName, removeMates, updateMate } from "./assembly";
 import {
   anchorsOf,
+  candidatePoints,
   connectorMatrix,
   connectorRefOf,
   midplaneShape,
@@ -17,7 +18,7 @@ import {
   type ConnectorShape,
 } from "./frames";
 import { dragAssembly } from "./drag";
-import { connectorGlyph } from "./glyph";
+import { connectorGlyph, pointGlyph } from "./glyph";
 import type { MateDialogProps } from "./MateDialog";
 import { MATE_TYPES } from "./mateTypes";
 import { applyPoint, IDENTITY, meshBounds, multiply } from "./placement";
@@ -312,7 +313,7 @@ export function useMates({
     const slot = session.armed;
     const other = slot === 0 ? session.draft.b : session.draft.a;
     if (other?.instanceId === picked.featureId)
-      return { ...session, message: "Pick a face or edge on a different part." };
+      return { ...session, message: "Pick a face, edge or vertex on a different part." };
     const width = session.draft.type === "width";
     let conn: MateConnector = { instanceId: picked.featureId, ref: c.ref, anchor: "center" };
     if (width) {
@@ -397,17 +398,54 @@ export function useMates({
     return m ? { type: m.type, glyph: [m.a, m.b], pick: [m.a, m.b] } : null;
   }, [session, hoveredMateId, display]);
 
-  // Markers at the shown connectors, sized to the assembly.
-  const glyphs = useMemo<GhostMesh[]>(() => {
-    if (!shown || !display || !solution) return [];
+  /** Markers sized to the assembly: a quarter of its largest part. */
+  const glyphSize = useMemo(() => {
     let size = 0;
-    for (const inst of display.instances) {
-      const mesh = partMesh(display, inst.id);
+    for (const inst of display?.instances ?? []) {
+      const mesh = display && partMesh(display, inst.id);
       const b = mesh && meshBounds(mesh);
       if (b) size = Math.max(size, Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]));
     }
-    const glyphSize = Math.min(40, Math.max(4, size * 0.25));
-    const out: GhostMesh[] = [];
+    return Math.min(40, Math.max(4, size * 0.25));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [display, sources]);
+
+  // The face, edge or vertex under the pointer, while a slot is listening for
+  // a pick (else null, so hovering doesn't re-render anything).
+  const [hovered, setHovered] = useState<Selection | null>(null);
+  const listening = !!session && session.armed !== null;
+  const listeningRef = useRef(listening);
+  listeningRef.current = listening;
+  const hoverPick = (sel: Selection | null) => setHovered(listeningRef.current ? sel : null);
+
+  /** Where the hovered entity could anchor the mate: a small marker at each
+   *  candidate point, the one a click would take larger. */
+  const candidates = useMemo<GhostMesh[]>(() => {
+    if (!listening || !hovered || !display || !solution) return [];
+    if (hovered.kind !== "face" && hovered.kind !== "edge" && hovered.kind !== "vertex") return [];
+    const mesh = partMesh(display, hovered.featureId);
+    const place = solution.placements.get(hovered.featureId);
+    if (!mesh || !place) return [];
+    const c = candidatePoints(
+      mesh,
+      hovered.kind === "face"
+        ? { kind: "face", faceId: hovered.faceId }
+        : hovered.kind === "edge"
+          ? { kind: "edge", edgeId: hovered.edgeId }
+          : { kind: "vertex", point: applyPoint(invertRigid(place), hovered.point) },
+    );
+    if (!c) return [];
+    return c.points.map((p, i) => ({
+      mesh: pointGlyph(applyPoint(place, p), glyphSize * (i === c.taken ? 0.3 : 0.17)),
+      variant: "marker" as const,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listening, hovered, display, solution, glyphSize]);
+
+  // Markers at the shown connectors.
+  const glyphs = useMemo<GhostMesh[]>(() => {
+    if (!shown || !display || !solution) return candidates;
+    const out: GhostMesh[] = [...candidates];
     for (const c of shown.glyph) {
       if (!c) continue;
       const f = frameFor(display)(c);
@@ -417,7 +455,7 @@ export function useMates({
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shown, display, solution]);
+  }, [shown, display, solution, candidates, glyphSize]);
 
   /** The shown connectors' faces/edges, as the viewport's selection. */
   const picks = useMemo<Selection[] | null>(() => {
@@ -575,6 +613,7 @@ export function useMates({
   };
 
   return {
+    hoverPick,
     warnings,
     hoverMate: setHoveredMateId,
     setMateValue,

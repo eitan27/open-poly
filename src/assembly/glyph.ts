@@ -59,3 +59,26 @@ export function connectorGlyph(m: Mat4, size: number): ShapeMeshPayload {
     edges: { lines: new Float32Array(0) },
   };
 }
+
+/** A small marker at a candidate connector point (`size` across, world
+ *  coordinates): an octahedron, so it reads the same from any side. The Mate
+ *  dialog draws one at each point the hovered face, edge or vertex offers. */
+export function pointGlyph(p: Vec3, size: number): ShapeMeshPayload {
+  const r = size / 2;
+  const pts: Vec3[] = [
+    [r, 0, 0],
+    [-r, 0, 0],
+    [0, r, 0],
+    [0, -r, 0],
+    [0, 0, r],
+    [0, 0, -r],
+  ];
+  const tris = [0, 2, 4, 2, 1, 4, 1, 3, 4, 3, 0, 4, 2, 0, 5, 1, 2, 5, 3, 1, 5, 0, 3, 5];
+  const vertices = new Float32Array(pts.length * 3);
+  pts.forEach((q, i) => vertices.set([p[0] + q[0], p[1] + q[1], p[2] + q[2]], i * 3));
+  return {
+    name: "candidate",
+    faces: { vertices, triangles: new Uint32Array(tris) },
+    edges: { lines: new Float32Array(0) },
+  };
+}

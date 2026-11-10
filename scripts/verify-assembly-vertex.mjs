@@ -165,6 +165,39 @@ const baseCorner = [base.lo[0], base.lo[1], base.hi[2]];
 const armCorner = [arm.lo[0], arm.lo[1], arm.lo[2]];
 const near = (p, q, tol = 1e-3) => p.every((v, i) => Math.abs(v - q[i]) < tol);
 
+// --- Hovering shows where a mate could anchor ------------------------------------
+// The base's top face, hovered with no Mate dialog open and then with one
+// listening: the face lights up either way, but only the dialog adds markers
+// at its centre and corners. Compared over the base's part of the view.
+await view("7");
+const topMid = [(base.lo[0] + base.hi[0]) / 2 + 6, (base.lo[1] + base.hi[1]) / 2 - 6, base.hi[2]];
+const region = async () => {
+  const ps = await Promise.all(
+    [
+      baseCorner,
+      [base.hi[0], base.hi[1], base.hi[2]],
+      [base.hi[0], base.lo[1], base.lo[2]],
+      [base.lo[0], base.hi[1], base.lo[2]],
+    ].map((p) => toScreen(apply4(T("Base"), p))),
+  );
+  const xs = ps.map((p) => p.x),
+    ys = ps.map((p) => p.y);
+  return {
+    x: Math.min(...xs) - 20,
+    y: Math.min(...ys) - 20,
+    width: Math.max(...xs) - Math.min(...xs) + 40,
+    height: Math.max(...ys) - Math.min(...ys) + 40,
+  };
+};
+const hoverTop = async () => {
+  const p = await toScreen(apply4(T("Base"), topMid));
+  await page.mouse.move(p.x - 30, p.y - 30);
+  await page.mouse.move(p.x, p.y, { steps: 4 });
+  await page.waitForTimeout(300);
+  return page.screenshot({ clip: await region() });
+};
+const idleHover = await hoverTop();
+
 await page
   .locator(".viewport canvas")
   .first()
@@ -183,6 +216,9 @@ check(
   await page.mouse.up();
 }
 await view("7");
+const armedHover = await hoverTop();
+check("hovering a face while a slot listens marks where a mate could anchor", !idleHover.equals(armedHover));
+await page.screenshot({ path: "/tmp/asm-candidates.png" });
 await clickWorld(apply4(T("Base"), baseCorner));
 await clickWorld(apply4(T("Arm"), armCorner));
 check(

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ShapeMeshPayload } from "../kernel/types";
 import type { Vec3 } from "./placement";
 import {
+  candidatePoints,
   connectorMatrix,
   connectorRefOf,
   edgeShape,
@@ -354,5 +355,90 @@ describe("connectorMatrix", () => {
   });
   it("throws on a bad offset", () => {
     expect(() => connectorMatrix(point, "center", { y: "nope" }, {})).toThrow();
+  });
+});
+
+describe("candidatePoints", () => {
+  /** A 10 mm square top face with its four edges named "top∩side…". */
+  const plate = () => {
+    const b = builder();
+    const top = b.face(
+      [
+        [0, 0, 5],
+        [10, 0, 5],
+        [10, 10, 5],
+        [0, 10, 5],
+      ],
+      "top",
+    );
+    const e = b.edge(
+      [
+        [0, 0, 5],
+        [10, 0, 5],
+      ],
+      "top∩front",
+    );
+    b.edge(
+      [
+        [10, 0, 5],
+        [10, 10, 5],
+      ],
+      "top∩right",
+    );
+    b.edge(
+      [
+        [10, 10, 5],
+        [0, 10, 5],
+      ],
+      "top∩back",
+    );
+    b.edge(
+      [
+        [0, 10, 5],
+        [0, 0, 5],
+      ],
+      "top∩left",
+    );
+    b.edge(
+      [
+        [0, 0, 0],
+        [0, 0, 5],
+      ],
+      "front∩left",
+    ); // not the top's
+    return { mesh: b.mesh(), top, e };
+  };
+
+  it("offers a face's centre, taken by a click, and its corners", () => {
+    const { mesh, top } = plate();
+    const c = candidatePoints(mesh, { kind: "face", faceId: top })!;
+    close(c.points[c.taken], [5, 5, 5]);
+    expect(c.points).toHaveLength(5);
+    for (const p of [
+      [0, 0, 5],
+      [10, 0, 5],
+      [10, 10, 5],
+      [0, 10, 5],
+    ] as Vec3[])
+      expect(c.points.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) < 1e-9)).toBe(true);
+  });
+
+  it("offers an edge's middle and its two ends", () => {
+    const { mesh, e } = plate();
+    const c = candidatePoints(mesh, { kind: "edge", edgeId: e })!;
+    expect(c.points).toHaveLength(3);
+    close(c.points[c.taken], [5, 0, 5]);
+  });
+
+  it("offers a vertex itself", () => {
+    const { mesh } = plate();
+    expect(candidatePoints(mesh, { kind: "vertex", point: [10, 10, 5] })).toEqual({ points: [[10, 10, 5]], taken: 0 });
+  });
+
+  it("offers a cylinder's middle and both ends", () => {
+    const { mesh, sides } = cylinder(48, 5, 40) as unknown as { mesh: ShapeMeshPayload; sides: number[] };
+    const c = candidatePoints(mesh, { kind: "face", faceId: sides[0] })!;
+    close(c.points[c.taken], [0, 0, 20]);
+    expect(c.points.slice(0, 3).map((p) => Math.round(p[2]))).toEqual([20, 0, 40]);
   });
 });

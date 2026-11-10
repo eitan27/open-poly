@@ -7430,6 +7430,7 @@ export default function App() {
               highlightBodyIds={isAssembly ? asmSelectedSet : highlightBodyIds}
               booleanHighlight={booleanHighlight}
               onSelect={isAssembly ? handleAssemblyPick : handlePick}
+              onHoverPick={isAssembly ? mates.hoverPick : undefined}
               onSketchEntityDouble={handleSketchEntityDouble}
               datumVisibility={datumVisibility}
               userPlanes={visibleUserPlanes}
