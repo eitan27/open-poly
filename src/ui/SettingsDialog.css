@@ -452,7 +452,9 @@
 }
 
 /* "Assembly" or "Parts" beside a document's name in the list: what kind of
-   document it is. Parts in a quieter outline, as the usual kind. */
+   document it is. The two pills are the same shape and weight, told apart by
+   hue alone (blue, teal) so neither reads as the lesser kind. Teal, not the
+   green, amber or red that mean success, warning and danger elsewhere. */
 .docs-kind {
   margin-left: 6px;
   padding: 0 5px;
@@ -464,8 +466,8 @@
   border-radius: 4px;
 }
 .docs-kind-parts {
-  color: var(--text-6);
-  border-color: var(--border-hover);
+  color: var(--ok-teal);
+  border-color: var(--ok-teal);
 }
 
 /* "Used in Arm" — shown while deleting a part an assembly places. */
