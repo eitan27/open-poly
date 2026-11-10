@@ -156,6 +156,12 @@ await page
   .hover({ position: { x: 5, y: 5 } });
 await page.keyboard.press("i");
 await page.waitForTimeout(300);
+// The list loads after the dialog opens: wait for its first row.
+await page
+  .locator(".insert-doc")
+  .first()
+  .waitFor({ timeout: 5000 })
+  .catch(() => {});
 check("I opens Insert", (await page.locator(".insert-doc").count()) > 0);
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);

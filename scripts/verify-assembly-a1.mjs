@@ -103,6 +103,11 @@ await switchedFrom("Pair");
 await rename("Arm");
 
 await page.locator(".asm-insert").click();
+// The list loads from storage after the dialog opens: wait for it, or under
+// load the check reads it empty.
+await page
+  .waitForFunction(() => document.querySelectorAll(".insert-doc").length >= 2, null, { timeout: 10000 })
+  .catch(() => {});
 const listed = await page.locator(".insert-doc .docs-name").allTextContents();
 check("Insert lists the part documents", listed.includes("Bracket") && listed.includes("Pair"), listed.join(" | "));
 check("…and no assemblies", !listed.includes("Arm"));

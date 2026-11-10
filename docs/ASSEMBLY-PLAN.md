@@ -28,7 +28,11 @@ must do the same.
 - **Sync hash:** `docHash(name, doc, assembly?)` drops an absent `assembly`, so
   every synced part keeps its old hash. An untouched new assembly counts as
   "blank" and stays local until edited, like a starter part.
-- **App:** the assembly has its own `useHistory`, and undo/redo route to it.
+- **App:** the assembly's state and behaviour (sources, meshes, mates,
+  selection and pre-picks, the Move panel and gizmo, inserting, variables)
+  are `useAssemblyWorkspace`; App holds the one Viewport, side panel and
+  toolbar both kinds share, and reads what to show in them from it. The
+  assembly has its own `useHistory`, and undo/redo route to it.
   While an assembly is open the part UI stands down: the side panel becomes
   `AssemblyPanel`, the model toolbar gives way to the assembly's, shortcuts
   are limited to the assembly mode's, and agent part ops are refused
@@ -382,8 +386,6 @@ mates' values. A grounded part can't be moved by its gizmo; unground it first.
 - Drive-only documents appear on the Open dialog's All tab only, since their
   kind isn't known until downloaded. The kind in the Drive file's
   `appProperties` would fix it.
-- The assembly UI lives in `App.tsx`'s assembly branches. Extracting an
-  `AssemblyWorkspace` component was planned and not done.
 
 **Later, roughly in order:** sub-assemblies (need a cycle check at insert) ·
 exploded views · BOM · interference/collision check (mesh BVH, per frame
