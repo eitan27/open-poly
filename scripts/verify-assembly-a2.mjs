@@ -26,6 +26,13 @@ const waitIdle = async () => {
 };
 await waitIdle();
 await page.waitForFunction(() => window.__openpoly);
+/** A document switch lands a few hundred ms after its click, while the status
+ *  still reads "up to date": wait for the title to stop being `was` before
+ *  acting on the new document (or the next step acts on the old one). */
+const switchedFrom = async (was) => {
+  await page.waitForFunction((t) => document.querySelector(".doc-title")?.value !== t, was, { timeout: 10000 });
+  await waitIdle();
+};
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -120,13 +127,15 @@ for (const f of [...doc0.features].reverse()) await apply({ op: "delete", featur
 await rename("Base");
 await apply({ op: "addPrimitive", kind: "box", params: { width: "40", depth: "40", height: "10" } });
 await waitIdle();
+let current = "Base";
 for (const [name, op] of [
   ["Arm", { op: "addPrimitive", kind: "box", params: { width: "30", depth: "8", height: "4" } }],
   ["Pin", { op: "addPrimitive", kind: "cylinder", params: { radius: "3", height: "20" } }],
 ]) {
   await page.locator(".newdoc-btn").click();
-  await waitIdle();
+  await switchedFrom(current);
   await rename(name);
+  current = name;
   await apply(op);
   await waitIdle();
 }
@@ -134,7 +143,7 @@ for (const [name, op] of [
 // --- The assembly ----------------------------------------------------------
 await page.locator(".split-btn-caret").click();
 await page.locator(".split-btn .mt-menu button", { hasText: "Assembly" }).click();
-await waitIdle();
+await switchedFrom(current);
 await rename("Mech");
 check("＋ Mate waits for two parts", await page.locator(".asm-new-mate").isDisabled());
 await insertFrom("Base");
@@ -282,14 +291,14 @@ check("undo brings the mate back", rec.assembly.mates.length === 2);
 
 // --- Live: make the base taller, the mated parts ride up --------------------------
 await page.locator(".asm-row", { hasText: "Base" }).first().dblclick();
-await waitIdle();
+await switchedFrom("Mech");
 const box = (await page.evaluate(() => window.__openpoly.read({ read: "document" }))).features[0];
 await apply({ op: "setParam", featureId: box.id, name: "height", value: "30" });
 await waitIdle();
 await page.waitForTimeout(900);
 await page.locator(".docs-btn").click();
 await page.locator(".docs-row", { hasText: "Mech" }).locator(".text-btn", { hasText: "Open" }).click();
-await waitIdle();
+await switchedFrom("Base");
 await page.waitForTimeout(1200);
 await page.screenshot({ path: "/tmp/asm-a2-live.png" });
 // The solved placement isn't saved until the next edit; read it off the arm's

@@ -25,6 +25,15 @@ const waitIdle = async () => {
 };
 await waitIdle();
 await page.waitForFunction(() => window.__openpoly);
+/** Click `target` to switch documents, then wait for the switch to land: it
+ *  comes a few hundred ms after the click, while the status still reads "up
+ *  to date", so without this the next step acts on the previous document. */
+const switchVia = async (target) => {
+  const was = await page.locator(".doc-title").inputValue();
+  await target.click();
+  await page.waitForFunction((t) => document.querySelector(".doc-title")?.value !== t, was, { timeout: 10000 });
+  await waitIdle();
+};
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -120,8 +129,7 @@ for (const f of [...doc0.features].reverse()) await apply({ op: "delete", featur
 await rename("Base");
 await apply({ op: "addPrimitive", kind: "box", params: { width: "40", depth: "40", height: "10" } });
 await waitIdle();
-await page.locator(".newdoc-btn").click();
-await waitIdle();
+await switchVia(page.locator(".newdoc-btn"));
 await rename("Arm");
 await apply({ op: "addPrimitive", kind: "box", params: { width: "30", depth: "8", height: "4" } });
 await waitIdle();
@@ -171,8 +179,7 @@ await widthField.blur();
 await waitIdle();
 
 await page.locator(".split-btn-caret").click();
-await page.locator(".split-btn .mt-menu button", { hasText: "Assembly" }).click();
-await waitIdle();
+await switchVia(page.locator(".split-btn .mt-menu button", { hasText: "Assembly" }));
 await rename("Vars");
 await insertFrom("Base");
 await insertFrom("Arm");
