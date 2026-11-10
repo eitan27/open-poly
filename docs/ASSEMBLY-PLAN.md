@@ -211,7 +211,11 @@ way up both were modelled) and Flip turns it over. Paired with a second mate
 on the same parts (Width + Planar for a tab in a slot) it goes to the loop
 solver.
 
-**Making mates** (`useMates`, `MateDialog`):
+**Making mates** (`useMates`, `MateDialog`). The assembly toolbar has a
+button per mate type (keys F R S C P B W, M for the last used), so the dialog
+shows its type as one button opening a menu of all seven, not the whole row.
+A custom menu, not a `<select>`: on macOS a select's native popup swallows the
+next click on the canvas, which here is the first face pick.
 
 - **Picking first.** With no dialog open, clicked faces and edges gather as a
   selection, as in a part document (click one again to drop it; empty space
@@ -402,8 +406,7 @@ pinning (parts have no versions yet).
   hole), through a rebuild of the block. `verify-all` doesn't run them.
 - **A document switch lands a few hundred ms after its click**, while the
   status still reads "up to date" from before it: a check must wait for the
-  side panel to change kind before acting on the new document (`settleAs` in
-  `a0`), or it acts on the old one.
+  side panel to change kind before acting on the new document (`settleAs` in `a0`, `switchedFrom` in `a1`), or it acts on the old one.
 
 ## Open questions
 

@@ -193,7 +193,7 @@ await page.keyboard.press("p");
 await page.waitForTimeout(300);
 check(
   "P opens the Mate dialog on Planar",
-  (await page.locator(".asm-mate-types button.active").textContent()) === "Planar",
+  (await page.locator(".asm-mate-type-btn .asm-mate-type-name").textContent()) === "Planar",
 );
 await moveDialogAside();
 await view("7");

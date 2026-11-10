@@ -137,3 +137,48 @@
 .mate-icon {
   vertical-align: -2px;
 }
+
+/* The Mate dialog's type: one button showing it, opening the .mt-menu of all
+   seven (MateTypePicker). */
+.asm-mate-type {
+  margin-bottom: 8px;
+}
+.asm-mate-type-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  background: var(--bg-control, transparent);
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.asm-mate-type-btn:hover,
+.asm-mate-type-btn[aria-expanded="true"] {
+  border-color: var(--accent);
+}
+.asm-mate-type-caret {
+  margin-left: auto;
+  color: var(--text-7);
+}
+.asm-mate-types {
+  width: 100%;
+  box-sizing: border-box;
+}
+.asm-mate-types button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.asm-mate-types button.active {
+  background: var(--accent-surface);
+  color: var(--accent-palest);
+}
+.asm-mate-type-key {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-8);
+}

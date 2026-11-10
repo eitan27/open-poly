@@ -190,7 +190,7 @@ await page.keyboard.press("c");
 await page.waitForTimeout(300);
 check(
   "C opens the Mate dialog on Cylindrical",
-  (await page.locator(".asm-mate-types button.active").textContent()) === "Cylindrical",
+  (await page.locator(".asm-mate-type-btn .asm-mate-type-name").textContent()) === "Cylindrical",
 );
 {
   const t = await page.locator(".asm-mate .ed-title").boundingBox();

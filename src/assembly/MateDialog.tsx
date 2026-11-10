@@ -2,10 +2,12 @@
 // each part, picked in the viewport), how they face each other, and the values
 // of whatever the mate leaves free. The assembly previews the mate live while
 // this is open.
-import { shortcutHint, shortcutName } from "../settings/shortcuts";
+import { useEffect, useRef, useState } from "react";
+import { shortcutName } from "../settings/shortcuts";
 import { DraggableDialog } from "../ui/DraggableDialog";
 import { PickSlot } from "../ui/PickSlot";
 import type { Anchor } from "./frames";
+import { MateIcon } from "./MateIcon";
 import { dofLabel, MATE_TYPES } from "./mateTypes";
 import { MATE_DOFS } from "./solve";
 import type { Dof, MateType } from "./types";
@@ -71,20 +73,7 @@ export function MateDialog(p: MateDialogProps) {
         {p.editing ? "Edit mate" : "Mate"}
         {!!p.made && <span className="asm-mate-made"> · {p.made} made</span>}
       </div>
-      <div className="ed-modes asm-mate-types">
-        {MATE_TYPES.map((t) => (
-          <button
-            key={t.type}
-            type="button"
-            className={p.type === t.type ? "active" : ""}
-            title={`${t.title} (${shortcutName(t.key)})`}
-            onClick={() => p.onType(t.type)}
-          >
-            {t.label}
-            {p.showShortcuts && <span className="kbd-hint">{shortcutHint(t.key)}</span>}
-          </button>
-        ))}
-      </div>
+      <MateTypePicker type={p.type} onType={p.onType} />
       {p.slots.map((s, i) => (
         <div key={i} className="asm-mate-slot">
           <PickSlot
@@ -184,5 +173,71 @@ export function MateDialog(p: MateDialogProps) {
         <button onClick={p.onCancel}>{p.made ? "Close" : "Cancel"}</button>
       </div>
     </DraggableDialog>
+  );
+}
+
+/** The mate's type: one button showing it, opening a menu of all seven. The
+ *  toolbar has a button per type already, so the dialog needn't show them all.
+ *  A custom menu, not a <select>: on macOS a select's native popup swallows
+ *  the next click on the canvas (see TransformDialog), which here is the first
+ *  face pick. Esc or a click elsewhere closes it; the type keys still switch. */
+function MateTypePicker({ type, onType }: { type: MateType; onType: (t: MateType) => void }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => {
+      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, [open]);
+  const current = MATE_TYPES.find((t) => t.type === type)!;
+  return (
+    <div
+      className="mt-dropdown asm-mate-type"
+      ref={wrap}
+      onKeyDown={(e) => {
+        if (open && e.key === "Escape") {
+          e.stopPropagation();
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        className="asm-mate-type-btn"
+        title={`${current.title}. Change the type (or press its key)`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <MateIcon type={type} />
+        <span className="asm-mate-type-name">{current.label}</span>
+        <span className="asm-mate-type-caret">▾</span>
+      </button>
+      {open && (
+        <div className="mt-menu asm-mate-types" role="menu">
+          {MATE_TYPES.map((t) => (
+            <button
+              key={t.type}
+              type="button"
+              role="menuitemradio"
+              aria-checked={t.type === type}
+              className={t.type === type ? "active" : ""}
+              title={t.title}
+              onClick={() => {
+                onType(t.type);
+                setOpen(false);
+              }}
+            >
+              <MateIcon type={t.type} />
+              <span className="asm-mate-type-name">{t.label}</span>
+              <span className="asm-mate-type-key">{shortcutName(t.key)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

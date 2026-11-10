@@ -68,6 +68,13 @@ const insertFrom = async (docName, parts = null) => {
   await page.locator(".insert-confirm").click();
   await page.waitForTimeout(400);
 };
+/** A document switch lands a few hundred ms after its click, while the status
+ *  still reads "up to date": wait for the title to stop being `was` before
+ *  acting on the new document (or a rename lands on the old one). */
+const switchedFrom = async (was) => {
+  await page.waitForFunction((t) => document.querySelector(".doc-title")?.value !== t, was, { timeout: 10000 });
+  await waitIdle();
+};
 /** Screen point of a world point, in CSS px relative to the page. */
 const toScreen = async (p) => {
   const box = await page.locator(".viewport canvas").first().boundingBox();
@@ -83,7 +90,7 @@ await rename("Bracket");
 await apply({ op: "addPrimitive", kind: "box", params: { width: "20", depth: "20", height: "20" } });
 await waitIdle();
 await page.locator(".newdoc-btn").click();
-await waitIdle();
+await switchedFrom("Bracket");
 await rename("Pair");
 await apply({ op: "addPrimitive", kind: "box" });
 await apply({ op: "addPrimitive", kind: "cylinder" });
@@ -92,7 +99,7 @@ await waitIdle();
 // --- An assembly ---------------------------------------------------------
 await page.locator(".split-btn-caret").click();
 await page.locator(".split-btn .mt-menu button", { hasText: "Assembly" }).click();
-await waitIdle();
+await switchedFrom("Pair");
 await rename("Arm");
 
 await page.locator(".asm-insert").click();
@@ -199,7 +206,7 @@ check("✕ removes the instance", (await rows()).length === 2);
 
 // --- Live reference: edit the part, come back ----------------------------
 await page.locator(".asm-row").first().dblclick();
-await waitIdle();
+await switchedFrom("Arm");
 check("double-clicking a row opens its source part", (await page.locator(".doc-title").inputValue()) === "Bracket");
 const box = (await page.evaluate(() => window.__openpoly.read({ read: "document" }))).features[0];
 await apply({ op: "setParam", featureId: box.id, name: "height", value: "60" });
@@ -207,7 +214,7 @@ await waitIdle();
 await page.waitForTimeout(900);
 await page.locator(".docs-btn").click();
 await page.locator(".docs-row", { hasText: "Arm" }).locator(".text-btn", { hasText: "Open" }).click();
-await waitIdle();
+await switchedFrom("Bracket");
 await page.waitForTimeout(800);
 await page.screenshot({ path: "/tmp/asm-a1-live.png" });
 check("back in the assembly", (await rows()).length === 2);

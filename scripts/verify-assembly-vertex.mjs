@@ -173,7 +173,7 @@ await page.keyboard.press("f");
 await page.waitForTimeout(300);
 check(
   "F opens the Mate dialog on Fastened",
-  (await page.locator(".asm-mate-types button.active").textContent()) === "Fastened",
+  (await page.locator(".asm-mate-type-btn .asm-mate-type-name").textContent()) === "Fastened",
 );
 {
   const t = await page.locator(".asm-mate .ed-title").boundingBox();

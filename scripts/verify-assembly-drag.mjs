@@ -139,6 +139,7 @@ let rec = await saved();
 const T = (prefix) => instanceOf(rec, prefix).transform;
 
 await page.locator(".asm-new-mate").click();
+await page.locator(".asm-mate-type-btn").click();
 await page.locator(".asm-mate-types button", { hasText: "Planar" }).click();
 // The dialog opens over the middle of the view, where the base is: move it aside.
 {

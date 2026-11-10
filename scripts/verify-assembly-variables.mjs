@@ -148,6 +148,24 @@ check(
   (await widthField.inputValue()) === "wide" && (await partSuggest.count()) === 0,
   await widthField.inputValue(),
 );
+await widthField.blur();
+await waitIdle();
+// Renaming a part's variable renames it where the part uses it, as in an
+// assembly: the box's Width follows wide → broad.
+const partName = page.locator(".panel .var-row").first().locator(".var-name");
+await partName.fill("broad");
+await partName.press("Enter");
+await page.waitForTimeout(400);
+check(
+  "renaming a part's variable renames it in the feature that uses it",
+  (await widthField.inputValue()) === "broad",
+  await widthField.inputValue(),
+);
+const partDoc = await page.evaluate(() => window.__openpoly.read({ read: "document" }));
+check(
+  "…as stored",
+  partDoc.features.some((f) => f.params?.width === "broad") && partDoc.variables.some((v) => v.name === "broad"),
+);
 await widthField.fill("30");
 await widthField.blur();
 await waitIdle();
@@ -230,6 +248,32 @@ await page
   .hover({ position: { x: 5, y: 5 } });
 await page.keyboard.press("s");
 await page.waitForTimeout(400);
+// The type is one button opening a menu (the toolbar already has a button
+// per type); Esc closes the menu, not the dialog.
+const typeBtn = page.locator(".asm-mate-type-btn");
+check(
+  "the dialog shows its type as one button",
+  (await page.locator(".asm-mate-type-btn .asm-mate-type-name").textContent()) === "Slider" &&
+    (await page.locator(".asm-mate-types").count()) === 0,
+);
+await typeBtn.click();
+check("…which opens a menu of all seven", (await page.locator(".asm-mate-types button").count()) === 7);
+await page.screenshot({ path: "/tmp/asm-mate-type-menu.png" });
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+check(
+  "Esc closes the menu, not the dialog",
+  (await page.locator(".asm-mate-types").count()) === 0 && (await page.locator(".asm-mate").count()) === 1,
+);
+await typeBtn.click();
+await page.locator(".asm-mate-types button", { hasText: "Cylindrical" }).click();
+check(
+  "choosing one switches the type and closes the menu",
+  (await page.locator(".asm-mate-type-btn .asm-mate-type-name").textContent()) === "Cylindrical" &&
+    (await page.locator(".asm-mate-types").count()) === 0,
+);
+await typeBtn.click();
+await page.locator(".asm-mate-types button", { hasText: "Slider" }).click();
 const dist = page.locator(".asm-mate .asm-mate-dof input").first();
 // The Mate dialog's value suggests the assembly's variables as it's typed.
 await dist.fill("li");

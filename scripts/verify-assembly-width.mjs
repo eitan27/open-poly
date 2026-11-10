@@ -164,7 +164,7 @@ await page.waitForTimeout(300);
 check("M opens the Mate dialog", (await page.locator(".asm-mate").count()) === 1);
 await page.keyboard.press("w");
 await page.waitForTimeout(200);
-check("…and W picks Width", (await page.locator(".asm-mate-types button.active").textContent()) === "Width");
+check("…and W picks Width", (await page.locator(".asm-mate-type-btn .asm-mate-type-name").textContent()) === "Width");
 check("Width asks for two faces", /two faces of the first part/.test(await page.locator(".asm-mate").textContent()));
 // The dialog opens over the middle of the view, where the base is: move it aside.
 {
@@ -253,14 +253,14 @@ await tb("Slider").click();
 await page.waitForTimeout(300);
 check(
   "the toolbar's Slider opens the Mate dialog on Slider",
-  (await page.locator(".asm-mate-types button.active").textContent()) === "Slider",
+  (await page.locator(".asm-mate-type-btn .asm-mate-type-name").textContent()) === "Slider",
 );
 await tb("Revolute").click();
 await page.waitForTimeout(200);
 check(
   "…and Revolute switches it",
   (await page.locator(".asm-mate").count()) === 1 &&
-    (await page.locator(".asm-mate-types button.active").textContent()) === "Revolute",
+    (await page.locator(".asm-mate-type-btn .asm-mate-type-name").textContent()) === "Revolute",
 );
 await page.keyboard.press("Escape");
 await page.waitForTimeout(200);
@@ -272,7 +272,7 @@ await page.keyboard.press("m");
 await page.waitForTimeout(300);
 check(
   "M reopens it on the last type used",
-  (await page.locator(".asm-mate-types button.active").textContent()) === "Revolute",
+  (await page.locator(".asm-mate-type-btn .asm-mate-type-name").textContent()) === "Revolute",
 );
 await page.keyboard.press("Escape");
 

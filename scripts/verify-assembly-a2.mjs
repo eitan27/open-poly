@@ -153,6 +153,7 @@ const T = (prefix) => instanceOf(rec, prefix).transform;
 await page.locator(".asm-new-mate").click();
 check("＋ Mate opens the Mate dialog", (await page.locator(".asm-mate").count()) === 1);
 check("…armed for the first connector", (await page.locator(".asm-mate .ed-pick-btn.active").count()) === 1);
+await page.locator(".asm-mate-type-btn").click();
 await page.locator(".asm-mate-types button", { hasText: "Revolute" }).click();
 await clickWorld(apply4(T("Base"), baseTop));
 const firstLabel = await page.locator(".asm-mate .bool-operand-name").first().textContent();
@@ -209,6 +210,7 @@ check(
 
 // --- Slider: the pin stands on the base, free to slide up --------------------
 await page.locator(".asm-new-mate").click();
+await page.locator(".asm-mate-type-btn").click();
 await page.locator(".asm-mate-types button", { hasText: "Slider" }).click();
 // The base's top, off-centre so the arm (on the centre) isn't hit.
 await clickWorld(apply4(T("Base"), [baseTop[0] + 15, baseTop[1] - 15, baseTop[2]]));
