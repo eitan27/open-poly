@@ -1,12 +1,9 @@
 // The open assembly's workspace state and behaviour: its parts' meshes (live
 // from their documents, placed where the mates put them), the mates, what's
-// selected and pre-picked, the Move panel and its gizmo, inserting, and the
-// assembly's variables. App holds the one Viewport, panel and toolbar both
-// kinds of document share, and reads what to show in them from here while an
-// assembly is open (docs/ASSEMBLY-PLAN.md).
-//
-// Moved out of App.tsx whole: the logic is unchanged, App just takes back the
-// names it uses.
+// selected and pre-picked, the Move panel and its gizmo, inserting, the
+// assembly's variables, and animating a mate. App holds the one Viewport, panel
+// and toolbar both kinds of document share, and reads what to show in them from
+// here while an assembly is open (docs/ASSEMBLY-PLAN.md).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { evaluateVariables, validateVariableNames } from "../document/document";
 import { evaluateExpression } from "../document/expression";
