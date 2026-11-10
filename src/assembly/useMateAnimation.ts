@@ -69,7 +69,7 @@ export function useMateAnimation({
   const specFor = (id: string, dof?: Dof): AnimateSpec | null => {
     const mate = assembly?.mates.find((m) => m.id === id);
     if (!assembly || !mate) return null;
-    const dofs = animatableDofs(mate);
+    const dofs = animatableDofs(assembly, mate);
     const d = dof && dofs.includes(dof) ? dof : dofs[0];
     if (!d) return null;
     const current = solution?.values.get(id)?.[d] ?? 0;

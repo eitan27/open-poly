@@ -8,6 +8,7 @@
 // from the one before (its placements are the next solve's seed), so a loop
 // follows the branch it's on instead of flipping to another.
 import { keepPlacements } from "./assembly";
+import { relationDriving } from "./relations";
 import { formatValue, isRotation, MATE_DOFS, solve, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector } from "./types";
 import type { Scope } from "../document/expression";
@@ -66,8 +67,10 @@ export function defaultSpec(mate: Mate, dof: Dof, current: number, scope: Scope)
     : { mateId: mate.id, dof, from: round(current), to: round(current + 20), seconds: 2, mode: "bounce" };
 }
 
-/** The DOFs of `mate` an animation can sweep: all its free ones. */
-export const animatableDofs = (mate: Mate): Dof[] => MATE_DOFS[mate.type];
+/** The DOFs of `mate` an animation can sweep: its free ones, but not those a
+ *  relation drives — animating the driver turns them. */
+export const animatableDofs = (assembly: AssemblyDoc, mate: Mate): Dof[] =>
+  MATE_DOFS[mate.type].filter((d) => !relationDriving(assembly, mate.id, d));
 
 /** Steps an animation frame by frame: each `at(value)` solves the assembly with
  *  the DOF at `value`, seeded from the previous frame. Connector frames are

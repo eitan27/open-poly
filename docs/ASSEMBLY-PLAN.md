@@ -391,17 +391,51 @@ translation (bouncing).
 - If a frame leaves a mate the solver can't satisfy, the animation stops there
   and says which.
 
+**Relations** (`relations.ts`, the Relations section under Mates,
+`RelationDialog`, `useRelations`) couple one mate's free DOF to another's,
+linearly: the driven value is its own stored value plus k times the driver's.
+
+| Type              | Ends                   | k (driven per driver unit) |
+| ----------------- | ---------------------- | -------------------------- |
+| Gear              | rotation → rotation    | −ratio                     |
+| Rack (and pinion) | rotation ↔ translation | r·π/180 mm per degree      |
+| Screw             | rotation ↔ translation | pitch/360 mm per degree    |
+
+A translation driving a rotation uses 1/k; Reverse negates k.
+
+- **The driven DOF's own value is a phase,** not where it is: it lines gear
+  teeth up. So `keepSolved` never writes a loop's reading back onto a
+  relation-driven DOF, and the Move panel's field for one reads the solved
+  value, not the stored one.
+- **Solving:** every mate's own values are evaluated first (with Animate's
+  `drive`), then relations in dependency order, so a gear train works in
+  whatever order its relations were made. A relation-driven DOF is `forced`,
+  which drives a loop group as an expression would. A cycle of relations, a
+  DOF driven twice (the second relation is refused), a driven DOF that's an
+  expression, mismatched DOF kinds or a zero or bad value each leave the
+  relation out with a ⚠ in its row (`Solution.relationProblems`). Limits don't
+  clamp a driven DOF: its driver's do.
+- **Moving a driven part moves its driver** (`routeToDriver`, followed back to
+  the root of a train): a drag or a typed value sets the root to what puts the
+  driven DOF there, so turning either of two gears turns both. A drag routes
+  only a driven DOF it actually changed, so a screw within one cylindrical
+  mate turns when it's turned. A root that's an expression refuses, saying so.
+- **Animate doesn't offer a relation-driven DOF**; animating its driver turns
+  it, and a mate with nothing else free has no ▶.
+- Removing a mate (or an instance) removes the relations that used it.
+  `migrateAssembly` keeps and validates them; an assembly with none has no
+  `relations` field, so older saves and hashes are unchanged.
+- The dialog chooses mates from lists, not picks in the view: a relation joins
+  mates, which the view doesn't show. Its problem line is a solve of the
+  assembly with the draft added, so it says what the solver would.
+
 ## Not built yet
 
 **Motion.**
 
-- **Relations** couple two DOF values linearly: gear
-  (`rz_b = −ratio · rz_a`), rack-and-pinion (`tz_b = r · rz_a`), screw
-  (`tz_b = pitch · rz_a / 2π`). In a tree they're evaluated in dependency
-  order after the driver is set, and a relation cycle is an error; inside a
-  loop group a relation is one more residual.
-  Animate then makes one driver move a whole gear train: a relation's
-  driven mates take their value from the driver's in each frame's solve.
+- A relation between DOFs in one loop group whose driver only reports (a
+  plain number) uses the driver's stored value, which `keepSolved` keeps
+  current, rather than being one more residual solved with the loop.
 - Later: a timeline with keyframes over several mates; GIF/video export (the
   frame capture in `scripts/tutorial/gif.mjs`, in-app via
   `canvas.captureStream` or a GIF encoder).
@@ -434,7 +468,9 @@ pinning (parts have no versions yet).
   planars, Width + Planar, a four-bar turned a full revolution and dragged by
   its coupler, a slider-crank, conflicts, locked parts dragged from either
   side, a box seated in a corner by one Fastened mate on vertices),
-  `drag.test.ts`, `animate.test.ts` (timing, default sweeps, a four-bar's
+  `drag.test.ts`, `relations.test.ts` (factors, gear trains, rack, a screw
+  in one cylindrical mate, refusals, routing, dragging either gear, save and
+  load), `animate.test.ts` (timing, default sweeps, a four-bar's
   crank turned a full revolution by `drive`), `frames.test.ts` (connector fitting, vertices, offsets and
   candidate points on synthetic meshes, no OCCT in Node), `variables.test.ts`
   (mate values and limits naming variables, in the tree, a loop and a drag),
@@ -443,7 +479,8 @@ pinning (parts have no versions yet).
   uses is `src/document/renameVariable.test.ts`; the mate count is in
   `src/storage/db.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
-  `width`, `loops`, `move`, `variables`, `pin`, `vertex`, `animate`), against `npm run dev`; set
+  `width`, `loops`, `move`, `variables`, `pin`, `vertex`, `animate`,
+  `relations`), against `npm run dev`; set
   `PW_EXE` to use a pre-installed Chromium (scripts on `scripts/lib/harness.mjs`
   read `CHROMIUM_PATH` instead). `pin` is the one Cylindrical mate
   between real faceted parts (a cylinder primitive in an extruded-circle

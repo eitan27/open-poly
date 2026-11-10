@@ -15,11 +15,13 @@ import { dofLabel } from "./mateTypes";
 import type { MoveField, MoveMode, WorldAxis } from "./MoveDialog";
 import { addMoves, moveReadout, NO_MOVE, type MoveReadout } from "./moveReadout";
 import { boundsCenter, IDENTITY, meshBounds, placeMesh, translation } from "./placement";
-import { formatValue } from "./solve";
-import type { AssemblyDoc, Mate, MateType } from "./types";
+import { relationDriving } from "./relations";
+import { formatValue, isRotation, solve } from "./solve";
+import type { AssemblyDoc, Dof, Mate, MateType } from "./types";
 import { useAssemblySources, type BuildDocument, type SourcePart } from "./useAssemblySources";
 import { useMateAnimation } from "./useMateAnimation";
 import { useMates } from "./useMates";
+import { useRelations } from "./useRelations";
 
 /** The clearance an inserted part keeps from what's already placed. */
 const INSERT_GAP_MM = 10;
@@ -65,12 +67,24 @@ export function useAssemblyWorkspace({
     frameFor: mates.frameFor,
     viewApi,
   });
+  const relations = useRelations({ assembly, commit: mates.commit, frameFor: mates.frameFor, genId });
+  /** Open the Relation dialog (on `id`, or a new one), closing what would
+   *  compete with it. */
+  const openRelation = (id?: string) => {
+    mates.close();
+    animation.close();
+    setAsmSelected([]);
+    setAsmFaces([]);
+    if (id) relations.openEdit(id);
+    else relations.openNew();
+  };
   // While the Animate dialog is open, the view is its: nothing is picked or
   // moved, so no frame is drawn over a part the gizmo is on.
   const animating = animation.mateId !== null;
   /** Open the Animate dialog on a mate, closing what would compete with it. */
   const openAnimation = (mateId: string) => {
     mates.close();
+    relations.close();
     setAsmSelected([]);
     setAsmFaces([]);
     animation.open(mateId);
@@ -167,6 +181,7 @@ export function useAssemblyWorkspace({
     }
     if (!canMate || insertOpen) return;
     animation.close();
+    relations.close();
     setAsmSelected([]);
     mates.openNew(type, asmFaces);
     setAsmFaces([]);
@@ -274,7 +289,12 @@ export function useAssemblyWorkspace({
   // the drag in progress, read from where the solver puts the part, and for a
   // part one mate positions, that mate's values mid-drag.
   const [asmMoved, setAsmMoved] = useState<MoveReadout>(NO_MOVE);
-  const [asmLive, setAsmLive] = useState<{ move: MoveReadout; mateValues?: Mate["values"] } | null>(null);
+  const [asmLive, setAsmLive] = useState<{
+    move: MoveReadout;
+    mateValues?: Mate["values"];
+    /** The mate's solved values mid-drag, for the DOFs a relation drives. */
+    solved?: Partial<Record<Dof, number>>;
+  } | null>(null);
   useEffect(() => {
     setAsmMoved(NO_MOVE);
     setAsmLive(null);
@@ -305,9 +325,11 @@ export function useAssemblyWorkspace({
     const motion = gizmoMotion(te, d);
     const mateId = asmDrag?.mate.id;
     const next = mateId ? mates.dragResult(te.featureId, motion).next : null;
+    const related = !!next && !!mateId && (assembly?.relations ?? []).some((r) => r.driven.mateId === mateId);
     setAsmLive({
       move: actualMove(te, motion),
       mateValues: next?.mates.find((m) => m.id === mateId)?.values,
+      solved: related ? solve(next, mates.frameFor(next)).values.get(mateId!) : undefined,
     });
   };
   // Mid-drag, the viewport poses every instance the drag moves — the dragged
@@ -323,11 +345,16 @@ export function useAssemblyWorkspace({
     // A part one mate positions: that mate's own values.
     if (asmDrag) {
       const values = asmLive?.mateValues ?? asmDrag.mate.values ?? {};
+      const solved = asmLive?.solved ?? mates.solution?.values.get(asmDrag.mate.id) ?? {};
       return asmDrag.dofs.map((dof) => ({
         key: dof,
         label: dofLabel(asmDrag.mate.type, dof),
-        value: values[dof]?.trim() || "0",
-        onCommit: (text: string) => mates.setMateValue(asmDrag.mate.id, dof, text),
+        // A DOF a relation drives: where it is, not its own value (a phase).
+        value:
+          assembly && relationDriving(assembly, asmDrag.mate.id, dof)
+            ? formatValue(solved[dof] ?? 0, isRotation(dof))
+            : values[dof]?.trim() || "0",
+        onCommit: (text: string) => setAsmDragMessage(mates.setMateValue(asmDrag.mate.id, dof, text)),
       }));
     }
     // Anything else: how far it has moved, live while dragging.
@@ -371,6 +398,8 @@ export function useAssemblyWorkspace({
     asmVariablesOpen,
     animation,
     openAnimation,
+    relations,
+    openRelation,
     assemblyMeshes,
     canMate,
     cancelInstanceMove,

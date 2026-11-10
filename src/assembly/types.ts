@@ -72,8 +72,39 @@ export interface Mate {
   suppressed?: boolean;
 }
 
+export type RelationType = "gear" | "rack" | "screw";
+
+/** One end of a relation: a free DOF of a mate. */
+export interface RelationEnd {
+  mateId: string;
+  dof: Dof;
+}
+
+/** Couples one mate's DOF to another's, linearly: the driven DOF's value is
+ *  its own (a phase, so gear teeth can be lined up) plus k times the driver's.
+ *  k comes from the type and `value` (relations.ts): a gear's ratio, a rack's
+ *  pinion radius, a screw's pitch. */
+export interface Relation {
+  id: string;
+  /** "Gear 1" — editable. */
+  name: string;
+  type: RelationType;
+  driver: RelationEnd;
+  driven: RelationEnd;
+  /** An expression, which may name the assembly's variables: the ratio
+   *  (driven turns per driver turn), the pinion's radius (mm), or the pitch
+   *  (mm per turn). */
+  value: string;
+  /** Turn or move the other way. A gear's default is the way meshed gears
+   *  turn: opposite. */
+  reverse?: boolean;
+  suppressed?: boolean;
+}
+
 export interface AssemblyDoc {
   instances: Instance[];
   mates: Mate[];
   variables: Variable[];
+  /** Absent in assemblies saved before relations, and while there are none. */
+  relations?: Relation[];
 }

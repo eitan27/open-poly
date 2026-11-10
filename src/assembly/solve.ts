@@ -22,6 +22,7 @@
 import { evaluateVariables } from "../document/document";
 import { evaluateExpression, type Scope } from "../document/expression";
 import { levenbergMarquardt } from "./lm";
+import { applyRelations } from "./relations";
 import { applyPoint, multiply, type Vec3 } from "./placement";
 import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector, MateType } from "./types";
 
@@ -227,6 +228,8 @@ export interface Solution {
   loops: Loop[];
   /** Every instance a mate positions, in the tree or in a loop. */
   mated: Set<string>;
+  /** Relations that couldn't be applied, and why, in words. */
+  relationProblems: Map<string, string>;
 }
 
 export interface SolveOptions {
@@ -277,8 +280,9 @@ interface Usable {
   cb: Mat4;
   v: Partial<Record<Dof, number>>;
   rel: Mat4;
-  /** The DOF SolveOptions.drive sets, on that mate. */
-  drive?: Dof;
+  /** DOFs set from outside the mate's own values — SolveOptions.drive, a
+   *  relation — which drive a loop group as an expression would. */
+  forced?: Dof[];
 }
 
 /** An edge of the mate graph: a mate, or (no `usable`) an instance's
@@ -316,7 +320,9 @@ export function solve(
   const loops: Loop[] = [];
   const byId = new Map(assembly.instances.map((i) => [i.id, i]));
 
-  const usable: Usable[] = [];
+  // Each mate's values first, then the relations that set some from others'
+  // (a gear train, in order), then what the solver needs from each.
+  const candidates: { mate: Mate; ca: Mat4; cb: Mat4; drive: Dof | null }[] = [];
   for (const mate of assembly.mates) {
     if (mate.suppressed) continue;
     if (!byId.has(mate.a.instanceId) || !byId.has(mate.b.instanceId)) {
@@ -343,8 +349,14 @@ export function solve(
     const drive = opts.drive?.mateId === mate.id && MATE_DOFS[mate.type].includes(opts.drive.dof) ? opts.drive : null;
     if (drive) v = { ...v, [drive.dof]: drive.value };
     values.set(mate.id, v);
-    usable.push({ mate, ca, cb, v, rel: mateRelative(mate, ca, cb, v), drive: drive?.dof });
+    candidates.push({ mate, ca, cb, drive: drive?.dof ?? null });
   }
+  const { forced, problems: relationProblems } = applyRelations(assembly, values, scope);
+  const usable: Usable[] = candidates.map(({ mate, ca, cb, drive }) => {
+    const v = values.get(mate.id)!;
+    const f = [...(drive ? [drive] : []), ...(forced.get(mate.id) ?? [])];
+    return { mate, ca, cb, v, rel: mateRelative(mate, ca, cb, v), ...(f.length ? { forced: f } : {}) };
+  });
 
   const edges: Edge[] = [];
   for (const i of assembly.instances) if (i.grounded) edges.push({ u: WORLD, w: i.id });
@@ -445,7 +457,7 @@ export function solve(
     }
   const mated = new Set<string>(drivenBy.keys());
   for (const l of loops) for (const n of [...l.free, ...(l.anchor ? [l.anchor] : [])]) mated.add(n);
-  return { placements, drivenBy, problems, values, loops, mated };
+  return { placements, drivenBy, problems, values, loops, mated, relationProblems };
 }
 
 /** The biconnected blocks of a multigraph, as lists of edges (Tarjan). Two
@@ -552,7 +564,7 @@ function solveGroup(
     const driven: GroupMate["driven"] = [];
     const limits: GroupMate["limits"] = [];
     for (const d of MATE_DOFS[u.mate.type]) {
-      if (u.drive === d || isDriven(u.mate, d)) {
+      if (u.forced?.includes(d) || isDriven(u.mate, d)) {
         driven.push({ d, value: u.v[d] ?? 0 });
         continue;
       }

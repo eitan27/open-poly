@@ -3,9 +3,10 @@
 // follow the Parts list's (colour, name, eye, ✕) so the two read alike.
 import { shortcutHint, shortcutName } from "../settings/shortcuts";
 import { EyeIcon, GroundIcon } from "../ui/icons";
-import { MateIcon } from "./MateIcon";
+import { MateIcon, RelationIcon } from "./MateIcon";
 import { mateValuesText } from "./mateTypes";
-import { MATE_DOFS } from "./solve";
+import { animatableDofs } from "./animate";
+import { RELATION_TYPES } from "./relations";
 import type { AssemblyDoc, Dof, Instance } from "./types";
 import type { SourceState } from "./useAssemblySources";
 import "./AssemblyPanel.css";
@@ -43,6 +44,15 @@ interface Props {
   onAnimateMate: (id: string) => void;
   /** The mate the Animate dialog is open on. */
   animatingMateId: string | null;
+  /** Relations that couldn't be applied, and why. */
+  relationProblems: ReadonlyMap<string, string>;
+  editingRelationId: string | null;
+  /** A relation can be made: some mate has a free DOF. */
+  canRelate: boolean;
+  onNewRelation: () => void;
+  onEditRelation: (id: string) => void;
+  onRenameRelation: (id: string, name: string) => void;
+  onRemoveRelation: (id: string) => void;
   /** Show the shortcut keys on the buttons (the ? toggle). */
   showShortcuts: boolean;
 }
@@ -217,7 +227,7 @@ export function AssemblyPanel(p: Props) {
                     ⚠
                   </span>
                 )}
-                {!bad && !m.suppressed && MATE_DOFS[m.type].length > 0 && (
+                {!bad && !m.suppressed && animatableDofs(assembly, m).length > 0 && (
                   <button
                     type="button"
                     className="row-icon asm-mate-animate"
@@ -237,6 +247,83 @@ export function AssemblyPanel(p: Props) {
                   onClick={(e) => {
                     e.stopPropagation();
                     p.onRemoveMate(m.id);
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <RelationsSection {...p} />
+    </>
+  );
+}
+
+/** Relations: one mate's DOF driven by another's (a gear, a rack, a screw). */
+function RelationsSection(p: Props) {
+  const { assembly } = p;
+  const relations = assembly.relations ?? [];
+  const mateName = (id: string) => assembly.mates.find((m) => m.id === id)?.name ?? "?";
+  return (
+    <>
+      <div className="parts-header">
+        <h2>Relations ({relations.length})</h2>
+        <div className="parts-import">
+          <button
+            type="button"
+            className="asm-new-relation"
+            title="Drive one mate from another: gears, a rack and pinion, a screw"
+            disabled={!p.canRelate}
+            onClick={p.onNewRelation}
+          >
+            ＋ Relation
+          </button>
+        </div>
+      </div>
+      {relations.length === 0 ? (
+        <p className="asm-empty">
+          {p.canRelate ? "No relations yet." : "Mate parts so they can move, then relate their mates."}
+        </p>
+      ) : (
+        <div className="tree-list asm-list">
+          {relations.map((r) => {
+            const bad = p.relationProblems.get(r.id);
+            const kind = RELATION_TYPES.find((t) => t.type === r.type)!;
+            return (
+              <div
+                key={r.id}
+                className={
+                  "solid-row asm-row asm-relation-row" +
+                  (p.editingRelationId === r.id ? " selected" : "") +
+                  (r.suppressed ? " dim" : "")
+                }
+                onClick={() => p.onEditRelation(r.id)}
+              >
+                <span className="asm-mate-icon" title={kind.label}>
+                  <RelationIcon type={r.type} />
+                </span>
+                <span className="asm-name">
+                  <input
+                    className="solid-name"
+                    value={r.name}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => p.onRenameRelation(r.id, e.target.value)}
+                  />
+                  <span className={"asm-source" + (bad ? " bad" : "")} title={bad ?? kind.title}>
+                    {bad
+                      ? `⚠ ${bad}`
+                      : `${mateName(r.driver.mateId)} → ${mateName(r.driven.mateId)} · ${r.value}${r.reverse ? " · reversed" : ""}`}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  className="row-icon"
+                  title="Delete the relation"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    p.onRemoveRelation(r.id);
                   }}
                 >
                   ✕

@@ -3,7 +3,7 @@
 // mate leaves free, or for Fastened the lack of it, rather than a text glyph
 // that renders at the mercy of the font.
 import type { ReactNode } from "react";
-import type { MateType } from "./types";
+import type { MateType, RelationType } from "./types";
 
 /** How far back from its tip an arrowhead's arms reach. */
 const HEAD_BACK = 2.2;
@@ -141,6 +141,49 @@ export function MateIcon({ type, size = 14 }: { type: MateType; size?: number })
       aria-hidden="true"
     >
       {PATHS[type]}
+    </svg>
+  );
+}
+
+/** The relation types' icons, in the same style: two meshed gears, a pinion
+ *  on a rack, a threaded shaft. */
+const RELATION_PATHS: Record<RelationType, ReactNode> = {
+  gear: (
+    <>
+      <circle cx={5.6} cy={9.6} r={3.6} />
+      <circle cx={11.6} cy={5.2} r={2.6} />
+      <path d="M5.6 9.6h.01M11.6 5.2h.01" />
+    </>
+  ),
+  rack: (
+    <>
+      <circle cx={8} cy={6} r={3.6} />
+      <path d="M2 12.8h12M3.5 12.8v-1.6M6.5 12.8v-1.6M9.5 12.8v-1.6M12.5 12.8v-1.6" />
+    </>
+  ),
+  screw: (
+    <>
+      <path d="M5.5 2.5v11M10.5 2.5v11" />
+      <path d="M5.5 4l5 1.6M5.5 7.2l5 1.6M5.5 10.4l5 1.6" />
+    </>
+  ),
+};
+
+export function RelationIcon({ type, size = 14 }: { type: RelationType; size?: number }) {
+  return (
+    <svg
+      className="mate-icon"
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.3}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {RELATION_PATHS[type]}
     </svg>
   );
 }

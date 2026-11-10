@@ -14,12 +14,17 @@
 // crank and rocker round as far as their mates let it, and moves them as
 // little as it can.
 //
+// A DOF a relation drives (a gear, a rack) isn't written: its driver is, by
+// what puts the driven DOF where the drag took it (routeToDriver), so turning
+// either of two meshed gears turns both.
+//
 // Everything a drag writes is mate values (rounded as they're stored) or
 // placements, so a preview of the result is exactly what letting go commits.
 import { evaluateVariables } from "../document/document";
 import type { Scope } from "../document/expression";
 import { keepPlacements, moveInstance, updateMate } from "./assembly";
 import { multiply } from "./placement";
+import { relationDriving, routeToDriver } from "./relations";
 import { formatValue, isDriven, isRotation, MATE_DOFS, mateValues, solve, valuesForPose, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector } from "./types";
 
@@ -98,7 +103,9 @@ export function dragAssembly(
     const tb = by.reversed ? pb : multiply(motion, pb);
     const values = fitValues(own, frameOf, ta, tb, solution.values.get(own.id) ?? {}, scope);
     if (!values) return { next: null, error: null };
-    next = updateMate(assembly, { ...own, values });
+    const routed = throughDrivers(assembly, own, values, solution.values.get(own.id) ?? {}, scope);
+    if ("error" in routed) return { next: null, error: routed.error };
+    next = routed.next;
   } else {
     next = moveInstance(assembly, instanceId, motion);
   }
@@ -122,7 +129,47 @@ export function dragAssembly(
       solution.values.get(mate.id) ?? {},
       scope,
     );
-    if (values) next = updateMate(next, { ...mate, values });
+    if (!values) continue;
+    // What a relation drives follows its driver, not the drag.
+    for (const d of MATE_DOFS[mate.type])
+      if (relationDriving(next, mate.id, d)) {
+        if (mate.values?.[d] !== undefined) values[d] = mate.values[d];
+        else delete values[d];
+      }
+    next = updateMate(next, { ...mate, values });
   }
   return { next, error: null };
+}
+
+/** `a` with `mate` set to `values` — except that a DOF a relation drives keeps
+ *  its own value (its phase), and if the drag moved it (from `current`, where
+ *  it is now), its driver, followed back to the root of a gear train, is set
+ *  to what puts it at the new value instead. A screw within one cylindrical
+ *  mate turns when it's turned, as its slide didn't change. */
+function throughDrivers(
+  a: AssemblyDoc,
+  mate: Mate,
+  values: Partial<Record<Dof, string>>,
+  current: Partial<Record<Dof, number>>,
+  scope: Scope,
+): { next: AssemblyDoc } | { error: string } {
+  const own: Partial<Record<Dof, string>> = { ...values };
+  const roots: { mateId: string; dof: Dof; value: number }[] = [];
+  for (const d of MATE_DOFS[mate.type]) {
+    if (!relationDriving(a, mate.id, d)) continue;
+    const want = Number(values[d] ?? 0);
+    const moved = Math.abs(want - (current[d] ?? 0)) > (isRotation(d) ? 0.005 : 0.0005);
+    if (mate.values?.[d] !== undefined) own[d] = mate.values[d];
+    else delete own[d];
+    if (!moved) continue;
+    const r = routeToDriver(a, mate.id, d, want, scope);
+    if ("error" in r) return r;
+    roots.push(r);
+  }
+  let next = updateMate(a, { ...mate, values: own });
+  for (const r of roots) {
+    const m = next.mates.find((x) => x.id === r.mateId);
+    if (m) next = updateMate(next, { ...m, values: { ...m.values, [r.dof]: formatValue(r.value, isRotation(r.dof)) } });
+  }
+  return { next };
 }

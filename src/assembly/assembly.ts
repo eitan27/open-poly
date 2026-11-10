@@ -1,11 +1,14 @@
 // Pure operations on an AssemblyDoc. No DOM, no storage, no kernel — like
 // document/document.ts is for parts.
 import type { ConnectorRef } from "./frames";
-import type { AssemblyDoc, Dof, Instance, Mat4, Mate, MateType } from "./types";
+import type { AssemblyDoc, Dof, Instance, Mat4, Mate, MateType, Relation, RelationType } from "./types";
 import { multiply } from "./placement";
+import { dropOrphanRelations, relationDriving } from "./relations";
 import { formatValue, isDriven, isRotation, MATE_DOFS, type Solution } from "./solve";
 
 const MATE_TYPES: MateType[] = ["fastened", "revolute", "slider", "cylindrical", "planar", "ball", "width"];
+const RELATION_TYPES: RelationType[] = ["gear", "rack", "screw"];
+const DOFS: Dof[] = ["tx", "ty", "tz", "rx", "ry", "rz"];
 
 export function createAssembly(): AssemblyDoc {
   return { instances: [], mates: [], variables: [] };
@@ -49,10 +52,23 @@ export function migrateAssembly(raw: unknown): AssemblyDoc {
       m && typeof m.id === "string" && MATE_TYPES.includes(m.type as MateType) && side(m.a, width) && side(m.b, width);
     if (!ok) throw new Error("Assembly data is missing or corrupt.");
   }
+  const relations = Array.isArray(a.relations) ? (a.relations as Partial<Relation>[]) : [];
+  const end = (e: Relation["driver"] | undefined) => !!e && typeof e.mateId === "string" && DOFS.includes(e.dof);
+  for (const r of relations) {
+    const ok =
+      r &&
+      typeof r.id === "string" &&
+      RELATION_TYPES.includes(r.type as RelationType) &&
+      typeof r.value === "string" &&
+      end(r.driver) &&
+      end(r.driven);
+    if (!ok) throw new Error("Assembly data is missing or corrupt.");
+  }
   return {
     instances: a.instances,
     mates: mates as Mate[],
     variables: Array.isArray(a.variables) ? a.variables : [],
+    ...(relations.length ? { relations: relations as Relation[] } : {}),
   };
 }
 
@@ -129,11 +145,11 @@ export function moveInstance(a: AssemblyDoc, id: string, motion: Mat4): Assembly
 /** Remove instances, and the mates that joined them to anything. */
 export function removeInstances(a: AssemblyDoc, ids: string[]): AssemblyDoc {
   const drop = new Set(ids);
-  return {
+  return dropOrphanRelations({
     ...a,
     instances: a.instances.filter((i) => !drop.has(i.id)),
     mates: a.mates.filter((m) => !drop.has(m.a.instanceId) && !drop.has(m.b.instanceId)),
-  };
+  });
 }
 
 const TYPE_NAMES: Record<MateType, string> = {
@@ -165,9 +181,10 @@ export function updateMate(a: AssemblyDoc, mate: Mate): AssemblyDoc {
   return { ...a, mates: a.mates.map((m) => (m.id === mate.id ? mate : m)) };
 }
 
+/** Remove mates, and the relations that used them. */
 export function removeMates(a: AssemblyDoc, ids: string[]): AssemblyDoc {
   const drop = new Set(ids);
-  return { ...a, mates: a.mates.filter((m) => !drop.has(m.id)) };
+  return dropOrphanRelations({ ...a, mates: a.mates.filter((m) => !drop.has(m.id)) });
 }
 
 /** Store solved placements as the instances' own, so a part a mate was
@@ -197,7 +214,8 @@ export function keepSolved(a: AssemblyDoc, solution: Pick<Solution, "placements"
     if (!got) continue;
     let values: Partial<Record<Dof, string>> | undefined;
     for (const d of MATE_DOFS[m.type]) {
-      if (isDriven(m, d)) continue;
+      // A relation-driven value is its phase, not where it is.
+      if (isDriven(m, d) || relationDriving(a, m.id, d)) continue;
       const text = formatValue(got[d] ?? 0, isRotation(d));
       const cur = m.values?.[d]?.trim();
       if (Number(cur ?? 0) === Number(text)) continue;
@@ -240,7 +258,7 @@ const offsetRenamed = (c: Mate["a"], rename: (expr: string) => string): Mate["a"
     : c;
 
 /** An assembly's mates with every value, limit and connector offset passed
- *  through `rename`:
+ *  through `rename`, and its relations' values:
  *  what renaming one of its variables does to them (see renameVariable). */
 export function renameInMates(a: AssemblyDoc, rename: (expr: string) => string): AssemblyDoc {
   const each = <V>(rec: Partial<Record<Dof, V>> | undefined, fn: (v: V) => V) =>
@@ -261,5 +279,6 @@ export function renameInMates(a: AssemblyDoc, rename: (expr: string) => string):
           }
         : {}),
     })),
+    ...(a.relations ? { relations: a.relations.map((r) => ({ ...r, value: rename(r.value) })) } : {}),
   };
 }

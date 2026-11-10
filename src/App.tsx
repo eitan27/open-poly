@@ -227,6 +227,7 @@ import { AssemblyPanel } from "./assembly/AssemblyPanel";
 import { InsertDialog } from "./assembly/InsertDialog";
 import { MoveDialog } from "./assembly/MoveDialog";
 import { AnimateDialog } from "./assembly/AnimateDialog";
+import { RelationDialog } from "./assembly/RelationDialog";
 import { animatableDofs } from "./assembly/animate";
 import { renameInMates, removeInstances, updateInstance, updateMate } from "./assembly/assembly";
 import { MateDialog } from "./assembly/MateDialog";
@@ -1941,6 +1942,8 @@ export default function App() {
     asmVariablesOpen,
     animation: mateAnimation,
     openAnimation,
+    relations: mateRelations,
+    openRelation,
     assemblyMeshes,
     canMate,
     cancelInstanceMove,
@@ -3469,6 +3472,7 @@ export default function App() {
     onCancel: () => {
       if (isAssembly) {
         if (mateAnimation.mateId) mateAnimation.close();
+        else if (mateRelations.dialog) mateRelations.close();
         else if (mates.sessionOpen) mates.close();
         else {
           if (asmMoveOpen) cancelInstanceMove();
@@ -7015,8 +7019,16 @@ export default function App() {
                   onEditMate={(id) => {
                     setAsmSelected([]);
                     mateAnimation.close();
+                    mateRelations.close();
                     mates.openEdit(id);
                   }}
+                  relationProblems={mates.solution?.relationProblems ?? NO_PROBLEMS}
+                  editingRelationId={mateRelations.editingId}
+                  canRelate={mateRelations.canRelate}
+                  onNewRelation={() => openRelation()}
+                  onEditRelation={(id) => openRelation(id)}
+                  onRenameRelation={mateRelations.rename}
+                  onRemoveRelation={mateRelations.remove}
                   onAnimateMate={openAnimation}
                   animatingMateId={mateAnimation.mateId}
                   onRenameMate={(id, name) => {
@@ -7244,7 +7256,7 @@ export default function App() {
             {isAssembly &&
               (() => {
                 const m = mateAnimation.mateId ? assembly?.mates.find((x) => x.id === mateAnimation.mateId) : undefined;
-                return m ? <AnimateDialog mate={m} anim={mateAnimation} dofs={animatableDofs(m)} /> : null;
+                return m ? <AnimateDialog mate={m} anim={mateAnimation} dofs={animatableDofs(assembly!, m)} /> : null;
               })()}
             {asmMoveOpen && asmMoveTarget && (
               <MoveDialog
@@ -7270,6 +7282,7 @@ export default function App() {
               />
             )}
             {mates.dialog && <MateDialog {...mates.dialog} showShortcuts={showShortcuts} />}
+            {isAssembly && mateRelations.dialog && <RelationDialog {...mateRelations.dialog} />}
             {insertOpen && (
               <InsertDialog onClose={() => setInsertOpen(false)} onInsert={insertParts} build={buildDocument} />
             )}
