@@ -427,6 +427,11 @@ pinning (parts have no versions yet).
   kin in each script), or under load it acts on the previous document or
   reads an empty list.
 
+- **Run browser checks one at a time, and don't edit `src/` while they run.**
+  They share one dev server, whose hot reload swaps the page under a running
+  check (it then hangs or fails for no reason of its own); run in parallel,
+  the load brings out timing races the checks otherwise miss.
+
 ## Open questions
 
 - When a source part's part count changes (a cut splits a body), what happens
