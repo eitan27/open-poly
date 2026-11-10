@@ -420,7 +420,7 @@ check(
 
 // The placement a variable leads to is kept like any mate edit's: deleting the
 // mate leaves the part where the variable had put it.
-await page.locator(".asm-mate-row").first().locator(".row-icon").click();
+await page.locator(".asm-mate-row").first().locator('.row-icon[title="Delete the mate"]').click();
 rec = await saved();
 check(
   "deleting the mate leaves the part where the variable put it",

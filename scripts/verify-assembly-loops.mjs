@@ -262,7 +262,7 @@ await page.locator(".asm-move .ed-primary", { hasText: "Done" }).click(); // kee
 
 // --- Delete the planar mate: the arm stays where the pair held it ---------------
 const before = T("Arm");
-await page.locator(".asm-mate-row").nth(1).locator(".row-icon").click();
+await page.locator(".asm-mate-row").nth(1).locator('.row-icon[title="Delete the mate"]').click();
 rec = await saved();
 check("✕ deletes the planar mate", rec.assembly.mates.length === 1);
 check(

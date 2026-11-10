@@ -278,7 +278,7 @@ await page.locator(".asm-mate button", { hasText: "Cancel" }).click();
 
 // --- Delete a mate: the part stays where it was ---------------------------------
 const before = T("Arm");
-await page.locator(".asm-mate-row").first().locator(".row-icon").click();
+await page.locator(".asm-mate-row").first().locator('.row-icon[title="Delete the mate"]').click();
 rec = await saved();
 check("✕ deletes the mate", rec.assembly.mates.length === 1);
 check(
