@@ -201,6 +201,10 @@ solver.
   turns, and keeps the first that holds. Silently: the mate never existed the
   other way round, so a note pointed at nothing and read as an error; the
   Flip button shows as pressed. A Flip pressed afterwards is respected.
+- **The mates list** reads "A ↔ B · values" (`mateValuesText`: "15 mm",
+  "x 3 mm · y 4 mm · 30°", or "lift = 25 mm" when an expression sets it).
+  Hovering a row shows its connectors in the view, as the open dialog does;
+  clicking it edits.
 - **One after another.** Once a new mate is complete and holds, clicking
   another face makes it and starts the next (same type) from that face; the
   title counts them and Cancel reads Close. Create makes the mate and closes.
@@ -213,8 +217,6 @@ solver.
   along an edge or axis, so fastening a box into another's corner takes three
   planars rather than one Fastened mate on a vertex.
 - An amber ⚠ when a connector was re-found by fingerprint (today it's silent).
-- The mates list shows the two parts, not the mate's values, and selecting a
-  mate in the list doesn't highlight its connectors outside the Mate dialog.
 
 ---
 

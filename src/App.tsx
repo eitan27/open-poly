@@ -7234,6 +7234,8 @@ export default function App() {
                 onOpenSource={(docId) => void openDocument(docId).catch(() => {})}
                 onInsert={() => setInsertOpen(true)}
                 mateProblems={mates.solution?.problems ?? NO_PROBLEMS}
+                mateValues={mates.solution?.values ?? NO_PROBLEMS}
+                onHoverMate={mates.hoverMate}
                 drivenIds={mates.solution?.mated ?? NO_PROBLEMS}
                 editingMateId={mates.editingId}
                 onNewMate={() => openMateDialog()}

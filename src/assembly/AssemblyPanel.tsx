@@ -4,7 +4,8 @@
 import { shortcutHint, shortcutName } from "../settings/shortcuts";
 import { EyeIcon, GroundIcon } from "../ui/icons";
 import { MateIcon } from "./MateIcon";
-import type { AssemblyDoc, Instance } from "./types";
+import { mateValuesText } from "./mateTypes";
+import type { AssemblyDoc, Dof, Instance } from "./types";
 import type { SourceState } from "./useAssemblySources";
 import "./AssemblyPanel.css";
 
@@ -23,6 +24,10 @@ interface Props {
   onInsert: () => void;
   /** Mates the solver couldn't apply, and why. */
   mateProblems: ReadonlyMap<string, string>;
+  /** Each mate's current values (solved), shown in its row. */
+  mateValues: ReadonlyMap<string, Partial<Record<Dof, number>>>;
+  /** The pointer is over a mate's row (null: it left): its connectors show. */
+  onHoverMate: (id: string | null) => void;
   /** Instances a mate positions. */
   drivenIds: { has(id: string): boolean };
   editingMateId: string | null;
@@ -183,6 +188,8 @@ export function AssemblyPanel(p: Props) {
                   (m.suppressed ? " dim" : "")
                 }
                 onClick={() => p.onEditMate(m.id)}
+                onMouseEnter={() => p.onHoverMate(m.id)}
+                onMouseLeave={() => p.onHoverMate(null)}
               >
                 <span className="asm-mate-icon" title={m.type}>
                   <MateIcon type={m.type} />
@@ -190,7 +197,11 @@ export function AssemblyPanel(p: Props) {
                 <span className="asm-name">
                   <input className="solid-name" value={m.name} onChange={(e) => p.onRenameMate(m.id, e.target.value)} />
                   <span className={"asm-source" + (bad ? " bad" : "")} title={bad}>
-                    {bad ? `⚠ ${bad}` : `${name(m.a.instanceId)} ↔ ${name(m.b.instanceId)}`}
+                    {bad
+                      ? `⚠ ${bad}`
+                      : [`${name(m.a.instanceId)} ↔ ${name(m.b.instanceId)}`, mateValuesText(m, p.mateValues.get(m.id))]
+                          .filter(Boolean)
+                          .join(" · ")}
                   </span>
                 </span>
                 <button

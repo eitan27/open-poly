@@ -350,9 +350,24 @@ export function useMates({
     if (session?.editingId === id) setSession(null);
   };
 
-  // Markers at the picked connectors, sized to the assembly.
+  /** A mate in the mates list the pointer is over: its connectors show in the
+   *  viewport as the open dialog's would. */
+  const [hoveredMateId, setHoveredMateId] = useState<string | null>(null);
+  /** The connectors to show: the open dialog's picks, else the hovered mate's.
+   *  `glyph` sides get a frame marker; `pick` sides highlight their faces (the
+   *  dialog's raw slots, so a width mate's half-picked face shows too). */
+  const shown = useMemo(() => {
+    if (session) {
+      const d = session.draft;
+      return { type: d.type, glyph: [sideOf(d, d.a), sideOf(d, d.b)], pick: [d.a, d.b] };
+    }
+    const m = hoveredMateId ? display?.mates.find((x) => x.id === hoveredMateId) : undefined;
+    return m ? { type: m.type, glyph: [m.a, m.b], pick: [m.a, m.b] } : null;
+  }, [session, hoveredMateId, display]);
+
+  // Markers at the shown connectors, sized to the assembly.
   const glyphs = useMemo<GhostMesh[]>(() => {
-    if (!session || !display || !solution) return [];
+    if (!shown || !display || !solution) return [];
     let size = 0;
     for (const inst of display.instances) {
       const mesh = partMesh(display, inst.id);
@@ -361,7 +376,7 @@ export function useMates({
     }
     const glyphSize = Math.min(40, Math.max(4, size * 0.25));
     const out: GhostMesh[] = [];
-    for (const c of [sideOf(session.draft, session.draft.a), sideOf(session.draft, session.draft.b)]) {
+    for (const c of shown.glyph) {
       if (!c) continue;
       const f = frameFor(display)(c);
       const place = solution.placements.get(c.instanceId);
@@ -370,16 +385,16 @@ export function useMates({
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, display, solution]);
+  }, [shown, display, solution]);
 
-  /** The picked connectors' faces/edges, shown as the viewport's selection. */
+  /** The shown connectors' faces/edges, as the viewport's selection. */
   const picks = useMemo<Selection[] | null>(() => {
-    if (!session || !display) return null;
+    if (!shown || !display) return null;
     const out: Selection[] = [];
-    for (const c of [session.draft.a, session.draft.b]) {
+    for (const c of shown.pick) {
       const mesh = c && partMesh(display, c.instanceId);
       if (!c || !mesh) continue;
-      const refs = session.draft.type === "width" && c.ref2 ? [c.ref, c.ref2] : [c.ref];
+      const refs = shown.type === "width" && c.ref2 ? [c.ref, c.ref2] : [c.ref];
       for (const ref of refs) {
         if (ref.kind === "face") {
           const g = mesh.faces.faceGroups?.find((x) => x.name === ref.name);
@@ -392,7 +407,7 @@ export function useMates({
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, display]);
+  }, [shown, display]);
 
   const slotView = (i: 0 | 1): MateDialogProps["slots"][number] => {
     const raw = i === 0 ? session?.draft.a : session?.draft.b;
@@ -512,6 +527,7 @@ export function useMates({
   };
 
   return {
+    hoverMate: setHoveredMateId,
     setMateValue,
     dragResult,
     solution,

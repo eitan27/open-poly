@@ -225,6 +225,27 @@ check(
   (apply4(T("Arm"), armBottom)[2] - z0).toFixed(3),
 );
 
+// The mates list shows the mate's value, and the expression that sets it.
+const row = page.locator(".asm-mate-row").first();
+check(
+  "the mate's row shows its value",
+  /lift = 15 mm/.test(await row.locator(".asm-source").textContent()),
+  await row.locator(".asm-source").textContent(),
+);
+// Hovering the row shows its connectors in the view (markers and faces).
+await page.mouse.move(5, 500);
+await page.waitForTimeout(300);
+const canvas = page.locator(".viewport canvas").first();
+const plain = await canvas.screenshot();
+await row.locator(".asm-source").hover();
+await page.waitForTimeout(400);
+const lit = await canvas.screenshot();
+await page.screenshot({ path: "/tmp/asm-mate-hover.png" });
+check("hovering the row lights its connectors", !plain.equals(lit));
+await page.mouse.move(5, 500);
+await page.waitForTimeout(400);
+check("…and leaving it puts them out", (await canvas.screenshot()).equals(plain));
+
 // Change the variable: the part follows.
 await exprBox.fill("25");
 await exprBox.blur();
