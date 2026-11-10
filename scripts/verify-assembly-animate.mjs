@@ -223,6 +223,17 @@ check("…holding the arm turned", !same(held, stillOpen));
 await page.locator(".asm-animate-close").click();
 await page.waitForTimeout(400);
 check("Close puts the arm back", same(await shot(), still));
+
+// Esc closes it too, mid-play, putting the arm back.
+await page.locator(".asm-mate-animate").first().click();
+await page.locator(".asm-animate-play").click();
+await page.waitForTimeout(600);
+await page.keyboard.press("Escape");
+await page.waitForTimeout(400);
+check("Esc closes the Animate dialog", (await page.locator(".asm-animate").count()) === 0);
+await page.mouse.move(5, 5);
+await page.waitForTimeout(300);
+check("…and puts the arm back", same(await shot(), still));
 rec = await saved();
 check("…and the document is as it was", JSON.stringify(rec.assembly) === before);
 

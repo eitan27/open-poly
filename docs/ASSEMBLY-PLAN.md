@@ -387,7 +387,7 @@ translation (bouncing).
   nothing that moves them can change while the dialog is open.
 - **The view is the dialog's** while it's open: picks are ignored, and the
   selection, the Move panel and the Mate dialog are closed. Opening a Mate
-  dialog or editing a mate closes it.
+  dialog or editing a mate closes it, as Esc does.
 - If a frame leaves a mate the solver can't satisfy, the animation stops there
   and says which.
 

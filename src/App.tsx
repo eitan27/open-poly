@@ -3468,7 +3468,8 @@ export default function App() {
     // with the dialog object.
     onCancel: () => {
       if (isAssembly) {
-        if (mates.sessionOpen) mates.close();
+        if (mateAnimation.mateId) mateAnimation.close();
+        else if (mates.sessionOpen) mates.close();
         else {
           if (asmMoveOpen) cancelInstanceMove();
           clearAssemblySelection();
