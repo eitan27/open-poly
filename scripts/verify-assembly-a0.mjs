@@ -37,13 +37,26 @@ const inAssembly = async () => (await page.locator(".panel h2", { hasText: "Inst
 // The part toolbar (an assembly has its own). Counted with `> 0`: the bar keeps
 // a hidden measuring copy of its buttons.
 const toolbarShown = async () => (await page.locator(".model-toolbar button", { hasText: "Extrude" }).count()) > 0;
+/** A document switch lands a few hundred ms after its click, while the status
+ *  still reads "up to date" from before: wait for the side panel to show the
+ *  kind expected (up to 10 s; the check that follows says if it never does). */
+const settleAs = async (kind) => {
+  await page
+    .waitForFunction(
+      (k) => !!document.querySelector(".panel .asm-list, .panel .asm-empty") === (k === "assembly"),
+      kind,
+      { timeout: 10000 },
+    )
+    .catch(() => {});
+  await waitIdle();
+};
 
 check("starts in a part (model toolbar shown)", (await toolbarShown()) && !(await inAssembly()));
 
 // 1. New ▾ → Assembly.
 await page.locator(".split-btn-caret").click();
 await page.locator(".split-btn .mt-menu button", { hasText: "Assembly" }).click();
-await waitIdle();
+await settleAs("assembly");
 check("New ▾ → Assembly opens an assembly", await inAssembly());
 check(
   "the part toolbar gives way to the assembly's",
@@ -106,7 +119,10 @@ check("Parts hides the assembly", !parts.some((n) => n.includes("Assembly")), pa
 // 6. Duplicate from the Assemblies tab: the copy is an assembly too.
 await page.locator(".docs-tabs button", { hasText: "Assemblies" }).click();
 await page.locator(".docs-row", { hasText: "Arm" }).first().locator(".text-btn", { hasText: "Duplicate" }).click();
-await waitIdle();
+await page
+  .waitForFunction(() => document.querySelector(".doc-title")?.value === "Copy of Arm", null, { timeout: 10000 })
+  .catch(() => {});
+await settleAs("assembly");
 check("the duplicate opens as an assembly", (await inAssembly()) && (await title()) === "Copy of Arm", await title());
 
 // 7. Undo/redo stay usable (nothing to undo in an empty assembly).
@@ -114,7 +130,7 @@ check("undo is disabled with nothing to undo", await page.locator(".topbar-actio
 
 // 8. Plain "＋ New" is still a part, and the part UI comes back.
 await page.locator(".newdoc-btn").click();
-await waitIdle();
+await settleAs("part");
 check("＋ New makes a part again", (await toolbarShown()) && !(await inAssembly()));
 const made = await page.evaluate(() => window.__openpoly.apply({ op: "addPrimitive", kind: "box" }));
 check("the agent can model in the part", made.ok === true, made.error ?? "");

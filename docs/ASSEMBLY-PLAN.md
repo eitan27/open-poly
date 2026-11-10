@@ -347,12 +347,6 @@ mates' values. A grounded part can't be moved by its gizmo; unground it first.
 
 **Smaller gaps.**
 
-- No browser check makes a Cylindrical mate between two real faceted parts:
-  `verify-assembly-a2` builds a cylinder pin but mates its flat bottom, and
-  the axis fit is tested only on synthetic meshes (`frames.test.ts`). Add a
-  pin-in-hole case (a cylinder primitive into a box with an extruded-circle
-  hole) checking the axes coincide and the pin still slides and turns after
-  a rebuild.
 - No name autocomplete where expressions are typed, in assemblies or parts.
 - Renaming a variable doesn't rename it in the expressions that use it (as in
   a part document): they show ⚠ until edited.
@@ -381,10 +375,14 @@ pinning (parts have no versions yet).
   side), `drag.test.ts`, `frames.test.ts` (connector fitting on synthetic
   meshes, no OCCT in Node), `moveReadout.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
-  `width`, `loops`, `move`), against `npm run dev`; set `PW_EXE` to use a
-  pre-installed Chromium. **`a0` fails two steps** ("＋ New makes a part
-  again" and the agent step after it), and has since before the loop solver;
-  not yet looked into. `verify-all` doesn't run the assembly checks.
+  `width`, `loops`, `move`, `variables`, `pin`), against `npm run dev`; set
+  `PW_EXE` to use a pre-installed Chromium. `pin` is the one Cylindrical mate
+  between real faceted parts (a cylinder primitive in an extruded-circle
+  hole), through a rebuild of the block. `verify-all` doesn't run them.
+- **A document switch lands a few hundred ms after its click**, while the
+  status still reads "up to date" from before it: a check must wait for the
+  side panel to change kind before acting on the new document (`settleAs` in
+  `a0`), or it acts on the old one.
 
 ## Open questions
 
