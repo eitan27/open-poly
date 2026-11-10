@@ -208,6 +208,7 @@ import { PickSlot } from "./ui/PickSlot";
 import { DraggableDialog } from "./ui/DraggableDialog";
 import { DimensionOverlay, type DimSpec } from "./ui/DimensionOverlay";
 import { DimValueInput, type VarOption } from "./ui/DimValueInput";
+import { ExprVariables } from "./ui/exprVariables";
 import { DraftSizeField } from "./ui/DraftSizeField";
 import { draftCursorStore } from "./ui/draftCursorStore";
 import { FeatureTree } from "./ui/FeatureTree";
@@ -3000,6 +3001,18 @@ export default function App() {
         .filter((v) => resolved.scope[v.name] !== undefined)
         .map((v) => ({ name: v.name, value: resolved.scope[v.name] })),
     [doc.variables, resolved.scope],
+  );
+  // The variables every expression field offers as you type (ExprInput): the
+  // open document's, a part's or an assembly's.
+  const exprVariables = useMemo<VarOption[]>(
+    () =>
+      assembly
+        ? assembly.variables
+            .filter((v) => asmVariables.scope[v.name] !== undefined)
+            .map((v) => ({ name: v.name, value: asmVariables.scope[v.name] }))
+        : dimVarOptions,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [assembly?.variables, asmVariables, dimVarOptions],
   );
   const dimSpecs = useMemo<DimSpec[]>(() => {
     if (!editingSketch) return [];
@@ -6838,847 +6851,897 @@ export default function App() {
   const titleValue = titleDraft ?? docName;
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <span className="logo">Open Poly</span>
-        {PREVIEW && (
-          <span className="preview-badge" title={`Preview deployment of the "${PREVIEW}" branch — not openpoly.dev`}>
-            preview · {PREVIEW}
-          </span>
-        )}
-        {/* Always a live input, never a button that becomes one: the swap hid the
-            affordance behind hover and resized the control under the pointer. */}
-        <input
-          ref={titleRef}
-          className={`doc-title${isUntitled(titleValue) ? " doc-title--unnamed" : ""}`}
-          // Content-sized. `size` is in character units, so it tracks the font at
-          // any zoom or device pixel ratio where a fixed px width would not; CSS
-          // clamps it (300px, or 40vw on a narrow viewport).
-          size={Math.min(28, Math.max(8, titleValue.length + 1))}
-          value={titleValue}
-          aria-label="Document name"
-          title="Rename document"
-          onChange={(e) => setTitleDraft(e.target.value)}
-          onFocus={() => {
-            setTitleDraft(docName);
-            // A default name is a placeholder, so typing should replace it whole.
-            // Deferred: the mouseup after a click collapses a selection made now.
-            if (isUntitled(docName)) requestAnimationFrame(() => titleRef.current?.select());
-          }}
-          onBlur={() => {
-            // Commit on blur; an all-whitespace draft, or one Escape abandoned,
-            // reverts to the saved name.
-            const abandoned = titleCancelled.current;
-            titleCancelled.current = false;
-            const trimmed = titleDraft?.trim();
-            if (!abandoned && trimmed) setDocName(trimmed);
-            setTitleDraft(null);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur();
-            else if (e.key === "Escape") {
-              titleCancelled.current = true;
-              e.currentTarget.blur();
-            }
-          }}
-        />
-        <div className="doc-actions">
-          {/* Split: the main half keeps what New always did (a part), the ▾
-              half picks the kind. */}
-          <div className="split-btn" ref={newMenuRef}>
-            <button
-              className="text-btn newdoc-btn"
-              title="Create and open a new empty part document"
-              onClick={() => void newDocument()}
-            >
-              ＋ New
-            </button>
-            <button
-              className="text-btn split-btn-caret"
-              title="Create a new part or assembly"
-              aria-label="Choose what to create"
-              aria-expanded={newMenuOpen}
-              onClick={() => setNewMenuOpen((o) => !o)}
-            >
-              ▾
-            </button>
-            {newMenuOpen && (
-              <div className="mt-menu">
-                <button
-                  type="button"
-                  title="A document you model parts in"
-                  onClick={() => {
-                    setNewMenuOpen(false);
-                    void newDocument("part");
-                  }}
-                >
-                  Parts
-                </button>
-                <button
-                  type="button"
-                  title="A document that places parts from other documents and joins them with mates"
-                  onClick={() => {
-                    setNewMenuOpen(false);
-                    void newDocument("assembly");
-                  }}
-                >
-                  Assembly
-                </button>
-              </div>
-            )}
-          </div>
-          <button className="text-btn docs-btn" title="Open a document" onClick={() => setDocsDialogOpen(true)}>
-            Open…
-          </button>
-        </div>
-        {docInOtherTab && (
-          <span
-            className="tab-warning"
-            title="This document is open in another tab — concurrent edits will overwrite each other."
-          >
-            ⚠ Also open in another tab
-          </span>
-        )}
-        {/* Undo/redo belong to the document, so they stay on the left with it.
-            The app-level chrome (?, settings, report) sits at the far right —
-            see .topbar-chrome below the status chip. */}
-        <div className="topbar-actions">
-          <button className="tool-btn" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">
-            ↶
-          </button>
-          <button className="tool-btn" onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)">
-            ↷
-          </button>
-        </div>
-        {/* The right-hand cluster is one group, not three loose children: the
-            topbar's own 16px gap is meant to separate sections, and applied
-            between the badge, the chip and the buttons it left them adrift. */}
-        <div className="topbar-right">
-          {!driveOwnsStatus && <DriveStatusButton sync={drive} onClick={() => setDriveDialogOpen(true)} />}
-          {agentStatus === "connected" && (
-            <span className="agent-badge" title="An LLM agent is connected to this tab">
-              ● Agent connected
+    <ExprVariables.Provider value={exprVariables}>
+      <div className="app">
+        <header className="topbar">
+          <span className="logo">Open Poly</span>
+          {PREVIEW && (
+            <span className="preview-badge" title={`Preview deployment of the "${PREVIEW}" branch — not openpoly.dev`}>
+              preview · {PREVIEW}
             </span>
           )}
-          {/* The two everyday states are glanced at, not read, so they're
+          {/* Always a live input, never a button that becomes one: the swap hid the
+            affordance behind hover and resized the control under the pointer. */}
+          <input
+            ref={titleRef}
+            className={`doc-title${isUntitled(titleValue) ? " doc-title--unnamed" : ""}`}
+            // Content-sized. `size` is in character units, so it tracks the font at
+            // any zoom or device pixel ratio where a fixed px width would not; CSS
+            // clamps it (300px, or 40vw on a narrow viewport).
+            size={Math.min(28, Math.max(8, titleValue.length + 1))}
+            value={titleValue}
+            aria-label="Document name"
+            title="Rename document"
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onFocus={() => {
+              setTitleDraft(docName);
+              // A default name is a placeholder, so typing should replace it whole.
+              // Deferred: the mouseup after a click collapses a selection made now.
+              if (isUntitled(docName)) requestAnimationFrame(() => titleRef.current?.select());
+            }}
+            onBlur={() => {
+              // Commit on blur; an all-whitespace draft, or one Escape abandoned,
+              // reverts to the saved name.
+              const abandoned = titleCancelled.current;
+              titleCancelled.current = false;
+              const trimmed = titleDraft?.trim();
+              if (!abandoned && trimmed) setDocName(trimmed);
+              setTitleDraft(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              else if (e.key === "Escape") {
+                titleCancelled.current = true;
+                e.currentTarget.blur();
+              }
+            }}
+          />
+          <div className="doc-actions">
+            {/* Split: the main half keeps what New always did (a part), the ▾
+              half picks the kind. */}
+            <div className="split-btn" ref={newMenuRef}>
+              <button
+                className="text-btn newdoc-btn"
+                title="Create and open a new empty part document"
+                onClick={() => void newDocument()}
+              >
+                ＋ New
+              </button>
+              <button
+                className="text-btn split-btn-caret"
+                title="Create a new part or assembly"
+                aria-label="Choose what to create"
+                aria-expanded={newMenuOpen}
+                onClick={() => setNewMenuOpen((o) => !o)}
+              >
+                ▾
+              </button>
+              {newMenuOpen && (
+                <div className="mt-menu">
+                  <button
+                    type="button"
+                    title="A document you model parts in"
+                    onClick={() => {
+                      setNewMenuOpen(false);
+                      void newDocument("part");
+                    }}
+                  >
+                    Parts
+                  </button>
+                  <button
+                    type="button"
+                    title="A document that places parts from other documents and joins them with mates"
+                    onClick={() => {
+                      setNewMenuOpen(false);
+                      void newDocument("assembly");
+                    }}
+                  >
+                    Assembly
+                  </button>
+                </div>
+              )}
+            </div>
+            <button className="text-btn docs-btn" title="Open a document" onClick={() => setDocsDialogOpen(true)}>
+              Open…
+            </button>
+          </div>
+          {docInOtherTab && (
+            <span
+              className="tab-warning"
+              title="This document is open in another tab — concurrent edits will overwrite each other."
+            >
+              ⚠ Also open in another tab
+            </span>
+          )}
+          {/* Undo/redo belong to the document, so they stay on the left with it.
+            The app-level chrome (?, settings, report) sits at the far right —
+            see .topbar-chrome below the status chip. */}
+          <div className="topbar-actions">
+            <button className="tool-btn" onClick={undo} disabled={!canUndo} title="Undo (⌘Z)">
+              ↶
+            </button>
+            <button className="tool-btn" onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)">
+              ↷
+            </button>
+          </div>
+          {/* The right-hand cluster is one group, not three loose children: the
+            topbar's own 16px gap is meant to separate sections, and applied
+            between the badge, the chip and the buttons it left them adrift. */}
+          <div className="topbar-right">
+            {!driveOwnsStatus && <DriveStatusButton sync={drive} onClick={() => setDriveDialogOpen(true)} />}
+            {agentStatus === "connected" && (
+              <span className="agent-badge" title="An LLM agent is connected to this tab">
+                ● Agent connected
+              </span>
+            )}
+            {/* The two everyday states are glanced at, not read, so they're
               glyphs: a spinner while the kernel works, a tick once it's caught
               up. Errors keep their words — those you do read. The sentence
               rides along hidden for screen readers, and as the hover title,
               since a lone tick doesn't say what it's the tick for. */}
-          {/* Connected, Drive's indicator takes over the status pill, in its
+            {/* Connected, Drive's indicator takes over the status pill, in its
               place (one cloud, one spinner-or-tick for model + sync); a
               modelling error keeps the plain pill, with words, and Drive goes
               back to its own button. */}
-          {driveOwnsStatus && (
-            <DriveStatusButton
-              sync={drive}
-              kernel={{ busy: statusClass === "busy", percent: meshPercent, text: status }}
-              onClick={() => setDriveDialogOpen(true)}
-            />
-          )}
-          {!driveOwnsStatus && (
-            <span className={`status ${statusClass}`} title={fatal ?? (errorDetail || status)}>
-              {statusClass === "err" ? (
-                status
-              ) : (
-                <>
-                  {statusClass === "busy" ? (
-                    <span className="status-spinner" aria-hidden />
-                  ) : (
-                    <span className="status-check" aria-hidden>
-                      ✓
-                    </span>
-                  )}
-                  {meshPercent !== null && <span aria-hidden>{meshPercent}%</span>}
-                  <span className="sr-only">{status}</span>
-                </>
-              )}
-            </span>
-          )}
-          {/* App-level chrome, parked at the right edge past the status: none of
+            {driveOwnsStatus && (
+              <DriveStatusButton
+                sync={drive}
+                kernel={{ busy: statusClass === "busy", percent: meshPercent, text: status }}
+                onClick={() => setDriveDialogOpen(true)}
+              />
+            )}
+            {!driveOwnsStatus && (
+              <span className={`status ${statusClass}`} title={fatal ?? (errorDetail || status)}>
+                {statusClass === "err" ? (
+                  status
+                ) : (
+                  <>
+                    {statusClass === "busy" ? (
+                      <span className="status-spinner" aria-hidden />
+                    ) : (
+                      <span className="status-check" aria-hidden>
+                        ✓
+                      </span>
+                    )}
+                    {meshPercent !== null && <span aria-hidden>{meshPercent}%</span>}
+                    <span className="sr-only">{status}</span>
+                  </>
+                )}
+              </span>
+            )}
+            {/* App-level chrome, parked at the right edge past the status: none of
               it belongs to the document, and mixed in with New/Open/undo on the
               left it read as five unrelated things in a row. Icons only — these
               are recognised, not read, and the labels live in their tooltips. */}
-          <div className="topbar-chrome">
-            {/* Named, not a bare glyph: a lone "?" beside the gear read as
+            <div className="topbar-chrome">
+              {/* Named, not a bare glyph: a lone "?" beside the gear read as
                 "help", not "show me the shortcuts". The key that toggles it
                 rides along as a key cap, the same treatment every shortcut
                 gets on every other button. */}
-            <button
-              className={"tool-btn shortcuts-btn" + (showShortcuts ? " active" : "")}
-              onClick={toggleShortcuts}
-              title={`Show keyboard shortcuts in button labels (${shortcutName("app.toggleHints")})`}
-              aria-pressed={showShortcuts}
-            >
-              Keyboard shortcuts<span className="kbd-hint">{shortcutHint("app.toggleHints")}</span>
-            </button>
-            <button
-              className={"tool-btn settings-btn" + (settingsOpen ? " active" : "")}
-              onClick={() => setSettingsOpen(true)}
-              title="Settings"
-              aria-label="Settings"
-            >
-              ⚙
-            </button>
-            <button
-              className="tool-btn report-btn"
-              onClick={() => setReportOpen(true)}
-              title="Report an issue"
-              aria-label="Report an issue"
-            >
-              {/* Drawn rather than an emoji: 🐞 came through in full colour, which
+              <button
+                className={"tool-btn shortcuts-btn" + (showShortcuts ? " active" : "")}
+                onClick={toggleShortcuts}
+                title={`Show keyboard shortcuts in button labels (${shortcutName("app.toggleHints")})`}
+                aria-pressed={showShortcuts}
+              >
+                Keyboard shortcuts<span className="kbd-hint">{shortcutHint("app.toggleHints")}</span>
+              </button>
+              <button
+                className={"tool-btn settings-btn" + (settingsOpen ? " active" : "")}
+                onClick={() => setSettingsOpen(true)}
+                title="Settings"
+                aria-label="Settings"
+              >
+                ⚙
+              </button>
+              <button
+                className="tool-btn report-btn"
+                onClick={() => setReportOpen(true)}
+                title="Report an issue"
+                aria-label="Report an issue"
+              >
+                {/* Drawn rather than an emoji: 🐞 came through in full colour, which
                   made the least-used control the loudest thing in the bar. This
                   is currentColor throughout, so it wears the same grey as the ?
                   and the gear, and the same blue when the button is hovered.
                   The body is filled and the legs kept short — an outlined body
                   with long legs reads as a sunburst at 14px, not a bug. */}
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                <g stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" fill="none">
-                  {/* Antennae off the head, then three legs a side. */}
-                  <path d="M6.8 3.3 5.8 2.2M9.2 3.3l1 -1.1" />
-                  <path d="M4.6 7.8 3 7.1M4.4 10.2H2.7M5 12.4 3.7 13.3M11.4 7.8 13 7.1M11.6 10.2h1.7M11 12.4l1.3.9" />
-                </g>
-                <circle cx="8" cy="4.5" r="1.6" fill="currentColor" />
-                <rect x="4.5" y="5.8" width="7" height="7.6" rx="3.5" fill="currentColor" />
-              </svg>
-            </button>
-            {/* The GitHub mark is the one icon everyone reads as "the source" —
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                  <g stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" fill="none">
+                    {/* Antennae off the head, then three legs a side. */}
+                    <path d="M6.8 3.3 5.8 2.2M9.2 3.3l1 -1.1" />
+                    <path d="M4.6 7.8 3 7.1M4.4 10.2H2.7M5 12.4 3.7 13.3M11.4 7.8 13 7.1M11.6 10.2h1.7M11 12.4l1.3.9" />
+                  </g>
+                  <circle cx="8" cy="4.5" r="1.6" fill="currentColor" />
+                  <rect x="4.5" y="5.8" width="7" height="7.6" rx="3.5" fill="currentColor" />
+                </svg>
+              </button>
+              {/* The GitHub mark is the one icon everyone reads as "the source" —
                 a generic code or link glyph here would need its tooltip to say
                 so. It is an <a>, not a button, so it opens in a tab of its own
                 the usual ways (middle-click, modifier-click) and the browser
                 can show where it goes. Official octicon path, currentColor like
                 its neighbours; the mark is GitHub's trademark, used here to link
                 to GitHub, which is what their guidelines allow. */}
-            <a
-              className="tool-btn repo-btn"
-              href={REPO_URL}
-              target="_blank"
-              rel="noreferrer"
-              title="Source on GitHub — opens in a new tab"
-              aria-label="Source on GitHub"
-            >
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor">
-                <path d="M6.766 11.328c-2.063-.25-3.516-1.734-3.516-3.656 0-.781.281-1.625.75-2.188-.203-.515-.172-1.609.063-2.062.625-.078 1.468.25 1.968.703.594-.187 1.219-.281 1.985-.281.765 0 1.39.094 1.953.265.484-.437 1.344-.765 1.969-.687.218.422.25 1.515.046 2.047.5.593.766 1.39.766 2.203 0 1.922-1.453 3.375-3.547 3.64.531.344.89 1.094.89 1.954v1.625c0 .468.391.734.86.547C13.781 14.359 16 11.53 16 8.03 16 3.61 12.406 0 7.984 0 3.563 0 0 3.61 0 8.031a7.88 7.88 0 0 0 5.172 7.422c.422.156.828-.125.828-.547v-1.25c-.219.094-.5.156-.75.156-1.031 0-1.64-.562-2.078-1.609-.172-.422-.36-.672-.719-.719-.187-.015-.25-.093-.25-.187 0-.188.313-.328.625-.328.453 0 .844.281 1.25.86.313.452.64.655 1.031.655s.641-.14 1-.5c.266-.265.47-.5.657-.656" />
-              </svg>
-            </a>
+              <a
+                className="tool-btn repo-btn"
+                href={REPO_URL}
+                target="_blank"
+                rel="noreferrer"
+                title="Source on GitHub — opens in a new tab"
+                aria-label="Source on GitHub"
+              >
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor">
+                  <path d="M6.766 11.328c-2.063-.25-3.516-1.734-3.516-3.656 0-.781.281-1.625.75-2.188-.203-.515-.172-1.609.063-2.062.625-.078 1.468.25 1.968.703.594-.187 1.219-.281 1.985-.281.765 0 1.39.094 1.953.265.484-.437 1.344-.765 1.969-.687.218.422.25 1.515.046 2.047.5.593.766 1.39.766 2.203 0 1.922-1.453 3.375-3.547 3.64.531.344.89 1.094.89 1.954v1.625c0 .468.391.734.86.547C13.781 14.359 16 11.53 16 8.03 16 3.61 12.406 0 7.984 0 3.563 0 0 3.61 0 8.031a7.88 7.88 0 0 0 5.172 7.422c.422.156.828-.125.828-.547v-1.25c-.219.094-.5.156-.75.156-1.031 0-1.64-.562-2.078-1.609-.172-.422-.36-.672-.719-.719-.187-.015-.25-.093-.25-.187 0-.188.313-.328.625-.328.453 0 .844.281 1.25.86.313.452.64.655 1.031.655s.641-.14 1-.5c.266-.265.47-.5.657-.656" />
+                </svg>
+              </a>
+            </div>
           </div>
-        </div>
-      </header>
-      {updateAvailable && (
-        <div className="update-banner">
-          {updateAvailable.items.length > 0 ? (
-            <WhatsNewLine items={updateAvailable.items} />
-          ) : (
-            <span>A new version of Open Poly is available.</span>
+        </header>
+        {updateAvailable && (
+          <div className="update-banner">
+            {updateAvailable.items.length > 0 ? (
+              <WhatsNewLine items={updateAvailable.items} />
+            ) : (
+              <span>A new version of Open Poly is available.</span>
+            )}
+            <button className="banner-link" onClick={() => location.reload()}>
+              Refresh
+            </button>
+          </div>
+        )}
+        {docRecoveryBanner && (
+          <div className="recovery-banner">
+            <span>
+              {docRecoveryBanner.kind === "corrupted" ? (
+                <>
+                  Couldn't open "{docRecoveryBanner.name}" — it may be corrupted. Use <strong>Export as JSON</strong> in
+                  the{" "}
+                  <button
+                    className="banner-link"
+                    onClick={() => {
+                      setDocRecoveryBanner(null);
+                      setDocsDialogOpen(true);
+                    }}
+                  >
+                    Documents
+                  </button>{" "}
+                  menu to save its data, then Delete it.
+                </>
+              ) : (
+                <>
+                  Couldn't read your last document from local storage.{" "}
+                  <button
+                    className="banner-link"
+                    onClick={() => {
+                      setDocRecoveryBanner(null);
+                      setDocsDialogOpen(true);
+                    }}
+                  >
+                    Open Documents
+                  </button>{" "}
+                  to see what's available.
+                </>
+              )}
+            </span>
+            <button className="row-icon" title="Dismiss" onClick={() => setDocRecoveryBanner(null)}>
+              ✕
+            </button>
+          </div>
+        )}
+        {docsDialogOpen && (
+          <DocumentsDialog
+            activeId={activeId}
+            onClose={() => setDocsDialogOpen(false)}
+            onOpen={openDocument}
+            onDuplicate={duplicateDocument}
+            onDelete={deleteDocument}
+            onRename={renameDocument}
+            onExport={exportDocument}
+            onImport={importDocumentFile}
+            drive={
+              drive.engine && drive.snapshot
+                ? {
+                    states: drive.snapshot.docStates,
+                    driveThumbs: drive.snapshot.driveThumbs,
+                    cloudOnly: drive.snapshot.cloudOnly,
+                    attention: drive.snapshot.issues.length + (drive.snapshot.onboarding ? 1 : 0),
+                    revision: drive.snapshot.localRevision,
+                    onOpenCloud: async (fileId) => openDocument(await drive.engine!.download(fileId)),
+                    onTrashCloud: (fileId) => drive.engine!.trashRemote(fileId),
+                    onDeleteEverywhere: (id) => drive.engine!.deleteEverywhere(id),
+                    onUpload: (id) => drive.engine!.upload(id),
+                    onReview: () => {
+                      setDocsDialogOpen(false);
+                      setDriveDialogOpen(true);
+                    },
+                  }
+                : null
+            }
+          />
+        )}
+        {driveDialogOpen && drive.config?.enabled && (
+          <DriveDialog
+            sync={drive}
+            onClose={() => setDriveDialogOpen(false)}
+            onShowDocuments={() => {
+              setDriveDialogOpen(false);
+              setDocsDialogOpen(true);
+            }}
+          />
+        )}
+        {settingsOpen && (
+          <SettingsDialog settings={settings} onChange={updateSettings} onClose={() => setSettingsOpen(false)} />
+        )}
+        {reportOpen && (
+          <ReportDialog
+            onClose={() => setReportOpen(false)}
+            version={__BUILD_ID__}
+            getDocJson={() => {
+              try {
+                return JSON.stringify(doc);
+              } catch {
+                return null;
+              }
+            }}
+            getScreenshot={() => viewApiRef.current?.capturePNG({ plain: true }) ?? null}
+          />
+        )}
+        <div className={"body" + (sidebarOpen ? "" : " sidebar-closed")}>
+          {sidebarOpen && (
+            // Backdrop only matters when the panel floats over the viewport
+            // (mobile drawer); on desktop it's CSS-hidden. Tap to dismiss.
+            <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
           )}
-          <button className="banner-link" onClick={() => location.reload()}>
-            Refresh
+          {/* Collapse/expand tab attached to the panel's right edge; slides to
+            the viewport's left edge when the panel is hidden so it's always
+            reachable (Onshape-style). */}
+          <button
+            className={"panel-toggle" + (sidebarOpen ? " open" : "")}
+            onClick={() => setSidebarOpen((o) => !o)}
+            title={sidebarOpen ? "Hide panel" : "Show panel"}
+            aria-pressed={sidebarOpen}
+            aria-label="Toggle side panel"
+          >
+            {sidebarOpen ? "‹" : "›"}
           </button>
-        </div>
-      )}
-      {docRecoveryBanner && (
-        <div className="recovery-banner">
-          <span>
-            {docRecoveryBanner.kind === "corrupted" ? (
+          <aside className="panel">
+            {assembly ? (
               <>
-                Couldn't open "{docRecoveryBanner.name}" — it may be corrupted. Use <strong>Export as JSON</strong> in
-                the{" "}
-                <button
-                  className="banner-link"
-                  onClick={() => {
-                    setDocRecoveryBanner(null);
-                    setDocsDialogOpen(true);
+                <VariablesSection
+                  open={asmVariablesOpen}
+                  onToggle={() => setAsmVariablesOpen((o) => !o)}
+                  variables={assembly.variables}
+                  scope={asmVariables.scope}
+                  errors={asmVariables.errors}
+                  nameErrors={asmVariables.nameErrors}
+                  onAdd={() => setAssembly(addVariable(assembly).doc)}
+                  // Through the mates' commit: a mate may name the variable, and
+                  // the placements it leads to are kept like any mate edit's.
+                  onChange={(id, field, value) =>
+                    field === "name"
+                      ? mates.commit(renameVariable(assembly, id, value, renameInMates))
+                      : mates.commit(updateVariable(assembly, id, field, value), `asm-var:${id}:${field}`)
+                  }
+                  onDelete={(id) => mates.commit(removeVariable(assembly, id))}
+                />
+                <AssemblyPanel
+                  assembly={assembly}
+                  showShortcuts={showShortcuts}
+                  sources={asmSources}
+                  selectedIds={asmSelectedSet}
+                  onSelect={(id, additive) =>
+                    setAsmSelected((cur) =>
+                      additive ? (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]) : [id],
+                    )
+                  }
+                  onRename={(id, name) => setAssembly(updateInstance(assembly, id, { name }), `asm-name:${id}`)}
+                  onToggleGrounded={(id) => {
+                    const now = asmNow() ?? assembly;
+                    setAssembly(
+                      updateInstance(now, id, { grounded: !now.instances.find((i) => i.id === id)?.grounded }),
+                    );
                   }}
-                >
-                  Documents
-                </button>{" "}
-                menu to save its data, then Delete it.
+                  onToggleHidden={(id) =>
+                    setAssembly(
+                      updateInstance(assembly, id, { hidden: !assembly.instances.find((i) => i.id === id)?.hidden }),
+                    )
+                  }
+                  onColor={(id, color) => setAssembly(updateInstance(assembly, id, { color }), `asm-color:${id}`)}
+                  onDelete={(id) => {
+                    setAssembly(removeInstances(asmNow() ?? assembly, [id]));
+                    setAsmSelected((cur) => cur.filter((x) => x !== id));
+                  }}
+                  onOpenSource={(docId) => void openDocument(docId).catch(() => {})}
+                  onInsert={() => setInsertOpen(true)}
+                  mateProblems={mates.solution?.problems ?? NO_PROBLEMS}
+                  mateValues={mates.solution?.values ?? NO_PROBLEMS}
+                  mateWarnings={mates.warnings}
+                  onHoverMate={mates.hoverMate}
+                  drivenIds={mates.solution?.mated ?? NO_PROBLEMS}
+                  editingMateId={mates.editingId}
+                  onNewMate={() => openMateDialog()}
+                  onEditMate={(id) => {
+                    setAsmSelected([]);
+                    mates.openEdit(id);
+                  }}
+                  onRenameMate={(id, name) => {
+                    const m = assembly.mates.find((x) => x.id === id);
+                    if (m) setAssembly(updateMate(assembly, { ...m, name }), `asm-mate-name:${id}`);
+                  }}
+                  onRemoveMate={mates.remove}
+                />
               </>
             ) : (
               <>
-                Couldn't read your last document from local storage.{" "}
-                <button
-                  className="banner-link"
-                  onClick={() => {
-                    setDocRecoveryBanner(null);
-                    setDocsDialogOpen(true);
+                <VariablesSection
+                  open={variablesOpen}
+                  onToggle={() => setVariablesOpen((o) => !o)}
+                  variables={doc.variables}
+                  scope={resolved.scope}
+                  errors={resolved.variableErrors}
+                  nameErrors={resolved.variableNameErrors}
+                  onAdd={() => {
+                    const { doc: next } = addVariable(doc);
+                    setDoc(next);
                   }}
-                >
-                  Open Documents
-                </button>{" "}
-                to see what's available.
-              </>
-            )}
-          </span>
-          <button className="row-icon" title="Dismiss" onClick={() => setDocRecoveryBanner(null)}>
-            ✕
-          </button>
-        </div>
-      )}
-      {docsDialogOpen && (
-        <DocumentsDialog
-          activeId={activeId}
-          onClose={() => setDocsDialogOpen(false)}
-          onOpen={openDocument}
-          onDuplicate={duplicateDocument}
-          onDelete={deleteDocument}
-          onRename={renameDocument}
-          onExport={exportDocument}
-          onImport={importDocumentFile}
-          drive={
-            drive.engine && drive.snapshot
-              ? {
-                  states: drive.snapshot.docStates,
-                  driveThumbs: drive.snapshot.driveThumbs,
-                  cloudOnly: drive.snapshot.cloudOnly,
-                  attention: drive.snapshot.issues.length + (drive.snapshot.onboarding ? 1 : 0),
-                  revision: drive.snapshot.localRevision,
-                  onOpenCloud: async (fileId) => openDocument(await drive.engine!.download(fileId)),
-                  onTrashCloud: (fileId) => drive.engine!.trashRemote(fileId),
-                  onDeleteEverywhere: (id) => drive.engine!.deleteEverywhere(id),
-                  onUpload: (id) => drive.engine!.upload(id),
-                  onReview: () => {
-                    setDocsDialogOpen(false);
-                    setDriveDialogOpen(true);
-                  },
-                }
-              : null
-          }
-        />
-      )}
-      {driveDialogOpen && drive.config?.enabled && (
-        <DriveDialog
-          sync={drive}
-          onClose={() => setDriveDialogOpen(false)}
-          onShowDocuments={() => {
-            setDriveDialogOpen(false);
-            setDocsDialogOpen(true);
-          }}
-        />
-      )}
-      {settingsOpen && (
-        <SettingsDialog settings={settings} onChange={updateSettings} onClose={() => setSettingsOpen(false)} />
-      )}
-      {reportOpen && (
-        <ReportDialog
-          onClose={() => setReportOpen(false)}
-          version={__BUILD_ID__}
-          getDocJson={() => {
-            try {
-              return JSON.stringify(doc);
-            } catch {
-              return null;
-            }
-          }}
-          getScreenshot={() => viewApiRef.current?.capturePNG({ plain: true }) ?? null}
-        />
-      )}
-      <div className={"body" + (sidebarOpen ? "" : " sidebar-closed")}>
-        {sidebarOpen && (
-          // Backdrop only matters when the panel floats over the viewport
-          // (mobile drawer); on desktop it's CSS-hidden. Tap to dismiss.
-          <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
-        )}
-        {/* Collapse/expand tab attached to the panel's right edge; slides to
-            the viewport's left edge when the panel is hidden so it's always
-            reachable (Onshape-style). */}
-        <button
-          className={"panel-toggle" + (sidebarOpen ? " open" : "")}
-          onClick={() => setSidebarOpen((o) => !o)}
-          title={sidebarOpen ? "Hide panel" : "Show panel"}
-          aria-pressed={sidebarOpen}
-          aria-label="Toggle side panel"
-        >
-          {sidebarOpen ? "‹" : "›"}
-        </button>
-        <aside className="panel">
-          {assembly ? (
-            <>
-              <VariablesSection
-                open={asmVariablesOpen}
-                onToggle={() => setAsmVariablesOpen((o) => !o)}
-                variables={assembly.variables}
-                scope={asmVariables.scope}
-                errors={asmVariables.errors}
-                nameErrors={asmVariables.nameErrors}
-                onAdd={() => setAssembly(addVariable(assembly).doc)}
-                // Through the mates' commit: a mate may name the variable, and
-                // the placements it leads to are kept like any mate edit's.
-                onChange={(id, field, value) =>
-                  field === "name"
-                    ? mates.commit(renameVariable(assembly, id, value, renameInMates))
-                    : mates.commit(updateVariable(assembly, id, field, value), `asm-var:${id}:${field}`)
-                }
-                onDelete={(id) => mates.commit(removeVariable(assembly, id))}
-              />
-              <AssemblyPanel
-                assembly={assembly}
-                showShortcuts={showShortcuts}
-                sources={asmSources}
-                selectedIds={asmSelectedSet}
-                onSelect={(id, additive) =>
-                  setAsmSelected((cur) =>
-                    additive ? (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]) : [id],
-                  )
-                }
-                onRename={(id, name) => setAssembly(updateInstance(assembly, id, { name }), `asm-name:${id}`)}
-                onToggleGrounded={(id) => {
-                  const now = asmNow() ?? assembly;
-                  setAssembly(updateInstance(now, id, { grounded: !now.instances.find((i) => i.id === id)?.grounded }));
-                }}
-                onToggleHidden={(id) =>
-                  setAssembly(
-                    updateInstance(assembly, id, { hidden: !assembly.instances.find((i) => i.id === id)?.hidden }),
-                  )
-                }
-                onColor={(id, color) => setAssembly(updateInstance(assembly, id, { color }), `asm-color:${id}`)}
-                onDelete={(id) => {
-                  setAssembly(removeInstances(asmNow() ?? assembly, [id]));
-                  setAsmSelected((cur) => cur.filter((x) => x !== id));
-                }}
-                onOpenSource={(docId) => void openDocument(docId).catch(() => {})}
-                onInsert={() => setInsertOpen(true)}
-                mateProblems={mates.solution?.problems ?? NO_PROBLEMS}
-                mateValues={mates.solution?.values ?? NO_PROBLEMS}
-                mateWarnings={mates.warnings}
-                onHoverMate={mates.hoverMate}
-                drivenIds={mates.solution?.mated ?? NO_PROBLEMS}
-                editingMateId={mates.editingId}
-                onNewMate={() => openMateDialog()}
-                onEditMate={(id) => {
-                  setAsmSelected([]);
-                  mates.openEdit(id);
-                }}
-                onRenameMate={(id, name) => {
-                  const m = assembly.mates.find((x) => x.id === id);
-                  if (m) setAssembly(updateMate(assembly, { ...m, name }), `asm-mate-name:${id}`);
-                }}
-                onRemoveMate={mates.remove}
-              />
-            </>
-          ) : (
-            <>
-              <VariablesSection
-                open={variablesOpen}
-                onToggle={() => setVariablesOpen((o) => !o)}
-                variables={doc.variables}
-                scope={resolved.scope}
-                errors={resolved.variableErrors}
-                nameErrors={resolved.variableNameErrors}
-                onAdd={() => {
-                  const { doc: next } = addVariable(doc);
-                  setDoc(next);
-                }}
-                // A rename carries into the expressions that use the variable.
-                onChange={(id, field, value) =>
-                  field === "name"
-                    ? setDoc(renameVariable(doc, id, value, renameInFeatures))
-                    : setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)
-                }
-                onDelete={(id) => setDoc(removeVariable(doc, id))}
-              />
-              <button
-                className="params-heading collapsible"
-                aria-expanded={timelineOpen}
-                onClick={() => setTimelineOpen((o) => !o)}
-              >
-                <span className={"collapse-caret" + (timelineOpen ? " open" : "")}>▶</span>
-                Timeline
-              </button>
-              {timelineOpen && (
-                <>
-                  <FeatureTree
-                    doc={doc}
-                    height={timelineHeight}
-                    busy={busy}
-                    datums={DATUM_ROWS}
-                    datumVisibility={datumVisibility}
-                    onToggleDatum={(id) => setDatumVisibility((v) => ({ ...v, [id]: !v[id] }))}
-                    selectedIds={selectedFeatureIds}
-                    errors={errors}
-                    warnings={warnings}
-                    onSelect={selectFeature}
-                    onDoubleClick={handleTreeDoubleClick}
-                    onDelete={handleDelete}
-                    onToggleSuppress={(id) =>
-                      setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
-                    }
-                    onToggleHidden={(id, hidden) => setDoc(setFeatureHidden(doc, id, hidden))}
-                    // A scrub commits at every position it passes (so the model
-                    // rolls with the bar) but coalesces into ONE undo step; a plain
-                    // click on a gutter is its own step, as before. Functional form:
-                    // the drag captures this callback once, so it must not close
-                    // over a `doc` that goes stale under it.
-                    onSetRollback={(index, draggingBar) =>
-                      setDoc((prev) => setRollbackIndex(prev, index), draggingBar ? "rollback-drag" : undefined)
-                    }
-                    onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
-                  />
-                  <div
-                    className="panel-splitter"
-                    title="Drag to resize the timeline"
-                    onPointerDown={startTimelineResize}
-                  />
-                </>
-              )}
-              <div className="parts-header">
+                  // A rename carries into the expressions that use the variable.
+                  onChange={(id, field, value) =>
+                    field === "name"
+                      ? setDoc(renameVariable(doc, id, value, renameInFeatures))
+                      : setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)
+                  }
+                  onDelete={(id) => setDoc(removeVariable(doc, id))}
+                />
                 <button
                   className="params-heading collapsible"
-                  aria-expanded={partsOpen}
-                  onClick={() => setPartsOpen((o) => !o)}
+                  aria-expanded={timelineOpen}
+                  onClick={() => setTimelineOpen((o) => !o)}
                 >
-                  <span className={"collapse-caret" + (partsOpen ? " open" : "")}>▶</span>
-                  Parts
+                  <span className={"collapse-caret" + (timelineOpen ? " open" : "")}>▶</span>
+                  Timeline
                 </button>
-                <div className="parts-import" ref={importMenuRef}>
+                {timelineOpen && (
+                  <>
+                    <FeatureTree
+                      doc={doc}
+                      height={timelineHeight}
+                      busy={busy}
+                      datums={DATUM_ROWS}
+                      datumVisibility={datumVisibility}
+                      onToggleDatum={(id) => setDatumVisibility((v) => ({ ...v, [id]: !v[id] }))}
+                      selectedIds={selectedFeatureIds}
+                      errors={errors}
+                      warnings={warnings}
+                      onSelect={selectFeature}
+                      onDoubleClick={handleTreeDoubleClick}
+                      onDelete={handleDelete}
+                      onToggleSuppress={(id) =>
+                        setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
+                      }
+                      onToggleHidden={(id, hidden) => setDoc(setFeatureHidden(doc, id, hidden))}
+                      // A scrub commits at every position it passes (so the model
+                      // rolls with the bar) but coalesces into ONE undo step; a plain
+                      // click on a gutter is its own step, as before. Functional form:
+                      // the drag captures this callback once, so it must not close
+                      // over a `doc` that goes stale under it.
+                      onSetRollback={(index, draggingBar) =>
+                        setDoc((prev) => setRollbackIndex(prev, index), draggingBar ? "rollback-drag" : undefined)
+                      }
+                      onMove={(id, delta) => setDoc(moveFeature(doc, id, delta))}
+                    />
+                    <div
+                      className="panel-splitter"
+                      title="Drag to resize the timeline"
+                      onPointerDown={startTimelineResize}
+                    />
+                  </>
+                )}
+                <div className="parts-header">
                   <button
-                    type="button"
-                    title="Import a STEP part or a DXF sketch"
-                    onClick={() => setImportMenuOpen((o) => !o)}
+                    className="params-heading collapsible"
+                    aria-expanded={partsOpen}
+                    onClick={() => setPartsOpen((o) => !o)}
                   >
-                    ⤓ Import ▾
+                    <span className={"collapse-caret" + (partsOpen ? " open" : "")}>▶</span>
+                    Parts
                   </button>
-                  {importMenuOpen && (
-                    <div className="mt-menu mt-menu-right">
-                      <button
-                        type="button"
-                        title="Import a STEP file as a new part (⌘I / Ctrl+I)"
-                        onClick={() => {
-                          setImportMenuOpen(false);
-                          importInputRef.current?.click();
-                        }}
-                      >
-                        STEP part…
-                      </button>
-                      <button
-                        type="button"
-                        title="Import a DXF drawing as an editable sketch"
-                        onClick={() => {
-                          setImportMenuOpen(false);
-                          dxfInputRef.current?.click();
-                        }}
-                      >
-                        DXF sketch…
-                      </button>
-                    </div>
-                  )}
+                  <div className="parts-import" ref={importMenuRef}>
+                    <button
+                      type="button"
+                      title="Import a STEP part or a DXF sketch"
+                      onClick={() => setImportMenuOpen((o) => !o)}
+                    >
+                      ⤓ Import ▾
+                    </button>
+                    {importMenuOpen && (
+                      <div className="mt-menu mt-menu-right">
+                        <button
+                          type="button"
+                          title="Import a STEP file as a new part (⌘I / Ctrl+I)"
+                          onClick={() => {
+                            setImportMenuOpen(false);
+                            importInputRef.current?.click();
+                          }}
+                        >
+                          STEP part…
+                        </button>
+                        <button
+                          type="button"
+                          title="Import a DXF drawing as an editable sketch"
+                          onClick={() => {
+                            setImportMenuOpen(false);
+                            dxfInputRef.current?.click();
+                          }}
+                        >
+                          DXF sketch…
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <input
+                    ref={importInputRef}
+                    type="file"
+                    accept=".step,.stp,.STEP,.STP"
+                    style={{ display: "none" }}
+                    onChange={handleImportFile}
+                  />
+                  <input
+                    ref={dxfInputRef}
+                    type="file"
+                    accept=".dxf,.DXF"
+                    style={{ display: "none" }}
+                    onChange={handleDxfFile}
+                  />
                 </div>
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept=".step,.stp,.STEP,.STP"
-                  style={{ display: "none" }}
-                  onChange={handleImportFile}
-                />
-                <input
-                  ref={dxfInputRef}
-                  type="file"
-                  accept=".dxf,.DXF"
-                  style={{ display: "none" }}
-                  onChange={handleDxfFile}
-                />
-              </div>
-              {partsOpen && (
-                <SolidsList
-                  doc={doc}
-                  partIds={partIds}
-                  selectedIds={selectedFeatureIds}
-                  onSelect={selectFeature}
-                  onRename={handleSolidRename}
-                  onDelete={handleDelete}
-                  onColorChange={handleSolidColor}
-                  onOpacityChange={handleSolidOpacity}
-                  onToggleHidden={handleSolidHidden}
-                  onExportStep={handleExportStep}
-                  onExportStl={handleExportStl}
-                  isolatedId={isolatedBodyId}
-                  onIsolate={handleIsolate}
-                />
-              )}
-              {/* Constraints + Parameters used to live here, below Parts, where the
+                {partsOpen && (
+                  <SolidsList
+                    doc={doc}
+                    partIds={partIds}
+                    selectedIds={selectedFeatureIds}
+                    onSelect={selectFeature}
+                    onRename={handleSolidRename}
+                    onDelete={handleDelete}
+                    onColorChange={handleSolidColor}
+                    onOpacityChange={handleSolidOpacity}
+                    onToggleHidden={handleSolidHidden}
+                    onExportStep={handleExportStep}
+                    onExportStl={handleExportStl}
+                    isolatedId={isolatedBodyId}
+                    onIsolate={handleIsolate}
+                  />
+                )}
+                {/* Constraints + Parameters used to live here, below Parts, where the
               thing you were editing was easy to miss. They're now the floating
               EditPanel over the viewport (see below). */}
-            </>
-          )}
-        </aside>
-        <main className="viewport" ref={viewportElRef}>
-          <Viewport
-            // An assembly's instances are whole-body picks: the selection is
-            // shown as the whole-body highlight, and the gizmo moves the one
-            // selected (see asmTransformEdit).
-            meshes={isAssembly ? assemblyMeshes : viewportMeshes}
-            ghostMeshes={isAssembly ? mates.glyphs : ghostMeshes}
-            selection={isAssembly ? (mates.picks ?? asmFaces) : (dialogPicks ?? selection)}
-            emphasize={constraintEmphasis}
-            highlightBodyIds={isAssembly ? asmSelectedSet : highlightBodyIds}
-            booleanHighlight={booleanHighlight}
-            onSelect={isAssembly ? handleAssemblyPick : handlePick}
-            onSketchEntityDouble={handleSketchEntityDouble}
-            datumVisibility={datumVisibility}
-            userPlanes={visibleUserPlanes}
-            ghostPlane={ghostPlaneFrame}
-            transformEdit={isAssembly ? asmTransformEdit : transformEdit}
-            transformMode={isAssembly ? asmMode : transform.mode}
-            onTransformInput={isAssembly ? commitInstanceMove : transform.applyDrag}
-            onTransformPreview={isAssembly ? previewInstanceMove : transform.previewDrag}
-            transformDragPoses={isAssembly ? asmDragPoses : undefined}
-            extrudeGizmo={extrudeGizmo}
-            onExtrudeDistanceChange={handleExtrudeGizmoDistance}
-            picking={picking}
-            onPick={handlePickRef}
-            axisPick={
-              picking &&
-              (pickPurpose === "revolveAxis" ||
-                pickPurpose === "patternAxis" ||
-                pickPurpose === "patternDir" ||
-                pickPurpose === "transformAxis")
-            }
-            onAxisPick={handleAxisPick}
-            activeSketch={
-              editingSketch ? { datumId: editingSketch.plane.kind === "datum" ? editingSketch.plane.id : null } : null
-            }
-            activeSketchFace={
-              editingSketch && editingSketch.plane.kind === "face"
-                ? { bodyId: editingSketch.plane.featureId, frame: editingSketch.plane.frame }
-                : null
-            }
-            sketchTool={sketchTool}
-            sketches={renderSketchesWithPreview}
-            activeSketchId={editingSketchId}
-            sketchFullyConstrained={fullyConstrained}
-            draft={draft}
-            draftRadius={typedCircleSize?.r ?? null}
-            onDraftCursor={draftCursorStore.set}
-            polygonSides={polygonSides}
-            onSketchClick={handleSketchClick}
-            onSketchToolHover={setTrimHover}
-            trimPreview={trimPreview}
-            onSketchDragMove={handleSketchDragMove}
-            onSketchDragEnd={handleSketchDragEnd}
-            selectionFilter={selFilter}
-            regionPickPriority={armingSketchProfile}
-            sectionView={{
-              enabled: sectionView.enabled,
-              frame: sectionFrame,
-              offset: sectionView.offset,
-              flip: sectionView.flip,
-            }}
-            onSectionOffsetChange={(offset) => setSectionView((s) => ({ ...s, offset }))}
-            theme={resolvedTheme}
-            mouseMiddle={settings.mouseMiddle}
-            mouseRight={settings.mouseRight}
-            cameraInertia={settings.cameraInertia}
-            apiRef={viewApiRef}
-          />
-          {asmMoveOpen && asmMoveTarget && (
-            <MoveDialog
-              name={asmMoveTarget.name}
-              grounded={!!asmMoveTarget.grounded}
-              mode={asmMode}
-              axis={rotateAxis}
-              mate={asmDrag ? { name: asmDrag.mate.name, type: asmDrag.mate.type } : null}
-              canTranslate={asmDragTranslates}
-              canRotate={asmDragRotates}
-              message={asmDragMessage}
-              fields={asmMoveFields}
-              onMode={setMoveMode}
-              onAxis={setRotateAxis}
-              onUnground={() =>
-                assembly && setAssembly(updateInstance(assembly, asmMoveTarget.id, { grounded: false }))
+              </>
+            )}
+          </aside>
+          <main className="viewport" ref={viewportElRef}>
+            <Viewport
+              // An assembly's instances are whole-body picks: the selection is
+              // shown as the whole-body highlight, and the gizmo moves the one
+              // selected (see asmTransformEdit).
+              meshes={isAssembly ? assemblyMeshes : viewportMeshes}
+              ghostMeshes={isAssembly ? mates.glyphs : ghostMeshes}
+              selection={isAssembly ? (mates.picks ?? asmFaces) : (dialogPicks ?? selection)}
+              emphasize={constraintEmphasis}
+              highlightBodyIds={isAssembly ? asmSelectedSet : highlightBodyIds}
+              booleanHighlight={booleanHighlight}
+              onSelect={isAssembly ? handleAssemblyPick : handlePick}
+              onSketchEntityDouble={handleSketchEntityDouble}
+              datumVisibility={datumVisibility}
+              userPlanes={visibleUserPlanes}
+              ghostPlane={ghostPlaneFrame}
+              transformEdit={isAssembly ? asmTransformEdit : transformEdit}
+              transformMode={isAssembly ? asmMode : transform.mode}
+              onTransformInput={isAssembly ? commitInstanceMove : transform.applyDrag}
+              onTransformPreview={isAssembly ? previewInstanceMove : transform.previewDrag}
+              transformDragPoses={isAssembly ? asmDragPoses : undefined}
+              extrudeGizmo={extrudeGizmo}
+              onExtrudeDistanceChange={handleExtrudeGizmoDistance}
+              picking={picking}
+              onPick={handlePickRef}
+              axisPick={
+                picking &&
+                (pickPurpose === "revolveAxis" ||
+                  pickPurpose === "patternAxis" ||
+                  pickPurpose === "patternDir" ||
+                  pickPurpose === "transformAxis")
               }
-              onDone={clearAssemblySelection}
-              onCancel={() => {
-                cancelInstanceMove();
-                clearAssemblySelection();
+              onAxisPick={handleAxisPick}
+              activeSketch={
+                editingSketch ? { datumId: editingSketch.plane.kind === "datum" ? editingSketch.plane.id : null } : null
+              }
+              activeSketchFace={
+                editingSketch && editingSketch.plane.kind === "face"
+                  ? { bodyId: editingSketch.plane.featureId, frame: editingSketch.plane.frame }
+                  : null
+              }
+              sketchTool={sketchTool}
+              sketches={renderSketchesWithPreview}
+              activeSketchId={editingSketchId}
+              sketchFullyConstrained={fullyConstrained}
+              draft={draft}
+              draftRadius={typedCircleSize?.r ?? null}
+              onDraftCursor={draftCursorStore.set}
+              polygonSides={polygonSides}
+              onSketchClick={handleSketchClick}
+              onSketchToolHover={setTrimHover}
+              trimPreview={trimPreview}
+              onSketchDragMove={handleSketchDragMove}
+              onSketchDragEnd={handleSketchDragEnd}
+              selectionFilter={selFilter}
+              regionPickPriority={armingSketchProfile}
+              sectionView={{
+                enabled: sectionView.enabled,
+                frame: sectionFrame,
+                offset: sectionView.offset,
+                flip: sectionView.flip,
               }}
+              onSectionOffsetChange={(offset) => setSectionView((s) => ({ ...s, offset }))}
+              theme={resolvedTheme}
+              mouseMiddle={settings.mouseMiddle}
+              mouseRight={settings.mouseRight}
+              cameraInertia={settings.cameraInertia}
+              apiRef={viewApiRef}
             />
-          )}
-          {mates.dialog && <MateDialog {...mates.dialog} showShortcuts={showShortcuts} />}
-          {insertOpen && (
-            <InsertDialog onClose={() => setInsertOpen(false)} onInsert={insertParts} build={buildDocument} />
-          )}
-          <OverflowToolbar
-            key={isAssembly ? "assembly" : "model"}
-            className="model-toolbar"
-            items={isAssembly ? assemblyTools : modelTools}
-            showShortcuts={showShortcuts}
-            openRequest={modelMoreRequest}
-          />
-          {/* The floating edit panel. It shows in two cases only (never on a
+            {asmMoveOpen && asmMoveTarget && (
+              <MoveDialog
+                name={asmMoveTarget.name}
+                grounded={!!asmMoveTarget.grounded}
+                mode={asmMode}
+                axis={rotateAxis}
+                mate={asmDrag ? { name: asmDrag.mate.name, type: asmDrag.mate.type } : null}
+                canTranslate={asmDragTranslates}
+                canRotate={asmDragRotates}
+                message={asmDragMessage}
+                fields={asmMoveFields}
+                onMode={setMoveMode}
+                onAxis={setRotateAxis}
+                onUnground={() =>
+                  assembly && setAssembly(updateInstance(assembly, asmMoveTarget.id, { grounded: false }))
+                }
+                onDone={clearAssemblySelection}
+                onCancel={() => {
+                  cancelInstanceMove();
+                  clearAssemblySelection();
+                }}
+              />
+            )}
+            {mates.dialog && <MateDialog {...mates.dialog} showShortcuts={showShortcuts} />}
+            {insertOpen && (
+              <InsertDialog onClose={() => setInsertOpen(false)} onInsert={insertParts} build={buildDocument} />
+            )}
+            <OverflowToolbar
+              key={isAssembly ? "assembly" : "model"}
+              className="model-toolbar"
+              items={isAssembly ? assemblyTools : modelTools}
+              showShortcuts={showShortcuts}
+              openRequest={modelMoreRequest}
+            />
+            {/* The floating edit panel. It shows in two cases only (never on a
               plain selection — that just highlights): the constraints of the
               sketch being edited, and the parameters of a double-clicked
               no-dialog feature (primitive / import / sweep / loft). Every other
               feature type opens its own creation dialog in edit mode instead. */}
-          {(editParamsFeature || (editingSketch && editingSketch.constraints.length > 0)) && (
-            <EditPanel
-              title={editParamsFeature ? featureTypeLabel(editParamsFeature) : "Sketch"}
-              targetKey={`${editingSketchId ?? ""}|${editParamsId ?? ""}`}
-              onClose={editParamsFeature ? () => setEditParamsId(null) : undefined}
-            >
-              {editingSketch && editingSketch.constraints.length > 0 && (
-                <>
-                  <div className="ep-heading">
-                    Constraints ({editingSketch.constraints.length})
-                    {solveConflict && (
-                      <span className="constraint-warn" title="Over-constrained / conflicting">
-                        {" "}
-                        ⚠ conflict
-                      </span>
-                    )}
-                  </div>
-                  <ul className="constraint-list">
-                    {editingSketch.constraints.map((c) => (
-                      <li
-                        key={c.id}
-                        className={hoveredConstraintId === c.id ? "cl-hover" : ""}
-                        onMouseEnter={() => setHoveredConstraintId(c.id)}
-                        onMouseLeave={() => setHoveredConstraintId((id) => (id === c.id ? null : id))}
-                      >
-                        <span>{constraintLabel(c)}</span>
-                        <button className="cl-del" title="Delete constraint" onClick={() => deleteConstraint(c.id)}>
-                          ✕
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-              {editParamsFeature && (
-                <>
-                  {/* No "Parameters" heading — the title already names the type,
+            {(editParamsFeature || (editingSketch && editingSketch.constraints.length > 0)) && (
+              <EditPanel
+                title={editParamsFeature ? featureTypeLabel(editParamsFeature) : "Sketch"}
+                targetKey={`${editingSketchId ?? ""}|${editParamsId ?? ""}`}
+                onClose={editParamsFeature ? () => setEditParamsId(null) : undefined}
+              >
+                {editingSketch && editingSketch.constraints.length > 0 && (
+                  <>
+                    <div className="ep-heading">
+                      Constraints ({editingSketch.constraints.length})
+                      {solveConflict && (
+                        <span className="constraint-warn" title="Over-constrained / conflicting">
+                          {" "}
+                          ⚠ conflict
+                        </span>
+                      )}
+                    </div>
+                    <ul className="constraint-list">
+                      {editingSketch.constraints.map((c) => (
+                        <li
+                          key={c.id}
+                          className={hoveredConstraintId === c.id ? "cl-hover" : ""}
+                          onMouseEnter={() => setHoveredConstraintId(c.id)}
+                          onMouseLeave={() => setHoveredConstraintId((id) => (id === c.id ? null : id))}
+                        >
+                          <span>{constraintLabel(c)}</span>
+                          <button className="cl-del" title="Delete constraint" onClick={() => deleteConstraint(c.id)}>
+                            ✕
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {editParamsFeature && (
+                  <>
+                    {/* No "Parameters" heading — the title already names the type,
                       matching the creation dialogs (which go straight to fields). */}
-                  <ParamEditor
-                    feature={editParamsFeature}
-                    error={errors[editParamsFeature.id] ?? null}
-                    editingSketchId={editingSketchId}
-                    onChangeParam={(id, name, value) =>
-                      setDoc(updateParam(doc, id, name, value), `param:${id}:${name}`)
-                    }
-                    onRename={handleSolidRename}
-                    onEditSketch={editSketch}
-                    onFinishSketch={finishSketch}
-                    onEditTransform={editTransformFeature}
-                  />
-                </>
-              )}
-            </EditPanel>
-          )}
-          {editingSketch && (
-            <OverflowColumn
-              className="sketch-toolbar"
-              slots={sketchSlots}
-              openRequest={sketchMoreRequest}
-              showShortcuts={showShortcuts}
-              searchPlaceholder="Search sketch tools…"
-            />
-          )}
-          {editingSketch && circleSizeActive && (
-            <DraftSizeField
-              center={draft[0]}
-              kind={circleSizeKind}
-              value={circleSizeText}
-              onChange={setCircleSizeText}
-              onToggleKind={() => setCircleSizeKind((k) => (k === "diameter" ? "radius" : "diameter"))}
-              onSubmit={() => {
-                if (typedCircleSize) handleSketchClick(draft[0]);
-              }}
-              variables={dimVarOptions}
-            />
-          )}
-          {dimPending && <div className="dim-hint">Pick a line or circle to dimension · Esc to cancel</div>}
-          {dimInput && (
-            <DraggableDialog
-              className="dim-input"
-              baseTransform="translate(14px, -130%)"
-              style={{ left: dimInput.x, top: dimInput.y }}
-            >
-              <label data-drag-handle>
-                {dimInput.kind === "radius"
-                  ? "Radius"
-                  : dimInput.kind === "diameter"
-                    ? "Diameter"
-                    : dimInput.kind === "angle"
-                      ? "Angle \u00b0"
-                      : dimInput.kind === "distance"
-                        ? "Distance"
-                        : "Length"}
-              </label>
-              <DimValueInput
-                value={dimInput.value}
-                variables={dimVarOptions}
-                onChange={(v) => setDimInput((d) => (d ? { ...d, value: v } : d))}
-                onSubmit={applyDimension}
-                onCancel={() => setDimInput(null)}
+                    <ParamEditor
+                      feature={editParamsFeature}
+                      error={errors[editParamsFeature.id] ?? null}
+                      editingSketchId={editingSketchId}
+                      onChangeParam={(id, name, value) =>
+                        setDoc(updateParam(doc, id, name, value), `param:${id}:${name}`)
+                      }
+                      onRename={handleSolidRename}
+                      onEditSketch={editSketch}
+                      onFinishSketch={finishSketch}
+                      onEditTransform={editTransformFeature}
+                    />
+                  </>
+                )}
+              </EditPanel>
+            )}
+            {editingSketch && (
+              <OverflowColumn
+                className="sketch-toolbar"
+                slots={sketchSlots}
+                openRequest={sketchMoreRequest}
+                showShortcuts={showShortcuts}
+                searchPlaceholder="Search sketch tools…"
               />
-              <button onClick={applyDimension}>Set</button>
-              <button className="ghost" onClick={() => setDimInput(null)}>
-                ✕
-              </button>
-            </DraggableDialog>
-          )}
-          {/* Offset tool: a floating distance box (like the dimension input) plus
+            )}
+            {editingSketch && circleSizeActive && (
+              <DraftSizeField
+                center={draft[0]}
+                kind={circleSizeKind}
+                value={circleSizeText}
+                onChange={setCircleSizeText}
+                onToggleKind={() => setCircleSizeKind((k) => (k === "diameter" ? "radius" : "diameter"))}
+                onSubmit={() => {
+                  if (typedCircleSize) handleSketchClick(draft[0]);
+                }}
+                variables={dimVarOptions}
+              />
+            )}
+            {dimPending && <div className="dim-hint">Pick a line or circle to dimension · Esc to cancel</div>}
+            {dimInput && (
+              <DraggableDialog
+                className="dim-input"
+                baseTransform="translate(14px, -130%)"
+                style={{ left: dimInput.x, top: dimInput.y }}
+              >
+                <label data-drag-handle>
+                  {dimInput.kind === "radius"
+                    ? "Radius"
+                    : dimInput.kind === "diameter"
+                      ? "Diameter"
+                      : dimInput.kind === "angle"
+                        ? "Angle \u00b0"
+                        : dimInput.kind === "distance"
+                          ? "Distance"
+                          : "Length"}
+                </label>
+                <DimValueInput
+                  value={dimInput.value}
+                  variables={dimVarOptions}
+                  onChange={(v) => setDimInput((d) => (d ? { ...d, value: v } : d))}
+                  onSubmit={applyDimension}
+                  onCancel={() => setDimInput(null)}
+                />
+                <button onClick={applyDimension}>Set</button>
+                <button className="ghost" onClick={() => setDimInput(null)}>
+                  ✕
+                </button>
+              </DraggableDialog>
+            )}
+            {/* Offset tool: a floating distance box (like the dimension input) plus
               a draggable arrow handle anchored on the chain. Dragging the arrow
               changes the signed distance live (cross to the other side → negative);
               the dashed offset preview updates as it moves. Set/Enter commits,
               ✕/Esc cancels. */}
-          {editingSketch &&
-            offsetSession &&
-            (() => {
-              // Guarded: a half-typed / non-numeric distance must not throw here.
-              let raw = NaN;
-              try {
-                raw = evaluateExpression(offsetSession.value, resolved.scope);
-              } catch {
-                raw = NaN;
-              }
-              const dv = Number.isFinite(raw) ? raw : 0;
-              const a0 = screenOf(offsetSession.anchor);
-              const a1 = screenOf([
-                offsetSession.anchor[0] + offsetSession.normal[0],
-                offsetSession.anchor[1] + offsetSession.normal[1],
-              ]);
-              const axisX = a1.x - a0.x,
-                axisY = a1.y - a0.y,
-                axisLen2 = axisX * axisX + axisY * axisY || 1;
-              const handle = screenOf([
-                offsetSession.anchor[0] + offsetSession.normal[0] * dv,
-                offsetSession.anchor[1] + offsetSession.normal[1] * dv,
-              ]);
-              // Point the arrow along the (screen-space) drag axis, flipping 180°
-              // when the offset has gone negative — like the Transform gizmo's
-              // translate handle pointing in the drag direction.
-              const arrowAng = (Math.atan2(axisY, axisX) * 180) / Math.PI + (dv < 0 ? 180 : 0);
-              const onDrag = (ev: React.PointerEvent) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                const sx = ev.clientX,
-                  sy = ev.clientY,
-                  d0 = dv;
-                const move = (m: WindowEventMap["pointermove"]) => {
-                  const proj = ((m.clientX - sx) * axisX + (m.clientY - sy) * axisY) / axisLen2;
-                  setOffsetSession((s) => (s ? { ...s, value: (d0 + proj).toFixed(2) } : s));
+            {editingSketch &&
+              offsetSession &&
+              (() => {
+                // Guarded: a half-typed / non-numeric distance must not throw here.
+                let raw = NaN;
+                try {
+                  raw = evaluateExpression(offsetSession.value, resolved.scope);
+                } catch {
+                  raw = NaN;
+                }
+                const dv = Number.isFinite(raw) ? raw : 0;
+                const a0 = screenOf(offsetSession.anchor);
+                const a1 = screenOf([
+                  offsetSession.anchor[0] + offsetSession.normal[0],
+                  offsetSession.anchor[1] + offsetSession.normal[1],
+                ]);
+                const axisX = a1.x - a0.x,
+                  axisY = a1.y - a0.y,
+                  axisLen2 = axisX * axisX + axisY * axisY || 1;
+                const handle = screenOf([
+                  offsetSession.anchor[0] + offsetSession.normal[0] * dv,
+                  offsetSession.anchor[1] + offsetSession.normal[1] * dv,
+                ]);
+                // Point the arrow along the (screen-space) drag axis, flipping 180°
+                // when the offset has gone negative — like the Transform gizmo's
+                // translate handle pointing in the drag direction.
+                const arrowAng = (Math.atan2(axisY, axisX) * 180) / Math.PI + (dv < 0 ? 180 : 0);
+                const onDrag = (ev: React.PointerEvent) => {
+                  ev.preventDefault();
+                  ev.stopPropagation();
+                  const sx = ev.clientX,
+                    sy = ev.clientY,
+                    d0 = dv;
+                  const move = (m: WindowEventMap["pointermove"]) => {
+                    const proj = ((m.clientX - sx) * axisX + (m.clientY - sy) * axisY) / axisLen2;
+                    setOffsetSession((s) => (s ? { ...s, value: (d0 + proj).toFixed(2) } : s));
+                  };
+                  const up = () => {
+                    window.removeEventListener("pointermove", move);
+                    window.removeEventListener("pointerup", up);
+                  };
+                  window.addEventListener("pointermove", move);
+                  window.addEventListener("pointerup", up);
                 };
-                const up = () => {
-                  window.removeEventListener("pointermove", move);
-                  window.removeEventListener("pointerup", up);
-                };
-                window.addEventListener("pointermove", move);
-                window.addEventListener("pointerup", up);
-              };
-              return (
-                <>
-                  <svg
-                    className="offset-arrow"
-                    onPointerDown={onDrag}
-                    width={48}
-                    height={18}
-                    viewBox="0 0 48 18"
-                    style={{ left: handle.x, top: handle.y, transform: `translate(-50%, -50%) rotate(${arrowAng}deg)` }}
-                  >
-                    <title>Drag to set the offset distance (cross over to flip the side)</title>
-                    <line className="offset-arrow-shaft" x1="3" y1="9" x2="31" y2="9" />
-                    <path className="offset-arrow-head" d="M30 2.5 L45 9 L30 15.5 Z" />
-                  </svg>
+                return (
+                  <>
+                    <svg
+                      className="offset-arrow"
+                      onPointerDown={onDrag}
+                      width={48}
+                      height={18}
+                      viewBox="0 0 48 18"
+                      style={{
+                        left: handle.x,
+                        top: handle.y,
+                        transform: `translate(-50%, -50%) rotate(${arrowAng}deg)`,
+                      }}
+                    >
+                      <title>Drag to set the offset distance (cross over to flip the side)</title>
+                      <line className="offset-arrow-shaft" x1="3" y1="9" x2="31" y2="9" />
+                      <path className="offset-arrow-head" d="M30 2.5 L45 9 L30 15.5 Z" />
+                    </svg>
+                    <DraggableDialog
+                      className="dim-input"
+                      baseTransform="translate(14px, -130%)"
+                      style={{ left: a0.x, top: a0.y }}
+                    >
+                      <label data-drag-handle>Offset</label>
+                      <DimValueInput
+                        value={offsetSession.value}
+                        variables={dimVarOptions}
+                        onChange={(v) => setOffsetSession((s) => (s ? { ...s, value: v } : s))}
+                        onSubmit={commitOffset}
+                        onCancel={cancelOffset}
+                      />
+                      <button onClick={commitOffset}>Set</button>
+                      <button className="ghost" onClick={cancelOffset}>
+                        ✕
+                      </button>
+                    </DraggableDialog>
+                  </>
+                );
+              })()}
+            {/* Re-edit a committed offset's distance: shown when a single generated
+              offset entity is selected. Editing re-runs applyDerived. */}
+            {editingSketch &&
+              !offsetSession &&
+              selectedOffsetOp &&
+              (() => {
+                const e = selectedOffsetOp.entity;
+                const uv: Vec2 =
+                  e.type === "line"
+                    ? [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2]
+                    : e.type === "circle"
+                      ? [e.c[0], e.c[1]]
+                      : e.type === "arc"
+                        ? [
+                            e.c[0] + e.r * Math.cos((e.start + e.end) / 2),
+                            e.c[1] + e.r * Math.sin((e.start + e.end) / 2),
+                          ]
+                        : [0, 0];
+                const a0 = screenOf(uv);
+                const shown =
+                  offsetEdit?.opId === selectedOffsetOp.op.id ? offsetEdit.value : selectedOffsetOp.op.distance;
+                return (
                   <DraggableDialog
                     className="dim-input"
                     baseTransform="translate(14px, -130%)"
@@ -7686,1077 +7749,1042 @@ export default function App() {
                   >
                     <label data-drag-handle>Offset</label>
                     <DimValueInput
-                      value={offsetSession.value}
+                      value={shown}
                       variables={dimVarOptions}
-                      onChange={(v) => setOffsetSession((s) => (s ? { ...s, value: v } : s))}
-                      onSubmit={commitOffset}
-                      onCancel={cancelOffset}
+                      onChange={(v) => setOffsetEdit({ opId: selectedOffsetOp.op.id, value: v })}
+                      onSubmit={commitOffsetEdit}
+                      onCancel={() => setOffsetEdit(null)}
                     />
-                    <button onClick={commitOffset}>Set</button>
-                    <button className="ghost" onClick={cancelOffset}>
+                    <button onClick={commitOffsetEdit}>Set</button>
+                  </DraggableDialog>
+                );
+              })()}
+            {/* Mirror tool: a floating prompt. Before an axis is armed it asks the
+              user to click a line; once armed it shows the live mirrored count and
+              Done/Cancel. Enter commits, Esc cancels (see the key handler). */}
+            {editingSketch &&
+              mirrorSession &&
+              (() => {
+                const sk = doc.features.find((f) => f.id === editingSketchId);
+                const axis =
+                  mirrorSession.axisEntityId && sk?.type === "sketch"
+                    ? sk.entities.find((x) => x.id === mirrorSession.axisEntityId)
+                    : undefined;
+                const anchorUv: Vec2 =
+                  axis && axis.type === "line" ? [(axis.a[0] + axis.b[0]) / 2, (axis.a[1] + axis.b[1]) / 2] : [0, 0];
+                const a0 = screenOf(anchorUv);
+                return (
+                  <DraggableDialog
+                    className="dim-input"
+                    baseTransform="translate(14px, -130%)"
+                    style={{ left: a0.x, top: a0.y }}
+                  >
+                    <label data-drag-handle>Mirror</label>
+                    {!mirrorSession.axisEntityId ? (
+                      <span className="dim-status" style={{ padding: "0 6px" }}>
+                        Select a line to set the axis
+                      </span>
+                    ) : (
+                      <>
+                        <span className="dim-status" style={{ padding: "0 6px" }}>
+                          {mirrorSession.previews.length} mirrored — select entities to add
+                        </span>
+                        {/* The axis is a pick like any other, so it has to be
+                          undoable without throwing the session away. Its copies
+                          are measured from it, so they go with it. */}
+                        <button
+                          className="ghost"
+                          title="Clear the mirror axis and pick a different line"
+                          onClick={() => {
+                            setMirrorSession((m) =>
+                              m ? { ...m, axisEntityId: null, sourceIds: [], previews: [] } : m,
+                            );
+                            setSelection([]);
+                          }}
+                        >
+                          Change axis
+                        </button>
+                      </>
+                    )}
+                    <button onClick={commitMirror} disabled={mirrorSession.previews.length === 0}>
+                      Done
+                    </button>
+                    <button className="ghost" onClick={cancelMirror}>
                       ✕
                     </button>
                   </DraggableDialog>
-                </>
-              );
-            })()}
-          {/* Re-edit a committed offset's distance: shown when a single generated
-              offset entity is selected. Editing re-runs applyDerived. */}
-          {editingSketch &&
-            !offsetSession &&
-            selectedOffsetOp &&
-            (() => {
-              const e = selectedOffsetOp.entity;
-              const uv: Vec2 =
-                e.type === "line"
-                  ? [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2]
-                  : e.type === "circle"
-                    ? [e.c[0], e.c[1]]
-                    : e.type === "arc"
-                      ? [e.c[0] + e.r * Math.cos((e.start + e.end) / 2), e.c[1] + e.r * Math.sin((e.start + e.end) / 2)]
-                      : [0, 0];
-              const a0 = screenOf(uv);
-              const shown =
-                offsetEdit?.opId === selectedOffsetOp.op.id ? offsetEdit.value : selectedOffsetOp.op.distance;
-              return (
-                <DraggableDialog
-                  className="dim-input"
-                  baseTransform="translate(14px, -130%)"
-                  style={{ left: a0.x, top: a0.y }}
-                >
-                  <label data-drag-handle>Offset</label>
-                  <DimValueInput
-                    value={shown}
-                    variables={dimVarOptions}
-                    onChange={(v) => setOffsetEdit({ opId: selectedOffsetOp.op.id, value: v })}
-                    onSubmit={commitOffsetEdit}
-                    onCancel={() => setOffsetEdit(null)}
-                  />
-                  <button onClick={commitOffsetEdit}>Set</button>
-                </DraggableDialog>
-              );
-            })()}
-          {/* Mirror tool: a floating prompt. Before an axis is armed it asks the
-              user to click a line; once armed it shows the live mirrored count and
-              Done/Cancel. Enter commits, Esc cancels (see the key handler). */}
-          {editingSketch &&
-            mirrorSession &&
-            (() => {
-              const sk = doc.features.find((f) => f.id === editingSketchId);
-              const axis =
-                mirrorSession.axisEntityId && sk?.type === "sketch"
-                  ? sk.entities.find((x) => x.id === mirrorSession.axisEntityId)
-                  : undefined;
-              const anchorUv: Vec2 =
-                axis && axis.type === "line" ? [(axis.a[0] + axis.b[0]) / 2, (axis.a[1] + axis.b[1]) / 2] : [0, 0];
-              const a0 = screenOf(anchorUv);
-              return (
-                <DraggableDialog
-                  className="dim-input"
-                  baseTransform="translate(14px, -130%)"
-                  style={{ left: a0.x, top: a0.y }}
-                >
-                  <label data-drag-handle>Mirror</label>
-                  {!mirrorSession.axisEntityId ? (
-                    <span className="dim-status" style={{ padding: "0 6px" }}>
-                      Select a line to set the axis
-                    </span>
-                  ) : (
-                    <>
-                      <span className="dim-status" style={{ padding: "0 6px" }}>
-                        {mirrorSession.previews.length} mirrored — select entities to add
-                      </span>
-                      {/* The axis is a pick like any other, so it has to be
-                          undoable without throwing the session away. Its copies
-                          are measured from it, so they go with it. */}
-                      <button
-                        className="ghost"
-                        title="Clear the mirror axis and pick a different line"
-                        onClick={() => {
-                          setMirrorSession((m) => (m ? { ...m, axisEntityId: null, sourceIds: [], previews: [] } : m));
-                          setSelection([]);
-                        }}
-                      >
-                        Change axis
-                      </button>
-                    </>
-                  )}
-                  <button onClick={commitMirror} disabled={mirrorSession.previews.length === 0}>
-                    Done
-                  </button>
-                  <button className="ghost" onClick={cancelMirror}>
-                    ✕
-                  </button>
-                </DraggableDialog>
-              );
-            })()}
-          {/* Pattern tool (linear/circular): a fixed floating prompt at the top
+                );
+              })()}
+            {/* Pattern tool (linear/circular): a fixed floating prompt at the top
               (sources accumulate by clicks anywhere, so there's no single
               anchor). Expression fields for count/step/angle; Done/Enter commits
               the DerivedOp, ✕/Esc discards the session. */}
-          {editingSketch &&
-            patternSession &&
-            (() => {
-              const s = patternSession;
-              const n = s.sourceIds.length;
-              const status =
-                s.kind === "circular" && !s.center
-                  ? "Select the center point (a vertex, the origin, or empty space)"
-                  : n === 0
-                    ? "Select entities to pattern"
-                    : `${n} in pattern — select entities to add`;
-              // The center is a pick like any other, so the dialog shows it as a
-              // slot: what it landed on, and ✕ to put it back to listening.
-              const c = s.center;
-              const centerAt = c && ("fixed" in c ? c.fixed : "at" in c && Array.isArray(c.at) ? c.at : null);
-              const centerLabel = !c
-                ? null
-                : "origin" in c
-                  ? "Origin"
-                  : centerAt
-                    ? `(${centerAt[0].toFixed(1)}, ${centerAt[1].toFixed(1)})`
-                    : "Sketch point";
-              return (
-                <DraggableDialog
-                  className="feature-dialog"
-                  style={{ left: "50%", top: 70 }}
-                  baseTransform="translateX(-50%)"
-                >
-                  <div className="ed-title" data-drag-handle>
-                    {s.kind === "linear" ? "Linear pattern" : "Circular pattern"}
-                  </div>
-                  <div className="ed-hint">{status}</div>
-                  {s.kind === "circular" && (
-                    <div className="ed-field">
-                      <span>Center</span>
-                      <PickSlot
-                        noun="the center"
-                        armed={!s.center}
-                        value={centerLabel}
-                        clearTitle="Pick a different center"
-                        onArm={() => setPatternSession((p) => (p ? { ...p, center: null } : p))}
-                      />
+            {editingSketch &&
+              patternSession &&
+              (() => {
+                const s = patternSession;
+                const n = s.sourceIds.length;
+                const status =
+                  s.kind === "circular" && !s.center
+                    ? "Select the center point (a vertex, the origin, or empty space)"
+                    : n === 0
+                      ? "Select entities to pattern"
+                      : `${n} in pattern — select entities to add`;
+                // The center is a pick like any other, so the dialog shows it as a
+                // slot: what it landed on, and ✕ to put it back to listening.
+                const c = s.center;
+                const centerAt = c && ("fixed" in c ? c.fixed : "at" in c && Array.isArray(c.at) ? c.at : null);
+                const centerLabel = !c
+                  ? null
+                  : "origin" in c
+                    ? "Origin"
+                    : centerAt
+                      ? `(${centerAt[0].toFixed(1)}, ${centerAt[1].toFixed(1)})`
+                      : "Sketch point";
+                return (
+                  <DraggableDialog
+                    className="feature-dialog"
+                    style={{ left: "50%", top: 70 }}
+                    baseTransform="translateX(-50%)"
+                  >
+                    <div className="ed-title" data-drag-handle>
+                      {s.kind === "linear" ? "Linear pattern" : "Circular pattern"}
                     </div>
-                  )}
-                  <label className="ed-field">
-                    <span>Count</span>
-                    <DimValueInput
-                      value={s.count}
-                      variables={dimVarOptions}
-                      onChange={(v) => setPatternSession((p) => (p ? { ...p, count: v } : p))}
-                      onSubmit={commitPattern}
-                      onCancel={cancelPattern}
-                    />
-                  </label>
-                  {s.kind === "linear" ? (
-                    <>
-                      <label className="ed-field">
-                        <span>ΔX</span>
-                        <DimValueInput
-                          value={s.dx}
-                          variables={dimVarOptions}
-                          onChange={(v) => setPatternSession((p) => (p ? { ...p, dx: v } : p))}
-                          onSubmit={commitPattern}
-                          onCancel={cancelPattern}
+                    <div className="ed-hint">{status}</div>
+                    {s.kind === "circular" && (
+                      <div className="ed-field">
+                        <span>Center</span>
+                        <PickSlot
+                          noun="the center"
+                          armed={!s.center}
+                          value={centerLabel}
+                          clearTitle="Pick a different center"
+                          onArm={() => setPatternSession((p) => (p ? { ...p, center: null } : p))}
                         />
-                      </label>
-                      <label className="ed-field">
-                        <span>ΔY</span>
-                        <DimValueInput
-                          value={s.dy}
-                          variables={dimVarOptions}
-                          onChange={(v) => setPatternSession((p) => (p ? { ...p, dy: v } : p))}
-                          onSubmit={commitPattern}
-                          onCancel={cancelPattern}
-                        />
-                      </label>
-                    </>
-                  ) : (
-                    <>
-                      <div className="ed-modes">
-                        <button
-                          className={s.mode === "full" ? "active" : ""}
-                          title="Full circle: instances at equal 360°/count steps"
-                          onClick={() => setPatternSession((p) => (p ? { ...p, mode: "full" } : p))}
-                        >
-                          Full (360°)
-                        </button>
-                        <button
-                          className={s.mode === "angle" ? "active" : ""}
-                          title="Spread the instances across a total sweep angle"
-                          onClick={() => setPatternSession((p) => (p ? { ...p, mode: "angle" } : p))}
-                        >
-                          Angle
-                        </button>
                       </div>
-                      {s.mode === "angle" && (
-                        <>
-                          <label className="ed-field">
-                            <span>Angle (°)</span>
-                            <DimValueInput
-                              value={s.angle}
-                              variables={dimVarOptions}
-                              onChange={(v) => setPatternSession((p) => (p ? { ...p, angle: v } : p))}
-                              onSubmit={commitPattern}
-                              onCancel={cancelPattern}
-                            />
-                          </label>
-                          <label className="ed-field ed-flip" title="Spread ±angle/2 to both sides of the seed">
-                            <span>Symmetric</span>
-                            <input
-                              type="checkbox"
-                              checked={s.symmetric}
-                              onChange={(ev) =>
-                                setPatternSession((p) => (p ? { ...p, symmetric: ev.target.checked } : p))
-                              }
-                            />
-                          </label>
-                        </>
-                      )}
-                    </>
-                  )}
-                  <div className="ed-actions">
-                    <button
-                      className="ed-primary"
-                      onClick={commitPattern}
-                      disabled={n === 0 || (s.kind === "circular" && !s.center)}
-                    >
-                      Done
-                    </button>
-                    <button onClick={cancelPattern}>Cancel</button>
-                  </div>
-                </DraggableDialog>
-              );
-            })()}
-          {/* Project/Convert tool: a fixed floating prompt. There's no single
+                    )}
+                    <label className="ed-field">
+                      <span>Count</span>
+                      <DimValueInput
+                        value={s.count}
+                        variables={dimVarOptions}
+                        onChange={(v) => setPatternSession((p) => (p ? { ...p, count: v } : p))}
+                        onSubmit={commitPattern}
+                        onCancel={cancelPattern}
+                      />
+                    </label>
+                    {s.kind === "linear" ? (
+                      <>
+                        <label className="ed-field">
+                          <span>ΔX</span>
+                          <DimValueInput
+                            value={s.dx}
+                            variables={dimVarOptions}
+                            onChange={(v) => setPatternSession((p) => (p ? { ...p, dx: v } : p))}
+                            onSubmit={commitPattern}
+                            onCancel={cancelPattern}
+                          />
+                        </label>
+                        <label className="ed-field">
+                          <span>ΔY</span>
+                          <DimValueInput
+                            value={s.dy}
+                            variables={dimVarOptions}
+                            onChange={(v) => setPatternSession((p) => (p ? { ...p, dy: v } : p))}
+                            onSubmit={commitPattern}
+                            onCancel={cancelPattern}
+                          />
+                        </label>
+                      </>
+                    ) : (
+                      <>
+                        <div className="ed-modes">
+                          <button
+                            className={s.mode === "full" ? "active" : ""}
+                            title="Full circle: instances at equal 360°/count steps"
+                            onClick={() => setPatternSession((p) => (p ? { ...p, mode: "full" } : p))}
+                          >
+                            Full (360°)
+                          </button>
+                          <button
+                            className={s.mode === "angle" ? "active" : ""}
+                            title="Spread the instances across a total sweep angle"
+                            onClick={() => setPatternSession((p) => (p ? { ...p, mode: "angle" } : p))}
+                          >
+                            Angle
+                          </button>
+                        </div>
+                        {s.mode === "angle" && (
+                          <>
+                            <label className="ed-field">
+                              <span>Angle (°)</span>
+                              <DimValueInput
+                                value={s.angle}
+                                variables={dimVarOptions}
+                                onChange={(v) => setPatternSession((p) => (p ? { ...p, angle: v } : p))}
+                                onSubmit={commitPattern}
+                                onCancel={cancelPattern}
+                              />
+                            </label>
+                            <label className="ed-field ed-flip" title="Spread ±angle/2 to both sides of the seed">
+                              <span>Symmetric</span>
+                              <input
+                                type="checkbox"
+                                checked={s.symmetric}
+                                onChange={(ev) =>
+                                  setPatternSession((p) => (p ? { ...p, symmetric: ev.target.checked } : p))
+                                }
+                              />
+                            </label>
+                          </>
+                        )}
+                      </>
+                    )}
+                    <div className="ed-actions">
+                      <button
+                        className="ed-primary"
+                        onClick={commitPattern}
+                        disabled={n === 0 || (s.kind === "circular" && !s.center)}
+                      >
+                        Done
+                      </button>
+                      <button onClick={cancelPattern}>Cancel</button>
+                    </div>
+                  </DraggableDialog>
+                );
+              })()}
+            {/* Project/Convert tool: a fixed floating prompt. There's no single
               anchor (the user clicks body edges/vertices anywhere), so it sits at
               the top. Done commits the projected previews; ✕/Esc discards them. */}
-          {editingSketch && projectSession && (
-            <DraggableDialog className="dim-input" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
-              <label data-drag-handle>Project</label>
-              <span className="dim-status" style={{ padding: "0 6px" }}>
-                {projectSession.previews.length > 0
-                  ? `${projectSession.previews.length} projected — select more edges/vertices`
-                  : "Select body edges or vertices to project"}
-              </span>
-              <button onClick={commitProject} disabled={projectSession.previews.length === 0}>
-                Done
-              </button>
-              <button className="ghost" onClick={cancelProject}>
-                ✕
-              </button>
-            </DraggableDialog>
-          )}
-          {/* Text tool: once the anchor is clicked, a floating box takes the
+            {editingSketch && projectSession && (
+              <DraggableDialog className="dim-input" style={{ left: "50%", top: 70 }} baseTransform="translateX(-50%)">
+                <label data-drag-handle>Project</label>
+                <span className="dim-status" style={{ padding: "0 6px" }}>
+                  {projectSession.previews.length > 0
+                    ? `${projectSession.previews.length} projected — select more edges/vertices`
+                    : "Select body edges or vertices to project"}
+                </span>
+                <button onClick={commitProject} disabled={projectSession.previews.length === 0}>
+                  Done
+                </button>
+                <button className="ghost" onClick={cancelProject}>
+                  ✕
+                </button>
+              </DraggableDialog>
+            )}
+            {/* Text tool: once the anchor is clicked, a floating box takes the
               string + height. Enter commits, ✕/Esc cancels. The text is live-
               previewed in the sketch (see renderSketchesWithPreview). */}
-          {editingSketch &&
-            textDraft &&
-            (() => {
-              const a0 = screenOf(textDraft.anchor);
-              return (
-                <DraggableDialog
-                  className="dim-input"
-                  baseTransform="translate(14px, -130%)"
-                  style={{ left: a0.x, top: a0.y }}
-                >
-                  <label data-drag-handle>Text</label>
-                  <input
-                    autoFocus
-                    value={textDraft.value}
-                    placeholder="Type text…"
-                    style={{ width: 120 }}
-                    onChange={(ev) => setTextDraft((s) => (s ? { ...s, value: ev.target.value } : s))}
-                    onKeyDown={(ev) => {
-                      if (ev.key === "Enter") {
-                        ev.preventDefault();
-                        commitText();
-                      }
-                    }}
-                  />
-                  <DimValueInput
-                    value={textDraft.height}
-                    variables={dimVarOptions}
-                    onChange={(v) => setTextDraft((s) => (s ? { ...s, height: v } : s))}
-                    onSubmit={commitText}
-                    onCancel={() => setTextDraft(null)}
-                  />
-                  <button onClick={commitText} disabled={!textDraft.value.trim()}>
-                    Set
-                  </button>
-                  <button className="ghost" onClick={() => setTextDraft(null)}>
-                    ✕
-                  </button>
-                </DraggableDialog>
-              );
-            })()}
-          {/* Polygon tool: a one-shot floating "Sides" box (like the dimension
+            {editingSketch &&
+              textDraft &&
+              (() => {
+                const a0 = screenOf(textDraft.anchor);
+                return (
+                  <DraggableDialog
+                    className="dim-input"
+                    baseTransform="translate(14px, -130%)"
+                    style={{ left: a0.x, top: a0.y }}
+                  >
+                    <label data-drag-handle>Text</label>
+                    <input
+                      autoFocus
+                      value={textDraft.value}
+                      placeholder="Type text…"
+                      style={{ width: 120 }}
+                      onChange={(ev) => setTextDraft((s) => (s ? { ...s, value: ev.target.value } : s))}
+                      onKeyDown={(ev) => {
+                        if (ev.key === "Enter") {
+                          ev.preventDefault();
+                          commitText();
+                        }
+                      }}
+                    />
+                    <DimValueInput
+                      value={textDraft.height}
+                      variables={dimVarOptions}
+                      onChange={(v) => setTextDraft((s) => (s ? { ...s, height: v } : s))}
+                      onSubmit={commitText}
+                      onCancel={() => setTextDraft(null)}
+                    />
+                    <button onClick={commitText} disabled={!textDraft.value.trim()}>
+                      Set
+                    </button>
+                    <button className="ghost" onClick={() => setTextDraft(null)}>
+                      ✕
+                    </button>
+                  </DraggableDialog>
+                );
+              })()}
+            {/* Polygon tool: a one-shot floating "Sides" box (like the dimension
               input). The draft is free text; Set (enabled only for an integer in
               3..24) commits the count and closes the box so the next viewport click
               draws. Cancel/✕/Esc just closes it, keeping the previous count. */}
-          {editingSketch &&
-            sketchTool === "polygon" &&
-            polySidesOpen &&
-            (() => {
-              const n = Number(polySidesText);
-              const valid = Number.isInteger(n) && n >= 3 && n <= 24;
-              const commit = () => {
-                if (valid) {
-                  setPolygonSides(n);
-                  setPolySidesOpen(false);
-                }
-              };
-              return (
-                <DraggableDialog
-                  className="dim-input"
-                  style={{ left: "50%", top: 70 }}
-                  baseTransform="translateX(-50%)"
-                >
-                  <label data-drag-handle>Sides</label>
-                  <input
-                    autoFocus
-                    value={polySidesText}
-                    onChange={(e) => setPolySidesText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") commit();
-                      else if (e.key === "Escape") setPolySidesOpen(false);
-                    }}
-                  />
-                  <button onClick={commit} disabled={!valid}>
-                    Set
-                  </button>
-                  <button className="ghost" onClick={() => setPolySidesOpen(false)}>
-                    ✕
-                  </button>
-                </DraggableDialog>
-              );
-            })()}
-          {dimFrame && dimSpecs.length > 0 && (
-            <DimensionOverlay
-              frame={dimFrame}
-              specs={dimSpecs}
-              centroid={dimCentroid}
-              viewApiRef={viewApiRef}
-              onEdit={editConstraint}
-              onDelete={deleteConstraint}
-            />
-          )}
-          {hudMsg && (
-            // Nudged below the sketch/pick banner when one is up, so it doesn't
-            // land on top of it — they share the top-centre slot.
-            <div className={"sketch-msg" + (editingSketch || picking ? " below-banner" : "")} role="alert">
-              ⚠ {hudMsg}
-            </div>
-          )}
-          {/* Named views (Top/Front/Right/…) + iso corners live on the on-canvas
+            {editingSketch &&
+              sketchTool === "polygon" &&
+              polySidesOpen &&
+              (() => {
+                const n = Number(polySidesText);
+                const valid = Number.isInteger(n) && n >= 3 && n <= 24;
+                const commit = () => {
+                  if (valid) {
+                    setPolygonSides(n);
+                    setPolySidesOpen(false);
+                  }
+                };
+                return (
+                  <DraggableDialog
+                    className="dim-input"
+                    style={{ left: "50%", top: 70 }}
+                    baseTransform="translateX(-50%)"
+                  >
+                    <label data-drag-handle>Sides</label>
+                    <input
+                      autoFocus
+                      value={polySidesText}
+                      onChange={(e) => setPolySidesText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commit();
+                        else if (e.key === "Escape") setPolySidesOpen(false);
+                      }}
+                    />
+                    <button onClick={commit} disabled={!valid}>
+                      Set
+                    </button>
+                    <button className="ghost" onClick={() => setPolySidesOpen(false)}>
+                      ✕
+                    </button>
+                  </DraggableDialog>
+                );
+              })()}
+            {dimFrame && dimSpecs.length > 0 && (
+              <DimensionOverlay
+                frame={dimFrame}
+                specs={dimSpecs}
+                centroid={dimCentroid}
+                viewApiRef={viewApiRef}
+                onEdit={editConstraint}
+                onDelete={deleteConstraint}
+              />
+            )}
+            {hudMsg && (
+              // Nudged below the sketch/pick banner when one is up, so it doesn't
+              // land on top of it — they share the top-centre slot.
+              <div className={"sketch-msg" + (editingSketch || picking ? " below-banner" : "")} role="alert">
+                ⚠ {hudMsg}
+              </div>
+            )}
+            {/* Named views (Top/Front/Right/…) + iso corners live on the on-canvas
               navigation gizmo (see Viewport.tsx). This small Home button, tucked
               at the gizmo's bottom-right, snaps to the iso view zoomed to fit
               every body in the scene. */}
-          <button
-            className="view-reset"
-            title={`Home — iso view, fit all (${shortcutName("view.home")})`}
-            onClick={() => viewApiRef.current?.homeView()}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="16"
-              height="16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+            <button
+              className="view-reset"
+              title={`Home — iso view, fit all (${shortcutName("view.home")})`}
+              onClick={() => viewApiRef.current?.homeView()}
             >
-              <path d="M3 10.5 12 3l9 7.5" />
-              <path d="M5 9.5V20h14V9.5" />
-              <path d="M9.5 20v-6h5v6" />
-            </svg>
-          </button>
-          {/* Its key cap hangs just below it — the row to its left is full of
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M3 10.5 12 3l9 7.5" />
+                <path d="M5 9.5V20h14V9.5" />
+                <path d="M9.5 20v-6h5v6" />
+              </svg>
+            </button>
+            {/* Its key cap hangs just below it — the row to its left is full of
               its peers. Hidden while sketching, where H isn't bound to Home. */}
-          {showShortcuts && !editingSketch && (
-            <span className="kbd-hint view-reset-kbd" aria-hidden="true">
-              {shortcutHint("view.home")}
-            </span>
-          )}
-          {/* Perspective/orthographic toggle — a peer of Home/Section in the view-
+            {showShortcuts && !editingSketch && (
+              <span className="kbd-hint view-reset-kbd" aria-hidden="true">
+                {shortcutHint("view.home")}
+              </span>
+            )}
+            {/* Perspective/orthographic toggle — a peer of Home/Section in the view-
               controls corner. View-only (the camera swap lives in the viewport API);
               the icon shows a box in one-point perspective, filled while active. */}
-          <button
-            className={"view-reset perspective-toggle" + (perspective ? " active" : "")}
-            title={
-              perspective
-                ? "Perspective view: on — click for orthographic"
-                : "Orthographic view — click for perspective"
-            }
-            aria-pressed={perspective}
-            onClick={() => {
-              const next = !perspective;
-              setPerspective(next);
-              viewApiRef.current?.setProjection(next ? "perspective" : "orthographic");
-            }}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="16"
-              height="16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+            <button
+              className={"view-reset perspective-toggle" + (perspective ? " active" : "")}
+              title={
+                perspective
+                  ? "Perspective view: on — click for orthographic"
+                  : "Orthographic view — click for perspective"
+              }
+              aria-pressed={perspective}
+              onClick={() => {
+                const next = !perspective;
+                setPerspective(next);
+                viewApiRef.current?.setProjection(next ? "perspective" : "orthographic");
+              }}
             >
-              {/* Cube seen from a front corner (perspective feel via the asymmetric
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                {/* Cube seen from a front corner (perspective feel via the asymmetric
                   top). Outer silhouette, then the 3 inner edges from the near
                   top-corner — each ends exactly on a silhouette vertex, so nothing
                   dangles. */}
-              <path d="M4 8 12 5 20 7 20 16 12 21 4 18Z" />
-              <path d="M12 11 4 8M12 11 20 7M12 11 12 21" />
-            </svg>
-          </button>
-          {/* Section view toggle: a peer of Home in the same view-controls corner
+                <path d="M4 8 12 5 20 7 20 16 12 21 4 18Z" />
+                <path d="M12 11 4 8M12 11 20 7M12 11 12 21" />
+              </svg>
+            </button>
+            {/* Section view toggle: a peer of Home in the same view-controls corner
               (not a modeling op — no undo, no timeline; see SectionViewState).
               Dragging the plane's own on-canvas handle changes the offset; this
               button only turns the feature on/off. */}
-          <button
-            className={"view-reset section-view-toggle" + (sectionView.enabled ? " active" : "")}
-            title={
-              sectionView.enabled
-                ? "Section view: on — click to turn off"
-                : "Section view: cut through the model to see the interior"
-            }
-            aria-pressed={sectionView.enabled}
-            onClick={() => setSectionView((s) => ({ ...s, enabled: !s.enabled }))}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="16"
-              height="16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+            <button
+              className={"view-reset section-view-toggle" + (sectionView.enabled ? " active" : "")}
+              title={
+                sectionView.enabled
+                  ? "Section view: on — click to turn off"
+                  : "Section view: cut through the model to see the interior"
+              }
+              aria-pressed={sectionView.enabled}
+              onClick={() => setSectionView((s) => ({ ...s, enabled: !s.enabled }))}
             >
-              <rect x="5" y="4" width="14" height="16" rx="1" />
-              <path d="M2 12h20" />
-            </svg>
-          </button>
-          {sectionView.enabled && (
-            <div className="section-view-panel" title="Section view">
-              <span className="section-view-label">{planeRefLabel(sectionView.ref)}</span>
-              <input
-                type="number"
-                className="section-view-offset"
-                value={sectionView.offset.toFixed(2)}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  if (Number.isFinite(v)) setSectionView((s) => ({ ...s, offset: v }));
-                }}
-              />
-              <button
-                className={sectionView.flip ? "active" : ""}
-                title="Flip which side is kept"
-                onClick={() => setSectionView((s) => ({ ...s, flip: !s.flip }))}
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
               >
-                ⇅ Flip
-              </button>
-              {/* The one arming affordance outside a dialog. It follows the same
+                <rect x="5" y="4" width="14" height="16" rx="1" />
+                <path d="M2 12h20" />
+              </svg>
+            </button>
+            {sectionView.enabled && (
+              <div className="section-view-panel" title="Section view">
+                <span className="section-view-label">{planeRefLabel(sectionView.ref)}</span>
+                <input
+                  type="number"
+                  className="section-view-offset"
+                  value={sectionView.offset.toFixed(2)}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (Number.isFinite(v)) setSectionView((s) => ({ ...s, offset: v }));
+                  }}
+                />
+                <button
+                  className={sectionView.flip ? "active" : ""}
+                  title="Flip which side is kept"
+                  onClick={() => setSectionView((s) => ({ ...s, flip: !s.flip }))}
+                >
+                  ⇅ Flip
+                </button>
+                {/* The one arming affordance outside a dialog. It follows the same
                   vocabulary as the pick slots: the label stays "Select …" and a
                   dashed pulse says it's waiting; clicking again calls the pick
                   off. */}
-              <button
-                className={picking && pickPurpose === "sectionPlane" ? "arming" : undefined}
-                title="Pick a different plane or face to cut through"
-                onClick={() => {
-                  if (picking && pickPurpose === "sectionPlane") {
-                    setPicking(false);
-                    setPickPurpose("sketch");
-                    return;
-                  }
-                  setPickPurpose("sectionPlane");
-                  setPicking(true);
-                }}
-              >
-                ⌖ Select plane
-              </button>
-            </div>
-          )}
-          {!editingSketch && !picking && (
-            <div className="sel-filters" title="Selection filters — what a click can pick">
-              <span className="sel-filters-label">Selection filters</span>
-              <div className="sel-filters-row">
-                {(["body", "face", "edge", "vertex"] as const).map((k) => (
-                  <button
-                    key={k}
-                    className={selFilter[k] ? "active" : ""}
-                    onClick={() => setSelFilter((f) => ({ ...f, [k]: !f[k] }))}
-                  >
-                    {k}
-                  </button>
-                ))}
+                <button
+                  className={picking && pickPurpose === "sectionPlane" ? "arming" : undefined}
+                  title="Pick a different plane or face to cut through"
+                  onClick={() => {
+                    if (picking && pickPurpose === "sectionPlane") {
+                      setPicking(false);
+                      setPickPurpose("sketch");
+                      return;
+                    }
+                    setPickPurpose("sectionPlane");
+                    setPicking(true);
+                  }}
+                >
+                  ⌖ Select plane
+                </button>
               </div>
-            </div>
-          )}
-          {isolatedBodyId && (
-            <div className="isolate-banner">
-              <span>
-                Isolated · <strong>{doc.features.find((f) => f.id === isolatedBodyId)?.name ?? "body"}</strong>
-              </span>
-              <button onClick={() => setIsolatedBodyId(null)}>Exit isolate</button>
-            </div>
-          )}
-          {editingSketch ? (
-            <div className="sketch-banner">
-              <span>
-                Editing <strong>{editingSketch.name}</strong> · {planeRefLabel(editingSketch.plane)}
-              </span>
-              <button onClick={finishSketch}>Finish sketch ⏎</button>
-            </div>
-          ) : picking && !anyDialogOpen ? (
-            // A modal OR a dialog, never both. When a dialog armed this pick it
-            // is already showing the request — a dashed, pulsing "Select an
-            // axis" slot — and the banner just repeated it lower down the
-            // screen with a second Cancel button that meant something subtly
-            // different. The banner is now only for the picks that have no
-            // dialog behind them: starting a sketch, and the section plane.
-            <div className="sketch-banner pick">
-              <span>
-                {/* Only the picks with no dialog behind them can reach this
+            )}
+            {!editingSketch && !picking && (
+              <div className="sel-filters" title="Selection filters — what a click can pick">
+                <span className="sel-filters-label">Selection filters</span>
+                <div className="sel-filters-row">
+                  {(["body", "face", "edge", "vertex"] as const).map((k) => (
+                    <button
+                      key={k}
+                      className={selFilter[k] ? "active" : ""}
+                      onClick={() => setSelFilter((f) => ({ ...f, [k]: !f[k] }))}
+                    >
+                      {k}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {isolatedBodyId && (
+              <div className="isolate-banner">
+                <span>
+                  Isolated · <strong>{doc.features.find((f) => f.id === isolatedBodyId)?.name ?? "body"}</strong>
+                </span>
+                <button onClick={() => setIsolatedBodyId(null)}>Exit isolate</button>
+              </div>
+            )}
+            {editingSketch ? (
+              <div className="sketch-banner">
+                <span>
+                  Editing <strong>{editingSketch.name}</strong> · {planeRefLabel(editingSketch.plane)}
+                </span>
+                <button onClick={finishSketch}>Finish sketch ⏎</button>
+              </div>
+            ) : picking && !anyDialogOpen ? (
+              // A modal OR a dialog, never both. When a dialog armed this pick it
+              // is already showing the request — a dashed, pulsing "Select an
+              // axis" slot — and the banner just repeated it lower down the
+              // screen with a second Cancel button that meant something subtly
+              // different. The banner is now only for the picks that have no
+              // dialog behind them: starting a sketch, and the section plane.
+              <div className="sketch-banner pick">
+                <span>
+                  {/* Only the picks with no dialog behind them can reach this
                     banner now — starting a sketch, and the section plane. Every
                     other purpose (revolve/pattern/transform axes, the mirror
                     plane, the reference plane's base) is armed BY a dialog, and
                     that dialog's own slot does the asking. TypeScript proves
                     it: narrow on `!anyDialogOpen` and `planeDialog` is `never`,
                     which is what flagged the dead branches this replaced. */}
-                {pickPurpose === "sectionPlane"
-                  ? "Select a plane or planar face to cut the section through"
-                  : "Select a plane or planar face for the sketch"}
-              </span>
-              <button
-                onClick={() => {
-                  setPicking(false);
-                  if (pickPurpose !== "sketch") setPickPurpose("sketch");
-                }}
-              >
-                Cancel (Esc)
-              </button>
-            </div>
-          ) : null}
-          {extrudeDialog && (
-            <ExtrudeDialog
-              editing={!!extrudeDialog.editId}
-              x={extrudeDialog.x}
-              y={extrudeDialog.y}
-              groups={extrudeProfileGroups}
-              profileCount={extrudeDialogProfiles.length}
-              arming={extrudeDialog.arming}
-              hasPicks={extrudeDialog.picks.length > 0}
-              mode={extrudeDialog.mode}
-              extent={extrudeDialog.extent}
-              needsTarget={extrudeNeedsTarget}
-              targetId={extrudeDialog.targetId ?? null}
-              targetOptions={booleanCandidates}
-              distance={extrudeDialog.distance}
-              flip={extrudeDialog.flip}
-              upToLabel={
-                extrudeDialog.upTo
-                  ? `On ${doc.features.find((f) => f.id === extrudeDialog.upTo!.featureId)?.name ?? "body"}`
-                  : null
-              }
-              faceArmed={pickingUpFace}
-              message={extrudeDistanceCheck.error ?? extrudePreviewError}
-              confirmDisabled={
-                extrudeDialogProfiles.length === 0 ||
-                (extrudeDialog.mode !== "new" && !extrudeTargetSatisfied) ||
-                (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) ||
-                !extrudeDistanceSatisfied
-              }
-              onToggleArming={() => {
-                // The two slots read the same click stream and the face is checked
-                // first, so asking for profiles has to take the stream back —
-                // otherwise the button lights up and the clicks still go to the face.
-                if (pickingUpFace) setPickingUpFace(false);
-                setExtrudeDialog((d) => (d ? { ...d, arming: !d.arming } : d));
-              }}
-              onModeChange={(mode) =>
-                setExtrudeDialog((d) =>
-                  // Through All is only meaningful for a cut (Remove); switching to
-                  // New or Add drops it back to Blind.
-                  d
-                    ? {
-                        ...d,
-                        mode,
-                        modeTouched: true,
-                        extent: mode !== "remove" && d.extent === "throughAll" ? "blind" : d.extent,
-                      }
-                    : d,
-                )
-              }
-              onTargetChange={(targetId) => setExtrudeDialog((d) => (d ? { ...d, targetId, modeTouched: true } : d))}
-              onExtentChange={(extent) => {
-                // Arming the face pick takes the click stream away from the profile
-                // list (handlePick checks pickingUpFace FIRST), so it must not
-                // happen while the profile slot is still the one with a job to do:
-                // with no profile picked, both slots glowed and the face silently
-                // won every click. The profile comes first, always; the face arms
-                // when the extent asks for it AND there is something to extrude —
-                // and then the profile list stands down so only one slot is live.
-                const armFace = extent === "upToFace" && extrudeDialogProfiles.length > 0;
-                setExtrudeDialog((d) => (d ? { ...d, extent, ...(armFace ? { arming: false } : {}) } : d));
-                setPickingUpFace(armFace);
-                // This is still a <select> arming a viewport pick — the shape whose
-                // first canvas click gets swallowed on macOS (see the Transform
-                // dialog's axis control). It no longer bites on the path people
-                // actually hit, because with no profile yet the dropdown arms
-                // nothing at all; the remaining path is switching the extent AFTER
-                // picking a profile. If it ever resurfaces, this control has to stop
-                // being a <select> the way Transform's, Pattern's and Mirror's did.
-                if (extent === "upToFace") releaseFocus();
-              }}
-              onArmFace={() =>
-                setPickingUpFace((v) => {
-                  if (!v) setExtrudeDialog((d) => (d ? { ...d, arming: false } : d));
-                  return !v;
-                })
-              }
-              onClearFace={() => {
-                setExtrudeDialog((d) => (d ? { ...d, upTo: null, arming: false } : d));
-                setPickingUpFace(true);
-              }}
-              onDistanceChange={(distance) => setExtrudeDialog((d) => (d ? { ...d, distance } : d))}
-              onFlipChange={(flip) => setExtrudeDialog((d) => (d ? { ...d, flip } : d))}
-              onConfirm={createExtrude}
-              onEscape={() => {
-                if (pickingUpFace) setPickingUpFace(false);
-                else if (extrudeDialog.arming) setExtrudeDialog((d) => (d ? { ...d, arming: false } : d));
-                else closeExtrudeDialog();
-              }}
-              onCancel={closeExtrudeDialog}
-            />
-          )}
-          {dressUp.dialog &&
-            (() => {
-              const d = dressUp.dialog;
-              // Synchronous validation (empty / unparseable / ≤ 0) is instant and
-              // kernel-free; the async geometry error (size too big) lives in
-              // `dressUp.error`. Show whichever applies; empty stays silent.
-              const sv = validateDressUpDialog(d, resolved.scope);
-              // Nothing picked yet is not an ERROR — the dialog opened that way
-              // on purpose — so it only holds the primary button, silently.
-              const targets = dressUp.targets;
-              const bodyLabel = (id: string) =>
-                isSubPart(id)
-                  ? partAppearance(doc, id, DEFAULT_SOLID_COLOR).name
-                  : (doc.features.find((f) => f.id === id)?.name ?? "Body");
-              return (
-                <DressUpDialog
-                  op={dressUp.dialog.op}
-                  editing={!!dressUp.dialog.editId}
-                  x={dressUp.dialog.x}
-                  y={dressUp.dialog.y}
-                  groups={buildDressUpGroups(
-                    dressUp.dialog.stored.map((t, i) => ({
-                      targetId: t.targetId,
-                      edges: t.edges.length,
-                      faces: t.faces?.length ?? 0,
-                      onRemove: () =>
-                        dressUp.setDialog((d) => (d ? { ...d, stored: d.stored.filter((_, k) => k !== i) } : d)),
-                    })),
-                    dressUp.dialog.picks.map((p, index) => ({
-                      bodyId: dressUpPickBody(p),
-                      kind: p.kind === "edge" ? ("edge" as const) : ("face" as const),
-                      onRemove: () =>
-                        dressUp.setDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== index) } : d)),
-                    })),
-                    bodyLabel,
-                  )}
-                  bodyCount={targets.length}
-                  summary={dressUpCountLabel(targets)}
-                  arming={dressUp.dialog.arming}
-                  hasPicks={dressUp.dialog.picks.length > 0}
-                  size={dressUp.dialog.size}
-                  angle={dressUp.dialog.angle}
-                  flip={dressUp.dialog.flip}
-                  message={sv.value === null ? sv.error : dressUp.error}
-                  confirmDisabled={sv.value === null || !!dressUp.error || targets.length === 0}
-                  onToggleArming={() => dressUp.setDialog((d) => (d ? { ...d, arming: !d.arming } : d))}
-                  onSizeChange={(size) => dressUp.setDialog((d) => (d ? { ...d, size } : d))}
-                  onAngleChange={(angle) => dressUp.setDialog((d) => (d ? { ...d, angle } : d))}
-                  onFlipChange={(flip) => dressUp.setDialog((d) => (d ? { ...d, flip } : d))}
-                  onConfirm={dressUp.confirm}
-                  onEscape={() => {
-                    if (d.arming) dressUp.setDialog((p) => (p ? { ...p, arming: false } : p));
-                    else dressUp.close();
+                  {pickPurpose === "sectionPlane"
+                    ? "Select a plane or planar face to cut the section through"
+                    : "Select a plane or planar face for the sketch"}
+                </span>
+                <button
+                  onClick={() => {
+                    setPicking(false);
+                    if (pickPurpose !== "sketch") setPickPurpose("sketch");
                   }}
-                  onCancel={dressUp.close}
-                />
-              );
-            })()}
-          {shell.dialog &&
-            (() => {
-              const d = shell.dialog;
-              // Synchronous validation (empty / unparseable / ≤ 0) is instant and
-              // kernel-free; the async geometry error (thickness too big) lives in
-              // `shell.error`. Show whichever applies; empty stays silent.
-              const sv = validateShellThickness(d.thickness, resolved.scope);
-              // Persistent face names are scoped by the body that owns them
-              // ("<featureId>/-y"), so drop that prefix rather than showing the
-              // user a raw UUID. Anything else (a re-matched or renamed face)
-              // shows as-is.
-              const faceLabel = (n: string) =>
-                d.targetId && n.startsWith(`${d.targetId}/`) ? n.slice(d.targetId.length + 1) : n;
-              return (
-                <ShellDialog
-                  editing={!!d.editId && !d.createdId}
-                  bodyLabel={d.targetId ? (doc.features.find((f) => f.id === d.targetId)?.name ?? "Body") : null}
-                  bodyArmed={d.arming === "body"}
-                  faces={d.faces.map((name) => ({ name, label: faceLabel(name) }))}
-                  facesArmed={d.arming === "faces"}
-                  thickness={d.thickness}
-                  message={sv.value === null ? sv.error : shell.error}
-                  confirmDisabled={!d.targetId || sv.value === null || !!shell.error}
-                  busy={shell.busy}
-                  onArmBody={() => shell.setDialog((p) => (p ? { ...p, arming: "body" } : p))}
-                  onToggleFaces={() =>
-                    shell.setDialog((p) => (p ? { ...p, arming: p.arming === "faces" ? null : "faces" } : p))
-                  }
-                  onRemoveFace={(name) =>
-                    shell.setDialog((p) => {
-                      if (!p) return p;
-                      const at = p.faces.indexOf(name);
-                      // `faces` and `faceRefs` are parallel arrays, so a face has
-                      // to leave both at the same index or the fingerprints
-                      // silently start describing the wrong names.
-                      return at === -1
-                        ? p
-                        : {
-                            ...p,
-                            faces: p.faces.filter((_, i) => i !== at),
-                            faceRefs: p.faceRefs.filter((_, i) => i !== at),
-                          };
-                    })
-                  }
-                  onThicknessChange={(thickness) => shell.setDialog((p) => (p ? { ...p, thickness } : p))}
-                  onConfirm={shell.confirm}
-                  onEscape={() => {
-                    if (d.arming) shell.setDialog((p) => (p ? { ...p, arming: null } : p));
-                    else shell.close();
-                  }}
-                  onCancel={shell.close}
-                />
-              );
-            })()}
-          {revolve.dialog &&
-            (() => {
-              const prof = revolve.dialog.profile;
-              const profileLabel = !prof
-                ? null
-                : prof.kind === "bodyFace"
-                  ? (doc.features.find((f) => f.id === prof.featureId)?.name ?? "Body") + " · face"
-                  : (doc.features.find((f) => f.id === prof.sketchId)?.name ?? "Region");
-              const ax = revolve.dialog.axis;
-              const axisLabel = !ax
-                ? null
-                : "plane" in ax
-                  ? planeRefLabel(ax.plane)
-                  : "face" in ax
-                    ? (doc.features.find((f) => f.id === ax.face.featureId)?.name ?? "Body") + " · face"
-                    : "edge" in ax
-                      ? (doc.features.find((f) => f.id === ax.edge.featureId)?.name ?? "Body") + " · edge"
-                      : (doc.features.find((f) => f.id === ax.sketchId)?.name ?? "Sketch") + " · line";
-              return (
-                <RevolveDialog
-                  editing={!!revolve.dialog.editId}
-                  x={revolve.dialog.x}
-                  y={revolve.dialog.y}
-                  profileLabel={profileLabel}
-                  profileArmed={revolve.dialog.armed === "profile"}
-                  axisLabel={axisLabel}
-                  axisArmed={picking && pickPurpose === "revolveAxis"}
-                  mode={revolve.dialog.mode}
-                  degrees={revolve.dialog.degrees}
-                  symmetric={revolve.dialog.symmetric}
-                  previewError={revolve.previewError}
-                  onArmProfile={() => revolve.armProfile()}
-                  onClearProfile={() => revolve.armProfile(true)}
-                  onArmAxis={revolve.armAxis}
-                  onClearAxis={() => {
-                    revolve.setDialog((d) => (d ? { ...d, axis: null } : d));
-                    revolve.armAxis();
-                  }}
-                  onModeChange={(mode) => revolve.setDialog((d) => (d ? { ...d, mode } : d))}
-                  onDegreesChange={(degrees) => revolve.setDialog((d) => (d ? { ...d, degrees } : d))}
-                  onSymmetricChange={(symmetric) => revolve.setDialog((d) => (d ? { ...d, symmetric } : d))}
-                  onConfirm={revolve.confirm}
-                  onCancel={revolve.close}
-                />
-              );
-            })()}
-          {sweepDialog && (
-            <SweepDialog
-              profileLabel={sweepDialog.profile ? `${sketchName(sweepDialog.profile.sketchId)} · region` : null}
-              pathLabel={sweepDialog.path ? `${sketchName(sweepDialog.path.sketchId)} · path` : null}
-              armed={sweepDialog.armed}
-              onArm={(slot) => setSweepDialog((d) => (d ? { ...d, armed: slot } : d))}
-              onClear={(slot) => setSweepDialog((d) => (d ? { ...d, [slot]: null, armed: slot } : d))}
-              onConfirm={createSweep}
-              onCancel={closeSweep}
-            />
-          )}
-          {loftDialog && (
-            <LoftDialog
-              sections={loftDialog.sections.map((s, i) => ({
-                key: `${s.sketchId}/${s.regionId}`,
-                label: `${i + 1}. ${sketchName(s.sketchId)} · region`,
-              }))}
-              arming={loftDialog.arming}
-              onToggleArming={() => setLoftDialog((d) => (d ? { ...d, arming: !d.arming } : d))}
-              onRemoveSection={(i) =>
-                setLoftDialog((d) => (d ? { ...d, sections: d.sections.filter((_, k) => k !== i) } : d))
-              }
-              onConfirm={createLoft}
-              onCancel={closeLoft}
-            />
-          )}
-          {dxfDialog && (
-            <DxfImportDialog
-              fileName={dxfDialog.fileName}
-              total={dxfDialog.preview.total}
-              skipped={dxfDialog.preview.skipped}
-              planeKey={dxfDialog.planeKey}
-              planeOptions={[
-                { key: "datum:plane-top", label: "Top" },
-                { key: "datum:plane-front", label: "Front" },
-                { key: "datum:plane-right", label: "Right" },
-                ...userPlanes.map((pl) => ({ key: `plane:${pl.id}`, label: pl.name })),
-              ]}
-              unitsKey={dxfDialog.unitsKey}
-              onPlaneChange={(key) => setDxfDialog((d) => (d ? { ...d, planeKey: key } : d))}
-              onUnitsChange={(key) => setDxfDialog((d) => (d ? { ...d, unitsKey: key } : d))}
-              onConfirm={confirmDxfImport}
-              onCancel={() => setDxfDialog(null)}
-            />
-          )}
-          {planeDialog && (
-            <PlaneDialog
-              editing={!!planeDialog.editId}
-              method={planeDialog.method}
-              baseLabel={planeDialog.base ? planeRefLabel(planeDialog.base) : null}
-              baseArmed={planePick === "base"}
-              refBLabel={planeDialog.refB ? planeRefLabel(planeDialog.refB) : null}
-              refBArmed={planePick === "refB"}
-              offset={planeDialog.offset}
-              angleAxis={planeDialog.angleAxis}
-              angle={planeDialog.angle}
-              pointCount={planeDialog.points.length}
-              pointsArmed={planePick === "point"}
-              onMethodChange={(method) => {
-                setPlaneDialog((d) => (d ? { ...d, method } : d));
-                // Arm the first pick the method needs: a plane/face for all but
-                // "through", which collects vertices/sketch points via clicks.
-                armPlanePick(method === "through" ? "point" : "base");
-              }}
-              onArmBase={() => armPlanePick("base")}
-              onClearBase={() => {
-                setPlaneDialog((d) => (d ? { ...d, base: null } : d));
-                armPlanePick("base");
-              }}
-              onArmRefB={() => armPlanePick("refB")}
-              onClearRefB={() => {
-                setPlaneDialog((d) => (d ? { ...d, refB: null } : d));
-                armPlanePick("refB");
-              }}
-              onOffsetChange={(offset) => setPlaneDialog((d) => (d ? { ...d, offset } : d))}
-              onAngleAxisChange={(angleAxis) => setPlaneDialog((d) => (d ? { ...d, angleAxis } : d))}
-              onAngleChange={(angle) => setPlaneDialog((d) => (d ? { ...d, angle } : d))}
-              onArmPoints={() => armPlanePick("point")}
-              onClearPoints={() => {
-                setPlaneDialog((d) => (d ? { ...d, points: [] } : d));
-                armPlanePick("point");
-              }}
-              onConfirm={createPlane}
-              onCancel={closePlaneDialog}
-            />
-          )}
-          {editingTransform && (
-            <TransformDialog
-              name={editingTransform.name}
-              at={transform.panelAt ?? null}
-              mode={transform.mode}
-              values={{
-                tx: transform.live ? formatRounded3(transform.live.tx) : editingTransform.tx,
-                ty: transform.live ? formatRounded3(transform.live.ty) : editingTransform.ty,
-                tz: transform.live ? formatRounded3(transform.live.tz) : editingTransform.tz,
-                scale: transform.live ? formatRounded3(transform.live.scale) : editingTransform.scale,
-                angle: transform.live ? formatRounded3(transform.live.angle) : editingTransform.angle,
-              }}
-              pickedAxis={transform.pickedAxis}
-              axisArmed={transform.axisPicking}
-              axisLabel={transformAxisLabel(editingTransform.axis, doc)}
-              worldAxis={typeof editingTransform.axis === "string" ? editingTransform.axis : null}
-              copy={editingTransform.copy}
-              onModeChange={transform.setMode}
-              onParamChange={(field, value) =>
-                setDoc(updateParam(doc, editingTransform.id, field, value), `param:${editingTransform.id}:${field}`)
-              }
-              onUseWorldAxis={() => {
-                transform.cancelAxisPick();
-                // Falling back to a world direction: keep the one the feature
-                // already held, or Z for a feature coming off a picked line
-                // (which has no direction of its own).
-                if (typeof editingTransform.axis !== "string") {
-                  setDoc(setTransform(doc, editingTransform.id, { axis: "z" }));
+                >
+                  Cancel (Esc)
+                </button>
+              </div>
+            ) : null}
+            {extrudeDialog && (
+              <ExtrudeDialog
+                editing={!!extrudeDialog.editId}
+                x={extrudeDialog.x}
+                y={extrudeDialog.y}
+                groups={extrudeProfileGroups}
+                profileCount={extrudeDialogProfiles.length}
+                arming={extrudeDialog.arming}
+                hasPicks={extrudeDialog.picks.length > 0}
+                mode={extrudeDialog.mode}
+                extent={extrudeDialog.extent}
+                needsTarget={extrudeNeedsTarget}
+                targetId={extrudeDialog.targetId ?? null}
+                targetOptions={booleanCandidates}
+                distance={extrudeDialog.distance}
+                flip={extrudeDialog.flip}
+                upToLabel={
+                  extrudeDialog.upTo
+                    ? `On ${doc.features.find((f) => f.id === extrudeDialog.upTo!.featureId)?.name ?? "body"}`
+                    : null
                 }
-              }}
-              onArmAxis={transform.armAxis}
-              onClearAxis={() => {
-                // Back to a world direction, then straight into re-picking — an
-                // empty slot would leave no rotation.
-                setDoc(setTransform(doc, editingTransform.id, { axis: "z" }));
-                transform.armAxis();
-              }}
-              onCopyChange={(copy) => setDoc(updateParam(doc, editingTransform.id, "copy", String(copy)))}
-              onConfirm={transform.finish}
-              onCancel={transform.cancel}
-            />
-          )}
-          {transform.arming && !transform.editing && (
-            <TransformArmingDialog
-              at={transform.panelAt ?? null}
-              mode={transform.arming.mode}
-              onModeChange={transform.setArmingMode}
-              onCancel={transform.cancelArming}
-            />
-          )}
-          {measure && (
-            <div className="selection-info">
-              <div className="si-title">{measure.title}</div>
-              {measure.rows.map((r) => (
-                <div className="si-row" key={r.label}>
-                  <span className="si-label">{r.label}</span>
-                  <span className="si-value">{r.value}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </main>
+                faceArmed={pickingUpFace}
+                message={extrudeDistanceCheck.error ?? extrudePreviewError}
+                confirmDisabled={
+                  extrudeDialogProfiles.length === 0 ||
+                  (extrudeDialog.mode !== "new" && !extrudeTargetSatisfied) ||
+                  (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) ||
+                  !extrudeDistanceSatisfied
+                }
+                onToggleArming={() => {
+                  // The two slots read the same click stream and the face is checked
+                  // first, so asking for profiles has to take the stream back —
+                  // otherwise the button lights up and the clicks still go to the face.
+                  if (pickingUpFace) setPickingUpFace(false);
+                  setExtrudeDialog((d) => (d ? { ...d, arming: !d.arming } : d));
+                }}
+                onModeChange={(mode) =>
+                  setExtrudeDialog((d) =>
+                    // Through All is only meaningful for a cut (Remove); switching to
+                    // New or Add drops it back to Blind.
+                    d
+                      ? {
+                          ...d,
+                          mode,
+                          modeTouched: true,
+                          extent: mode !== "remove" && d.extent === "throughAll" ? "blind" : d.extent,
+                        }
+                      : d,
+                  )
+                }
+                onTargetChange={(targetId) => setExtrudeDialog((d) => (d ? { ...d, targetId, modeTouched: true } : d))}
+                onExtentChange={(extent) => {
+                  // Arming the face pick takes the click stream away from the profile
+                  // list (handlePick checks pickingUpFace FIRST), so it must not
+                  // happen while the profile slot is still the one with a job to do:
+                  // with no profile picked, both slots glowed and the face silently
+                  // won every click. The profile comes first, always; the face arms
+                  // when the extent asks for it AND there is something to extrude —
+                  // and then the profile list stands down so only one slot is live.
+                  const armFace = extent === "upToFace" && extrudeDialogProfiles.length > 0;
+                  setExtrudeDialog((d) => (d ? { ...d, extent, ...(armFace ? { arming: false } : {}) } : d));
+                  setPickingUpFace(armFace);
+                  // This is still a <select> arming a viewport pick — the shape whose
+                  // first canvas click gets swallowed on macOS (see the Transform
+                  // dialog's axis control). It no longer bites on the path people
+                  // actually hit, because with no profile yet the dropdown arms
+                  // nothing at all; the remaining path is switching the extent AFTER
+                  // picking a profile. If it ever resurfaces, this control has to stop
+                  // being a <select> the way Transform's, Pattern's and Mirror's did.
+                  if (extent === "upToFace") releaseFocus();
+                }}
+                onArmFace={() =>
+                  setPickingUpFace((v) => {
+                    if (!v) setExtrudeDialog((d) => (d ? { ...d, arming: false } : d));
+                    return !v;
+                  })
+                }
+                onClearFace={() => {
+                  setExtrudeDialog((d) => (d ? { ...d, upTo: null, arming: false } : d));
+                  setPickingUpFace(true);
+                }}
+                onDistanceChange={(distance) => setExtrudeDialog((d) => (d ? { ...d, distance } : d))}
+                onFlipChange={(flip) => setExtrudeDialog((d) => (d ? { ...d, flip } : d))}
+                onConfirm={createExtrude}
+                onEscape={() => {
+                  if (pickingUpFace) setPickingUpFace(false);
+                  else if (extrudeDialog.arming) setExtrudeDialog((d) => (d ? { ...d, arming: false } : d));
+                  else closeExtrudeDialog();
+                }}
+                onCancel={closeExtrudeDialog}
+              />
+            )}
+            {dressUp.dialog &&
+              (() => {
+                const d = dressUp.dialog;
+                // Synchronous validation (empty / unparseable / ≤ 0) is instant and
+                // kernel-free; the async geometry error (size too big) lives in
+                // `dressUp.error`. Show whichever applies; empty stays silent.
+                const sv = validateDressUpDialog(d, resolved.scope);
+                // Nothing picked yet is not an ERROR — the dialog opened that way
+                // on purpose — so it only holds the primary button, silently.
+                const targets = dressUp.targets;
+                const bodyLabel = (id: string) =>
+                  isSubPart(id)
+                    ? partAppearance(doc, id, DEFAULT_SOLID_COLOR).name
+                    : (doc.features.find((f) => f.id === id)?.name ?? "Body");
+                return (
+                  <DressUpDialog
+                    op={dressUp.dialog.op}
+                    editing={!!dressUp.dialog.editId}
+                    x={dressUp.dialog.x}
+                    y={dressUp.dialog.y}
+                    groups={buildDressUpGroups(
+                      dressUp.dialog.stored.map((t, i) => ({
+                        targetId: t.targetId,
+                        edges: t.edges.length,
+                        faces: t.faces?.length ?? 0,
+                        onRemove: () =>
+                          dressUp.setDialog((d) => (d ? { ...d, stored: d.stored.filter((_, k) => k !== i) } : d)),
+                      })),
+                      dressUp.dialog.picks.map((p, index) => ({
+                        bodyId: dressUpPickBody(p),
+                        kind: p.kind === "edge" ? ("edge" as const) : ("face" as const),
+                        onRemove: () =>
+                          dressUp.setDialog((d) => (d ? { ...d, picks: d.picks.filter((_, k) => k !== index) } : d)),
+                      })),
+                      bodyLabel,
+                    )}
+                    bodyCount={targets.length}
+                    summary={dressUpCountLabel(targets)}
+                    arming={dressUp.dialog.arming}
+                    hasPicks={dressUp.dialog.picks.length > 0}
+                    size={dressUp.dialog.size}
+                    angle={dressUp.dialog.angle}
+                    flip={dressUp.dialog.flip}
+                    message={sv.value === null ? sv.error : dressUp.error}
+                    confirmDisabled={sv.value === null || !!dressUp.error || targets.length === 0}
+                    onToggleArming={() => dressUp.setDialog((d) => (d ? { ...d, arming: !d.arming } : d))}
+                    onSizeChange={(size) => dressUp.setDialog((d) => (d ? { ...d, size } : d))}
+                    onAngleChange={(angle) => dressUp.setDialog((d) => (d ? { ...d, angle } : d))}
+                    onFlipChange={(flip) => dressUp.setDialog((d) => (d ? { ...d, flip } : d))}
+                    onConfirm={dressUp.confirm}
+                    onEscape={() => {
+                      if (d.arming) dressUp.setDialog((p) => (p ? { ...p, arming: false } : p));
+                      else dressUp.close();
+                    }}
+                    onCancel={dressUp.close}
+                  />
+                );
+              })()}
+            {shell.dialog &&
+              (() => {
+                const d = shell.dialog;
+                // Synchronous validation (empty / unparseable / ≤ 0) is instant and
+                // kernel-free; the async geometry error (thickness too big) lives in
+                // `shell.error`. Show whichever applies; empty stays silent.
+                const sv = validateShellThickness(d.thickness, resolved.scope);
+                // Persistent face names are scoped by the body that owns them
+                // ("<featureId>/-y"), so drop that prefix rather than showing the
+                // user a raw UUID. Anything else (a re-matched or renamed face)
+                // shows as-is.
+                const faceLabel = (n: string) =>
+                  d.targetId && n.startsWith(`${d.targetId}/`) ? n.slice(d.targetId.length + 1) : n;
+                return (
+                  <ShellDialog
+                    editing={!!d.editId && !d.createdId}
+                    bodyLabel={d.targetId ? (doc.features.find((f) => f.id === d.targetId)?.name ?? "Body") : null}
+                    bodyArmed={d.arming === "body"}
+                    faces={d.faces.map((name) => ({ name, label: faceLabel(name) }))}
+                    facesArmed={d.arming === "faces"}
+                    thickness={d.thickness}
+                    message={sv.value === null ? sv.error : shell.error}
+                    confirmDisabled={!d.targetId || sv.value === null || !!shell.error}
+                    busy={shell.busy}
+                    onArmBody={() => shell.setDialog((p) => (p ? { ...p, arming: "body" } : p))}
+                    onToggleFaces={() =>
+                      shell.setDialog((p) => (p ? { ...p, arming: p.arming === "faces" ? null : "faces" } : p))
+                    }
+                    onRemoveFace={(name) =>
+                      shell.setDialog((p) => {
+                        if (!p) return p;
+                        const at = p.faces.indexOf(name);
+                        // `faces` and `faceRefs` are parallel arrays, so a face has
+                        // to leave both at the same index or the fingerprints
+                        // silently start describing the wrong names.
+                        return at === -1
+                          ? p
+                          : {
+                              ...p,
+                              faces: p.faces.filter((_, i) => i !== at),
+                              faceRefs: p.faceRefs.filter((_, i) => i !== at),
+                            };
+                      })
+                    }
+                    onThicknessChange={(thickness) => shell.setDialog((p) => (p ? { ...p, thickness } : p))}
+                    onConfirm={shell.confirm}
+                    onEscape={() => {
+                      if (d.arming) shell.setDialog((p) => (p ? { ...p, arming: null } : p));
+                      else shell.close();
+                    }}
+                    onCancel={shell.close}
+                  />
+                );
+              })()}
+            {revolve.dialog &&
+              (() => {
+                const prof = revolve.dialog.profile;
+                const profileLabel = !prof
+                  ? null
+                  : prof.kind === "bodyFace"
+                    ? (doc.features.find((f) => f.id === prof.featureId)?.name ?? "Body") + " · face"
+                    : (doc.features.find((f) => f.id === prof.sketchId)?.name ?? "Region");
+                const ax = revolve.dialog.axis;
+                const axisLabel = !ax
+                  ? null
+                  : "plane" in ax
+                    ? planeRefLabel(ax.plane)
+                    : "face" in ax
+                      ? (doc.features.find((f) => f.id === ax.face.featureId)?.name ?? "Body") + " · face"
+                      : "edge" in ax
+                        ? (doc.features.find((f) => f.id === ax.edge.featureId)?.name ?? "Body") + " · edge"
+                        : (doc.features.find((f) => f.id === ax.sketchId)?.name ?? "Sketch") + " · line";
+                return (
+                  <RevolveDialog
+                    editing={!!revolve.dialog.editId}
+                    x={revolve.dialog.x}
+                    y={revolve.dialog.y}
+                    profileLabel={profileLabel}
+                    profileArmed={revolve.dialog.armed === "profile"}
+                    axisLabel={axisLabel}
+                    axisArmed={picking && pickPurpose === "revolveAxis"}
+                    mode={revolve.dialog.mode}
+                    degrees={revolve.dialog.degrees}
+                    symmetric={revolve.dialog.symmetric}
+                    previewError={revolve.previewError}
+                    onArmProfile={() => revolve.armProfile()}
+                    onClearProfile={() => revolve.armProfile(true)}
+                    onArmAxis={revolve.armAxis}
+                    onClearAxis={() => {
+                      revolve.setDialog((d) => (d ? { ...d, axis: null } : d));
+                      revolve.armAxis();
+                    }}
+                    onModeChange={(mode) => revolve.setDialog((d) => (d ? { ...d, mode } : d))}
+                    onDegreesChange={(degrees) => revolve.setDialog((d) => (d ? { ...d, degrees } : d))}
+                    onSymmetricChange={(symmetric) => revolve.setDialog((d) => (d ? { ...d, symmetric } : d))}
+                    onConfirm={revolve.confirm}
+                    onCancel={revolve.close}
+                  />
+                );
+              })()}
+            {sweepDialog && (
+              <SweepDialog
+                profileLabel={sweepDialog.profile ? `${sketchName(sweepDialog.profile.sketchId)} · region` : null}
+                pathLabel={sweepDialog.path ? `${sketchName(sweepDialog.path.sketchId)} · path` : null}
+                armed={sweepDialog.armed}
+                onArm={(slot) => setSweepDialog((d) => (d ? { ...d, armed: slot } : d))}
+                onClear={(slot) => setSweepDialog((d) => (d ? { ...d, [slot]: null, armed: slot } : d))}
+                onConfirm={createSweep}
+                onCancel={closeSweep}
+              />
+            )}
+            {loftDialog && (
+              <LoftDialog
+                sections={loftDialog.sections.map((s, i) => ({
+                  key: `${s.sketchId}/${s.regionId}`,
+                  label: `${i + 1}. ${sketchName(s.sketchId)} · region`,
+                }))}
+                arming={loftDialog.arming}
+                onToggleArming={() => setLoftDialog((d) => (d ? { ...d, arming: !d.arming } : d))}
+                onRemoveSection={(i) =>
+                  setLoftDialog((d) => (d ? { ...d, sections: d.sections.filter((_, k) => k !== i) } : d))
+                }
+                onConfirm={createLoft}
+                onCancel={closeLoft}
+              />
+            )}
+            {dxfDialog && (
+              <DxfImportDialog
+                fileName={dxfDialog.fileName}
+                total={dxfDialog.preview.total}
+                skipped={dxfDialog.preview.skipped}
+                planeKey={dxfDialog.planeKey}
+                planeOptions={[
+                  { key: "datum:plane-top", label: "Top" },
+                  { key: "datum:plane-front", label: "Front" },
+                  { key: "datum:plane-right", label: "Right" },
+                  ...userPlanes.map((pl) => ({ key: `plane:${pl.id}`, label: pl.name })),
+                ]}
+                unitsKey={dxfDialog.unitsKey}
+                onPlaneChange={(key) => setDxfDialog((d) => (d ? { ...d, planeKey: key } : d))}
+                onUnitsChange={(key) => setDxfDialog((d) => (d ? { ...d, unitsKey: key } : d))}
+                onConfirm={confirmDxfImport}
+                onCancel={() => setDxfDialog(null)}
+              />
+            )}
+            {planeDialog && (
+              <PlaneDialog
+                editing={!!planeDialog.editId}
+                method={planeDialog.method}
+                baseLabel={planeDialog.base ? planeRefLabel(planeDialog.base) : null}
+                baseArmed={planePick === "base"}
+                refBLabel={planeDialog.refB ? planeRefLabel(planeDialog.refB) : null}
+                refBArmed={planePick === "refB"}
+                offset={planeDialog.offset}
+                angleAxis={planeDialog.angleAxis}
+                angle={planeDialog.angle}
+                pointCount={planeDialog.points.length}
+                pointsArmed={planePick === "point"}
+                onMethodChange={(method) => {
+                  setPlaneDialog((d) => (d ? { ...d, method } : d));
+                  // Arm the first pick the method needs: a plane/face for all but
+                  // "through", which collects vertices/sketch points via clicks.
+                  armPlanePick(method === "through" ? "point" : "base");
+                }}
+                onArmBase={() => armPlanePick("base")}
+                onClearBase={() => {
+                  setPlaneDialog((d) => (d ? { ...d, base: null } : d));
+                  armPlanePick("base");
+                }}
+                onArmRefB={() => armPlanePick("refB")}
+                onClearRefB={() => {
+                  setPlaneDialog((d) => (d ? { ...d, refB: null } : d));
+                  armPlanePick("refB");
+                }}
+                onOffsetChange={(offset) => setPlaneDialog((d) => (d ? { ...d, offset } : d))}
+                onAngleAxisChange={(angleAxis) => setPlaneDialog((d) => (d ? { ...d, angleAxis } : d))}
+                onAngleChange={(angle) => setPlaneDialog((d) => (d ? { ...d, angle } : d))}
+                onArmPoints={() => armPlanePick("point")}
+                onClearPoints={() => {
+                  setPlaneDialog((d) => (d ? { ...d, points: [] } : d));
+                  armPlanePick("point");
+                }}
+                onConfirm={createPlane}
+                onCancel={closePlaneDialog}
+              />
+            )}
+            {editingTransform && (
+              <TransformDialog
+                name={editingTransform.name}
+                at={transform.panelAt ?? null}
+                mode={transform.mode}
+                values={{
+                  tx: transform.live ? formatRounded3(transform.live.tx) : editingTransform.tx,
+                  ty: transform.live ? formatRounded3(transform.live.ty) : editingTransform.ty,
+                  tz: transform.live ? formatRounded3(transform.live.tz) : editingTransform.tz,
+                  scale: transform.live ? formatRounded3(transform.live.scale) : editingTransform.scale,
+                  angle: transform.live ? formatRounded3(transform.live.angle) : editingTransform.angle,
+                }}
+                pickedAxis={transform.pickedAxis}
+                axisArmed={transform.axisPicking}
+                axisLabel={transformAxisLabel(editingTransform.axis, doc)}
+                worldAxis={typeof editingTransform.axis === "string" ? editingTransform.axis : null}
+                copy={editingTransform.copy}
+                onModeChange={transform.setMode}
+                onParamChange={(field, value) =>
+                  setDoc(updateParam(doc, editingTransform.id, field, value), `param:${editingTransform.id}:${field}`)
+                }
+                onUseWorldAxis={() => {
+                  transform.cancelAxisPick();
+                  // Falling back to a world direction: keep the one the feature
+                  // already held, or Z for a feature coming off a picked line
+                  // (which has no direction of its own).
+                  if (typeof editingTransform.axis !== "string") {
+                    setDoc(setTransform(doc, editingTransform.id, { axis: "z" }));
+                  }
+                }}
+                onArmAxis={transform.armAxis}
+                onClearAxis={() => {
+                  // Back to a world direction, then straight into re-picking — an
+                  // empty slot would leave no rotation.
+                  setDoc(setTransform(doc, editingTransform.id, { axis: "z" }));
+                  transform.armAxis();
+                }}
+                onCopyChange={(copy) => setDoc(updateParam(doc, editingTransform.id, "copy", String(copy)))}
+                onConfirm={transform.finish}
+                onCancel={transform.cancel}
+              />
+            )}
+            {transform.arming && !transform.editing && (
+              <TransformArmingDialog
+                at={transform.panelAt ?? null}
+                mode={transform.arming.mode}
+                onModeChange={transform.setArmingMode}
+                onCancel={transform.cancelArming}
+              />
+            )}
+            {measure && (
+              <div className="selection-info">
+                <div className="si-title">{measure.title}</div>
+                {measure.rows.map((r) => (
+                  <div className="si-row" key={r.label}>
+                    <span className="si-label">{r.label}</span>
+                    <span className="si-value">{r.value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </main>
+        </div>
+        {booleanDialog && (
+          <BooleanDialog
+            op={booleanDialog.op}
+            editing={!!booleanDialog.editId}
+            candidates={booleanCandidates}
+            operandIds={booleanDialog.operandIds}
+            base={booleanDialog.base}
+            tools={booleanDialog.tools}
+            armed={booleanDialog.armed}
+            onOpChange={setBooleanOp}
+            onArm={(slot) => setBooleanDialog((d) => (d ? { ...d, armed: slot } : d))}
+            onRemoveOperand={(id) =>
+              setBooleanDialog((d) => (d ? { ...d, operandIds: d.operandIds.filter((x) => x !== id) } : d))
+            }
+            onClearBase={() => setBooleanDialog((d) => (d ? { ...d, base: null, armed: "base" } : d))}
+            onRemoveTool={(id) => setBooleanDialog((d) => (d ? { ...d, tools: d.tools.filter((x) => x !== id) } : d))}
+            onConfirm={confirmBoolean}
+            onCancel={closeBooleanDialog}
+          />
+        )}
+        {mirrorDialog && (
+          <MirrorDialog
+            editing={!!mirrorDialog.editId}
+            targetLabel={
+              mirrorDialog.targetId ? (doc.features.find((f) => f.id === mirrorDialog.targetId)?.name ?? "Body") : null
+            }
+            targetArmed={mirrorDialog.arming === "target"}
+            planeLabel={mirrorDialog.plane ? mirrorPlaneLabel(mirrorDialog.plane, doc) : null}
+            planeArmed={picking && pickPurpose === "mirrorPlane"}
+            onArmTarget={armMirrorTarget}
+            onClearTarget={() => armMirrorTarget(true)}
+            onArmPlane={armMirrorPlane}
+            onClearPlane={() => {
+              setMirrorDialog((d) => (d ? { ...d, plane: null } : d));
+              armMirrorPlane();
+            }}
+            onConfirm={createMirror}
+            onCancel={closeMirror}
+          />
+        )}
+        {pattern.dialog &&
+          (() => {
+            const d = pattern.dialog;
+            const nameOf = (id: string, fallback: string) => doc.features.find((f) => f.id === id)?.name ?? fallback;
+            /** How a PICKED reference reads in its slot (a world one never gets here
+             *  — the X/Y/Z row says which axis it is). */
+            const refLabel = (ref: PatternDirRef | PatternAxisRef) =>
+              "face" in ref
+                ? nameOf(ref.face.featureId, "Body") + " · face"
+                : "world" in ref
+                  ? `World ${ref.world.toUpperCase()}`
+                  : nameOf(ref.sketchId, "Sketch") + " · line";
+            /** Which KIND of reference a slot currently holds — a world axis, a
+             *  picked one, or nothing yet. A slot reads as "picked" while its pick is
+             *  merely ARMED too, so the control shows what you're in the middle of
+             *  choosing rather than snapping back the moment you arm it. */
+            const control = (slot: "dir1" | "dir2" | "axis", ref: PatternDirRef | PatternAxisRef | null) => ({
+              kind:
+                d.arming === slot || (ref && !("world" in ref)) ? ("picked" as const) : ref ? ("world" as const) : null,
+              label: ref && !("world" in ref) ? refLabel(ref) : null,
+              armed: picking && d.arming === slot,
+              worldAxis: ref && "world" in ref ? ref.world : null,
+              onUseWorld: () => pattern.setWorldRef(slot, ref),
+              onWorldAxisChange: (ax: "x" | "y" | "z") => pattern.setWorldRef(slot, ref, ax),
+              onArmPick: () => pattern.armPick(slot),
+              onClearPick: () => pattern.clearRef(slot),
+            });
+            return (
+              <PatternDialog
+                editing={!!d.editId}
+                kind={d.kind}
+                targetLabel={d.targetId ? nameOf(d.targetId, "Body") : null}
+                targetArmed={d.arming === "target"}
+                dir1={control("dir1", d.dir1)}
+                dir2={control("dir2", d.dir2)}
+                axis={control("axis", d.axis)}
+                count1={d.count1}
+                spacing1={d.spacing1}
+                flip1={d.flip1}
+                dir2on={d.dir2on}
+                count2={d.count2}
+                spacing2={d.spacing2}
+                flip2={d.flip2}
+                count={d.count}
+                mode={d.mode}
+                angle={d.angle}
+                symmetric={d.symmetric}
+                axisIsFace={!!d.axis && "face" in d.axis}
+                warning={pattern.warning}
+                confirmDisabled={!!pattern.warning || (d.kind === "circular" && !d.axis)}
+                onKindChange={pattern.setKind}
+                onArmTarget={pattern.armTarget}
+                onFieldChange={(field, value) =>
+                  pattern.setDialog((prev) => (prev ? { ...prev, [field]: value } : prev))
+                }
+                onFlagChange={(field, value) =>
+                  pattern.setDialog((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          [field]: value,
+                          // Collapsing or opening the second direction drops a ref
+                          // pick, but never the BODY arming.
+                          ...(field === "dir2on" ? { arming: prev.arming === "target" ? "target" : null } : {}),
+                        }
+                      : prev,
+                  )
+                }
+                onModeChange={(mode) => pattern.setDialog((prev) => (prev ? { ...prev, mode } : prev))}
+                onConfirm={pattern.confirm}
+                onCancel={pattern.close}
+              />
+            );
+          })()}
       </div>
-      {booleanDialog && (
-        <BooleanDialog
-          op={booleanDialog.op}
-          editing={!!booleanDialog.editId}
-          candidates={booleanCandidates}
-          operandIds={booleanDialog.operandIds}
-          base={booleanDialog.base}
-          tools={booleanDialog.tools}
-          armed={booleanDialog.armed}
-          onOpChange={setBooleanOp}
-          onArm={(slot) => setBooleanDialog((d) => (d ? { ...d, armed: slot } : d))}
-          onRemoveOperand={(id) =>
-            setBooleanDialog((d) => (d ? { ...d, operandIds: d.operandIds.filter((x) => x !== id) } : d))
-          }
-          onClearBase={() => setBooleanDialog((d) => (d ? { ...d, base: null, armed: "base" } : d))}
-          onRemoveTool={(id) => setBooleanDialog((d) => (d ? { ...d, tools: d.tools.filter((x) => x !== id) } : d))}
-          onConfirm={confirmBoolean}
-          onCancel={closeBooleanDialog}
-        />
-      )}
-      {mirrorDialog && (
-        <MirrorDialog
-          editing={!!mirrorDialog.editId}
-          targetLabel={
-            mirrorDialog.targetId ? (doc.features.find((f) => f.id === mirrorDialog.targetId)?.name ?? "Body") : null
-          }
-          targetArmed={mirrorDialog.arming === "target"}
-          planeLabel={mirrorDialog.plane ? mirrorPlaneLabel(mirrorDialog.plane, doc) : null}
-          planeArmed={picking && pickPurpose === "mirrorPlane"}
-          onArmTarget={armMirrorTarget}
-          onClearTarget={() => armMirrorTarget(true)}
-          onArmPlane={armMirrorPlane}
-          onClearPlane={() => {
-            setMirrorDialog((d) => (d ? { ...d, plane: null } : d));
-            armMirrorPlane();
-          }}
-          onConfirm={createMirror}
-          onCancel={closeMirror}
-        />
-      )}
-      {pattern.dialog &&
-        (() => {
-          const d = pattern.dialog;
-          const nameOf = (id: string, fallback: string) => doc.features.find((f) => f.id === id)?.name ?? fallback;
-          /** How a PICKED reference reads in its slot (a world one never gets here
-           *  — the X/Y/Z row says which axis it is). */
-          const refLabel = (ref: PatternDirRef | PatternAxisRef) =>
-            "face" in ref
-              ? nameOf(ref.face.featureId, "Body") + " · face"
-              : "world" in ref
-                ? `World ${ref.world.toUpperCase()}`
-                : nameOf(ref.sketchId, "Sketch") + " · line";
-          /** Which KIND of reference a slot currently holds — a world axis, a
-           *  picked one, or nothing yet. A slot reads as "picked" while its pick is
-           *  merely ARMED too, so the control shows what you're in the middle of
-           *  choosing rather than snapping back the moment you arm it. */
-          const control = (slot: "dir1" | "dir2" | "axis", ref: PatternDirRef | PatternAxisRef | null) => ({
-            kind:
-              d.arming === slot || (ref && !("world" in ref)) ? ("picked" as const) : ref ? ("world" as const) : null,
-            label: ref && !("world" in ref) ? refLabel(ref) : null,
-            armed: picking && d.arming === slot,
-            worldAxis: ref && "world" in ref ? ref.world : null,
-            onUseWorld: () => pattern.setWorldRef(slot, ref),
-            onWorldAxisChange: (ax: "x" | "y" | "z") => pattern.setWorldRef(slot, ref, ax),
-            onArmPick: () => pattern.armPick(slot),
-            onClearPick: () => pattern.clearRef(slot),
-          });
-          return (
-            <PatternDialog
-              editing={!!d.editId}
-              kind={d.kind}
-              targetLabel={d.targetId ? nameOf(d.targetId, "Body") : null}
-              targetArmed={d.arming === "target"}
-              dir1={control("dir1", d.dir1)}
-              dir2={control("dir2", d.dir2)}
-              axis={control("axis", d.axis)}
-              count1={d.count1}
-              spacing1={d.spacing1}
-              flip1={d.flip1}
-              dir2on={d.dir2on}
-              count2={d.count2}
-              spacing2={d.spacing2}
-              flip2={d.flip2}
-              count={d.count}
-              mode={d.mode}
-              angle={d.angle}
-              symmetric={d.symmetric}
-              axisIsFace={!!d.axis && "face" in d.axis}
-              warning={pattern.warning}
-              confirmDisabled={!!pattern.warning || (d.kind === "circular" && !d.axis)}
-              onKindChange={pattern.setKind}
-              onArmTarget={pattern.armTarget}
-              onFieldChange={(field, value) => pattern.setDialog((prev) => (prev ? { ...prev, [field]: value } : prev))}
-              onFlagChange={(field, value) =>
-                pattern.setDialog((prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        [field]: value,
-                        // Collapsing or opening the second direction drops a ref
-                        // pick, but never the BODY arming.
-                        ...(field === "dir2on" ? { arming: prev.arming === "target" ? "target" : null } : {}),
-                      }
-                    : prev,
-                )
-              }
-              onModeChange={(mode) => pattern.setDialog((prev) => (prev ? { ...prev, mode } : prev))}
-              onConfirm={pattern.confirm}
-              onCancel={pattern.close}
-            />
-          );
-        })()}
-    </div>
+    </ExprVariables.Provider>
   );
 }

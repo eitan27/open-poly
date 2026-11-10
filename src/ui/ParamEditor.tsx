@@ -1,6 +1,7 @@
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "../document/featureDefs";
 import { planeRefLabel } from "../document/planes";
 import type { Feature } from "../document/types";
+import { ExprInput } from "./ExprInput";
 
 interface Props {
   feature: Feature | null;
@@ -69,7 +70,7 @@ export function ParamEditor({
           </label>
           <label className="param-field">
             <span className="param-label">Distance</span>
-            <input
+            <ExprInput
               className="param-input"
               value={feature.distance}
               onChange={(e) => onChangeParam(feature.id, "distance", e.target.value)}
@@ -95,7 +96,7 @@ export function ParamEditor({
           </div>
           <label className="param-field">
             <span className="param-label">{feature.op === "chamfer" ? "Distance" : "Radius"}</span>
-            <input
+            <ExprInput
               className="param-input"
               value={feature.size}
               onChange={(e) => onChangeParam(feature.id, "size", e.target.value)}
@@ -107,7 +108,7 @@ export function ParamEditor({
             <>
               <label className="param-field">
                 <span className="param-label">Angle (°)</span>
-                <input
+                <ExprInput
                   className="param-input"
                   value={feature.angle ?? "45"}
                   onChange={(e) => onChangeParam(feature.id, "angle", e.target.value)}
@@ -132,7 +133,7 @@ export function ParamEditor({
           </div>
           <label className="param-field">
             <span className="param-label">Thickness</span>
-            <input
+            <ExprInput
               className="param-input"
               value={feature.thickness}
               onChange={(e) => onChangeParam(feature.id, "thickness", e.target.value)}
@@ -193,7 +194,7 @@ export function ParamEditor({
               {(feature.method ?? "offset") === "angle" ? (
                 <label className="param-field">
                   <span className="param-label">Angle°</span>
-                  <input
+                  <ExprInput
                     className="param-input"
                     value={feature.angle ?? "0"}
                     onChange={(e) => onChangeParam(feature.id, "angle", e.target.value)}
@@ -202,7 +203,7 @@ export function ParamEditor({
               ) : (
                 <label className="param-field">
                   <span className="param-label">Offset</span>
-                  <input
+                  <ExprInput
                     className="param-input"
                     value={feature.offset}
                     onChange={(e) => onChangeParam(feature.id, "offset", e.target.value)}
@@ -217,7 +218,7 @@ export function ParamEditor({
           {(["tx", "ty", "tz"] as const).map((k) => (
             <label className="param-field" key={k}>
               <span className="param-label">Move {k[1].toUpperCase()}</span>
-              <input
+              <ExprInput
                 className="param-input"
                 value={feature[k]}
                 onChange={(e) => onChangeParam(feature.id, k, e.target.value)}
@@ -245,7 +246,7 @@ export function ParamEditor({
           </label>
           <label className="param-field">
             <span className="param-label">Angle°</span>
-            <input
+            <ExprInput
               className="param-input"
               value={feature.angle}
               onChange={(e) => onChangeParam(feature.id, "angle", e.target.value)}
@@ -253,7 +254,7 @@ export function ParamEditor({
           </label>
           <label className="param-field">
             <span className="param-label">Scale</span>
-            <input
+            <ExprInput
               className="param-input"
               value={feature.scale}
               onChange={(e) => onChangeParam(feature.id, "scale", e.target.value)}
@@ -287,7 +288,7 @@ export function ParamEditor({
             <>
               <label className="param-field">
                 <span className="param-label">Count</span>
-                <input
+                <ExprInput
                   className="param-input"
                   value={feature.count1 ?? ""}
                   onChange={(e) => onChangeParam(feature.id, "count1", e.target.value)}
@@ -295,7 +296,7 @@ export function ParamEditor({
               </label>
               <label className="param-field">
                 <span className="param-label">Spacing</span>
-                <input
+                <ExprInput
                   className="param-input"
                   value={feature.spacing1 ?? ""}
                   onChange={(e) => onChangeParam(feature.id, "spacing1", e.target.value)}
@@ -313,7 +314,7 @@ export function ParamEditor({
                 <>
                   <label className="param-field">
                     <span className="param-label">Count 2</span>
-                    <input
+                    <ExprInput
                       className="param-input"
                       value={feature.count2 ?? ""}
                       onChange={(e) => onChangeParam(feature.id, "count2", e.target.value)}
@@ -321,7 +322,7 @@ export function ParamEditor({
                   </label>
                   <label className="param-field">
                     <span className="param-label">Spacing 2</span>
-                    <input
+                    <ExprInput
                       className="param-input"
                       value={feature.spacing2 ?? ""}
                       onChange={(e) => onChangeParam(feature.id, "spacing2", e.target.value)}
@@ -342,7 +343,7 @@ export function ParamEditor({
             <>
               <label className="param-field">
                 <span className="param-label">Count</span>
-                <input
+                <ExprInput
                   className="param-input"
                   value={feature.count ?? ""}
                   onChange={(e) => onChangeParam(feature.id, "count", e.target.value)}
@@ -350,7 +351,7 @@ export function ParamEditor({
               </label>
               <label className="param-field">
                 <span className="param-label">Angle°</span>
-                <input
+                <ExprInput
                   className="param-input"
                   value={feature.angle ?? "360"}
                   onChange={(e) => onChangeParam(feature.id, "angle", e.target.value)}
@@ -371,7 +372,7 @@ export function ParamEditor({
         <div className="sketch-params">
           <label className="param-field">
             <span className="param-label">Angle°</span>
-            <input
+            <ExprInput
               className="param-input"
               value={feature.angle}
               onChange={(e) => onChangeParam(feature.id, "angle", e.target.value)}
@@ -396,7 +397,7 @@ export function ParamEditor({
         FEATURE_DEFS[feature.kind].params.map((p) => (
           <label className="param-field" key={p.name}>
             <span className="param-label">{p.label}</span>
-            <input
+            <ExprInput
               className="param-input"
               value={feature.params[p.name] ?? ""}
               onChange={(e) => onChangeParam(feature.id, p.name, e.target.value)}

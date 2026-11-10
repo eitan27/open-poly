@@ -9,6 +9,7 @@ import type { Anchor } from "./frames";
 import { dofLabel, MATE_TYPES } from "./mateTypes";
 import { MATE_DOFS } from "./solve";
 import type { Dof, MateType } from "./types";
+import { ExprInput } from "../ui/ExprInput";
 
 export interface MateSlotView {
   /** "Bracket <1> · face" once picked, else null. */
@@ -122,7 +123,7 @@ export function MateDialog(p: MateDialogProps) {
         <div key={d} className="asm-mate-dof">
           <label className="ed-field">
             <span>{dofLabel(p.type, d)}</span>
-            <input
+            <ExprInput
               value={p.values[d] ?? ""}
               placeholder="0"
               onFocus={selectAll}
@@ -133,7 +134,7 @@ export function MateDialog(p: MateDialogProps) {
           {p.type !== "ball" && (
             <div className="asm-mate-limits" title="Leave blank for no limit">
               <span>Limits</span>
-              <input
+              <ExprInput
                 aria-label={`${dofLabel(p.type, d)} minimum`}
                 placeholder="min"
                 value={p.limits[d]?.min ?? ""}
@@ -141,7 +142,7 @@ export function MateDialog(p: MateDialogProps) {
                 onChange={(e) => p.onLimit(d, "min", e.target.value)}
                 onKeyDown={keys}
               />
-              <input
+              <ExprInput
                 aria-label={`${dofLabel(p.type, d)} maximum`}
                 placeholder="max"
                 value={p.limits[d]?.max ?? ""}

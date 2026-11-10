@@ -2,6 +2,7 @@ import { validateVariableNames } from "../document/document";
 import type { Variable } from "../document/types";
 import { useRef, useState } from "react";
 import { formatNumber } from "../lib/format";
+import { ExprInput } from "./ExprInput";
 
 interface Props {
   variables: Variable[];
@@ -32,7 +33,7 @@ export function VariablesPanel({ variables, scope, errors, nameErrors, onChange,
               onCommit={(name) => onChange(v.id, "name", name)}
             />
             <span className="var-eq">=</span>
-            <input
+            <ExprInput
               // An invalid name is grayed out (disabled) — the expression can't
               // be used until the name is fixed.
               className={"var-expr" + (error ? " invalid" : "")}

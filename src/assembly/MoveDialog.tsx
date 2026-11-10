@@ -10,6 +10,7 @@
 import { useRef, useState } from "react";
 import { DraggableDialog } from "../ui/DraggableDialog";
 import type { MateType } from "./types";
+import { ExprInput } from "../ui/ExprInput";
 
 /** One number in the panel: shown live, typed to set. */
 export interface MoveField {
@@ -122,7 +123,7 @@ function NumField({ field }: { field: MoveField }) {
   return (
     <label className="ed-field">
       <span>{field.label}</span>
-      <input
+      <ExprInput
         value={draft ?? field.value}
         onFocus={(e) => {
           setDraft(field.value);

@@ -126,6 +126,32 @@ await rename("Arm");
 await apply({ op: "addPrimitive", kind: "box", params: { width: "30", depth: "8", height: "4" } });
 await waitIdle();
 
+// --- In a part: an expression field suggests the part's variables ----------------
+// The edit panel's box Width (double-click the box in the timeline). The
+// variable is the part's own; the assembly's come later.
+check("a part variable is made", (await apply({ op: "setVariable", name: "wide", expression: "30" })).ok);
+await page.locator(".tree-row", { hasText: "Box" }).last().dblclick();
+await page.waitForTimeout(300);
+const widthField = page.locator(".param-field", { hasText: "Width" }).locator("input");
+await widthField.fill("wi");
+await page.waitForTimeout(200);
+const partSuggest = page.locator(".expr-suggest li");
+check(
+  "typing part of a name suggests the variable, with its value",
+  (await partSuggest.count()) === 1 && /wide\s*30/.test(await partSuggest.first().innerText()),
+  await partSuggest.allInnerTexts().then((t) => t.join(" | ")),
+);
+await widthField.press("Tab");
+await page.waitForTimeout(200);
+check(
+  "Tab completes it",
+  (await widthField.inputValue()) === "wide" && (await partSuggest.count()) === 0,
+  await widthField.inputValue(),
+);
+await widthField.fill("30");
+await widthField.blur();
+await waitIdle();
+
 await page.locator(".split-btn-caret").click();
 await page.locator(".split-btn .mt-menu button", { hasText: "Assembly" }).click();
 await waitIdle();
@@ -205,6 +231,30 @@ await page
 await page.keyboard.press("s");
 await page.waitForTimeout(400);
 const dist = page.locator(".asm-mate .asm-mate-dof input").first();
+// The Mate dialog's value suggests the assembly's variables as it's typed.
+await dist.fill("li");
+await page.waitForTimeout(200);
+const suggest = page.locator(".expr-suggest li");
+check(
+  "the mate's Distance suggests the assembly's variable",
+  (await suggest.count()) === 1 && /lift\s*15/.test(await suggest.first().innerText()),
+  await suggest.allInnerTexts().then((t) => t.join(" | ")),
+);
+await dist.press("Escape");
+await page.waitForTimeout(200);
+check(
+  "Esc closes the list, not the dialog",
+  (await suggest.count()) === 0 && (await page.locator(".asm-mate").count()) === 1,
+);
+await dist.fill("lif");
+await page.waitForTimeout(200);
+await dist.press("Enter");
+await page.waitForTimeout(200);
+check(
+  "Enter completes it rather than creating the mate",
+  (await dist.inputValue()) === "lift" && (await page.locator(".asm-mate").count()) === 1,
+  await dist.inputValue(),
+);
 await dist.fill("lift");
 await page.waitForTimeout(300);
 check(

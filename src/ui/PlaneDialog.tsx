@@ -1,6 +1,7 @@
 import type { PlaneMethod } from "../document/types";
 import { DraggableDialog } from "./DraggableDialog";
 import { PickSlot } from "./PickSlot";
+import { ExprInput } from "./ExprInput";
 
 const METHOD_LABELS: Record<PlaneMethod, string> = {
   offset: "Offset",
@@ -121,7 +122,7 @@ export function PlaneDialog({
       {method === "offset" && (
         <label className="ed-field">
           <span>Offset</span>
-          <input value={offset} onChange={(e) => onOffsetChange(e.target.value)} onKeyDown={keys} />
+          <ExprInput value={offset} onChange={(e) => onOffsetChange(e.target.value)} onKeyDown={keys} />
         </label>
       )}
 
@@ -153,7 +154,7 @@ export function PlaneDialog({
           </div>
           <label className="ed-field">
             <span>Angle°</span>
-            <input value={angle} onChange={(e) => onAngleChange(e.target.value)} onKeyDown={keys} />
+            <ExprInput value={angle} onChange={(e) => onAngleChange(e.target.value)} onKeyDown={keys} />
           </label>
         </>
       )}

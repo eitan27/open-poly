@@ -1,6 +1,7 @@
 import type { TransformMode } from "../viewport/types";
 import { DraggableDialog } from "./DraggableDialog";
 import { PickSlot } from "./PickSlot";
+import { ExprInput } from "./ExprInput";
 
 const MODE_LABELS: Record<TransformMode, string> = { translate: "Move", rotate: "Rotate", scale: "Scale" };
 const MODES = ["translate", "rotate", "scale"] as const;
@@ -75,7 +76,7 @@ export function TransformDialog({
   const field = (label: string, f: TransformField, value: string) => (
     <label className="ed-field" key={f}>
       <span>{label}</span>
-      <input value={value} onChange={(e) => onParamChange(f, e.target.value)} onKeyDown={keys} />
+      <ExprInput value={value} onChange={(e) => onParamChange(f, e.target.value)} onKeyDown={keys} />
     </label>
   );
 

@@ -42,6 +42,12 @@ must do the same.
   groups and dragging all see them. Editing one goes through `useMates.commit`
   like a mate edit, so the placements it leads to are kept (delete the mate
   afterwards and the part stays put).
+- **Expression fields autocomplete variable names** (`ExprInput`, a drop-in
+  for `<input>`, in parts and assemblies alike): the open document's
+  variables come from the `ExprVariables` context App provides, so no dialog
+  passes them down; the list is a portal at the field, and while it's open
+  Enter/Tab complete and Esc closes only the list. The sketch dimension field
+  (`DimValueInput`) is built on it. A new expression field should use it.
 - **Renaming a variable renames its uses** (`renameVariable`): the variables'
   own expressions, and a part's feature expressions (`renameInFeatures`, only
   the keys that always hold one, so a name like "box" can't rewrite a kind)
@@ -360,7 +366,6 @@ mates' values. A grounded part can't be moved by its gizmo; unground it first.
 
 **Smaller gaps.**
 
-- No name autocomplete where expressions are typed, in assemblies or parts.
 - Drive-only documents appear on the Open dialog's All tab only, since their
   kind isn't known until downloaded. The kind in the Drive file's
   `appProperties` would fix it.
@@ -385,7 +390,8 @@ pinning (parts have no versions yet).
   meshes, no OCCT in Node), `moveReadout.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
   `width`, `loops`, `move`, `variables`, `pin`), against `npm run dev`; set
-  `PW_EXE` to use a pre-installed Chromium. `pin` is the one Cylindrical mate
+  `PW_EXE` to use a pre-installed Chromium (scripts on `scripts/lib/harness.mjs`
+  read `CHROMIUM_PATH` instead). `pin` is the one Cylindrical mate
   between real faceted parts (a cylinder primitive in an extruded-circle
   hole), through a rebuild of the block. `verify-all` doesn't run them.
 - **A document switch lands a few hundred ms after its click**, while the
