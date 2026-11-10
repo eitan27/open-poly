@@ -152,7 +152,7 @@ preview work on them unchanged, in the one Viewport App already mounts.
   - a rim's edge chain → a circle, with Z taken from the flat face it bounds;
   - a straight edge → its midpoint and direction.
 
-  So meshes saved before assemblies existed work as they are.
+  So any saved mesh can be mated as it is, with no rebuild.
 
 **Not built: per-instance matrices.** Re-baking every moved instance's mesh is
 fine for a drag but will be too slow for per-frame animation. The Viewport
@@ -174,19 +174,22 @@ holding a box into a corner also work.
 **Every mate joins two frames**, inferred from the face, edge or vertex
 picked. Z is the face normal, cylinder axis or edge direction; X is world X
 projected onto the plane, in part coordinates, so it doesn't flip between
-rebuilds. **A vertex** has no name of its own, so it's stored as the end of a
-named edge it meets, nearest its fingerprint, and its frame takes the part's
-own axes (as Onshape's vertex connectors do): one Fastened mate between two
+rebuilds. By default the two Z axes are opposed, so two faces touch. **Flip**
+aligns them and **Rotate 90°** adds quarter turns about Z. A cylinder or edge
+offers Middle / Start / End, shown by a ghost marker (ring and Z arrow, drawn
+through parts).
+
+**A vertex** has no name of its own, so it's stored as the end of a named
+edge it meets, nearest its fingerprint, and its frame takes the part's own
+axes (as Onshape's vertex connectors do): one Fastened mate between two
 corners, flipped, seats one box in another's corner the way both were
 modelled. **An offset** on a connector moves its frame within itself (mm along
 its own X/Y/Z, expressions that may name variables), set per side in the Mate
-dialog: offsets live on connectors, not on the mate, so there's one place to
-look (`connectorMatrix`). By
-default the two Z axes are opposed, so two faces touch. **Flip** aligns them
-and **Rotate 90°** adds quarter turns about Z. A cylinder or edge offers
-Middle / Start / End, shown by a ghost marker (ring and Z arrow, drawn through
-parts). Connectors are stored by **persistent face/edge name + fingerprint**,
-so they survive part edits the way chamfer refs do. One re-found only by its
+dialog (`connectorMatrix`). Offsets live on connectors, not on the mate, so
+there's one place to look.
+
+Connectors are stored by **persistent face/edge name + fingerprint**, so they
+survive part edits the way chamfer refs do. One re-found only by its
 fingerprint (its name gone after an edit) still works, with an amber ⚠ badge
 on the mate saying to check it (`connectorWarnings`), as a timeline feature
 flags a re-matched reference. The fingerprint is where the face was when it
@@ -217,7 +220,7 @@ solver.
 
 **Making mates** (`useMates`, `MateDialog`). The assembly toolbar has a
 button per mate type (keys F R S C P B W, M for the last used), so the dialog
-shows its type as one button opening a menu of all seven, not the whole row.
+shows its type as one button opening a menu of all seven.
 A custom menu, not a `<select>`: on macOS a select's native popup swallows the
 next click on the canvas, which here is the first face pick.
 
@@ -241,9 +244,9 @@ next click on the canvas, which here is the first face pick.
 - **Turned to fit.** When a new mate's slots fill, or its type changes, and it
   would be over-constrained the way it faces (flush ends default to
   touching), the dialog tries Flip and, for Fastened and Slider, the quarter
-  turns, and keeps the first that holds. Silently: the mate never existed the
-  other way round, so a note pointed at nothing and read as an error; the
-  Flip button shows as pressed. A Flip pressed afterwards is respected.
+  turns, and keeps the first that holds. Silently, with nothing to point at
+  (the mate never existed the other way round); the Flip button shows as
+  pressed. A Flip pressed afterwards is respected.
 - **The mates list** reads "A ↔ B · values" (`mateValuesText`: "15 mm",
   "x 3 mm · y 4 mm · 30°", or "lift = 25 mm" when an expression sets it).
   Hovering a row shows its connectors in the view, as the open dialog does;
@@ -350,9 +353,12 @@ far it has moved since it was selected, measured from where the solver
 actually put it, so a part in a loop reads what its mates let it do. Typing
 one moves it by the difference, through the same path as a drag.
 
+**A grounded part has no gizmo:** it stays where it is until it's
+ungrounded, as in Onshape.
+
 **Not built:** Onshape's "stay where your mate allows" applies one step out
 from a tree-dragged part only; parts hanging off a loop group follow their
-mates' values. A grounded part can't be moved by its gizmo; unground it first.
+mates' values.
 
 ---
 
@@ -401,8 +407,14 @@ pinning (parts have no versions yet).
   order independence, limits), `loops.test.ts` (box in a corner by three
   planars, Width + Planar, a four-bar turned a full revolution and dragged by
   its coupler, a slider-crank, conflicts, locked parts dragged from either
-  side), `drag.test.ts`, `frames.test.ts` (connector fitting on synthetic
-  meshes, no OCCT in Node), `moveReadout.test.ts`.
+  side, a box seated in a corner by one Fastened mate on vertices),
+  `drag.test.ts`, `frames.test.ts` (connector fitting, vertices, offsets and
+  candidate points on synthetic meshes, no OCCT in Node), `variables.test.ts`
+  (mate values and limits naming variables, in the tree, a loop and a drag),
+  `assembly.test.ts` (including `connectorWarnings`), `mateTypes.test.ts`
+  (`mateValuesText`), `moveReadout.test.ts`. Renaming variables through their
+  uses is `src/document/renameVariable.test.ts`; the mate count is in
+  `src/storage/db.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
   `width`, `loops`, `move`, `variables`, `pin`, `vertex`), against `npm run dev`; set
   `PW_EXE` to use a pre-installed Chromium (scripts on `scripts/lib/harness.mjs`
@@ -410,8 +422,10 @@ pinning (parts have no versions yet).
   between real faceted parts (a cylinder primitive in an extruded-circle
   hole), through a rebuild of the block. `verify-all` doesn't run them.
 - **A document switch lands a few hundred ms after its click**, while the
-  status still reads "up to date" from before it: a check must wait for the
-  side panel to change kind before acting on the new document (`settleAs` in `a0`, `switchedFrom` in `a1`), or it acts on the old one.
+  status still reads "up to date" from before it, and the Insert dialog's
+  list loads after it opens. A check must wait for both (`switchVia` and its
+  kin in each script), or under load it acts on the previous document or
+  reads an empty list.
 
 ## Open questions
 
