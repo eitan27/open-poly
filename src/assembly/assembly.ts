@@ -230,3 +230,25 @@ export function connectorWarnings(
       }
   return out;
 }
+
+/** An assembly's mates with every value and limit passed through `rename`:
+ *  what renaming one of its variables does to them (see renameVariable). */
+export function renameInMates(a: AssemblyDoc, rename: (expr: string) => string): AssemblyDoc {
+  const each = <V>(rec: Partial<Record<Dof, V>> | undefined, fn: (v: V) => V) =>
+    rec && (Object.fromEntries(Object.entries(rec).map(([d, v]) => [d, fn(v as V)])) as Partial<Record<Dof, V>>);
+  return {
+    ...a,
+    mates: a.mates.map((m) => ({
+      ...m,
+      ...(m.values ? { values: each(m.values, (v: string) => rename(v)) } : {}),
+      ...(m.limits
+        ? {
+            limits: each(m.limits, (l: { min?: string; max?: string }) => ({
+              ...(l.min !== undefined ? { min: rename(l.min) } : {}),
+              ...(l.max !== undefined ? { max: rename(l.max) } : {}),
+            })),
+          }
+        : {}),
+    })),
+  };
+}

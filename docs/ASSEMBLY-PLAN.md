@@ -42,6 +42,14 @@ must do the same.
   groups and dragging all see them. Editing one goes through `useMates.commit`
   like a mate edit, so the placements it leads to are kept (delete the mate
   afterwards and the part stays put).
+- **Renaming a variable renames its uses** (`renameVariable`): the variables'
+  own expressions, and a part's feature expressions (`renameInFeatures`, only
+  the keys that always hold one, so a name like "box" can't rewrite a kind)
+  or an assembly's mate values and limits (`renameInMates`). The name field
+  commits on Enter or leaving it, not per keystroke, so the names typed on the
+  way don't rewrite anything, and a rename onto an invalid or taken name only
+  sets the name. Committing an empty name drops the link: the old references
+  stay as they were, flagged, until edited.
 - **Thumbnails** are captured on `paintSeq` in App: a part bumps it when its
   regen settles, an assembly when every source has loaded (or failed to).
 
@@ -353,8 +361,6 @@ mates' values. A grounded part can't be moved by its gizmo; unground it first.
 **Smaller gaps.**
 
 - No name autocomplete where expressions are typed, in assemblies or parts.
-- Renaming a variable doesn't rename it in the expressions that use it (as in
-  a part document): they show ⚠ until edited.
 - Drive-only documents appear on the Open dialog's All tab only, since their
   kind isn't known until downloaded. The kind in the Drive file's
   `appProperties` would fix it.

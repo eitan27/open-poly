@@ -3,7 +3,7 @@
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "./featureDefs";
 import { newBodyColor, randomSolidColor } from "./colors";
 import { clamp } from "../lib/clamp";
-import { evaluateExpression, RESERVED_NAMES, type Scope } from "./expression";
+import { evaluateExpression, renameIdentifier, RESERVED_NAMES, type Scope } from "./expression";
 import {
   angledFrame,
   frameOf,
@@ -1036,6 +1036,84 @@ export function updateVariable<T extends WithVariables>(
     ...doc,
     variables: doc.variables.map((v) => (v.id === id ? { ...v, [field]: value } : v)),
   };
+}
+
+/** Rename variable `id` to `name`, and the expressions that use it with it:
+ *  the variables' own, and whatever `rewriteRest` rewrites (a part's features,
+ *  see `renameInFeatures`; an assembly's mates). Only when both names are valid
+ *  and `name` isn't another variable's: a rename to an empty, malformed or
+ *  taken name just sets the name (flagged in the panel), as before, so a
+ *  half-typed name can't rewrite anything. */
+export function renameVariable<T extends WithVariables>(
+  doc: T,
+  id: string,
+  name: string,
+  rewriteRest: (doc: T, rename: (expr: string) => string) => T = (d) => d,
+): T {
+  const v = doc.variables.find((x) => x.id === id);
+  if (!v || v.name === name) return doc;
+  const old = v.name;
+  const renamed = updateVariable(doc, id, "name", name);
+  // validateVariableNames flags only the LATER of two same-named variables,
+  // so "taken" is checked directly: renaming onto another's name must not
+  // rewrite references to point at it.
+  const taken = doc.variables.some((x) => x.id !== id && x.name === name);
+  const oldValid = !validateVariableNames(doc.variables)[id];
+  if (!oldValid || taken || validateVariableNames(renamed.variables)[id]) return renamed;
+  const rename = (expr: string) => renameIdentifier(expr, old, name);
+  const withVars = {
+    ...renamed,
+    variables: renamed.variables.map((x) => ({ ...x, expression: rename(x.expression) })),
+  };
+  return rewriteRest(withVars, rename);
+}
+
+/** The keys under which a part document stores expressions: every one holds
+ *  an expression string wherever it appears (`params` and `exprs` are records
+ *  of them). Anything else — names, ids, kinds, a sketch text's `value` — is
+ *  never touched, so a variable named like a kind ("box") can't rewrite it. */
+const EXPRESSION_KEYS = new Set([
+  "expression",
+  "expr",
+  "distance",
+  "count",
+  "count1",
+  "count2",
+  "spacing1",
+  "spacing2",
+  "dx",
+  "dy",
+  "angle",
+  "size",
+  "thickness",
+  "offset",
+  "tx",
+  "ty",
+  "tz",
+  "scale",
+]);
+const EXPRESSION_RECORDS = new Set(["params", "exprs"]);
+
+/** A part document's features with every expression passed through `rename`
+ *  (see EXPRESSION_KEYS). For `renameVariable`. */
+export function renameInFeatures(doc: Document, rename: (expr: string) => string): Document {
+  const walk = (value: unknown, key?: string): unknown => {
+    if (typeof value === "string") return key && EXPRESSION_KEYS.has(key) ? rename(value) : value;
+    if (Array.isArray(value)) return value.map((v) => walk(v));
+    if (value && typeof value === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value)) {
+        if (EXPRESSION_RECORDS.has(k) && v && typeof v === "object" && !Array.isArray(v))
+          out[k] = Object.fromEntries(
+            Object.entries(v).map(([pk, pv]) => [pk, typeof pv === "string" ? rename(pv) : pv]),
+          );
+        else out[k] = walk(v, k);
+      }
+      return out;
+    }
+    return value;
+  };
+  return { ...doc, features: walk(doc.features) as Document["features"] };
 }
 
 export function removeVariable<T extends WithVariables>(doc: T, id: string): T {

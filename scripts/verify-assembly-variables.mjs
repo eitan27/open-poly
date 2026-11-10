@@ -258,13 +258,45 @@ check(
 );
 check("no ⚠ on the mate", (await page.locator(".asm-mate-row .asm-source.bad").count()) === 0);
 
-// A name the mate uses, gone: the mate says so.
+// Renaming the variable carries into the mate that uses it. The name commits
+// on Enter (or leaving the field), so the names typed on the way don't.
 await nameBox.fill("lifted");
+await nameBox.press("Enter");
+await page.waitForTimeout(400);
+const rowText = async () => (await page.locator(".asm-mate-row .asm-source").first().textContent()) ?? "";
+check("renaming the variable renames it in the mate", /lifted = 25 mm/.test(await rowText()), await rowText());
+check("…which still works", (await page.locator(".asm-mate-row .asm-source.bad").count()) === 0);
+rec = await saved();
+check("…as saved", rec.assembly.mates[0].values?.tz === "lifted", JSON.stringify(rec.assembly.mates[0].values));
+// Esc puts a name back; an invalid one rewrites nothing.
+await nameBox.fill("zzz");
+await nameBox.press("Escape");
 await page.waitForTimeout(300);
-check("renaming it away flags the mate", (await page.locator(".asm-mate-row .asm-source.bad").count()) === 1);
+check("Esc puts the name back", (await nameBox.inputValue()) === "lifted");
+await nameBox.fill("");
+check("an empty name is flagged as it's typed", /invalid/.test((await nameBox.getAttribute("class")) ?? ""));
+await nameBox.press("Enter");
+await page.waitForTimeout(300);
+rec = await saved();
+check(
+  "…and rewrites nothing",
+  rec.assembly.mates[0].values?.tz === "lifted",
+  JSON.stringify(rec.assembly.mates[0].values),
+);
+check("…so the mate can't find it", (await page.locator(".asm-mate-row .asm-source.bad").count()) === 1);
 await nameBox.fill("lift");
+await nameBox.press("Enter");
 await page.waitForTimeout(300);
-check("…and naming it back clears it", (await page.locator(".asm-mate-row .asm-source.bad").count()) === 0);
+check(
+  "a valid name again doesn't claim the mate's old one",
+  (await page.locator(".asm-mate-row .asm-source.bad").count()) === 1,
+);
+// Point the mate back at it, through the Mate dialog's value.
+await page.locator(".asm-mate-row").first().click();
+await page.locator(".asm-mate .asm-mate-dof input").first().fill("lift");
+await page.locator(".asm-mate .ed-primary").click();
+await page.waitForTimeout(300);
+check("…until the mate names it again", (await page.locator(".asm-mate-row .asm-source.bad").count()) === 0);
 await page.screenshot({ path: "/tmp/asm-variables.png" });
 
 // --- Reload ------------------------------------------------------------------------

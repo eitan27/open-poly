@@ -38,6 +38,8 @@ import {
   removeSketchConstraint,
   removeSketchEntity,
   removeVariable,
+  renameInFeatures,
+  renameVariable,
   resolveDocument,
   setFeatureHidden,
   setRollbackIndex,
@@ -228,6 +230,7 @@ import { MoveDialog, type MoveField, type MoveMode, type WorldAxis } from "./ass
 import {
   insertInstances,
   keepSolved,
+  renameInMates,
   referencedDocIds,
   removeInstances,
   updateInstance,
@@ -7202,7 +7205,9 @@ export default function App() {
                 // Through the mates' commit: a mate may name the variable, and
                 // the placements it leads to are kept like any mate edit's.
                 onChange={(id, field, value) =>
-                  mates.commit(updateVariable(assembly, id, field, value), `asm-var:${id}:${field}`)
+                  field === "name"
+                    ? mates.commit(renameVariable(assembly, id, value, renameInMates))
+                    : mates.commit(updateVariable(assembly, id, field, value), `asm-var:${id}:${field}`)
                 }
                 onDelete={(id) => mates.commit(removeVariable(assembly, id))}
               />
@@ -7264,7 +7269,12 @@ export default function App() {
                   const { doc: next } = addVariable(doc);
                   setDoc(next);
                 }}
-                onChange={(id, field, value) => setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)}
+                // A rename carries into the expressions that use the variable.
+                onChange={(id, field, value) =>
+                  field === "name"
+                    ? setDoc(renameVariable(doc, id, value, renameInFeatures))
+                    : setDoc(updateVariable(doc, id, field, value), `var:${id}:${field}`)
+                }
                 onDelete={(id) => setDoc(removeVariable(doc, id))}
               />
               <button
