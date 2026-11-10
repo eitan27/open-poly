@@ -12,7 +12,9 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
-export function VariablesPanel({ variables, scope, errors, nameErrors, onAdd, onChange, onDelete }: Props) {
+/** The variable rows. Adding one is the section heading's button (see
+ *  VariablesSection), so it stays in reach while the list is collapsed. */
+export function VariablesPanel({ variables, scope, errors, nameErrors, onChange, onDelete }: Omit<Props, "onAdd">) {
   return (
     <div className="vars">
       {variables.map((v) => {
@@ -48,22 +50,36 @@ export function VariablesPanel({ variables, scope, errors, nameErrors, onAdd, on
           </div>
         );
       })}
-      <button className="add-btn var-add" onClick={onAdd}>
-        + Variable
-      </button>
     </div>
   );
 }
 
-/** The side panel's collapsible "Variables (n)" section around the panel: a
- *  part document's, and an assembly's (which starts collapsed). */
+/** The side panel's collapsible "Variables (n)" section: a part document's,
+ *  and an assembly's (which starts collapsed). "＋ Variable" sits beside the
+ *  heading, as "＋ Insert" and "＋ Mate" do beside theirs, so it's there while
+ *  the list is collapsed; adding from a collapsed section opens it. */
 export function VariablesSection({ open, onToggle, ...panel }: Props & { open: boolean; onToggle: () => void }) {
   return (
     <>
-      <button className="params-heading collapsible" aria-expanded={open} onClick={onToggle}>
-        <span className={"collapse-caret" + (open ? " open" : "")}>▶</span>
-        Variables ({panel.variables.length})
-      </button>
+      <div className="parts-header vars-header">
+        <button className="params-heading collapsible" aria-expanded={open} onClick={onToggle}>
+          <span className={"collapse-caret" + (open ? " open" : "")}>▶</span>
+          Variables ({panel.variables.length})
+        </button>
+        <div className="parts-import">
+          <button
+            type="button"
+            className="var-add"
+            title="Add a variable"
+            onClick={() => {
+              panel.onAdd();
+              if (!open) onToggle();
+            }}
+          >
+            ＋ Variable
+          </button>
+        </div>
+      </div>
       {open && <VariablesPanel {...panel} />}
     </>
   );

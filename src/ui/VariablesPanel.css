@@ -69,10 +69,15 @@
   white-space: nowrap;
 }
 
-.var-add {
-  flex: none;
-  width: 100%;
-  margin-top: 3px;
-  /* A touch of air before the Timeline heading that follows. */
-  margin-bottom: 4px;
+/* "Variables (n)" shares its row with "＋ Variable" (.parts-header, as the Parts
+   and Instances headings share theirs), and keeps a little air below it for
+   the rows. */
+.vars-header {
+  margin-bottom: 8px;
+}
+
+/* The rows keep the gap below them that the add button used to give, before
+   the next section's heading. */
+.vars {
+  margin-bottom: 14px;
 }

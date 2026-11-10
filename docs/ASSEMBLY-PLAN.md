@@ -347,11 +347,6 @@ mates' values. A grounded part can't be moved by its gizmo; unground it first.
 
 **Smaller gaps.**
 
-- The "+ Variable" button sits below the variables list (`VariablesPanel`),
-  so it is hidden while the section is collapsed. It belongs beside the
-  "Variables (n)" heading, as "＋ Insert" and "＋ Mate" sit beside theirs,
-  in both part and assembly documents (they share `VariablesSection`).
-  Adding a variable from a collapsed section should expand it.
 - No browser check makes a Cylindrical mate between two real faceted parts:
   `verify-assembly-a2` builds a cylinder pin but mates its flat bottom, and
   the axis fit is tested only on synthetic meshes (`frames.test.ts`). Add a

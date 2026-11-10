@@ -158,11 +158,15 @@ check("an assembly has a Variables section", (await heading.count()) === 1);
 check("…collapsed by default", (await heading.getAttribute("aria-expanded")) === "false" && (await rows.count()) === 0);
 await heading.click();
 check("…and opens on a click", (await heading.getAttribute("aria-expanded")) === "true");
+await heading.click();
 
 // --- Add one, the part document's way ------------------------------------------------
-await page.locator(".panel .var-add").click();
+// "＋ Variable" sits beside the heading, so it's there while collapsed; adding
+// from a collapsed section opens it.
+await page.locator(".panel .vars-header .var-add").click();
 await page.waitForTimeout(200);
-check("+ Variable adds a row", (await rows.count()) === 1);
+check("＋ Variable beside the collapsed heading adds a row", (await rows.count()) === 1);
+check("…and opens the section", (await heading.getAttribute("aria-expanded")) === "true");
 const nameBox = rows.first().locator(".var-name");
 const exprBox = rows.first().locator(".var-expr");
 await nameBox.fill("");
