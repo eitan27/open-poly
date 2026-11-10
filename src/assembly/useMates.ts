@@ -4,7 +4,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { GhostMesh } from "../viewport/types";
 import type { Selection } from "../selection/types";
-import { addMate, keepSolved, nextMateName, removeMates, updateMate } from "./assembly";
+import { addMate, connectorWarnings, keepSolved, nextMateName, removeMates, updateMate } from "./assembly";
 import {
   anchorsOf,
   connectorRefOf,
@@ -103,22 +103,27 @@ export function useMates({
   const [session, setSession] = useState<Session | null>(null);
 
   // Connector shapes, kept while the part's mesh is the same object.
-  const shapeCache = useRef(new Map<string, { mesh: unknown; shape: ConnectorShape | null }>());
+  const shapeCache = useRef(new Map<string, { mesh: unknown; shape: ConnectorShape | null; rematched: boolean }>());
   const partMesh = (a: AssemblyDoc, instanceId: string) => {
     const inst = a.instances.find((i) => i.id === instanceId);
     const src = inst ? sources.get(inst.source.docId) : undefined;
     return src?.status === "ready" ? src.parts.find((p) => p.partId === inst!.source.partId)?.mesh : undefined;
   };
-  const refShape = (a: AssemblyDoc, instanceId: string, ref: ConnectorRef): ConnectorShape | null | undefined => {
+  /** A connector ref resolved on its part's mesh, and whether it had to be
+   *  re-found by its fingerprint (its name gone after an edit to the part). */
+  const resolveRef = (a: AssemblyDoc, instanceId: string, ref: ConnectorRef) => {
     const mesh = partMesh(a, instanceId);
     if (!mesh) return undefined;
     const key = `${instanceId}|${ref.kind}|${ref.name}`;
     const hit = shapeCache.current.get(key);
-    if (hit && hit.mesh === mesh) return hit.shape;
-    const shape = resolveConnector(mesh, ref)?.shape ?? null;
-    shapeCache.current.set(key, { mesh, shape });
-    return shape;
+    if (hit && hit.mesh === mesh) return hit;
+    const r = resolveConnector(mesh, ref);
+    const entry = { mesh, shape: r?.shape ?? null, rematched: !!r?.rematched };
+    shapeCache.current.set(key, entry);
+    return entry;
   };
+  const refShape = (a: AssemblyDoc, instanceId: string, ref: ConnectorRef): ConnectorShape | null | undefined =>
+    resolveRef(a, instanceId, ref)?.shape;
   /** What a connector is: its face or edge, or for a width mate's pair of
    *  faces the plane midway between them (null if they've stopped being
    *  parallel). */
@@ -153,6 +158,17 @@ export function useMates({
   const solution = useMemo<Solution | null>(
     () => (display ? solve(display, frameFor(display)) : null),
     // frameFor reads `sources`, which is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [display, sources],
+  );
+
+  /** Mates whose connectors resolved only by fingerprint (connectorWarnings). */
+  const warnings = useMemo(
+    () =>
+      display
+        ? connectorWarnings(display, (instanceId, ref) => !!resolveRef(display, instanceId, ref)?.rematched)
+        : new Map<string, string>(),
+    // resolveRef reads `sources` through partMesh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [display, sources],
   );
@@ -527,6 +543,7 @@ export function useMates({
   };
 
   return {
+    warnings,
     hoverMate: setHoveredMateId,
     setMateValue,
     dragResult,

@@ -281,6 +281,51 @@ await page.screenshot({ path: "/tmp/asm-pin-moved.png" });
 // Done keeps the move (Esc would cancel it, putting back what was typed).
 await page.locator(".asm-move .ed-primary").click();
 
+// --- A connector whose face was renamed is re-found, with an amber ⚠ ---------------
+// What an edit to the part does to a mate's reference: the hole's face name
+// is gone. Its fingerprint (where it was when picked) still finds it. Then the
+// name is put back, for the rebuild below.
+const asmId = await page.evaluate(() => localStorage.getItem("openpoly.activeDocId"));
+const setHoleRef = (name) =>
+  page.evaluate(
+    ([id, name]) =>
+      new Promise((resolve, reject) => {
+        const req = indexedDB.open("open-poly");
+        req.onsuccess = () => {
+          const store = req.result.transaction("documents", "readwrite").objectStore("documents");
+          store.get(id).onsuccess = (e) => {
+            const r = e.target.result;
+            r.assembly.mates[0].a.ref.name = name;
+            store.put(r).onsuccess = () => resolve();
+          };
+        };
+        req.onerror = reject;
+      }),
+    [asmId, name],
+  );
+const reopen = async () => {
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await waitIdle();
+  await page.waitForTimeout(1200);
+};
+const holeName = rec.assembly.mates[0].a.ref.name;
+await setHoleRef("a-face-that-was-renamed");
+await reopen();
+const badge = page.locator(".asm-mate-row .asm-mate-warn");
+check("a re-found connector puts an amber ⚠ on its mate", (await badge.count()) === 1);
+check(
+  "…saying what to check",
+  /Re-found the face on Box 1 <1>/.test((await badge.getAttribute("title")) ?? ""),
+  (await badge.getAttribute("title")) ?? "",
+);
+check("…while the mate still works (no error)", (await page.locator(".asm-mate-row .asm-source.bad").count()) === 0);
+rec = await saved();
+check("…and the pin is still on the hole's axis", axisGap() < 1e-3, axisGap().toExponential(2));
+await page.screenshot({ path: "/tmp/asm-pin-refound.png" });
+await setHoleRef(holeName);
+await reopen();
+check("with the name back, the ⚠ goes", (await badge.count()) === 0);
+
 // --- Rebuild the block taller: the mate holds -------------------------------------
 await page.locator(".asm-list > .asm-row").nth(0).dblclick();
 // The switch lands a few hundred ms after the click, while the status already

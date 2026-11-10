@@ -159,8 +159,12 @@ default the two Z axes are opposed, so two faces touch. **Flip** aligns them
 and **Rotate 90°** adds quarter turns about Z. A cylinder or edge offers
 Middle / Start / End, shown by a ghost marker (ring and Z arrow, drawn through
 parts). Connectors are stored by **persistent face/edge name + fingerprint**,
-so they survive part edits the way chamfer refs do; an unresolvable one puts
-⚠ on the mate.
+so they survive part edits the way chamfer refs do. One re-found only by its
+fingerprint (its name gone after an edit) still works, with an amber ⚠ badge
+on the mate saying to check it (`connectorWarnings`), as a timeline feature
+flags a re-matched reference. The fingerprint is where the face was when it
+was picked, so a renamed face that has also moved isn't re-found: the mate
+shows ⚠ as broken until it's re-picked.
 
 | Mate        | Free DOFs  | Typical use             |
 | ----------- | ---------- | ----------------------- |
@@ -216,7 +220,6 @@ solver.
 - Vertex and offset connectors. Today a frame sits only at a face's centre or
   along an edge or axis, so fastening a box into another's corner takes three
   planars rather than one Fastened mate on a vertex.
-- An amber ⚠ when a connector was re-found by fingerprint (today it's silent).
 
 ---
 

@@ -7235,6 +7235,7 @@ export default function App() {
                 onInsert={() => setInsertOpen(true)}
                 mateProblems={mates.solution?.problems ?? NO_PROBLEMS}
                 mateValues={mates.solution?.values ?? NO_PROBLEMS}
+                mateWarnings={mates.warnings}
                 onHoverMate={mates.hoverMate}
                 drivenIds={mates.solution?.mated ?? NO_PROBLEMS}
                 editingMateId={mates.editingId}

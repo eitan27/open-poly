@@ -10,6 +10,7 @@ import {
   removeInstances,
   updateInstance,
   addMate,
+  connectorWarnings,
   keepPlacements,
   nextMateName,
   removeMates,
@@ -160,5 +161,43 @@ describe("mates", () => {
     expect(kept.instances[0]).toBe(a.instances[0]);
     // Nothing moved: the same object back.
     expect(keepPlacements(a, new Map([[a.instances[0].id, IDENTITY]]))).toBe(a);
+  });
+});
+
+describe("connectorWarnings", () => {
+  const c = (instanceId: string, name: string, extra = {}) => ({
+    instanceId,
+    ref: { kind: "face" as const, name },
+    anchor: "center" as const,
+    ...extra,
+  });
+  const a = {
+    instances: [
+      { id: "A", name: "Base <1>", source: { docId: "d", partId: "p" }, transform: [] },
+      { id: "B", name: "Arm <1>", source: { docId: "d", partId: "p" }, transform: [] },
+    ],
+    mates: [
+      { id: "m1", name: "Planar 1", type: "planar" as const, a: c("A", "top"), b: c("B", "bottom") },
+      {
+        id: "m2",
+        name: "Width 1",
+        type: "width" as const,
+        a: c("A", "f1", { ref2: { kind: "face", name: "f2" } }),
+        b: c("B", "g1"),
+      },
+    ],
+    variables: [],
+  };
+
+  it("flags each mate with a re-found connector once, naming the part", () => {
+    const w = connectorWarnings(a, (_id, ref) => ref.name === "bottom" || ref.name === "f2");
+    expect([...w.keys()]).toEqual(["m1", "m2"]);
+    expect(w.get("m1")).toMatch(/face on Arm <1>/);
+    // A width mate's second face counts too.
+    expect(w.get("m2")).toMatch(/face on Base <1>/);
+  });
+
+  it("is empty when every connector resolved by name", () => {
+    expect(connectorWarnings(a, () => false).size).toBe(0);
   });
 });

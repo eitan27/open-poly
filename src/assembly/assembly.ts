@@ -1,5 +1,6 @@
 // Pure operations on an AssemblyDoc. No DOM, no storage, no kernel — like
 // document/document.ts is for parts.
+import type { ConnectorRef } from "./frames";
 import type { AssemblyDoc, Dof, Instance, Mat4, Mate, MateType } from "./types";
 import { multiply } from "./placement";
 import { formatValue, isDriven, isRotation, MATE_DOFS, type Solution } from "./solve";
@@ -204,5 +205,28 @@ export function keepSolved(a: AssemblyDoc, solution: Pick<Solution, "placements"
     }
     if (values) out = updateMate(out, { ...m, values });
   }
+  return out;
+}
+
+/** Mates that still work but whose connector was found only by its
+ *  fingerprint: the face or edge it named is gone (an edit to the part renamed
+ *  it) and a match was found where it was. The user should check it's the one
+ *  they meant, as a part's timeline flags a re-matched reference. One message
+ *  per mate; `rematched` says how a connector ref resolved. */
+export function connectorWarnings(
+  a: AssemblyDoc,
+  rematched: (instanceId: string, ref: ConnectorRef) => boolean,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of a.mates)
+    for (const c of [m.a, m.b])
+      for (const ref of [c.ref, ...(c.ref2 ? [c.ref2] : [])]) {
+        if (out.has(m.id) || !rematched(c.instanceId, ref)) continue;
+        const name = a.instances.find((i) => i.id === c.instanceId)?.name ?? "a part";
+        out.set(
+          m.id,
+          `Re-found the ${ref.kind} on ${name} by where it was: an edit to the part renamed it. Check it's the one you meant, and re-pick it if not.`,
+        );
+      }
   return out;
 }

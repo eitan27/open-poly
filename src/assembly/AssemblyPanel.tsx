@@ -24,6 +24,9 @@ interface Props {
   onInsert: () => void;
   /** Mates the solver couldn't apply, and why. */
   mateProblems: ReadonlyMap<string, string>;
+  /** Mates that still work but whose connector was re-found by fingerprint,
+   *  and what to check: an amber ⚠ on the row, as on a timeline feature. */
+  mateWarnings: ReadonlyMap<string, string>;
   /** Each mate's current values (solved), shown in its row. */
   mateValues: ReadonlyMap<string, Partial<Record<Dof, number>>>;
   /** The pointer is over a mate's row (null: it left): its connectors show. */
@@ -204,6 +207,11 @@ export function AssemblyPanel(p: Props) {
                           .join(" · ")}
                   </span>
                 </span>
+                {!bad && p.mateWarnings.get(m.id) && (
+                  <span className="row-badge warn asm-mate-warn" title={p.mateWarnings.get(m.id)}>
+                    ⚠
+                  </span>
+                )}
                 <button
                   type="button"
                   className="row-icon"
