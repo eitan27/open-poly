@@ -231,7 +231,16 @@ export function connectorWarnings(
   return out;
 }
 
-/** An assembly's mates with every value and limit passed through `rename`:
+const offsetRenamed = (c: Mate["a"], rename: (expr: string) => string): Mate["a"] =>
+  c.offset
+    ? {
+        ...c,
+        offset: Object.fromEntries(Object.entries(c.offset).map(([k, v]) => [k, v === undefined ? v : rename(v)])),
+      }
+    : c;
+
+/** An assembly's mates with every value, limit and connector offset passed
+ *  through `rename`:
  *  what renaming one of its variables does to them (see renameVariable). */
 export function renameInMates(a: AssemblyDoc, rename: (expr: string) => string): AssemblyDoc {
   const each = <V>(rec: Partial<Record<Dof, V>> | undefined, fn: (v: V) => V) =>
@@ -240,6 +249,8 @@ export function renameInMates(a: AssemblyDoc, rename: (expr: string) => string):
     ...a,
     mates: a.mates.map((m) => ({
       ...m,
+      a: offsetRenamed(m.a, rename),
+      b: offsetRenamed(m.b, rename),
       ...(m.values ? { values: each(m.values, (v: string) => rename(v)) } : {}),
       ...(m.limits
         ? {

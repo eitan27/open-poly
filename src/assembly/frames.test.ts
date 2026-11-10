@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { ShapeMeshPayload } from "../kernel/types";
 import type { Vec3 } from "./placement";
-import { connectorRefOf, edgeShape, faceShape, midplaneShape, resolveConnector, shapeFrame } from "./frames";
+import {
+  connectorMatrix,
+  connectorRefOf,
+  edgeShape,
+  faceShape,
+  midplaneShape,
+  resolveConnector,
+  shapeFrame,
+} from "./frames";
 
 /** A tiny mesh builder: faces as polygons (fan-triangulated, wound so the
  *  normal follows the right-hand rule), edges as polylines. */
@@ -250,5 +258,101 @@ describe("connectors", () => {
     const other = cylinder(48, 5, 60).mesh; // the top moved 20 mm up and has a new name
     other.faces.faceGroups!.forEach((g) => (g.name = `x/${g.name}`));
     expect(resolveConnector(other, c.ref)).toBeNull();
+  });
+});
+
+describe("vertex connectors", () => {
+  /** Three edges of a box corner meeting at (10, 10, 10), as polylines. */
+  const corner = () => {
+    const b = builder();
+    b.edge(
+      [
+        [0, 10, 10],
+        [10, 10, 10],
+      ],
+      "top∩back",
+    );
+    b.edge(
+      [
+        [10, 0, 10],
+        [10, 10, 10],
+      ],
+      "top∩right",
+    );
+    b.edge(
+      [
+        [10, 10, 0],
+        [10, 10, 10],
+      ],
+      "back∩right",
+    );
+    return b.mesh();
+  };
+
+  it("stores a picked vertex as the end of an edge it meets, and resolves it back", () => {
+    const mesh = corner();
+    const c = connectorRefOf(mesh, { kind: "vertex", point: [10, 10, 10.00001] })!;
+    expect(c.ref.kind).toBe("vertex");
+    close(c.ref.center!, [10, 10, 10]);
+    const r = resolveConnector(mesh, c.ref)!;
+    expect(r.rematched).toBe(false);
+    expect(r.shape).toEqual({ kind: "point", origin: [10, 10, 10] });
+  });
+
+  it("frames a vertex with the part's own axes", () => {
+    const f = shapeFrame({ kind: "point", origin: [1, 2, 3] }, "center");
+    expect(f).toEqual({ origin: [1, 2, 3], z: [0, 0, 1], x: [1, 0, 0] });
+  });
+
+  it("refuses a point where no edge ends", () => {
+    expect(connectorRefOf(corner(), { kind: "vertex", point: [5, 5, 5] })).toBeNull();
+  });
+
+  it("follows its edge's end when the part changes, and re-finds it by position if the edge is renamed", () => {
+    const c = connectorRefOf(corner(), { kind: "vertex", point: [10, 10, 10] })!;
+    // The edge grows 5 mm longer: the end nearest where the vertex was.
+    const b = builder();
+    b.edge(
+      [
+        [0, 10, 10],
+        [10, 10, 10],
+      ],
+      "top∩back",
+    );
+    b.edge(
+      [
+        [10, -5, 10],
+        [10, 10, 10],
+      ],
+      "top∩right",
+    );
+    b.edge(
+      [
+        [10, 10, -5],
+        [10, 10, 10],
+      ],
+      "back∩right",
+    );
+    const grown = b.mesh();
+    expect(resolveConnector(grown, c.ref)).toMatchObject({ shape: { origin: [10, 10, 10] }, rematched: false });
+    const renamed = {
+      ...grown,
+      edges: { ...grown.edges, edgeGroups: grown.edges.edgeGroups!.map((g) => ({ ...g, name: `x/${g.name}` })) },
+    };
+    expect(resolveConnector(renamed, c.ref)).toMatchObject({ shape: { origin: [10, 10, 10] }, rematched: true });
+  });
+});
+
+describe("connectorMatrix", () => {
+  const point = { kind: "point" as const, origin: [1, 2, 3] as Vec3 };
+  it("is the entity's frame with no offset", () => {
+    expect(connectorMatrix(point, "center", undefined, {})).toEqual([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 2, 3, 1]);
+  });
+  it("moves along the frame's own axes by the offset, which may name variables", () => {
+    const m = connectorMatrix(point, "center", { x: "5", z: "inset * 2" }, { inset: 1.5 });
+    expect(m.slice(12, 15)).toEqual([6, 2, 6]);
+  });
+  it("throws on a bad offset", () => {
+    expect(() => connectorMatrix(point, "center", { y: "nope" }, {})).toThrow();
   });
 });

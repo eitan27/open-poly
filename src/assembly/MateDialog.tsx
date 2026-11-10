@@ -23,6 +23,9 @@ export interface MateSlotView {
   anchor: Anchor;
   onArm: () => void;
   onAnchor: (a: Anchor) => void;
+  /** The connector moved within its own frame (mm, expressions). */
+  offset: Partial<Record<"x" | "y" | "z", string>>;
+  onOffset: (axis: "x" | "y" | "z", text: string) => void;
 }
 
 export interface MateDialogProps {
@@ -96,6 +99,25 @@ export function MateDialog(p: MateDialogProps) {
             wide
             onArm={s.onArm}
           />
+          {s.label && (
+            <div
+              className="asm-mate-limits asm-mate-offset"
+              title="Moves this side's connector within its own frame. Leave blank for none"
+            >
+              <span>Offset</span>
+              {(["x", "y", "z"] as const).map((k) => (
+                <ExprInput
+                  key={k}
+                  aria-label={`${s.label} offset ${k.toUpperCase()}`}
+                  placeholder={k.toUpperCase()}
+                  value={s.offset[k] ?? ""}
+                  onFocus={selectAll}
+                  onChange={(e) => s.onOffset(k, e.target.value)}
+                  onKeyDown={keys}
+                />
+              ))}
+            </div>
+          )}
           {s.label && s.anchors.length > 1 && (
             <div className="ed-modes">
               {s.anchors.map((a) => (

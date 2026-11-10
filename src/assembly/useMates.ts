@@ -4,14 +4,14 @@
 import { useMemo, useRef, useState } from "react";
 import type { GhostMesh } from "../viewport/types";
 import type { Selection } from "../selection/types";
+import { evaluateVariables } from "../document/document";
 import { addMate, connectorWarnings, keepSolved, nextMateName, removeMates, updateMate } from "./assembly";
 import {
   anchorsOf,
+  connectorMatrix,
   connectorRefOf,
-  frameMatrix,
   midplaneShape,
   resolveConnector,
-  shapeFrame,
   type Anchor,
   type ConnectorRef,
   type ConnectorShape,
@@ -20,7 +20,7 @@ import { dragAssembly } from "./drag";
 import { connectorGlyph } from "./glyph";
 import type { MateDialogProps } from "./MateDialog";
 import { MATE_TYPES } from "./mateTypes";
-import { meshBounds, multiply } from "./placement";
+import { applyPoint, IDENTITY, meshBounds, multiply } from "./placement";
 import { invertRigid, MATE_DOFS, solve, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector, MateType } from "./types";
 import type { SourceState } from "./useAssemblySources";
@@ -57,7 +57,10 @@ const DRAFT_ID = "__draft";
 const sideOf = (d: Draft, c: MateConnector | undefined): MateConnector | undefined => {
   if (!c) return undefined;
   if (d.type === "width") return c.ref2 ? c : undefined;
-  return c.ref2 ? { instanceId: c.instanceId, ref: c.ref, anchor: c.anchor } : c;
+  if (!c.ref2) return c;
+  // Drop only the leftover second face; the rest (an offset) stays.
+  const { ref2: _ref2, ...rest } = c;
+  return rest;
 };
 const draftMate = (d: Draft, id: string, name: string): Mate | null => {
   const a = sideOf(d, d.a);
@@ -143,7 +146,12 @@ export function useMates({
         return c.ref2
           ? `The two faces it was mated to on ${name} are gone or no longer parallel.`
           : `Can't find the ${c.ref.kind} it was mated to on ${name}.`;
-      return frameMatrix(shapeFrame(shape, c.anchor));
+      // An offset may name the assembly's variables.
+      try {
+        return connectorMatrix(shape, c.anchor, c.offset, c.offset ? evaluateVariables(a.variables).scope : {});
+      } catch (e) {
+        return `Bad offset on ${name}: ${(e as Error).message}`;
+      }
     };
 
   // What the viewport shows: the assembly, with the mate being made applied.
@@ -285,14 +293,22 @@ export function useMates({
    *  width mate's two faces one at a time), or says why it can't. */
   const step = (a: AssemblyDoc, session: Session, picked: Selection | null): Session => {
     if (session.armed === null) return session;
-    if (!picked || (picked.kind !== "face" && picked.kind !== "edge")) return session;
+    if (!picked || (picked.kind !== "face" && picked.kind !== "edge" && picked.kind !== "vertex")) return session;
     const mesh = partMesh(a, picked.featureId);
     if (!mesh) return session;
+    // A vertex pick is a point in the view, where the part is drawn placed:
+    // back into the part's own coordinates, where its mesh is.
+    const place = solution?.placements.get(picked.featureId) ?? IDENTITY;
     const c = connectorRefOf(
       mesh,
-      picked.kind === "face" ? { kind: "face", faceId: picked.faceId } : { kind: "edge", edgeId: picked.edgeId },
+      picked.kind === "face"
+        ? { kind: "face", faceId: picked.faceId }
+        : picked.kind === "edge"
+          ? { kind: "edge", edgeId: picked.edgeId }
+          : { kind: "vertex", point: applyPoint(invertRigid(place), picked.point) },
     );
-    if (!c) return { ...session, message: "That can't anchor a mate. Pick a flat face, a round wall, or an edge." };
+    if (!c)
+      return { ...session, message: "That can't anchor a mate. Pick a flat face, a round wall, an edge or a vertex." };
     const slot = session.armed;
     const other = slot === 0 ? session.draft.b : session.draft.a;
     if (other?.instanceId === picked.featureId)
@@ -330,7 +346,7 @@ export function useMates({
     if (session.armed === null) {
       // A finished new mate: clicking on to the next face makes it, and
       // starts the next mate (same type) from that face.
-      if (ready(session) && picked && (picked.kind === "face" || picked.kind === "edge")) {
+      if (ready(session) && picked && (picked.kind === "face" || picked.kind === "edge" || picked.kind === "vertex")) {
         const next = make(assembly, session);
         if (next) setSession(step(next, fresh(session.draft.type, session.made + 1), picked));
       }
@@ -412,7 +428,13 @@ export function useMates({
       if (!c || !mesh) continue;
       const refs = shown.type === "width" && c.ref2 ? [c.ref, c.ref2] : [c.ref];
       for (const ref of refs) {
-        if (ref.kind === "face") {
+        if (ref.kind === "vertex") {
+          // Highlighted where it's drawn: its part-space point, placed.
+          const shape = refShape(display, c.instanceId, ref);
+          const place = solution?.placements.get(c.instanceId);
+          if (shape?.kind === "point" && place)
+            out.push({ kind: "vertex", featureId: c.instanceId, point: applyPoint(place, shape.origin) });
+        } else if (ref.kind === "face") {
           const g = mesh.faces.faceGroups?.find((x) => x.name === ref.name);
           if (g) out.push({ kind: "face", featureId: c.instanceId, faceId: g.faceId });
         } else {
@@ -423,7 +445,7 @@ export function useMates({
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shown, display]);
+  }, [shown, display, solution]);
 
   const slotView = (i: 0 | 1): MateDialogProps["slots"][number] => {
     const raw = i === 0 ? session?.draft.a : session?.draft.b;
@@ -447,6 +469,16 @@ export function useMates({
           const cur = i === 0 ? d.a : d.b;
           if (!cur) return d;
           return i === 0 ? { ...d, a: { ...cur, anchor } } : { ...d, b: { ...cur, anchor } };
+        }),
+      offset: raw?.offset ?? {},
+      onOffset: (axis, text) =>
+        patch((d) => {
+          const cur = i === 0 ? d.a : d.b;
+          if (!cur) return d;
+          const offset = setOrDrop(cur.offset ?? {}, axis, text);
+          const { offset: _drop, ...rest } = cur;
+          const next = Object.keys(offset).length ? { ...rest, offset } : rest;
+          return i === 0 ? { ...d, a: next } : { ...d, b: next };
         }),
     };
   };
@@ -567,6 +599,7 @@ export function useMates({
 }
 
 const SHAPE_WORDS: Record<ConnectorShape["kind"], string> = {
+  point: "vertex",
   plane: "face",
   cylinder: "axis",
   circle: "circle",

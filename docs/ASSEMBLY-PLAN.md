@@ -80,9 +80,10 @@ interface Instance {
 
 interface MateConnector {
   instanceId: string;
-  ref: { kind: "face" | "edge"; name: string; center?: Vec3; normal?: Vec3 }; // name + fingerprint
+  ref: { kind: "face" | "edge" | "vertex"; name: string; center?: Vec3; normal?: Vec3 }; // name + fingerprint
   ref2?: ConnectorRef; // a width mate's second face
   anchor: "center" | "start" | "end"; // where along a cylinder or edge
+  offset?: Partial<Record<"x" | "y" | "z", string>>; // moves the frame within itself (mm, expressions)
 }
 
 interface Mate {
@@ -166,9 +167,17 @@ it takes three, each removing some freedom). Mates between the same parts
 still combine, through the loop solver (see "Solver"), so three planar mates
 holding a box into a corner also work.
 
-**Every mate joins two frames**, inferred from the face or edge picked. Z is
-the face normal, cylinder axis or edge direction; X is world X projected onto
-the plane, in part coordinates, so it doesn't flip between rebuilds. By
+**Every mate joins two frames**, inferred from the face, edge or vertex
+picked. Z is the face normal, cylinder axis or edge direction; X is world X
+projected onto the plane, in part coordinates, so it doesn't flip between
+rebuilds. **A vertex** has no name of its own, so it's stored as the end of a
+named edge it meets, nearest its fingerprint, and its frame takes the part's
+own axes (as Onshape's vertex connectors do): one Fastened mate between two
+corners, flipped, seats one box in another's corner the way both were
+modelled. **An offset** on a connector moves its frame within itself (mm along
+its own X/Y/Z, expressions that may name variables), set per side in the Mate
+dialog: offsets live on connectors, not on the mate, so there's one place to
+look (`connectorMatrix`). By
 default the two Z axes are opposed, so two faces touch. **Flip** aligns them
 and **Rotate 90°** adds quarter turns about Z. A cylinder or edge offers
 Middle / Start / End, shown by a ghost marker (ring and Z arrow, drawn through
@@ -231,9 +240,6 @@ solver.
 
 - Hover candidates: a face showing its snap points (centroid, circle centre,
   axis ends, vertices) before the click.
-- Vertex and offset connectors. Today a frame sits only at a face's centre or
-  along an edge or axis, so fastening a box into another's corner takes three
-  planars rather than one Fastened mate on a vertex.
 
 ---
 
@@ -389,7 +395,7 @@ pinning (parts have no versions yet).
   side), `drag.test.ts`, `frames.test.ts` (connector fitting on synthetic
   meshes, no OCCT in Node), `moveReadout.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
-  `width`, `loops`, `move`, `variables`, `pin`), against `npm run dev`; set
+  `width`, `loops`, `move`, `variables`, `pin`, `vertex`), against `npm run dev`; set
   `PW_EXE` to use a pre-installed Chromium (scripts on `scripts/lib/harness.mjs`
   read `CHROMIUM_PATH` instead). `pin` is the one Cylindrical mate
   between real faceted parts (a cylinder primitive in an extruded-circle
@@ -401,8 +407,6 @@ pinning (parts have no versions yet).
 
 ## Open questions
 
-- Mate offsets in the Mate dialog, or only on connectors (one place to look)?
-  Proposed: connectors only.
 - When a source part's part count changes (a cut splits a body), what happens
   to instances of `ext1#1`? Proposed: an instance resolves by `partId`; a
   vanished `partId` is a missing source with ⚠.

@@ -39,6 +39,7 @@ const lookupIn =
 const closeV = (p: Vec3, q: Vec3, digits = 5) => p.forEach((v, i) => expect(v).toBeCloseTo(q[i], digits));
 const dist = (p: Vec3, q: Vec3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
 const at = (s: { placements: Map<string, Mat4> }, id: string, p: Vec3) => applyPoint(s.placements.get(id)!, p);
+const at_ = at;
 
 describe("three planar mates hold a box in a corner", () => {
   // A: a floor (z = 0) with walls at x = 0 and y = 0. B: a 20 mm cube from
@@ -128,6 +129,35 @@ describe("dragging two parts locked together by three mates", () => {
     const { next } = dragAssembly(a, before, lookup, "B", move);
     const after = solve(next!, lookup);
     closeV(at(after, "B", [0, 0, 0]), at(before, "B", [0, 0, 0]), 5);
+  });
+});
+
+describe("one fastened mate on two vertices puts a box in a corner", () => {
+  // Vertex connectors frame with the part's own axes (frames.ts): A's inner
+  // corner at its origin, B's corner at its own. Flipped, the frames align, so
+  // B sits in the corner the way both were modelled. "inset" is a corner
+  // connector moved 3, 4 along A's axes — what an offset gives (the offset's
+  // own arithmetic is connectorMatrix's, tested in frames.test.ts).
+  const at = (o: Vec3): Mat4 => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, o[0], o[1], o[2], 1];
+  const frames = { innerCorner: at([0, 0, 0]), boxCorner: at([0, 0, 0]), inset: at([3, 4, 0]) };
+  const lookup = lookupIn(frames);
+  const corner = (aRef: string): AssemblyDoc => ({
+    instances: [inst("A", { grounded: true }), inst("B", { transform: multiply(translation([40, 30, 7]), rotZ(0.3)) })],
+    mates: [mate("f", "fastened", conn("A", aRef), conn("B", "boxCorner"), { flip: true })],
+    variables: [],
+  });
+
+  it("seats the box in the corner, square to it", () => {
+    const s = solve(corner("innerCorner"), lookup);
+    expect(s.problems.size).toBe(0);
+    closeV(at_(s, "B", [0, 0, 0]), [0, 0, 0]);
+    closeV(at_(s, "B", [20, 20, 20]), [20, 20, 20]);
+  });
+
+  it("sets it in by the corner's offset", () => {
+    const s = solve(corner("inset"), lookup);
+    closeV(at_(s, "B", [0, 0, 0]), [3, 4, 0]);
+    closeV(at_(s, "B", [20, 0, 0]), [23, 4, 0]);
   });
 });
 

@@ -14,7 +14,8 @@
 // renames it — the same contract as a dress-up's edge refs.
 import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types";
 import type { Mat4 } from "./types";
-import { meshBounds, type Vec3 } from "./placement";
+import { evaluateExpression, type Scope } from "../document/expression";
+import { meshBounds, multiply, translation, type Vec3 } from "./placement";
 
 /** A frame in PART coordinates: origin plus orthonormal X and Z (Y = Z × X). */
 export interface Frame {
@@ -28,7 +29,9 @@ export interface Frame {
 export type Anchor = "center" | "start" | "end";
 
 export interface ConnectorRef {
-  kind: "face" | "edge";
+  /** A vertex has no name of its own: it's stored as an end of a named edge
+   *  (`name` is that edge's), the end nearest `center`. */
+  kind: "face" | "edge" | "vertex";
   name: string;
   /** Fingerprint at pick time, in part coordinates. */
   center?: Vec3;
@@ -40,7 +43,8 @@ export type ConnectorShape =
   | { kind: "plane"; origin: Vec3; normal: Vec3 }
   | { kind: "cylinder"; axisPoint: Vec3; dir: Vec3; radius: number; tMin: number; tMax: number }
   | { kind: "circle"; center: Vec3; normal: Vec3; radius: number }
-  | { kind: "line"; mid: Vec3; dir: Vec3 };
+  | { kind: "line"; mid: Vec3; dir: Vec3 }
+  | { kind: "point"; origin: Vec3 };
 
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -396,6 +400,35 @@ export function edgeShape(edges: MeshedEdges, edgeId: number, faces?: MeshedFace
   return { kind: "line", mid: scale(add(a, b), 0.5), dir: canonical(dir) };
 }
 
+/** The distinct points an edge's line buffer holds: a straight edge's two
+ *  ends, a chord's ends. */
+function edgePoints(edges: MeshedEdges, edgeId: number): Vec3[] {
+  const eg = edgeGroup(edges, edgeId);
+  if (!eg) return [];
+  const { lines } = edges;
+  const pts: Vec3[] = [];
+  for (let i = eg.start; i < eg.start + eg.count; i++) pts.push([lines[i * 3], lines[i * 3 + 1], lines[i * 3 + 2]]);
+  return distinct(pts);
+}
+
+/** The edge end nearest `p` (and its edge), over every named edge, within
+ *  `tol`; null if none is that close. What a vertex resolves to. */
+function nearestEdgeEnd(edges: MeshedEdges, p: Vec3, tol: number): { name: string; point: Vec3 } | null {
+  let best: { name: string; point: Vec3 } | null = null;
+  let bestD = tol;
+  for (const g of edges.edgeGroups ?? []) {
+    if (!g.name) continue;
+    for (const q of edgePoints(edges, g.edgeId)) {
+      const d = len(sub(q, p));
+      if (d < bestD) {
+        bestD = d;
+        best = { name: g.name, point: q };
+      }
+    }
+  }
+  return best;
+}
+
 /** The normal of a planar face adjacent to an edge (edge names are
  *  "faceA∩faceB") that is parallel to `axis`, or null. */
 function adjacentPlane(faces: MeshedFaces, edgeName: string, axis: Vec3): Vec3 | null {
@@ -434,6 +467,11 @@ export function shapeFrame(shape: ConnectorShape, anchor: Anchor): Frame {
       return { origin: shape.center, z: shape.normal, x: defaultX(shape.normal) };
     case "line":
       return { origin: shape.mid, z: shape.dir, x: defaultX(shape.dir) };
+    // A vertex has no direction of its own: its frame takes the part's axes
+    // (as Onshape's vertex connectors do), so two parts fastened corner to
+    // corner keep their modelled orientations against each other.
+    case "point":
+      return { origin: shape.origin, z: [0, 0, 1], x: [1, 0, 0] };
     case "cylinder": {
       const t = anchor === "start" ? shape.tMin : anchor === "end" ? shape.tMax : (shape.tMin + shape.tMax) / 2;
       return { origin: add(shape.axisPoint, scale(shape.dir, t)), z: shape.dir, x: defaultX(shape.dir) };
@@ -441,12 +479,33 @@ export function shapeFrame(shape: ConnectorShape, anchor: Anchor): Frame {
   }
 }
 
+/** A connector's frame as a matrix, in part coordinates: the entity's frame
+ *  at `anchor`, moved within itself by `offset` (mm along its own X/Y/Z, as
+ *  expressions evaluated against `scope`). Throws on a bad offset. */
+export function connectorMatrix(
+  shape: ConnectorShape,
+  anchor: Anchor,
+  offset: Partial<Record<"x" | "y" | "z", string>> | undefined,
+  scope: Scope,
+): Mat4 {
+  const frame = frameMatrix(shapeFrame(shape, anchor));
+  if (!offset) return frame;
+  const v = (k: "x" | "y" | "z") => (offset[k]?.trim() ? evaluateExpression(offset[k]!, scope) : 0);
+  return multiply(frame, translation([v("x"), v("y"), v("z")]));
+}
+
 /** A picked face/edge as a stored reference (name + fingerprint). Null for an
  *  unnamed entity or one that can't anchor a mate. */
 export function connectorRefOf(
   mesh: ShapeMeshPayload,
-  pick: { kind: "face"; faceId: number } | { kind: "edge"; edgeId: number },
+  pick: { kind: "face"; faceId: number } | { kind: "edge"; edgeId: number } | { kind: "vertex"; point: Vec3 },
 ): { ref: ConnectorRef; shape: ConnectorShape } | null {
+  if (pick.kind === "vertex") {
+    // `point` is in part coordinates. Stored as the end of an edge it meets.
+    const end = nearestEdgeEnd(mesh.edges, pick.point, Math.max(1e-4, 1e-3 * partSize(mesh)));
+    if (!end) return null;
+    return { ref: { kind: "vertex", name: end.name, center: end.point }, shape: { kind: "point", origin: end.point } };
+  }
   if (pick.kind === "face") {
     const name = faceGroup(mesh.faces, pick.faceId)?.name;
     const shape = faceShape(mesh.faces, pick.faceId);
@@ -469,6 +528,8 @@ function fingerprint(s: ConnectorShape): { center: Vec3; normal?: Vec3 } {
       return { center: s.mid };
     case "cylinder":
       return { center: add(s.axisPoint, scale(s.dir, (s.tMin + s.tMax) / 2)) };
+    case "point":
+      return { center: s.origin };
   }
 }
 
@@ -480,6 +541,21 @@ export function resolveConnector(
   mesh: ShapeMeshPayload,
   ref: ConnectorRef,
 ): { shape: ConnectorShape; rematched: boolean } | null {
+  if (ref.kind === "vertex") {
+    if (!ref.center) return null;
+    // The end of its edge nearest where it was (the edge's own name holds it
+    // to that edge), else, the edge gone, any edge end where it was.
+    const g = mesh.edges.edgeGroups?.find((x) => x.name === ref.name);
+    if (g) {
+      const pts = edgePoints(mesh.edges, g.edgeId);
+      if (!pts.length) return null;
+      let best = pts[0];
+      for (const q of pts) if (len(sub(q, ref.center)) < len(sub(best, ref.center))) best = q;
+      return { shape: { kind: "point", origin: best }, rematched: false };
+    }
+    const end = nearestEdgeEnd(mesh.edges, ref.center, Math.max(0.05, 1e-3 * partSize(mesh)));
+    return end ? { shape: { kind: "point", origin: end.point }, rematched: true } : null;
+  }
   const byName =
     ref.kind === "face"
       ? mesh.faces.faceGroups?.find((g) => g.name === ref.name)

@@ -2047,7 +2047,8 @@ export default function App() {
     // The part clicked last is the one the gizmo moves; its faces and edges
     // gather (a second click on one drops it), as in a part document.
     setAsmSelected(isInstance ? [id] : []);
-    if (!picked || !isInstance || (picked.kind !== "face" && picked.kind !== "edge")) setAsmFaces([]);
+    if (!picked || !isInstance || (picked.kind !== "face" && picked.kind !== "edge" && picked.kind !== "vertex"))
+      setAsmFaces([]);
     else
       setAsmFaces((prev) => {
         const i = prev.findIndex((s) => sameSelection(s, picked));

@@ -43,6 +43,10 @@ export interface MateConnector {
    *  it. */
   ref2?: ConnectorRef;
   anchor: Anchor;
+  /** Moves the connector within its own frame (mm, as expressions that may
+   *  name the assembly's variables): a frame where no face or edge sits, say
+   *  a corner set in from a part's edge. Absent = none. */
+  offset?: Partial<Record<"x" | "y" | "z", string>>;
 }
 
 export interface Mate {
