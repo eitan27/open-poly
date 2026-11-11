@@ -450,8 +450,8 @@ The agent reads an open assembly through the same tools as a part
 - **Editing** (`agent/assemblyOps.ts`, pure, then `applyAssemblyOp` in
   `commands.ts`): `insert_instance` (a part document's parts, all or by id,
   beside what's placed as the Insert dialog does — `insertShift` — or at a
-  `position`), `ground_instance`, `add_mate`, `set_mate_value`,
-  `add_relation`, `set_variable` (the assembly's own; `setVariableByName` is
+  `position`), `ground_instance`, `add_mate`, `edit_mate`, `set_mate_value`,
+  `add_relation`, `edit_relation`, `set_variable` (the assembly's own; `setVariableByName` is
   shared with parts) and `delete` of an instance, mate or relation. Each is one step on the assembly's own undo history
   (`AgentContext.assemblyEdit.commit` is `setAssembly`), so Ctrl+Z undoes it,
   and each waits (`settle`) until the edit has rendered and every source has
@@ -475,6 +475,14 @@ The agent reads an open assembly through the same tools as a part
   MCP server returns the frames as images, each captioned with its value and,
   where the motion jams, the mate that can't hold. A DOF a relation drives is
   refused, naming the driver to sweep instead.
+- **Edits are in place** (`edit_mate`, `edit_relation`): only the fields given
+  change, and the id, name and relations stay — deleting a mate to re-add it
+  would delete its relations too. Values merge in (`""` clears one), limits
+  merge per DOF (`null` clears one). A new type drops the values and limits of
+  DOFs it lacks (a warning names them; a relation that used one reports a
+  problem), keeps a width mate's second faces only while it's a width mate,
+  and to become one needs both sides given again with `face2`. Edits are
+  checked as adds are, and one the solver can't hold is the op's failure.
 - **`set_mate_value` is the Move panel's typed value** (`setMateValue` in
   `relations.ts`, shared by both): a DOF a relation drives sets its driver to
   what puts it there, so it takes a number, not an expression.
@@ -498,9 +506,10 @@ The agent reads an open assembly through the same tools as a part
   frame capture in `scripts/tutorial/gif.mjs`, in-app via
   `canvas.captureStream` or a GIF encoder).
 
-**Agent / MCP: not planned yet:** editing a mate's connectors, flip or limits
-after it's made (the agent deletes and re-adds), and suppressing mates or
-relations.
+**Agent / MCP: next:** a suppress toggle on mate and relation rows (the
+model and solver already honour `suppressed`, but nothing sets it), then
+`set_suppressed` for the agent — for finding which mate over-constrains an
+assembly without losing it.
 
 **Smaller gaps.**
 

@@ -14,8 +14,16 @@ import {
   removeInstances,
   removeMates,
   updateInstance,
+  updateMate,
 } from "../assembly/assembly";
-import { addRelation, endsFit, nextRelationName, removeRelations, setMateValue } from "../assembly/relations";
+import {
+  addRelation,
+  endsFit,
+  nextRelationName,
+  removeRelations,
+  setMateValue,
+  updateRelation,
+} from "../assembly/relations";
 import { evaluateVariables, setVariableByName } from "../document/document";
 import {
   anchorsOf,
@@ -166,14 +174,8 @@ export function planMate(
   if ("error" in a) return a;
   const b = connectorOf(state, op.b, "b", width);
   if ("error" in b) return b;
-  const free = MATE_DOFS[op.type];
-  const notFree = (rec?: Partial<Record<Dof, unknown>>) =>
-    Object.keys(rec ?? {}).filter((d) => !free.includes(d as Dof));
-  const bad = [...notFree(op.values), ...notFree(op.limits)];
-  if (bad.length)
-    return fail(
-      `A ${op.type} mate leaves ${free.length ? free.join(", ") : "nothing"} free, not ${[...new Set(bad)].join(", ")}.`,
-    );
+  const bad = notFreeIn(op.type, op.values, op.limits);
+  if (bad) return fail(bad);
   const id = genId();
   const mate: Mate = {
     id,
@@ -215,23 +217,8 @@ export function planAddRelation(
   op: Extract<Operation, { op: "addRelation" }>,
   genId: () => string,
 ): Planned<{ assembly: AssemblyDoc; id: string }> {
-  for (const [role, end] of [
-    ["driver", op.driver],
-    ["driven", op.driven],
-  ] as const) {
-    const m = state.assembly.mates.find((x) => x.id === end.mateId);
-    if (!m) return fail(`${role}: no mate "${end.mateId}" — ids are in get_scene_summary's mates.`);
-    if (!MATE_DOFS[m.type].includes(end.dof))
-      return fail(
-        `${role}: ${m.name} is ${m.type}; it leaves ${MATE_DOFS[m.type].join(", ") || "nothing"} free, not ${end.dof}.`,
-      );
-  }
-  if (!endsFit(op.type, op.driver.dof, op.driven.dof))
-    return fail(
-      op.type === "gear"
-        ? "A gear couples two rotations (rx/ry/rz)."
-        : `A ${op.type} couples a rotation and a translation (rz with tz, say).`,
-    );
+  const bad = relationEndsProblem(state.assembly, op.type, op.driver, op.driven);
+  if (bad) return fail(bad);
   const id = genId();
   const rel: Relation = {
     id,
@@ -252,4 +239,134 @@ export function planSetVariable(
 ): Planned<{ assembly: AssemblyDoc; id: string }> {
   const r = setVariableByName(state.assembly, op.name, op.expression);
   return "error" in r ? r : { assembly: r.doc, id: r.id };
+}
+
+/** Why `values`/`limits` name a DOF a mate of `type` doesn't leave free, or
+ *  null when they don't. */
+function notFreeIn(type: Mate["type"], ...recs: (Partial<Record<Dof, unknown>> | undefined)[]): string | null {
+  const free = MATE_DOFS[type];
+  const bad = [...new Set(recs.flatMap((r) => Object.keys(r ?? {})).filter((d) => !free.includes(d as Dof)))];
+  return bad.length
+    ? `A ${type} mate leaves ${free.length ? free.join(", ") : "nothing"} free, not ${bad.join(", ")}.`
+    : null;
+}
+
+/** Why a relation of `type` can't join these ends, or null when it can. */
+function relationEndsProblem(
+  a: AssemblyDoc,
+  type: Relation["type"],
+  driver: Relation["driver"],
+  driven: Relation["driven"],
+): string | null {
+  for (const [role, end] of [
+    ["driver", driver],
+    ["driven", driven],
+  ] as const) {
+    const m = a.mates.find((x) => x.id === end.mateId);
+    if (!m) return `${role}: no mate "${end.mateId}" — ids are in get_scene_summary's mates.`;
+    if (!MATE_DOFS[m.type].includes(end.dof))
+      return `${role}: ${m.name} is ${m.type}; it leaves ${MATE_DOFS[m.type].join(", ") || "nothing"} free, not ${end.dof}.`;
+  }
+  if (!endsFit(type, driver.dof, driven.dof))
+    return type === "gear"
+      ? "A gear couples two rotations (rx/ry/rz)."
+      : `A ${type} couples a rotation and a translation (rz with tz, say).`;
+  return null;
+}
+
+/** `rec` with `patch` merged in, keeping only the DOFs in `keep`: a key the
+ *  patch sets to null (or, for a string, to "") is removed. Undefined when
+ *  nothing is left. */
+function merged<V>(
+  rec: Partial<Record<Dof, V>> | undefined,
+  patch: Partial<Record<Dof, V | null>> | undefined,
+  keep: readonly Dof[],
+): Partial<Record<Dof, V>> | undefined {
+  const out: Partial<Record<Dof, V>> = {};
+  for (const [d, v] of Object.entries({ ...rec, ...patch }) as [Dof, V | null | undefined][]) {
+    if (v === null || v === undefined || (typeof v === "string" && !v.trim())) continue;
+    if (keep.includes(d)) out[d] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+export function planEditMate(
+  state: AssemblyAgentState,
+  op: Extract<Operation, { op: "editMate" }>,
+): Planned<{ assembly: AssemblyDoc; dropped: Dof[] }> {
+  const base = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
+  const old = base.mates.find((m) => m.id === op.mateId);
+  if (!old) return fail(`No mate "${op.mateId}" — ids are in get_scene_summary's mates.`);
+  const type = op.type ?? old.type;
+  const width = type === "width";
+  // A side given again is resolved as add_mate's are; a side kept must still
+  // suit the type: a width mate needs its second face, any other drops it.
+  const side = (spec: ConnectorSpec | undefined, cur: MateConnector, which: "a" | "b"): Planned<MateConnector> => {
+    if (spec) return connectorOf(state, spec, which, width);
+    if (width && !cur.ref2)
+      return fail(
+        `${which}: a width mate needs two parallel faces on each part — give ${which} again with face and face2.`,
+      );
+    if (!width && cur.ref2) {
+      const { ref2: _ref2, ...rest } = cur;
+      return rest;
+    }
+    return cur;
+  };
+  const a = side(op.a, old.a, "a");
+  if ("error" in a) return a;
+  const b = side(op.b, old.b, "b");
+  if ("error" in b) return b;
+  if (a.instanceId === b.instanceId) return fail("A mate joins two different instances.");
+  // Values and limits given must be the new type's; old ones it lacks go.
+  const bad = notFreeIn(type, op.values, op.limits);
+  if (bad) return fail(bad);
+  const free = MATE_DOFS[type];
+  const dropped = [...new Set([...Object.keys(old.values ?? {}), ...Object.keys(old.limits ?? {})] as Dof[])].filter(
+    (d) => !free.includes(d),
+  );
+  const values = merged(old.values, op.values, free);
+  const limits = merged(old.limits, op.limits, free);
+  const flip = op.flip ?? !!old.flip;
+  const turns = op.turns ?? old.turns ?? 0;
+  const { values: _v, limits: _l, flip: _f, turns: _t, ...rest } = old;
+  const mate: Mate = {
+    ...rest,
+    type,
+    name: op.name ?? old.name,
+    a,
+    b,
+    ...(values ? { values } : {}),
+    ...(limits ? { limits } : {}),
+    ...(flip ? { flip: true } : {}),
+    ...(turns ? { turns } : {}),
+  };
+  return { assembly: updateMate(base, mate), dropped };
+}
+
+export function planEditRelation(
+  state: AssemblyAgentState,
+  op: Extract<Operation, { op: "editRelation" }>,
+): Planned<AssemblyDoc> {
+  const base = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
+  const old = base.relations?.find((r) => r.id === op.relationId);
+  if (!old) return fail(`No relation "${op.relationId}" — ids are in get_scene_summary's relations.`);
+  const type = op.type ?? old.type;
+  const driver = op.driver ?? old.driver;
+  const driven = op.driven ?? old.driven;
+  const bad = relationEndsProblem(base, type, driver, driven);
+  if (bad) return fail(bad);
+  const value = op.value ?? old.value;
+  if (!value.trim()) return fail("A relation needs a value: its ratio, radius or pitch.");
+  const reverse = op.reverse ?? !!old.reverse;
+  const { reverse: _r, ...rest } = old;
+  return updateRelation(base, {
+    ...rest,
+    type,
+    name: op.name ?? old.name,
+    driver,
+    driven,
+    value,
+    ...(reverse ? { reverse: true } : {}),
+  });
 }

@@ -80,6 +80,8 @@ import { assemblySummary, type AssemblyAgentState } from "./assemblySummary";
 import {
   planAddRelation,
   planDelete,
+  planEditMate,
+  planEditRelation,
   planGround,
   planInsert,
   planMate,
@@ -640,6 +642,8 @@ const ASSEMBLY_OPS: ReadonlySet<Operation["op"]> = new Set([
   "addMate",
   "setMateValue",
   "addRelation",
+  "editMate",
+  "editRelation",
   "setVariable",
   "delete",
 ]);
@@ -649,6 +653,8 @@ const ASSEMBLY_ONLY: ReadonlySet<Operation["op"]> = new Set([
   "addMate",
   "setMateValue",
   "addRelation",
+  "editMate",
+  "editRelation",
 ]);
 
 /** Apply an assembly op: plan it, commit it through the assembly's undo
@@ -656,6 +662,8 @@ const ASSEMBLY_ONLY: ReadonlySet<Operation["op"]> = new Set([
 async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op: Operation): Promise<OpResult> {
   let next: AssemblyDoc;
   let createdIds: string[] = [];
+  /** A note for the result's warnings, against the op's id. */
+  let note: string | undefined;
   switch (op.op) {
     case "insertInstance": {
       const source = await ctx.assemblyEdit.readSource(op.documentId);
@@ -691,6 +699,20 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
       createdIds = [r.id];
       break;
     }
+    case "editMate": {
+      const r = planEditMate(state, op);
+      if ("error" in r) throw new OpError(/^No mate/.test(r.error) ? "not_found" : "invalid_op", r.error);
+      next = r.assembly;
+      if (r.dropped.length)
+        note = `A ${op.type} mate has no ${r.dropped.join(", ")}: their values and limits were dropped.`;
+      break;
+    }
+    case "editRelation": {
+      const r = planEditRelation(state, op);
+      if ("error" in r) throw new OpError(/^No relation/.test(r.error) ? "not_found" : "invalid_op", r.error);
+      next = r;
+      break;
+    }
     case "setVariable": {
       const r = planSetVariable(state, op);
       if ("error" in r) throw new OpError("invalid_op", r.error);
@@ -711,7 +733,14 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
   const { timedOut } = await ctx.assemblyEdit.settle(state.assembly);
   const after = ctx.getAssembly();
   const createdId =
-    createdIds[0] ?? (op.op === "groundInstance" ? op.instanceId : op.op === "setMateValue" ? op.mateId : undefined);
+    createdIds[0] ??
+    (op.op === "groundInstance"
+      ? op.instanceId
+      : op.op === "setMateValue" || op.op === "editMate"
+        ? op.mateId
+        : op.op === "editRelation"
+          ? op.relationId
+          : undefined);
   const multi = createdIds.length > 1 ? { createdIds } : {};
   // What the solver says now: every mate's and relation's problem, and each
   // re-found connector; a new mate that doesn't hold is the op's own failure.
@@ -720,13 +749,16 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
   for (const [id, p] of after?.solution?.relationProblems ?? []) featureErrors[id] = p;
   const warnings: Record<string, string> = {};
   for (const [id, w] of after?.warnings ?? []) warnings[id] = w;
+  if (note && createdId) warnings[createdId] = note;
   if (timedOut)
     warnings[createdId ?? "assembly"] = "The assembly didn't finish loading in time; read it again shortly.";
   const extra = {
     ...(Object.keys(featureErrors).length ? { featureErrors } : {}),
     ...(Object.keys(warnings).length ? { warnings } : {}),
   };
-  if ((op.op === "addMate" || op.op === "addRelation") && createdId && featureErrors[createdId])
+  // A mate or relation made or edited into one the solver can't hold.
+  const made = ["addMate", "addRelation", "editMate", "editRelation"].includes(op.op);
+  if (made && createdId && featureErrors[createdId])
     return { ok: false, createdId, error: featureErrors[createdId], errorKind: "invalid_op", ...extra };
   return { ok: true, ...(createdId ? { createdId } : {}), ...multi, ...extra };
 }
@@ -738,7 +770,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
     if (ctx.documents.info().kind === "assembly" && !DOCUMENT_OPS.has(op.op)) {
       throw new OpError(
         "invalid_op",
-        `The open document is an assembly: ${op.op} models a part. On an assembly use insert_instance, ground_instance, add_mate, set_mate_value, add_relation, set_variable and delete (an instance, mate or relation), read it with get_scene_summary and screenshot, and switch documents with the document tools.`,
+        `The open document is an assembly: ${op.op} models a part. On an assembly use insert_instance, ground_instance, add_mate, edit_mate, set_mate_value, add_relation, edit_relation, set_variable and delete (an instance, mate or relation), read it with get_scene_summary and screenshot, and switch documents with the document tools.`,
       );
     }
     if (ASSEMBLY_ONLY.has(op.op))
@@ -1321,6 +1353,8 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       case "addMate":
       case "setMateValue":
       case "addRelation":
+      case "editMate":
+      case "editRelation":
         throw new OpError("invalid_op", `${op.op} works on an assembly.`);
       case "openDocument": {
         if (op.id === ctx.documents.info().id) return { ok: true, createdId: op.id };

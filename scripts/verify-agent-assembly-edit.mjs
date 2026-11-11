@@ -5,7 +5,8 @@
 // angle given), the panel showing it, Ctrl+Z undoing it like a hand-made one,
 // a mate the solver can't hold reported and deleted, and delete removing an
 // instance; then two arms geared together, driven by set_mate_value from
-// either end and by an assembly variable; animate_mate's stills of it. NB if the local open-poly MCP hub is running, this headless tab
+// either end and by an assembly variable; animate_mate's stills of it; and
+// edit_mate / edit_relation changing them in place. NB if the local open-poly MCP hub is running, this headless tab
 // connects to it and can take the bridge from your own tab; reload yours after.
 import { chromium } from "playwright";
 
@@ -229,6 +230,36 @@ const refusedAnim = await page.evaluate(
   rB,
 );
 check("a gear-driven mate can't be swept: its driver is named", /animate the driver/.test(refusedAnim), refusedAnim);
+
+// --- edit_mate / edit_relation: in place, ids and relations kept -----------------------
+const relId = gear.createdId;
+const lim = await apply({ op: "editMate", mateId: rA, limits: { rz: { min: -90, max: 90 } }, name: "Hinge A" });
+s = await summary();
+const ma = s.mates.find((x) => x.id === rA);
+check(
+  "edit_mate changes the mate in place, keeping its id and its gear",
+  lim.ok && ma?.name === "Hinge A" && ma.free[0].min === "-90" && s.relations.some((r) => r.id === relId),
+  JSON.stringify(lim),
+);
+check(
+  "…and the panel shows the new name",
+  (await page.locator(".asm-mate-row .solid-name").evaluateAll((els) => els.map((e) => e.value))).includes("Hinge A"),
+);
+const er = await apply({ op: "editRelation", relationId: relId, value: 3 });
+s = await summary();
+check(
+  "edit_relation changes the ratio in place",
+  er.ok && angle(s, rB).value === -3 * angle(s, rA).value && s.relations[0].id === relId,
+  `${angle(s, rA).value}, ${angle(s, rB).value}`,
+);
+await page
+  .locator(".viewport canvas")
+  .first()
+  .hover({ position: { x: 5, y: 5 } });
+await page.keyboard.press("Control+z");
+await page.waitForTimeout(500);
+s = await summary();
+check("Ctrl+Z undoes an edit", s.relations[0].value === "2", s.relations[0].value);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL PASS");
 await browser.close();

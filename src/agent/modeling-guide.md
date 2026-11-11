@@ -74,8 +74,9 @@ quoted in the warning).
   `duplicate_document` (opens the copy — a safe sandbox before risky edits).
   There is deliberately no delete — ask the human.
 - **Assemblies** (only while one is open — see [Assemblies](#assemblies)):
-  `insert_instance`, `ground_instance`, `add_mate`, `set_mate_value`,
-  `add_relation`, `set_variable`, `delete`, and the read `animate_mate`.
+  `insert_instance`, `ground_instance`, `add_mate`, `edit_mate`,
+  `set_mate_value`, `add_relation`, `edit_relation`, `set_variable`, `delete`,
+  and the read `animate_mate`.
 
 All mutations route through undo, so the human can revert anything you do.
 
@@ -153,7 +154,8 @@ walls or two straight edges**, whose Z both point "up" their part: without
 `flip` the second part comes out **upside down** (a pin turned over in its
 hole). `turns` (0–3) then rotates `b` in quarter turns about Z, for a fastened
 or sliding part that should face another way. If a screenshot shows a part
-reversed, `delete` the mate and add it again with `flip`/`turns` changed.
+reversed, **`edit_mate`** it with `flip`/`turns` changed — don't delete and
+re-add: deleting a mate also deletes the relations that use it.
 
 ### Mate types and their free DOFs
 
@@ -179,7 +181,10 @@ DOFs with their current values.
   the slot's two walls). Its mid-planes start aligned, so no `flip` is needed.
 
 `values` sets free DOFs when the mate is made; `limits` `{min, max}` bound them.
-`set_mate_value` changes one later (`""` resets it to 0).
+`set_mate_value` changes one later (`""` resets it to 0). `edit_mate` changes
+anything else in place — type, either connector, flip, turns, limits (`null`
+clears one) — keeping the mate's id and its relations; a new type drops values
+and limits for DOFs it doesn't have.
 
 **Plain numbers vs expressions.** A value that is an **expression** (names a
 variable, or is a formula) _drives_ the joint. A plain number is where it is:
@@ -201,7 +206,8 @@ variable, then `set_mate_value` it to that name — or sweep it with
   cylindrical mate's own `rz` → `tz` is a lead screw or a bolt.
 
 They chain (a gear train). The driven DOF's own value becomes a **phase** added
-on top (to line teeth up); its `free` entry shows `drivenBy`. Setting a driven
+on top (to line teeth up); its `free` entry shows `drivenBy`. `edit_relation`
+changes a relation's value, direction or ends in place. Setting a driven
 DOF with `set_mate_value` sets its driver instead — so give it a number, not an
 expression. A loop of relations, or two relations driving one DOF, is refused.
 
@@ -210,7 +216,8 @@ expression. A loop of relations, or two relations driving one DOF, is refused.
 - An op that makes a mate or relation the solver can't satisfy returns
   **`ok: false` with its `createdId`** and why (e.g. "Over-constrained: this
   mate conflicts with the other mates holding these parts") — it's kept so you
-  can see it: fix the cause and `delete` it, then try again. Two grounded
+  can see it: `edit_mate` / `edit_relation` it into one that holds, or
+  `delete` it. Two grounded
   parts can't be mated together unless they already sit where the mate puts
   them.
 - `get_scene_summary` marks each broken mate/relation with `problem`, and a
@@ -238,12 +245,11 @@ frame count that shows the motion you care about.
    bottom-back edge (`…/+y∩…/-z`), by name from `parts`.
 4. `add_mate` `revolute`, a = the Box edge, b = the Lid edge, `flip: true`
    (two straight edges); `screenshot` — the lid should lie closed on the box
-   (if it's turned over, delete and re-add with `flip`/`turns` changed).
+   (if it's turned over, `edit_mate` it with `flip`/`turns` changed).
 5. `set_mate_value` the hinge to 30 and `screenshot`: does the lid lift, or
    swing into the box? For an edge along +X with the lid lying toward −Y of
-   it, opening is **negative**. Set `limits` to match (here
-   `{rz: {min: -110, max: 0}}`: delete and re-add, or add them up front once
-   you know), and set it back to 0.
+   it, opening is **negative**. `edit_mate` the limits to match (here
+   `{rz: {min: -110, max: 0}}`) and set it back to 0.
 6. `animate_mate` the hinge: with limits set, it sweeps between them, open to
    closed.
 

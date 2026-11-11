@@ -624,6 +624,36 @@ export const operationSchema = z.discriminatedUnion("op", [
    *  rack: rotation ↔ translation, value = pinion radius (mm); screw:
    *  rotation ↔ translation, value = pitch (mm per turn) — a cylindrical
    *  mate's own rz → tz is a screw. reverse flips the direction. */
+  /** Change a mate, keeping its id, name and the relations that use it: only
+   *  the fields given change. a/b replace that side's connector (same form as
+   *  addMate). values merge in ("" clears one); limits merge in per DOF (null
+   *  clears one). A new type drops the values and limits of DOFs it doesn't
+   *  have (width needs a and b given again, with face2). */
+  z.object({
+    op: z.literal("editMate"),
+    mateId: z.string(),
+    type: z.enum(["fastened", "revolute", "slider", "cylindrical", "planar", "ball", "width"]).optional(),
+    a: connectorSpecSchema.optional(),
+    b: connectorSpecSchema.optional(),
+    name: z.string().min(1).optional(),
+    flip: z.boolean().optional(),
+    turns: z.number().int().min(0).max(3).optional(),
+    values: z.partialRecord(dofSchema, expr).optional(),
+    limits: z
+      .partialRecord(dofSchema, z.union([z.object({ min: expr.optional(), max: expr.optional() }), z.null()]))
+      .optional(),
+  }),
+  /** Change a relation: only the fields given change. */
+  z.object({
+    op: z.literal("editRelation"),
+    relationId: z.string(),
+    type: z.enum(["gear", "rack", "screw"]).optional(),
+    driver: z.object({ mateId: z.string(), dof: dofSchema }).optional(),
+    driven: z.object({ mateId: z.string(), dof: dofSchema }).optional(),
+    value: expr.optional(),
+    reverse: z.boolean().optional(),
+    name: z.string().min(1).optional(),
+  }),
   z.object({
     op: z.literal("addRelation"),
     type: z.enum(["gear", "rack", "screw"]),

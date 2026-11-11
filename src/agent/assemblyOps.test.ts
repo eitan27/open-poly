@@ -616,3 +616,153 @@ describe("the modeling guide's worked example", () => {
     expect(at(t, lid, [0, 0, 2])[2]).toBeLessThan(at(t, lid, [0, 0, 0])[2]);
   });
 });
+
+describe("edit_mate", () => {
+  /** Two hinges, geared 1:1, the first at 30° with limits. */
+  async function geared() {
+    const t = await twoHinges();
+    await t.apply({
+      op: "setMateValue",
+      mateId: t.r1,
+      dof: "rz",
+      value: 30,
+    });
+    const g = (
+      await t.apply({
+        op: "addRelation",
+        type: "gear",
+        driver: { mateId: t.r1, dof: "rz" },
+        driven: { mateId: t.r2, dof: "rz" },
+        value: 1,
+      })
+    ).createdId!;
+    return { ...t, g };
+  }
+  const mate = (t: ReturnType<typeof assemblyCtx>, id: string) => t.assembly().mates.find((m) => m.id === id)!;
+
+  it("changes only what's given, keeping the mate's id, name, values and relations", async () => {
+    const t = await geared();
+    const before = mate(t, t.r1);
+    const r = await t.apply({ op: "editMate", mateId: t.r1, flip: true });
+    expect(r).toMatchObject({ ok: true, createdId: t.r1 });
+    const after = mate(t, t.r1);
+    expect(after).toMatchObject({ id: before.id, name: before.name, flip: true, values: { rz: "30" } });
+    expect(after.a).toEqual(before.a);
+    expect(t.assembly().relations).toHaveLength(1);
+    await t.apply({ op: "editMate", mateId: t.r1, flip: false, turns: 2, name: "Lid hinge" });
+    expect(mate(t, t.r1)).toMatchObject({ name: "Lid hinge", turns: 2 });
+    expect(mate(t, t.r1).flip).toBeUndefined();
+  });
+
+  it('merges values and limits in, and clears one with "" or null', async () => {
+    const t = await geared();
+    await t.apply({ op: "editMate", mateId: t.r1, limits: { rz: { min: -90, max: 90 } } });
+    expect(mate(t, t.r1)).toMatchObject({ values: { rz: "30" }, limits: { rz: { min: "-90", max: "90" } } });
+    await t.apply({ op: "editMate", mateId: t.r1, values: { rz: "" }, limits: { rz: null } });
+    expect(mate(t, t.r1).values).toBeUndefined();
+    expect(mate(t, t.r1).limits).toBeUndefined();
+  });
+
+  it("replaces one side's connector, leaving the other", async () => {
+    const t = await geared();
+    const before = mate(t, t.r1);
+    const r = await t.apply({
+      op: "editMate",
+      mateId: t.r1,
+      b: { instanceId: t.c1, face: "box/+z" },
+      flip: true,
+    });
+    expect(r.ok).toBe(true);
+    expect(mate(t, t.r1).a).toEqual(before.a);
+    expect(mate(t, t.r1).b.ref.name).toBe("box/+z");
+  });
+
+  it("changes type, dropping DOFs the new one lacks, and reports what that breaks", async () => {
+    const t = await geared();
+    await t.apply({ op: "editMate", mateId: t.r1, limits: { rz: { max: 90 } } });
+    const cyl = await t.apply({ op: "editMate", mateId: t.r1, type: "cylindrical", values: { tz: 2 } });
+    expect(cyl.ok).toBe(true);
+    expect(mate(t, t.r1)).toMatchObject({ type: "cylindrical", values: { rz: "30", tz: "2" } });
+    const slide = await t.apply({ op: "editMate", mateId: t.r1, type: "slider" });
+    expect(slide.ok).toBe(true);
+    expect(mate(t, t.r1).values).toEqual({ tz: "2" });
+    expect(mate(t, t.r1).limits).toBeUndefined();
+    expect(slide.warnings?.[t.r1]).toMatch(/slider mate has no rz: their values and limits were dropped/);
+    // The gear drove r1's rz, which a slider hasn't got: it says so.
+    expect(slide.featureErrors?.[t.g]).toMatch(/no rz/);
+  });
+
+  it("needs both faces again to become a width mate", async () => {
+    const t = await geared();
+    expect((await t.apply({ op: "editMate", mateId: t.r1, type: "width" })).error).toMatch(
+      /a: a width mate needs two parallel faces.*give a again with face and face2/,
+    );
+    const w = await t.apply({
+      op: "editMate",
+      mateId: t.r1,
+      type: "width",
+      a: { instanceId: t.plate, face: "box/-y", face2: "box/+y" },
+      b: { instanceId: t.c1, face: "box/-y", face2: "box/+y" },
+    });
+    expect(w.ok).toBe(true);
+    // …and back: the second faces go.
+    await t.apply({ op: "editMate", mateId: t.r1, type: "planar" });
+    expect(mate(t, t.r1).a.ref2).toBeUndefined();
+  });
+
+  it("refuses what it can't do, changing nothing", async () => {
+    const t = await geared();
+    const before = JSON.stringify(t.assembly());
+    expect(await t.apply({ op: "editMate", mateId: "ghost", flip: true })).toMatchObject({ errorKind: "not_found" });
+    expect((await t.apply({ op: "editMate", mateId: t.r1, values: { tx: 1 } })).error).toMatch(
+      /revolute mate leaves rz free, not tx/,
+    );
+    expect((await t.apply({ op: "editMate", mateId: t.r1, b: { instanceId: t.plate, face: "box/-z" } })).error).toMatch(
+      /two different instances/,
+    );
+    expect(JSON.stringify(t.assembly())).toBe(before);
+  });
+});
+
+describe("edit_relation", () => {
+  async function geared() {
+    const t = await twoHinges();
+    await t.apply({ op: "setMateValue", mateId: t.r1, dof: "rz", value: 30 });
+    const g = (
+      await t.apply({
+        op: "addRelation",
+        type: "gear",
+        driver: { mateId: t.r1, dof: "rz" },
+        driven: { mateId: t.r2, dof: "rz" },
+        value: 2,
+      })
+    ).createdId!;
+    return { ...t, g };
+  }
+
+  it("changes its value, direction and name, keeping its id", async () => {
+    const t = await geared();
+    expect(value(t, t.r2)).toBeCloseTo(-60);
+    const r = await t.apply({ op: "editRelation", relationId: t.g, value: 3, reverse: true, name: "Belt" });
+    expect(r).toMatchObject({ ok: true, createdId: t.g });
+    expect(t.assembly().relations?.[0]).toMatchObject({ id: t.g, name: "Belt", value: "3", reverse: true });
+    expect(value(t, t.r2)).toBeCloseTo(90);
+    await t.apply({ op: "editRelation", relationId: t.g, reverse: false });
+    expect(t.assembly().relations?.[0].reverse).toBeUndefined();
+  });
+
+  it("refuses ends that don't fit, and reports an edit the solver refuses as the op's failure", async () => {
+    const t = await geared();
+    expect((await t.apply({ op: "editRelation", relationId: t.g, type: "rack" })).error).toMatch(
+      /rack couples a rotation and a translation/,
+    );
+    expect(await t.apply({ op: "editRelation", relationId: "ghost", value: 1 })).toMatchObject({
+      errorKind: "not_found",
+    });
+    // Edited so the solver can't apply it: kept, and the op's failure.
+    const self = await t.apply({ op: "editRelation", relationId: t.g, driven: { mateId: t.r1, dof: "rz" } });
+    expect(self).toMatchObject({ ok: false, createdId: t.g });
+    expect(self.error).toMatch(/drives itself/);
+    expect(t.assembly().relations?.[0].driven.mateId).toBe(t.r1);
+  });
+});
