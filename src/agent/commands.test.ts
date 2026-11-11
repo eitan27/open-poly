@@ -18,6 +18,7 @@ const NO_ASSEMBLY_EDIT: AgentContext["assemblyEdit"] = {
   commit: () => {},
   readSource: async () => ({ status: "missing" }),
   settle: async () => ({}),
+  frameOf: () => "No assembly.",
 };
 
 /** Workspace stub for tests that don't exercise multi-document ops. */

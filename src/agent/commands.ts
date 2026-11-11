@@ -86,7 +86,12 @@ import {
   planSetMateValue,
   planSetVariable,
 } from "./assemblyOps";
-import type { AssemblyDoc } from "../assembly/types";
+import type { AssemblyDoc, Dof, Mat4, MateConnector } from "../assembly/types";
+import { animatableDofs, animator, defaultSpec } from "../assembly/animate";
+import { multiply } from "../assembly/placement";
+import { evaluateVariables } from "../document/document";
+import { invertRigid, isRotation } from "../assembly/solve";
+import { relationDriving } from "../assembly/relations";
 import type { SourceState } from "../assembly/useAssemblySources";
 import {
   expandEntities,
@@ -94,6 +99,7 @@ import {
   type DimensionSpec,
   type Operation,
   type DocumentListing,
+  type AnimationFrames,
   type AssemblySummary,
   type OpResult,
   type PlaneRefSpec,
@@ -153,11 +159,16 @@ export interface AgentContext {
     /** Resolve once the open assembly is no longer `before` and every source
      *  has loaded and solved — what a read right after an edit should see. */
     settle(before: AssemblyDoc): Promise<{ timedOut?: boolean }>;
+    /** A connector's frame in its part (or why it can't be found), for the
+     *  open assembly: what the solver works from. */
+    frameOf(c: MateConnector): Mat4 | string;
   };
   /** The viewport API (camera + capturePNG), or null before it mounts. */
   getViewport(): {
     setView(name: ViewName): void;
     capturePNG(): string | null;
+    /** Pose bodies by matrix (see ViewportApi.poseBodies); null releases. */
+    poseBodies(poses: ReadonlyMap<string, readonly number[]> | null): void;
   } | null;
   /** Multi-document workspace. All mutations run through the
    *  App's switch flow (flush → load → adopt) — NEVER a raw setDoc — so
@@ -1556,4 +1567,72 @@ export function screenshot(ctx: AgentContext, opts?: { view?: ViewName }): strin
   if (!vp) return null;
   if (opts?.view) vp.setView(opts.view);
   return vp.capturePNG();
+}
+
+/** Sweep a mate's DOF and screenshot it at evenly spaced values (the
+ *  animateMate read): each frame is a solve with the DOF driven, as the
+ *  Animate dialog's are, posed by matrix and captured, then released, so
+ *  nothing is written. A full turn's last frame would repeat its first, so a
+ *  sweep of whole turns stops a step short of it. Throws with a reason. */
+export function animateMate(
+  ctx: AgentContext,
+  q: { mateId: string; dof?: Dof; from?: number; to?: number; frames?: number; view?: ViewName },
+): AnimationFrames {
+  const state = ctx.getAssembly();
+  if (!state) throw new Error("animate_mate works on an assembly; the open document is a part.");
+  const vp = ctx.getViewport();
+  if (!vp) throw new Error("No viewport to capture.");
+  const { assembly, solution } = state;
+  if (!solution) throw new Error("The assembly is still loading; try again shortly.");
+  const mate = assembly.mates.find((m) => m.id === q.mateId);
+  if (!mate) throw new Error(`No mate "${q.mateId}" — ids are in get_scene_summary's mates.`);
+  const dofs = animatableDofs(assembly, mate);
+  const dof = q.dof ?? dofs[0];
+  if (!dof) {
+    const driven = relationDriving(assembly, mate.id, mate.type === "fastened" ? "rz" : (q.dof ?? "rz"));
+    throw new Error(
+      mate.type === "fastened"
+        ? `${mate.name} is fastened: nothing moves.`
+        : `${mate.name}'s free DOFs are driven by relations${driven ? ` (${driven.name})` : ""}: animate the driver.`,
+    );
+  }
+  if (!dofs.includes(dof)) {
+    const r = relationDriving(assembly, mate.id, dof);
+    throw new Error(
+      r
+        ? `${mate.name}'s ${dof} is driven by ${r.name}: animate its driver (${r.driver.mateId} ${r.driver.dof}).`
+        : `${mate.name} is ${mate.type}: it leaves ${dofs.join(", ")} free, not ${dof}.`,
+    );
+  }
+  const scope = evaluateVariables(assembly.variables).scope;
+  const spec = defaultSpec(mate, dof, solution.values.get(mate.id)?.[dof] ?? 0, scope);
+  const from = q.from ?? spec.from;
+  const to = q.to ?? spec.to;
+  const n = q.frames ?? 4;
+  const span = to - from;
+  const wholeTurns = isRotation(dof) && span !== 0 && Math.abs(span) % 360 < 1e-9;
+  const step = span / (wholeTurns ? n : n - 1);
+  const values = Array.from({ length: n }, (_, i) => from + step * i);
+  const run = animator(assembly, ctx.assemblyEdit.frameOf, { mateId: mate.id, dof });
+  if (q.view) vp.setView(q.view);
+  const frames: AnimationFrames["frames"] = [];
+  try {
+    for (const value of values) {
+      const s = run.at(value);
+      // Each part posed by its motion from where its mesh is baked.
+      const poses = new Map<string, Mat4>();
+      for (const [id, p] of s.placements) {
+        const was = solution.placements.get(id);
+        if (was) poses.set(id, multiply(p, invertRigid(was)));
+      }
+      vp.poseBodies(poses);
+      const image = vp.capturePNG();
+      if (!image) throw new Error("No viewport to capture.");
+      const fresh = [...s.problems].find(([id]) => !solution.problems.has(id));
+      frames.push({ value: Math.round(value * 1000) / 1000, image, ...(fresh ? { problem: fresh[1] } : {}) });
+    }
+  } finally {
+    vp.poseBodies(null);
+  }
+  return { mateId: mate.id, dof, from, to, frames };
 }

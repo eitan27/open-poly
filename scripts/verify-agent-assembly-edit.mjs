@@ -5,7 +5,7 @@
 // angle given), the panel showing it, Ctrl+Z undoing it like a hand-made one,
 // a mate the solver can't hold reported and deleted, and delete removing an
 // instance; then two arms geared together, driven by set_mate_value from
-// either end and by an assembly variable. NB if the local open-poly MCP hub is running, this headless tab
+// either end and by an assembly variable; animate_mate's stills of it. NB if the local open-poly MCP hub is running, this headless tab
 // connects to it and can take the bridge from your own tab; reload yours after.
 import { chromium } from "playwright";
 
@@ -192,6 +192,43 @@ check(
 await apply({ op: "setVariable", name: "swing", expression: "10" });
 s = await summary();
 check("…and changing it turns both arms", angle(s, rA).value === 10 && angle(s, rB).value === -20);
+
+// --- animate_mate: stills of the motion, nothing saved ------------------------------------
+const before = await read({ read: "screenshot" });
+const docBefore = JSON.stringify(await read({ read: "document" }));
+const anim = await read({ read: "animateMate", mateId: rA, frames: 4 });
+check(
+  "animate_mate returns four frames a quarter turn apart",
+  anim.frames.length === 4 && anim.frames.map((f) => f.value).join() === "10,100,190,280",
+  anim.frames.map((f) => f.value).join(),
+);
+// Each arm is symmetric about its own centre, so a half turn apart looks the
+// same: only neighbouring frames must differ.
+check(
+  "…each a different picture from the one before",
+  anim.frames.every(
+    (f, i) => f.image.startsWith("data:image/png") && (i === 0 || f.image !== anim.frames[i - 1].image),
+  ),
+);
+if (process.env.SHOTS) {
+  const fs = await import("node:fs");
+  anim.frames.forEach((f, i) =>
+    fs.writeFileSync(`${process.env.SHOTS}/anim-${i}.png`, Buffer.from(f.image.split(",")[1], "base64")),
+  );
+}
+check("…leaving the view as it was", (await read({ read: "screenshot" })) === before);
+check("…and the document", JSON.stringify(await read({ read: "document" })) === docBefore);
+const refusedAnim = await page.evaluate(
+  (id) =>
+    Promise.resolve()
+      .then(() => window.__openpoly.read({ read: "animateMate", mateId: id }))
+      .then(
+        () => "",
+        (e) => String(e.message ?? e),
+      ),
+  rB,
+);
+check("a gear-driven mate can't be swept: its driver is named", /animate the driver/.test(refusedAnim), refusedAnim);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL PASS");
 await browser.close();

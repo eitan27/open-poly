@@ -98,7 +98,8 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
   `add_mate` (each side a face, edge or vertex of an instance's part, by the
   names listed under its part), `set_mate_value`, `add_relation` (gear, rack,
   screw), `set_variable` (the assembly's own) and `delete` (an instance, mate
-  or relation). Modelling ops are refused while an assembly is open.
+  or relation); `animate_mate` returns stills of a mate's motion. Modelling
+  ops are refused while an assembly is open.
 
 ## Recipes
 

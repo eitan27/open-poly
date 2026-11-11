@@ -12,7 +12,7 @@ import { solve } from "../assembly/solve";
 import type { AssemblyDoc, MateConnector } from "../assembly/types";
 import type { SourceState } from "../assembly/useAssemblySources";
 import type { ShapeMeshPayload } from "../kernel/types";
-import { applyOperation, type AgentContext } from "./commands";
+import { animateMate, applyOperation, type AgentContext } from "./commands";
 import { operationSchema } from "./operations";
 
 type V = [number, number, number];
@@ -127,6 +127,7 @@ function assemblyCtx(start: AssemblyDoc = createAssembly()) {
       },
       readSource: async (id) => SOURCES.get(id) ?? { status: "missing" },
       settle: async () => ({}),
+      frameOf,
     },
     getViewport: () => null,
     documents: {
@@ -485,5 +486,78 @@ describe("set_variable on an assembly", () => {
     await t.apply({ op: "setVariable", name: "gap", expression: "5" });
     expect(t.assembly().variables).toEqual([{ id: r.createdId, name: "gap", expression: "5" }]);
     expect((await t.apply({ op: "setVariable", name: "gap2", expression: "1" })).error).toMatch(/letters only/);
+  });
+});
+
+describe("animate_mate", () => {
+  /** A viewport that records each pose it's given and "captures" a frame by
+   *  numbering it. */
+  function recordingViewport(t: ReturnType<typeof assemblyCtx>) {
+    const poses: (ReadonlyMap<string, readonly number[]> | null)[] = [];
+    const views: string[] = [];
+    t.ctx.getViewport = () => ({
+      setView: (v) => void views.push(v),
+      capturePNG: () => `data:image/png;base64,frame${poses.length}`,
+      poseBodies: (p) => void poses.push(p),
+    });
+    return { poses, views };
+  }
+  const turnOf = (m: readonly number[]) => (Math.atan2(m[1], m[0]) * 180) / Math.PI;
+
+  it("captures a full turn in four quarter turns, posing the part each time, then lets go", async () => {
+    const t = await twoHinges();
+    const vp = recordingViewport(t);
+    const r = animateMate(t.ctx, { mateId: t.r1, view: "top" });
+    expect(r).toMatchObject({ mateId: t.r1, dof: "rz", from: 0, to: 360 });
+    expect(r.frames.map((f) => f.value)).toEqual([0, 90, 180, 270]);
+    expect(r.frames.map((f) => f.image)).toEqual([1, 2, 3, 4].map((n) => `data:image/png;base64,frame${n}`));
+    expect(vp.views).toEqual(["top"]);
+    // Each frame turns the hinged cube by its value; the other stays put.
+    vp.poses.slice(0, 4).forEach((p, i) => {
+      expect(Math.round(turnOf(p!.get(t.c1)!) + 360) % 360).toBe([0, 90, 180, 270][i]);
+      expect(turnOf(p!.get(t.c2)!)).toBeCloseTo(0);
+    });
+    expect(vp.poses.at(-1)).toBeNull();
+    // Nothing was written.
+    expect(t.assembly().mates.find((m) => m.id === t.r1)?.values).toBeUndefined();
+  });
+
+  it("sweeps from and to inclusive, turning what a relation drives too", async () => {
+    const t = await twoHinges();
+    await t.apply({
+      op: "addRelation",
+      type: "gear",
+      driver: { mateId: t.r1, dof: "rz" },
+      driven: { mateId: t.r2, dof: "rz" },
+      value: 1,
+    });
+    const vp = recordingViewport(t);
+    const r = animateMate(t.ctx, { mateId: t.r1, from: 0, to: 60, frames: 3 });
+    expect(r.frames.map((f) => f.value)).toEqual([0, 30, 60]);
+    expect(turnOf(vp.poses[2]!.get(t.c2)!)).toBeCloseTo(-60);
+  });
+
+  it("refuses what it can't sweep, saying what to do instead", async () => {
+    const t = await twoHinges();
+    recordingViewport(t);
+    await t.apply({
+      op: "addRelation",
+      type: "gear",
+      driver: { mateId: t.r1, dof: "rz" },
+      driven: { mateId: t.r2, dof: "rz" },
+      value: 1,
+    });
+    expect(() => animateMate(t.ctx, { mateId: t.r2 })).toThrow(/driven by relations \(Gear 1\): animate the driver/);
+    expect(() => animateMate(t.ctx, { mateId: t.r1, dof: "tz" })).toThrow(/revolute: it leaves rz free, not tz/);
+    expect(() => animateMate(t.ctx, { mateId: "ghost" })).toThrow(/No mate "ghost"/);
+    const fastened = await t.apply({
+      op: "addMate",
+      type: "fastened",
+      a: { instanceId: t.c1, face: "box/+z" },
+      b: { instanceId: (await t.apply({ op: "insertInstance", documentId: "cube" })).createdId!, face: "box/-z" },
+    });
+    expect(() => animateMate(t.ctx, { mateId: fastened.createdId! })).toThrow(/fastened: nothing moves/);
+    t.ctx.getAssembly = () => null;
+    expect(() => animateMate(t.ctx, { mateId: t.r1 })).toThrow(/works on an assembly/);
   });
 });

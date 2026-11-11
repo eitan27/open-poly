@@ -109,6 +109,11 @@ const READ_TOOLS: Record<string, { tool: string; description: string }> = {
     description:
       "Render the viewport and return a PNG image (optionally snap to a standard view first). Use it to verify what you built.",
   },
+  animateMate: {
+    tool: "animate_mate",
+    description:
+      "ASSEMBLY only. See a mechanism move: sweep one free DOF of a mate (dof defaults to its first; one a relation drives can't be swept — sweep its driver, and everything it drives moves too) from `from` to `to` and return a screenshot at each of `frames` (2-8, default 4) evenly spaced values, captioned with the value. from/to default to the DOF's limits, else a full turn (rotation) or 20 mm (translation) from where it is. Nothing is saved. A frame where the motion jams (a mate that can't hold there) is captioned with why.",
+  },
   documents: {
     tool: "list_documents",
     description:
@@ -167,6 +172,24 @@ export function registerBridgeTools(server: McpServer, hub: WsHub): void {
       async (args: Record<string, unknown>) => {
         const res = await forward(hub, "read", { read: readName, ...args });
         if (!res.ok) return toToolResult(res);
+        if (readName === "animateMate") {
+          const r = res.payload as {
+            mateId: string;
+            dof: string;
+            from: number;
+            to: number;
+            frames: { value: number; image: string; problem?: string }[];
+          };
+          const unit = r.dof.startsWith("r") ? "°" : " mm";
+          const content: CallToolResult["content"] = [
+            { type: "text", text: `${r.dof} of mate ${r.mateId}, ${r.from}${unit} → ${r.to}${unit}:` },
+          ];
+          for (const f of r.frames) {
+            content.push({ type: "text", text: `${r.dof} = ${f.value}${unit}${f.problem ? ` — ${f.problem}` : ""}` });
+            content.push({ type: "image", data: f.image.slice(f.image.indexOf(",") + 1), mimeType: "image/png" });
+          }
+          return { content };
+        }
         if (readName === "screenshot") {
           const url = res.payload as string | null;
           if (typeof url !== "string" || !url.startsWith("data:image/png;base64,")) {

@@ -7,6 +7,7 @@
 // console testing without any networking.
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
+  animateMate,
   applyOperation,
   getDocument,
   readSceneSummary,
@@ -155,6 +156,7 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
         commit: (next) => deps.assemblyEditRef.current.commit(next),
         readSource: (id) => deps.assemblyEditRef.current.readSource(id),
         settle: (before) => deps.assemblyEditRef.current.settle(before),
+        frameOf: (c) => deps.assemblyEditRef.current.frameOf(c),
       },
       getViewport: () => viewApiRef.current,
       // Delegate through the ref so the ctx stays stable while App's switch
@@ -192,6 +194,8 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
           return listDocuments(ctx); // async — the bridge awaits handler results
         case "screenshot":
           return screenshot(ctx, q.view ? { view: q.view } : undefined);
+        case "animateMate":
+          return animateMate(ctx, q);
       }
     },
     [ctx],

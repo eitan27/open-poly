@@ -653,6 +653,20 @@ export const readQuerySchema = z.discriminatedUnion("read", [
     /** Snap the camera to a standard view before capturing. */
     view: z.enum(["front", "back", "left", "right", "top", "bottom", "iso"]).optional(),
   }),
+  /** ASSEMBLY only: sweep one free DOF of a mate from `from` to `to` and
+   *  screenshot it at `frames` evenly spaced values — the Animate dialog's
+   *  motion, as stills. Nothing is written to the document. from/to default
+   *  as the dialog's: between the DOF's limits, else a full turn (a rotation)
+   *  or 20 mm (a translation) from where it is. */
+  z.object({
+    read: z.literal("animateMate"),
+    mateId: z.string(),
+    dof: dofSchema.optional(),
+    from: z.number().optional(),
+    to: z.number().optional(),
+    frames: z.number().int().min(2).max(8).optional(),
+    view: z.enum(["front", "back", "left", "right", "top", "bottom", "iso"]).optional(),
+  }),
 ]);
 export type ReadQuery = z.infer<typeof readQuerySchema>;
 
@@ -660,6 +674,16 @@ export type ReadQuery = z.infer<typeof readQuerySchema>;
 export const READ_NAMES = readQuerySchema.options.map((o) => o.shape.read.value);
 
 // --- Result shapes --------------------------------------------------------
+
+/** What animateMate returns: each frame's DOF value, PNG data URL, and any
+ *  mate that frame leaves unsatisfied (where the motion jams). */
+export interface AnimationFrames {
+  mateId: string;
+  dof: string;
+  from: number;
+  to: number;
+  frames: { value: number; image: string; problem?: string }[];
+}
 
 export type ErrorKind = "not_found" | "invalid_op" | "kernel_error";
 

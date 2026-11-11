@@ -466,6 +466,15 @@ The agent reads an open assembly through the same tools as a part
   stays, so the agent can see it and `delete` it. A relation the solver
   refuses (a cycle, a DOF driven twice) likewise; ends of the wrong kind are
   refused before anything is made.
+- **`animate_mate`** is a read, not an op: it sweeps one free DOF of a mate
+  and returns a screenshot at each of a few evenly spaced values (2–8,
+  default 4), from/to defaulting as the Animate dialog's do. Each frame is
+  `animator`'s solve, posed through `poseBodies` and captured, then released,
+  so nothing is written and the view is left as it was. A sweep of whole
+  turns stops a step short, so its last frame doesn't repeat its first. The
+  MCP server returns the frames as images, each captioned with its value and,
+  where the motion jams, the mate that can't hold. A DOF a relation drives is
+  refused, naming the driver to sweep instead.
 - **`set_mate_value` is the Move panel's typed value** (`setMateValue` in
   `relations.ts`, shared by both): a DOF a relation drives sets its driver to
   what puts it there, so it takes a number, not an expression.
@@ -483,9 +492,8 @@ The agent reads an open assembly through the same tools as a part
   frame capture in `scripts/tutorial/gif.mjs`, in-app via
   `canvas.captureStream` or a GIF encoder).
 
-**Agent / MCP: still to come**, in order: `animate_mate` (the per-frame
-solve, captured at a few values as a screenshot strip); then a full assembly
-section in `src/agent/modeling-guide.md`, which today has a paragraph. Not
+**Agent / MCP: still to come:** a full assembly section in
+`src/agent/modeling-guide.md`, which today has a paragraph. Not
 planned yet: editing a mate's connectors, flip or limits after it's made
 (delete and re-add), and suppressing mates or relations.
 
