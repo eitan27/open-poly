@@ -73,18 +73,23 @@ const OP_DESCRIPTIONS: Record<string, string> = {
     "Import a DXF drawing as an EDITABLE sketch (not an opaque body like import_step). source is the DXF file text; plane places the sketch (datum/planeId/body face); scale multiplies all coordinates (DXF is unitless — 25.4 if the drawing is in inches, else 1 = mm). Handles LINE/CIRCLE/ARC/POLYLINE(bulges)/SPLINE/TEXT; unsupported types are skipped and reported as a warning. Imported geometry is free (unconstrained).",
   openDocument:
     "Switch the working document to `id` (from list_documents). Resolves after its geometry regenerates; undo history resets. Check get_scene_summary's documentId/documentName before assuming which file you're in.",
-  newDocument: "Create and open a NEW empty document (optionally named). The previous document is autosaved.",
+  newDocument:
+    "Create and open a NEW empty document (optionally named): kind 'part' (default) to model, or 'assembly' to place and mate parts of other documents. The previous document is autosaved.",
   renameDocument: "Rename a document (id defaults to the active one). Display-name only — not an undoable model edit.",
   duplicateDocument:
     "Duplicate a document (id defaults to the active one) and open the copy — a safe sandbox before risky edits.",
 };
 
 const READ_TOOLS: Record<string, { tool: string; description: string }> = {
-  document: { tool: "get_document", description: "Return the full document JSON (ground truth)." },
+  document: {
+    tool: "get_document",
+    description:
+      "Return the full document JSON (ground truth): a part's features, or an assembly's instances, mates, relations and variables.",
+  },
   sceneSummary: {
     tool: "get_scene_summary",
     description:
-      "Compact, LLM-first digest: bodies (named faces/edges, bbox), sketches (entities by id+type, regions, constraints by id+type+refs), planes, variables, rollback, selection. Your primary planning input — read it to get the entity id for a revolve axis, region ids, face/edge names, and constraint ids to remove.",
+      "Compact, LLM-first digest: bodies (named faces/edges, bbox), sketches (entities by id+type, regions, constraints by id+type+refs), planes, variables, rollback, selection. Your primary planning input — read it to get the entity id for a revolve axis, region ids, face/edge names, and constraint ids to remove. On an ASSEMBLY (kind: 'assembly') it lists instead: parts (each once, with the face/edge names a mate connector can use), instances (part, grounded, mated, world bbox), mates (type, both connectors, each free DOF with its value — `expression` when one drives it, `drivenBy` a relation id), relations (gear/rack/screw), loop groups, variables, and every problem or ⚠.",
   },
   selection: { tool: "get_selection", description: "Return the current viewport selection." },
   screenshot: {
@@ -95,7 +100,7 @@ const READ_TOOLS: Record<string, { tool: string; description: string }> = {
   documents: {
     tool: "list_documents",
     description:
-      'All stored documents (id, name, edited time, feature/part counts), most-recently-edited first, with the ACTIVE one flagged. Entry point for "continue the X document" — find it here, then open_document.',
+      'All stored documents (id, name, kind part|assembly, edited time, feature/part counts, and for an assembly its instance/mate counts), most-recently-edited first, with the ACTIVE one flagged. Entry point for "continue the X document" — find it here, then open_document.',
   },
 };
 

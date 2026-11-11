@@ -88,6 +88,13 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
 - `new_document` starts empty (the previous document autosaves); pass `name`
   so the human can find it later.
 - Never guess ids — they come from `list_documents`.
+- A document is a **part** (you model it) or an **assembly** (`kind` in
+  `list_documents`): instances of other documents' parts, joined by mates.
+  `new_document` with `kind: "assembly"` makes one. On an assembly,
+  `get_scene_summary` lists its parts (with the face/edge names a mate can
+  use), instances, mates (each free DOF and its value), relations and
+  problems, and `screenshot` shows it — but you can't edit an assembly yet:
+  modelling ops are refused while one is open.
 
 ## Recipes
 

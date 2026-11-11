@@ -188,6 +188,7 @@ import { useRevolveDialog } from "./hooks/useRevolveDialog";
 import { usePersistedDocuments } from "./hooks/usePersistedDocuments";
 import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentMesh, RegenSettle } from "./agent/commands";
+import type { AssemblyAgentState } from "./agent/assemblySummary";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { PatternDialog } from "./ui/PatternDialog";
@@ -2586,6 +2587,17 @@ export default function App() {
     duplicate: duplicateDocument,
     rename: renameDocument,
   });
+  // What the agent reads of an open assembly (agent/assemblySummary.ts).
+  const agentAssemblyRef = useRef<AssemblyAgentState | null>(null);
+  agentAssemblyRef.current = assembly
+    ? {
+        assembly,
+        solution: mates.solution,
+        sources: asmSources,
+        warnings: mates.warnings,
+        selection: asmSelected,
+      }
+    : null;
   agentDocApiRef.current = {
     info: () => ({ id: docIdRef.current!, name: docName, ...(isAssembly ? { kind: "assembly" as const } : {}) }),
     open: openDocument,
@@ -2606,6 +2618,7 @@ export default function App() {
     waitForRegen,
     viewApiRef,
     docApiRef: agentDocApiRef,
+    assemblyRef: agentAssemblyRef,
   });
 
   // Exit isolate if the isolated body disappears (deleted / consumed / regen).

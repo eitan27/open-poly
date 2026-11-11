@@ -79,12 +79,15 @@ import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types
 import type { SectionViewState } from "../document/sectionView";
 import type { Selection } from "../selection/types";
 import type { ViewName } from "../viewport/types";
+import { assemblySummary, type AssemblyAgentState } from "./assemblySummary";
+import type { AssemblyDoc } from "../assembly/types";
 import {
   expandEntities,
   type ConstraintSpec,
   type DimensionSpec,
   type Operation,
   type DocumentListing,
+  type AssemblySummary,
   type OpResult,
   type PlaneRefSpec,
   type ProfileSpec,
@@ -130,6 +133,9 @@ export interface AgentContext {
   /** Resolve after the next kernel regeneration settles — so a mutating op can
    *  report success/errors and a follow-up read/screenshot sees the result. */
   waitForRegen(): Promise<RegenSettle>;
+  /** The open assembly with its solution and sources, or null when the open
+   *  document is a part. */
+  getAssembly(): AssemblyAgentState | null;
   /** The viewport API (camera + capturePNG), or null before it mounts. */
   getViewport(): {
     setView(name: ViewName): void;
@@ -142,8 +148,9 @@ export interface AgentContext {
     /** Active document identity (id + display name). `kind` absent = a part. */
     info(): { id: string; name: string; kind?: "assembly" };
     open(id: string): Promise<void>;
-    /** Create + open an empty document (name auto-deduped "Untitled N"). */
-    create(): Promise<void>;
+    /** Create + open an empty document (name auto-deduped "Untitled N"): a
+     *  part unless `kind` says otherwise. */
+    create(kind?: "part" | "assembly"): Promise<void>;
     /** Duplicate `id` and open the copy. */
     duplicate(id: string): Promise<void>;
     rename(id: string, name: string): Promise<void>;
@@ -601,7 +608,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
     if (ctx.documents.info().kind === "assembly" && !DOCUMENT_OPS.has(op.op)) {
       throw new OpError(
         "invalid_op",
-        "The open document is an assembly; assembly editing isn't exposed to the agent yet. Open a part document to model.",
+        "The open document is an assembly, and the agent can't edit assemblies yet: get_scene_summary and screenshot read it, and the document tools (open/new/rename/duplicate) work. Open a part document to model.",
       );
     }
     const doc = ctx.getDoc();
@@ -1207,7 +1214,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         };
       }
       case "newDocument": {
-        await ctx.documents.create();
+        await ctx.documents.create(op.kind ?? "part");
         const id = ctx.documents.info().id;
         if (op.name) await ctx.documents.rename(id, op.name);
         await ctx.waitForRegen(); // empty doc — settles immediately
@@ -1273,8 +1280,10 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
 
 // --- Reads ----------------------------------------------------------------
 
-export function getDocument(ctx: AgentContext): Document {
-  return ctx.getDoc();
+/** The open document's ground truth: a part's Document, or an assembly's
+ *  AssemblyDoc (instances, mates, relations, variables). */
+export function getDocument(ctx: AgentContext): Document | AssemblyDoc {
+  return ctx.getAssembly()?.assembly ?? ctx.getDoc();
 }
 
 export function getSelection(ctx: AgentContext): Selection[] {
@@ -1323,6 +1332,14 @@ function constraintRefIds(c: SketchConstraint): string[] {
   }
 }
 
+/** The open document's summary — what the get_scene_summary read returns: an
+ *  assembly's (assemblySummary.ts) or a part's (getSceneSummary). */
+export function readSceneSummary(ctx: AgentContext): SceneSummary | AssemblySummary {
+  const a = ctx.getAssembly();
+  return a ? assemblySummary(a, ctx.documents.info()) : getSceneSummary(ctx);
+}
+
+/** A part document's summary. */
 export function getSceneSummary(ctx: AgentContext): SceneSummary {
   const doc = ctx.getDoc();
   const meshes = ctx.getMeshes();
@@ -1415,6 +1432,7 @@ export async function listDocuments(ctx: AgentContext): Promise<DocumentListing[
     kind: m.kind ?? "part",
     featureCount: m.featureCount,
     partCount: m.partCount,
+    ...(m.kind === "assembly" ? { instanceCount: m.instanceCount ?? 0, mateCount: m.mateCount ?? 0 } : {}),
     active: m.id === activeId,
   }));
 }

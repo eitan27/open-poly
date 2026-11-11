@@ -557,7 +557,12 @@ export const operationSchema = z.discriminatedUnion("op", [
     entityId: z.string(),
     at: z.tuple([z.number(), z.number()]),
   }),
-  z.object({ op: z.literal("newDocument"), name: z.string().optional() }),
+  /** kind defaults to "part"; an assembly places parts of other documents. */
+  z.object({
+    op: z.literal("newDocument"),
+    name: z.string().optional(),
+    kind: z.enum(["part", "assembly"]).optional(),
+  }),
   /** id defaults to the active document. Rename is not an undoable model edit. */
   z.object({ op: z.literal("renameDocument"), id: z.string().optional(), name: z.string().min(1) }),
   /** id defaults to the active document; the copy opens as the working doc. */
@@ -617,6 +622,9 @@ export interface DocumentListing {
   kind: "part" | "assembly";
   featureCount: number;
   partCount: number;
+  /** Assemblies only: how many part instances it places, and mates join them. */
+  instanceCount?: number;
+  mateCount?: number;
   /** True for the document currently open in the tab. */
   active: boolean;
 }
@@ -658,6 +666,98 @@ export interface SceneSummary {
   featureCount: number;
   selection: unknown[];
   errors: Record<string, string>;
+}
+
+/** The scene summary of an open ASSEMBLY (see agent/assemblySummary.ts):
+ *  what's placed, how it's joined, and what can still move. `kind` tells it
+ *  from a part's SceneSummary. */
+export interface AssemblySummary {
+  kind: "assembly";
+  documentId: string;
+  documentName: string;
+  /** The parts instances are made from, each once: `key` is what an instance's
+   *  `part` names. `faces`/`edges` are the names a mate's connector can use
+   *  (a vertex is an end of a named edge). Absent while its document loads or
+   *  when it can't be read (`problem`). */
+  parts: {
+    key: string;
+    documentId: string;
+    documentName?: string;
+    partId: string;
+    name?: string;
+    faces?: string[];
+    edges?: string[];
+    problem?: string;
+  }[];
+  instances: {
+    id: string;
+    name: string;
+    /** A `parts[].key`. */
+    part: string;
+    grounded?: boolean;
+    hidden?: boolean;
+    /** Placed by a mate (else by its own stored placement). */
+    mated?: boolean;
+    /** World-space bounds where it's placed now. */
+    bbox?: { min: [number, number, number]; max: [number, number, number] };
+  }[];
+  mates: {
+    id: string;
+    name: string;
+    type: string;
+    a: AssemblyConnectorSummary;
+    b: AssemblyConnectorSummary;
+    flip?: boolean;
+    /** Quarter turns of b about the mate's Z. */
+    turns?: number;
+    /** What the mate leaves free, with where each is now. `expression` when its
+     *  value is one (it drives); `drivenBy` a relation id when one sets it. */
+    free: {
+      dof: string;
+      label: string;
+      value: number;
+      expression?: string;
+      drivenBy?: string;
+      min?: string;
+      max?: string;
+    }[];
+    suppressed?: boolean;
+    /** Why it couldn't be applied. */
+    problem?: string;
+    /** It applies, but a connector was re-found by fingerprint: check it. */
+    warning?: string;
+  }[];
+  relations: {
+    id: string;
+    name: string;
+    type: string;
+    driver: { mateId: string; dof: string };
+    driven: { mateId: string; dof: string };
+    value: string;
+    reverse?: boolean;
+    suppressed?: boolean;
+    problem?: string;
+  }[];
+  /** Groups of instances solved together (a closed loop of mates, or two mates
+   *  between one pair): their plain-number mate values only report. */
+  loops: { instanceIds: string[]; mateIds: string[] }[];
+  variables: { name: string; expression: string; value?: number }[];
+  /** Selected instance ids. */
+  selection: string[];
+}
+
+/** One side of a mate, as the assembly summary shows it. */
+export interface AssemblyConnectorSummary {
+  instanceId: string;
+  /** "face" | "edge" | "vertex" — a vertex is the end of `name` nearest where it was picked. */
+  kind: string;
+  /** The face or edge name on the instance's part. */
+  name: string;
+  /** A width mate's second face. */
+  name2?: string;
+  /** Where on the entity the connector sits: center, or an edge's start/end. */
+  anchor: string;
+  offset?: Partial<Record<"x" | "y" | "z", string>>;
 }
 
 // --- Expression-aware coordinate arithmetic -------------------------------

@@ -429,6 +429,27 @@ A translation driving a rotation uses 1/k; Reverse negates k.
   mates, which the view doesn't show. Its problem line is a solve of the
   assembly with the draft added, so it says what the solver would.
 
+## The agent
+
+The agent reads an open assembly through the same tools as a part
+(`agent/assemblySummary.ts`, wired through `AgentContext.getAssembly`):
+
+- **`get_scene_summary`** returns an `AssemblySummary` (`kind: "assembly"`):
+  each part once, with the face and edge names a connector can use (so three
+  instances of a 96-gon part don't list its rim three times), then instances
+  by part key with grounding, whether a mate places them and a world bbox;
+  mates with both connectors and every free DOF's solved value, marked
+  `expression` when one drives it and `drivenBy` when a relation does;
+  relations; loop groups; variables; the selection; and each problem or ⚠.
+  `readSceneSummary` picks it or the part summary; `getSceneSummary` stays the
+  part one.
+- **`get_document`** returns the `AssemblyDoc`, not the empty part model an
+  assembly record carries.
+- **`list_documents`** adds `instanceCount` and `mateCount` for an assembly;
+  **`new_document`** takes `kind: "assembly"`.
+- Every other op is refused while an assembly is open, with a message saying
+  what does work.
+
 ## Not built yet
 
 **Motion.**
@@ -440,12 +461,15 @@ A translation driving a rotation uses 1/k; Reverse negates k.
   frame capture in `scripts/tutorial/gif.mjs`, in-app via
   `canvas.captureStream` or a GIF encoder).
 
-**Agent / MCP** (the agent drives the same document ops): `new_document` gains
-`kind`; `list_documents` reports kind; new tools `insert_instance`, `add_mate`
-(connector refs by face name, as dress-up refs are), `set_mate_value`,
-`ground_instance`, `animate_mate` (returns a screenshot strip).
-`get_scene_summary` on an assembly reports instances, mates, free DOFs and
-⚠s. An assembly section in `src/agent/modeling-guide.md`.
+**Agent / MCP: editing.** The agent reads assemblies (see "The agent" above)
+but every edit is refused while one is open. Still to come, in order:
+`insert_instance`, `ground_instance` and `add_mate` (connectors by face, edge
+or vertex name from the summary's `parts`, as dress-up refs are); then
+`set_mate_value` and `add_relation` (through `setMateValue`'s driver routing);
+then `animate_mate` (the per-frame solve, captured at a few values as a
+screenshot strip); then an assembly section in `src/agent/modeling-guide.md`.
+Edits must go through the assembly's own undo setter, as part ops go through
+`setDoc`.
 
 **Smaller gaps.**
 
@@ -475,12 +499,14 @@ pinning (parts have no versions yet).
   candidate points on synthetic meshes, no OCCT in Node), `variables.test.ts`
   (mate values and limits naming variables, in the tree, a loop and a drag),
   `assembly.test.ts` (including `connectorWarnings`), `mateTypes.test.ts`
-  (`mateValuesText`), `moveReadout.test.ts`. Renaming variables through their
+  (`mateValuesText`), `moveReadout.test.ts`. The agent's assembly summary
+  is `src/agent/assemblySummary.test.ts`. Renaming variables through their
   uses is `src/document/renameVariable.test.ts`; the mate count is in
   `src/storage/db.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
   `width`, `loops`, `move`, `variables`, `pin`, `vertex`, `animate`,
-  `relations`), against `npm run dev`; set
+  `relations`), and `verify-agent-assembly-read.mjs` for the agent's reads,
+  against `npm run dev`; set
   `PW_EXE` to use a pre-installed Chromium (scripts on `scripts/lib/harness.mjs`
   read `CHROMIUM_PATH` instead). `pin` is the one Cylindrical mate
   between real faceted parts (a cylinder primitive in an extruded-circle

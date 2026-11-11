@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   applyOperation,
   getDocument,
-  getSceneSummary,
+  readSceneSummary,
   getSelection,
   listDocuments,
   screenshot,
@@ -26,9 +26,12 @@ import {
   type Operation,
   type OpResult,
   type ReadQuery,
+  type AssemblySummary,
   type SceneSummary,
 } from "./operations";
 import { BridgeClient, type BridgeStatus } from "./bridgeClient";
+import type { AssemblyAgentState } from "./assemblySummary";
+import type { AssemblyDoc } from "../assembly/types";
 import { genId } from "../document/document";
 import type { Document } from "../document/types";
 import type { SectionViewState } from "../document/sectionView";
@@ -54,6 +57,9 @@ interface BridgeDeps {
   /** Multi-document workspace API. App refreshes the ref each
    *  render so the getters/actions always see the latest switch-flow closures. */
   docApiRef: RefObject<AgentContext["documents"]>;
+  /** The open assembly's state (null: a part is open). App refreshes it each
+   *  render, like docApiRef. */
+  assemblyRef: RefObject<AssemblyAgentState | null>;
 }
 
 /** The dev-console handle. `apply` validates the op with the shared zod schema
@@ -62,9 +68,11 @@ interface BridgeDeps {
 export interface OpenPolyApi {
   apply(op: Operation): Promise<OpResult>;
   /** `documents` resolves async (IndexedDB); the rest return synchronously. */
-  read(query: ReadQuery): Document | SceneSummary | Selection[] | string | null | Promise<DocumentListing[]>;
-  document(): Document;
-  summary(): SceneSummary;
+  read(
+    query: ReadQuery,
+  ): Document | AssemblyDoc | SceneSummary | AssemblySummary | Selection[] | string | null | Promise<DocumentListing[]>;
+  document(): Document | AssemblyDoc;
+  summary(): SceneSummary | AssemblySummary;
   selection(): Selection[];
   screenshot(view?: ViewName): string | null;
   /** Project a world point to canvas CSS pixels (dev/console + e2e scripts:
@@ -140,18 +148,19 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
       getMeshes: () => meshesRef.current,
       getErrors: () => errorsRef.current,
       waitForRegen: () => waitForRegenRef.current(),
+      getAssembly: () => deps.assemblyRef.current,
       getViewport: () => viewApiRef.current,
       // Delegate through the ref so the ctx stays stable while App's switch
       // flow callbacks (which close over doc/docName/rawMeshes) are refreshed.
       documents: {
         info: () => deps.docApiRef.current.info(),
         open: (id) => deps.docApiRef.current.open(id),
-        create: () => deps.docApiRef.current.create(),
+        create: (kind) => deps.docApiRef.current.create(kind),
         duplicate: (id) => deps.docApiRef.current.duplicate(id),
         rename: (id, name) => deps.docApiRef.current.rename(id, name),
       },
     }),
-    [meshesRef, errorsRef, viewApiRef, deps.docApiRef],
+    [meshesRef, errorsRef, viewApiRef, deps.docApiRef, deps.assemblyRef],
   );
 
   // Apply/read handlers shared by the WS bridge and the dev console. Validate
@@ -169,7 +178,7 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
         case "document":
           return getDocument(ctx);
         case "sceneSummary":
-          return getSceneSummary(ctx);
+          return readSceneSummary(ctx);
         case "selection":
           return getSelection(ctx);
         case "documents":
@@ -210,7 +219,7 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
       apply: (op) => applyOperation(ctx, operationSchema.parse(op)),
       read: (query) => handleRead(query) as ReturnType<OpenPolyApi["read"]>,
       document: () => getDocument(ctx),
-      summary: () => getSceneSummary(ctx),
+      summary: () => readSceneSummary(ctx),
       selection: () => getSelection(ctx),
       screenshot: (view) => screenshot(ctx, view ? { view } : undefined),
       worldToScreen: (p) => viewApiRef.current?.worldToScreen(p) ?? null,
