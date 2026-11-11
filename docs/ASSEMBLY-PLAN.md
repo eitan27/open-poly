@@ -29,14 +29,16 @@ must do the same.
   every synced part keeps its old hash. An untouched new assembly counts as
   "blank" and stays local until edited, like a starter part.
 - **App:** the assembly's state and behaviour (sources, meshes, mates,
-  selection and pre-picks, the Move panel and gizmo, inserting, variables)
+  selection and pre-picks, the Move panel and gizmo, inserting, variables,
+  the Animate and Relation dialogs)
   are `useAssemblyWorkspace`; App holds the one Viewport, side panel and
   toolbar both kinds share, and reads what to show in them from it. The
   assembly has its own `useHistory`, and undo/redo route to it.
   While an assembly is open the part UI stands down: the side panel becomes
   `AssemblyPanel`, the model toolbar gives way to the assembly's, shortcuts
-  are limited to the assembly mode's, and agent part ops are refused
-  (`DOCUMENT_OPS` in `agent/commands.ts`).
+  are limited to the assembly mode's, and the agent's part ops are refused:
+  only `DOCUMENT_OPS` and `ASSEMBLY_OPS` apply (`agent/commands.ts`; see The
+  agent).
 - **Variables** are the part document's: the same `Variable` type, the same
   `VariablesSection` / `VariablesPanel`, and the same add/rename/edit/delete
   and evaluation helpers in `document.ts`, which take anything that holds
@@ -427,8 +429,8 @@ A translation driving a rotation uses 1/k; Reverse negates k.
 - **Animate doesn't offer a relation-driven DOF**; animating its driver turns
   it, and a mate with nothing else free has no ▶.
 - Removing a mate (or an instance) removes the relations that used it.
-  `migrateAssembly` keeps and validates them; an assembly with none has no
-  `relations` field, so older saves and hashes are unchanged.
+  `migrateAssembly` keeps and validates them. An assembly with none has no
+  `relations` field, so it's saved and hashed without one.
 - The dialog chooses mates from lists, not picks in the view: a relation joins
   mates, which the view doesn't show. Its problem line is a solve of the
   assembly with the draft added, so it says what the solver would.
@@ -445,8 +447,7 @@ The agent reads an open assembly through the same tools as a part
   mates with both connectors and every free DOF's solved value, marked
   `expression` when one drives it and `drivenBy` when a relation does;
   relations; loop groups; variables; the selection; and each problem or ⚠.
-  `readSceneSummary` picks it or the part summary; `getSceneSummary` stays the
-  part one.
+  `readSceneSummary` picks it or the part summary (`getSceneSummary`).
 - **`get_document`** returns the `AssemblyDoc`, not the empty part model an
   assembly record carries.
 - **`list_documents`** adds `instanceCount` and `mateCount` for an assembly;
@@ -455,11 +456,13 @@ The agent reads an open assembly through the same tools as a part
   `commands.ts`): `insert_instance` (a part document's parts, all or by id,
   beside what's placed as the Insert dialog does — `insertShift` — or at a
   `position`), `ground_instance`, `add_mate`, `edit_mate`, `set_mate_value`,
-  `add_relation`, `edit_relation`, `set_variable` (the assembly's own; `setVariableByName` is
-  shared with parts) and `delete` of an instance, mate or relation. Each is one step on the assembly's own undo history
-  (`AgentContext.assemblyEdit.commit` is `setAssembly`), so Ctrl+Z undoes it,
-  and each waits (`settle`) until the edit has rendered and every source has
-  loaded and solved, so the result and a read after it see the solve.
+  `add_relation`, `edit_relation`, `set_suppressed`, `set_variable` (the
+  assembly's own; `setVariableByName` is shared with parts) and `delete` of
+  an instance, mate or relation. Each is one step on the assembly's own undo
+  history (`AgentContext.assemblyEdit.commit` is `setAssembly`), so Ctrl+Z
+  undoes it, and each waits (`settle`) until the edit has rendered and every
+  source has loaded and solved, so the result and a read after it see the
+  solve.
 - **A connector is named, not picked:** a face, an edge, or a vertex as the
   start or end of a named edge, from the summary's `parts`.
   `connectorRefByName` stores the same ref and fingerprint a click would, so
@@ -487,14 +490,14 @@ The agent reads an open assembly through the same tools as a part
   problem), keeps a width mate's second faces only while it's a width mate,
   and to become one needs both sides given again with `face2`. Edits are
   checked as adds are, and one the solver can't hold is the op's failure.
+- **`set_mate_value` is the Move panel's typed value** (`setMateValue` in
+  `relations.ts`, shared by both): a DOF a relation drives sets its driver to
+  what puts it there, so it takes a number, not an expression.
 - **`set_suppressed`** leaves a mate or relation out of the solve, kept, as
   each row's suppress toggle does (`setSuppressed` in `assembly.ts`, from
   keepSolved, so what it held stays put). A relation whose mate is suppressed
   says so. For the agent it's how to find the mate that over-constrains an
   assembly without losing it.
-- **`set_mate_value` is the Move panel's typed value** (`setMateValue` in
-  `relations.ts`, shared by both): a DOF a relation drives sets its driver to
-  what puts it there, so it takes a number, not an expression.
 - Part modelling ops are refused while an assembly is open, and assembly ops
   while a part is, each naming what does work.
 - **The modeling guide** (`src/agent/modeling-guide.md`, Assemblies) teaches
@@ -514,8 +517,6 @@ The agent reads an open assembly through the same tools as a part
 - Later: a timeline with keyframes over several mates; GIF/video export (the
   frame capture in `scripts/tutorial/gif.mjs`, in-app via
   `canvas.captureStream` or a GIF encoder).
-
-**Agent / MCP: nothing planned beyond the above.**
 
 **Smaller gaps.**
 
@@ -540,30 +541,30 @@ pinning (parts have no versions yet).
   side, a box seated in a corner by one Fastened mate on vertices),
   `drag.test.ts`, `relations.test.ts` (factors, gear trains, rack, a screw
   in one cylindrical mate, refusals, routing, dragging either gear, save and
-  load), `animate.test.ts` (timing, default sweeps, a four-bar's
-  crank turned a full revolution by `drive`), `frames.test.ts` (connector fitting, vertices, offsets and
-  candidate points on synthetic meshes, no OCCT in Node), `variables.test.ts`
-  (mate values and limits naming variables, in the tree, a loop and a drag),
-  `assembly.test.ts` (including `connectorWarnings`), `mateTypes.test.ts`
-  (`mateValuesText`), `moveReadout.test.ts`. The agent's assembly summary
-  is `src/agent/assemblySummary.test.ts`; its edits, through `applyOperation`
-  on a solved in-memory assembly, `src/agent/assemblyOps.test.ts`. Renaming variables through their
-  uses is `src/document/renameVariable.test.ts`; the mate count is in
-  `src/storage/db.test.ts`.
+  load), `animate.test.ts` (timing, default sweeps, a four-bar's crank
+  turned a full revolution by `drive`), `frames.test.ts` (connector fitting,
+  vertices, offsets and candidate points on synthetic meshes, no OCCT in
+  Node), `variables.test.ts` (mate values and limits naming variables, in the
+  tree, a loop and a drag), `assembly.test.ts` (including
+  `connectorWarnings`), `mateTypes.test.ts` (`mateValuesText`),
+  `moveReadout.test.ts`. The agent's assembly summary is
+  `src/agent/assemblySummary.test.ts`; its edits, through `applyOperation` on
+  a solved in-memory assembly, `src/agent/assemblyOps.test.ts`. Renaming
+  variables through their uses is `src/document/renameVariable.test.ts`; the
+  mate count is in `src/storage/db.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
   `width`, `loops`, `move`, `variables`, `pin`, `vertex`, `animate`,
   `relations`), and `verify-agent-assembly-read.mjs` and
-  `verify-agent-assembly-edit.mjs` for the agent, against `npm run dev`; set
-  `PW_EXE` to use a pre-installed Chromium (scripts on `scripts/lib/harness.mjs`
-  read `CHROMIUM_PATH` instead). `pin` is the one Cylindrical mate
-  between real faceted parts (a cylinder primitive in an extruded-circle
+  `verify-agent-assembly-edit.mjs` for the agent, against `npm run dev`. Set
+  `PW_EXE` to use a pre-installed Chromium (scripts on
+  `scripts/lib/harness.mjs` read `CHROMIUM_PATH` instead). `pin` is the one
+  Cylindrical mate between real faceted parts (a cylinder primitive in an extruded-circle
   hole), through a rebuild of the block. `verify-all` doesn't run them.
 - **A document switch lands a few hundred ms after its click**, while the
   status still reads "up to date" from before it, and the Insert dialog's
   list loads after it opens. A check must wait for both (`switchVia` and its
   kin in each script), or under load it acts on the previous document or
   reads an empty list.
-
 - **Run browser checks one at a time, and don't edit `src/` while they run.**
   They share one dev server, whose hot reload swaps the page under a running
   check (it then hangs or fails for no reason of its own); run in parallel,
