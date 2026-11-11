@@ -14,7 +14,7 @@ import { insertInstances, keepSolved, referencedDocIds, removeInstances } from "
 import { dofLabel } from "./mateTypes";
 import type { MoveField, MoveMode, WorldAxis } from "./MoveDialog";
 import { addMoves, moveReadout, NO_MOVE, type MoveReadout } from "./moveReadout";
-import { boundsCenter, IDENTITY, meshBounds, placeMesh, translation } from "./placement";
+import { boundsCenter, IDENTITY, INSERT_GAP_MM, insertShift, meshBounds, placeMesh, translation } from "./placement";
 import { relationDriving } from "./relations";
 import { formatValue, isRotation, solve } from "./solve";
 import type { AssemblyDoc, Dof, Mate, MateType } from "./types";
@@ -23,8 +23,6 @@ import { useMateAnimation } from "./useMateAnimation";
 import { useMates } from "./useMates";
 import { useRelations } from "./useRelations";
 
-/** The clearance an inserted part keeps from what's already placed. */
-const INSERT_GAP_MM = 10;
 const sameMatrix = (a: number[], b: number[]) => a === b || a.every((v, i) => v === b[i]);
 
 export function useAssemblyWorkspace({
@@ -144,14 +142,11 @@ export function useAssemblyWorkspace({
     // Land the insert just past everything already placed, along +X, so it
     // never appears inside another part. The parts of one document move
     // together, keeping the arrangement they were modelled in.
-    let shift = 0;
-    const placedBounds = assemblyMeshes.map((m) => meshBounds(m.mesh)).filter((b) => b !== null);
-    const partBounds = parts.map((p) => meshBounds(p.mesh)).filter((b) => b !== null);
-    if (placedBounds.length && partBounds.length) {
-      const placedMaxX = Math.max(...placedBounds.map((b) => b.max[0]));
-      const partMinX = Math.min(...partBounds.map((b) => b.min[0]));
-      shift = placedMaxX - partMinX + INSERT_GAP_MM;
-    }
+    const shift = insertShift(
+      assemblyMeshes.map((m) => meshBounds(m.mesh)),
+      parts.map((p) => meshBounds(p.mesh)),
+      INSERT_GAP_MM,
+    );
     const transform = shift ? translation([shift, 0, 0]) : IDENTITY;
     const r = insertInstances(
       assembly,
@@ -393,6 +388,7 @@ export function useAssemblyWorkspace({
     asmSelected,
     asmSelectedSet,
     asmSources,
+    asmSourcesSettled,
     asmTransformEdit,
     asmVariables,
     asmVariablesOpen,

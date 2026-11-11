@@ -60,6 +60,8 @@ interface BridgeDeps {
   /** The open assembly's state (null: a part is open). App refreshes it each
    *  render, like docApiRef. */
   assemblyRef: RefObject<AssemblyAgentState | null>;
+  /** Editing the open assembly (App refreshes it each render). */
+  assemblyEditRef: RefObject<AgentContext["assemblyEdit"]>;
 }
 
 /** The dev-console handle. `apply` validates the op with the shared zod schema
@@ -149,6 +151,11 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
       getErrors: () => errorsRef.current,
       waitForRegen: () => waitForRegenRef.current(),
       getAssembly: () => deps.assemblyRef.current,
+      assemblyEdit: {
+        commit: (next) => deps.assemblyEditRef.current.commit(next),
+        readSource: (id) => deps.assemblyEditRef.current.readSource(id),
+        settle: (before) => deps.assemblyEditRef.current.settle(before),
+      },
       getViewport: () => viewApiRef.current,
       // Delegate through the ref so the ctx stays stable while App's switch
       // flow callbacks (which close over doc/docName/rawMeshes) are refreshed.
@@ -160,7 +167,7 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
         rename: (id, name) => deps.docApiRef.current.rename(id, name),
       },
     }),
-    [meshesRef, errorsRef, viewApiRef, deps.docApiRef, deps.assemblyRef],
+    [meshesRef, errorsRef, viewApiRef, deps.docApiRef, deps.assemblyRef, deps.assemblyEditRef],
   );
 
   // Apply/read handlers shared by the WS bridge and the dev console. Validate

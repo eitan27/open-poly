@@ -552,6 +552,30 @@ export function connectorRefOf(
   return { ref: { kind: "edge", name, ...fingerprint(shape) }, shape };
 }
 
+/** A connector named rather than picked — what the agent gives: a face or an
+ *  edge by its name, or a vertex as the start or end of a named edge (the
+ *  first or last point of its polyline). The same ref and fingerprint a click
+ *  on it would store, or why it can't be one. */
+export function connectorRefByName(
+  mesh: ShapeMeshPayload,
+  by: { face: string } | { edge: string } | { vertex: { edge: string; end: "start" | "end" } },
+): { ref: ConnectorRef; shape: ConnectorShape } | string {
+  if ("face" in by) {
+    const g = mesh.faces.faceGroups?.find((x) => x.name === by.face);
+    if (!g) return `No face "${by.face}" on this part.`;
+    return connectorRefOf(mesh, { kind: "face", faceId: g.faceId }) ?? `Face "${by.face}" can't anchor a mate.`;
+  }
+  const name = "edge" in by ? by.edge : by.vertex.edge;
+  const g = mesh.edges.edgeGroups?.find((x) => x.name === name);
+  if (!g) return `No edge "${name}" on this part.`;
+  if ("edge" in by)
+    return connectorRefOf(mesh, { kind: "edge", edgeId: g.edgeId }) ?? `Edge "${name}" can't anchor a mate.`;
+  const pts = edgePoints(mesh.edges, g.edgeId);
+  if (!pts.length) return `Edge "${name}" has no points.`;
+  const point = by.vertex.end === "start" ? pts[0] : pts[pts.length - 1];
+  return { ref: { kind: "vertex", name, center: point }, shape: { kind: "point", origin: point } };
+}
+
 function fingerprint(s: ConnectorShape): { center: Vec3; normal?: Vec3 } {
   switch (s.kind) {
     case "plane":

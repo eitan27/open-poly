@@ -18,6 +18,8 @@ export interface AssemblyAgentState {
   /** Null until the assembly's sources have loaded enough to solve. */
   solution: Solution | null;
   sources: ReadonlyMap<string, SourceState>;
+  /** Every source has loaded (or failed to), so `solution` is final. */
+  settled: boolean;
   /** Mates whose connector was re-found by fingerprint, and what to check. */
   warnings: ReadonlyMap<string, string>;
   /** Selected instance ids. */
@@ -26,13 +28,30 @@ export interface AssemblyAgentState {
 
 export const partKey = (docId: string, partId: string) => `${docId}/${partId}`;
 
+/** Resolve once the assembly `state` reads is no longer `before` and has
+ *  settled (every source loaded, so the solve is final), polling, as a render
+ *  has to land first. Gives up after `timeoutMs`. */
+export async function settleAssembly(
+  state: { current: AssemblyAgentState | null },
+  before: AssemblyDoc,
+  timeoutMs = 30000,
+): Promise<{ timedOut?: boolean }> {
+  const t0 = Date.now();
+  for (;;) {
+    const s = state.current;
+    if (s && s.assembly !== before && s.settled && s.solution) return {};
+    if (Date.now() - t0 > timeoutMs) return { timedOut: true };
+    await new Promise((r) => setTimeout(r, 30));
+  }
+}
+
 /** The distinct names in a mesh's face or edge groups, in order. */
 const names = (groups: { name?: string }[] | undefined): string[] => [
   ...new Set((groups ?? []).map((g) => g.name).filter((n): n is string => !!n)),
 ];
 
 /** World bounds of `mesh` placed at `m`: its local box's corners, moved. */
-function placedBounds(mesh: ShapeMeshPayload, m: Mat4): AssemblySummary["instances"][number]["bbox"] {
+export function placedBoundsOf(mesh: ShapeMeshPayload, m: Mat4): AssemblySummary["instances"][number]["bbox"] {
   const v = mesh.faces.vertices;
   if (!v.length) return undefined;
   const lo = [Infinity, Infinity, Infinity];
@@ -111,7 +130,7 @@ export function assemblySummary(state: AssemblyAgentState, info: { id: string; n
       ...(i.grounded ? { grounded: true } : {}),
       ...(i.hidden ? { hidden: true } : {}),
       ...(solution?.mated.has(i.id) ? { mated: true } : {}),
-      ...(part ? { bbox: placedBounds(part.mesh, at) } : {}),
+      ...(part ? { bbox: placedBoundsOf(part.mesh, at) } : {}),
     };
   });
 

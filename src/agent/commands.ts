@@ -80,7 +80,9 @@ import type { SectionViewState } from "../document/sectionView";
 import type { Selection } from "../selection/types";
 import type { ViewName } from "../viewport/types";
 import { assemblySummary, type AssemblyAgentState } from "./assemblySummary";
+import { planDelete, planGround, planInsert, planMate } from "./assemblyOps";
 import type { AssemblyDoc } from "../assembly/types";
+import type { SourceState } from "../assembly/useAssemblySources";
 import {
   expandEntities,
   type ConstraintSpec,
@@ -136,6 +138,17 @@ export interface AgentContext {
   /** The open assembly with its solution and sources, or null when the open
    *  document is a part. */
   getAssembly(): AssemblyAgentState | null;
+  /** Editing the open assembly: through its undo setter, like `setDoc`. */
+  assemblyEdit: {
+    /** Commit an edit (one undo step). */
+    commit(next: AssemblyDoc): void;
+    /** A part document as an insert source: its parts and meshes, built
+     *  first if it never was on this device. */
+    readSource(docId: string): Promise<SourceState>;
+    /** Resolve once the open assembly is no longer `before` and every source
+     *  has loaded and solved — what a read right after an edit should see. */
+    settle(before: AssemblyDoc): Promise<{ timedOut?: boolean }>;
+  };
   /** The viewport API (camera + capturePNG), or null before it mounts. */
   getViewport(): {
     setView(name: ViewName): void;
@@ -603,14 +616,85 @@ const DOCUMENT_OPS: ReadonlySet<Operation["op"]> = new Set([
   "duplicateDocument",
 ]);
 
+/** The ops that edit an open assembly (agent/assemblyOps.ts). `delete` is
+ *  shared: on a part it deletes a feature. */
+const ASSEMBLY_OPS: ReadonlySet<Operation["op"]> = new Set(["insertInstance", "groundInstance", "addMate", "delete"]);
+const ASSEMBLY_ONLY: ReadonlySet<Operation["op"]> = new Set(["insertInstance", "groundInstance", "addMate"]);
+
+/** Apply an assembly op: plan it, commit it through the assembly's undo
+ *  setter, wait for it to solve, and report what the solver made of it. */
+async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op: Operation): Promise<OpResult> {
+  let next: AssemblyDoc;
+  let createdIds: string[] = [];
+  switch (op.op) {
+    case "insertInstance": {
+      const source = await ctx.assemblyEdit.readSource(op.documentId);
+      const r = planInsert(state, op, source, genId);
+      if ("error" in r) throw new OpError(source.status === "missing" ? "not_found" : "invalid_op", r.error);
+      next = r.assembly;
+      createdIds = r.ids;
+      break;
+    }
+    case "groundInstance": {
+      const r = planGround(state, op);
+      if ("error" in r) throw new OpError("not_found", r.error);
+      next = r;
+      break;
+    }
+    case "addMate": {
+      const r = planMate(state, op, genId);
+      if ("error" in r) throw new OpError("invalid_op", r.error);
+      next = r.assembly;
+      createdIds = [r.id];
+      break;
+    }
+    case "delete": {
+      const r = planDelete(state, op.featureId);
+      if ("error" in r) throw new OpError("not_found", r.error);
+      next = r;
+      break;
+    }
+    default:
+      throw new OpError("invalid_op", `${op.op} doesn't apply to an assembly.`);
+  }
+  ctx.assemblyEdit.commit(next);
+  const { timedOut } = await ctx.assemblyEdit.settle(state.assembly);
+  const after = ctx.getAssembly();
+  const createdId = createdIds[0] ?? (op.op === "groundInstance" ? op.instanceId : undefined);
+  const multi = createdIds.length > 1 ? { createdIds } : {};
+  // What the solver says now: every mate's and relation's problem, and each
+  // re-found connector; a new mate that doesn't hold is the op's own failure.
+  const featureErrors: Record<string, string> = {};
+  for (const [id, p] of after?.solution?.problems ?? []) featureErrors[id] = p;
+  for (const [id, p] of after?.solution?.relationProblems ?? []) featureErrors[id] = p;
+  const warnings: Record<string, string> = {};
+  for (const [id, w] of after?.warnings ?? []) warnings[id] = w;
+  if (timedOut)
+    warnings[createdId ?? "assembly"] = "The assembly didn't finish loading in time; read it again shortly.";
+  const extra = {
+    ...(Object.keys(featureErrors).length ? { featureErrors } : {}),
+    ...(Object.keys(warnings).length ? { warnings } : {}),
+  };
+  if (op.op === "addMate" && createdId && featureErrors[createdId])
+    return { ok: false, createdId, error: featureErrors[createdId], errorKind: "invalid_op", ...extra };
+  return { ok: true, ...(createdId ? { createdId } : {}), ...multi, ...extra };
+}
+
 export async function applyOperation(ctx: AgentContext, op: Operation): Promise<OpResult> {
   try {
+    const asm = ctx.documents.info().kind === "assembly" ? ctx.getAssembly() : null;
+    if (asm && ASSEMBLY_OPS.has(op.op)) return await applyAssemblyOp(ctx, asm, op);
     if (ctx.documents.info().kind === "assembly" && !DOCUMENT_OPS.has(op.op)) {
       throw new OpError(
         "invalid_op",
-        "The open document is an assembly, and the agent can't edit assemblies yet: get_scene_summary and screenshot read it, and the document tools (open/new/rename/duplicate) work. Open a part document to model.",
+        `The open document is an assembly: ${op.op} models a part. On an assembly use insert_instance, ground_instance, add_mate and delete (an instance, mate or relation), read it with get_scene_summary and screenshot, and switch documents with the document tools.`,
       );
     }
+    if (ASSEMBLY_ONLY.has(op.op))
+      throw new OpError(
+        "invalid_op",
+        `${op.op} works on an assembly; the open document is a part. Open or create an assembly first.`,
+      );
     const doc = ctx.getDoc();
     let next: Document;
     let createdId: string | undefined;
@@ -1199,6 +1283,11 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       }
       // --- Multi-document ops: these switch/mutate the WORKSPACE, not `doc`,
       // so they bypass the shared setDoc tail and settle their own regen.
+      // Routed to applyAssemblyOp above while an assembly is open.
+      case "insertInstance":
+      case "groundInstance":
+      case "addMate":
+        throw new OpError("invalid_op", `${op.op} works on an assembly.`);
       case "openDocument": {
         if (op.id === ctx.documents.info().id) return { ok: true, createdId: op.id };
         if (!(await listMeta()).some((m) => m.id === op.id)) {

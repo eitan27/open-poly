@@ -93,8 +93,11 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
   `new_document` with `kind: "assembly"` makes one. On an assembly,
   `get_scene_summary` lists its parts (with the face/edge names a mate can
   use), instances, mates (each free DOF and its value), relations and
-  problems, and `screenshot` shows it — but you can't edit an assembly yet:
-  modelling ops are refused while one is open.
+  problems, and `screenshot` shows it. Build one with `insert_instance` (a
+  part document's parts; the first is grounded), `ground_instance`,
+  `add_mate` (each side a face, edge or vertex of an instance's part, by the
+  names listed under its part) and `delete` (an instance, mate or relation).
+  Modelling ops are refused while an assembly is open.
 
 ## Recipes
 

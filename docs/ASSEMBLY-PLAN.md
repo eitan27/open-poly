@@ -447,8 +447,24 @@ The agent reads an open assembly through the same tools as a part
   assembly record carries.
 - **`list_documents`** adds `instanceCount` and `mateCount` for an assembly;
   **`new_document`** takes `kind: "assembly"`.
-- Every other op is refused while an assembly is open, with a message saying
-  what does work.
+- **Editing** (`agent/assemblyOps.ts`, pure, then `applyAssemblyOp` in
+  `commands.ts`): `insert_instance` (a part document's parts, all or by id,
+  beside what's placed as the Insert dialog does — `insertShift` — or at a
+  `position`), `ground_instance`, `add_mate`, and `delete` of an instance,
+  mate or relation. Each is one step on the assembly's own undo history
+  (`AgentContext.assemblyEdit.commit` is `setAssembly`), so Ctrl+Z undoes it,
+  and each waits (`settle`) until the edit has rendered and every source has
+  loaded and solved, so the result and a read after it see the solve.
+- **A connector is named, not picked:** a face, an edge, or a vertex as the
+  start or end of a named edge, from the summary's `parts`.
+  `connectorRefByName` stores the same ref and fingerprint a click would, so
+  an agent's mate is re-found after a part edit exactly as a hand-made one is.
+  A width mate takes `face2` on each side.
+- **A mate the solver can't hold is the op's failure** (`ok: false`, with its
+  `createdId` and the reason), as a part feature that fails to build is: it
+  stays, so the agent can see it and `delete` it.
+- Part modelling ops are refused while an assembly is open, and assembly ops
+  while a part is, each naming what does work.
 
 ## Not built yet
 
@@ -461,15 +477,11 @@ The agent reads an open assembly through the same tools as a part
   frame capture in `scripts/tutorial/gif.mjs`, in-app via
   `canvas.captureStream` or a GIF encoder).
 
-**Agent / MCP: editing.** The agent reads assemblies (see "The agent" above)
-but every edit is refused while one is open. Still to come, in order:
-`insert_instance`, `ground_instance` and `add_mate` (connectors by face, edge
-or vertex name from the summary's `parts`, as dress-up refs are); then
-`set_mate_value` and `add_relation` (through `setMateValue`'s driver routing);
-then `animate_mate` (the per-frame solve, captured at a few values as a
-screenshot strip); then an assembly section in `src/agent/modeling-guide.md`.
-Edits must go through the assembly's own undo setter, as part ops go through
-`setDoc`.
+**Agent / MCP: still to come**, in order: `set_mate_value` and
+`add_relation` (through `setMateValue`'s driver routing); then `animate_mate`
+(the per-frame solve, captured at a few values as a screenshot strip); then
+a full assembly section in `src/agent/modeling-guide.md`, which today has a
+paragraph.
 
 **Smaller gaps.**
 
@@ -500,13 +512,14 @@ pinning (parts have no versions yet).
   (mate values and limits naming variables, in the tree, a loop and a drag),
   `assembly.test.ts` (including `connectorWarnings`), `mateTypes.test.ts`
   (`mateValuesText`), `moveReadout.test.ts`. The agent's assembly summary
-  is `src/agent/assemblySummary.test.ts`. Renaming variables through their
+  is `src/agent/assemblySummary.test.ts`; its edits, through `applyOperation`
+  on a solved in-memory assembly, `src/agent/assemblyOps.test.ts`. Renaming variables through their
   uses is `src/document/renameVariable.test.ts`; the mate count is in
   `src/storage/db.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
   `width`, `loops`, `move`, `variables`, `pin`, `vertex`, `animate`,
-  `relations`), and `verify-agent-assembly-read.mjs` for the agent's reads,
-  against `npm run dev`; set
+  `relations`), and `verify-agent-assembly-read.mjs` and
+  `verify-agent-assembly-edit.mjs` for the agent, against `npm run dev`; set
   `PW_EXE` to use a pre-installed Chromium (scripts on `scripts/lib/harness.mjs`
   read `CHROMIUM_PATH` instead). `pin` is the one Cylindrical mate
   between real faceted parts (a cylinder primitive in an extruded-circle

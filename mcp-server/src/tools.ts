@@ -63,7 +63,8 @@ const OP_DESCRIPTIONS: Record<string, string> = {
   setVariable: "Create or update a named variable (drive dimensions with variables, then reference them in params).",
   setAppearance: "Set a body's color (0xRRGGBB), opacity (0..1), and/or hidden flag.",
   rename: "Rename a feature/body so later steps and the human can read it.",
-  delete: "Delete a feature (undoable).",
+  delete:
+    "Delete a feature (undoable). On an assembly: delete an instance (with the mates and relations that used it), a mate (with its relations) or a relation, by id — what's left stays where it is.",
   setRollback: "Move the timeline rollback bar to an index (features at/after it are not regenerated).",
   select: "Set the viewport selection (so a screenshot highlights what you mean).",
   setSectionView:
@@ -76,6 +77,12 @@ const OP_DESCRIPTIONS: Record<string, string> = {
   newDocument:
     "Create and open a NEW empty document (optionally named): kind 'part' (default) to model, or 'assembly' to place and mate parts of other documents. The previous document is autosaved.",
   renameDocument: "Rename a document (id defaults to the active one). Display-name only — not an undoable model edit.",
+  insertInstance:
+    "ASSEMBLY only. Place a part document's parts (all of them, or just `partIds` — the body ids in that document's own get_scene_summary) into the open assembly, as instances: beside what's already there along +X, or with the part's origin at `position`. The assembly's first instance is grounded (fixed); mates then place the rest. Returns createdId (createdIds when several). `name` renames a single inserted instance.",
+  groundInstance:
+    "ASSEMBLY only. Fix an instance where it is (grounded: true, the default) so mates place others against it, or free it (grounded: false).",
+  addMate:
+    "ASSEMBLY only. Join two instances with a mate; b moves to a. Each side names ONE entity of its instance's part from get_scene_summary's parts: {face} | {edge} | {vertex: {edge, end: 'start'|'end'}}, plus optional anchor ('center' default; a round wall also offers 'start'/'end') and offset {x,y,z} (mm in the connector's own frame). type: fastened (no motion), revolute (turns about Z: rz), slider (along Z: tz), cylindrical (tz + rz), planar (slides tx/ty and turns rz on the plane), ball (rx/ry/rz), width (centres b between two faces of a; give face AND face2 on both sides). Connector Z is a face's outward normal / an edge's direction / a round wall's axis; by default the two Z axes face each other (two faces touching) — flip:true points them the same way; turns (0-3) rotates b by quarter turns about Z. values set free DOFs (mm / degrees, numbers or variable expressions); limits {min,max} bound them. A mate the solver can't hold returns ok:false with its createdId and the reason — fix the cause or delete it.",
   duplicateDocument:
     "Duplicate a document (id defaults to the active one) and open the copy — a safe sandbox before risky edits.",
 };

@@ -154,6 +154,25 @@ export type DimensionSpec = z.infer<typeof dimensionSpec>;
 
 // --- Selection refs (for the `select` op) ---------------------------------
 
+/** One side of an assembly mate: a face, an edge, or a vertex (an end of a
+ *  named edge) of an instance's part, by the names get_scene_summary lists
+ *  under that part. Exactly one of face/edge/vertex. */
+const connectorSpecSchema = z.object({
+  instanceId: z.string(),
+  face: z.string().optional(),
+  edge: z.string().optional(),
+  vertex: z.object({ edge: z.string(), end: z.enum(["start", "end"]) }).optional(),
+  /** A width mate's second face on the same part. */
+  face2: z.string().optional(),
+  /** Where on the entity: center (default), or a round wall's start/end. */
+  anchor: z.enum(["center", "start", "end"]).optional(),
+  /** Move the connector within its own frame, mm (number or expression). */
+  offset: z.object({ x: expr.optional(), y: expr.optional(), z: expr.optional() }).optional(),
+});
+export type ConnectorSpec = z.infer<typeof connectorSpecSchema>;
+
+const dofSchema = z.enum(["tx", "ty", "tz", "rx", "ry", "rz"]);
+
 const selectionSchema = z.union([
   z.object({ kind: z.literal("feature"), id: z.string() }),
   z.object({ kind: z.literal("face"), featureId: z.string(), faceId: z.number() }),
@@ -567,6 +586,35 @@ export const operationSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("renameDocument"), id: z.string().optional(), name: z.string().min(1) }),
   /** id defaults to the active document; the copy opens as the working doc. */
   z.object({ op: z.literal("duplicateDocument"), id: z.string().optional() }),
+  // --- Assembly ops: only while an assembly is open. Instance and connector
+  // names come from get_scene_summary's `instances` and `parts`.
+  /** Place a part document's parts (all, or `partIds`) into the open
+   *  assembly: beside what's there, or with its origin at `position`. The
+   *  assembly's first instance is grounded. */
+  z.object({
+    op: z.literal("insertInstance"),
+    documentId: z.string(),
+    partIds: z.array(z.string()).min(1).optional(),
+    position: z.tuple([z.number(), z.number(), z.number()]).optional(),
+    name: z.string().optional(),
+  }),
+  /** Fix an instance where it is (grounded: true, the default) or free it. */
+  z.object({ op: z.literal("groundInstance"), instanceId: z.string(), grounded: z.boolean().optional() }),
+  /** Join two instances with a mate. b moves to a: by default the two
+   *  connectors' Z axes face each other (two faces touching); flip points
+   *  them the same way; turns rotates b in quarter turns about Z. values set
+   *  the free DOFs (mm / degrees, numbers or expressions). */
+  z.object({
+    op: z.literal("addMate"),
+    type: z.enum(["fastened", "revolute", "slider", "cylindrical", "planar", "ball", "width"]),
+    a: connectorSpecSchema,
+    b: connectorSpecSchema,
+    name: z.string().optional(),
+    flip: z.boolean().optional(),
+    turns: z.number().int().min(0).max(3).optional(),
+    values: z.partialRecord(dofSchema, expr).optional(),
+    limits: z.partialRecord(dofSchema, z.object({ min: expr.optional(), max: expr.optional() })).optional(),
+  }),
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -608,6 +656,8 @@ export type ErrorKind = "not_found" | "invalid_op" | "kernel_error";
 export interface OpResult {
   ok: boolean;
   createdId?: string;
+  /** Every id an op created, when it made several (insertInstance). */
+  createdIds?: string[];
   error?: string;
   errorKind?: ErrorKind;
   featureErrors?: Record<string, string>;

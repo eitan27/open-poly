@@ -63,6 +63,7 @@ function state(assembly: AssemblyDoc, extra: Partial<AssemblyAgentState> = {}): 
     assembly,
     solution: solve(assembly, lookup),
     sources,
+    settled: true,
     warnings: new Map(),
     selection: [],
     ...extra,

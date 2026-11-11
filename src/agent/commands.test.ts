@@ -13,6 +13,13 @@ import type { Selection } from "../selection/types";
 // document-resolution errors (expressions / references) — the same surface the
 // real kernel would also report, minus actual geometry build failures.
 
+/** Assembly editing, for tests that don't open an assembly. */
+const NO_ASSEMBLY_EDIT: AgentContext["assemblyEdit"] = {
+  commit: () => {},
+  readSource: async () => ({ status: "missing" }),
+  settle: async () => ({}),
+};
+
 /** Workspace stub for tests that don't exercise multi-document ops. */
 function stubDocuments(): AgentContext["documents"] {
   return {
@@ -42,6 +49,7 @@ function makeCtx(initial: Document = createDocument()) {
     getErrors: () => resolveDocument(doc).errors,
     waitForRegen: async () => ({ errors: resolveDocument(doc).errors }),
     getAssembly: () => null,
+    assemblyEdit: NO_ASSEMBLY_EDIT,
     getViewport: () => null,
     documents: stubDocuments(),
   };
@@ -533,6 +541,7 @@ describe("applyOperation — construction, extent, revolve, mirror", () => {
       getErrors: () => resolveDocument(d).errors,
       waitForRegen: async () => ({ errors: resolveDocument(d).errors }),
       getAssembly: () => null,
+      assemblyEdit: NO_ASSEMBLY_EDIT,
       getViewport: () => null,
       documents: stubDocuments(),
     };
@@ -1117,6 +1126,7 @@ describe("applyOperation — dressUp edge fingerprints", () => {
       getErrors: () => resolveDocument(d).errors,
       waitForRegen: async () => ({ errors: resolveDocument(d).errors }),
       getAssembly: () => null,
+      assemblyEdit: NO_ASSEMBLY_EDIT,
       getViewport: () => null,
       documents: stubDocuments(),
     };
@@ -1158,6 +1168,7 @@ describe("applyOperation — regen warnings surface in the result", () => {
       getErrors: () => resolveDocument(d).errors,
       waitForRegen: async () => ({ errors: resolveDocument(d).errors, warnings: pendingWarnings }),
       getAssembly: () => null,
+      assemblyEdit: NO_ASSEMBLY_EDIT,
       getViewport: () => null,
       documents: stubDocuments(),
     };
@@ -1307,6 +1318,7 @@ describe("while an assembly is open", () => {
       assembly,
       solution: null,
       sources: new Map(),
+      settled: true,
       warnings: new Map(),
       selection: [],
     });

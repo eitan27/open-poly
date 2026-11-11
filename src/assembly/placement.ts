@@ -106,3 +106,21 @@ export function meshBounds(mesh: ShapeMeshPayload): { min: Vec3; max: Vec3 } | n
 export function boundsCenter(b: { min: Vec3; max: Vec3 }): Vec3 {
   return [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
 }
+
+/** The clearance an inserted part keeps from what's already placed. */
+export const INSERT_GAP_MM = 10;
+
+/** How far along +X an insert moves so it lands just past everything already
+ *  placed (`placed`, in world space), never inside another part: the gap past
+ *  the furthest +X of what's there. 0 when either side is empty. The parts of
+ *  one insert move together, keeping the arrangement they were modelled in. */
+export function insertShift(
+  placed: ({ min: Vec3; max: Vec3 } | null)[],
+  parts: ({ min: Vec3; max: Vec3 } | null)[],
+  gap: number,
+): number {
+  const p = placed.filter((b) => b !== null);
+  const q = parts.filter((b) => b !== null);
+  if (!p.length || !q.length) return 0;
+  return Math.max(...p.map((b) => b.max[0])) - Math.min(...q.map((b) => b.min[0])) + gap;
+}

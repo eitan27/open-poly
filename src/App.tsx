@@ -187,7 +187,9 @@ import { usePatternDialog } from "./hooks/usePatternDialog";
 import { useRevolveDialog } from "./hooks/useRevolveDialog";
 import { usePersistedDocuments } from "./hooks/usePersistedDocuments";
 import { useAgentBridge } from "./agent/useAgentBridge";
-import type { AgentMesh, RegenSettle } from "./agent/commands";
+import type { AgentContext, AgentMesh, RegenSettle } from "./agent/commands";
+import { settleAssembly } from "./agent/assemblySummary";
+import { readSource } from "./assembly/useAssemblySources";
 import type { AssemblyAgentState } from "./agent/assemblySummary";
 import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
@@ -1938,6 +1940,7 @@ export default function App() {
     asmSelected,
     asmSelectedSet,
     asmSources,
+    asmSourcesSettled,
     asmTransformEdit,
     asmVariables,
     asmVariablesOpen,
@@ -2594,10 +2597,19 @@ export default function App() {
         assembly,
         solution: mates.solution,
         sources: asmSources,
+        settled: asmSourcesSettled,
         warnings: mates.warnings,
         selection: asmSelected,
       }
     : null;
+  // The agent's assembly edits (agent/assemblyOps.ts): one undo step each,
+  // and a wait until the edit has loaded and solved.
+  const agentAssemblyEditRef = useRef<AgentContext["assemblyEdit"]>(null!);
+  agentAssemblyEditRef.current = {
+    commit: (next) => setAssembly(next),
+    readSource: (id) => readSource(id, buildDocument),
+    settle: (before) => settleAssembly(agentAssemblyRef, before),
+  };
   agentDocApiRef.current = {
     info: () => ({ id: docIdRef.current!, name: docName, ...(isAssembly ? { kind: "assembly" as const } : {}) }),
     open: openDocument,
@@ -2619,6 +2631,7 @@ export default function App() {
     viewApiRef,
     docApiRef: agentDocApiRef,
     assemblyRef: agentAssemblyRef,
+    assemblyEditRef: agentAssemblyEditRef,
   });
 
   // Exit isolate if the isolated body disappears (deleted / consumed / regen).
