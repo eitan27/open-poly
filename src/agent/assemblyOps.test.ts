@@ -72,6 +72,7 @@ const source = (name: string, mesh: ShapeMeshPayload): SourceState => ({
 const SOURCES = new Map<string, SourceState>([
   ["cube", source("Cube", CUBE)],
   ["plate", source("Plate", PLATE)],
+  ["lid", source("Lid", boxMesh(10, 10, 2))],
   [
     "pair",
     {
@@ -559,5 +560,59 @@ describe("animate_mate", () => {
     expect(() => animateMate(t.ctx, { mateId: fastened.createdId! })).toThrow(/fastened: nothing moves/);
     t.ctx.getAssembly = () => null;
     expect(() => animateMate(t.ctx, { mateId: t.r1 })).toThrow(/works on an assembly/);
+  });
+});
+
+describe("the modeling guide's worked example", () => {
+  // A 10 mm cube as the box and a 10×10×2 lid. In these meshes box/e7 is a
+  // box's top-back edge (y = d, z = h) and box/e6 its bottom-back edge.
+  it("hinges a lid on a box: two straight edges, flip:true, lying closed", async () => {
+    const t = assemblyCtx();
+    const box = (await t.apply({ op: "insertInstance", documentId: "cube" })).createdId!;
+    const lid = (await t.apply({ op: "insertInstance", documentId: "lid" })).createdId!;
+    const hinge = await t.apply({
+      op: "addMate",
+      type: "revolute",
+      a: { instanceId: box, edge: "box/e7" },
+      b: { instanceId: lid, edge: "box/e6" },
+      flip: true,
+      limits: { rz: { min: -110, max: 0 } },
+    });
+    expect(hinge.ok).toBe(true);
+    // Closed: the lid's footprint on the box's top, the same way up.
+    [
+      [
+        [0, 0, 0],
+        [0, 0, 10],
+      ],
+      [
+        [10, 10, 2],
+        [10, 10, 12],
+      ],
+    ].forEach(([p, q]) => at(t, lid, p as V).forEach((v, i) => expect(v).toBeCloseTo((q as V)[i])));
+    // The edge's Z runs along +X and the lid lies toward −Y of it, so by the
+    // right-hand rule +90° would swing it down into the box: opening is
+    // negative. −90° stands it up from the back edge.
+    await t.apply({ op: "setMateValue", mateId: hinge.createdId!, dof: "rz", value: -90 });
+    const front = at(t, lid, [5, 0, 0]);
+    expect(front[1]).toBeCloseTo(10);
+    expect(front[2]).toBeCloseTo(20);
+    // Past the limit, it stops at it.
+    await t.apply({ op: "setMateValue", mateId: hinge.createdId!, dof: "rz", value: -150 });
+    expect(t.ctx.getAssembly()!.solution!.values.get(hinge.createdId!)?.rz).toBe(-110);
+  });
+
+  it("…and without flip, turns the lid over", async () => {
+    const t = assemblyCtx();
+    const box = (await t.apply({ op: "insertInstance", documentId: "cube" })).createdId!;
+    const lid = (await t.apply({ op: "insertInstance", documentId: "lid" })).createdId!;
+    await t.apply({
+      op: "addMate",
+      type: "revolute",
+      a: { instanceId: box, edge: "box/e7" },
+      b: { instanceId: lid, edge: "box/e6" },
+    });
+    // The lid's own top (z = 2) ends up below its bottom.
+    expect(at(t, lid, [0, 0, 2])[2]).toBeLessThan(at(t, lid, [0, 0, 0])[2]);
   });
 });

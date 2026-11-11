@@ -480,6 +480,12 @@ The agent reads an open assembly through the same tools as a part
   what puts it there, so it takes a number, not an expression.
 - Part modelling ops are refused while an assembly is open, and assembly ops
   while a part is, each naming what does work.
+- **The modeling guide** (`src/agent/modeling-guide.md`, Assemblies) teaches
+  the workflow, the connector frames and orientation (two round walls or two
+  straight edges need `flip` to stay the same way up), the DOFs per type with
+  the right-hand rule, plain numbers vs expressions in a loop, relations,
+  problems and `animate_mate`. Its worked example — a lid hinged on a box,
+  opening negative — is a test in `assemblyOps.test.ts`, so it stays true.
 
 ## Not built yet
 
@@ -492,10 +498,9 @@ The agent reads an open assembly through the same tools as a part
   frame capture in `scripts/tutorial/gif.mjs`, in-app via
   `canvas.captureStream` or a GIF encoder).
 
-**Agent / MCP: still to come:** a full assembly section in
-`src/agent/modeling-guide.md`, which today has a paragraph. Not
-planned yet: editing a mate's connectors, flip or limits after it's made
-(delete and re-add), and suppressing mates or relations.
+**Agent / MCP: not planned yet:** editing a mate's connectors, flip or limits
+after it's made (the agent deletes and re-adds), and suppressing mates or
+relations.
 
 **Smaller gaps.**
 
