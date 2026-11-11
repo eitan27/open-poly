@@ -85,6 +85,7 @@ function relationProblem(
     if (!m) return `Its ${what} mate was removed.`;
     if (!MATE_DOFS[m.type].includes(e.dof))
       return `${m.name} has no ${e.dof} to ${what === "driver" ? "drive it" : "drive"}.`;
+    if (m.suppressed) return `${m.name} is suppressed.`;
     if (!inUse(m.id)) return `${m.name} isn't solved.`;
     return null;
   };

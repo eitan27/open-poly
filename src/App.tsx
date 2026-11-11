@@ -7063,6 +7063,7 @@ export default function App() {
                     if (m) setAssembly(updateMate(assembly, { ...m, name }), `asm-mate-name:${id}`);
                   }}
                   onRemoveMate={mates.remove}
+                  onToggleSuppressed={mates.toggleSuppressed}
                 />
               </>
             ) : (

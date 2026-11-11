@@ -5,7 +5,15 @@ import { useMemo, useRef, useState } from "react";
 import type { GhostMesh } from "../viewport/types";
 import type { Selection } from "../selection/types";
 import { evaluateVariables } from "../document/document";
-import { addMate, connectorWarnings, keepSolved, nextMateName, removeMates, updateMate } from "./assembly";
+import {
+  addMate,
+  connectorWarnings,
+  keepSolved,
+  nextMateName,
+  removeMates,
+  setSuppressed,
+  updateMate,
+} from "./assembly";
 import {
   anchorsOf,
   candidatePoints,
@@ -378,6 +386,17 @@ export function useMates({
     if (make(assembly, session)) setSession(null);
   };
 
+  /** Suppress a mate or relation (left out of the solve, kept), or bring it
+   *  back. Parts it held stay where they are. */
+  const toggleSuppressed = (id: string) => {
+    if (!assembly) return;
+    const cur =
+      assembly.mates.find((m) => m.id === id)?.suppressed ?? assembly.relations?.find((r) => r.id === id)?.suppressed;
+    const base = solution ? keepSolved(assembly, solution) : assembly;
+    const next = setSuppressed(base, id, !cur);
+    if (next) commit(next);
+  };
+
   const remove = (id: string) => {
     if (!assembly) return;
     commit(removeMates(assembly, [id]));
@@ -635,6 +654,7 @@ export function useMates({
     editingId: session?.editingId ?? null,
     close,
     remove,
+    toggleSuppressed,
     commit,
     dragFor,
     commitDrag,

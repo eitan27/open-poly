@@ -2,7 +2,8 @@
 // relation (ratio 2) made in the Relation dialog turns the second when the
 // first's angle is typed, and typing the second's angle turns the first (it
 // drives it through the relation). The relation is listed, saved, and goes
-// with its mate. Animating the first mate turns both. NB if the local open-poly MCP hub is running, this headless tab
+// with its mate. Animating the first mate turns both. The suppress toggles
+// leave a relation or mate out, keeping it and the parts where they are. NB if the local open-poly MCP hub is running, this headless tab
 // connects to it and can take the bridge from your own tab; reload yours after.
 import { chromium } from "playwright";
 
@@ -257,6 +258,36 @@ check("animating the driver turns the first arm", !still[0].equals(mid[0]));
 check("…and the second, through the relation", !still[1].equals(mid[1]));
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);
+
+// --- Suppress toggles: left out of the solve, kept, parts staying put ---------------
+const relToggle = page.locator(".asm-relation-row .asm-suppress");
+await relToggle.click();
+rec = await saved();
+check(
+  "the relation's toggle suppresses it, keeping it",
+  rec.assembly.relations?.[0].suppressed === true &&
+    (await page.locator(".asm-relation-row .asm-source").textContent()).includes("suppressed"),
+);
+await relToggle.click();
+rec = await saved();
+check("…and brings it back", rec.assembly.relations?.[0].suppressed === undefined);
+const armAt = JSON.stringify(T("Arm2"));
+const mateToggle = page.locator(".asm-mate-row").nth(1).locator(".asm-suppress");
+await mateToggle.click();
+rec = await saved();
+if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/suppressed-panel.png` });
+check(
+  "a mate's toggle suppresses it, the arm it held staying where it was",
+  rec.assembly.mates[1].suppressed === true && JSON.stringify(T("Arm2")) === armAt,
+);
+check(
+  "…its row says so, and the relation that used it says why it can't apply",
+  (await page.locator(".asm-mate-row").nth(1).locator(".asm-source").textContent()).includes("suppressed") &&
+    /is suppressed/.test(await page.locator(".asm-relation-row .asm-source").textContent()),
+);
+await mateToggle.click();
+rec = await saved();
+check("…and back", rec.assembly.mates[1].suppressed === undefined);
 
 // --- Deleting the driven mate takes the relation with it ------------------------
 await page.locator(".asm-mate-row").nth(1).locator('.row-icon[title="Delete the mate"]').click();

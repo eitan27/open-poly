@@ -88,6 +88,8 @@ const OP_DESCRIPTIONS: Record<string, string> = {
     "ASSEMBLY only. Set one free DOF of a mate (dof from get_scene_summary's mate `free` list: mm for t*, degrees for r*), a number or a variable expression (an expression keeps driving it); \"\" resets it to 0. A DOF a relation drives (`drivenBy`) can't take its own value: give a number and its driver is set to what puts it there.",
   editMate:
     'ASSEMBLY only. Change a mate in place, keeping its id, name and the relations that use it — only the fields given change: type, a / b (a whole connector, as in add_mate), flip, turns, name; values merge in ("" clears one) and limits merge in per DOF (null clears one). Changing type drops the values and limits of DOFs the new type lacks (reported in warnings; a relation that used one then reports a problem). To become a width mate, give a and b again with face2. A mate edited into one the solver can\'t hold returns ok:false with the reason.',
+  setSuppressed:
+    "ASSEMBLY only. Leave a mate or relation out of the solve while keeping it (suppressed: true, the default), or bring it back (false). Parts a suppressed mate held stay where they are; a relation using a suppressed mate reports why it can't apply. Use it to find which mate over-constrains an assembly: suppress suspects one at a time and watch the problems go, without losing them.",
   editRelation:
     "ASSEMBLY only. Change a relation in place, keeping its id — only the fields given change: type, driver, driven, value, reverse, name. Ends are checked as in add_relation; one the solver then refuses (a loop, a DOF driven twice) returns ok:false with the reason.",
   addRelation:

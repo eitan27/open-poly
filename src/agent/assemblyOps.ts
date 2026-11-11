@@ -13,6 +13,7 @@ import {
   nextMateName,
   removeInstances,
   removeMates,
+  setSuppressed,
   updateInstance,
   updateMate,
 } from "../assembly/assembly";
@@ -369,4 +370,15 @@ export function planEditRelation(
     value,
     ...(reverse ? { reverse: true } : {}),
   });
+}
+
+export function planSuppress(
+  state: AssemblyAgentState,
+  op: Extract<Operation, { op: "setSuppressed" }>,
+): Planned<AssemblyDoc> {
+  const base = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
+  return (
+    setSuppressed(base, op.id, op.suppressed ?? true) ??
+    fail(`No mate or relation "${op.id}" — ids are in get_scene_summary's mates and relations.`)
+  );
 }

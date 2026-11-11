@@ -766,3 +766,60 @@ describe("edit_relation", () => {
     expect(t.assembly().relations?.[0].driven.mateId).toBe(t.r1);
   });
 });
+
+describe("set_suppressed", () => {
+  it("takes a conflicting mate out to find it, without losing it, then puts it back", async () => {
+    const t = await plateAndCube();
+    await t.apply({ op: "groundInstance", instanceId: t.cube });
+    const bad = await t.apply({
+      op: "addMate",
+      type: "fastened",
+      a: { instanceId: t.plate, face: "box/+z" },
+      b: { instanceId: t.cube, face: "box/-z" },
+    });
+    expect(bad.ok).toBe(false);
+    const off = await t.apply({ op: "setSuppressed", id: bad.createdId! });
+    expect(off).toMatchObject({ ok: true, createdId: bad.createdId });
+    expect(off.featureErrors).toBeUndefined();
+    expect(t.assembly().mates[0].suppressed).toBe(true);
+    const on = await t.apply({ op: "setSuppressed", id: bad.createdId!, suppressed: false });
+    expect(on.featureErrors?.[bad.createdId!]).toMatch(/Over-constrained/);
+    expect(t.assembly().mates[0].suppressed).toBeUndefined();
+  });
+
+  it("leaves a part a suppressed mate held where it was", async () => {
+    const t = await plateAndCube();
+    const m = await t.apply({
+      op: "addMate",
+      type: "revolute",
+      a: { instanceId: t.plate, face: "box/+z" },
+      b: { instanceId: t.cube, face: "box/-z" },
+      values: { rz: 30 },
+    });
+    const before = at(t, t.cube, [10, 0, 0]);
+    await t.apply({ op: "setSuppressed", id: m.createdId! });
+    at(t, t.cube, [10, 0, 0]).forEach((v, i) => expect(v).toBeCloseTo(before[i]));
+    expect(t.ctx.getAssembly()!.solution!.mated.has(t.cube)).toBe(false);
+  });
+
+  it("suppresses a relation, and says so when a relation's mate is suppressed", async () => {
+    const t = await twoHinges();
+    const g = (
+      await t.apply({
+        op: "addRelation",
+        type: "gear",
+        driver: { mateId: t.r1, dof: "rz" },
+        driven: { mateId: t.r2, dof: "rz" },
+        value: 1,
+      })
+    ).createdId!;
+    await t.apply({ op: "setMateValue", mateId: t.r1, dof: "rz", value: 40 });
+    expect(value(t, t.r2)).toBeCloseTo(-40);
+    await t.apply({ op: "setSuppressed", id: g });
+    expect(value(t, t.r2)).toBeCloseTo(0);
+    await t.apply({ op: "setSuppressed", id: g, suppressed: false });
+    const off = await t.apply({ op: "setSuppressed", id: t.r1 });
+    expect(off.featureErrors?.[g]).toMatch(/is suppressed/);
+    expect(await t.apply({ op: "setSuppressed", id: "ghost" })).toMatchObject({ errorKind: "not_found" });
+  });
+});

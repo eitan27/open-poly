@@ -643,6 +643,9 @@ export const operationSchema = z.discriminatedUnion("op", [
       .partialRecord(dofSchema, z.union([z.object({ min: expr.optional(), max: expr.optional() }), z.null()]))
       .optional(),
   }),
+  /** Leave a mate or relation out of the solve, keeping it (suppressed: true,
+   *  the default), or bring it back. Parts it held stay where they are. */
+  z.object({ op: z.literal("setSuppressed"), id: z.string(), suppressed: z.boolean().optional() }),
   /** Change a relation: only the fields given change. */
   z.object({
     op: z.literal("editRelation"),

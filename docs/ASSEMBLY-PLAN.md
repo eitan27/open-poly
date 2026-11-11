@@ -353,6 +353,10 @@ far it has moved since it was selected, measured from where the solver
 actually put it, so a part in a loop reads what its mates let it do. Typing
 one moves it by the difference, through the same path as a drag.
 
+**Suppressing** a mate or relation (the toggle on its row, as the timeline's
+for features) leaves it out of the solve and keeps it; its row dims and reads
+"suppressed", and parts it held stay where they were.
+
 **A grounded part has no gizmo:** it stays where it is until it's
 ungrounded, as in Onshape.
 
@@ -483,6 +487,11 @@ The agent reads an open assembly through the same tools as a part
   problem), keeps a width mate's second faces only while it's a width mate,
   and to become one needs both sides given again with `face2`. Edits are
   checked as adds are, and one the solver can't hold is the op's failure.
+- **`set_suppressed`** leaves a mate or relation out of the solve, kept, as
+  each row's suppress toggle does (`setSuppressed` in `assembly.ts`, from
+  keepSolved, so what it held stays put). A relation whose mate is suppressed
+  says so. For the agent it's how to find the mate that over-constrains an
+  assembly without losing it.
 - **`set_mate_value` is the Move panel's typed value** (`setMateValue` in
   `relations.ts`, shared by both): a DOF a relation drives sets its driver to
   what puts it there, so it takes a number, not an expression.
@@ -506,10 +515,7 @@ The agent reads an open assembly through the same tools as a part
   frame capture in `scripts/tutorial/gif.mjs`, in-app via
   `canvas.captureStream` or a GIF encoder).
 
-**Agent / MCP: next:** a suppress toggle on mate and relation rows (the
-model and solver already honour `suppressed`, but nothing sets it), then
-`set_suppressed` for the agent — for finding which mate over-constrains an
-assembly without losing it.
+**Agent / MCP: nothing planned beyond the above.**
 
 **Smaller gaps.**
 

@@ -282,3 +282,19 @@ export function renameInMates(a: AssemblyDoc, rename: (expr: string) => string):
     ...(a.relations ? { relations: a.relations.map((r) => ({ ...r, value: rename(r.value) })) } : {}),
   };
 }
+
+/** `a` with the mate or relation `id` suppressed (left out of the solve, kept
+ *  in the assembly) or back in. Null when `id` is neither. A mate that stops
+ *  holding a part leaves it where `a`'s placements have it: callers start from
+ *  keepSolved, as removing a mate does. */
+export function setSuppressed(a: AssemblyDoc, id: string, suppressed: boolean): AssemblyDoc | null {
+  const flag = <T extends { suppressed?: boolean }>(x: T): T => {
+    if (suppressed) return { ...x, suppressed: true };
+    const { suppressed: _s, ...rest } = x;
+    return rest as T;
+  };
+  if (a.mates.some((m) => m.id === id)) return { ...a, mates: a.mates.map((m) => (m.id === id ? flag(m) : m)) };
+  if (a.relations?.some((r) => r.id === id))
+    return { ...a, relations: a.relations.map((r) => (r.id === id ? flag(r) : r)) };
+  return null;
+}

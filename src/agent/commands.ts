@@ -83,6 +83,7 @@ import {
   planEditMate,
   planEditRelation,
   planGround,
+  planSuppress,
   planInsert,
   planMate,
   planSetMateValue,
@@ -644,6 +645,7 @@ const ASSEMBLY_OPS: ReadonlySet<Operation["op"]> = new Set([
   "addRelation",
   "editMate",
   "editRelation",
+  "setSuppressed",
   "setVariable",
   "delete",
 ]);
@@ -655,6 +657,7 @@ const ASSEMBLY_ONLY: ReadonlySet<Operation["op"]> = new Set([
   "addRelation",
   "editMate",
   "editRelation",
+  "setSuppressed",
 ]);
 
 /** Apply an assembly op: plan it, commit it through the assembly's undo
@@ -707,6 +710,12 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
         note = `A ${op.type} mate has no ${r.dropped.join(", ")}: their values and limits were dropped.`;
       break;
     }
+    case "setSuppressed": {
+      const r = planSuppress(state, op);
+      if ("error" in r) throw new OpError("not_found", r.error);
+      next = r;
+      break;
+    }
     case "editRelation": {
       const r = planEditRelation(state, op);
       if ("error" in r) throw new OpError(/^No relation/.test(r.error) ? "not_found" : "invalid_op", r.error);
@@ -740,7 +749,9 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
         ? op.mateId
         : op.op === "editRelation"
           ? op.relationId
-          : undefined);
+          : op.op === "setSuppressed"
+            ? op.id
+            : undefined);
   const multi = createdIds.length > 1 ? { createdIds } : {};
   // What the solver says now: every mate's and relation's problem, and each
   // re-found connector; a new mate that doesn't hold is the op's own failure.
@@ -770,7 +781,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
     if (ctx.documents.info().kind === "assembly" && !DOCUMENT_OPS.has(op.op)) {
       throw new OpError(
         "invalid_op",
-        `The open document is an assembly: ${op.op} models a part. On an assembly use insert_instance, ground_instance, add_mate, edit_mate, set_mate_value, add_relation, edit_relation, set_variable and delete (an instance, mate or relation), read it with get_scene_summary and screenshot, and switch documents with the document tools.`,
+        `The open document is an assembly: ${op.op} models a part. On an assembly use insert_instance, ground_instance, add_mate, edit_mate, set_mate_value, add_relation, edit_relation, set_suppressed, set_variable and delete (an instance, mate or relation), read it with get_scene_summary and screenshot, and switch documents with the document tools.`,
       );
     }
     if (ASSEMBLY_ONLY.has(op.op))
@@ -1355,6 +1366,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       case "addRelation":
       case "editMate":
       case "editRelation":
+      case "setSuppressed":
         throw new OpError("invalid_op", `${op.op} works on an assembly.`);
       case "openDocument": {
         if (op.id === ctx.documents.info().id) return { ok: true, createdId: op.id };

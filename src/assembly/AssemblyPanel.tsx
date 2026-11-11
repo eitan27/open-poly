@@ -2,7 +2,7 @@
 // Timeline / Parts: what the assembly places, and how those are joined. Rows
 // follow the Parts list's (colour, name, eye, ✕) so the two read alike.
 import { shortcutHint, shortcutName } from "../settings/shortcuts";
-import { EyeIcon, GroundIcon } from "../ui/icons";
+import { EyeIcon, GroundIcon, SuppressIcon } from "../ui/icons";
 import { MateIcon, RelationIcon } from "./MateIcon";
 import { mateValuesText } from "./mateTypes";
 import { animatableDofs } from "./animate";
@@ -40,6 +40,8 @@ interface Props {
   onEditMate: (id: string) => void;
   onRenameMate: (id: string, name: string) => void;
   onRemoveMate: (id: string) => void;
+  /** Suppress a mate or relation, or bring it back. */
+  onToggleSuppressed: (id: string) => void;
   /** Open the Animate dialog on a mate with free DOFs. */
   onAnimateMate: (id: string) => void;
   /** The mate the Animate dialog is open on. */
@@ -217,7 +219,10 @@ export function AssemblyPanel(p: Props) {
                   <span className={"asm-source" + (bad ? " bad" : "")} title={bad}>
                     {bad
                       ? `⚠ ${bad}`
-                      : [`${name(m.a.instanceId)} ↔ ${name(m.b.instanceId)}`, mateValuesText(m, p.mateValues.get(m.id))]
+                      : [
+                          `${name(m.a.instanceId)} ↔ ${name(m.b.instanceId)}`,
+                          m.suppressed ? "suppressed" : mateValuesText(m, p.mateValues.get(m.id)),
+                        ]
                           .filter(Boolean)
                           .join(" · ")}
                   </span>
@@ -240,6 +245,7 @@ export function AssemblyPanel(p: Props) {
                     ▶
                   </button>
                 )}
+                <SuppressToggle on={!!m.suppressed} what="mate" onToggle={() => p.onToggleSuppressed(m.id)} />
                 <button
                   type="button"
                   className="row-icon"
@@ -314,9 +320,10 @@ function RelationsSection(p: Props) {
                   <span className={"asm-source" + (bad ? " bad" : "")} title={bad ?? kind.title}>
                     {bad
                       ? `⚠ ${bad}`
-                      : `${mateName(r.driver.mateId)} → ${mateName(r.driven.mateId)} · ${r.value}${r.reverse ? " · reversed" : ""}`}
+                      : `${mateName(r.driver.mateId)} → ${mateName(r.driven.mateId)} · ${r.value}${r.reverse ? " · reversed" : ""}${r.suppressed ? " · suppressed" : ""}`}
                   </span>
                 </span>
+                <SuppressToggle on={!!r.suppressed} what="relation" onToggle={() => p.onToggleSuppressed(r.id)} />
                 <button
                   type="button"
                   className="row-icon"
@@ -334,5 +341,25 @@ function RelationsSection(p: Props) {
         </div>
       )}
     </>
+  );
+}
+
+/** A mate's or relation's suppress button, as the timeline's: faded while it
+ *  applies, bright while it's suppressed. */
+function SuppressToggle({ on, what, onToggle }: { on: boolean; what: string; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className={"row-icon asm-suppress" + (on ? " on" : "")}
+      title={on ? `Unsuppress the ${what}` : `Suppress the ${what}: leave it out, keeping it`}
+      aria-pressed={on}
+      style={{ opacity: on ? 1 : 0.35 }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+    >
+      <SuppressIcon />
+    </button>
   );
 }

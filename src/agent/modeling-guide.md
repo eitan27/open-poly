@@ -75,8 +75,8 @@ quoted in the warning).
   There is deliberately no delete — ask the human.
 - **Assemblies** (only while one is open — see [Assemblies](#assemblies)):
   `insert_instance`, `ground_instance`, `add_mate`, `edit_mate`,
-  `set_mate_value`, `add_relation`, `edit_relation`, `set_variable`, `delete`,
-  and the read `animate_mate`.
+  `set_mate_value`, `add_relation`, `edit_relation`, `set_suppressed`,
+  `set_variable`, `delete`, and the read `animate_mate`.
 
 All mutations route through undo, so the human can revert anything you do.
 
@@ -223,6 +223,11 @@ expression. A loop of relations, or two relations driving one DOF, is refused.
 - `get_scene_summary` marks each broken mate/relation with `problem`, and a
   mate whose connector had to be re-found after a part edit with `warning`
   (check it landed on the intended face).
+- **Finding the culprit:** when several mates hold the same parts and one
+  conflicts, `set_suppressed` suspects one at a time (they're kept, and the
+  parts stay put) until the problems clear, then fix that one with
+  `edit_mate` and `set_suppressed` it back (`suppressed: false`). The summary
+  marks suppressed mates and relations `suppressed`.
 - `parts[].problem` says a part's document is missing, broken or still loading.
 
 ### Seeing it move
