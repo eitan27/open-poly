@@ -60,7 +60,8 @@ const OP_DESCRIPTIONS: Record<string, string> = {
   extendEntity:
     "Extend a sketch edge: grows it from the end nearest `at` ([u,v] in the sketch plane) along its own path until it meets another edge, and RECORDS that meeting (coincident if it lands on the other edge's own end, else point-on) so it survives later solves. Errors when nothing lies ahead of that end. Circles have no end to extend.",
   setParam: 'Set a feature parameter to a number or expression (e.g. width = "plate/2").',
-  setVariable: "Create or update a named variable (drive dimensions with variables, then reference them in params).",
+  setVariable:
+    "Create or update a named variable (drive dimensions with variables, then reference them in params). On an assembly it sets the assembly's own variables, which mate values, limits, offsets and relation values can name.",
   setAppearance: "Set a body's color (0xRRGGBB), opacity (0..1), and/or hidden flag.",
   rename: "Rename a feature/body so later steps and the human can read it.",
   delete:
@@ -83,6 +84,10 @@ const OP_DESCRIPTIONS: Record<string, string> = {
     "ASSEMBLY only. Fix an instance where it is (grounded: true, the default) so mates place others against it, or free it (grounded: false).",
   addMate:
     "ASSEMBLY only. Join two instances with a mate; b moves to a. Each side names ONE entity of its instance's part from get_scene_summary's parts: {face} | {edge} | {vertex: {edge, end: 'start'|'end'}}, plus optional anchor ('center' default; a round wall also offers 'start'/'end') and offset {x,y,z} (mm in the connector's own frame). type: fastened (no motion), revolute (turns about Z: rz), slider (along Z: tz), cylindrical (tz + rz), planar (slides tx/ty and turns rz on the plane), ball (rx/ry/rz), width (centres b between two faces of a; give face AND face2 on both sides). Connector Z is a face's outward normal / an edge's direction / a round wall's axis; by default the two Z axes face each other (two faces touching) — flip:true points them the same way; turns (0-3) rotates b by quarter turns about Z. values set free DOFs (mm / degrees, numbers or variable expressions); limits {min,max} bound them. A mate the solver can't hold returns ok:false with its createdId and the reason — fix the cause or delete it.",
+  setMateValue:
+    "ASSEMBLY only. Set one free DOF of a mate (dof from get_scene_summary's mate `free` list: mm for t*, degrees for r*), a number or a variable expression (an expression keeps driving it); \"\" resets it to 0. A DOF a relation drives (`drivenBy`) can't take its own value: give a number and its driver is set to what puts it there.",
+  addRelation:
+    "ASSEMBLY only. Drive one mate's free DOF from another's, linearly: gear (rotation → rotation, value = ratio: driven turns per driver turn, opposite ways as meshed gears turn), rack (rotation ↔ translation, value = pinion radius mm), screw (rotation ↔ translation, value = pitch mm per turn — a cylindrical mate's own rz → tz is a screw). The driven DOF's own value becomes a phase added on top. reverse flips the direction. Relations chain (a gear train); a loop of them, or a DOF driven twice, is refused — returned as ok:false with the relation's createdId to delete.",
   duplicateDocument:
     "Duplicate a document (id defaults to the active one) and open the copy — a safe sandbox before risky edits.",
 };

@@ -27,7 +27,6 @@ import {
   addSweep,
   addSketchEntities,
   addTransform,
-  addVariable,
   genId,
   removeSketchConstraint,
   setSketchEntities,
@@ -40,8 +39,7 @@ import {
   setFeatureOpacity,
   setRollbackIndex,
   updateParam,
-  updateVariable,
-  validateVariableNames,
+  setVariableByName,
 } from "../document/document";
 import { expandPickToChains } from "../geom/edgeChains";
 import { edgeLine } from "../geom/meshQuery";
@@ -71,7 +69,6 @@ import type {
   SketchEntity,
   SketchFeature,
   TransformAxis,
-  Variable,
   Vec2,
 } from "../document/types";
 import { listMeta } from "../storage/db";
@@ -80,7 +77,15 @@ import type { SectionViewState } from "../document/sectionView";
 import type { Selection } from "../selection/types";
 import type { ViewName } from "../viewport/types";
 import { assemblySummary, type AssemblyAgentState } from "./assemblySummary";
-import { planDelete, planGround, planInsert, planMate } from "./assemblyOps";
+import {
+  planAddRelation,
+  planDelete,
+  planGround,
+  planInsert,
+  planMate,
+  planSetMateValue,
+  planSetVariable,
+} from "./assemblyOps";
 import type { AssemblyDoc } from "../assembly/types";
 import type { SourceState } from "../assembly/useAssemblySources";
 import {
@@ -618,8 +623,22 @@ const DOCUMENT_OPS: ReadonlySet<Operation["op"]> = new Set([
 
 /** The ops that edit an open assembly (agent/assemblyOps.ts). `delete` is
  *  shared: on a part it deletes a feature. */
-const ASSEMBLY_OPS: ReadonlySet<Operation["op"]> = new Set(["insertInstance", "groundInstance", "addMate", "delete"]);
-const ASSEMBLY_ONLY: ReadonlySet<Operation["op"]> = new Set(["insertInstance", "groundInstance", "addMate"]);
+const ASSEMBLY_OPS: ReadonlySet<Operation["op"]> = new Set([
+  "insertInstance",
+  "groundInstance",
+  "addMate",
+  "setMateValue",
+  "addRelation",
+  "setVariable",
+  "delete",
+]);
+const ASSEMBLY_ONLY: ReadonlySet<Operation["op"]> = new Set([
+  "insertInstance",
+  "groundInstance",
+  "addMate",
+  "setMateValue",
+  "addRelation",
+]);
 
 /** Apply an assembly op: plan it, commit it through the assembly's undo
  *  setter, wait for it to solve, and report what the solver made of it. */
@@ -648,6 +667,26 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
       createdIds = [r.id];
       break;
     }
+    case "setMateValue": {
+      const r = planSetMateValue(state, op);
+      if ("error" in r) throw new OpError(/^No mate/.test(r.error) ? "not_found" : "invalid_op", r.error);
+      next = r;
+      break;
+    }
+    case "addRelation": {
+      const r = planAddRelation(state, op, genId);
+      if ("error" in r) throw new OpError("invalid_op", r.error);
+      next = r.assembly;
+      createdIds = [r.id];
+      break;
+    }
+    case "setVariable": {
+      const r = planSetVariable(state, op);
+      if ("error" in r) throw new OpError("invalid_op", r.error);
+      next = r.assembly;
+      createdIds = [r.id];
+      break;
+    }
     case "delete": {
       const r = planDelete(state, op.featureId);
       if ("error" in r) throw new OpError("not_found", r.error);
@@ -660,7 +699,8 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
   ctx.assemblyEdit.commit(next);
   const { timedOut } = await ctx.assemblyEdit.settle(state.assembly);
   const after = ctx.getAssembly();
-  const createdId = createdIds[0] ?? (op.op === "groundInstance" ? op.instanceId : undefined);
+  const createdId =
+    createdIds[0] ?? (op.op === "groundInstance" ? op.instanceId : op.op === "setMateValue" ? op.mateId : undefined);
   const multi = createdIds.length > 1 ? { createdIds } : {};
   // What the solver says now: every mate's and relation's problem, and each
   // re-found connector; a new mate that doesn't hold is the op's own failure.
@@ -675,7 +715,7 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
     ...(Object.keys(featureErrors).length ? { featureErrors } : {}),
     ...(Object.keys(warnings).length ? { warnings } : {}),
   };
-  if (op.op === "addMate" && createdId && featureErrors[createdId])
+  if ((op.op === "addMate" || op.op === "addRelation") && createdId && featureErrors[createdId])
     return { ok: false, createdId, error: featureErrors[createdId], errorKind: "invalid_op", ...extra };
   return { ok: true, ...(createdId ? { createdId } : {}), ...multi, ...extra };
 }
@@ -687,7 +727,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
     if (ctx.documents.info().kind === "assembly" && !DOCUMENT_OPS.has(op.op)) {
       throw new OpError(
         "invalid_op",
-        `The open document is an assembly: ${op.op} models a part. On an assembly use insert_instance, ground_instance, add_mate and delete (an instance, mate or relation), read it with get_scene_summary and screenshot, and switch documents with the document tools.`,
+        `The open document is an assembly: ${op.op} models a part. On an assembly use insert_instance, ground_instance, add_mate, set_mate_value, add_relation, set_variable and delete (an instance, mate or relation), read it with get_scene_summary and screenshot, and switch documents with the document tools.`,
       );
     }
     if (ASSEMBLY_ONLY.has(op.op))
@@ -1187,29 +1227,10 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         break;
       }
       case "setVariable": {
-        const existing = doc.variables.find((v) => v.name === op.name);
-        if (existing) {
-          next = updateVariable(doc, existing.id, "expression", op.expression);
-          createdId = existing.id;
-        } else {
-          // Validate the new name up front (letters-only, non-reserved, unique)
-          // so the agent gets a clear error rather than a variable that's
-          // silently dropped from scope at regen.
-          const candidate: Variable[] = [
-            ...doc.variables,
-            { id: "__candidate__", name: op.name, expression: op.expression },
-          ];
-          const nameError = validateVariableNames(candidate)["__candidate__"];
-          if (nameError) {
-            throw new OpError(
-              "invalid_op",
-              `Invalid variable name "${op.name}": ${nameError}. Variable names must be letters only — no digits, spaces, underscores, or reserved math names (pi, sin, …).`,
-            );
-          }
-          const r = addVariable(doc);
-          next = updateVariable(updateVariable(r.doc, r.id, "name", op.name), r.id, "expression", op.expression);
-          createdId = r.id;
-        }
+        const r = setVariableByName(doc, op.name, op.expression);
+        if ("error" in r) throw new OpError("invalid_op", r.error);
+        next = r.doc;
+        createdId = r.id;
         break;
       }
       case "setAppearance": {
@@ -1287,6 +1308,8 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       case "insertInstance":
       case "groundInstance":
       case "addMate":
+      case "setMateValue":
+      case "addRelation":
         throw new OpError("invalid_op", `${op.op} works on an assembly.`);
       case "openDocument": {
         if (op.id === ctx.documents.info().id) return { ok: true, createdId: op.id };

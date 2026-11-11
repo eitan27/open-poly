@@ -15,7 +15,8 @@ import {
   removeMates,
   updateInstance,
 } from "../assembly/assembly";
-import { removeRelations } from "../assembly/relations";
+import { addRelation, endsFit, nextRelationName, removeRelations, setMateValue } from "../assembly/relations";
+import { evaluateVariables, setVariableByName } from "../document/document";
 import {
   anchorsOf,
   connectorRefByName,
@@ -25,7 +26,7 @@ import {
 } from "../assembly/frames";
 import { INSERT_GAP_MM, insertShift, meshBounds, translation } from "../assembly/placement";
 import { MATE_DOFS } from "../assembly/solve";
-import type { AssemblyDoc, Dof, Mate, MateConnector } from "../assembly/types";
+import type { AssemblyDoc, Dof, Mate, MateConnector, Relation } from "../assembly/types";
 import type { SourcePart, SourceState } from "../assembly/useAssemblySources";
 import type { ShapeMeshPayload } from "../kernel/types";
 import { placedBoundsOf, type AssemblyAgentState } from "./assemblySummary";
@@ -197,4 +198,58 @@ export function planDelete(state: AssemblyAgentState, id: string): Planned<Assem
   if (a.mates.some((m) => m.id === id)) return removeMates(a, [id]);
   if (a.relations?.some((r) => r.id === id)) return removeRelations(a, [id]);
   return fail(`No instance, mate or relation "${id}" — ids are in get_scene_summary.`);
+}
+
+export function planSetMateValue(
+  state: AssemblyAgentState,
+  op: Extract<Operation, { op: "setMateValue" }>,
+): Planned<AssemblyDoc> {
+  const a = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
+  if (!a.mates.some((m) => m.id === op.mateId))
+    return fail(`No mate "${op.mateId}" — ids are in get_scene_summary's mates.`);
+  return setMateValue(a, op.mateId, op.dof, op.value, evaluateVariables(a.variables).scope);
+}
+
+export function planAddRelation(
+  state: AssemblyAgentState,
+  op: Extract<Operation, { op: "addRelation" }>,
+  genId: () => string,
+): Planned<{ assembly: AssemblyDoc; id: string }> {
+  for (const [role, end] of [
+    ["driver", op.driver],
+    ["driven", op.driven],
+  ] as const) {
+    const m = state.assembly.mates.find((x) => x.id === end.mateId);
+    if (!m) return fail(`${role}: no mate "${end.mateId}" — ids are in get_scene_summary's mates.`);
+    if (!MATE_DOFS[m.type].includes(end.dof))
+      return fail(
+        `${role}: ${m.name} is ${m.type}; it leaves ${MATE_DOFS[m.type].join(", ") || "nothing"} free, not ${end.dof}.`,
+      );
+  }
+  if (!endsFit(op.type, op.driver.dof, op.driven.dof))
+    return fail(
+      op.type === "gear"
+        ? "A gear couples two rotations (rx/ry/rz)."
+        : `A ${op.type} couples a rotation and a translation (rz with tz, say).`,
+    );
+  const id = genId();
+  const rel: Relation = {
+    id,
+    name: op.name ?? nextRelationName(state.assembly, op.type),
+    type: op.type,
+    driver: op.driver,
+    driven: op.driven,
+    value: op.value,
+    ...(op.reverse ? { reverse: true } : {}),
+  };
+  const base = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
+  return { assembly: addRelation(base, rel), id };
+}
+
+export function planSetVariable(
+  state: AssemblyAgentState,
+  op: Extract<Operation, { op: "setVariable" }>,
+): Planned<{ assembly: AssemblyDoc; id: string }> {
+  const r = setVariableByName(state.assembly, op.name, op.expression);
+  return "error" in r ? r : { assembly: r.doc, id: r.id };
 }

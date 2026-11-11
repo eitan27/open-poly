@@ -615,6 +615,24 @@ export const operationSchema = z.discriminatedUnion("op", [
     values: z.partialRecord(dofSchema, expr).optional(),
     limits: z.partialRecord(dofSchema, z.object({ min: expr.optional(), max: expr.optional() })).optional(),
   }),
+  /** Set one free DOF of a mate (mm / degrees, a number or an expression; ""
+   *  resets it to 0). A DOF a relation drives sets its driver instead, to
+   *  what puts it there (a number only). */
+  z.object({ op: z.literal("setMateValue"), mateId: z.string(), dof: dofSchema, value: expr }),
+  /** Drive one mate's DOF from another's. gear: rotation → rotation, value =
+   *  ratio (driven turns per driver turn; meshed gears turn opposite ways);
+   *  rack: rotation ↔ translation, value = pinion radius (mm); screw:
+   *  rotation ↔ translation, value = pitch (mm per turn) — a cylindrical
+   *  mate's own rz → tz is a screw. reverse flips the direction. */
+  z.object({
+    op: z.literal("addRelation"),
+    type: z.enum(["gear", "rack", "screw"]),
+    driver: z.object({ mateId: z.string(), dof: dofSchema }),
+    driven: z.object({ mateId: z.string(), dof: dofSchema }),
+    value: expr,
+    reverse: z.boolean().optional(),
+    name: z.string().optional(),
+  }),
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;

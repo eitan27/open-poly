@@ -4,7 +4,8 @@
 // add_mate by face names from the summary (the arm seats on the base at the
 // angle given), the panel showing it, Ctrl+Z undoing it like a hand-made one,
 // a mate the solver can't hold reported and deleted, and delete removing an
-// instance. NB if the local open-poly MCP hub is running, this headless tab
+// instance; then two arms geared together, driven by set_mate_value from
+// either end and by an assembly variable. NB if the local open-poly MCP hub is running, this headless tab
 // connects to it and can take the bridge from your own tab; reload yours after.
 import { chromium } from "playwright";
 
@@ -142,6 +143,55 @@ check("delete removes an instance with its mates", delArm.ok && s.instances.leng
 
 const refused = await apply({ op: "addPrimitive", kind: "box" });
 check("part modelling is refused, naming the assembly tools", !refused.ok && /add_mate/.test(refused.error));
+
+// --- Values, relations and variables: two arms geared on the base ------------------
+const armA = (await apply({ op: "insertInstance", documentId: idOf("AgentArm"), name: "ArmA" })).createdId;
+const armB = (await apply({ op: "insertInstance", documentId: idOf("AgentArm"), name: "ArmB" })).createdId;
+const hinge = async (instanceId, x) =>
+  (
+    await apply({
+      op: "addMate",
+      type: "revolute",
+      a: { instanceId: base.id, face: top, offset: { x } },
+      b: { instanceId, face: bottom },
+    })
+  ).createdId;
+const rA = await hinge(armA, -10);
+const rB = await hinge(armB, 10);
+const gear = await apply({
+  op: "addRelation",
+  type: "gear",
+  driver: { mateId: rA, dof: "rz" },
+  driven: { mateId: rB, dof: "rz" },
+  value: 2,
+});
+check("add_relation gears the second arm to the first", gear.ok, JSON.stringify(gear));
+check("…and the panel lists it", (await page.locator(".asm-relation-row").count()) === 1);
+const angle = (sum, id) => sum.mates.find((m) => m.id === id).free[0];
+await apply({ op: "setMateValue", mateId: rA, dof: "rz", value: 15 });
+s = await summary();
+check(
+  "set_mate_value turns the driver, and the gear the driven arm",
+  angle(s, rA).value === 15 && angle(s, rB).value === -30 && angle(s, rB).drivenBy === gear.createdId,
+  `${angle(s, rA).value}, ${angle(s, rB).value}`,
+);
+const back = await apply({ op: "setMateValue", mateId: rB, dof: "rz", value: -50 });
+s = await summary();
+check("a value set on the driven arm turns its driver", back.ok && angle(s, rA).value === 25, `${angle(s, rA).value}`);
+const v = await apply({ op: "setVariable", name: "swing", expression: "40" });
+await apply({ op: "setMateValue", mateId: rA, dof: "rz", value: "swing" });
+s = await summary();
+check(
+  "set_variable makes an assembly variable a mate value can name",
+  v.ok &&
+    s.variables.some((x) => x.name === "swing" && x.value === 40) &&
+    angle(s, rA).expression === "swing" &&
+    angle(s, rB).value === -80,
+  JSON.stringify(s.variables),
+);
+await apply({ op: "setVariable", name: "swing", expression: "10" });
+s = await summary();
+check("…and changing it turns both arms", angle(s, rA).value === 10 && angle(s, rB).value === -20);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL PASS");
 await browser.close();

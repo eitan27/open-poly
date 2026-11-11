@@ -96,8 +96,9 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
   problems, and `screenshot` shows it. Build one with `insert_instance` (a
   part document's parts; the first is grounded), `ground_instance`,
   `add_mate` (each side a face, edge or vertex of an instance's part, by the
-  names listed under its part) and `delete` (an instance, mate or relation).
-  Modelling ops are refused while an assembly is open.
+  names listed under its part), `set_mate_value`, `add_relation` (gear, rack,
+  screw), `set_variable` (the assembly's own) and `delete` (an instance, mate
+  or relation). Modelling ops are refused while an assembly is open.
 
 ## Recipes
 

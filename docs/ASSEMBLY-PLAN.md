@@ -450,8 +450,9 @@ The agent reads an open assembly through the same tools as a part
 - **Editing** (`agent/assemblyOps.ts`, pure, then `applyAssemblyOp` in
   `commands.ts`): `insert_instance` (a part document's parts, all or by id,
   beside what's placed as the Insert dialog does — `insertShift` — or at a
-  `position`), `ground_instance`, `add_mate`, and `delete` of an instance,
-  mate or relation. Each is one step on the assembly's own undo history
+  `position`), `ground_instance`, `add_mate`, `set_mate_value`,
+  `add_relation`, `set_variable` (the assembly's own; `setVariableByName` is
+  shared with parts) and `delete` of an instance, mate or relation. Each is one step on the assembly's own undo history
   (`AgentContext.assemblyEdit.commit` is `setAssembly`), so Ctrl+Z undoes it,
   and each waits (`settle`) until the edit has rendered and every source has
   loaded and solved, so the result and a read after it see the solve.
@@ -462,7 +463,12 @@ The agent reads an open assembly through the same tools as a part
   A width mate takes `face2` on each side.
 - **A mate the solver can't hold is the op's failure** (`ok: false`, with its
   `createdId` and the reason), as a part feature that fails to build is: it
-  stays, so the agent can see it and `delete` it.
+  stays, so the agent can see it and `delete` it. A relation the solver
+  refuses (a cycle, a DOF driven twice) likewise; ends of the wrong kind are
+  refused before anything is made.
+- **`set_mate_value` is the Move panel's typed value** (`setMateValue` in
+  `relations.ts`, shared by both): a DOF a relation drives sets its driver to
+  what puts it there, so it takes a number, not an expression.
 - Part modelling ops are refused while an assembly is open, and assembly ops
   while a part is, each naming what does work.
 
@@ -477,11 +483,11 @@ The agent reads an open assembly through the same tools as a part
   frame capture in `scripts/tutorial/gif.mjs`, in-app via
   `canvas.captureStream` or a GIF encoder).
 
-**Agent / MCP: still to come**, in order: `set_mate_value` and
-`add_relation` (through `setMateValue`'s driver routing); then `animate_mate`
-(the per-frame solve, captured at a few values as a screenshot strip); then
-a full assembly section in `src/agent/modeling-guide.md`, which today has a
-paragraph.
+**Agent / MCP: still to come**, in order: `animate_mate` (the per-frame
+solve, captured at a few values as a screenshot strip); then a full assembly
+section in `src/agent/modeling-guide.md`, which today has a paragraph. Not
+planned yet: editing a mate's connectors, flip or limits after it's made
+(delete and re-add), and suppressing mates or relations.
 
 **Smaller gaps.**
 

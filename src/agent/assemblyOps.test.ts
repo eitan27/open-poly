@@ -369,3 +369,121 @@ describe("which document the ops work on", () => {
     expect(r.error).toMatch(/works on an assembly; the open document is a part/);
   });
 });
+
+/** A plate with two cubes hinged on its top: revolutes r1 (left) and r2
+ *  (right), each about its own vertical axis. */
+async function twoHinges() {
+  const t = assemblyCtx();
+  const plate = (await t.apply({ op: "insertInstance", documentId: "plate" })).createdId!;
+  const c1 = (await t.apply({ op: "insertInstance", documentId: "cube" })).createdId!;
+  const c2 = (await t.apply({ op: "insertInstance", documentId: "cube" })).createdId!;
+  const hinge = async (cube: string, x: number) =>
+    (
+      await t.apply({
+        op: "addMate",
+        type: "revolute",
+        a: { instanceId: plate, face: "box/+z", offset: { x } },
+        b: { instanceId: cube, face: "box/-z" },
+      })
+    ).createdId!;
+  const r1 = await hinge(c1, -12);
+  const r2 = await hinge(c2, 12);
+  return { ...t, plate, c1, c2, r1, r2 };
+}
+const value = (t: ReturnType<typeof assemblyCtx>, mateId: string, dof = "rz") =>
+  t.ctx.getAssembly()!.solution!.values.get(mateId)?.[dof as "rz"];
+
+describe("set_mate_value", () => {
+  it("sets a free DOF to a number or an expression, and clears it", async () => {
+    const t = await twoHinges();
+    expect(await t.apply({ op: "setMateValue", mateId: t.r1, dof: "rz", value: 45 })).toMatchObject({
+      ok: true,
+      createdId: t.r1,
+    });
+    expect(value(t, t.r1)).toBe(45);
+    await t.apply({ op: "setVariable", name: "turn", expression: "20" });
+    await t.apply({ op: "setMateValue", mateId: t.r1, dof: "rz", value: "turn * 2" });
+    expect(value(t, t.r1)).toBe(40);
+    await t.apply({ op: "setMateValue", mateId: t.r1, dof: "rz", value: "" });
+    expect(t.assembly().mates.find((m) => m.id === t.r1)?.values).toBeUndefined();
+  });
+
+  it("refuses a DOF the mate doesn't leave free, or a mate that isn't there", async () => {
+    const t = await twoHinges();
+    expect((await t.apply({ op: "setMateValue", mateId: t.r1, dof: "tz", value: 3 })).error).toMatch(
+      /revolute: it leaves rz free, not tz/,
+    );
+    expect(await t.apply({ op: "setMateValue", mateId: "ghost", dof: "rz", value: 3 })).toMatchObject({
+      errorKind: "not_found",
+    });
+  });
+});
+
+describe("add_relation", () => {
+  it("gears one hinge to another, and a value typed on the driven one turns its driver", async () => {
+    const t = await twoHinges();
+    const g = await t.apply({
+      op: "addRelation",
+      type: "gear",
+      driver: { mateId: t.r1, dof: "rz" },
+      driven: { mateId: t.r2, dof: "rz" },
+      value: 2,
+    });
+    expect(g).toMatchObject({ ok: true });
+    expect(t.assembly().relations?.[0]).toMatchObject({ id: g.createdId, name: "Gear 1", type: "gear", value: "2" });
+    await t.apply({ op: "setMateValue", mateId: t.r1, dof: "rz", value: 30 });
+    expect(value(t, t.r2)).toBeCloseTo(-60);
+    // The driven gear's angle drives its driver: −20 needs 10 on r1.
+    expect(await t.apply({ op: "setMateValue", mateId: t.r2, dof: "rz", value: -20 })).toMatchObject({ ok: true });
+    expect(t.assembly().mates.find((m) => m.id === t.r1)?.values).toEqual({ rz: "10" });
+    expect(t.assembly().mates.find((m) => m.id === t.r2)?.values).toBeUndefined();
+    // …but not to an expression, which would be the driven DOF's own.
+    expect((await t.apply({ op: "setMateValue", mateId: t.r2, dof: "rz", value: "nope + 1" })).error).toMatch(
+      /Not a number/,
+    );
+  });
+
+  it("refuses ends that don't fit, before making anything", async () => {
+    const t = await twoHinges();
+    const rel = (driven: { mateId: string; dof: "rz" | "tz" }, type: "gear" | "rack" = "gear") =>
+      t.apply({ op: "addRelation", type, driver: { mateId: t.r1, dof: "rz" }, driven, value: 1 });
+    expect((await rel({ mateId: "ghost", dof: "rz" })).error).toMatch(/driven: no mate "ghost"/);
+    expect((await rel({ mateId: t.r2, dof: "tz" })).error).toMatch(/driven: .* revolute; it leaves rz free, not tz/);
+    expect((await rel({ mateId: t.r2, dof: "rz" }, "rack")).error).toMatch(/rack couples a rotation and a translation/);
+    expect(t.assembly().relations).toBeUndefined();
+  });
+
+  it("reports a relation the solver refuses as the op's failure, keeping it to delete", async () => {
+    const t = await twoHinges();
+    await t.apply({
+      op: "addRelation",
+      type: "gear",
+      driver: { mateId: t.r1, dof: "rz" },
+      driven: { mateId: t.r2, dof: "rz" },
+      value: 1,
+    });
+    const loop = await t.apply({
+      op: "addRelation",
+      type: "gear",
+      driver: { mateId: t.r2, dof: "rz" },
+      driven: { mateId: t.r1, dof: "rz" },
+      value: 1,
+    });
+    expect(loop.ok).toBe(false);
+    expect(loop.error).toMatch(/loop of relations/);
+    expect(await t.apply({ op: "delete", featureId: loop.createdId! })).toMatchObject({ ok: true });
+    expect(t.assembly().relations).toHaveLength(1);
+  });
+});
+
+describe("set_variable on an assembly", () => {
+  it("makes and updates the assembly's own variables", async () => {
+    const t = assemblyCtx();
+    const r = await t.apply({ op: "setVariable", name: "gap", expression: "4" });
+    expect(r.ok).toBe(true);
+    expect(t.assembly().variables).toEqual([{ id: r.createdId, name: "gap", expression: "4" }]);
+    await t.apply({ op: "setVariable", name: "gap", expression: "5" });
+    expect(t.assembly().variables).toEqual([{ id: r.createdId, name: "gap", expression: "5" }]);
+    expect((await t.apply({ op: "setVariable", name: "gap2", expression: "1" })).error).toMatch(/letters only/);
+  });
+});

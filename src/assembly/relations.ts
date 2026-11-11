@@ -15,7 +15,7 @@
 // a driven part — a drag, a typed value — moves its driver instead, so the
 // relation keeps holding (routeToDriver).
 import { evaluateExpression, type Scope } from "../document/expression";
-import { isDriven, isRotation, MATE_DOFS } from "./solve";
+import { formatValue, isDriven, isRotation, MATE_DOFS } from "./solve";
 import type { AssemblyDoc, Dof, Mate, Relation, RelationType } from "./types";
 
 export const RELATION_TYPES: {
@@ -282,4 +282,44 @@ export function defaultDraft(type: RelationType, mates: Mate[]): RelationDraft {
       if (a.mateId !== b.mateId && endsFit(type, a.dof, b.dof) && (type === "gear" || isRotation(a.dof)))
         return { type, driver: a, driven: b, value, reverse: false };
   return { type, driver: null, driven: null, value, reverse: false };
+}
+
+/** `a` with `mateId`'s `dof` set to `text` (empty: back to 0), as typing it
+ *  in the Move panel does. A DOF a relation drives can't take its own value
+ *  (that's its phase): its driver, followed back to the root of a gear train,
+ *  is set to what puts it at the typed number instead — so the text must be a
+ *  number there, not an expression. Why it can't be set, if it can't. */
+export function setMateValue(
+  a: AssemblyDoc,
+  mateId: string,
+  dof: Dof,
+  text: string,
+  scope: Scope,
+): AssemblyDoc | { error: string } {
+  const m = a.mates.find((x) => x.id === mateId);
+  if (!m) return { error: `No mate "${mateId}".` };
+  if (!MATE_DOFS[m.type].includes(dof))
+    return {
+      error: `${m.name} is ${m.type}: it leaves ${MATE_DOFS[m.type].join(", ") || "nothing"} free, not ${dof}.`,
+    };
+  const update = (mate: Mate, d: Dof, t: string): AssemblyDoc => {
+    const values = { ...mate.values };
+    if (t.trim()) values[d] = t;
+    else delete values[d];
+    const { values: _drop, ...rest } = mate;
+    const next = Object.keys(values).length ? { ...rest, values } : rest;
+    return { ...a, mates: a.mates.map((x) => (x.id === mate.id ? next : x)) };
+  };
+  if (!relationDriving(a, mateId, dof)) return update(m, dof, text);
+  let v: number;
+  try {
+    v = text.trim() ? evaluateExpression(text, scope) : 0;
+  } catch (e) {
+    return { error: `Not a number: ${(e as Error).message}` };
+  }
+  const r = routeToDriver(a, mateId, dof, v, scope);
+  if ("error" in r) return r;
+  const root = a.mates.find((x) => x.id === r.mateId);
+  if (!root) return { error: `No mate "${r.mateId}".` };
+  return update(root, r.dof, formatValue(r.value, isRotation(r.dof)));
 }

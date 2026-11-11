@@ -1010,6 +1010,28 @@ export function addVariable<T extends WithVariables>(doc: T): { doc: T; id: stri
  *  spaces, or symbols), must be non-empty, can't collide with a built-in
  *  constant/function, and must be unique. Returns one error message per
  *  offending variable id (keyed for the panel to flag the name field). */
+/** Set the variable `name` to `expression`, making it if there's none: what
+ *  the agent's set_variable does, on a part or an assembly. A new name is
+ *  checked up front (letters only, not reserved, unique), so a bad one is an
+ *  error rather than a variable silently left out of scope. */
+export function setVariableByName<T extends WithVariables>(
+  doc: T,
+  name: string,
+  expression: string,
+): { doc: T; id: string } | { error: string } {
+  const existing = doc.variables.find((v) => v.name === name);
+  if (existing) return { doc: updateVariable(doc, existing.id, "expression", expression), id: existing.id };
+  const nameError = validateVariableNames([...doc.variables, { id: "__candidate__", name, expression }])[
+    "__candidate__"
+  ];
+  if (nameError)
+    return {
+      error: `Invalid variable name "${name}": ${nameError}. Variable names must be letters only — no digits, spaces, underscores, or reserved math names (pi, sin, …).`,
+    };
+  const r = addVariable(doc);
+  return { doc: updateVariable(updateVariable(r.doc, r.id, "name", name), r.id, "expression", expression), id: r.id };
+}
+
 export function validateVariableNames(variables: Variable[]): Record<string, string> {
   const errors: Record<string, string> = {};
   const firstByName = new Map<string, string>();

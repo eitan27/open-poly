@@ -5,7 +5,6 @@ import { useMemo, useRef, useState } from "react";
 import type { GhostMesh } from "../viewport/types";
 import type { Selection } from "../selection/types";
 import { evaluateVariables } from "../document/document";
-import { evaluateExpression } from "../document/expression";
 import { addMate, connectorWarnings, keepSolved, nextMateName, removeMates, updateMate } from "./assembly";
 import {
   anchorsOf,
@@ -23,8 +22,8 @@ import { connectorGlyph, pointGlyph } from "./glyph";
 import type { MateDialogProps } from "./MateDialog";
 import { MATE_TYPES } from "./mateTypes";
 import { applyPoint, IDENTITY, meshBounds, multiply } from "./placement";
-import { relationDriving, routeToDriver } from "./relations";
-import { formatValue, invertRigid, isRotation, MATE_DOFS, solve, type Solution } from "./solve";
+import { setMateValue as setMateValueIn } from "./relations";
+import { invertRigid, MATE_DOFS, solve, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector, MateType } from "./types";
 import type { SourceState } from "./useAssemblySources";
 
@@ -611,25 +610,10 @@ export function useMates({
    *  drives sets its driver instead (routeToDriver), to what puts it at the
    *  typed value. Returns why it couldn't be set, or null. */
   const setMateValue = (mateId: string, dof: Dof, text: string): string | null => {
-    const m = assembly?.mates.find((x) => x.id === mateId);
-    if (!assembly || !m) return null;
-    if (!relationDriving(assembly, mateId, dof)) {
-      commit(updateMate(assembly, { ...m, values: setOrDrop(m.values ?? {}, dof, text) }));
-      return null;
-    }
-    const scope = evaluateVariables(assembly.variables).scope;
-    let v: number;
-    try {
-      v = text.trim() ? evaluateExpression(text, scope) : 0;
-    } catch (e) {
-      return `Not a number: ${(e as Error).message}`;
-    }
-    const r = routeToDriver(assembly, mateId, dof, v, scope);
+    if (!assembly) return null;
+    const r = setMateValueIn(assembly, mateId, dof, text, evaluateVariables(assembly.variables).scope);
     if ("error" in r) return r.error;
-    const root = assembly.mates.find((x) => x.id === r.mateId);
-    if (!root) return null;
-    const value = formatValue(r.value, isRotation(r.dof));
-    commit(updateMate(assembly, { ...root, values: { ...root.values, [r.dof]: value } }));
+    commit(r);
     return null;
   };
 
