@@ -1793,6 +1793,46 @@ export function Viewport({
       }
       return pts;
     };
+    /** Render one frame and read it back (`read`) in the same tick, since the
+     *  WebGL drawing buffer isn't preserved across the browser's compositing
+     *  step. Snaps any in-flight view tween to its end first, so the camera
+     *  asked for is the one captured. `plain` renders it with every highlight
+     *  (selection, hover, whole-body, boolean operands) blanked, then restores
+     *  them — all in this tick, so the on-screen frame the user sees next is
+     *  the normal highlighted one. */
+    const captureFrame = (plain: boolean, read: () => void) => {
+      if (state.tween) {
+        camera.position.copy(state.tween.to);
+        camera.up.copy(state.tween.up);
+        state.tween = null;
+      }
+      controls.update();
+      const saved = plain
+        ? {
+            sel: selectionRef.current,
+            hover: hoverSelRef.current,
+            bodies: highlightBodyIdsRef.current,
+            bool: booleanHighlightRef.current,
+          }
+        : null;
+      if (saved) {
+        selectionRef.current = [];
+        hoverSelRef.current = null;
+        highlightBodyIdsRef.current = new Set();
+        booleanHighlightRef.current = null;
+        applyHighlights();
+      }
+      renderer.render(scene, camera);
+      read();
+      if (saved) {
+        selectionRef.current = saved.sel;
+        hoverSelRef.current = saved.hover;
+        highlightBodyIdsRef.current = saved.bodies;
+        booleanHighlightRef.current = saved.bool;
+        applyHighlights();
+        renderer.render(scene, camera);
+      }
+    };
     apiRef.current = {
       setView(name) {
         goToView(name);
@@ -1982,45 +2022,22 @@ export function Viewport({
         return edgePolyline(featureId, (g) => g.name === name);
       },
       capturePNG(opts) {
-        // Snap to the end of any in-flight view tween so the requested camera is
-        // captured now, not mid-animation.
-        if (state.tween) {
-          camera.position.copy(state.tween.to);
-          camera.up.copy(state.tween.up);
-          state.tween = null;
-        }
-        controls.update();
-        // Plain mode: blank every highlight source, re-apply materials, render
-        // the capture frame, then restore — all in this tick, so the on-screen
-        // frame the user sees next is the normal highlighted one.
-        const saved = opts?.plain
-          ? {
-              sel: selectionRef.current,
-              hover: hoverSelRef.current,
-              bodies: highlightBodyIdsRef.current,
-              bool: booleanHighlightRef.current,
-            }
-          : null;
-        if (saved) {
-          selectionRef.current = [];
-          hoverSelRef.current = null;
-          highlightBodyIdsRef.current = new Set();
-          booleanHighlightRef.current = null;
-          applyHighlights();
-        }
-        // Read back in the same tick as render — the WebGL drawing buffer isn't
-        // preserved across the browser's compositing step.
-        renderer.render(scene, camera);
-        const url = renderer.domElement.toDataURL("image/png");
-        if (saved) {
-          selectionRef.current = saved.sel;
-          hoverSelRef.current = saved.hover;
-          highlightBodyIdsRef.current = saved.bodies;
-          booleanHighlightRef.current = saved.bool;
-          applyHighlights();
-          renderer.render(scene, camera);
-        }
+        let url = "";
+        captureFrame(!!opts?.plain, () => (url = renderer.domElement.toDataURL("image/png")));
         return url;
+      },
+      drawFrame(target) {
+        const src = renderer.domElement;
+        captureFrame(true, () => {
+          const c = target.canvas;
+          target.fillStyle = "#000";
+          target.fillRect(0, 0, c.width, c.height);
+          target.drawImage(src, 0, 0, src.width, src.height, 0, 0, c.width, c.height);
+        });
+      },
+      frameAspect() {
+        const c = renderer.domElement;
+        return c.height ? c.width / c.height : 16 / 9;
       },
     };
 

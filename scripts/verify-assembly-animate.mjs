@@ -1,13 +1,18 @@
 // Assemblies: animating a mate. A revolute mate holds the arm on the base; the
 // mate row's ▶ opens the Animate dialog, Play turns the arm in the view (the
 // frames differ mid-play and the readout counts), nothing is saved, and Stop
-// puts the arm back where it was. NB if the local open-poly MCP hub is running, this headless tab
+// puts the arm back where it was. Export saves one cycle as a GIF or a
+// video (and Cancel stops one), leaving the view and the document as they were. NB if the local open-poly MCP hub is running, this headless tab
 // connects to it and can take the bridge from your own tab; reload yours after.
 import { chromium } from "playwright";
 
 const URL = process.env.URL ?? "http://localhost:5173/";
 const browser = await chromium.launch(process.env.PW_EXE ? { executablePath: process.env.PW_EXE } : {});
-const context = await browser.newContext({ viewport: { width: 1660, height: 920 }, deviceScaleFactor: 2 });
+const context = await browser.newContext({
+  viewport: { width: 1660, height: 920 },
+  deviceScaleFactor: 2,
+  acceptDownloads: true,
+});
 const page = await context.newPage();
 page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
 await page.goto(URL, { waitUntil: "domcontentloaded" });
@@ -220,6 +225,60 @@ check("a Once animation ends", await page.locator(".asm-animate-play").isVisible
 check("…at its last value", (await page.locator(".asm-animate-live").textContent()).includes("90"));
 const held = await shot();
 check("…holding the arm turned", !same(held, stillOpen));
+// --- Export one cycle: a GIF, a video, and a cancelled one -----------------------------
+// Once, a quarter turn in half a second: 10 GIF frames, 15 video frames.
+const download = async (button) => {
+  const [d] = await Promise.all([page.waitForEvent("download", { timeout: 60000 }), page.locator(button).click()]);
+  const path = await d.path();
+  const fs = await import("node:fs");
+  return { name: d.suggestedFilename(), bytes: fs.readFileSync(path) };
+};
+const gifClick = page.locator(".asm-export-gif").click();
+await page.locator(".asm-export-progress").waitFor({ timeout: 5000 });
+check("exporting shows its progress, with Play off", await page.locator(".asm-animate-play").isDisabled());
+await gifClick;
+const gif = await (async () => {
+  const [d] = await Promise.all([page.waitForEvent("download", { timeout: 60000 })]);
+  const fs = await import("node:fs");
+  return { name: d.suggestedFilename(), bytes: fs.readFileSync(await d.path()) };
+})();
+// Each frame carries a graphic control extension (21 F9 04).
+const frames = (b) => {
+  let n = 0;
+  for (let i = 0; i + 2 < b.length; i++) if (b[i] === 0x21 && b[i + 1] === 0xf9 && b[i + 2] === 0x04) n++;
+  return n;
+};
+check(
+  "GIF downloads a GIF of one cycle",
+  gif.name.endsWith(".gif") && gif.bytes.subarray(0, 6).toString() === "GIF89a" && frames(gif.bytes) === 10,
+  `${gif.name}, ${gif.bytes.length} bytes, ${frames(gif.bytes)} frames`,
+);
+if (process.env.SHOTS) (await import("node:fs")).writeFileSync(`${process.env.SHOTS}/export.gif`, gif.bytes);
+await page.waitForTimeout(300);
+// Like Stop, the export lets go of the poses when it's done: the arm at rest.
+check("…and lets the view go, as Stop does", same(await shot(), stillOpen));
+
+const video = await download(".asm-export-video");
+check(
+  "Video downloads a WebM",
+  video.name.endsWith(".webm") && video.bytes.readUInt32BE(0) === 0x1a45dfa3 && video.bytes.length > 2000,
+  `${video.name}, ${video.bytes.length} bytes`,
+);
+if (process.env.SHOTS) (await import("node:fs")).writeFileSync(`${process.env.SHOTS}/export.webm`, video.bytes);
+
+let downloaded = false;
+page.once("download", () => (downloaded = true));
+await field("Seconds").fill("3");
+await field("Seconds").press("Enter");
+await page.locator(".asm-export-gif").click();
+await page.locator(".asm-export-cancel").click();
+await page.waitForTimeout(1500);
+check(
+  "Cancel stops an export: nothing downloads",
+  !downloaded &&
+    (await page.locator(".asm-export-gif").count()) === 1 &&
+    (await page.locator(".asm-animate .ed-warning").count()) === 0,
+);
 await page.locator(".asm-animate-close").click();
 await page.waitForTimeout(400);
 check("Close puts the arm back", same(await shot(), still));

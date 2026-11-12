@@ -196,4 +196,9 @@ export interface ViewportApi {
    *  on screen. Agent screenshots stay un-plain: highlighting the selection is
    *  how `select` + `screenshot` communicate. */
   capturePNG(opts?: { plain?: boolean }): string;
+  /** Render the current scene with no highlights and draw it, scaled, onto
+   *  `target`'s whole canvas: one frame of an exported animation. */
+  drawFrame(target: CanvasRenderingContext2D): void;
+  /** The view's width / height, for sizing an export's frames. */
+  frameAspect(): number;
 }

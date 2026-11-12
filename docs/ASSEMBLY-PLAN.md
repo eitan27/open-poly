@@ -413,6 +413,16 @@ translation (bouncing).
   dialog or editing a mate closes it, as Esc does.
 - If a frame leaves a mate the solver can't satisfy, the animation stops there
   and says which.
+- **Export** (Video / GIF in the dialog, `exportAnimation.ts`) saves one cycle:
+  once from end to end, a loop's sweep, a bounce there and back. Frames are
+  rendered, not recorded off the screen, so a slow machine drops none: each
+  is the same per-frame solve, posed through `poseBodies` and drawn through
+  `ViewportApi.drawFrame` (the view as it is, highlights off) onto a hidden
+  canvas. Video: 30 fps, 1280 wide, through `captureStream` and a
+  `MediaRecorder` paced in real time — WebM, or MP4 where only that records
+  (Safari). GIF: 20 fps, 640 wide, each frame quantized to its own palette by
+  `gifenc`; a Once GIF plays once, the others repeat. Like Stop, it lets go of
+  the poses when it's done; Cancel stops it with nothing saved.
 
 **Relations** (`relations.ts`, the Relations section under Mates,
 `RelationDialog`, `useRelations`) couple one mate's free DOF to another's,
@@ -531,9 +541,8 @@ The agent reads an open assembly through the same tools as a part
 - A relation between DOFs in one loop group whose driver only reports (a
   plain number) uses the driver's stored value, which `keepSolved` keeps
   current, rather than being one more residual solved with the loop.
-- Later: a timeline with keyframes over several mates; GIF/video export (the
-  frame capture in `scripts/tutorial/gif.mjs`, in-app via
-  `canvas.captureStream` or a GIF encoder).
+- Later: a timeline with keyframes over several mates, which Export would then
+  save as one sequence.
 
 **Smaller gaps.**
 
@@ -556,7 +565,8 @@ pinning (parts have no versions yet).
   planars, Width + Planar, a four-bar turned a full revolution and dragged by
   its coupler, a slider-crank, conflicts, locked parts dragged from either
   side, a box seated in a corner by one Fastened mate on vertices),
-  `drag.test.ts`, `loopInput.test.ts` (a typed value driving a four-bar, a later entry
+  `drag.test.ts`, `exportAnimation.test.ts` (each mode's frame values, frame
+  sizes), `loopInput.test.ts` (a typed value driving a four-bar, a later entry
   overriding an earlier, an expression named and cleared, an unreachable
   value, a drag past an expression), `relations.test.ts` (factors, gear
   trains, rack, a screw

@@ -8,6 +8,14 @@ import { useEffect, useRef, useState } from "react";
 import { evaluateVariables } from "../document/document";
 import type { ViewportApi } from "../viewport/types";
 import { animatableDofs, animator, defaultSpec, valueAt, type AnimateSpec } from "./animate";
+import {
+  EXPORT_FPS,
+  exportAnimation,
+  exportFrameValues,
+  extensionOf,
+  saveBlob,
+  type ExportFormat,
+} from "./exportAnimation";
 import { multiply } from "./placement";
 import { invertRigid, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, MateConnector } from "./types";
@@ -30,6 +38,11 @@ export interface MateAnimation {
   setDof(dof: Dof): void;
   play(): void;
   stop(): void;
+  /** An export under way: its format and how far it's got. */
+  exporting: { format: ExportFormat; done: number; total: number } | null;
+  /** Render one cycle of the animation to a file and download it. */
+  exportAs(format: ExportFormat): void;
+  cancelExport(): void;
 }
 
 export function useMateAnimation({
@@ -49,6 +62,8 @@ export function useMateAnimation({
   const [live, setLive] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const raf = useRef<number | null>(null);
+  const [exporting, setExporting] = useState<MateAnimation["exporting"]>(null);
+  const exportAbort = useRef<AbortController | null>(null);
   // Whether parts are posed away from their meshes (playing, or a finished
   // "once" holding its last frame).
   const posed = useRef(false);
@@ -64,7 +79,13 @@ export function useMateAnimation({
 
   // Any edit to the assembly (or switching document) ends the animation: its
   // frames were solved from the assembly as it was.
-  useEffect(() => release, [assembly]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(
+    () => () => {
+      release();
+      exportAbort.current?.abort();
+    },
+    [assembly], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const specFor = (id: string, dof?: Dof): AnimateSpec | null => {
     const mate = assembly?.mates.find((m) => m.id === id);
@@ -83,6 +104,7 @@ export function useMateAnimation({
     setSpecState(specFor(id));
   };
   const close = () => {
+    exportAbort.current?.abort();
     release();
     setMateId(null);
     setSpecState(null);
@@ -138,10 +160,69 @@ export function useMateAnimation({
     raf.current = requestAnimationFrame(frame);
   };
 
+  const exportAs = async (format: ExportFormat) => {
+    release();
+    const vp = viewApi.current;
+    if (!assembly || !solution || !spec || !vp || exportAbort.current) return;
+    const baked = solution.placements;
+    const run = animator(assembly, frameFor(assembly), spec);
+    const values = exportFrameValues(spec, EXPORT_FPS[format]);
+    const abort = new AbortController();
+    exportAbort.current = abort;
+    setError(null);
+    setExporting({ format, done: 0, total: values.length });
+    try {
+      const blob = await exportAnimation({
+        format,
+        values,
+        aspect: vp.frameAspect(),
+        once: spec.mode === "once",
+        signal: abort.signal,
+        draw: (value, ctx) => {
+          const s = run.at(value);
+          const poses = new Map<string, Mat4>();
+          for (const [id, p] of s.placements) {
+            const was = baked.get(id);
+            if (was) poses.set(id, multiply(p, invertRigid(was)));
+          }
+          vp.poseBodies(poses);
+          posed.current = true;
+          vp.drawFrame(ctx);
+        },
+        onProgress: (done, total) => setExporting({ format, done, total }),
+      });
+      const mate = assembly.mates.find((m) => m.id === spec.mateId);
+      saveBlob(blob, `${mate?.name ?? "Animation"} ${spec.dof}.${extensionOf(blob.type)}`);
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") setError(`Export failed: ${(e as Error).message}`);
+    } finally {
+      if (exportAbort.current === abort) exportAbort.current = null;
+      setExporting(null);
+      vp.poseBodies(null);
+      posed.current = false;
+    }
+  };
+  const cancelExport = () => exportAbort.current?.abort();
+
   // Editing the sweep while it plays restarts it with the new one.
   useEffect(() => {
     if (raf.current !== null) play();
   }, [spec]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { mateId, spec, playing, live, error, open, close, setSpec, setDof, play, stop: release };
+  return {
+    mateId,
+    spec,
+    playing,
+    live,
+    error,
+    open,
+    close,
+    setSpec,
+    setDof,
+    play,
+    stop: release,
+    exporting,
+    exportAs: (f) => void exportAs(f),
+    cancelExport,
+  };
 }

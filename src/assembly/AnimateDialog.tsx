@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { DraggableDialog } from "../ui/DraggableDialog";
 import type { AnimateMode } from "./animate";
+import { videoMimeType } from "./exportAnimation";
 import { dofLabel } from "./mateTypes";
 import { formatValue, isRotation } from "./solve";
 import type { MateAnimation } from "./useMateAnimation";
@@ -20,6 +21,7 @@ export function AnimateDialog({ mate, anim, dofs }: { mate: Mate; anim: MateAnim
   const spec = anim.spec;
   if (!spec) return null;
   const rot = isRotation(spec.dof);
+  const canVideo = videoMimeType() !== null;
   const unit = rot ? "°" : "mm";
   return (
     <DraggableDialog className="feature-dialog asm-animate" style={{ left: 16, top: 72 }}>
@@ -61,13 +63,42 @@ export function AnimateDialog({ mate, anim, dofs }: { mate: Mate; anim: MateAnim
           : "Plays in the view only: nothing is saved."}
       </p>
       {anim.error && <p className="ed-warning">{anim.error}</p>}
+      <div className="bool-group-label">Export one cycle</div>
+      {anim.exporting ? (
+        <div className="asm-export-progress">
+          <span>
+            Exporting {anim.exporting.format === "gif" ? "GIF" : "video"}… {anim.exporting.done}/{anim.exporting.total}
+          </span>
+          <button className="asm-export-cancel" onClick={anim.cancelExport}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <div className="ed-modes">
+          <button
+            className="asm-export-video"
+            disabled={!canVideo}
+            title={canVideo ? "Save one cycle as a video (WebM, or MP4 in Safari)" : "This browser can't record video"}
+            onClick={() => anim.exportAs("video")}
+          >
+            Video
+          </button>
+          <button
+            className="asm-export-gif"
+            title="Save one cycle as an animated GIF"
+            onClick={() => anim.exportAs("gif")}
+          >
+            GIF
+          </button>
+        </div>
+      )}
       <div className="ed-actions">
         {anim.playing ? (
           <button className="ed-primary asm-animate-stop" onClick={anim.stop}>
             ■ Stop
           </button>
         ) : (
-          <button className="ed-primary asm-animate-play" onClick={anim.play}>
+          <button className="ed-primary asm-animate-play" disabled={!!anim.exporting} onClick={anim.play}>
             ▶ Play
           </button>
         )}

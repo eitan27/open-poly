@@ -182,3 +182,14 @@
   font-size: 11px;
   color: var(--text-8);
 }
+
+/* The Animate dialog's export in progress. */
+.asm-export-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-5);
+  margin: 4px 0 6px;
+}
