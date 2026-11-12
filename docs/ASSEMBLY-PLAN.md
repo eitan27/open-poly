@@ -484,6 +484,13 @@ at its solved placement; hidden instances are left out:
 Zips (3MF is one) are written with `fflate`. Assembly STEP isn't offered: it
 needs the kernel's XCAF (see Not built yet).
 
+## Measure
+
+The part document's passive measure box works in an assembly too: its
+picked faces, edges and vertices are measured on the placed meshes, so in
+assembly space, and two picks on different parts give the gap between them
+(see PLAN.md, "Measuring is passive and shared").
+
 ## The agent
 
 The agent reads an open assembly through the same tools as a part
@@ -607,7 +614,7 @@ pinning (parts have no versions yet).
   mate count is in `src/storage/db.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
   `width`, `loops`, `move`, `variables`, `pin`, `vertex`, `animate`,
-  `relations`, `loop-input`, `export`), and `verify-agent-assembly-read.mjs` and
+  `relations`, `loop-input`, `export`, `measure`), and `verify-agent-assembly-read.mjs` and
   `verify-agent-assembly-edit.mjs` for the agent, against `npm run dev`. Set
   `PW_EXE` to use a pre-installed Chromium (scripts on
   `scripts/lib/harness.mjs` read `CHROMIUM_PATH` instead). `pin` is the one

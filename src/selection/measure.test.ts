@@ -350,7 +350,7 @@ describe("distance between two parallel edges", () => {
     expect(distanceOf([b], [pick("b", 0), pick("b", 1), pick("b", 2)])).toBeUndefined();
   });
 
-  it("reports just the count and the distance, nothing else", () => {
+  it("reports the edges' minimum and parallel distances", () => {
     const b = body("b", [
       [
         [0, 0, 0],
@@ -361,9 +361,10 @@ describe("distance between two parallel edges", () => {
         [10, 4, 0],
       ],
     ]);
-    const rows = measureSelection([pick("b", 0), pick("b", 1)], doc, [b])!.rows;
-    expect(rows).toEqual([
-      { label: "Selected", value: "2" },
+    const m = measureSelection([pick("b", 0), pick("b", 1)], doc, [b])!;
+    expect(m.title).toBe("Edge ↔ Edge");
+    expect(m.rows).toEqual([
+      { label: "Distance", value: "4" },
       { label: "Parallel distance", value: "4" },
     ]);
   });

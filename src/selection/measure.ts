@@ -12,6 +12,7 @@ import type { FeatureMesh } from "../viewport/types";
 import type { Selection } from "./types";
 import { formatNumber as fmt } from "../lib/format";
 import { defaultX, faceShape } from "../assembly/frames";
+import { measurePair } from "./measurePair";
 
 export interface MeasureInfo {
   title: string;
@@ -109,58 +110,6 @@ function edgeChainRadius(edges: MeshedEdges, ids: number[]): number | null {
 }
 
 type Vec3 = [number, number, number];
-
-/** Perpendicular distance from `q` to the infinite line through `p` along unit `d`. */
-function distToLine(q: Vec3, p: Vec3, d: Vec3): number {
-  const wx = q[0] - p[0];
-  const wy = q[1] - p[1];
-  const wz = q[2] - p[2];
-  const t = wx * d[0] + wy * d[1] + wz * d[2];
-  return Math.hypot(wx - t * d[0], wy - t * d[1], wz - t * d[2]);
-}
-
-/** The infinite line a STRAIGHT edge lies on — `p` a point on it, `d` a unit
- *  direction. Null for a curved edge (no single direction) or a degenerate one.
- *  The tessellated polyline is the only geometry we have here, so straightness is
- *  "every vertex lies on the chord", which a curve's sagitta fails comfortably. */
-function edgeLine(edges: MeshedEdges, edgeId: number): { p: Vec3; d: Vec3 } | null {
-  const g = edges.edgeGroups?.find((eg) => eg.edgeId === edgeId);
-  if (!g || g.count < 2) return null;
-  const { lines } = edges;
-  const at = (v: number): Vec3 => [lines[v * 3], lines[v * 3 + 1], lines[v * 3 + 2]];
-  const p = at(g.start);
-  // The farthest vertex fixes the direction robustly — a closed or doubled-back
-  // polyline can end where it started, so the last vertex won't do.
-  let far = p;
-  let farLen = 0;
-  for (let v = g.start; v < g.start + g.count; v++) {
-    const q = at(v);
-    const len = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
-    if (len > farLen) {
-      farLen = len;
-      far = q;
-    }
-  }
-  if (farLen < 1e-9) return null;
-  const d: Vec3 = [(far[0] - p[0]) / farLen, (far[1] - p[1]) / farLen, (far[2] - p[2]) / farLen];
-  // Relative tolerance: vertices are float32, so an absolute epsilon is too tight.
-  for (let v = g.start; v < g.start + g.count; v++) {
-    if (distToLine(at(v), p, d) > 1e-4 * farLen) return null;
-  }
-  return { p, d };
-}
-
-/** Distance between two PARALLEL straight edges, or null if they aren't parallel
- *  (skew/intersecting lines have no single distance — an angle is the right
- *  measure there). Matches the sketch dimension's parallel tolerance: the sine of
- *  the angle between the directions. */
-function parallelEdgeDistance(a: { p: Vec3; d: Vec3 }, b: { p: Vec3; d: Vec3 }): number | null {
-  const cx = a.d[1] * b.d[2] - a.d[2] * b.d[1];
-  const cy = a.d[2] * b.d[0] - a.d[0] * b.d[2];
-  const cz = a.d[0] * b.d[1] - a.d[1] * b.d[0];
-  if (Math.hypot(cx, cy, cz) > 1e-3) return null; // not parallel
-  return distToLine(b.p, a.p, a.d);
-}
 
 /** A circle entity's radius, evaluated against the variable scope when it's
  *  expression-driven (`r: "dia/2"`) — the stored `.r` is a stale literal after a
@@ -350,8 +299,15 @@ export function measureSelection(
   return measureOne(selection[0], doc, meshes, scope);
 }
 
-/** Aggregate measurement for a multi-element selection. */
+/** Aggregate measurement for a multi-element selection: two vertices, edges
+ *  or faces measure against each other (measurePair.ts); more, their count and
+ *  the faces' total area. */
 function measureMany(selection: Selection[], meshes: FeatureMesh[]): MeasureInfo {
+  const solid = (s: Selection) => s.kind === "vertex" || s.kind === "edge" || s.kind === "face";
+  if (selection.length === 2 && selection.every(solid)) {
+    const pair = measurePair(selection[0], selection[1], meshes);
+    if (pair) return pair;
+  }
   let area = 0;
   for (const s of selection) {
     if (s.kind === "face") {
@@ -361,20 +317,6 @@ function measureMany(selection: Selection[], meshes: FeatureMesh[]): MeasureInfo
   }
   const rows = [{ label: "Selected", value: String(selection.length) }];
   if (area > 0) rows.push({ label: "Total area", value: fmt(area) });
-
-  // Two parallel straight edges → their separation, the thing you actually want
-  // when you pick two edges of a solid.
-  const [s0, s1] = selection;
-  if (selection.length === 2 && s0.kind === "edge" && s1.kind === "edge") {
-    const m0 = meshes.find((x) => x.id === s0.featureId);
-    const m1 = meshes.find((x) => x.id === s1.featureId);
-    const l0 = m0 && edgeLine(m0.mesh.edges, s0.edgeId);
-    const l1 = m1 && edgeLine(m1.mesh.edges, s1.edgeId);
-    if (l0 && l1) {
-      const dist = parallelEdgeDistance(l0, l1);
-      if (dist !== null) rows.push({ label: "Parallel distance", value: fmt(dist) });
-    }
-  }
   return { title: "Selection", rows };
 }
 
