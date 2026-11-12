@@ -129,7 +129,11 @@ export function planLoopInput(
       break;
     }
   }
-  return { next: keepSolved(cleared(clears), result.s), clears, message: clearMessage(assembly, `set ${what}`, clears) };
+  return {
+    next: keepSolved(cleared(clears), result.s),
+    clears,
+    message: clearMessage(assembly, `set ${what}`, clears),
+  };
 }
 
 /** `a` with each expression in `list` replaced by the plain number it's at

@@ -47,13 +47,7 @@ const hinge = (id: string, a: MateConnector, b: MateConnector, extra: Partial<Ma
   ...extra,
 });
 const fourBar = (crank?: string): AssemblyDoc => ({
-  instances: [
-    inst("Ground", { grounded: true }),
-    inst("Crank"),
-    inst("Coupler"),
-    inst("Rocker"),
-    inst("Side"),
-  ],
+  instances: [inst("Ground", { grounded: true }), inst("Crank"), inst("Coupler"), inst("Rocker"), inst("Side")],
   mates: [
     hinge("r1", conn("Ground", "O1"), conn("Crank", "B1"), crank ? { values: { rz: crank } } : {}),
     hinge("r2", conn("Crank", "B2"), conn("Coupler", "C1")),

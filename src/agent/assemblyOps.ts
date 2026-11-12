@@ -218,9 +218,7 @@ export function planSetMateValue(
   if (state.solution) {
     const p = planLoopInput(a, state.solution, frameOf, scope, [{ mateId: op.mateId, dof: op.dof, text: op.value }]);
     if (p && "clears" in p && !op.clearExpressions)
-      return fail(
-        `${p.message} Ask the user, then call set_mate_value again with clearExpressions: true to go ahead.`,
-      );
+      return fail(`${p.message} Ask the user, then call set_mate_value again with clearExpressions: true to go ahead.`);
     if (p) return "error" in p ? p : p.next;
   }
   return setMateValue(a, op.mateId, op.dof, op.value, scope);

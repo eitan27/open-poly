@@ -311,9 +311,7 @@ export function useAssemblyWorkspace({
         // Cancelled at the confirmation: the view shows the released drag
         // until told otherwise, and the readout counted it.
         viewApi.current?.releaseDragPins();
-        setAsmMoved((m) =>
-          addMoves(m, { tx: -moved.tx, ty: -moved.ty, tz: -moved.tz, angle: -moved.angle }),
-        );
+        setAsmMoved((m) => addMoves(m, { tx: -moved.tx, ty: -moved.ty, tz: -moved.tz, angle: -moved.angle }));
         setAsmDragSeq((n) => n + 1);
       }),
     );
