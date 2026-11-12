@@ -151,6 +151,9 @@ true minimum Distance over their triangles and segments, then what their
 shapes mean — ΔX/ΔY/ΔZ, Parallel distance or Angle, centre or axis distance,
 a point's distance to a line, axis or plane — from the same fits a mate's
 connectors use (`frames.ts`). More picks: their count and total area.
+Measurements are transient by design: they follow the selection and go with
+it, so they're never stale and there's no mode or clutter. Kept-on-screen
+dimensions belong with drawings, if those are ever built.
 
 **Performance — two optimizations that measured well alone and badly together.**
 The warning is the point; `shelved/viewport-geom-reuse-and-lazy-regen` is deleted.
@@ -185,9 +188,8 @@ blocking, or persisting the import's built body across reloads, over deferring.
 - **Planes:** hinge on a picked edge; line+point and two-parallel-edges methods.
 - **Sweep/loft:** twist, multiple profiles, guide rails, ruled option.
 - **Measure:** picking a whole body measures nothing (no volume, mass or
-  overall size), measurements aren't kept on screen as annotations, and the
-  minimum distance is skipped for two very large faces (over 2M primitive
-  pairs) rather than computed slowly.
+  overall size), and the minimum distance is skipped for two very large faces
+  (over 2M primitive pairs) rather than computed slowly.
 - **STEP import:** drag-and-drop onto the viewport. Disjoint solids already split
   into parts, but unnamed — real part names need `STEPCAFControl_Reader`, which
   this wasm build does not expose, so that is a kernel rebuild before it is a
