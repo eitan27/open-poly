@@ -618,7 +618,16 @@ export const operationSchema = z.discriminatedUnion("op", [
   /** Set one free DOF of a mate (mm / degrees, a number or an expression; ""
    *  resets it to 0). A DOF a relation drives sets its driver instead, to
    *  what puts it there (a number only). */
-  z.object({ op: z.literal("setMateValue"), mateId: z.string(), dof: dofSchema, value: expr }),
+  z.object({
+    op: z.literal("setMateValue"),
+    mateId: z.string(),
+    dof: dofSchema,
+    value: expr,
+    /** Inside a loop group, consent to clear the expressions the value needs
+     *  out of its way (they become plain numbers). Without it such a value is
+     *  refused, naming them. */
+    clearExpressions: z.boolean().optional(),
+  }),
   /** Drive one mate's DOF from another's. gear: rotation → rotation, value =
    *  ratio (driven turns per driver turn; meshed gears turn opposite ways);
    *  rack: rotation ↔ translation, value = pinion radius (mm); screw:

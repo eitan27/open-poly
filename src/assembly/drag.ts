@@ -24,6 +24,7 @@ import { evaluateVariables } from "../document/document";
 import type { Scope } from "../document/expression";
 import { keepPlacements, moveInstance, updateMate } from "./assembly";
 import { multiply } from "./placement";
+import { clearExpressions, clearMessage, standingExpressions } from "./loopInput";
 import { relationDriving, routeToDriver } from "./relations";
 import { formatValue, isDriven, isRotation, MATE_DOFS, mateValues, solve, valuesForPose, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector } from "./types";
@@ -73,29 +74,58 @@ export function dragAssembly(
   frameOf: FrameOf,
   instanceId: string,
   motion: Mat4,
-): { next: AssemblyDoc | null; error: string | null } {
+): DragResult {
   const before = (id: string) => solution.placements.get(id);
   const scope = evaluateVariables(assembly.variables).scope;
+  const name = assembly.instances.find((i) => i.id === instanceId)?.name ?? "it";
   let next: AssemblyDoc;
 
   // Inside a loop group: re-solve with a pull toward the drag. Every
   // placement is stored, so the next solve starts (and stays) there.
   const was = before(instanceId);
-  if (was && solution.loops.some((l) => l.free.includes(instanceId))) {
-    const s = solve(assembly, frameOf, scope, { goals: new Map([[instanceId, multiply(motion, was)]]) });
-    return { next: keepPlacements(assembly, s.placements), error: null };
+  const group = was ? solution.loops.find((l) => l.free.includes(instanceId)) : undefined;
+  if (was && group) {
+    const target = multiply(motion, was);
+    const goals = new Map([[instanceId, target]]);
+    const kept = solve(assembly, frameOf, scope, { goals });
+    // An expression in the group may hold the part back: if clearing them
+    // lets it go noticeably closer to the drag, that's the drag — with the
+    // expressions that had to change named, for the user to confirm.
+    const standing = standingExpressions(assembly, new Set(group.mateIds));
+    const miss = (s: Solution) => poseGap(s.placements.get(instanceId), target);
+    if (standing.length && miss(kept) > NEAR) {
+      const free = clearExpressions(assembly, standing, solution);
+      const s = solve(free, frameOf, scope, { goals });
+      if (miss(s) < miss(kept) - NEAR) {
+        const moved = standing.filter(
+          (c) => Math.abs((s.values.get(c.mateId)?.[c.dof] ?? 0) - (kept.values.get(c.mateId)?.[c.dof] ?? 0)) > 1e-3,
+        );
+        const clears = moved.length ? moved : standing;
+        const nextFree = clearExpressions(assembly, clears, solution);
+        const s2 = clears === standing ? s : solve(nextFree, frameOf, scope, { goals });
+        return {
+          next: keepPlacements(nextFree, s2.placements),
+          error: null,
+          confirm: clearMessage(assembly, `move ${name} there`, clears),
+        };
+      }
+    }
+    return { next: keepPlacements(assembly, kept.placements), error: null };
   }
 
   // The dragged instance: along its own mate, or freely when nothing drives it.
   const by = solution.drivenBy.get(instanceId);
-  const own = by && assembly.mates.find((m) => m.id === by.mateId);
+  let own = by && assembly.mates.find((m) => m.id === by.mateId);
+  let confirm: string | undefined;
   if (by && own) {
-    const fixed = expressionDof(own);
-    if (fixed)
-      return {
-        next: null,
-        error: `${own.name}'s ${fixed} is set by "${own.values![fixed]}", so dragging can't change it.`,
-      };
+    // Its own mate's expressions are standing inputs the drag overrides:
+    // cleared, once the user confirms.
+    const exprs = standingExpressions(assembly, new Set([own.id]));
+    if (exprs.length) {
+      confirm = clearMessage(assembly, `move ${name} there`, exprs);
+      assembly = clearExpressions(assembly, exprs, solution);
+      own = assembly.mates.find((m) => m.id === by.mateId)!;
+    }
     const pa = before(own.a.instanceId);
     const pb = before(own.b.instanceId);
     if (!pa || !pb) return { next: null, error: null };
@@ -113,7 +143,7 @@ export function dragAssembly(
   // Where that leaves it — then each instance it drives keeps its place as
   // far as its mate allows.
   const moved = solve(next, frameOf).placements.get(instanceId);
-  if (!moved) return { next, error: null };
+  if (!moved) return { next, error: null, ...(confirm ? { confirm } : {}) };
   for (const [childId, cb] of solution.drivenBy) {
     if (childId === instanceId) continue;
     const mate = next.mates.find((m) => m.id === cb.mateId);
@@ -138,7 +168,27 @@ export function dragAssembly(
       }
     next = updateMate(next, { ...mate, values });
   }
-  return { next, error: null };
+  return { next, error: null, ...(confirm ? { confirm } : {}) };
+}
+
+/** What a drag leads to: the assembly to commit (null: nothing to write), why
+ *  it can't be, and — when it clears an expression to get there — what to ask
+ *  the user before committing. */
+export interface DragResult {
+  next: AssemblyDoc | null;
+  error: string | null;
+  confirm?: string;
+}
+
+/** How far (mm, plus the turn as mm at a 10 mm radius) a drag's pose is from
+ *  its target. */
+const NEAR = 0.01;
+function poseGap(p: Mat4 | undefined, q: Mat4): number {
+  if (!p) return Infinity;
+  const t = Math.hypot(p[12] - q[12], p[13] - q[13], p[14] - q[14]);
+  let r = 0;
+  for (const i of [0, 1, 2, 4, 5, 6, 8, 9, 10]) r = Math.max(r, Math.abs(p[i] - q[i]));
+  return t + 10 * r;
 }
 
 /** `a` with `mate` set to `values` — except that a DOF a relation drives keeps

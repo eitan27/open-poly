@@ -39,8 +39,8 @@ const stack = (id: string, type: MateType, a: string, b: string, extra: Partial<
 /** Drag `id` by `motion` and solve the result: every instance's new placement. */
 function drag(asm: AssemblyDoc, id: string, motion: Mat4) {
   const before = solve(asm, frameOf);
-  const { next, error } = dragAssembly(asm, before, frameOf, id, motion);
-  return { before: before.placements, after: next ? solve(next, frameOf).placements : null, next, error };
+  const { next, error, confirm } = dragAssembly(asm, before, frameOf, id, motion);
+  return { before: before.placements, after: next ? solve(next, frameOf).placements : null, next, error, confirm };
 }
 const closeV = (p: Vec3, q: Vec3) => p.forEach((v, i) => expect(v).toBeCloseTo(q[i], 6));
 const at = (m: Map<string, Mat4> | null, id: string, p: Vec3 = [0, 0, 0]) => applyPoint(m!.get(id)!, p);
@@ -105,11 +105,16 @@ describe("dragAssembly", () => {
     closeV(at(r.after, "B"), [5 + 6, 0, 20]);
   });
 
-  it("refuses to drag a part along a mate whose value is an expression", () => {
+  it("drags a part along a mate whose value is an expression, clearing it once confirmed", () => {
     const asm = pair();
     asm.mates[0] = { ...asm.mates[0], values: { tx: "2 * 3" } };
     const r = drag(asm, "B", translation([5, 0, 0]));
-    expect(r.next).toBeNull();
-    expect(r.error).toMatch(/set by "2 \* 3"/);
+    expect(r.error).toBeNull();
+    expect(r.confirm).toBe(
+      "To move B there, the expression `2 * 3` on the Offset X of m (A ↔ B) will be cleared: it becomes a plain number.",
+    );
+    // What's committed on Continue: the dragged value, as a plain number.
+    expect(r.next!.mates[0].values).toEqual({ tx: "11", ty: "0", rz: "0" });
+    closeV(at(r.after, "B"), [11, 0, 20]);
   });
 });

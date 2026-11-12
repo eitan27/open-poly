@@ -1955,6 +1955,17 @@ export function Viewport({
         state.bodyPoses = next;
         applyHighlights();
       },
+      releaseDragPins() {
+        for (const pc of state.pendingCommits)
+          for (const o of state.group.children)
+            if (o.userData.featureId === pc.bodyId) {
+              o.matrix.identity();
+              o.matrixAutoUpdate = true;
+              o.matrixWorldNeedsUpdate = true;
+            }
+        state.pendingCommits = [];
+        applyHighlights();
+      },
       worldToScreen(p) {
         const v = new THREE.Vector3(p[0], p[1], p[2]).project(camera);
         const rect = renderer.domElement.getBoundingClientRect();

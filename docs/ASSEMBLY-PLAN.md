@@ -294,12 +294,25 @@ placements, carried along with the anchor): that's what keeps a linkage on
 its branch (elbow up stays up). If that start doesn't converge, the group is
 retried from a tree composition of its mates' stored values.
 
-- **Values inside a loop group** only report where the mate is: they're read
-  back from the solved poses, and `keepSolved` writes them into the mates on
-  every commit, so deleting a mate that turns the loop back into a tree
-  doesn't make anything jump. An **expression** drives instead: it becomes a
-  residual, which is how a crank angle on a variable turns a four-bar. Limits
-  are one-sided residuals, active only when crossed.
+- **Values inside a loop group**, as stored, only report where the mate is:
+  they're read back from the solved poses, and `keepSolved` writes them into
+  the mates on every commit, so deleting a mate that turns the loop back into
+  a tree doesn't make anything jump. An **expression** drives instead: it
+  becomes a residual, which is how a crank angle on a variable turns a
+  four-bar. Limits are one-sided residuals, active only when crossed.
+- **A typed value drives once** (`loopInput.ts`): a number typed into a mate
+  in a loop group (the Mate dialog, the agent's `set_mate_value`) drives one
+  solve (`SolveOptions.drive`) with every free part held softly where it is
+  (`hold`), so the group moves as little as it can and an earlier entry is
+  overridden only where the loop forces it. The result is stored as plain
+  numbers, so the next entry or drag can move the group again. An expression
+  is a standing input: one that leaves the value nowhere to go is named (the
+  fewest that must go: one if one will do) and cleared — replaced by its
+  plain number — only after the user's Continue (`ConfirmDialog`) or the
+  agent's `clearExpressions: true`. A value the group can't reach even with
+  every expression cleared is refused with the solver's reason, asking
+  nothing. A relation is never cleared: a value one drives is set through
+  its driver, as anywhere.
 - **Conflicts.** Redundant but consistent mates solve to zero and raise
   nothing. If a group can't be satisfied, the latest mate in list order whose
   removal lets the rest hold is flagged "Over-constrained", and the group is
@@ -323,8 +336,12 @@ values, clamped to its limits. A revolute (and a planar or cylindrical part in
 Rotate mode) gets the rotate gizmo on the mate's own axis; a ball turns about
 world X/Y/Z through its centre. A fastened part has no gizmo, and a part a
 tree mate positions moves only through that mate. A value that is an
-expression is the user's: the drag is refused, with a "set by" hint. Revolute
-values unwrap past ±180° from the previous value.
+expression is a standing input: a drag that needs it changed shows the move
+as if it were cleared, and on release asks before clearing it (the same
+`ConfirmDialog` as a typed value). Inside a loop group, the expressions that
+held the part back are the ones named. Cancel puts the part back
+(`ViewportApi.releaseDragPins`). Revolute values unwrap past ±180° from the
+previous value.
 
 **What else moves** follows Onshape's rule (`drag.ts`): each part mated to the
 dragged one stays where it is wherever its mate allows, and only the motion
@@ -539,7 +556,10 @@ pinning (parts have no versions yet).
   planars, Width + Planar, a four-bar turned a full revolution and dragged by
   its coupler, a slider-crank, conflicts, locked parts dragged from either
   side, a box seated in a corner by one Fastened mate on vertices),
-  `drag.test.ts`, `relations.test.ts` (factors, gear trains, rack, a screw
+  `drag.test.ts`, `loopInput.test.ts` (a typed value driving a four-bar, a later entry
+  overriding an earlier, an expression named and cleared, an unreachable
+  value, a drag past an expression), `relations.test.ts` (factors, gear
+  trains, rack, a screw
   in one cylindrical mate, refusals, routing, dragging either gear, save and
   load), `animate.test.ts` (timing, default sweeps, a four-bar's crank
   turned a full revolution by `drive`), `frames.test.ts` (connector fitting,
@@ -554,7 +574,7 @@ pinning (parts have no versions yet).
   mate count is in `src/storage/db.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
   `width`, `loops`, `move`, `variables`, `pin`, `vertex`, `animate`,
-  `relations`), and `verify-agent-assembly-read.mjs` and
+  `relations`, `loop-input`), and `verify-agent-assembly-read.mjs` and
   `verify-agent-assembly-edit.mjs` for the agent, against `npm run dev`. Set
   `PW_EXE` to use a pre-installed Chromium (scripts on
   `scripts/lib/harness.mjs` read `CHROMIUM_PATH` instead). `pin` is the one
@@ -575,5 +595,3 @@ pinning (parts have no versions yet).
 - When a source part's part count changes (a cut splits a body), what happens
   to instances of `ext1#1`? Proposed: an instance resolves by `partId`; a
   vanished `partId` is a missing source with ⚠.
-- Should the Mate dialog say when a mate sits in a loop group, where its typed
-  plain values only report? A one-line note would do.

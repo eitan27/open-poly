@@ -823,3 +823,51 @@ describe("set_suppressed", () => {
     expect(await t.apply({ op: "setSuppressed", id: "ghost" })).toMatchObject({ errorKind: "not_found" });
   });
 });
+
+describe("set_mate_value inside a loop", () => {
+  /** A cube held to the plate by a revolute and a planar on the same faces:
+   *  two mates on one pair make a loop group, and both share one angle. */
+  async function heldTwice(revoluteAngle: string) {
+    const t = await plateAndCube();
+    await t.apply({ op: "setVariable", name: "angle", expression: "10" });
+    const r = (
+      await t.apply({
+        op: "addMate",
+        type: "revolute",
+        a: { instanceId: t.plate, face: "box/+z" },
+        b: { instanceId: t.cube, face: "box/-z" },
+        values: { rz: revoluteAngle },
+      })
+    ).createdId!;
+    const p = (
+      await t.apply({
+        op: "addMate",
+        type: "planar",
+        a: { instanceId: t.plate, face: "box/+z" },
+        b: { instanceId: t.cube, face: "box/-z" },
+      })
+    ).createdId!;
+    expect(t.ctx.getAssembly()!.solution!.loops).toHaveLength(1);
+    return { ...t, r, p };
+  }
+
+  it("drives the loop with a plain number", async () => {
+    const t = await heldTwice("0");
+    expect(await t.apply({ op: "setMateValue", mateId: t.p, dof: "rz", value: 40 })).toMatchObject({ ok: true });
+    expect(value(t, t.p)).toBeCloseTo(40, 3);
+    expect(value(t, t.r)).toBeCloseTo(40, 3);
+  });
+
+  it("refuses to clear an expression in the way unless told to, naming it", async () => {
+    const t = await heldTwice("angle");
+    const no = await t.apply({ op: "setMateValue", mateId: t.p, dof: "rz", value: 40 });
+    expect(no.ok).toBe(false);
+    expect(no.error).toMatch(/the expression `angle` on the Angle of Revolute 1 .* will be cleared/);
+    expect(no.error).toMatch(/clearExpressions: true/);
+    expect(t.assembly().mates[0].values?.rz).toBe("angle");
+    const yes = await t.apply({ op: "setMateValue", mateId: t.p, dof: "rz", value: 40, clearExpressions: true });
+    expect(yes.ok).toBe(true);
+    expect(Number(t.assembly().mates[0].values?.rz)).toBeCloseTo(40, 2);
+    expect(value(t, t.p)).toBeCloseTo(40, 3);
+  });
+});

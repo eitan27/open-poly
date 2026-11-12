@@ -237,10 +237,19 @@ export interface SolveOptions {
    *  pose as far as the group's mates allow, while the rest of the group moves
    *  as little as it can — what dragging a part inside a loop does. */
   goals?: ReadonlyMap<string, Mat4>;
-  /** One free DOF of one mate set to `value` for this solve only, and driving
-   *  it as an expression would: inside a loop the group follows it (what
-   *  animating a mate does). Limits don't clamp it. */
-  drive?: { mateId: string; dof: Dof; value: number };
+  /** Free DOFs set to a value for this solve only, each driving as an
+   *  expression would: inside a loop the group follows it (what animating a
+   *  mate, or typing a value into one in a loop, does). Limits don't clamp it. */
+  drive?: Drive | readonly Drive[];
+  /** Hold every free part of a loop group softly where it is, so a drive
+   *  moves the group as little as it can: what it leaves free stays put. */
+  hold?: boolean;
+}
+
+export interface Drive {
+  mateId: string;
+  dof: Dof;
+  value: number;
 }
 
 /** A free DOF whose value is an expression (a variable, a formula) rather than
@@ -322,7 +331,8 @@ export function solve(
 
   // Each mate's values first, then the relations that set some from others'
   // (a gear train, in order), then what the solver needs from each.
-  const candidates: { mate: Mate; ca: Mat4; cb: Mat4; drive: Dof | null }[] = [];
+  const candidates: { mate: Mate; ca: Mat4; cb: Mat4; drive: Dof[] }[] = [];
+  const drives = opts.drive === undefined ? [] : Array.isArray(opts.drive) ? opts.drive : [opts.drive as Drive];
   for (const mate of assembly.mates) {
     if (mate.suppressed) continue;
     if (!byId.has(mate.a.instanceId) || !byId.has(mate.b.instanceId)) {
@@ -346,15 +356,15 @@ export function solve(
       problems.set(mate.id, `Bad value: ${(e as Error).message}`);
       continue;
     }
-    const drive = opts.drive?.mateId === mate.id && MATE_DOFS[mate.type].includes(opts.drive.dof) ? opts.drive : null;
-    if (drive) v = { ...v, [drive.dof]: drive.value };
+    const mine = drives.filter((d) => d.mateId === mate.id && MATE_DOFS[mate.type].includes(d.dof));
+    for (const d of mine) v = { ...v, [d.dof]: d.value };
     values.set(mate.id, v);
-    candidates.push({ mate, ca, cb, drive: drive?.dof ?? null });
+    candidates.push({ mate, ca, cb, drive: mine.map((d) => d.dof) });
   }
   const { forced, problems: relationProblems } = applyRelations(assembly, values, scope);
   const usable: Usable[] = candidates.map(({ mate, ca, cb, drive }) => {
     const v = values.get(mate.id)!;
-    const f = [...(drive ? [drive] : []), ...(forced.get(mate.id) ?? [])];
+    const f = [...drive, ...(forced.get(mate.id) ?? [])];
     return { mate, ca, cb, v, rel: mateRelative(mate, ca, cb, v), ...(f.length ? { forced: f } : {}) };
   });
 
@@ -431,7 +441,7 @@ export function solve(
           .filter((e) => e.usable)
           .map((e) => e.usable!)
           .sort((p, q) => mateOrder.get(p.mate.id)! - mateOrder.get(q.mate.id)!);
-        const r = solveGroup(group, fixed, free, seed, scope, opts.goals);
+        const r = solveGroup(group, fixed, free, seed, scope, opts.goals, !!opts.hold);
         for (const [n, p] of fixed) placements.set(n, p);
         for (const [n, p] of r.poses) placements.set(n, p);
         for (const [m, why] of r.blamed) problems.set(m, why);
@@ -555,6 +565,7 @@ function solveGroup(
   seed: ReadonlyMap<string, Mat4>,
   scope: Scope,
   goals: ReadonlyMap<string, Mat4> | undefined,
+  hold = false,
 ): {
   poses: Map<string, Mat4>;
   blamed: Map<string, string>;
@@ -712,7 +723,7 @@ function solveGroup(
     return out;
   };
 
-  const pulling = !!goals && free.some((n) => goals.has(n));
+  const pulling = hold || (!!goals && free.some((n) => goals.has(n)));
   const best = (mates: GroupMate[], tries = 2) => {
     const first = attempt(mates, seed, pulling);
     if (first.worst < SATISFIED || tries < 2) return first;

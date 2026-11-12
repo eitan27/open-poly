@@ -35,7 +35,8 @@ import {
 } from "../assembly/frames";
 import { INSERT_GAP_MM, insertShift, meshBounds, translation } from "../assembly/placement";
 import { MATE_DOFS } from "../assembly/solve";
-import type { AssemblyDoc, Dof, Mate, MateConnector, Relation } from "../assembly/types";
+import { planLoopInput } from "../assembly/loopInput";
+import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector, Relation } from "../assembly/types";
 import type { SourcePart, SourceState } from "../assembly/useAssemblySources";
 import type { ShapeMeshPayload } from "../kernel/types";
 import { placedBoundsOf, type AssemblyAgentState } from "./assemblySummary";
@@ -206,11 +207,23 @@ export function planDelete(state: AssemblyAgentState, id: string): Planned<Assem
 export function planSetMateValue(
   state: AssemblyAgentState,
   op: Extract<Operation, { op: "setMateValue" }>,
+  frameOf: (c: MateConnector) => Mat4 | string,
 ): Planned<AssemblyDoc> {
   const a = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
   if (!a.mates.some((m) => m.id === op.mateId))
     return fail(`No mate "${op.mateId}" — ids are in get_scene_summary's mates.`);
-  return setMateValue(a, op.mateId, op.dof, op.value, evaluateVariables(a.variables).scope);
+  const scope = evaluateVariables(a.variables).scope;
+  // Inside a loop group the value drives (loopInput.ts); clearing an
+  // expression in its way needs clearExpressions, as the UI needs Continue.
+  if (state.solution) {
+    const p = planLoopInput(a, state.solution, frameOf, scope, [{ mateId: op.mateId, dof: op.dof, text: op.value }]);
+    if (p && "clears" in p && !op.clearExpressions)
+      return fail(
+        `${p.message} Ask the user, then call set_mate_value again with clearExpressions: true to go ahead.`,
+      );
+    if (p) return "error" in p ? p : p.next;
+  }
+  return setMateValue(a, op.mateId, op.dof, op.value, scope);
 }
 
 export function planAddRelation(

@@ -170,6 +170,10 @@ export interface ViewportApi {
    *  to their meshes; null releases them all. For assembly animation, which
    *  calls this every frame. */
   poseBodies(poses: ReadonlyMap<string, readonly number[]> | null): void;
+  /** Let go of the poses a released gizmo drag pinned while its commit was
+   *  awaited: for a drag that won't be committed after all (cancelled at a
+   *  confirmation), so the bodies show their meshes again. */
+  releaseDragPins(): void;
   /** The ordered world-space polyline of a body edge (by feature + edge id), as
    *  drawn — the source geometry the Project/Convert sketch tool projects onto
    *  the active plane. Null if that edge isn't currently rendered. */

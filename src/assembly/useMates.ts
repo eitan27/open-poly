@@ -25,7 +25,8 @@ import {
   type ConnectorRef,
   type ConnectorShape,
 } from "./frames";
-import { dragAssembly } from "./drag";
+import { dragAssembly, type DragResult } from "./drag";
+import { loopOf, planLoopInput } from "./loopInput";
 import { connectorGlyph, pointGlyph } from "./glyph";
 import type { MateDialogProps } from "./MateDialog";
 import { MATE_TYPES } from "./mateTypes";
@@ -114,6 +115,19 @@ export function useMates({
   genId: () => string;
 }) {
   const [session, setSession] = useState<Session | null>(null);
+  /** An edit waiting for the user's Continue: it clears an expression a typed
+   *  value or a drag overrides (loopInput.ts). `cancel` puts back what the
+   *  view already shows (a drag's released pose). */
+  const [confirmRequest, setConfirmRequest] = useState<{
+    message: string;
+    apply: () => void;
+    cancel?: () => void;
+  } | null>(null);
+  const resolveConfirm = (ok: boolean) => {
+    const r = confirmRequest;
+    setConfirmRequest(null);
+    if (r) (ok ? r.apply : r.cancel)?.();
+  };
 
   // Connector shapes, kept while the part's mesh is the same object.
   const shapeCache = useRef(new Map<string, { mesh: unknown; shape: ConnectorShape | null; rematched: boolean }>());
@@ -373,6 +387,39 @@ export function useMates({
     if (!m) return null;
     // A mate's name follows its type until the user renames it.
     if (existing && existing.type !== m.type && /^\w+ \d+$/.test(existing.name)) m.name = nextMateName(a, m.type);
+    // Values typed into a mate in a loop group drive it (loopInput.ts): the
+    // edit applies with them as typed, and clears an expression in the way
+    // only once the user confirms.
+    if (existing && existing.type === m.type && solution && loopOf(solution, existing.id)) {
+      const entries = MATE_DOFS[m.type]
+        .filter((d) => (m.values?.[d] ?? "").trim() !== (existing.values?.[d] ?? "").trim())
+        .map((d) => ({ mateId: m.id, dof: d, text: m.values?.[d] ?? "" }));
+      if (entries.length) {
+        const { values: _drop, ...valueless } = m;
+        const unvalued = updateMate(a, existing.values ? { ...valueless, values: existing.values } : valueless);
+        const base = keepSolved(unvalued, solve(unvalued, frameFor(unvalued)));
+        const scope = evaluateVariables(a.variables).scope;
+        const p = planLoopInput(base, solve(base, frameFor(base)), frameFor(base), scope, entries);
+        if (p && "error" in p) {
+          setSession((cur) => (cur ? { ...cur, message: p.error } : cur));
+          return null;
+        }
+        if (p && "clears" in p) {
+          setConfirmRequest({
+            message: p.message,
+            apply: () => {
+              setAssembly(p.next);
+              setSession(null);
+            },
+          });
+          return null;
+        }
+        if (p) {
+          setAssembly(p.next);
+          return p.next;
+        }
+      }
+    }
     const added = existing ? updateMate(a, m) : addMate(a, m);
     const next = keepSolved(added, solve(added, frameFor(added)));
     setAssembly(next);
@@ -597,15 +644,18 @@ export function useMates({
 
   /** The assembly a drag (a world motion of one instance) leads to: see
    *  drag.ts. */
-  const dragResult = (instanceId: string, motion: Mat4): { next: AssemblyDoc | null; error: string | null } =>
+  const dragResult = (instanceId: string, motion: Mat4): DragResult =>
     assembly && solution
       ? dragAssembly(assembly, solution, frameFor(assembly), instanceId, motion)
       : { next: null, error: null };
 
-  /** Commit a drag (see dragResult); the error, if it couldn't be. */
-  const commitDrag = (instanceId: string, motion: Mat4): string | null => {
-    const { next, error } = dragResult(instanceId, motion);
-    if (next) commit(next);
+  /** Commit a drag (see dragResult); the error, if it couldn't be. One that
+   *  clears an expression waits for Continue; `onCancel` then restores the
+   *  view. */
+  const commitDrag = (instanceId: string, motion: Mat4, onCancel?: () => void): string | null => {
+    const { next, error, confirm } = dragResult(instanceId, motion);
+    if (next && confirm) setConfirmRequest({ message: confirm, apply: () => commit(next), cancel: onCancel });
+    else if (next) commit(next);
     return error;
   };
 
@@ -630,6 +680,21 @@ export function useMates({
    *  typed value. Returns why it couldn't be set, or null. */
   const setMateValue = (mateId: string, dof: Dof, text: string): string | null => {
     if (!assembly) return null;
+    // Inside a loop group the typed value drives (loopInput.ts).
+    if (solution) {
+      const scope = evaluateVariables(assembly.variables).scope;
+      const base = keepSolved(assembly, solution);
+      const p = planLoopInput(base, solution, frameFor(base), scope, [{ mateId, dof, text }]);
+      if (p && "error" in p) return p.error;
+      if (p && "clears" in p) {
+        setConfirmRequest({ message: p.message, apply: () => setAssembly(p.next) });
+        return null;
+      }
+      if (p) {
+        setAssembly(p.next);
+        return null;
+      }
+    }
     const r = setMateValueIn(assembly, mateId, dof, text, evaluateVariables(assembly.variables).scope);
     if ("error" in r) return r.error;
     commit(r);
@@ -658,6 +723,9 @@ export function useMates({
     commit,
     dragFor,
     commitDrag,
+    /** An edit waiting for Continue, and how to answer it. */
+    confirmRequest,
+    resolveConfirm,
     dragPoses,
     /** A connector's frame in its part, for `a` (see solve's connectorFrame). */
     frameFor,

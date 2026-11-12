@@ -306,7 +306,17 @@ export function useAssemblyWorkspace({
     const moved = actualMove(te, motion);
     setAsmMoved((m) => addMoves(m, moved));
     setAsmLive(null);
-    setAsmDragMessage(mates.commitDrag(te.featureId, motion));
+    setAsmDragMessage(
+      mates.commitDrag(te.featureId, motion, () => {
+        // Cancelled at the confirmation: the view shows the released drag
+        // until told otherwise, and the readout counted it.
+        viewApi.current?.releaseDragPins();
+        setAsmMoved((m) =>
+          addMoves(m, { tx: -moved.tx, ty: -moved.ty, tz: -moved.tz, angle: -moved.angle }),
+        );
+        setAsmDragSeq((n) => n + 1);
+      }),
+    );
     setAsmDragSeq((n) => n + 1);
   };
   const commitInstanceMove = (d: TransformDelta) => {

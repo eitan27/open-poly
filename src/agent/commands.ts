@@ -690,7 +690,7 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
       break;
     }
     case "setMateValue": {
-      const r = planSetMateValue(state, op);
+      const r = planSetMateValue(state, op, ctx.assemblyEdit.frameOf);
       if ("error" in r) throw new OpError(/^No mate/.test(r.error) ? "not_found" : "invalid_op", r.error);
       next = r;
       break;

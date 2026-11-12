@@ -231,6 +231,7 @@ import { InsertDialog } from "./assembly/InsertDialog";
 import { MoveDialog } from "./assembly/MoveDialog";
 import { AnimateDialog } from "./assembly/AnimateDialog";
 import { RelationDialog } from "./assembly/RelationDialog";
+import { ConfirmDialog } from "./ui/ConfirmDialog";
 import { animatableDofs } from "./assembly/animate";
 import { renameInMates, removeInstances, updateInstance, updateMate } from "./assembly/assembly";
 import { MateDialog } from "./assembly/MateDialog";
@@ -7310,6 +7311,14 @@ export default function App() {
               />
             )}
             {mates.dialog && <MateDialog {...mates.dialog} showShortcuts={showShortcuts} />}
+            {isAssembly && mates.confirmRequest && (
+              <ConfirmDialog
+                title="Clear an expression?"
+                message={mates.confirmRequest.message}
+                onConfirm={() => mates.resolveConfirm(true)}
+                onCancel={() => mates.resolveConfirm(false)}
+              />
+            )}
             {isAssembly && mateRelations.dialog && <RelationDialog {...mateRelations.dialog} />}
             {insertOpen && (
               <InsertDialog onClose={() => setInsertOpen(false)} onInsert={insertParts} build={buildDocument} />

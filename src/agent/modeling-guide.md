@@ -186,14 +186,19 @@ anything else in place — type, either connector, flip, turns, limits (`null`
 clears one) — keeping the mate's id and its relations; a new type drops values
 and limits for DOFs it doesn't have.
 
-**Plain numbers vs expressions.** A value that is an **expression** (names a
-variable, or is a formula) _drives_ the joint. A plain number is where it is:
-in a simple chain that's the same thing, but **inside a loop group** (the
-summary's `loops`: parts held by a closed loop of mates, like a four-bar
-linkage) a plain number only _reports_ where the solver put it. To drive a
-linkage, give its input joint an expression — `set_variable` an assembly
-variable, then `set_mate_value` it to that name — or sweep it with
-`animate_mate`.
+**Inside a loop group** (the summary's `loops`: parts held by a closed loop of
+mates, like a four-bar linkage) the mates' values depend on each other: a
+four-bar's four hinge angles have one degree of freedom between them. The
+values `get_scene_summary` shows there report where the solver put each
+joint. `set_mate_value` with a **number** drives the linkage there, once: the
+rest moves as little as it must, and the value stays a plain number, so a
+later value (on any joint) can move it again. An **expression** (a variable,
+a formula) is a _standing_ input instead, applied on every solve — give the
+input joint one to drive the linkage from a variable. If a value you set
+would need an expression elsewhere in the loop changed, `set_mate_value`
+fails naming it; **ask the user**, and only if they agree call it again with
+`clearExpressions: true`, which replaces that expression with its plain
+number. A value the linkage can't reach at all is refused with why.
 
 ### Relations
 
