@@ -111,6 +111,17 @@ several parts (`ext1`, `ext1#1`, … — `parts.ts`). Inserting a document inser
 one instance per ticked part, each independently movable; that's what users
 expect when they modelled a gear pair in one file.
 
+**Several at once** (`copies.ts`): each part in the Insert dialog has a count,
+and each instance row a ⧉ Duplicate that asks how many copies. Copies are
+never stacked (they'd look like one part, and only the top one could be
+clicked): they're laid out in a grid of about √n columns, a gap apart. With
+every count 1, an insert keeps the document's arrangement, beside what's
+placed; with any above 1, each part's copies get a grid, the grids side by
+side past what's placed. Duplicates go in a grid beside their original —
+past everything, level with it, if that would overlap a part — turned as it
+is, in its colour, with no mates and not grounded. The new instances end up
+selected, and either is one undo step.
+
 **References are live.** An instance follows the latest saved state of its part
 document. Rules that fall out of this:
 
@@ -510,8 +521,8 @@ The agent reads an open assembly through the same tools as a part
   **`new_document`** takes `kind: "assembly"`.
 - **Editing** (`agent/assemblyOps.ts`, pure, then `applyAssemblyOp` in
   `commands.ts`): `insert_instance` (a part document's parts, all or by id,
-  beside what's placed as the Insert dialog does — `insertShift` — or at a
-  `position`), `ground_instance`, `add_mate`, `edit_mate`, `set_mate_value`,
+  `count` of each, laid out as the Insert dialog does — `insertLayout` — or
+  from a `position`), `duplicate_instance`, `ground_instance`, `add_mate`, `edit_mate`, `set_mate_value`,
   `add_relation`, `edit_relation`, `set_suppressed`, `set_variable` (the
   assembly's own; `setVariableByName` is shared with parts) and `delete` of
   an instance, mate or relation. Each is one step on the assembly's own undo
@@ -594,7 +605,8 @@ pinning (parts have no versions yet).
   planars, Width + Planar, a four-bar turned a full revolution and dragged by
   its coupler, a slider-crank, conflicts, locked parts dragged from either
   side, a box seated in a corner by one Fastened mate on vertices),
-  `drag.test.ts`, `exportAssembly.test.ts` (welding to a closed mesh, binary
+  `drag.test.ts`, `copies.test.ts` (grids, the arrangement kept for single
+  inserts, duplicates beside or past what's placed), `exportAssembly.test.ts` (welding to a closed mesh, binary
   STL, the 3MF package, part files and their names), `exportAnimation.test.ts` (each mode's frame values, frame
   sizes), `loopInput.test.ts` (a typed value driving a four-bar, a later entry
   overriding an earlier, an expression named and cleared, an unreachable
@@ -614,7 +626,7 @@ pinning (parts have no versions yet).
   mate count is in `src/storage/db.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
   `width`, `loops`, `move`, `variables`, `pin`, `vertex`, `animate`,
-  `relations`, `loop-input`, `export`, `measure`), and `verify-agent-assembly-read.mjs` and
+  `relations`, `loop-input`, `export`, `measure`, `insert-many`), and `verify-agent-assembly-read.mjs` and
   `verify-agent-assembly-edit.mjs` for the agent, against `npm run dev`. Set
   `PW_EXE` to use a pre-installed Chromium (scripts on
   `scripts/lib/harness.mjs` read `CHROMIUM_PATH` instead). `pin` is the one

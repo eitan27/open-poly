@@ -1,4 +1,5 @@
-// Insert: choose a part document, then which of its parts to place. The list
+// Insert: choose a part document, then which of its parts to place, and how
+// many of each (copies.ts lays several out in a grid). The list
 // is the Documents dialog's rows (meta only, never full records), limited to
 // part documents; picking one reads it as a source — building it first if this
 // device never has — to show its parts.
@@ -11,17 +12,21 @@ import { readSource, type BuildDocument, type SourcePart, type SourceState } fro
 
 interface Props {
   onClose: () => void;
-  onInsert: (docId: string, parts: SourcePart[]) => void;
+  onInsert: (docId: string, picks: { part: SourcePart; count: number }[]) => void;
   build: BuildDocument | null;
 }
 
 const hex = (c: number) => `#${c.toString(16).padStart(6, "0")}`;
+/** The most copies one insert or duplicate makes. */
+export const MAX_COPIES = 100;
 
 export function InsertDialog({ onClose, onInsert, build }: Props) {
   const [metas, setMetas] = useState<DocMeta[] | null>(null);
   const [chosen, setChosen] = useState<{ id: string; source: SourceState } | null>(null);
-  // Part ids left unticked (default: every part).
+  // Part ids left unticked (default: every part), and how many of each.
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
+  const [counts, setCounts] = useState<Map<string, number>>(new Map());
+  const countOf = (partId: string) => counts.get(partId) ?? 1;
 
   useEffect(() => {
     listMeta()
@@ -31,6 +36,7 @@ export function InsertDialog({ onClose, onInsert, build }: Props) {
 
   const choose = (id: string) => {
     setSkipped(new Set());
+    setCounts(new Map());
     setChosen({ id, source: { status: "loading" } });
     void readSource(id, build).then((source) => setChosen((c) => (c?.id === id ? { id, source } : c)));
   };
@@ -38,6 +44,7 @@ export function InsertDialog({ onClose, onInsert, build }: Props) {
   const src = chosen?.source;
   const parts = src?.status === "ready" ? src.parts : [];
   const picked = parts.filter((p) => !skipped.has(p.partId));
+  const total = picked.reduce((n, p) => n + countOf(p.partId), 0);
 
   return (
     <Modal onClose={onClose} ariaLabel="Insert parts" className="docs-dialog insert-dialog" escapeCapture>
@@ -100,6 +107,22 @@ export function InsertDialog({ onClose, onInsert, build }: Props) {
                     <span className="insert-swatch" style={{ background: hex(p.color) }} />
                     {p.name}
                   </label>
+                  <label className="insert-count" title="How many to insert">
+                    ×
+                    <input
+                      type="number"
+                      min={1}
+                      max={MAX_COPIES}
+                      aria-label={`How many ${p.name}`}
+                      disabled={skipped.has(p.partId)}
+                      value={countOf(p.partId)}
+                      onChange={(e) => {
+                        const n = Math.max(1, Math.min(MAX_COPIES, Math.round(Number(e.target.value) || 1)));
+                        setCounts((c) => new Map(c).set(p.partId, n));
+                      }}
+                      onFocus={(e) => e.target.select()}
+                    />
+                  </label>
                 </li>
               ))}
             </ul>
@@ -108,11 +131,14 @@ export function InsertDialog({ onClose, onInsert, build }: Props) {
                 className="text-btn insert-confirm"
                 disabled={picked.length === 0}
                 onClick={() => {
-                  onInsert(chosen.id, picked);
+                  onInsert(
+                    chosen.id,
+                    picked.map((part) => ({ part, count: countOf(part.partId) })),
+                  );
                   onClose();
                 }}
               >
-                Insert {picked.length === 1 ? "1 part" : `${picked.length} parts`}
+                Insert {total === 1 ? "1 part" : picked.length === total ? `${total} parts` : `${total} instances`}
               </button>
             </div>
           </>

@@ -80,6 +80,7 @@ import { assemblySummary, type AssemblyAgentState } from "./assemblySummary";
 import {
   planAddRelation,
   planDelete,
+  planDuplicate,
   planEditMate,
   planEditRelation,
   planGround,
@@ -639,6 +640,7 @@ const DOCUMENT_OPS: ReadonlySet<Operation["op"]> = new Set([
  *  shared: on a part it deletes a feature. */
 const ASSEMBLY_OPS: ReadonlySet<Operation["op"]> = new Set([
   "insertInstance",
+  "duplicateInstance",
   "groundInstance",
   "addMate",
   "setMateValue",
@@ -651,6 +653,7 @@ const ASSEMBLY_OPS: ReadonlySet<Operation["op"]> = new Set([
 ]);
 const ASSEMBLY_ONLY: ReadonlySet<Operation["op"]> = new Set([
   "insertInstance",
+  "duplicateInstance",
   "groundInstance",
   "addMate",
   "setMateValue",
@@ -672,6 +675,13 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
       const source = await ctx.assemblyEdit.readSource(op.documentId);
       const r = planInsert(state, op, source, genId);
       if ("error" in r) throw new OpError(source.status === "missing" ? "not_found" : "invalid_op", r.error);
+      next = r.assembly;
+      createdIds = r.ids;
+      break;
+    }
+    case "duplicateInstance": {
+      const r = planDuplicate(state, op, genId);
+      if ("error" in r) throw new OpError(/^No instance/.test(r.error) ? "not_found" : "invalid_op", r.error);
       next = r.assembly;
       createdIds = r.ids;
       break;
@@ -781,7 +791,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
     if (ctx.documents.info().kind === "assembly" && !DOCUMENT_OPS.has(op.op)) {
       throw new OpError(
         "invalid_op",
-        `The open document is an assembly: ${op.op} models a part. On an assembly use insert_instance, ground_instance, add_mate, edit_mate, set_mate_value, add_relation, edit_relation, set_suppressed, set_variable and delete (an instance, mate or relation), read it with get_scene_summary and screenshot, and switch documents with the document tools.`,
+        `The open document is an assembly: ${op.op} models a part. On an assembly use insert_instance, duplicate_instance, ground_instance, add_mate, edit_mate, set_mate_value, add_relation, edit_relation, set_suppressed, set_variable and delete (an instance, mate or relation), read it with get_scene_summary and screenshot, and switch documents with the document tools.`,
       );
     }
     if (ASSEMBLY_ONLY.has(op.op))
@@ -1360,6 +1370,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       // so they bypass the shared setDoc tail and settle their own regen.
       // Routed to applyAssemblyOp above while an assembly is open.
       case "insertInstance":
+      case "duplicateInstance":
       case "groundInstance":
       case "addMate":
       case "setMateValue":

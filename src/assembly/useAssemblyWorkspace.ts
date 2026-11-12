@@ -14,12 +14,13 @@ import { insertInstances, keepSolved, referencedDocIds, removeInstances } from "
 import { dofLabel } from "./mateTypes";
 import type { MoveField, MoveMode, WorldAxis } from "./MoveDialog";
 import { addMoves, moveReadout, NO_MOVE, type MoveReadout } from "./moveReadout";
-import { boundsCenter, IDENTITY, INSERT_GAP_MM, insertShift, meshBounds, placeMesh, translation } from "./placement";
+import { boundsCenter, IDENTITY, meshBounds, placeMesh } from "./placement";
 import { relationDriving } from "./relations";
 import { formatValue, isRotation, solve } from "./solve";
 import type { AssemblyDoc, Dof, Mate, MateType } from "./types";
 import { useAssemblySources, type BuildDocument, type SourcePart } from "./useAssemblySources";
 import { exportAssemblyFile, exportPieces, type AssemblyExportKind } from "./exportAssembly";
+import { duplicateInstances, insertLayout } from "./copies";
 import { saveBlob } from "../lib/download";
 import { useMateAnimation } from "./useMateAnimation";
 import { useMates } from "./useMates";
@@ -139,23 +140,44 @@ export function useAssemblyWorkspace({
     if (isAssembly && asmSourcesSettled) onPaintedRef.current();
   }, [isAssembly, asmSourcesSettled, assemblyMeshes]);
 
-  const insertParts = (docId: string, parts: SourcePart[]) => {
+  const insertParts = (docId: string, picks: { part: SourcePart; count: number }[]) => {
     if (!assembly) return;
-    // Land the insert just past everything already placed, along +X, so it
-    // never appears inside another part. The parts of one document move
-    // together, keeping the arrangement they were modelled in.
-    const shift = insertShift(
+    // Land the insert just past everything already placed, never inside
+    // another part: the document's parts together as modelled, or, with any
+    // wanted more than once, a grid of each (copies.ts). The new ones end up
+    // selected, so it's clear what was added.
+    const layout = insertLayout(
       assemblyMeshes.map((m) => meshBounds(m.mesh)),
-      parts.map((p) => meshBounds(p.mesh)),
-      INSERT_GAP_MM,
+      picks.map(({ part, count }) => ({ partId: part.partId, name: part.name, mesh: part.mesh, count })),
     );
-    const transform = shift ? translation([shift, 0, 0]) : IDENTITY;
-    const r = insertInstances(
-      assembly,
-      docId,
-      parts.map((p) => ({ partId: p.partId, name: p.name, transform })),
+    const r = insertInstances(asmNow() ?? assembly, docId, layout, genId);
+    setAssembly(r.assembly);
+    setAsmSelected(r.ids);
+  };
+  /** The Duplicate prompt: which instances, while it's open. */
+  const [duplicating, setDuplicating] = useState<string[] | null>(null);
+  /** Open the Duplicate prompt on `id` — or, when it's one of several
+   *  selected, on all of them. */
+  const askDuplicate = (id: string) =>
+    setDuplicating(asmSelected.includes(id) && asmSelected.length > 1 ? asmSelected : [id]);
+  /** `count` copies of each instance in `ids`, in a grid beside it, selected. */
+  const duplicate = (ids: string[], count: number) => {
+    const now = asmNow();
+    if (!now) return;
+    const meshOf = (id: string) => {
+      const inst = now.instances.find((i) => i.id === id);
+      const src = inst ? asmSources.get(inst.source.docId) : undefined;
+      return src?.status === "ready" ? src.parts.find((p) => p.partId === inst!.source.partId)?.mesh : undefined;
+    };
+    const r = duplicateInstances(
+      now,
+      ids,
+      count,
+      (id) => now.instances.find((i) => i.id === id)!.transform,
+      meshOf,
       genId,
     );
+    if (!r.ids.length) return;
     setAssembly(r.assembly);
     setAsmSelected(r.ids);
   };
@@ -416,6 +438,10 @@ export function useAssemblyWorkspace({
     asmVariables,
     asmVariablesOpen,
     exportAssembly,
+    duplicating,
+    askDuplicate,
+    closeDuplicate: () => setDuplicating(null),
+    duplicate,
     animation,
     openAnimation,
     relations,

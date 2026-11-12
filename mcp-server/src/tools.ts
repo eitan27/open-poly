@@ -79,7 +79,9 @@ const OP_DESCRIPTIONS: Record<string, string> = {
     "Create and open a NEW empty document (optionally named): kind 'part' (default) to model, or 'assembly' to place and mate parts of other documents. The previous document is autosaved.",
   renameDocument: "Rename a document (id defaults to the active one). Display-name only — not an undoable model edit.",
   insertInstance:
-    "ASSEMBLY only. Place a part document's parts (all of them, or just `partIds` — the body ids in that document's own get_scene_summary) into the open assembly, as instances: beside what's already there along +X, or with the part's origin at `position`. The assembly's first instance is grounded (fixed); mates then place the rest. Returns createdId (createdIds when several). `name` renames a single inserted instance.",
+    "ASSEMBLY only. Place a part document's parts (all of them, or just `partIds` — the body ids in that document's own get_scene_summary) into the open assembly, as instances: beside what's already there along +X, or with the part's origin at `position`. The assembly's first instance is grounded (fixed); mates then place the rest. `count` (1-100) inserts that many of each part, laid out in a grid so none overlap (with `position`, the grid starts there). Returns createdId (createdIds when several). `name` renames a single inserted instance.",
+  duplicateInstance:
+    "ASSEMBLY only. Copy instances, `count` of each (default 1), in a grid beside each original — or past everything if that spot is taken: turned as the original is, in its colour, with no mates and not grounded. Returns createdIds; mate the copies as you would new parts.",
   groundInstance:
     "ASSEMBLY only. Fix an instance where it is (grounded: true, the default) so mates place others against it, or free it (grounded: false).",
   addMate:

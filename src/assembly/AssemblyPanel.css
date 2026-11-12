@@ -74,6 +74,31 @@
   cursor: pointer;
 }
 
+/* A part's row: its tick and name, then how many. */
+.insert-parts li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.insert-parts .insert-count {
+  gap: 4px;
+  color: var(--text-5);
+  cursor: default;
+}
+.insert-count input {
+  width: 52px;
+  padding: 3px 6px;
+  font-size: 12px;
+  background: var(--bg-sunken);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.insert-count input:disabled {
+  opacity: 0.4;
+}
+
 .insert-swatch {
   width: 12px;
   height: 12px;

@@ -595,8 +595,17 @@ export const operationSchema = z.discriminatedUnion("op", [
     op: z.literal("insertInstance"),
     documentId: z.string(),
     partIds: z.array(z.string()).min(1).optional(),
+    /** How many of each part (default 1): copies are laid out in a grid. */
+    count: z.number().int().min(1).max(100).optional(),
     position: z.tuple([z.number(), z.number(), z.number()]).optional(),
     name: z.string().optional(),
+  }),
+  /** Copies of instances (count each, default 1), in a grid beside each
+   *  original: turned as it is, in its colour, with no mates, not grounded. */
+  z.object({
+    op: z.literal("duplicateInstance"),
+    instanceIds: z.array(z.string()).min(1),
+    count: z.number().int().min(1).max(100).optional(),
   }),
   /** Fix an instance where it is (grounded: true, the default) or free it. */
   z.object({ op: z.literal("groundInstance"), instanceId: z.string(), grounded: z.boolean().optional() }),

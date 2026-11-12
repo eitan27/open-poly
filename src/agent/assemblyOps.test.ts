@@ -871,3 +871,51 @@ describe("set_mate_value inside a loop", () => {
     expect(value(t, t.p)).toBeCloseTo(40, 3);
   });
 });
+
+describe("several at once", () => {
+  it("insert_instance with a count lays the copies out in a grid", async () => {
+    const t = assemblyCtx();
+    await t.apply({ op: "insertInstance", documentId: "plate" });
+    const r = await t.apply({ op: "insertInstance", documentId: "cube", count: 3 });
+    expect(r.createdIds).toHaveLength(3);
+    const moves = t
+      .assembly()
+      .instances.slice(1)
+      .map((i) => [i.transform[12], i.transform[13]]);
+    // Past the plate (x 0..40) by the 10 mm gap: 2 columns 20 apart, then a row.
+    expect(moves).toEqual([
+      [50, 0],
+      [70, 0],
+      [50, 20],
+    ]);
+    expect(
+      t
+        .assembly()
+        .instances.slice(1)
+        .map((i) => i.name),
+    ).toEqual(["Cube <1>", "Cube <2>", "Cube <3>"]);
+  });
+
+  it("starts the grid at a position, and refuses a name for several", async () => {
+    const t = assemblyCtx();
+    await t.apply({ op: "insertInstance", documentId: "cube", count: 2, position: [100, 0, 0] });
+    expect(t.assembly().instances.map((i) => i.transform[12])).toEqual([100, 120]);
+    expect((await t.apply({ op: "insertInstance", documentId: "cube", count: 2, name: "X" })).error).toMatch(
+      /only when inserting one part, once/,
+    );
+  });
+
+  it("duplicate_instance copies beside the original, not grounded", async () => {
+    const t = await plateAndCube();
+    const r = await t.apply({ op: "duplicateInstance", instanceIds: [t.plate], count: 2 });
+    expect(r.createdIds).toHaveLength(2);
+    const copies = t.assembly().instances.slice(2);
+    expect(copies.every((c) => !c.grounded && c.source.docId === "plate")).toBe(true);
+    // The plate spans x 0..40, but the cube sits right beside it (50..60):
+    // the copies go past everything, from 70, 2 columns 50 apart.
+    expect(copies.map((c) => c.transform[12])).toEqual([70, 120]);
+    expect(await t.apply({ op: "duplicateInstance", instanceIds: ["ghost"] })).toMatchObject({
+      errorKind: "not_found",
+    });
+  });
+});

@@ -33,7 +33,8 @@ import {
   type ConnectorRef,
   type ConnectorShape,
 } from "../assembly/frames";
-import { INSERT_GAP_MM, insertShift, meshBounds, translation } from "../assembly/placement";
+import { multiply, translation } from "../assembly/placement";
+import { duplicateInstances, insertLayout } from "../assembly/copies";
 import { MATE_DOFS } from "../assembly/solve";
 import { planLoopInput } from "../assembly/loopInput";
 import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector, Relation } from "../assembly/types";
@@ -69,7 +70,9 @@ export function planInsert(
 ): Planned<{ assembly: AssemblyDoc; ids: string[] }> {
   const parts = partsToInsert(source, op.documentId, op.partIds);
   if ("error" in parts) return parts;
-  if (op.name && parts.length > 1) return fail("A name can be given only when inserting one part.");
+  const count = op.count ?? 1;
+  if (op.name && (parts.length > 1 || count > 1))
+    return fail("A name can be given only when inserting one part, once.");
   // Where everything is now, so the insert lands past it (as the Insert dialog
   // does), unless a position is given.
   const placed = state.assembly.instances
@@ -78,24 +81,14 @@ export function planInsert(
       const mesh = meshOf(state, i.id);
       return mesh ? (placedBoundsOf(mesh, state.solution?.placements.get(i.id) ?? i.transform) ?? null) : null;
     });
-  const transform = op.position
-    ? translation(op.position)
-    : translation([
-        insertShift(
-          placed,
-          parts.map((p) => meshBounds(p.mesh)),
-          INSERT_GAP_MM,
-        ),
-        0,
-        0,
-      ]);
+  // Laid out as the Insert dialog does (copies.ts); with a position, the
+  // layout starts where the part was modelled and moves there.
+  const picks = parts.map((p) => ({ partId: p.partId, name: p.name, mesh: p.mesh, count }));
+  const layout = op.position
+    ? insertLayout([], picks).map((l) => ({ ...l, transform: multiply(translation(op.position!), l.transform) }))
+    : insertLayout(placed, picks);
   const base = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
-  let r = insertInstances(
-    base,
-    op.documentId,
-    parts.map((p) => ({ partId: p.partId, name: p.name, transform })),
-    genId,
-  );
+  let r = insertInstances(base, op.documentId, layout, genId);
   if (op.name) r = { ...r, assembly: updateInstance(r.assembly, r.ids[0], { name: op.name }) };
   return r;
 }
@@ -392,4 +385,24 @@ export function planSuppress(
     setSuppressed(base, op.id, op.suppressed ?? true) ??
     fail(`No mate or relation "${op.id}" — ids are in get_scene_summary's mates and relations.`)
   );
+}
+
+export function planDuplicate(
+  state: AssemblyAgentState,
+  op: Extract<Operation, { op: "duplicateInstance" }>,
+  genId: () => string,
+): Planned<{ assembly: AssemblyDoc; ids: string[] }> {
+  const missing = op.instanceIds.filter((id) => !state.assembly.instances.some((i) => i.id === id));
+  if (missing.length)
+    return fail(`No instance ${missing.map((m) => `"${m}"`).join(", ")} — ids are in get_scene_summary's instances.`);
+  const base = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
+  const r = duplicateInstances(
+    base,
+    op.instanceIds,
+    op.count ?? 1,
+    (id) => base.instances.find((i) => i.id === id)!.transform,
+    (id) => meshOf(state, id),
+    genId,
+  );
+  return r.ids.length ? r : fail("Nothing to duplicate: the instances' parts haven't loaded.");
 }

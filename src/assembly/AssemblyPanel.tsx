@@ -23,6 +23,8 @@ interface Props {
   onToggleHidden: (id: string) => void;
   onColor: (id: string, color: number) => void;
   onDelete: (id: string) => void;
+  /** Ask how many copies of the instance (or of all selected, if it's one). */
+  onDuplicate: (id: string) => void;
   /** Open the instance's source document, to edit the part itself. */
   onOpenSource: (docId: string) => void;
   onInsert: () => void;
@@ -163,6 +165,17 @@ export function AssemblyPanel(p: Props) {
                   }}
                 >
                   <EyeIcon />
+                </button>
+                <button
+                  type="button"
+                  className="row-icon asm-duplicate-btn"
+                  title="Duplicate…"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    p.onDuplicate(inst.id);
+                  }}
+                >
+                  ⧉
                 </button>
                 <button
                   type="button"

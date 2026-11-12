@@ -74,7 +74,8 @@ quoted in the warning).
   `duplicate_document` (opens the copy — a safe sandbox before risky edits).
   There is deliberately no delete — ask the human.
 - **Assemblies** (only while one is open — see [Assemblies](#assemblies)):
-  `insert_instance`, `ground_instance`, `add_mate`, `edit_mate`,
+  `insert_instance` (`count` for several), `duplicate_instance`,
+  `ground_instance`, `add_mate`, `edit_mate`,
   `set_mate_value`, `add_relation`, `edit_relation`, `set_suppressed`,
   `set_variable`, `delete`, and the read `animate_mate`.
 
@@ -115,6 +116,8 @@ far fewer of them than constraints.
 2. `new_document` with `kind: "assembly"`, then `insert_instance` each part
    document's id (from `list_documents`; `partIds` picks some of its parts —
    they're that document's body ids). Each insert lands beside what's there.
+   For several of a part (eight bolts), give `count`, or `duplicate_instance`
+   one already placed: the copies are laid out in a grid, none overlapping.
    **The first instance is grounded** (fixed in place); everything else is
    placed by mates.
 3. `get_scene_summary`: `parts` lists each part once with the **face and edge

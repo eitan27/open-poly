@@ -232,6 +232,7 @@ import { MoveDialog } from "./assembly/MoveDialog";
 import { AnimateDialog } from "./assembly/AnimateDialog";
 import { RelationDialog } from "./assembly/RelationDialog";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
+import { DuplicateDialog } from "./assembly/DuplicateDialog";
 import { MeasurePanel } from "./ui/MeasurePanel";
 import { animatableDofs } from "./assembly/animate";
 import { renameInMates, removeInstances, updateInstance, updateMate } from "./assembly/assembly";
@@ -1949,6 +1950,10 @@ export default function App() {
     animation: mateAnimation,
     openAnimation,
     exportAssembly,
+    duplicating,
+    askDuplicate,
+    closeDuplicate,
+    duplicate,
     relations: mateRelations,
     openRelation,
     assemblyMeshes,
@@ -7044,6 +7049,7 @@ export default function App() {
                   }}
                   onOpenSource={(docId) => void openDocument(docId).catch(() => {})}
                   onInsert={() => setInsertOpen(true)}
+                  onDuplicate={askDuplicate}
                   onExport={(kind) => {
                     const why = exportAssembly(kind, docName || "Assembly");
                     if (why) flashMsg(why);
@@ -7322,6 +7328,20 @@ export default function App() {
               />
             )}
             {mates.dialog && <MateDialog {...mates.dialog} showShortcuts={showShortcuts} />}
+            {isAssembly && duplicating && (
+              <DuplicateDialog
+                what={
+                  duplicating.length > 1
+                    ? `${duplicating.length} instances`
+                    : (assembly?.instances.find((i) => i.id === duplicating[0])?.name ?? "instance")
+                }
+                onDuplicate={(n) => {
+                  duplicate(duplicating, n);
+                  closeDuplicate();
+                }}
+                onCancel={closeDuplicate}
+              />
+            )}
             {isAssembly && mates.confirmRequest && (
               <ConfirmDialog
                 title="Clear an expression?"
