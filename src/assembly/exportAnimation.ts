@@ -126,15 +126,5 @@ async function encodeVideo(job: ExportJob, ctx: CanvasRenderingContext2D): Promi
   return new Blob(chunks, { type: mimeType.split(";")[0] });
 }
 
-/** Hand `blob` to the browser as a download named `name`. */
-export function saveBlob(blob: Blob, name: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
-}
-
 /** A file extension for an exported blob's type. */
 export const extensionOf = (type: string) => (type.includes("gif") ? "gif" : type.includes("mp4") ? "mp4" : "webm");

@@ -8,14 +8,8 @@ import { useEffect, useRef, useState } from "react";
 import { evaluateVariables } from "../document/document";
 import type { ViewportApi } from "../viewport/types";
 import { animatableDofs, animator, defaultSpec, valueAt, type AnimateSpec } from "./animate";
-import {
-  EXPORT_FPS,
-  exportAnimation,
-  exportFrameValues,
-  extensionOf,
-  saveBlob,
-  type ExportFormat,
-} from "./exportAnimation";
+import { EXPORT_FPS, exportAnimation, exportFrameValues, extensionOf, type ExportFormat } from "./exportAnimation";
+import { saveBlob } from "../lib/download";
 import { multiply } from "./placement";
 import { invertRigid, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, MateConnector } from "./types";

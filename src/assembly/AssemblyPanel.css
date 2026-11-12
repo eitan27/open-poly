@@ -193,3 +193,33 @@
   color: var(--text-5);
   margin: 4px 0 6px;
 }
+
+/* The Instances header holds ＋ Insert and the Export menu side by side; the
+   menu's button looks like its neighbour, and its list drops right-aligned
+   (mt-menu-right) over the rows below. */
+.parts-import:has(.asm-export) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.asm-export > .asm-export-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  color: var(--accent-palest);
+  background: var(--accent-surface-4);
+  border: 1px solid var(--accent-border-4);
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.asm-export > .asm-export-btn:hover:not(:disabled) {
+  background: var(--accent-surface-6);
+}
+.asm-export > .asm-export-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.asm-export .asm-export-menu {
+  min-width: 250px;
+  z-index: 20;
+}

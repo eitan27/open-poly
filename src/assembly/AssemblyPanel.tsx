@@ -1,12 +1,14 @@
 // The side panel of an open assembly, in place of a part's Variables /
 // Timeline / Parts: what the assembly places, and how those are joined. Rows
 // follow the Parts list's (colour, name, eye, ✕) so the two read alike.
+import { useEffect, useRef, useState } from "react";
 import { shortcutHint, shortcutName } from "../settings/shortcuts";
 import { EyeIcon, GroundIcon, SuppressIcon } from "../ui/icons";
 import { MateIcon, RelationIcon } from "./MateIcon";
 import { mateValuesText } from "./mateTypes";
 import { animatableDofs } from "./animate";
 import { RELATION_TYPES } from "./relations";
+import type { AssemblyExportKind } from "./exportAssembly";
 import type { AssemblyDoc, Dof, Instance } from "./types";
 import type { SourceState } from "./useAssemblySources";
 import "./AssemblyPanel.css";
@@ -24,6 +26,8 @@ interface Props {
   /** Open the instance's source document, to edit the part itself. */
   onOpenSource: (docId: string) => void;
   onInsert: () => void;
+  /** Save the assembly as a file (exportAssembly.ts). */
+  onExport: (kind: AssemblyExportKind) => void;
   /** Mates the solver couldn't apply, and why. */
   mateProblems: ReadonlyMap<string, string>;
   /** Mates that still work but whose connector was re-found by fingerprint,
@@ -86,6 +90,7 @@ export function AssemblyPanel(p: Props) {
             ＋ Insert
             {p.showShortcuts && <span className="kbd-hint">{shortcutHint("asm.insert")}</span>}
           </button>
+          <ExportMenu disabled={assembly.instances.length === 0} onExport={p.onExport} />
         </div>
       </div>
       {assembly.instances.length === 0 ? (
@@ -361,5 +366,81 @@ function SuppressToggle({ on, what, onToggle }: { on: boolean; what: string; onT
     >
       <SuppressIcon />
     </button>
+  );
+}
+
+const EXPORTS: { kind: AssemblyExportKind; label: string; title: string }[] = [
+  {
+    kind: "3mf",
+    label: "3MF — assembled, parts kept separate",
+    title: "One file for printing or viewing the whole assembly: each part a separate, coloured object where it sits",
+  },
+  {
+    kind: "stl",
+    label: "STL — one file, assembled",
+    title: "Every part merged into one mesh where it sits, for tools that only take STL",
+  },
+  {
+    kind: "stl-parts",
+    label: "STL — each part once, zipped",
+    title:
+      "One STL per distinct part, in its own coordinates, with how many the assembly uses in its name: for making the parts",
+  },
+];
+
+/** The assembly's Export menu: three ways to save it as files. */
+function ExportMenu({ disabled, onExport }: { disabled: boolean; onExport: (k: AssemblyExportKind) => void }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => {
+      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, [open]);
+  return (
+    <div
+      className="mt-dropdown asm-export"
+      ref={wrap}
+      onKeyDown={(e) => {
+        if (open && e.key === "Escape") {
+          e.stopPropagation();
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        className="asm-export-btn"
+        title="Save the assembly as a file (hidden parts are left out)"
+        disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        Export ▾
+      </button>
+      {open && (
+        <div className="mt-menu mt-menu-right asm-export-menu" role="menu">
+          {EXPORTS.map((x) => (
+            <button
+              key={x.kind}
+              type="button"
+              role="menuitem"
+              className={`asm-export-${x.kind}`}
+              title={x.title}
+              onClick={() => {
+                setOpen(false);
+                onExport(x.kind);
+              }}
+            >
+              {x.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

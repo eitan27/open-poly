@@ -19,6 +19,8 @@ import { relationDriving } from "./relations";
 import { formatValue, isRotation, solve } from "./solve";
 import type { AssemblyDoc, Dof, Mate, MateType } from "./types";
 import { useAssemblySources, type BuildDocument, type SourcePart } from "./useAssemblySources";
+import { exportAssemblyFile, exportPieces, type AssemblyExportKind } from "./exportAssembly";
+import { saveBlob } from "../lib/download";
 import { useMateAnimation } from "./useMateAnimation";
 import { useMates } from "./useMates";
 import { useRelations } from "./useRelations";
@@ -160,6 +162,19 @@ export function useAssemblyWorkspace({
   // Edits that change what the mates hold start from where everything is now
   // (see keepSolved), so a part a removed mate held stays put.
   const asmNow = () => (assembly && mates.solution ? keepSolved(assembly, mates.solution) : assembly);
+  /** Save the assembly as `kind` (exportAssembly.ts), named after `title`.
+   *  Why it couldn't be, if it couldn't. */
+  const exportAssembly = (kind: AssemblyExportKind, title: string): string | null => {
+    if (!assembly) return null;
+    const pieces = exportPieces(assembly, asmSources, mates.solution?.placements);
+    if (!pieces.length) return "Nothing to export: no visible part has loaded.";
+    const f = exportAssemblyFile(kind, pieces, title);
+    saveBlob(
+      new Blob([f.bytes as Uint8Array<ArrayBuffer>], { type: f.type }),
+      `${title}${kind === "stl-parts" ? " parts" : ""}.${f.extension}`,
+    );
+    return null;
+  };
   const removeSelectedInstances = () => {
     const now = asmNow();
     if (!now || asmSelected.length === 0) return;
@@ -400,6 +415,7 @@ export function useAssemblyWorkspace({
     asmTransformEdit,
     asmVariables,
     asmVariablesOpen,
+    exportAssembly,
     animation,
     openAnimation,
     relations,

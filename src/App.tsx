@@ -1947,6 +1947,7 @@ export default function App() {
     asmVariablesOpen,
     animation: mateAnimation,
     openAnimation,
+    exportAssembly,
     relations: mateRelations,
     openRelation,
     assemblyMeshes,
@@ -7037,6 +7038,10 @@ export default function App() {
                   }}
                   onOpenSource={(docId) => void openDocument(docId).catch(() => {})}
                   onInsert={() => setInsertOpen(true)}
+                  onExport={(kind) => {
+                    const why = exportAssembly(kind, docName || "Assembly");
+                    if (why) flashMsg(why);
+                  }}
                   mateProblems={mates.solution?.problems ?? NO_PROBLEMS}
                   mateValues={mates.solution?.values ?? NO_PROBLEMS}
                   mateWarnings={mates.warnings}

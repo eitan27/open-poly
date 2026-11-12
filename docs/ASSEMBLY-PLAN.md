@@ -462,6 +462,28 @@ A translation driving a rotation uses 1/k; Reverse negates k.
   mates, which the view doesn't show. Its problem line is a solve of the
   assembly with the draft added, so it says what the solver would.
 
+## Export
+
+**Export ▾** in the Instances header (`exportAssembly.ts`) saves the assembly
+three ways, all from the meshes it shows — each visible instance's part mesh
+at its solved placement; hidden instances are left out:
+
+- **3MF, assembled, parts kept separate** (the one to print or view the whole
+  thing): each instance its own named object, coloured, with its placement
+  baked into its vertices rather than left as a build-item transform, so
+  every slicer shows the assembly as built. Vertices are welded (to 1e-5 mm)
+  so each mesh is closed: a face-by-face tessellation repeats each edge's
+  corners, and 3MF wants every edge shared by two triangles.
+- **STL, one file, assembled:** every instance merged into one binary STL,
+  for tools that only take STL. It can't be told apart again.
+- **STL, each part once, zipped:** one STL per distinct part in its own
+  coordinates, named with how many the assembly uses (`Bolt ×8.stl`), for
+  making the parts — as a part document's Parts list exports each part on its
+  own.
+
+Zips (3MF is one) are written with `fflate`. Assembly STEP isn't offered: it
+needs the kernel's XCAF (see Not built yet).
+
 ## The agent
 
 The agent reads an open assembly through the same tools as a part
@@ -565,7 +587,8 @@ pinning (parts have no versions yet).
   planars, Width + Planar, a four-bar turned a full revolution and dragged by
   its coupler, a slider-crank, conflicts, locked parts dragged from either
   side, a box seated in a corner by one Fastened mate on vertices),
-  `drag.test.ts`, `exportAnimation.test.ts` (each mode's frame values, frame
+  `drag.test.ts`, `exportAssembly.test.ts` (welding to a closed mesh, binary
+  STL, the 3MF package, part files and their names), `exportAnimation.test.ts` (each mode's frame values, frame
   sizes), `loopInput.test.ts` (a typed value driving a four-bar, a later entry
   overriding an earlier, an expression named and cleared, an unreachable
   value, a drag past an expression), `relations.test.ts` (factors, gear
@@ -584,7 +607,7 @@ pinning (parts have no versions yet).
   mate count is in `src/storage/db.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
   `width`, `loops`, `move`, `variables`, `pin`, `vertex`, `animate`,
-  `relations`, `loop-input`), and `verify-agent-assembly-read.mjs` and
+  `relations`, `loop-input`, `export`), and `verify-agent-assembly-read.mjs` and
   `verify-agent-assembly-edit.mjs` for the agent, against `npm run dev`. Set
   `PW_EXE` to use a pre-installed Chromium (scripts on
   `scripts/lib/harness.mjs` read `CHROMIUM_PATH` instead). `pin` is the one
