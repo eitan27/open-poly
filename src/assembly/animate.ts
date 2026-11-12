@@ -99,3 +99,63 @@ export function animator(
     },
   };
 }
+
+/** Whether a sweep can run, found before it plays. */
+export type SweepCheck =
+  | { kind: "ok" }
+  /** The DOF can't move at all from where it is: other mates hold the part.
+   *  `blockers` are the mates whose suppressing alone would free it. */
+  | { kind: "locked"; blockers: string[] }
+  /** It moves, but the mates can't follow past `at`: `blocker` is the mate
+   *  that couldn't hold there, when it isn't the one animated. */
+  | { kind: "jams"; at: number; blocker?: string };
+
+/** How many evenly spaced values `checkSweep` tries along a sweep. */
+const SWEEP_SAMPLES = 36;
+/** Mates past which `checkSweep` stops looking for the one locking a DOF. */
+const MAX_BLOCKER_SEARCH = 40;
+
+/** Try `spec`'s sweep before it plays: is the DOF locked by other mates, or
+ *  does the motion jam somewhere along the way? `current` is the DOF's value
+ *  where the assembly now stands. Only problems the assembly doesn't already
+ *  have at rest count. */
+export function checkSweep(
+  assembly: AssemblyDoc,
+  frameOf: (c: MateConnector) => Mat4 | string,
+  spec: Pick<AnimateSpec, "mateId" | "dof" | "from" | "to">,
+  current: number,
+  scope?: Scope,
+): SweepCheck {
+  const cache = new Map<string, Mat4 | string>();
+  const cached = (c: MateConnector) => {
+    const k = JSON.stringify(c);
+    let f = cache.get(k);
+    if (f === undefined) cache.set(k, (f = frameOf(c)));
+    return f;
+  };
+  const atRest = new Set(solve(assembly, cached, scope).problems.keys());
+  const fresh = (s: Solution) => [...s.problems.keys()].filter((id) => !atRest.has(id));
+  // A nudge either way from where it stands: if neither holds, it's locked.
+  const nudge = isRotation(spec.dof) ? 1 : 0.2;
+  const moves = (a: AssemblyDoc) =>
+    [nudge, -nudge].some((d) => fresh(animator(a, cached, spec, scope).at(current + d)).length === 0);
+  if (!moves(assembly)) {
+    const blockers: string[] = [];
+    const others = assembly.mates.filter((m) => m.id !== spec.mateId && !m.suppressed).slice(0, MAX_BLOCKER_SEARCH);
+    for (const m of others) {
+      const without = {
+        ...assembly,
+        mates: assembly.mates.map((x) => (x.id === m.id ? { ...x, suppressed: true } : x)),
+      };
+      if (moves(without)) blockers.push(m.id);
+    }
+    return { kind: "locked", blockers };
+  }
+  const run = animator(assembly, cached, spec, scope);
+  for (let i = 0; i <= SWEEP_SAMPLES; i++) {
+    const value = spec.from + ((spec.to - spec.from) * i) / SWEEP_SAMPLES;
+    const bad = fresh(run.at(value));
+    if (bad.length) return { kind: "jams", at: value, blocker: bad.find((id) => id !== spec.mateId) };
+  }
+  return { kind: "ok" };
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { animator, defaultSpec, phase, valueAt, type AnimateSpec } from "./animate";
+import { animator, checkSweep, defaultSpec, phase, valueAt, type AnimateSpec } from "./animate";
 import { defaultX, frameMatrix } from "./frames";
 import { applyPoint, IDENTITY, type Vec3 } from "./placement";
 import { solve } from "./solve";
@@ -146,5 +146,72 @@ describe("animator", () => {
         expect(at(s, "D", [40, 30, 0])[1]).toBeGreaterThan(0);
       }
     });
+  });
+});
+
+describe("checkSweep", () => {
+  const z: Vec3 = [0, 0, 1];
+
+  it("passes a free hinge", () => {
+    const lookup = lookupIn({ O: frame([0, 0, 0], z) });
+    const asm: AssemblyDoc = {
+      instances: [inst("A", { grounded: true }), inst("B")],
+      mates: [mate("r", "revolute", conn("A", "O"), conn("B", "O"), { flip: true })],
+      variables: [],
+    };
+    expect(checkSweep(asm, lookup, { mateId: "r", dof: "rz", from: 0, to: 360 }, 0)).toEqual({ kind: "ok" });
+  });
+
+  it("finds a hinge locked by a fastened mate on the same parts, and names it", () => {
+    const lookup = lookupIn({ O: frame([0, 0, 0], z), P: frame([10, 0, 0], z) });
+    const asm: AssemblyDoc = {
+      instances: [inst("A", { grounded: true }), inst("B")],
+      mates: [
+        mate("r", "revolute", conn("A", "O"), conn("B", "O"), { flip: true }),
+        mate("f", "fastened", conn("A", "P"), conn("B", "P"), { flip: true }),
+      ],
+      variables: [],
+    };
+    expect(solve(asm, lookup).problems.size).toBe(0);
+    expect(checkSweep(asm, lookup, { mateId: "r", dof: "rz", from: 0, to: 360 }, 0)).toEqual({
+      kind: "locked",
+      blockers: ["f"],
+    });
+  });
+
+  it("finds where a four-bar whose crank can't turn all the way jams", () => {
+    // Ground pins at (0,0) and (40,0); crank 30, coupler 15, rocker ~39. With
+    // the crank pointing at the far pin its tip is 10 from it, closer than
+    // the coupler and rocker can fold to, so a full turn can't happen.
+    const lookup = lookupIn({
+      O1: frame([0, 0, 0], z),
+      O2: frame([40, 0, 0], z),
+      B1: frame([0, 0, 0], z),
+      B2: frame([0, 30, 0], z),
+      C1: frame([0, 30, 0], z),
+      C2: frame([15, 30, 0], z),
+      D1: frame([40, 0, 0], z),
+      D2: frame([15, 30, 0], z),
+    });
+    const hinge = (id: string, a: MateConnector, b: MateConnector) => mate(id, "revolute", a, b, { flip: true });
+    const asm: AssemblyDoc = {
+      instances: [inst("A", { grounded: true }), inst("B"), inst("C"), inst("D")],
+      mates: [
+        hinge("r1", conn("A", "O1"), conn("B", "B1")),
+        hinge("r2", conn("B", "B2"), conn("C", "C1")),
+        hinge("r3", conn("C", "C2"), conn("D", "D2")),
+        hinge("r4", conn("A", "O2"), conn("D", "D1")),
+      ],
+      variables: [],
+    };
+    expect(solve(asm, lookup).problems.size).toBe(0);
+    const forward = checkSweep(asm, lookup, { mateId: "r1", dof: "rz", from: 0, to: 360 }, 0);
+    const back = checkSweep(asm, lookup, { mateId: "r1", dof: "rz", from: 0, to: -360 }, 0);
+    // One way or the other it jams before the far pin, somewhere past the start.
+    for (const c of [forward, back]) {
+      expect(c.kind).toBe("jams");
+      if (c.kind === "jams") expect(Math.abs(c.at)).toBeGreaterThan(0);
+      if (c.kind === "jams") expect(Math.abs(c.at)).toBeLessThan(360);
+    }
   });
 });

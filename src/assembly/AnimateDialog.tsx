@@ -23,6 +23,8 @@ export function AnimateDialog({ mate, anim, dofs }: { mate: Mate; anim: MateAnim
   const rot = isRotation(spec.dof);
   const canVideo = videoMimeType() !== null;
   const unit = rot ? "°" : "mm";
+  // Export waits for the sweep to be checked, and needs it to run clean.
+  const exportable = anim.check !== null && !anim.blocked;
   return (
     <DraggableDialog className="feature-dialog asm-animate" style={{ left: 16, top: 72 }}>
       <div className="ed-title" data-drag-handle>
@@ -62,7 +64,11 @@ export function AnimateDialog({ mate, anim, dofs }: { mate: Mate; anim: MateAnim
           ? `${dofLabel(mate.type, spec.dof).replace(/ \(.*\)$/, "")}: ${formatValue(anim.live, rot)} ${unit}`
           : "Plays in the view only: nothing is saved."}
       </p>
-      {anim.error && <p className="ed-warning">{anim.error}</p>}
+      {anim.blocked ? (
+        <p className="ed-warning asm-animate-blocked">{anim.blocked.text}</p>
+      ) : (
+        anim.error && <p className="ed-warning">{anim.error}</p>
+      )}
       <div className="bool-group-label">Export one cycle</div>
       {anim.exporting ? (
         <div className="asm-export-progress">
@@ -77,7 +83,7 @@ export function AnimateDialog({ mate, anim, dofs }: { mate: Mate; anim: MateAnim
         <div className="ed-modes">
           <button
             className="asm-export-video"
-            disabled={!canVideo}
+            disabled={!canVideo || !exportable}
             title={canVideo ? "Save one cycle as a video (WebM, or MP4 in Safari)" : "This browser can't record video"}
             onClick={() => anim.exportAs("video")}
           >
@@ -85,6 +91,7 @@ export function AnimateDialog({ mate, anim, dofs }: { mate: Mate; anim: MateAnim
           </button>
           <button
             className="asm-export-gif"
+            disabled={!exportable}
             title="Save one cycle as an animated GIF"
             onClick={() => anim.exportAs("gif")}
           >
@@ -98,7 +105,11 @@ export function AnimateDialog({ mate, anim, dofs }: { mate: Mate; anim: MateAnim
             ■ Stop
           </button>
         ) : (
-          <button className="ed-primary asm-animate-play" disabled={!!anim.exporting} onClick={anim.play}>
+          <button
+            className="ed-primary asm-animate-play"
+            disabled={!!anim.exporting || anim.blocked?.play === false}
+            onClick={anim.play}
+          >
             ▶ Play
           </button>
         )}
