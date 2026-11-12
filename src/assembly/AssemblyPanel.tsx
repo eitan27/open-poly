@@ -76,18 +76,51 @@ function instanceProblem(inst: Instance, src: SourceState | undefined): string |
   return null;
 }
 
+type Section = "instances" | "mates" | "relations";
+
+/** A section heading that folds its list away, as Variables' does. */
+function SectionHeading({ open, onToggle, children }: { open: boolean; onToggle: () => void; children: string }) {
+  return (
+    <button className="params-heading collapsible" aria-expanded={open} onClick={onToggle}>
+      <span className={"collapse-caret" + (open ? " open" : "")}>▶</span>
+      {children}
+    </button>
+  );
+}
+
 export function AssemblyPanel(p: Props) {
   const { assembly, sources } = p;
+  // Which sections are folded away. Adding to one opens it.
+  const [closed, setClosed] = useState<ReadonlySet<Section>>(new Set());
+  const isOpen = (s: Section) => !closed.has(s);
+  const toggle = (s: Section) =>
+    setClosed((c) => {
+      const next = new Set(c);
+      if (!next.delete(s)) next.add(s);
+      return next;
+    });
+  const reveal = (s: Section) =>
+    setClosed((c) => {
+      if (!c.has(s)) return c;
+      const next = new Set(c);
+      next.delete(s);
+      return next;
+    });
   return (
     <>
       <div className="parts-header">
-        <h2>Instances ({assembly.instances.length})</h2>
+        <SectionHeading open={isOpen("instances")} onToggle={() => toggle("instances")}>
+          {`Instances (${assembly.instances.length})`}
+        </SectionHeading>
         <div className="parts-import">
           <button
             type="button"
             className="asm-insert"
             title={`Insert parts from a part document (${shortcutName("asm.insert")})`}
-            onClick={p.onInsert}
+            onClick={() => {
+              reveal("instances");
+              p.onInsert();
+            }}
           >
             ＋ Insert
             {p.showShortcuts && <span className="kbd-hint">{shortcutHint("asm.insert")}</span>}
@@ -95,7 +128,9 @@ export function AssemblyPanel(p: Props) {
           <ExportMenu disabled={assembly.instances.length === 0} onExport={p.onExport} />
         </div>
       </div>
-      {assembly.instances.length === 0 ? (
+      {!isOpen("instances") ? (
+        <div className="asm-folded" />
+      ) : assembly.instances.length === 0 ? (
         <p className="asm-empty">No parts placed yet. Insert one from a part document.</p>
       ) : (
         <div className="tree-list asm-list">
@@ -194,21 +229,28 @@ export function AssemblyPanel(p: Props) {
         </div>
       )}
       <div className="parts-header">
-        <h2>Mates ({assembly.mates.length})</h2>
+        <SectionHeading open={isOpen("mates")} onToggle={() => toggle("mates")}>
+          {`Mates (${assembly.mates.length})`}
+        </SectionHeading>
         <div className="parts-import">
           <button
             type="button"
             className="asm-new-mate"
             title={`Join two parts with a mate (${shortcutName("asm.mate")})`}
             disabled={assembly.instances.length < 2}
-            onClick={p.onNewMate}
+            onClick={() => {
+              reveal("mates");
+              p.onNewMate();
+            }}
           >
             ＋ Mate
             {p.showShortcuts && <span className="kbd-hint">{shortcutHint("asm.mate")}</span>}
           </button>
         </div>
       </div>
-      {assembly.mates.length === 0 ? (
+      {!isOpen("mates") ? (
+        <div className="asm-folded" />
+      ) : assembly.mates.length === 0 ? (
         <p className="asm-empty">
           {assembly.instances.length < 2 ? "Insert two parts to mate them." : "No mates yet."}
         </p>
@@ -280,33 +322,45 @@ export function AssemblyPanel(p: Props) {
           })}
         </div>
       )}
-      <RelationsSection {...p} />
+      <RelationsSection
+        {...p}
+        open={isOpen("relations")}
+        onToggle={() => toggle("relations")}
+        reveal={() => reveal("relations")}
+      />
     </>
   );
 }
 
 /** Relations: one mate's DOF driven by another's (a gear, a rack, a screw). */
-function RelationsSection(p: Props) {
+function RelationsSection(p: Props & { open: boolean; onToggle: () => void; reveal: () => void }) {
   const { assembly } = p;
   const relations = assembly.relations ?? [];
   const mateName = (id: string) => assembly.mates.find((m) => m.id === id)?.name ?? "?";
   return (
     <>
       <div className="parts-header">
-        <h2>Relations ({relations.length})</h2>
+        <SectionHeading open={p.open} onToggle={p.onToggle}>
+          {`Relations (${relations.length})`}
+        </SectionHeading>
         <div className="parts-import">
           <button
             type="button"
             className="asm-new-relation"
             title="Drive one mate from another: gears, a rack and pinion, a screw"
             disabled={!p.canRelate}
-            onClick={p.onNewRelation}
+            onClick={() => {
+              p.reveal();
+              p.onNewRelation();
+            }}
           >
             ＋ Relation
           </button>
         </div>
       </div>
-      {relations.length === 0 ? (
+      {!p.open ? (
+        <div className="asm-folded" />
+      ) : relations.length === 0 ? (
         <p className="asm-empty">
           {p.canRelate ? "No relations yet." : "Mate parts so they can move, then relate their mates."}
         </p>

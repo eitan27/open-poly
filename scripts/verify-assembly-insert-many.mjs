@@ -59,7 +59,7 @@ const insert = async (docName, count) => {
   await page.locator(".asm-insert").click();
   await page.locator(".insert-doc", { hasText: docName }).click();
   await page.locator(".insert-confirm").waitFor({ timeout: 30000 });
-  if (count !== 1) await page.locator(".insert-count input").first().fill(String(count));
+  if (count !== 1) await page.locator("input.insert-count").first().fill(String(count));
   const label = await page.locator(".insert-confirm").textContent();
   if (process.env.SHOTS && count !== 1) await page.screenshot({ path: `${process.env.SHOTS}/insert-count.png` });
   await page.locator(".insert-confirm").click();

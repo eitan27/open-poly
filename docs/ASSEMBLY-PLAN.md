@@ -48,6 +48,9 @@ must do the same.
   groups and dragging all see them. Editing one goes through `useMates.commit`
   like a mate edit, so the placements it leads to are kept (delete the mate
   afterwards and the part stays put).
+- **Instances, Mates and Relations fold** as Variables does (the same
+  `params-heading collapsible` heading). They start open; their ＋ buttons
+  open a folded section, so what's added shows.
 - **Expression fields autocomplete variable names** (`ExprInput`, a drop-in
   for `<input>`, in parts and assemblies alike): the open document's
   variables come from the `ExprVariables` context App provides, so no dialog
@@ -111,7 +114,11 @@ several parts (`ext1`, `ext1#1`, … — `parts.ts`). Inserting a document inser
 one instance per ticked part, each independently movable; that's what users
 expect when they modelled a gear pair in one file.
 
-**Several at once** (`copies.ts`): each part in the Insert dialog has a count,
+**Several at once** (`copies.ts`): each part in the Insert dialog has a count
+(the "Instances" column beside "Parts"). A count of 0 is the part left out,
+and the tick is the same state: unticking sets 0, ticking sets 1. ▶ on a row
+unfolds a picture of the part (`PartPreview`: flat-shaded triangles on a 2D
+canvas from the Home corner, not a WebGL context per row, which browsers cap),
 and each instance row a ⧉ Duplicate that asks how many copies. Copies are
 never stacked (they'd look like one part, and only the top one could be
 clicked): they're laid out in a grid of about √n columns, a gap apart. With
@@ -422,6 +429,15 @@ translation (bouncing).
 - **The view is the dialog's** while it's open: picks are ignored, and the
   selection, the Move panel and the Mate dialog are closed. Opening a Mate
   dialog or editing a mate closes it, as Esc does.
+- **The sweep is tried before it plays** (`checkSweep`, off the event, on
+  opening and on any change to the DOF, From/To or the assembly), counting
+  only problems the assembly doesn't have at rest. **Locked** — a nudge of
+  1° / 0.2 mm either way from where it stands fails — disables Play, Video and
+  GIF, and the dialog says so on opening, naming the mates whose suppressing
+  alone frees it (found by trying each, up to 40). **Jams** — it moves, but a
+  sample along From→To fails — keeps Play (seeing where it stops is useful)
+  and disables export, saying where. Export also stops on its own at a frame
+  the mates can't hold, rather than saving parts pulled apart.
 - If a frame leaves a mate the solver can't satisfy, the animation stops there
   and says which.
 - **Export** (Video / GIF in the dialog, `exportAnimation.ts`) saves one cycle:

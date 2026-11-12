@@ -8,6 +8,7 @@ import { listMeta, type DocMeta } from "../storage/db";
 import { timeAgo } from "../storage/docNames";
 import { Modal } from "../ui/Modal";
 import { Thumb } from "../ui/DocumentsDialog";
+import { PartPreview } from "./PartPreview";
 import { readSource, type BuildDocument, type SourcePart, type SourceState } from "./useAssemblySources";
 
 interface Props {
@@ -23,10 +24,13 @@ export const MAX_COPIES = 100;
 export function InsertDialog({ onClose, onInsert, build }: Props) {
   const [metas, setMetas] = useState<DocMeta[] | null>(null);
   const [chosen, setChosen] = useState<{ id: string; source: SourceState } | null>(null);
-  // Part ids left unticked (default: every part), and how many of each.
-  const [skipped, setSkipped] = useState<Set<string>>(new Set());
+  // How many of each part (default 1). A part at 0 is left out, and its tick
+  // is the same thing: unticking sets 0, ticking sets 1.
   const [counts, setCounts] = useState<Map<string, number>>(new Map());
   const countOf = (partId: string) => counts.get(partId) ?? 1;
+  const setCount = (partId: string, n: number) => setCounts((c) => new Map(c).set(partId, n));
+  // Parts whose preview is unfolded.
+  const [shown, setShown] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     listMeta()
@@ -35,15 +39,15 @@ export function InsertDialog({ onClose, onInsert, build }: Props) {
   }, []);
 
   const choose = (id: string) => {
-    setSkipped(new Set());
     setCounts(new Map());
+    setShown(new Set());
     setChosen({ id, source: { status: "loading" } });
     void readSource(id, build).then((source) => setChosen((c) => (c?.id === id ? { id, source } : c)));
   };
 
   const src = chosen?.source;
   const parts = src?.status === "ready" ? src.parts : [];
-  const picked = parts.filter((p) => !skipped.has(p.partId));
+  const picked = parts.filter((p) => countOf(p.partId) > 0);
   const total = picked.reduce((n, p) => n + countOf(p.partId), 0);
 
   return (
@@ -88,43 +92,60 @@ export function InsertDialog({ onClose, onInsert, build }: Props) {
           <p className="hint">This document has no parts to insert.</p>
         ) : (
           <>
+            <div className="insert-columns" aria-hidden>
+              <span>Parts</span>
+              <span>Instances</span>
+            </div>
             <ul className="insert-parts">
-              {parts.map((p) => (
-                <li key={p.partId}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={!skipped.has(p.partId)}
-                      onChange={(e) =>
-                        setSkipped((s) => {
-                          const next = new Set(s);
-                          if (e.target.checked) next.delete(p.partId);
-                          else next.add(p.partId);
-                          return next;
-                        })
-                      }
-                    />
-                    <span className="insert-swatch" style={{ background: hex(p.color) }} />
-                    {p.name}
-                  </label>
-                  <label className="insert-count" title="How many to insert">
-                    ×
-                    <input
-                      type="number"
-                      min={1}
-                      max={MAX_COPIES}
-                      aria-label={`How many ${p.name}`}
-                      disabled={skipped.has(p.partId)}
-                      value={countOf(p.partId)}
-                      onChange={(e) => {
-                        const n = Math.max(1, Math.min(MAX_COPIES, Math.round(Number(e.target.value) || 1)));
-                        setCounts((c) => new Map(c).set(p.partId, n));
-                      }}
-                      onFocus={(e) => e.target.select()}
-                    />
-                  </label>
-                </li>
-              ))}
+              {parts.map((p) => {
+                const n = countOf(p.partId);
+                const open = shown.has(p.partId);
+                return (
+                  <li key={p.partId}>
+                    <div className="insert-part">
+                      <button
+                        type="button"
+                        className="insert-expand"
+                        aria-expanded={open}
+                        title={open ? "Hide the part" : "Show the part"}
+                        onClick={() =>
+                          setShown((s) => {
+                            const next = new Set(s);
+                            if (!next.delete(p.partId)) next.add(p.partId);
+                            return next;
+                          })
+                        }
+                      >
+                        <span className={"collapse-caret" + (open ? " open" : "")}>▶</span>
+                      </button>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={n > 0}
+                          onChange={(e) => setCount(p.partId, e.target.checked ? 1 : 0)}
+                        />
+                        <span className="insert-swatch" style={{ background: hex(p.color) }} />
+                        {p.name}
+                      </label>
+                      <input
+                        className="insert-count"
+                        type="number"
+                        min={0}
+                        max={MAX_COPIES}
+                        aria-label={`How many ${p.name}`}
+                        title="How many instances to insert"
+                        value={n}
+                        onChange={(e) => {
+                          const v = Math.round(Number(e.target.value));
+                          setCount(p.partId, Number.isFinite(v) ? Math.max(0, Math.min(MAX_COPIES, v)) : 0);
+                        }}
+                        onFocus={(e) => e.target.select()}
+                      />
+                    </div>
+                    {open && <PartPreview mesh={p.mesh} color={p.color} />}
+                  </li>
+                );
+              })}
             </ul>
             <div className="insert-actions">
               <button

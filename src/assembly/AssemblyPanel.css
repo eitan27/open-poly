@@ -56,6 +56,23 @@
   border-color: var(--accent);
 }
 
+/* Insert's part list: "Parts" and "Instances" over the two columns. */
+.docs-dialog.insert-dialog {
+  width: min(400px, calc(100vw - 48px));
+}
+.insert-columns {
+  display: flex;
+  justify-content: space-between;
+  margin: 2px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-7);
+}
+
 .insert-parts {
   list-style: none;
   margin: 0 0 12px;
@@ -67,26 +84,33 @@
   color: var(--text-2);
 }
 
-.insert-parts label {
+/* A part's row: unfold, tick and name, then how many. */
+.insert-part {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.insert-part label {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
 }
-
-/* A part's row: its tick and name, then how many. */
-.insert-parts li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.insert-expand {
+  flex: 0 0 auto;
+  width: 18px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-7);
+  cursor: pointer;
 }
-.insert-parts .insert-count {
-  gap: 4px;
-  color: var(--text-5);
-  cursor: default;
+.insert-expand:hover {
+  color: var(--accent-palest);
 }
-.insert-count input {
+.insert-count {
   width: 52px;
   padding: 3px 6px;
   font-size: 12px;
@@ -95,8 +119,18 @@
   border: 1px solid var(--border);
   border-radius: 5px;
 }
-.insert-count input:disabled {
-  opacity: 0.4;
+.insert-preview {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* A folded section keeps the gap its list would leave before the next. */
+.asm-folded {
+  height: 8px;
 }
 
 .insert-swatch {
@@ -247,4 +281,13 @@
 .asm-export .asm-export-menu {
   min-width: 250px;
   z-index: 20;
+}
+
+/* The Relation dialog: wide enough for Gear / Rack / Screw, icon and word, on
+   one line each. */
+.feature-dialog.asm-relation {
+  width: 240px;
+}
+.asm-relation .ed-modes button {
+  white-space: nowrap;
 }
