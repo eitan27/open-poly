@@ -152,8 +152,7 @@ shapes mean — ΔX/ΔY/ΔZ, Parallel distance or Angle, centre or axis distance
 a point's distance to a line, axis or plane — from the same fits a mate's
 connectors use (`frames.ts`). More picks: their count and total area.
 Measurements are transient by design: they follow the selection and go with
-it, so they're never stale and there's no mode or clutter. Kept-on-screen
-dimensions belong with drawings, if those are ever built.
+it, so they're never stale and there's no mode or clutter.
 
 **Performance — two optimizations that measured well alone and badly together.**
 The warning is the point; `shelved/viewport-geom-reuse-and-lazy-regen` is deleted.
