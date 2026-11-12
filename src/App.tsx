@@ -232,6 +232,7 @@ import { MoveDialog } from "./assembly/MoveDialog";
 import { AnimateDialog } from "./assembly/AnimateDialog";
 import { RelationDialog } from "./assembly/RelationDialog";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
+import { MeasurePanel } from "./ui/MeasurePanel";
 import { animatableDofs } from "./assembly/animate";
 import { renameInMates, removeInstances, updateInstance, updateMate } from "./assembly/assembly";
 import { MateDialog } from "./assembly/MateDialog";
@@ -2849,9 +2850,14 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingSketch, dimInput]);
 
+  // What the selection measures: an assembly's picks on its placed meshes (no
+  // part document), or the part document's selection.
   const measure = useMemo(
-    () => measureSelection(selection, doc, meshes, resolved.scope),
-    [selection, doc, meshes, resolved.scope],
+    () =>
+      isAssembly
+        ? measureSelection(asmFaces, null, assemblyMeshes)
+        : measureSelection(selection, doc, meshes, resolved.scope),
+    [isAssembly, asmFaces, assemblyMeshes, selection, doc, meshes, resolved.scope],
   );
 
   // Every profile an Extrude could consume from the live selection. The
@@ -8472,17 +8478,7 @@ export default function App() {
                 onCancel={transform.cancelArming}
               />
             )}
-            {measure && (
-              <div className="selection-info">
-                <div className="si-title">{measure.title}</div>
-                {measure.rows.map((r) => (
-                  <div className="si-row" key={r.label}>
-                    <span className="si-label">{r.label}</span>
-                    <span className="si-value">{r.value}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            {measure && <MeasurePanel info={measure} />}
           </main>
         </div>
         {booleanDialog && (

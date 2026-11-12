@@ -1,5 +1,9 @@
 // Derives readable measurements for the current selection (length / radius /
-// area / coordinates), used by the bottom-right info pane.
+// area / coordinates), shown by the bottom-right MeasurePanel — in a part
+// document and in an assembly alike. Everything is read off the meshes as
+// shown (an assembly's are placed, so its numbers are in assembly space); the
+// part document, when there is one, adds what only it knows (sketch entities,
+// and the exact radius an extruded circle was drawn with).
 import type { Document, SketchEntity } from "../document/types";
 import { detectSketchRegions, type SketchRegion } from "../document/regions";
 import { evaluateExpression, type Scope } from "../document/expression";
@@ -7,6 +11,7 @@ import type { MeshedEdges, MeshedFaces } from "../kernel/types";
 import type { FeatureMesh } from "../viewport/types";
 import type { Selection } from "./types";
 import { formatNumber as fmt } from "../lib/format";
+import { defaultX, faceShape } from "../assembly/frames";
 
 export interface MeasureInfo {
   title: string;
@@ -208,9 +213,135 @@ function extrudedCircleRadius(doc: Document, faceName: string | undefined, scope
   return region ? circleRadiusOfRegion(region, sk.entities, scope) : null;
 }
 
+/** Measurements for `selection`, or null when there's nothing to say. `doc`
+ *  is the part document (null in an assembly, whose picks are faces, edges
+ *  and vertices of its placed meshes, `featureId` the instance id). */
+/** The radius of a faceted round face, from its mesh alone: a round wall's
+ *  fitted cylinder; a flat face whose outline is one circle (an extruded
+ *  circle's cap, a fan of triangles about its centre); or a flat ring, two
+ *  concentric circles (a tube's end). Null otherwise. */
+function facetedRadius(faces: MeshedFaces, faceId: number): { r: number } | { outer: number; inner: number } | null {
+  const shape = faceShape(faces, faceId);
+  if (shape?.kind === "cylinder") return { r: shape.radius };
+  if (shape?.kind !== "plane") return null;
+  // The whole logical face: a revolve's flat end is a ring of sector faces in
+  // one cluster, each too narrow to show its circles alone.
+  const ids = new Set(faceClusterIds(faces, faceId));
+  const groups = (faces.faceGroups ?? []).filter((fg) => ids.has(fg.faceId));
+  if (!groups.length) return null;
+  const { triangles, vertices } = faces;
+  // The outline's corners only: the ends of edges used by one triangle of the
+  // face. An edge inside it (between two of its triangles, or two of a
+  // cluster's sector faces) is used twice, so a fan's hub and the points a
+  // mesher adds inside a large flat face drop out. Integer keys merge
+  // coordinates the way toFixed wouldn't (-0.0000 against 0.0000).
+  const key = (i: number) =>
+    `${Math.round(vertices[i] * 1e4)},${Math.round(vertices[i + 1] * 1e4)},${Math.round(vertices[i + 2] * 1e4)}`;
+  const uses = new Map<string, { n: number; a: number; b: number }>();
+  for (const g of groups)
+    for (let k = g.start; k + 2 < g.start + g.count; k += 3)
+      for (const [x, y] of [
+        [k, k + 1],
+        [k + 1, k + 2],
+        [k + 2, k],
+      ]) {
+        const a = triangles[x] * 3,
+          b = triangles[y] * 3;
+        const ka = key(a),
+          kb = key(b);
+        const e = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+        const cur = uses.get(e);
+        if (cur) cur.n++;
+        else uses.set(e, { n: 1, a, b });
+      }
+  const seen = new Map<string, Vec3>();
+  for (const { n, a, b } of uses.values())
+    if (n === 1) for (const i of [a, b]) seen.set(key(i), [vertices[i], vertices[i + 1], vertices[i + 2]]);
+  const pts = [...seen.values()];
+  if (pts.length < 12) return null; // too few corners to call it a circle
+  // The centre by a least-squares circle fit in the face's plane, not a mean:
+  // a corner the dedupe missed (a seam's float32 twin) or uneven sampling
+  // would pull a mean off, but a point on the circle can't move the fit. A
+  // fan's hub at the centre is left out of a second pass.
+  const n = shape.normal;
+  const u = defaultX(n);
+  const v: Vec3 = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+  const o = pts[0];
+  const flat = pts.map((p) => {
+    const d: Vec3 = [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
+    return [d[0] * u[0] + d[1] * u[1] + d[2] * u[2], d[0] * v[0] + d[1] * v[1] + d[2] * v[2]] as const;
+  });
+  // Rings first: radii about the outline's bounding-box middle (close to the
+  // centre whatever the duplicates), split at the gap between the smallest
+  // and largest. A fan's hub, near the middle, belongs to neither.
+  const lo = [Infinity, Infinity],
+    hi = [-Infinity, -Infinity];
+  for (const q of flat)
+    for (let j = 0; j < 2; j++) {
+      lo[j] = Math.min(lo[j], q[j]);
+      hi[j] = Math.max(hi[j], q[j]);
+    }
+  const mid = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2];
+  const rough = flat.map((q) => Math.hypot(q[0] - mid[0], q[1] - mid[1]));
+  const far = Math.max(...rough);
+  if (far < 1e-6) return null;
+  const rim = flat.filter((_, i) => rough[i] > 0.05 * far);
+  const rimR = rough.filter((x) => x > 0.05 * far);
+  const split = (Math.min(...rimR) + Math.max(...rimR)) / 2;
+  const two = Math.max(...rimR) - Math.min(...rimR) > 0.05 * far;
+  const rings = two ? [rim.filter((_, i) => rimR[i] > split), rim.filter((_, i) => rimR[i] <= split)] : [rim];
+  // Each ring fitted on its own: every point on its circle, so a duplicate
+  // can't move it. It must hold all the ring's corners, and rings share a centre.
+  const fits: { c: [number, number]; r: number }[] = [];
+  for (const ring of rings) {
+    if (ring.length < 12) return null;
+    const c = circleCentre(ring);
+    if (!c) return null;
+    const rs = ring.map((q) => Math.hypot(q[0] - c[0], q[1] - c[1]));
+    const r = rs.reduce((a, b) => a + b, 0) / rs.length;
+    if (!rs.every((x) => Math.abs(x - r) < 1e-3 * r)) return null;
+    fits.push({ c, r });
+  }
+  if (fits.length === 1) return { r: fits[0].r };
+  const [outer, inner] = fits;
+  return Math.hypot(outer.c[0] - inner.c[0], outer.c[1] - inner.c[1]) < 1e-3 * outer.r
+    ? { outer: outer.r, inner: inner.r }
+    : null;
+}
+
+/** The centre of the circle through 2-D points, by an algebraic least-squares
+ *  fit (x² + y² + Dx + Ey + F = 0); null for a degenerate set. Concentric rings
+ *  fitted together share it. */
+function circleCentre(pts: readonly (readonly [number, number])[]): [number, number] | null {
+  // Normal equations for [D, E, F].
+  const m = [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+  ];
+  const b = [0, 0, 0];
+  for (const [x, y] of pts) {
+    const row = [x, y, 1];
+    const rhs = -(x * x + y * y);
+    for (let i = 0; i < 3; i++) {
+      b[i] += row[i] * rhs;
+      for (let j = 0; j < 3; j++) m[i][j] += row[i] * row[j];
+    }
+  }
+  const det = (a: number[][]) =>
+    a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
+    a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+    a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+  const d = det(m);
+  if (Math.abs(d) < 1e-12) return null;
+  const col = (k: number) => m.map((r, i) => r.map((x, j) => (j === k ? b[i] : x)));
+  // Cramer's rule for D and E; the centre is (−D/2, −E/2).
+  return [-det(col(0)) / d / 2, -det(col(1)) / d / 2];
+}
+
 export function measureSelection(
   selection: Selection[],
-  doc: Document,
+  doc: Document | null,
   meshes: FeatureMesh[],
   scope: Scope = {},
 ): MeasureInfo | null {
@@ -247,8 +378,14 @@ function measureMany(selection: Selection[], meshes: FeatureMesh[]): MeasureInfo
   return { title: "Selection", rows };
 }
 
-function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[], scope: Scope): MeasureInfo | null {
+function measureOne(
+  selection: Selection,
+  doc: Document | null,
+  meshes: FeatureMesh[],
+  scope: Scope,
+): MeasureInfo | null {
   if (selection.kind === "sketchEntity") {
+    if (!doc) return null;
     const sk = doc.features.find((f) => f.id === selection.sketchId);
     if (sk?.type !== "sketch") return null;
     const e = sk.entities.find((x) => x.id === selection.entityId);
@@ -285,6 +422,7 @@ function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[], 
   }
 
   if (selection.kind === "sketchFace") {
+    if (!doc) return null;
     const sk = doc.features.find((f) => f.id === selection.sketchId);
     if (sk?.type !== "sketch") return null;
     const region = detectSketchRegions(sk.entities).find((r) => r.id === selection.regionId);
@@ -335,10 +473,16 @@ function measureOne(selection: Selection, doc: Document, meshes: FeatureMesh[], 
       rows.push({ label: "Outer diameter", value: fmt(2 * s.radius) });
       rows.push({ label: "Inner diameter", value: fmt(2 * s.innerRadius) });
     } else {
-      // No analytic surface (a faceted extruded circle) → trace back to the
-      // source sketch circle for its diameter.
-      const r = extrudedCircleRadius(doc, group?.name, scope);
-      if (r !== null) rows.push({ label: "Diameter", value: fmt(2 * r) });
+      // No analytic surface (a faceted extruded circle): trace back to the
+      // source sketch circle when the document is at hand, else fit the circle
+      // its facets' corners lie on — exact, since they lie on the true circle.
+      const traced = doc && extrudedCircleRadius(doc, group?.name, scope);
+      const fit = traced ? { r: traced } : facetedRadius(m.mesh.faces, selection.faceId);
+      if (fit && "r" in fit) rows.push({ label: "Diameter", value: fmt(2 * fit.r) });
+      else if (fit) {
+        rows.push({ label: "Outer diameter", value: fmt(2 * fit.outer) });
+        rows.push({ label: "Inner diameter", value: fmt(2 * fit.inner) });
+      }
     }
     return { title: "Face", rows };
   }

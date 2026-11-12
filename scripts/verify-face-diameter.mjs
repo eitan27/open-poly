@@ -130,19 +130,14 @@ await page.waitForTimeout(300);
 
 // A point in the ring: radius 4.5 sits between the r=3 hole and the r=6 rim.
 const ring = await clickFace([4.5 / Math.SQRT2, 4.5 / Math.SQRT2, 10]);
-// KNOWN GAP, not a regression. A revolve is FACETED like everything else round
-// (geom/circleFacets.ts — this OCCT build cannot boolean an analytic cylinder
-// against a plane), so this "tube" is a 384-face polygonal approximation with no
-// circular wire anywhere in it. faceSurfacesFrom therefore classifies nothing,
-// and measure.ts has no fallback for a revolve the way it has for a primitive
-// cylinder (feature params) and an extruded sketch circle (extrudedCircleRadius).
-// The area below still reads correctly because it sums the facet CLUSTER.
-// This check was written when a revolved profile really did give true cylinders.
-// The gap is the extrude-only workaround (`extrudedCircleRadius`) that a revolve
-// lacks; PLAN's Gotchas has the faceting finding behind it.
+// A revolve is FACETED like everything else round (geom/circleFacets.ts — this
+// OCCT build cannot boolean an analytic cylinder against a plane), so this
+// "tube" is a polygonal approximation with no circular wire in it, and the
+// kernel classifies no surface. measure.ts fits the circles the facets' corners
+// lie on instead (facetedRadius): the ring's two, and the bore's cylinder.
 check(
-  "annular top face reports no analytic diameter (revolve is faceted — known gap)",
-  ring !== null && ring["Outer diameter"] === undefined && ring["Inner diameter"] === undefined,
+  "annular top face reports both diameters, fitted from its facets",
+  ring !== null && ring["Outer diameter"] === "12" && ring["Inner diameter"] === "6",
   JSON.stringify(ring),
 );
 check(
@@ -162,10 +157,9 @@ console.log("  (annulus pane screenshot → /tmp/face-diameter-pane.png)");
 // wall is visible down the opening near the top rim. Sweep angle + a few near-top
 // heights until a click lands on it — confirming a HOLE, not just a shaft, reads
 // its diameter.
-// Same known gap as the cap above: the bore wall is a ring of flat facets, so
-// there is no analytic radius to report. What must still hold is that clicking
-// it selects ONE face (the facet cluster reads as a single wall, not a sliver)
-// and reports an area — a bore you cannot select at all would be a real bug.
+// The bore wall is a ring of flat facets: clicking it must select ONE face (the
+// facet cluster reads as a single wall, not a sliver), with an area, and the
+// cylinder fitted to the cluster gives its diameter.
 let bore = null;
 for (const z of [9.5, 9, 8.5, 8]) {
   for (let deg = 0; deg < 360 && !bore; deg += 15) {
@@ -177,8 +171,8 @@ for (const z of [9.5, 9, 8.5, 8]) {
 }
 check("the bore wall is selectable as one clustered face", bore !== null && !!bore.Area, JSON.stringify(bore));
 check(
-  "…and reports no analytic diameter (revolve is faceted — known gap)",
-  bore !== null && bore.Diameter === undefined,
+  "…and reports its diameter, fitted from its facets",
+  bore !== null && bore.Diameter === "6",
   JSON.stringify(bore),
 );
 
