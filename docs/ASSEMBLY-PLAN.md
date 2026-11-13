@@ -473,6 +473,12 @@ A translation driving a rotation uses 1/k; Reverse negates k.
   teeth up. So `keepSolved` never writes a loop's reading back onto a
   relation-driven DOF, and the Move panel's field for one reads the solved
   value, not the stored one.
+- **A relation starts from the pose on screen** (`phaseToCurrentPose`): adding
+  one, or switching it back on, sets the driven DOF's phase to where it is
+  minus k times the driver, so nothing moves. Without it a relation switched
+  off to line gear teeth up snapped them back on re-enable (the phase was
+  never touched, only the driven part's pose). Editing a relation's value
+  keeps the phase, so the driven part does move then.
 - **Solving:** every mate's own values are evaluated first (with Animate's
   `drive`), then relations in dependency order, so a gear train works in
   whatever order its relations were made. A relation-driven DOF is `forced`,

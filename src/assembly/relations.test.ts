@@ -4,7 +4,14 @@ import { dragAssembly } from "./drag";
 import { animator } from "./animate";
 import { defaultX, frameMatrix } from "./frames";
 import { applyPoint, IDENTITY, type Vec3 } from "./placement";
-import { addRelation, relationBlocker, relationFactor, removeRelations, routeToDriver } from "./relations";
+import {
+  addRelation,
+  phaseToCurrentPose,
+  relationBlocker,
+  relationFactor,
+  removeRelations,
+  routeToDriver,
+} from "./relations";
 import { solve } from "./solve";
 import type { AssemblyDoc, Dof, Instance, Mat4, Mate, MateConnector, MateType, Relation } from "./types";
 
@@ -324,5 +331,37 @@ describe("relationBlocker", () => {
   });
   it("allows a lone cylindrical mate (a screw on its own turn and slide)", () => {
     expect(relationBlocker([m("c", "cylindrical")])).toBeNull();
+  });
+});
+
+describe("phaseToCurrentPose", () => {
+  it("keeps the driven gear where it is when a relation is switched back on", () => {
+    // B was turned to 7° (teeth lined up) while the relation was off, and A
+    // sits at 30°. Back on with a ratio of 2, B would read 0 + (−2 × 30) = −60°.
+    const off = gears([rel("g", "gear", ["ra", "rz"], ["rb", "rz"], "2", { suppressed: true })]);
+    off.mates = off.mates.map((m) => (m.id === "rb" ? { ...m, values: { rz: "7" } } : m));
+    const before = solve(off, lookup);
+    expect(turn(before, "B")).toBeCloseTo(7);
+
+    const on = { ...off, relations: off.relations!.map((r) => ({ ...r, suppressed: undefined })) };
+    expect(turn(solve(on, lookup), "B")).toBeCloseTo(-53); // the snap: 7 + (−2 × 30)
+
+    const kept = phaseToCurrentPose(on, "g", before.values, {});
+    const after = solve(kept, lookup);
+    expect(turn(after, "B")).toBeCloseTo(7);
+    // …and it still turns with A from there.
+    const moved = { ...kept, mates: kept.mates.map((m) => (m.id === "ra" ? { ...m, values: { rz: "40" } } : m)) };
+    expect(turn(solve(moved, lookup), "B")).toBeCloseTo(7 - 20);
+  });
+
+  it("leaves an expression phase, a suppressed relation and a bad ratio alone", () => {
+    const values = solve(gears([]), lookup).values;
+    const expr = gears([rel("g", "gear", ["ra", "rz"], ["rb", "rz"], "2")]);
+    expr.mates = expr.mates.map((m) => (m.id === "rb" ? { ...m, values: { rz: "teeth * 3" } } : m));
+    expect(phaseToCurrentPose(expr, "g", values, { teeth: 2 })).toBe(expr);
+    const off = gears([rel("g", "gear", ["ra", "rz"], ["rb", "rz"], "2", { suppressed: true })]);
+    expect(phaseToCurrentPose(off, "g", values, {})).toBe(off);
+    const bad = gears([rel("g", "gear", ["ra", "rz"], ["rb", "rz"], "0")]);
+    expect(phaseToCurrentPose(bad, "g", values, {})).toBe(bad);
   });
 });

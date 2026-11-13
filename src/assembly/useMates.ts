@@ -31,7 +31,7 @@ import { connectorGlyph, pointGlyph } from "./glyph";
 import type { MateDialogProps } from "./MateDialog";
 import { MATE_TYPES } from "./mateTypes";
 import { applyPoint, IDENTITY, meshBounds, multiply } from "./placement";
-import { setMateValue as setMateValueIn } from "./relations";
+import { phaseToCurrentPose, setMateValue as setMateValueIn } from "./relations";
 import { invertRigid, MATE_DOFS, solve, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector, MateType } from "./types";
 import type { SourceState } from "./useAssemblySources";
@@ -440,7 +440,10 @@ export function useMates({
     const cur =
       assembly.mates.find((m) => m.id === id)?.suppressed ?? assembly.relations?.find((r) => r.id === id)?.suppressed;
     const base = solution ? keepSolved(assembly, solution) : assembly;
-    const next = setSuppressed(base, id, !cur);
+    let next = setSuppressed(base, id, !cur);
+    // A relation switched back on starts from the pose on screen.
+    if (next && cur && solution && next.relations?.some((r) => r.id === id))
+      next = phaseToCurrentPose(next, id, solution.values, evaluateVariables(next.variables).scope);
     if (next) commit(next);
   };
 

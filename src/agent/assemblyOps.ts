@@ -21,6 +21,7 @@ import {
   addRelation,
   endsFit,
   nextRelationName,
+  phaseToCurrentPose,
   removeRelations,
   setMateValue,
   updateRelation,
@@ -235,7 +236,14 @@ export function planAddRelation(
     ...(op.reverse ? { reverse: true } : {}),
   };
   const base = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
-  return { assembly: addRelation(base, rel), id };
+  const added = addRelation(base, rel);
+  // It starts from the pose the parts are in (as the dialog's does).
+  return {
+    assembly: state.solution
+      ? phaseToCurrentPose(added, id, state.solution.values, evaluateVariables(base.variables).scope)
+      : added,
+    id,
+  };
 }
 
 export function planSetVariable(
@@ -381,10 +389,13 @@ export function planSuppress(
   op: Extract<Operation, { op: "setSuppressed" }>,
 ): Planned<AssemblyDoc> {
   const base = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
-  return (
-    setSuppressed(base, op.id, op.suppressed ?? true) ??
-    fail(`No mate or relation "${op.id}" — ids are in get_scene_summary's mates and relations.`)
-  );
+  const next = setSuppressed(base, op.id, op.suppressed ?? true);
+  if (!next) return fail(`No mate or relation "${op.id}" — ids are in get_scene_summary's mates and relations.`);
+  // A relation switched back on starts from the pose on screen.
+  const wasOff = state.assembly.relations?.find((r) => r.id === op.id)?.suppressed;
+  return wasOff && op.suppressed === false && state.solution
+    ? phaseToCurrentPose(next, op.id, state.solution.values, evaluateVariables(next.variables).scope)
+    : next;
 }
 
 export function planDuplicate(

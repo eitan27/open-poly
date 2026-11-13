@@ -3,10 +3,12 @@
 // assembly with it applied, so the dialog says what the solver would (a loop
 // of relations, a DOF already driven, a bad ratio) before it's added.
 import { useMemo, useState } from "react";
+import { evaluateVariables } from "../document/document";
 import {
   addRelation,
   defaultDraft,
   nextRelationName,
+  phaseToCurrentPose,
   relationBlocker,
   removeRelations,
   updateRelation,
@@ -85,9 +87,15 @@ export function useRelations({
       existing?.name ?? nextRelationName(assembly, session.draft.type),
     );
     if (!rel) return;
-    commit(
-      existing ? updateRelation(assembly, { ...existing, ...rel, name: existing.name }) : addRelation(assembly, rel),
-    );
+    if (existing) commit(updateRelation(assembly, { ...existing, ...rel, name: existing.name }));
+    else {
+      // A new relation starts from the pose on screen: the driven part stays
+      // put, and turns from there.
+      const values = solve(assembly, frameFor(assembly)).values;
+      commit(
+        phaseToCurrentPose(addRelation(assembly, rel), rel.id, values, evaluateVariables(assembly.variables).scope),
+      );
+    }
     setSession(null);
   };
   const remove = (id: string) => {

@@ -268,9 +268,23 @@ check(
   rec.assembly.relations?.[0].suppressed === true &&
     (await page.locator(".asm-relation-row .asm-source").textContent()).includes("suppressed"),
 );
+// While it's off, turn the driven arm on its own (lining teeth up, say).
+await page.locator(".asm-row").nth(2).click();
+await page.waitForTimeout(300);
+await typeField("Angle", "15");
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+rec = await saved();
+const offPose = JSON.stringify(T("Arm2"));
+const driverPose = JSON.stringify(T("Arm"));
 await relToggle.click();
 rec = await saved();
 check("…and brings it back", rec.assembly.relations?.[0].suppressed === undefined);
+check(
+  "…leaving the driven arm where it was turned to, not snapping back",
+  JSON.stringify(T("Arm2")) === offPose && JSON.stringify(T("Arm")) === driverPose,
+  `driven phase now ${rec.assembly.mates[1].values?.rz}`,
+);
 const armAt = JSON.stringify(T("Arm2"));
 const mateToggle = page.locator(".asm-mate-row").nth(1).locator(".asm-suppress");
 await mateToggle.click();
