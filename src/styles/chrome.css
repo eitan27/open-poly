@@ -449,3 +449,52 @@ button:disabled .kbd-hint {
   left: auto;
   right: 0;
 }
+
+/* The viewport's "3D graphics failed" notice (Viewport.tsx GlFailure): a card
+   centred over the dead view, saying to reload or restart the browser. */
+.gl-failure {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100% - 32px));
+  padding: 18px 20px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px var(--shadow-strong);
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+  z-index: 40;
+}
+.gl-failure h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  color: var(--warn-text);
+}
+.gl-failure p,
+.gl-failure ol {
+  margin: 0 0 10px;
+}
+.gl-failure ol {
+  padding-left: 20px;
+}
+.gl-failure kbd {
+  font-family: inherit;
+  padding: 0 4px;
+  border: 1px solid var(--border-control);
+  border-radius: 3px;
+}
+.gl-failure-note {
+  color: var(--text-7);
+}
+.gl-failure button {
+  padding: 5px 14px;
+  font: inherit;
+  color: var(--accent-palest);
+  background: var(--accent-surface-4);
+  border: 1px solid var(--accent-border-4);
+  border-radius: 5px;
+  cursor: pointer;
+}

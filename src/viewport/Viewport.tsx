@@ -710,6 +710,11 @@ export function Viewport({
   // would then have to re-run for. Later changes go through the appearance
   // effect, in place.
   const mountSettingsRef = useRef({ theme, mouseMiddle, mouseRight, cameraInertia });
+  // The browser's 3D graphics (WebGL) failed: couldn't start, or the context
+  // was lost while open. Either way the view can't draw, so it says what to do
+  // instead of leaving a blank page with errors only in the console. Safari
+  // in particular can hand out an already-lost context until it's restarted.
+  const [glFailure, setGlFailure] = useState<"start" | "lost" | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -717,7 +722,21 @@ export function Viewport({
 
     // `stencil: true` — off by default in three.js — is required for the
     // section-view cross-section cap (see createSectionCapTriple).
-    const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
+      if (renderer.getContext().isContextLost()) throw new Error("WebGL context lost on creation");
+    } catch (e) {
+      console.error("The 3D view couldn't start:", e);
+      setGlFailure("start");
+      return;
+    }
+    const onContextLost = (e: Event) => {
+      // Lets the browser try to restore it; the view still needs a reload.
+      e.preventDefault();
+      setGlFailure("lost");
+    };
+    renderer.domElement.addEventListener("webglcontextlost", onContextLost);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.domElement.style.display = "block";
     container.appendChild(renderer.domElement);
@@ -3572,6 +3591,7 @@ export function Viewport({
       grid.geometry.dispose();
       (grid.material as THREE.Material).dispose();
       axes.dispose();
+      renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
       renderer.dispose();
       container.removeChild(renderer.domElement);
       apiRef.current = null;
@@ -4320,7 +4340,35 @@ export function Viewport({
     activeSketchFaceRef.current = faceIds.size ? { bodyId: activeSketchFace.bodyId, faceIds } : null;
   }, [activeSketchFace, meshes]);
 
-  return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+      {glFailure && <GlFailure kind={glFailure} />}
+    </div>
+  );
+}
+
+/** What to do when the browser's 3D graphics failed (see `glFailure`). */
+function GlFailure({ kind }: { kind: "start" | "lost" }) {
+  return (
+    <div className="gl-failure" role="alert">
+      <h2>{kind === "start" ? "The 3D view couldn't start" : "The 3D view stopped working"}</h2>
+      <p>
+        {kind === "start"
+          ? "Your browser didn't give this page working 3D graphics (WebGL). This usually clears up when you restart the browser."
+          : "Your browser's 3D graphics (WebGL) stopped responding."}
+      </p>
+      <ol>
+        {kind === "lost" && <li>Reload the page.</li>}
+        <li>
+          {kind === "lost" ? "If that doesn't help, quit" : "Quit"} the browser completely (on a Mac, <kbd>⌘Q</kbd>;
+          closing the tab isn't enough), reopen it and come back.
+        </li>
+      </ol>
+      <p className="gl-failure-note">Your documents are saved in this browser, so nothing is lost.</p>
+      <button onClick={() => window.location.reload()}>Reload</button>
+    </div>
+  );
 }
 
 /** Append world-space segment endpoints for an entity to a flat buffer. */
