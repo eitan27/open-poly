@@ -32,12 +32,12 @@ async function openGear() {
   await dialog.waitFor();
 }
 
-// 1. Open, by its shortcut (O): the ghost is there before touching anything.
+// 1. Open, by its shortcut (G): the ghost is there before touching anything.
 await page
   .locator(".viewport canvas")
   .first()
   .hover({ position: { x: 5, y: 5 } });
-await page.keyboard.press("o");
+await page.keyboard.press("g");
 await dialog.waitFor({ timeout: 3000 });
 await page.waitForTimeout(1500);
 await shot("1-open");
