@@ -73,6 +73,11 @@ quoted in the warning).
   flagged), `open_document`, `new_document`, `rename_document`,
   `duplicate_document` (opens the copy — a safe sandbox before risky edits).
   There is deliberately no delete — ask the human.
+- **Assemblies** (only while one is open — see [Assemblies](#assemblies)):
+  `insert_instance` (`count` for several), `duplicate_instance`,
+  `ground_instance`, `add_mate`, `edit_mate`,
+  `set_mate_value`, `add_relation`, `edit_relation`, `set_suppressed`,
+  `set_variable`, `delete`, and the read `animate_mate`.
 
 All mutations route through undo, so the human can revert anything you do.
 
@@ -88,6 +93,178 @@ The workspace holds several documents; you act on the ACTIVE one. Rules:
 - `new_document` starts empty (the previous document autosaves); pass `name`
   so the human can find it later.
 - Never guess ids — they come from `list_documents`.
+- A document is a **part** (you model it) or an **assembly** (`kind` in
+  `list_documents`): instances of other documents' parts, joined by mates —
+  see [Assemblies](#assemblies). `new_document` with `kind: "assembly"` makes
+  one. Modelling ops are refused while an assembly is open, and assembly ops
+  while a part is.
+
+## Assemblies
+
+An assembly doesn't model geometry: it **places instances** of parts that live
+in part documents, and joins them with **mates**. Each mate is a joint (as in
+Onshape): it holds a frame on one part to a frame on another and says what
+motion is left free. One mate fully defines how two parts sit, so you need
+far fewer of them than constraints.
+
+### Workflow
+
+1. **Model the parts first**, each in its own part document (or several parts
+   in one). An assembly can't change a part's shape — to change one, open its
+   document, edit it, and re-open the assembly; instances follow, and mates
+   re-find their faces.
+2. `new_document` with `kind: "assembly"`, then `insert_instance` each part
+   document's id (from `list_documents`; `partIds` picks some of its parts —
+   they're that document's body ids). Each insert lands beside what's there.
+   For several of a part (eight bolts), give `count`, or `duplicate_instance`
+   one already placed: the copies are laid out in a grid, none overlapping.
+   **The first instance is grounded** (fixed in place); everything else is
+   placed by mates.
+3. `get_scene_summary`: `parts` lists each part once with the **face and edge
+   names** a mate can use; `instances` say which part each uses (`part` = a
+   `parts[].key`), whether it's grounded or `mated`, and its world `bbox`.
+4. `add_mate`, one joint at a time, then **`screenshot` to check it sits the way
+   you meant** (see orientation below) before the next.
+5. Drive it: `set_mate_value` for the free motion, `add_relation` to couple
+   joints, and `animate_mate` to see it move.
+
+### Connectors: which entity, and which way it faces
+
+Each side of `add_mate` names ONE entity of that instance's part — `{face}`,
+`{edge}`, or `{vertex: {edge, end: "start"|"end"}}` (a corner, as an end of a
+named edge) — with the names from that part's entry in `parts`. The entity
+gives the connector a frame:
+
+| Entity                                      | Origin                                                      | Z axis                                                                               |
+| ------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Flat face                                   | its centre                                                  | the **outward** normal                                                               |
+| Round wall (cylinder, hole, faceted 96-gon) | on its axis, mid-length (`anchor` `start`/`end` = its ends) | along the axis, pointing the part's **positive** way (+Z for an upright pin or bore) |
+| Circular edge (a rim)                       | its centre                                                  | the outward normal of the flat face it bounds                                        |
+| Straight edge                               | its midpoint                                                | along it, the part's positive way                                                    |
+| Vertex                                      | the corner                                                  | the part's own Z (and X)                                                             |
+
+An edge is named after the two faces it joins, sorted and joined with `∩`: on
+a box primitive whose faces are `<id>/+z` (top), `<id>/+y` (back) and so on,
+the top-back edge is `<id>/+y∩<id>/+z`.
+
+`offset: {x, y, z}` moves a connector within its own frame (mm, numbers or
+expressions) — a hinge set in from an edge, a gap between faces.
+
+**Orientation.** By default the two Z axes **face each other** — right for two
+flat faces touching (a part's bottom face on a plate's top face sits on it).
+`flip: true` points them the same way instead. That matters for **two round
+walls or two straight edges**, whose Z both point "up" their part: without
+`flip` the second part comes out **upside down** (a pin turned over in its
+hole). `turns` (0–3) then rotates `b` in quarter turns about Z, for a fastened
+or sliding part that should face another way. If a screenshot shows a part
+reversed, **`edit_mate`** it with `flip`/`turns` changed — don't delete and
+re-add: deleting a mate also deletes the relations that use it.
+
+### Mate types and their free DOFs
+
+Values are measured in the frame of `a`'s connector: `t*` in mm along its X/Y/Z,
+`r*` in degrees about them, positive by the **right-hand rule** (thumb along the
+axis, fingers curl the positive way). Which way that turns a part depends on
+where it lies from the axis, so **try a value and look** (`screenshot`, or
+`animate_mate`) before setting limits. The summary lists each mate's `free`
+DOFs with their current values.
+
+- **fastened** — nothing moves (glue two parts; with `turns` to orient).
+- **revolute** `rz` — turns about Z: a hinge, a wheel on an axle (round wall
+  to round wall, or face to face for a turntable).
+- **slider** `tz` — slides along Z: a drawer, a piston.
+- **cylindrical** `tz`, `rz` — slides and turns: a pin in a hole, a shaft in a
+  bushing. Use the two round walls.
+- **planar** `tx`, `ty`, `rz` — slides and turns on the plane: a part on a
+  table (two flat faces).
+- **ball** `rx`, `ry`, `rz` — turns any way about the point: a ball joint (two
+  vertices, or two centres).
+- **width** `tx`, `ty`, `rz` — centres `b` between two parallel faces of `a`:
+  a tab in a slot. Give `face` AND `face2` on both sides (the tab's two sides,
+  the slot's two walls). Its mid-planes start aligned, so no `flip` is needed.
+
+`values` sets free DOFs when the mate is made; `limits` `{min, max}` bound them.
+`set_mate_value` changes one later (`""` resets it to 0). `edit_mate` changes
+anything else in place — type, either connector, flip, turns, limits (`null`
+clears one) — keeping the mate's id and its relations; a new type drops values
+and limits for DOFs it doesn't have.
+
+**Inside a loop group** (the summary's `loops`: parts held by a closed loop of
+mates, like a four-bar linkage) the mates' values depend on each other: a
+four-bar's four hinge angles have one degree of freedom between them. The
+values `get_scene_summary` shows there report where the solver put each
+joint. `set_mate_value` with a **number** drives the linkage there, once: the
+rest moves as little as it must, and the value stays a plain number, so a
+later value (on any joint) can move it again. An **expression** (a variable,
+a formula) is a _standing_ input instead, applied on every solve — give the
+input joint one to drive the linkage from a variable. If a value you set
+would need an expression elsewhere in the loop changed, `set_mate_value`
+fails naming it; **ask the user**, and only if they agree call it again with
+`clearExpressions: true`, which replaces that expression with its plain
+number. A value the linkage can't reach at all is refused with why.
+
+### Relations
+
+`add_relation` drives one mate's DOF from another's, linearly:
+
+- **gear** — rotation → rotation, `value` = ratio (driven turns per driver
+  turn); meshed gears turn opposite ways (`reverse: true` for a belt).
+- **rack** — rotation ↔ translation, `value` = pinion radius (mm).
+- **screw** — rotation ↔ translation, `value` = pitch (mm per turn). A
+  cylindrical mate's own `rz` → `tz` is a lead screw or a bolt.
+
+They chain (a gear train). The driven DOF's own value becomes a **phase** added
+on top (to line teeth up); its `free` entry shows `drivenBy`. `edit_relation`
+changes a relation's value, direction or ends in place. Setting a driven
+DOF with `set_mate_value` sets its driver instead — so give it a number, not an
+expression. A loop of relations, or two relations driving one DOF, is refused.
+
+### Reading problems
+
+- An op that makes a mate or relation the solver can't satisfy returns
+  **`ok: false` with its `createdId`** and why (e.g. "Over-constrained: this
+  mate conflicts with the other mates holding these parts") — it's kept so you
+  can see it: `edit_mate` / `edit_relation` it into one that holds, or
+  `delete` it. Two grounded
+  parts can't be mated together unless they already sit where the mate puts
+  them.
+- `get_scene_summary` marks each broken mate/relation with `problem`, and a
+  mate whose connector had to be re-found after a part edit with `warning`
+  (check it landed on the intended face).
+- **Finding the culprit:** when several mates hold the same parts and one
+  conflicts, `set_suppressed` suspects one at a time (they're kept, and the
+  parts stay put) until the problems clear, then fix that one with
+  `edit_mate` and `set_suppressed` it back (`suppressed: false`). The summary
+  marks suppressed mates and relations `suppressed`.
+- `parts[].problem` says a part's document is missing, broken or still loading.
+
+### Seeing it move
+
+`animate_mate` (a read: nothing is saved) sweeps one free DOF of a mate and
+returns a screenshot at each of 2–8 evenly spaced values — by default between
+its limits, else a full turn or 20 mm. Sweep a relation's **driver** and
+everything it drives moves too. Frames captioned with a problem show where the
+motion jams. A symmetric part can look the same half a turn apart, so pick a
+frame count that shows the motion you care about.
+
+### Worked example (pattern, not literal API)
+
+> "Hinge a lid on a box, opening up to 110°."
+
+1. Part documents `Box` and `Lid` (model each, `rename` them).
+2. `new_document` `{kind: "assembly", name: "Hinged box"}`;
+   `insert_instance` Box (grounded), then Lid.
+3. `get_scene_summary` → the Box's top-back edge (`…/+y∩…/+z`) and the Lid's
+   bottom-back edge (`…/+y∩…/-z`), by name from `parts`.
+4. `add_mate` `revolute`, a = the Box edge, b = the Lid edge, `flip: true`
+   (two straight edges); `screenshot` — the lid should lie closed on the box
+   (if it's turned over, `edit_mate` it with `flip`/`turns` changed).
+5. `set_mate_value` the hinge to 30 and `screenshot`: does the lid lift, or
+   swing into the box? For an edge along +X with the lid lying toward −Y of
+   it, opening is **negative**. `edit_mate` the limits to match (here
+   `{rz: {min: -110, max: 0}}`) and set it back to 0.
+6. `animate_mate` the hinge: with limits set, it sweeps between them, open to
+   closed.
 
 ## Recipes
 

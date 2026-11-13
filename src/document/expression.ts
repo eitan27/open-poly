@@ -181,3 +181,35 @@ export function evaluateExpression(expr: string, scope: Scope = {}): number {
   if (!Number.isFinite(value)) throw new Error("Result is not a finite number");
   return value;
 }
+
+/** `expr` with the identifier `from` renamed to `to` wherever it names a
+ *  variable — a whole identifier token, not a function call (`sin(`) — and
+ *  every other character kept as typed. What renaming a variable does to the
+ *  expressions that use it. */
+export function renameIdentifier(expr: string, from: string, to: string): string {
+  if (!expr.includes(from)) return expr;
+  const isDigit = (c: string) => c >= "0" && c <= "9";
+  let out = "";
+  let i = 0;
+  while (i < expr.length) {
+    const c = expr[i];
+    if (isDigit(c) || (c === "." && isDigit(expr[i + 1] ?? ""))) {
+      let j = i + 1;
+      while (j < expr.length && (isDigit(expr[j]) || expr[j] === ".")) j++;
+      out += expr.slice(i, j);
+      i = j;
+    } else if (/[A-Za-z_]/.test(c)) {
+      let j = i + 1;
+      while (j < expr.length && /[A-Za-z0-9_]/.test(expr[j])) j++;
+      const id = expr.slice(i, j);
+      let k = j;
+      while (k < expr.length && /\s/.test(expr[k])) k++;
+      out += id === from && expr[k] !== "(" ? to : id;
+      i = j;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}

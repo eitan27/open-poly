@@ -43,6 +43,28 @@ const SYNC_LABEL: Record<DocSyncState, string> = {
 };
 const IN_DRIVE: ReadonlySet<DocSyncState> = new Set(["synced", "pending", "conflict"]);
 
+/** Which documents the list shows. Remembered per browser — a convenience, so
+ *  every read and write is allowed to fail. */
+type DocsTab = "all" | "parts" | "assemblies";
+const TAB_KEY = "openpoly.docsTab";
+const TABS: { id: DocsTab; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "parts", label: "Parts" },
+  { id: "assemblies", label: "Assemblies" },
+];
+function readTab(): DocsTab {
+  try {
+    const v = localStorage.getItem(TAB_KEY);
+    return v === "parts" || v === "assemblies" ? v : "all";
+  } catch {
+    return "all";
+  }
+}
+function inTab(m: DocMeta, tab: DocsTab): boolean {
+  return tab === "all" || (tab === "assemblies") === (m.kind === "assembly");
+}
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
 interface Props {
   /** The document currently open in this tab (highlighted; can't be Opened). */
   activeId: string | null;
@@ -86,6 +108,16 @@ export function DocumentsDialog({
     { kind: "corrupted"; name: string } | { kind: "plain"; message: string } | null
   >(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [tab, setTabState] = useState<DocsTab>(readTab);
+  const setTab = (next: DocsTab) => {
+    setTabState(next);
+    try {
+      localStorage.setItem(TAB_KEY, next);
+    } catch {
+      /* best-effort */
+    }
+  };
+  const shown = metas?.filter((m) => inTab(m, tab)) ?? null;
 
   const reload = useCallback(() => {
     listMeta()
@@ -206,14 +238,40 @@ export function DocumentsDialog({
         </p>
       )}
 
-      {metas === null ? (
+      <div className="ed-modes docs-tabs" role="tablist" aria-label="Show">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            className={tab === t.id ? "active" : ""}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {shown === null ? (
         <p className="hint">Loading…</p>
-      ) : metas.length === 0 ? (
-        <p className="hint">No documents yet.</p>
+      ) : shown.length === 0 ? (
+        <p className="hint">
+          {tab === "assemblies"
+            ? "No assemblies yet. Make one with New ▾ → Assembly."
+            : tab === "parts"
+              ? "No part documents yet."
+              : "No documents yet."}
+        </p>
       ) : (
         <ul className="docs-list">
-          {metas.map((m) => {
+          {shown.map((m) => {
             const active = m.id === activeId;
+            // Deleting a part an assembly uses leaves its instances with nothing
+            // to show, so the confirm step names who'd be affected.
+            const usedIn =
+              confirmDelete === m.id && m.kind !== "assembly"
+                ? (metas ?? []).filter((x) => x.referencedDocIds?.includes(m.id)).map((x) => x.name)
+                : [];
             return (
               <li key={m.id} className={"docs-row" + (active ? " active" : "")}>
                 {m.thumb || !drive?.driveThumbs[m.id] ? (
@@ -246,12 +304,33 @@ export function DocumentsDialog({
                       onClick={() => setRenaming({ id: m.id, draft: m.name })}
                     >
                       {m.name}
+                      {m.kind === "assembly" ? (
+                        <span className="docs-kind">Assembly</span>
+                      ) : (
+                        <span className="docs-kind docs-kind-part">Part</span>
+                      )}
                       {active && <span className="docs-current"> · current</span>}
                     </button>
                   )}
                   <span className="docs-sub">
-                    edited {timeAgo(m.updatedAt)} · {m.featureCount} feature{m.featureCount === 1 ? "" : "s"}
-                    {!m.unbuilt && ` · ${m.partCount} part${m.partCount === 1 ? "" : "s"}`}
+                    edited {timeAgo(m.updatedAt)} ·{" "}
+                    {m.kind === "assembly" ? (
+                      // "4 parts · 3 mates", as a part's reads "1 feature · 1 part".
+                      <>
+                        {plural(m.instanceCount ?? 0, "part")}
+                        {m.mateCount !== undefined && ` · ${plural(m.mateCount, "mate")}`}
+                      </>
+                    ) : (
+                      <>
+                        {plural(m.featureCount, "feature")}
+                        {!m.unbuilt && ` · ${plural(m.partCount, "part")}`}
+                      </>
+                    )}
+                    {usedIn.length > 0 && (
+                      <span className="docs-used">
+                        {" · "}⚠ Used in {usedIn.join(", ")}
+                      </span>
+                    )}
                     {drive?.states[m.id] && (
                       <>
                         {" · "}
@@ -328,7 +407,9 @@ export function DocumentsDialog({
         </ul>
       )}
 
-      {drive && drive.cloudOnly.length > 0 && (
+      {/* A Drive-only document's kind isn't known until it's downloaded, so only
+          the All tab lists them. */}
+      {drive && tab === "all" && drive.cloudOnly.length > 0 && (
         <>
           <h3 className="docs-section-title">In Google Drive, not on this device</h3>
           <ul className="docs-list">
@@ -386,7 +467,7 @@ function CloudThumb({ url, glyph = "☁" }: { url?: string; glyph?: string }) {
  *  still showed it flashed a broken image. A data URL can't be revoked, and
  *  the old picture stays up until the new one is read (a few KB). A document
  *  that has not been captured yet has no blob: the empty placeholder. */
-function Thumb({ thumb }: { thumb?: Blob }) {
+export function Thumb({ thumb }: { thumb?: Blob }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     if (!thumb) {

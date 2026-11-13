@@ -3,7 +3,7 @@
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "./featureDefs";
 import { newBodyColor, randomSolidColor } from "./colors";
 import { clamp } from "../lib/clamp";
-import { evaluateExpression, RESERVED_NAMES, type Scope } from "./expression";
+import { evaluateExpression, renameIdentifier, RESERVED_NAMES, type Scope } from "./expression";
 import {
   angledFrame,
   frameOf,
@@ -993,7 +993,11 @@ function letterName(n: number): string {
   return s;
 }
 
-export function addVariable(doc: Document): { doc: Document; id: string } {
+// The variable operations work on anything that holds variables: a part
+// document, or an assembly (AssemblyDoc), whose Variables panel is the same.
+type WithVariables = { variables: Variable[] };
+
+export function addVariable<T extends WithVariables>(doc: T): { doc: T; id: string } {
   const used = new Set(doc.variables.map((v) => v.name));
   let i = 0;
   while (used.has(letterName(i)) || RESERVED_NAMES.has(letterName(i))) i++;
@@ -1006,6 +1010,28 @@ export function addVariable(doc: Document): { doc: Document; id: string } {
  *  spaces, or symbols), must be non-empty, can't collide with a built-in
  *  constant/function, and must be unique. Returns one error message per
  *  offending variable id (keyed for the panel to flag the name field). */
+/** Set the variable `name` to `expression`, making it if there's none: what
+ *  the agent's set_variable does, on a part or an assembly. A new name is
+ *  checked up front (letters only, not reserved, unique), so a bad one is an
+ *  error rather than a variable silently left out of scope. */
+export function setVariableByName<T extends WithVariables>(
+  doc: T,
+  name: string,
+  expression: string,
+): { doc: T; id: string } | { error: string } {
+  const existing = doc.variables.find((v) => v.name === name);
+  if (existing) return { doc: updateVariable(doc, existing.id, "expression", expression), id: existing.id };
+  const nameError = validateVariableNames([...doc.variables, { id: "__candidate__", name, expression }])[
+    "__candidate__"
+  ];
+  if (nameError)
+    return {
+      error: `Invalid variable name "${name}": ${nameError}. Variable names must be letters only — no digits, spaces, underscores, or reserved math names (pi, sin, …).`,
+    };
+  const r = addVariable(doc);
+  return { doc: updateVariable(updateVariable(r.doc, r.id, "name", name), r.id, "expression", expression), id: r.id };
+}
+
 export function validateVariableNames(variables: Variable[]): Record<string, string> {
   const errors: Record<string, string> = {};
   const firstByName = new Map<string, string>();
@@ -1022,14 +1048,97 @@ export function validateVariableNames(variables: Variable[]): Record<string, str
   return errors;
 }
 
-export function updateVariable(doc: Document, id: string, field: "name" | "expression", value: string): Document {
+export function updateVariable<T extends WithVariables>(
+  doc: T,
+  id: string,
+  field: "name" | "expression",
+  value: string,
+): T {
   return {
     ...doc,
     variables: doc.variables.map((v) => (v.id === id ? { ...v, [field]: value } : v)),
   };
 }
 
-export function removeVariable(doc: Document, id: string): Document {
+/** Rename variable `id` to `name`, and the expressions that use it with it:
+ *  the variables' own, and whatever `rewriteRest` rewrites (a part's features,
+ *  see `renameInFeatures`; an assembly's mates). Only when both names are valid
+ *  and `name` isn't another variable's: a rename to an empty, malformed or
+ *  taken name just sets the name (flagged in the panel), as before, so a
+ *  half-typed name can't rewrite anything. */
+export function renameVariable<T extends WithVariables>(
+  doc: T,
+  id: string,
+  name: string,
+  rewriteRest: (doc: T, rename: (expr: string) => string) => T = (d) => d,
+): T {
+  const v = doc.variables.find((x) => x.id === id);
+  if (!v || v.name === name) return doc;
+  const old = v.name;
+  const renamed = updateVariable(doc, id, "name", name);
+  // validateVariableNames flags only the LATER of two same-named variables,
+  // so "taken" is checked directly: renaming onto another's name must not
+  // rewrite references to point at it.
+  const taken = doc.variables.some((x) => x.id !== id && x.name === name);
+  const oldValid = !validateVariableNames(doc.variables)[id];
+  if (!oldValid || taken || validateVariableNames(renamed.variables)[id]) return renamed;
+  const rename = (expr: string) => renameIdentifier(expr, old, name);
+  const withVars = {
+    ...renamed,
+    variables: renamed.variables.map((x) => ({ ...x, expression: rename(x.expression) })),
+  };
+  return rewriteRest(withVars, rename);
+}
+
+/** The keys under which a part document stores expressions: every one holds
+ *  an expression string wherever it appears (`params` and `exprs` are records
+ *  of them). Anything else — names, ids, kinds, a sketch text's `value` — is
+ *  never touched, so a variable named like a kind ("box") can't rewrite it. */
+const EXPRESSION_KEYS = new Set([
+  "expression",
+  "expr",
+  "distance",
+  "count",
+  "count1",
+  "count2",
+  "spacing1",
+  "spacing2",
+  "dx",
+  "dy",
+  "angle",
+  "size",
+  "thickness",
+  "offset",
+  "tx",
+  "ty",
+  "tz",
+  "scale",
+]);
+const EXPRESSION_RECORDS = new Set(["params", "exprs"]);
+
+/** A part document's features with every expression passed through `rename`
+ *  (see EXPRESSION_KEYS). For `renameVariable`. */
+export function renameInFeatures(doc: Document, rename: (expr: string) => string): Document {
+  const walk = (value: unknown, key?: string): unknown => {
+    if (typeof value === "string") return key && EXPRESSION_KEYS.has(key) ? rename(value) : value;
+    if (Array.isArray(value)) return value.map((v) => walk(v));
+    if (value && typeof value === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value)) {
+        if (EXPRESSION_RECORDS.has(k) && v && typeof v === "object" && !Array.isArray(v))
+          out[k] = Object.fromEntries(
+            Object.entries(v).map(([pk, pv]) => [pk, typeof pv === "string" ? rename(pv) : pv]),
+          );
+        else out[k] = walk(v, k);
+      }
+      return out;
+    }
+    return value;
+  };
+  return { ...doc, features: walk(doc.features) as Document["features"] };
+}
+
+export function removeVariable<T extends WithVariables>(doc: T, id: string): T {
   return { ...doc, variables: doc.variables.filter((v) => v.id !== id) };
 }
 
@@ -1050,8 +1159,9 @@ export interface ResolveResult {
 }
 
 /** Evaluate variables in dependency order via fixpoint iteration; whatever can't
- *  resolve after no further progress is a cycle or an undefined reference. */
-function evaluateVariables(doc: Document): {
+ *  resolve after no further progress is a cycle or an undefined reference.
+ *  A part document's and an assembly's variables alike. */
+export function evaluateVariables(variables: Variable[]): {
   scope: Scope;
   errors: Record<string, string>;
 } {
@@ -1059,8 +1169,8 @@ function evaluateVariables(doc: Document): {
   const errors: Record<string, string> = {};
   // Only well-named variables enter scope; an invalid name is flagged on the
   // name field separately (variableNameErrors) and isn't evaluated.
-  const nameErrors = validateVariableNames(doc.variables);
-  let remaining = doc.variables.filter((v) => !nameErrors[v.id]);
+  const nameErrors = validateVariableNames(variables);
+  let remaining = variables.filter((v) => !nameErrors[v.id]);
 
   let progressed = true;
   while (remaining.length > 0 && progressed) {
@@ -1089,7 +1199,7 @@ function evaluateVariables(doc: Document): {
 
 /** Resolve the active (non-suppressed, pre-rollback) features to numeric params. */
 export function resolveDocument(doc: Document): ResolveResult {
-  const { scope, errors: variableErrors } = evaluateVariables(doc);
+  const { scope, errors: variableErrors } = evaluateVariables(doc.variables);
   const variableNameErrors = validateVariableNames(doc.variables);
   const planeFrames = resolvePlanes(doc, scope);
 

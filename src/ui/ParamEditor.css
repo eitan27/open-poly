@@ -69,43 +69,6 @@
   position: relative;
 }
 
-.selection-info {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  min-width: 150px;
-  padding: 8px 12px;
-  font-size: 12px;
-  background: rgba(var(--hud-rgb), 0.88);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  backdrop-filter: blur(4px);
-}
-
-.si-title {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-7);
-  margin-bottom: 5px;
-}
-
-.si-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 1px 0;
-}
-
-.si-label {
-  color: var(--text-4);
-}
-
-.si-value {
-  color: var(--text-2);
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-}
-
 .sketch-msg {
   position: absolute;
   top: 16px;

@@ -23,6 +23,8 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import type { Document } from "../document/types";
 import { DEFAULT_SECTION_VIEW, type SectionViewState } from "../document/sectionView";
 import { createDocument, genId, migrateDocument } from "../document/document";
+import type { AssemblyDoc } from "../assembly/types";
+import { createAssembly, migrateAssembly } from "../assembly/assembly";
 import {
   deleteDoc,
   duplicateDoc,
@@ -54,6 +56,11 @@ export interface UsePersistedDocumentsParams {
   doc: Document;
   /** Replaces the document AND clears undo history — a document boundary. */
   resetDoc: (doc: Document) => void;
+  /** The working assembly, or null when the working document is a part. While
+   *  it's an assembly, `doc` is the empty part model the record carries. */
+  assembly: AssemblyDoc | null;
+  /** Same contract as `resetDoc`, for the assembly's own history. */
+  resetAssembly: (assembly: AssemblyDoc | null) => void;
   rawMeshes: RawMesh[];
   setRawMeshes: (meshes: RawMesh[]) => void;
   /** Bumped each time a kernel regen settles; drives the thumbnail refresh. */
@@ -85,7 +92,8 @@ export interface UsePersistedDocumentsResult {
   docRecoveryBanner: DocRecoveryBanner;
   setDocRecoveryBanner: (banner: DocRecoveryBanner) => void;
   openDocument: (id: string) => Promise<void>;
-  newDocument: () => Promise<void>;
+  /** Defaults to a part. */
+  newDocument: (kind?: "part" | "assembly") => Promise<void>;
   duplicateDocument: (id: string) => Promise<void>;
   deleteDocument: (id: string) => Promise<void>;
   renameDocument: (id: string, name: string) => Promise<void>;
@@ -104,6 +112,8 @@ export interface UsePersistedDocumentsResult {
 export function usePersistedDocuments({
   doc,
   resetDoc,
+  assembly,
+  resetAssembly,
   rawMeshes,
   setRawMeshes,
   regenSettledSeq,
@@ -123,6 +133,8 @@ export function usePersistedDocuments({
   // passing a fresh closure, which is not a promise this file can enforce.
   const onDocumentAdoptedRef = useRef(onDocumentAdopted);
   onDocumentAdoptedRef.current = onDocumentAdopted;
+  const resetAssemblyRef = useRef(resetAssembly);
+  resetAssemblyRef.current = resetAssembly;
   const setRawMeshesRef = useRef(setRawMeshes);
   setRawMeshesRef.current = setRawMeshes;
   const setSectionViewRef = useRef(setSectionView);
@@ -158,9 +170,9 @@ export function usePersistedDocuments({
   const [docRecoveryBanner, setDocRecoveryBanner] = useState<DocRecoveryBanner>(null);
   // What the last flush (or adoption) wrote, against the live values, for
   // canReplaceActive. Refs, because Drive sync asks between renders.
-  const lastFlushedRef = useRef<{ doc: Document; name: string } | null>(null);
-  const liveRef = useRef({ doc, name: docName });
-  liveRef.current = { doc, name: docName };
+  const lastFlushedRef = useRef<{ doc: Document; assembly: AssemblyDoc | null; name: string } | null>(null);
+  const liveRef = useRef({ doc, assembly, name: docName });
+  liveRef.current = { doc, assembly, name: docName };
 
   // Restore the working document from IndexedDB on first load: the tab's
   // active-document pointer (localStorage) first — NOT "most recent", which
@@ -198,6 +210,7 @@ export function usePersistedDocuments({
             // autosave would silently overwrite the corrupt data with an empty
             // box — the exact "quiet data loss" this fix exists to prevent.
             const migrated = migrateDocument(record.doc);
+            const migratedAssembly = record.assembly ? migrateAssembly(record.assembly) : null;
             docIdRef.current = record.id;
             docCreatedAtRef.current = record.createdAt ?? record.updatedAt;
             setDocName(record.name || "Untitled");
@@ -208,6 +221,7 @@ export function usePersistedDocuments({
             // viewport stays blank until that full rebuild finishes.
             if (record.meshes?.length) setRawMeshesRef.current(record.meshes);
             resetDoc(migrated);
+            resetAssemblyRef.current(migratedAssembly);
             setSectionViewRef.current(record.sectionView ?? DEFAULT_SECTION_VIEW);
             // Default the Variables section open/collapsed by the restored count.
             onDocumentAdoptedRef.current(migrated);
@@ -241,18 +255,12 @@ export function usePersistedDocuments({
   useEffect(() => {
     if (!persistLoaded) return;
     const t = setTimeout(() => {
-      putDoc({
-        id: docIdRef.current!,
-        name: docName,
-        doc,
-        updatedAt: Date.now(),
-        createdAt: docCreatedAtRef.current,
-        meshes: rawMeshes,
-        sectionView,
-      }).catch((err) => console.warn("autosave failed:", err));
+      putDoc(
+        workingRecord(docIdRef.current!, docName, doc, assembly, docCreatedAtRef.current, rawMeshes, sectionView),
+      ).catch((err) => console.warn("autosave failed:", err));
     }, 600);
     return () => clearTimeout(t);
-  }, [doc, rawMeshes, docName, persistLoaded, sectionView]);
+  }, [doc, assembly, rawMeshes, docName, persistLoaded, sectionView]);
 
   // Mirror the document name to the browser tab — but only once there is a name
   // worth mirroring. A first visit (and every crawl, which starts with an empty
@@ -270,17 +278,11 @@ export function usePersistedDocuments({
    *  and a double-write is harmless. */
   const flushSave = useCallback(() => {
     if (!persistLoaded) return Promise.resolve();
-    lastFlushedRef.current = { doc, name: docName };
-    return putDoc({
-      id: docIdRef.current!,
-      name: docName,
-      doc,
-      updatedAt: Date.now(),
-      createdAt: docCreatedAtRef.current,
-      meshes: rawMeshes,
-      sectionView,
-    }).catch((err) => console.warn("flush save failed:", err));
-  }, [doc, docName, rawMeshes, persistLoaded, sectionView]);
+    lastFlushedRef.current = { doc, assembly, name: docName };
+    return putDoc(
+      workingRecord(docIdRef.current!, docName, doc, assembly, docCreatedAtRef.current, rawMeshes, sectionView),
+    ).catch((err) => console.warn("flush save failed:", err));
+  }, [doc, assembly, docName, rawMeshes, persistLoaded, sectionView]);
 
   /** Snapshot the CURRENT viewport into `meta.thumb` for `docId`, downscaled
    *  to ~256 px (offscreen canvas — capturePNG is Retina-sized, and a 2×/4×
@@ -395,15 +397,17 @@ export function usePersistedDocuments({
   const adoptRecord = useCallback(
     (record: StoredDoc) => {
       const migrated = migrateDocument(record.doc);
+      const migratedAssembly = record.assembly ? migrateAssembly(record.assembly) : null;
       docIdRef.current = record.id;
       docCreatedAtRef.current = record.createdAt ?? record.updatedAt;
-      lastFlushedRef.current = { doc: migrated, name: record.name || "Untitled" };
+      lastFlushedRef.current = { doc: migrated, assembly: migratedAssembly, name: record.name || "Untitled" };
       setDocName(record.name || "Untitled");
       setActiveId(record.id);
       setActiveDocId(record.id);
       setSelectionRef.current([]);
       setRawMeshesRef.current(record.meshes ?? []);
       resetDoc(migrated); // clears undo history — a document boundary
+      resetAssemblyRef.current(migratedAssembly);
       fitOnSettleRef.current = true;
       setSectionViewRef.current(record.sectionView ?? DEFAULT_SECTION_VIEW);
       onDocumentAdoptedRef.current(migrated);
@@ -435,21 +439,25 @@ export function usePersistedDocuments({
     [flushSave, adoptRecord, captureThumb],
   );
 
-  const newDocument = useCallback(async () => {
-    captureThumb(docIdRef.current!);
-    await flushSave();
-    const metas = await listMeta();
-    const now = Date.now();
-    const record: StoredDoc = {
-      id: genId(),
-      name: nextUntitled(metas.map((m) => m.name)),
-      doc: createDocument(),
-      createdAt: now,
-      updatedAt: now,
-    };
-    await putDoc(record); // exists in the list before it's ever edited
-    adoptRecord(record);
-  }, [flushSave, adoptRecord, captureThumb]);
+  const newDocument = useCallback(
+    async (kind: "part" | "assembly" = "part") => {
+      captureThumb(docIdRef.current!);
+      await flushSave();
+      const metas = await listMeta();
+      const now = Date.now();
+      const record: StoredDoc = {
+        id: genId(),
+        name: nextUntitled(metas.map((m) => m.name)),
+        doc: createDocument(),
+        ...(kind === "assembly" ? { assembly: createAssembly() } : {}),
+        createdAt: now,
+        updatedAt: now,
+      };
+      await putDoc(record); // exists in the list before it's ever edited
+      adoptRecord(record);
+    },
+    [flushSave, adoptRecord, captureThumb],
+  );
 
   const duplicateDocument = useCallback(
     async (id: string) => {
@@ -517,7 +525,7 @@ export function usePersistedDocuments({
       if (id === docIdRef.current) await flushSave(); // export the latest edits
       const record = await loadDoc(id);
       if (!record) return;
-      const blob = new Blob([serializeDocFile(record.name, record.doc)], { type: "application/json" });
+      const blob = new Blob([serializeDocFile(record.name, record.doc, record.assembly)], { type: "application/json" });
       downloadBlobRef.current(blob, `${safeFilenameRef.current(record.name)}.openpoly.json`);
     },
     [flushSave],
@@ -545,6 +553,7 @@ export function usePersistedDocuments({
           metas.map((m) => m.name),
         ),
         doc: migrateDocument(parsed.doc),
+        ...(parsed.assembly ? { assembly: parsed.assembly } : {}),
         createdAt: now,
         updatedAt: now,
       };
@@ -587,7 +596,8 @@ export function usePersistedDocuments({
 
   const canReplaceActive = useCallback(() => {
     const flushed = lastFlushedRef.current;
-    return !!flushed && flushed.doc === liveRef.current.doc && flushed.name === liveRef.current.name;
+    const live = liveRef.current;
+    return !!flushed && flushed.doc === live.doc && flushed.assembly === live.assembly && flushed.name === live.name;
   }, []);
 
   const adoptExternalRecord = useCallback(
@@ -620,6 +630,29 @@ export function usePersistedDocuments({
     flushSave,
     canReplaceActive,
     adoptExternalRecord,
+  };
+}
+
+/** The record the working document saves as. An assembly carries no meshes:
+ *  it has no build of its own (its instances' geometry lives in their part
+ *  documents' records), and `partCount` must not count anything. */
+function workingRecord(
+  id: string,
+  name: string,
+  doc: Document,
+  assembly: AssemblyDoc | null,
+  createdAt: number,
+  meshes: RawMesh[],
+  sectionView: SectionViewState,
+): StoredDoc {
+  return {
+    id,
+    name,
+    doc,
+    ...(assembly ? { assembly } : { meshes }),
+    updatedAt: Date.now(),
+    createdAt,
+    sectionView,
   };
 }
 

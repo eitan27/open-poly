@@ -1,0 +1,27 @@
+/* Continue / Cancel question (ConfirmDialog). */
+.confirm-dialog {
+  width: min(460px, calc(100vw - 48px));
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 12px 40px var(--shadow-strong);
+  color: var(--text-4);
+}
+.confirm-message {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.confirm-message:focus {
+  outline: none;
+}
+.confirm-message code {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-sunken);
+  color: var(--text-2);
+}

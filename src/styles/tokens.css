@@ -119,6 +119,10 @@
   --ok-teal: #7fd4c8;
   --ok-surface: #15301f;
 
+  /* --- document kinds (the Documents dialog's Part / Assembly badges) --- */
+  --kind-part: #7fd4c8;
+  --kind-assembly: #4f8cff;
+
   /* --- overlays, scrims and shadows --- */
   --overlay: rgba(8, 9, 12, 0.6);
   --overlay-2: rgba(6, 7, 10, 0.5);
@@ -251,6 +255,9 @@
   --ok-2: #12784a;
   --ok-teal: #0f7a6e;
   --ok-surface: #ddf3e6;
+
+  --kind-part: #0f7a6e;
+  --kind-assembly: #2563eb;
 
   /* Shadows go blue-black and much softer — full-strength black reads as dirt
      on a light surface rather than as depth. */

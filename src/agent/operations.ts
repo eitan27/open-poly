@@ -154,6 +154,25 @@ export type DimensionSpec = z.infer<typeof dimensionSpec>;
 
 // --- Selection refs (for the `select` op) ---------------------------------
 
+/** One side of an assembly mate: a face, an edge, or a vertex (an end of a
+ *  named edge) of an instance's part, by the names get_scene_summary lists
+ *  under that part. Exactly one of face/edge/vertex. */
+const connectorSpecSchema = z.object({
+  instanceId: z.string(),
+  face: z.string().optional(),
+  edge: z.string().optional(),
+  vertex: z.object({ edge: z.string(), end: z.enum(["start", "end"]) }).optional(),
+  /** A width mate's second face on the same part. */
+  face2: z.string().optional(),
+  /** Where on the entity: center (default), or a round wall's start/end. */
+  anchor: z.enum(["center", "start", "end"]).optional(),
+  /** Move the connector within its own frame, mm (number or expression). */
+  offset: z.object({ x: expr.optional(), y: expr.optional(), z: expr.optional() }).optional(),
+});
+export type ConnectorSpec = z.infer<typeof connectorSpecSchema>;
+
+const dofSchema = z.enum(["tx", "ty", "tz", "rx", "ry", "rz"]);
+
 const selectionSchema = z.union([
   z.object({ kind: z.literal("feature"), id: z.string() }),
   z.object({ kind: z.literal("face"), featureId: z.string(), faceId: z.number() }),
@@ -557,11 +576,114 @@ export const operationSchema = z.discriminatedUnion("op", [
     entityId: z.string(),
     at: z.tuple([z.number(), z.number()]),
   }),
-  z.object({ op: z.literal("newDocument"), name: z.string().optional() }),
+  /** kind defaults to "part"; an assembly places parts of other documents. */
+  z.object({
+    op: z.literal("newDocument"),
+    name: z.string().optional(),
+    kind: z.enum(["part", "assembly"]).optional(),
+  }),
   /** id defaults to the active document. Rename is not an undoable model edit. */
   z.object({ op: z.literal("renameDocument"), id: z.string().optional(), name: z.string().min(1) }),
   /** id defaults to the active document; the copy opens as the working doc. */
   z.object({ op: z.literal("duplicateDocument"), id: z.string().optional() }),
+  // --- Assembly ops: only while an assembly is open. Instance and connector
+  // names come from get_scene_summary's `instances` and `parts`.
+  /** Place a part document's parts (all, or `partIds`) into the open
+   *  assembly: beside what's there, or with its origin at `position`. The
+   *  assembly's first instance is grounded. */
+  z.object({
+    op: z.literal("insertInstance"),
+    documentId: z.string(),
+    partIds: z.array(z.string()).min(1).optional(),
+    /** How many of each part (default 1): copies are laid out in a grid. */
+    count: z.number().int().min(1).max(100).optional(),
+    position: z.tuple([z.number(), z.number(), z.number()]).optional(),
+    name: z.string().optional(),
+  }),
+  /** Copies of instances (count each, default 1), in a grid beside each
+   *  original: turned as it is, in its colour, with no mates, not grounded. */
+  z.object({
+    op: z.literal("duplicateInstance"),
+    instanceIds: z.array(z.string()).min(1),
+    count: z.number().int().min(1).max(100).optional(),
+  }),
+  /** Fix an instance where it is (grounded: true, the default) or free it. */
+  z.object({ op: z.literal("groundInstance"), instanceId: z.string(), grounded: z.boolean().optional() }),
+  /** Join two instances with a mate. b moves to a: by default the two
+   *  connectors' Z axes face each other (two faces touching); flip points
+   *  them the same way; turns rotates b in quarter turns about Z. values set
+   *  the free DOFs (mm / degrees, numbers or expressions). */
+  z.object({
+    op: z.literal("addMate"),
+    type: z.enum(["fastened", "revolute", "slider", "cylindrical", "planar", "ball", "width"]),
+    a: connectorSpecSchema,
+    b: connectorSpecSchema,
+    name: z.string().optional(),
+    flip: z.boolean().optional(),
+    turns: z.number().int().min(0).max(3).optional(),
+    values: z.partialRecord(dofSchema, expr).optional(),
+    limits: z.partialRecord(dofSchema, z.object({ min: expr.optional(), max: expr.optional() })).optional(),
+  }),
+  /** Set one free DOF of a mate (mm / degrees, a number or an expression; ""
+   *  resets it to 0). A DOF a relation drives sets its driver instead, to
+   *  what puts it there (a number only). */
+  z.object({
+    op: z.literal("setMateValue"),
+    mateId: z.string(),
+    dof: dofSchema,
+    value: expr,
+    /** Inside a loop group, consent to clear the expressions the value needs
+     *  out of its way (they become plain numbers). Without it such a value is
+     *  refused, naming them. */
+    clearExpressions: z.boolean().optional(),
+  }),
+  /** Drive one mate's DOF from another's. gear: rotation → rotation, value =
+   *  ratio (driven turns per driver turn; meshed gears turn opposite ways);
+   *  rack: rotation ↔ translation, value = pinion radius (mm); screw:
+   *  rotation ↔ translation, value = pitch (mm per turn) — a cylindrical
+   *  mate's own rz → tz is a screw. reverse flips the direction. */
+  /** Change a mate, keeping its id, name and the relations that use it: only
+   *  the fields given change. a/b replace that side's connector (same form as
+   *  addMate). values merge in ("" clears one); limits merge in per DOF (null
+   *  clears one). A new type drops the values and limits of DOFs it doesn't
+   *  have (width needs a and b given again, with face2). */
+  z.object({
+    op: z.literal("editMate"),
+    mateId: z.string(),
+    type: z.enum(["fastened", "revolute", "slider", "cylindrical", "planar", "ball", "width"]).optional(),
+    a: connectorSpecSchema.optional(),
+    b: connectorSpecSchema.optional(),
+    name: z.string().min(1).optional(),
+    flip: z.boolean().optional(),
+    turns: z.number().int().min(0).max(3).optional(),
+    values: z.partialRecord(dofSchema, expr).optional(),
+    limits: z
+      .partialRecord(dofSchema, z.union([z.object({ min: expr.optional(), max: expr.optional() }), z.null()]))
+      .optional(),
+  }),
+  /** Leave a mate or relation out of the solve, keeping it (suppressed: true,
+   *  the default), or bring it back. Parts it held stay where they are. */
+  z.object({ op: z.literal("setSuppressed"), id: z.string(), suppressed: z.boolean().optional() }),
+  /** Change a relation: only the fields given change. */
+  z.object({
+    op: z.literal("editRelation"),
+    relationId: z.string(),
+    type: z.enum(["gear", "rack", "screw"]).optional(),
+    driver: z.object({ mateId: z.string(), dof: dofSchema }).optional(),
+    driven: z.object({ mateId: z.string(), dof: dofSchema }).optional(),
+    value: expr.optional(),
+    reverse: z.boolean().optional(),
+    name: z.string().min(1).optional(),
+  }),
+  z.object({
+    op: z.literal("addRelation"),
+    type: z.enum(["gear", "rack", "screw"]),
+    driver: z.object({ mateId: z.string(), dof: dofSchema }),
+    driven: z.object({ mateId: z.string(), dof: dofSchema }),
+    value: expr,
+    reverse: z.boolean().optional(),
+    name: z.string().optional(),
+  }),
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -582,6 +704,20 @@ export const readQuerySchema = z.discriminatedUnion("read", [
     /** Snap the camera to a standard view before capturing. */
     view: z.enum(["front", "back", "left", "right", "top", "bottom", "iso"]).optional(),
   }),
+  /** ASSEMBLY only: sweep one free DOF of a mate from `from` to `to` and
+   *  screenshot it at `frames` evenly spaced values — the Animate dialog's
+   *  motion, as stills. Nothing is written to the document. from/to default
+   *  as the dialog's: between the DOF's limits, else a full turn (a rotation)
+   *  or 20 mm (a translation) from where it is. */
+  z.object({
+    read: z.literal("animateMate"),
+    mateId: z.string(),
+    dof: dofSchema.optional(),
+    from: z.number().optional(),
+    to: z.number().optional(),
+    frames: z.number().int().min(2).max(8).optional(),
+    view: z.enum(["front", "back", "left", "right", "top", "bottom", "iso"]).optional(),
+  }),
 ]);
 export type ReadQuery = z.infer<typeof readQuerySchema>;
 
@@ -589,6 +725,16 @@ export type ReadQuery = z.infer<typeof readQuerySchema>;
 export const READ_NAMES = readQuerySchema.options.map((o) => o.shape.read.value);
 
 // --- Result shapes --------------------------------------------------------
+
+/** What animateMate returns: each frame's DOF value, PNG data URL, and any
+ *  mate that frame leaves unsatisfied (where the motion jams). */
+export interface AnimationFrames {
+  mateId: string;
+  dof: string;
+  from: number;
+  to: number;
+  frames: { value: number; image: string; problem?: string }[];
+}
 
 export type ErrorKind = "not_found" | "invalid_op" | "kernel_error";
 
@@ -603,6 +749,8 @@ export type ErrorKind = "not_found" | "invalid_op" | "kernel_error";
 export interface OpResult {
   ok: boolean;
   createdId?: string;
+  /** Every id an op created, when it made several (insertInstance). */
+  createdIds?: string[];
   error?: string;
   errorKind?: ErrorKind;
   featureErrors?: Record<string, string>;
@@ -614,8 +762,12 @@ export interface DocumentListing {
   id: string;
   name: string;
   updatedAt: number;
+  kind: "part" | "assembly";
   featureCount: number;
   partCount: number;
+  /** Assemblies only: how many part instances it places, and mates join them. */
+  instanceCount?: number;
+  mateCount?: number;
   /** True for the document currently open in the tab. */
   active: boolean;
 }
@@ -657,6 +809,98 @@ export interface SceneSummary {
   featureCount: number;
   selection: unknown[];
   errors: Record<string, string>;
+}
+
+/** The scene summary of an open ASSEMBLY (see agent/assemblySummary.ts):
+ *  what's placed, how it's joined, and what can still move. `kind` tells it
+ *  from a part's SceneSummary. */
+export interface AssemblySummary {
+  kind: "assembly";
+  documentId: string;
+  documentName: string;
+  /** The parts instances are made from, each once: `key` is what an instance's
+   *  `part` names. `faces`/`edges` are the names a mate's connector can use
+   *  (a vertex is an end of a named edge). Absent while its document loads or
+   *  when it can't be read (`problem`). */
+  parts: {
+    key: string;
+    documentId: string;
+    documentName?: string;
+    partId: string;
+    name?: string;
+    faces?: string[];
+    edges?: string[];
+    problem?: string;
+  }[];
+  instances: {
+    id: string;
+    name: string;
+    /** A `parts[].key`. */
+    part: string;
+    grounded?: boolean;
+    hidden?: boolean;
+    /** Placed by a mate (else by its own stored placement). */
+    mated?: boolean;
+    /** World-space bounds where it's placed now. */
+    bbox?: { min: [number, number, number]; max: [number, number, number] };
+  }[];
+  mates: {
+    id: string;
+    name: string;
+    type: string;
+    a: AssemblyConnectorSummary;
+    b: AssemblyConnectorSummary;
+    flip?: boolean;
+    /** Quarter turns of b about the mate's Z. */
+    turns?: number;
+    /** What the mate leaves free, with where each is now. `expression` when its
+     *  value is one (it drives); `drivenBy` a relation id when one sets it. */
+    free: {
+      dof: string;
+      label: string;
+      value: number;
+      expression?: string;
+      drivenBy?: string;
+      min?: string;
+      max?: string;
+    }[];
+    suppressed?: boolean;
+    /** Why it couldn't be applied. */
+    problem?: string;
+    /** It applies, but a connector was re-found by fingerprint: check it. */
+    warning?: string;
+  }[];
+  relations: {
+    id: string;
+    name: string;
+    type: string;
+    driver: { mateId: string; dof: string };
+    driven: { mateId: string; dof: string };
+    value: string;
+    reverse?: boolean;
+    suppressed?: boolean;
+    problem?: string;
+  }[];
+  /** Groups of instances solved together (a closed loop of mates, or two mates
+   *  between one pair): their plain-number mate values only report. */
+  loops: { instanceIds: string[]; mateIds: string[] }[];
+  variables: { name: string; expression: string; value?: number }[];
+  /** Selected instance ids. */
+  selection: string[];
+}
+
+/** One side of a mate, as the assembly summary shows it. */
+export interface AssemblyConnectorSummary {
+  instanceId: string;
+  /** "face" | "edge" | "vertex" — a vertex is the end of `name` nearest where it was picked. */
+  kind: string;
+  /** The face or edge name on the instance's part. */
+  name: string;
+  /** A width mate's second face. */
+  name2?: string;
+  /** Where on the entity the connector sits: center, or an edge's start/end. */
+  anchor: string;
+  offset?: Partial<Record<"x" | "y" | "z", string>>;
 }
 
 // --- Expression-aware coordinate arithmetic -------------------------------

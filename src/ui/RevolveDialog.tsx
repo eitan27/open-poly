@@ -1,5 +1,6 @@
 import { DraggableDialog } from "./DraggableDialog";
 import { PickSlot } from "./PickSlot";
+import { ExprInput } from "./ExprInput";
 
 export type RevolveMode = "full" | "angle";
 
@@ -87,7 +88,7 @@ export function RevolveDialog({
         <>
           <label className="ed-field">
             <span>Angle (°)</span>
-            <input
+            <ExprInput
               autoFocus
               value={degrees}
               onChange={(e) => onDegreesChange(e.target.value)}

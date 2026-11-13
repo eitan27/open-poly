@@ -81,6 +81,9 @@ const _scaleTmp = new THREE.Vector3();
 /** Scratch vector for moving highlight vertices with a dragged body (same
  *  reason: this runs once per highlighted vertex, every drag frame). */
 const _highlightTmp = new THREE.Vector3();
+const _identity = new THREE.Matrix4();
+/** A drag motion that, to rounding, goes nowhere. */
+const isIdentity = (m: THREE.Matrix4) => m.elements.every((v, i) => Math.abs(v - _identity.elements[i]) < 1e-9);
 /** The proxy's local rotate axis, and a scratch for aligning it to a world one. */
 const _unitZ = new THREE.Vector3(0, 0, 1);
 const _axisTmp = new THREE.Vector3();
@@ -174,6 +177,9 @@ interface SceneState {
   ghostFillLineMaterial: THREE.LineBasicMaterial;
   ghostCutMaterial: THREE.MeshStandardMaterial;
   ghostCutLineMaterial: THREE.LineBasicMaterial;
+  /** Small point markers (an assembly's candidate connector points): opaque
+   *  and on top of everything, so they read against any part colour. */
+  ghostMarkerMaterial: THREE.MeshBasicMaterial;
   /** A whole body a Boolean subtract will consume — the removal red as an
    *  ordinary, occluded ghost (see the material's own comment). */
   ghostCutBodyMaterial: THREE.MeshStandardMaterial;
@@ -197,13 +203,20 @@ interface SceneState {
      *  which the drag never touches, so they have to be moved by this to travel
      *  with the body instead of hanging in the air where it started. */
     delta: THREE.Matrix4;
+    /** Other bodies the drag moves (see the transformDragPoses prop), each
+     *  posed by its own motion. */
+    followers: Map<string, { objects: THREE.Object3D[]; delta: THREE.Matrix4 }>;
   } | null;
   /** A just-released drag whose kernel regenerate is still in flight. The commit
    *  changes the document immediately, which rebuilds the body's objects from the
    *  STILL-STALE meshes (original position) before the new geometry lands — so we
    *  re-pin the dragged matrix onto each rebuild until the body's mesh reference
    *  actually changes (the real geometry), avoiding a flash back to the origin. */
-  pendingCommit: { bodyId: string; delta: THREE.Matrix4; meshRef: unknown } | null;
+  pendingCommits: { bodyId: string; delta: THREE.Matrix4; meshRef: unknown }[];
+  /** Bodies posed by ViewportApi.poseBodies (an assembly animation): each one's
+   *  motion from where its mesh was baked. Re-applied after a rebuild, like
+   *  pendingCommits. Empty when nothing is posed. */
+  bodyPoses: Map<string, THREE.Matrix4>;
   // The rubber-band preview while drawing (line/rect/arc/polygon), as a fat line
   // so it reads as clearly as a committed sketch line.
   previewLine: Line2;
@@ -279,6 +292,8 @@ export const GHOST_CUT_COLOR = 0xff6b5a;
  *  delta pair is read as a pair, and green/red carries "gained/lost" with no
  *  legend, where cyan/red would just look like two unrelated previews. */
 export const GHOST_FILL_COLOR = 0x51e08a;
+/** Point markers (variant "marker"): a near-white that shows on any part. */
+const GHOST_MARKER_COLOR = 0xf4f7ff;
 const EDGE_SEL_COLOR = new THREE.Color(SELECT_COLOR);
 const EDGE_HOV_COLOR = new THREE.Color(0x36d6c3);
 // Small persistent dots drawn at every selectable/draggable vertex of the ACTIVE
@@ -396,6 +411,7 @@ export function Viewport({
   transformMode,
   onTransformInput,
   onTransformPreview,
+  transformDragPoses,
   extrudeGizmo,
   onExtrudeDistanceChange,
   picking,
@@ -414,6 +430,7 @@ export function Viewport({
   onDraftCursor,
   onSketchClick,
   onSketchToolHover,
+  onHoverPick,
   trimPreview,
   onSketchDragMove,
   onSketchDragEnd,
@@ -474,6 +491,12 @@ export function Viewport({
   /** Per-frame numeric values during a drag, for display only (the floating
    *  panel's live readout). Must not trigger a regenerate. */
   onTransformPreview: (delta: TransformDelta) => void;
+  /** When given, a gizmo drag poses what this returns instead of just the
+   *  gizmo's own body: for each body id, the world motion (new · committed⁻¹)
+   *  the drag gives it, so dependants follow and a constrained body moves only
+   *  as it may. Bodies left out stay put. What it returns for the release
+   *  position must be exactly what the commit then bakes. */
+  transformDragPoses?: (delta: TransformDelta) => ReadonlyMap<string, readonly number[]> | null;
   /** The active extrude-distance gizmo (null = hidden). */
   extrudeGizmo: ExtrudeGizmo | null;
   /** Fired while the gizmo arrow is dragged (throttled — each change costs a
@@ -527,6 +550,10 @@ export function Viewport({
    *  cursor and where, so App can work out the piece that would go. Fires with
    *  null when the cursor is over nothing. */
   onSketchToolHover?: (hit: { entityId: string; uv: Vec2 } | null) => void;
+  /** The face, edge or vertex under the pointer changed, as a selection would
+   *  see it (null: none). Idle selection hover only — what an assembly's Mate
+   *  dialog shows candidate connector points from. */
+  onHoverPick?: (sel: Selection | null) => void;
   /** The span Trim would remove (or the stretch Extend would add), in sketch uv
    *  — drawn on the active sketch plane in the "this is going" colour. */
   trimPreview?: Vec2[] | null;
@@ -582,6 +609,8 @@ export function Viewport({
   onTransformInputRef.current = onTransformInput;
   const onTransformPreviewRef = useRef(onTransformPreview);
   onTransformPreviewRef.current = onTransformPreview;
+  const transformDragPosesRef = useRef(transformDragPoses);
+  transformDragPosesRef.current = transformDragPoses;
   const extrudeGizmoRef = useRef(extrudeGizmo);
   extrudeGizmoRef.current = extrudeGizmo;
   const onExtrudeDistanceChangeRef = useRef(onExtrudeDistanceChange);
@@ -640,6 +669,8 @@ export function Viewport({
   onSketchDragMoveRef.current = onSketchDragMove;
   const onSketchToolHoverRef = useRef(onSketchToolHover);
   onSketchToolHoverRef.current = onSketchToolHover;
+  const onHoverPickRef = useRef(onHoverPick);
+  onHoverPickRef.current = onHoverPick;
   const onSketchDragEndRef = useRef(onSketchDragEnd);
   onSketchDragEndRef.current = onSketchDragEnd;
   // derived from sketches + activeSketchId in the render effect
@@ -679,6 +710,11 @@ export function Viewport({
   // would then have to re-run for. Later changes go through the appearance
   // effect, in place.
   const mountSettingsRef = useRef({ theme, mouseMiddle, mouseRight, cameraInertia });
+  // The browser's 3D graphics (WebGL) failed: couldn't start, or the context
+  // was lost while open. Either way the view can't draw, so it says what to do
+  // instead of leaving a blank page with errors only in the console. Safari
+  // in particular can hand out an already-lost context until it's restarted.
+  const [glFailure, setGlFailure] = useState<"start" | "lost" | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -686,7 +722,21 @@ export function Viewport({
 
     // `stencil: true` — off by default in three.js — is required for the
     // section-view cross-section cap (see createSectionCapTriple).
-    const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
+      if (renderer.getContext().isContextLost()) throw new Error("WebGL context lost on creation");
+    } catch (e) {
+      console.error("The 3D view couldn't start:", e);
+      setGlFailure("start");
+      return;
+    }
+    const onContextLost = (e: Event) => {
+      // Lets the browser try to restore it; the view still needs a reload.
+      e.preventDefault();
+      setGlFailure("lost");
+    };
+    renderer.domElement.addEventListener("webglcontextlost", onContextLost);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.domElement.style.display = "block";
     container.appendChild(renderer.domElement);
@@ -876,6 +926,12 @@ export function Viewport({
     const ghostFillLineMaterial = ghostLineMat(GHOST_FILL_COLOR, true);
     const ghostCutMaterial = ghostFaceMat(GHOST_CUT_COLOR, true);
     const ghostCutLineMaterial = ghostLineMat(GHOST_CUT_COLOR, true);
+    const ghostMarkerMaterial = new THREE.MeshBasicMaterial({
+      color: GHOST_MARKER_COLOR,
+      depthTest: false,
+      depthWrite: false,
+      clippingPlanes: sectionClipPlanes,
+    });
     // A whole BODY about to be subtracted away wears the removal red too — but
     // as an ordinary depth-tested ghost, not the drawn-on-top `inside` one: a
     // subtract tool is a solid standing in the scene, not a sliver buried in
@@ -1190,7 +1246,13 @@ export function Viewport({
         const m0 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, te.scale);
         const objects = state.group.children.filter((c) => c.userData.featureId === te.bodyId);
         for (const o of objects) o.matrixAutoUpdate = false;
-        state.liveDrag = { bodyId: te.bodyId, objects, m0Inverse: m0.clone().invert(), delta: new THREE.Matrix4() };
+        state.liveDrag = {
+          bodyId: te.bodyId,
+          objects,
+          m0Inverse: m0.clone().invert(),
+          delta: new THREE.Matrix4(),
+          followers: new Map(),
+        };
       } else {
         // Drag end: commit the final values once — that is the only regenerate.
         const ld = state.liveDrag;
@@ -1203,9 +1265,21 @@ export function Viewport({
           // by the body's current mesh ref, which changes only when regenerate
           // returns — so the pin releases exactly when the new geometry lands.
           const m1 = transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, d.scale);
-          const delta = m1.multiply(ld.m0Inverse);
-          const entry = meshesRef.current.find((m) => m.id === te.bodyId);
-          state.pendingCommit = { bodyId: te.bodyId, delta, meshRef: entry?.mesh ?? null };
+          poseDraggedBody(ld, m1, d);
+          const pin = (bodyId: string, objects: THREE.Object3D[], delta: THREE.Matrix4) => {
+            if (isIdentity(delta)) {
+              // It ends where it started, so nothing will re-bake it: hand
+              // it straight back rather than pinning it for good.
+              for (const o of objects) o.matrixAutoUpdate = true;
+              return;
+            }
+            const entry = meshesRef.current.find((m) => m.id === bodyId);
+            state.pendingCommits.push({ bodyId, delta: delta.clone(), meshRef: entry?.mesh ?? null });
+          };
+          state.pendingCommits = [];
+          pin(ld.bodyId, ld.objects, ld.delta);
+          for (const [id, f] of ld.followers) pin(id, f.objects, f.delta);
+          applyHighlights();
         }
         onTransformInputRef.current(d);
       }
@@ -1218,7 +1292,7 @@ export function Viewport({
       if (!te) return;
       const d = proxyDelta(te, transformModeRef.current);
       const ld = state.liveDrag;
-      if (ld) poseDraggedBody(ld, transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, d.scale));
+      if (ld) poseDraggedBody(ld, transformMatrix(te.pivot, d.tx, d.ty, d.tz, d.angle, te.axis, d.scale), d);
       onTransformPreviewRef.current(d);
     });
 
@@ -1334,13 +1408,15 @@ export function Viewport({
       transformControls,
       gizmoProxy,
       liveDrag: null,
-      pendingCommit: null,
+      pendingCommits: [],
+      bodyPoses: new Map(),
       ghostGroup,
       ghostMaterial,
       ghostLineMaterial,
       ghostFillMaterial,
       ghostFillLineMaterial,
       ghostCutMaterial,
+      ghostMarkerMaterial,
       ghostCutLineMaterial,
       ghostCutBodyMaterial,
       previewLine,
@@ -1372,11 +1448,31 @@ export function Viewport({
      *  cursor when the drag started floats in place while the body slides out
      *  from under it. Cheap: the rebuild only walks the ranges actually
      *  highlighted, which is one face or edge. */
-    const poseDraggedBody = (ld: NonNullable<SceneState["liveDrag"]>, m1: THREE.Matrix4) => {
-      ld.delta.copy(m1).multiply(ld.m0Inverse); // current · committed⁻¹
-      for (const o of ld.objects) {
-        o.matrix.copy(ld.delta);
-        o.matrixWorldNeedsUpdate = true; // matrixAutoUpdate is off; force the world recompute
+    const poseDraggedBody = (ld: NonNullable<SceneState["liveDrag"]>, m1: THREE.Matrix4, d?: TransformDelta) => {
+      const setPose = (objects: THREE.Object3D[], delta: THREE.Matrix4) => {
+        for (const o of objects) {
+          o.matrix.copy(delta);
+          o.matrixWorldNeedsUpdate = true; // matrixAutoUpdate is off; force the world recompute
+        }
+      };
+      const poses = d && transformDragPosesRef.current?.(d);
+      if (!poses) {
+        ld.delta.copy(m1).multiply(ld.m0Inverse); // current · committed⁻¹
+        setPose(ld.objects, ld.delta);
+      } else {
+        // Each body the drag moves, by its own motion; the rest back home.
+        const motion = (id: string, into: THREE.Matrix4) => {
+          const m = poses.get(id);
+          return m ? into.fromArray(m) : into.identity();
+        };
+        setPose(ld.objects, motion(ld.bodyId, ld.delta));
+        for (const id of poses.keys()) {
+          if (id === ld.bodyId || ld.followers.has(id)) continue;
+          const objects = state.group.children.filter((c) => c.userData.featureId === id);
+          for (const o of objects) o.matrixAutoUpdate = false;
+          ld.followers.set(id, { objects, delta: new THREE.Matrix4() });
+        }
+        for (const [id, f] of ld.followers) setPose(f.objects, motion(id, f.delta));
       }
       applyHighlights();
     };
@@ -1446,12 +1542,16 @@ export function Viewport({
       // not carry (see SceneState.liveDrag), so anything copied out of that
       // geometry has to be moved by the same matrix — otherwise the outline of a
       // hovered or selected face hangs in the air where the body used to be. The
-      // same holds for the released-but-not-yet-rebuilt window that pendingCommit
+      // same holds for the released-but-not-yet-rebuilt window that pendingCommits
       // pins, which is why it answers here too.
       const ld = state.liveDrag;
-      const pc = state.pendingCommit;
       const dragMotion = (featureId: string): THREE.Matrix4 | null =>
-        ld?.bodyId === featureId ? ld.delta : pc?.bodyId === featureId ? pc.delta : null;
+        ld?.bodyId === featureId
+          ? ld.delta
+          : (ld?.followers.get(featureId)?.delta ??
+            state.pendingCommits.find((p) => p.bodyId === featureId)?.delta ??
+            state.bodyPoses.get(featureId) ??
+            null);
       const pushRange = (
         geom: THREE.BufferGeometry,
         start: number,
@@ -1712,6 +1812,46 @@ export function Viewport({
       }
       return pts;
     };
+    /** Render one frame and read it back (`read`) in the same tick, since the
+     *  WebGL drawing buffer isn't preserved across the browser's compositing
+     *  step. Snaps any in-flight view tween to its end first, so the camera
+     *  asked for is the one captured. `plain` renders it with every highlight
+     *  (selection, hover, whole-body, boolean operands) blanked, then restores
+     *  them — all in this tick, so the on-screen frame the user sees next is
+     *  the normal highlighted one. */
+    const captureFrame = (plain: boolean, read: () => void) => {
+      if (state.tween) {
+        camera.position.copy(state.tween.to);
+        camera.up.copy(state.tween.up);
+        state.tween = null;
+      }
+      controls.update();
+      const saved = plain
+        ? {
+            sel: selectionRef.current,
+            hover: hoverSelRef.current,
+            bodies: highlightBodyIdsRef.current,
+            bool: booleanHighlightRef.current,
+          }
+        : null;
+      if (saved) {
+        selectionRef.current = [];
+        hoverSelRef.current = null;
+        highlightBodyIdsRef.current = new Set();
+        booleanHighlightRef.current = null;
+        applyHighlights();
+      }
+      renderer.render(scene, camera);
+      read();
+      if (saved) {
+        selectionRef.current = saved.sel;
+        hoverSelRef.current = saved.hover;
+        highlightBodyIdsRef.current = saved.bodies;
+        booleanHighlightRef.current = saved.bool;
+        applyHighlights();
+        renderer.render(scene, camera);
+      }
+    };
     apiRef.current = {
       setView(name) {
         goToView(name);
@@ -1853,6 +1993,38 @@ export function Viewport({
           startTween(center.clone().add(N.clone().multiplyScalar(dist)), new THREE.Vector3(...frame.vAxis), center);
         }
       },
+      poseBodies(poses) {
+        const next = new Map<string, THREE.Matrix4>();
+        for (const [id, m] of poses ?? []) next.set(id, new THREE.Matrix4().fromArray(m));
+        for (const o of state.group.children) {
+          const id = o.userData.featureId as string | undefined;
+          if (!id || state.liveDrag?.bodyId === id) continue;
+          const m = next.get(id);
+          if (m) {
+            o.matrixAutoUpdate = false;
+            o.matrix.copy(m);
+            o.matrixWorldNeedsUpdate = true;
+          } else if (state.bodyPoses.has(id) && !state.pendingCommits.some((pc) => pc.bodyId === id)) {
+            // Back where its mesh was baked.
+            o.matrix.identity();
+            o.matrixAutoUpdate = true;
+            o.matrixWorldNeedsUpdate = true;
+          }
+        }
+        state.bodyPoses = next;
+        applyHighlights();
+      },
+      releaseDragPins() {
+        for (const pc of state.pendingCommits)
+          for (const o of state.group.children)
+            if (o.userData.featureId === pc.bodyId) {
+              o.matrix.identity();
+              o.matrixAutoUpdate = true;
+              o.matrixWorldNeedsUpdate = true;
+            }
+        state.pendingCommits = [];
+        applyHighlights();
+      },
       worldToScreen(p) {
         const v = new THREE.Vector3(p[0], p[1], p[2]).project(camera);
         const rect = renderer.domElement.getBoundingClientRect();
@@ -1869,45 +2041,22 @@ export function Viewport({
         return edgePolyline(featureId, (g) => g.name === name);
       },
       capturePNG(opts) {
-        // Snap to the end of any in-flight view tween so the requested camera is
-        // captured now, not mid-animation.
-        if (state.tween) {
-          camera.position.copy(state.tween.to);
-          camera.up.copy(state.tween.up);
-          state.tween = null;
-        }
-        controls.update();
-        // Plain mode: blank every highlight source, re-apply materials, render
-        // the capture frame, then restore — all in this tick, so the on-screen
-        // frame the user sees next is the normal highlighted one.
-        const saved = opts?.plain
-          ? {
-              sel: selectionRef.current,
-              hover: hoverSelRef.current,
-              bodies: highlightBodyIdsRef.current,
-              bool: booleanHighlightRef.current,
-            }
-          : null;
-        if (saved) {
-          selectionRef.current = [];
-          hoverSelRef.current = null;
-          highlightBodyIdsRef.current = new Set();
-          booleanHighlightRef.current = null;
-          applyHighlights();
-        }
-        // Read back in the same tick as render — the WebGL drawing buffer isn't
-        // preserved across the browser's compositing step.
-        renderer.render(scene, camera);
-        const url = renderer.domElement.toDataURL("image/png");
-        if (saved) {
-          selectionRef.current = saved.sel;
-          hoverSelRef.current = saved.hover;
-          highlightBodyIdsRef.current = saved.bodies;
-          booleanHighlightRef.current = saved.bool;
-          applyHighlights();
-          renderer.render(scene, camera);
-        }
+        let url = "";
+        captureFrame(!!opts?.plain, () => (url = renderer.domElement.toDataURL("image/png")));
         return url;
+      },
+      drawFrame(target) {
+        const src = renderer.domElement;
+        captureFrame(true, () => {
+          const c = target.canvas;
+          target.fillStyle = "#000";
+          target.fillRect(0, 0, c.width, c.height);
+          target.drawImage(src, 0, 0, src.width, src.height, 0, 0, c.width, c.height);
+        });
+      },
+      frameAspect() {
+        const c = renderer.domElement;
+        return c.height ? c.width / c.height : 16 / 9;
       },
     };
 
@@ -2797,6 +2946,7 @@ export function Viewport({
         hoverSelRef.current = sel;
         renderer.domElement.style.cursor = sel ? "pointer" : "";
         applyHighlights();
+        onHoverPickRef.current?.(sel);
       }
     };
     const onDown = (e: PointerEvent) => {
@@ -2848,11 +2998,13 @@ export function Viewport({
           if (ld) {
             const m1 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, live);
             const entry = meshesRef.current.find((m) => m.id === te.bodyId);
-            state.pendingCommit = {
-              bodyId: te.bodyId,
-              delta: m1.multiply(ld.m0Inverse),
-              meshRef: entry?.mesh ?? null,
-            };
+            state.pendingCommits = [
+              {
+                bodyId: te.bodyId,
+                delta: m1.multiply(ld.m0Inverse),
+                meshRef: entry?.mesh ?? null,
+              },
+            ];
           }
           onTransformInputRef.current({ tx: te.tx, ty: te.ty, tz: te.tz, angle: te.angle, scale: live });
         } else if (ld) {
@@ -3002,14 +3154,30 @@ export function Viewport({
           const m0 = transformMatrix(te.pivot, te.tx, te.ty, te.tz, te.angle, te.axis, te.scale);
           const objects = state.group.children.filter((c) => c.userData.featureId === te.bodyId);
           for (const o of objects) o.matrixAutoUpdate = false;
-          state.liveDrag = { bodyId: te.bodyId, objects, m0Inverse: m0.clone().invert(), delta: new THREE.Matrix4() };
+          state.liveDrag = {
+            bodyId: te.bodyId,
+            objects,
+            m0Inverse: m0.clone().invert(),
+            delta: new THREE.Matrix4(),
+            followers: new Map(),
+          };
           e.stopImmediatePropagation();
           return;
         }
       }
       cubeHit = viewCube.pick(renderer, e.clientX, e.clientY);
     };
-    const onGizmoLeave = () => viewCube.clearHover();
+    // Leaving the canvas (onto a panel, say) ends any hover: otherwise the last
+    // face or vertex stays lit under a dialog, and hover listeners (the Mate
+    // dialog's candidate points) keep showing it.
+    const onGizmoLeave = () => {
+      viewCube.clearHover();
+      if (hoverSelRef.current) {
+        hoverSelRef.current = null;
+        applyHighlights();
+        onHoverPickRef.current?.(null);
+      }
+    };
     // Double-click on a sketch entity (Select tool only): grab its whole
     // connected chain in one gesture. The two constituent single clicks still
     // toggle the entity via onUp; the chain-select that follows replaces it.
@@ -3382,6 +3550,7 @@ export function Viewport({
       ghostFillMaterial.dispose();
       ghostFillLineMaterial.dispose();
       ghostCutMaterial.dispose();
+      ghostMarkerMaterial.dispose();
       ghostCutLineMaterial.dispose();
       ghostCutBodyMaterial.dispose();
       previewLine.geometry.dispose();
@@ -3422,6 +3591,7 @@ export function Viewport({
       grid.geometry.dispose();
       (grid.material as THREE.Material).dispose();
       axes.dispose();
+      renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
       renderer.dispose();
       container.removeChild(renderer.domElement);
       apiRef.current = null;
@@ -3529,20 +3699,25 @@ export function Viewport({
     // (original position) before the regenerate returns; re-pin the dragged
     // matrix so it doesn't flash back. Once the body's mesh ref changes (real
     // geometry baked at the new position), release the pin.
-    const pc = state.pendingCommit;
-    if (pc) {
+    state.pendingCommits = state.pendingCommits.filter((pc) => {
       const entry = meshes.find((m) => m.id === pc.bodyId);
-      if (entry && entry.mesh === pc.meshRef) {
-        for (const o of state.group.children) {
-          if (o.userData.featureId === pc.bodyId) {
-            o.matrixAutoUpdate = false;
-            o.matrix.copy(pc.delta);
-            o.matrixWorldNeedsUpdate = true;
-          }
+      if (!entry || entry.mesh !== pc.meshRef) return false; // real geometry arrived (or body gone)
+      for (const o of state.group.children) {
+        if (o.userData.featureId === pc.bodyId) {
+          o.matrixAutoUpdate = false;
+          o.matrix.copy(pc.delta);
+          o.matrixWorldNeedsUpdate = true;
         }
-      } else {
-        state.pendingCommit = null; // real geometry arrived (or body gone)
       }
+      return true;
+    });
+    // An animation's poses, onto the rebuilt objects.
+    for (const o of state.group.children) {
+      const m = state.bodyPoses.get(o.userData.featureId as string);
+      if (!m) continue;
+      o.matrixAutoUpdate = false;
+      o.matrix.copy(m);
+      o.matrixWorldNeedsUpdate = true;
     }
     applyHighlightsRef.current();
     // sectionView.enabled is included so toggling section view rebuilds the
@@ -3568,6 +3743,12 @@ export function Viewport({
       // Depth-testless delta ghosts also need an explicit renderOrder — with the
       // depth buffer out of the picture, draw order is all that separates them
       // (fill below cut, both above the model).
+      if (ghost.variant === "marker") {
+        const marker = new THREE.Mesh(geometry.faces, state.ghostMarkerMaterial);
+        marker.renderOrder = 4;
+        state.ghostGroup.add(marker);
+        return;
+      }
       const [faceMat, lineMat, order] =
         ghost.variant === "cut"
           ? [state.ghostCutMaterial, state.ghostCutLineMaterial, 3]
@@ -4159,7 +4340,35 @@ export function Viewport({
     activeSketchFaceRef.current = faceIds.size ? { bodyId: activeSketchFace.bodyId, faceIds } : null;
   }, [activeSketchFace, meshes]);
 
-  return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+      {glFailure && <GlFailure kind={glFailure} />}
+    </div>
+  );
+}
+
+/** What to do when the browser's 3D graphics failed (see `glFailure`). */
+function GlFailure({ kind }: { kind: "start" | "lost" }) {
+  return (
+    <div className="gl-failure" role="alert">
+      <h2>{kind === "start" ? "The 3D view couldn't start" : "The 3D view stopped working"}</h2>
+      <p>
+        {kind === "start"
+          ? "Your browser didn't give this page working 3D graphics (WebGL). This usually clears up when you restart the browser."
+          : "Your browser's 3D graphics (WebGL) stopped responding."}
+      </p>
+      <ol>
+        {kind === "lost" && <li>Reload the page.</li>}
+        <li>
+          {kind === "lost" ? "If that doesn't help, quit" : "Quit"} the browser completely (on a Mac, <kbd>⌘Q</kbd>;
+          closing the tab isn't enough), reopen it and come back.
+        </li>
+      </ol>
+      <p className="gl-failure-note">Your documents are saved in this browser, so nothing is lost.</p>
+      <button onClick={() => window.location.reload()}>Reload</button>
+    </div>
+  );
 }
 
 /** Append world-space segment endpoints for an entity to a flat buffer. */

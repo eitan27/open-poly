@@ -3,6 +3,7 @@ import type { ExtrudeExtent, ExtrudeMode } from "../document/types";
 import { DraggableDialog } from "./DraggableDialog";
 import { PickButton, PickedRow, PickSlot } from "./PickSlot";
 import type { PickGroup } from "./pickRows";
+import { ExprInput } from "./ExprInput";
 
 const MODE_LABELS: Record<ExtrudeMode, string> = { new: "New", add: "Add", remove: "Remove" };
 const MODES = ["new", "add", "remove"] as const;
@@ -160,7 +161,7 @@ export function ExtrudeDialog({
       {!upTo && (
         <label className="ed-field">
           <span>Distance</span>
-          <input
+          <ExprInput
             autoFocus
             value={distance}
             onChange={(e) => onDistanceChange(e.target.value)}

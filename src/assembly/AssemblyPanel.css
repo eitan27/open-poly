@@ -1,0 +1,299 @@
+/* The gap below a section stands in for .params-heading's margin-top, which
+   `.panel h2` out-specifies. */
+.asm-empty {
+  /* The gap above keeps the hint off the header row's button. */
+  margin: 8px 0 22px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* Compound, to beat .tree-list's own margin. */
+.tree-list.asm-list {
+  margin-bottom: 22px;
+}
+
+/* Name over source document, so a row says what it is a copy of. */
+.asm-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.asm-source {
+  font-size: 10px;
+  color: var(--text-7);
+  padding-left: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asm-source.bad {
+  color: var(--warn-text);
+}
+
+/* An instance whose part can't be found has no colour to show. */
+.asm-color-none {
+  border-style: dashed;
+}
+
+.asm-ground {
+  font-size: 13px;
+}
+
+/* Insert: a document row is a button in this list. */
+.insert-doc {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  cursor: pointer;
+}
+
+.insert-doc:hover {
+  border-color: var(--accent);
+}
+
+/* Insert's part list: "Parts" and "Instances" over the two columns. */
+.docs-dialog.insert-dialog {
+  width: min(400px, calc(100vw - 48px));
+}
+.insert-columns {
+  display: flex;
+  justify-content: space-between;
+  margin: 2px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-7);
+}
+
+.insert-parts {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* A part's row: unfold, tick and name, then how many. */
+.insert-part {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.insert-part label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.insert-expand {
+  flex: 0 0 auto;
+  width: 18px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-7);
+  cursor: pointer;
+}
+.insert-expand:hover {
+  color: var(--accent-palest);
+}
+.insert-count {
+  width: 52px;
+  padding: 3px 6px;
+  font-size: 12px;
+  background: var(--bg-sunken);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.insert-preview {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* A folded section keeps the gap its list would leave before the next. */
+.asm-folded {
+  height: 8px;
+}
+
+.insert-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--border-control);
+}
+
+.insert-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Mates: a type glyph where an instance row has its colour swatch. */
+.asm-mate-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  text-align: center;
+  color: var(--accent-soft);
+}
+
+/* The Mate dialog. Its six types wrap to two rows of three. */
+.feature-dialog.asm-mate {
+  width: 280px;
+}
+.ed-modes.asm-mate-types {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+.asm-mate-types button {
+  padding: 5px 4px;
+  font-size: 12px;
+}
+.asm-mate-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.asm-mate-dof {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.asm-mate-limits {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-6);
+}
+.asm-mate-limits span {
+  flex: 1 1 auto;
+}
+.asm-mate-limits input {
+  width: 52px;
+  font: inherit;
+}
+
+/* The mate icons (MateIcon.tsx), in the toolbar and the mates list: centred
+   on the label's text rather than sitting on its baseline. */
+.mate-icon {
+  vertical-align: -2px;
+}
+
+/* The Mate dialog's type: one button showing it, opening the .mt-menu of all
+   seven (MateTypePicker). */
+.asm-mate-type {
+  margin-bottom: 8px;
+}
+.asm-mate-type-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  background: var(--bg-control, transparent);
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.asm-mate-type-btn:hover,
+.asm-mate-type-btn[aria-expanded="true"] {
+  border-color: var(--accent);
+}
+.asm-mate-type-caret {
+  margin-left: auto;
+  color: var(--text-7);
+}
+.asm-mate-types {
+  width: 100%;
+  box-sizing: border-box;
+}
+.asm-mate-types button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.asm-mate-types button.active {
+  background: var(--accent-surface);
+  color: var(--accent-palest);
+}
+.asm-mate-type-key {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-8);
+}
+
+/* The Animate dialog's export in progress. */
+.asm-export-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-5);
+  margin: 4px 0 6px;
+}
+
+/* The Instances header holds ＋ Insert and the Export menu side by side; the
+   menu's button looks like its neighbour, and its list drops right-aligned
+   (mt-menu-right) over the rows below. */
+.parts-import:has(.asm-export) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.asm-export > .asm-export-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  color: var(--accent-palest);
+  background: var(--accent-surface-4);
+  border: 1px solid var(--accent-border-4);
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.asm-export > .asm-export-btn:hover:not(:disabled) {
+  background: var(--accent-surface-6);
+}
+.asm-export > .asm-export-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.asm-export .asm-export-menu {
+  min-width: 250px;
+  z-index: 20;
+}
+
+/* The Relation dialog: wide enough for Gear / Rack / Screw, icon and word, on
+   one line each. */
+.feature-dialog.asm-relation {
+  width: 240px;
+}
+.asm-relation .ed-modes button {
+  white-space: nowrap;
+}
+/* Its mate pickers: a fifth wider than a dialog's usual select (112px), as
+   "Driver" / "Driven" leave the room, so "Choose a mate" isn't cut off. */
+.asm-relation .ed-field select {
+  width: 134px;
+}

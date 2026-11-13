@@ -29,6 +29,8 @@ import { parseDocFile, serializeDocFile } from "../storage/docFile";
 import { dedupeName, isUntitled, nextUntitled } from "../storage/docNames";
 import { genId, isStarterDocument, migrateDocument } from "../document/document";
 import type { Document } from "../document/types";
+import type { AssemblyDoc } from "../assembly/types";
+import { isStarterAssembly } from "../assembly/assembly";
 import { docHash } from "./docHash";
 import { DriveError, type DocThumbnail, type DriveApi, type RemoteDoc } from "./driveApi";
 import { deleteSyncLink, listSyncLinks, putSyncLink, type SyncLink } from "./syncStore";
@@ -144,7 +146,15 @@ export class ReauthError extends Error {
 interface Pulled {
   name: string;
   doc: Document;
+  /** Present iff Drive's file is an assembly. */
+  assembly?: AssemblyDoc;
   hash: string;
+}
+
+/** A record's content fields as pulled — `assembly` only when there is one,
+ *  so a part record stays exactly the shape it always was. */
+function pulledContent(p: Pulled): { doc: Document; assembly?: AssemblyDoc } {
+  return p.assembly ? { doc: p.doc, assembly: p.assembly } : { doc: p.doc };
 }
 
 const defaultLock = <T>(fn: () => Promise<T>): Promise<T> =>
@@ -489,13 +499,13 @@ export class SyncEngine {
   private async isBlank(id: string): Promise<boolean> {
     const record = await loadDoc(id);
     if (!record) return false;
-    return isStarterDocument(record.doc);
+    return isStarterDocument(record.doc) && (!record.assembly || isStarterAssembly(record.assembly));
   }
 
   private async loadLocal(id: string): Promise<{ record: StoredDoc; hash: string } | null> {
     const record = await loadDoc(id);
     if (!record) return null;
-    return { record, hash: await docHash(record.name, record.doc) };
+    return { record, hash: await docHash(record.name, record.doc, record.assembly) };
   }
 
   /** Download and parse a Drive document. The name comes from the Drive FILE
@@ -503,7 +513,13 @@ export class SyncEngine {
   private async fetchRemote(remote: RemoteDoc): Promise<Pulled> {
     const parsed = parseDocFile(await this.api.download(remote.fileId));
     const doc = migrateDocument(parsed.doc);
-    return { name: remote.name, doc, hash: await docHash(remote.name, doc) };
+    const assembly = parsed.assembly;
+    return {
+      name: remote.name,
+      doc,
+      ...(assembly ? { assembly } : {}),
+      hash: await docHash(remote.name, doc, assembly),
+    };
   }
 
   /** Record that `docId` and `remote` now hold the same content. `thumbSize`
@@ -555,7 +571,7 @@ export class SyncEngine {
     const updated = await this.api.updateDoc(fileId, {
       name: record.name,
       docId: record.id,
-      content: serializeDocFile(record.name, record.doc),
+      content: serializeDocFile(record.name, record.doc, record.assembly),
       thumbnail: thumb?.hint,
       editedAt: record.updatedAt,
     });
@@ -570,7 +586,7 @@ export class SyncEngine {
     const created = await this.api.createDoc({
       name: local.record.name,
       docId,
-      content: serializeDocFile(local.record.name, local.record.doc),
+      content: serializeDocFile(local.record.name, local.record.doc, local.record.assembly),
       thumbnail: thumb?.hint,
       editedAt: local.record.updatedAt,
     });
@@ -589,7 +605,7 @@ export class SyncEngine {
     const record: StoredDoc = {
       id: docId,
       name: pulled.name,
-      doc: pulled.doc,
+      ...pulledContent(pulled),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       ...(existing?.sectionView ? { sectionView: existing.sectionView } : {}),
@@ -683,7 +699,7 @@ export class SyncEngine {
     const record: StoredDoc = {
       id: docId,
       name: pulled.name,
-      doc: pulled.doc,
+      ...pulledContent(pulled),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       ...(existing?.sectionView ? { sectionView: existing.sectionView } : {}),
@@ -793,7 +809,7 @@ export class SyncEngine {
     // Dated by its last edit (Drive's modifiedTime, which uploads set to the
     // edit time), not by this download: "edited 3d ago", and in edit order.
     const edited = Date.parse(remote.modifiedTime) || now;
-    const record: StoredDoc = { id, name: pulled.name, doc: pulled.doc, createdAt: edited, updatedAt: edited };
+    const record: StoredDoc = { id, name: pulled.name, ...pulledContent(pulled), createdAt: edited, updatedAt: edited };
     await putDoc(record);
     await this.linkTo(id, remote, pulled.hash, record);
     this.touchedLocal();

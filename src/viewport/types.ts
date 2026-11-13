@@ -39,8 +39,10 @@ export interface GhostMesh {
    *  (two of its faces exactly coplanar with the body's), and while editing —
    *  where the change is already applied to the model — the added material
    *  likewise lies inside the finished body. Drawn on top, the delta reads as a
-   *  translucent band hugging the edge in both cases. */
-  variant?: "add" | "fill" | "cut";
+   *  translucent band hugging the edge in both cases.
+   *   • "marker" — a small opaque point marker drawn on top of everything (an
+   *     assembly Mate dialog's candidate connector points). */
+  variant?: "add" | "fill" | "cut" | "marker";
 }
 
 export interface RenderSketch {
@@ -163,6 +165,15 @@ export interface ViewportApi {
   frameSketchBounds(frame: PlaneFrameData, min: [number, number], max: [number, number]): void;
   /** Project a world point to pixel coords relative to the canvas top-left. */
   worldToScreen(p: [number, number, number]): { x: number; y: number };
+  /** Pose bodies by matrix, without re-baking their meshes: each id's motion
+   *  from where its mesh was baked (column-major 4×4). Bodies left out go back
+   *  to their meshes; null releases them all. For assembly animation, which
+   *  calls this every frame. */
+  poseBodies(poses: ReadonlyMap<string, readonly number[]> | null): void;
+  /** Let go of the poses a released gizmo drag pinned while its commit was
+   *  awaited: for a drag that won't be committed after all (cancelled at a
+   *  confirmation), so the bodies show their meshes again. */
+  releaseDragPins(): void;
   /** The ordered world-space polyline of a body edge (by feature + edge id), as
    *  drawn — the source geometry the Project/Convert sketch tool projects onto
    *  the active plane. Null if that edge isn't currently rendered. */
@@ -185,4 +196,9 @@ export interface ViewportApi {
    *  on screen. Agent screenshots stay un-plain: highlighting the selection is
    *  how `select` + `screenshot` communicate. */
   capturePNG(opts?: { plain?: boolean }): string;
+  /** Render the current scene with no highlights and draw it, scaled, onto
+   *  `target`'s whole canvas: one frame of an exported animation. */
+  drawFrame(target: CanvasRenderingContext2D): void;
+  /** The view's width / height, for sizing an export's frames. */
+  frameAspect(): number;
 }

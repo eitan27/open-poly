@@ -1,5 +1,6 @@
 import { DraggableDialog } from "./DraggableDialog";
 import { PickSlot } from "./PickSlot";
+import { ExprInput } from "./ExprInput";
 
 /** Which half of a two-level reference control is showing. `null` is neither:
  *  nothing chosen yet, so only the segmented pair is offered. */
@@ -150,7 +151,12 @@ export function PatternDialog({
   const field = (label: string, f: PatternNumericField, value: string, autoFocus = false) => (
     <label className="ed-field" key={f}>
       <span>{label}</span>
-      <input autoFocus={autoFocus} value={value} onChange={(e) => onFieldChange(f, e.target.value)} onKeyDown={enter} />
+      <ExprInput
+        autoFocus={autoFocus}
+        value={value}
+        onChange={(e) => onFieldChange(f, e.target.value)}
+        onKeyDown={enter}
+      />
     </label>
   );
 

@@ -137,6 +137,23 @@ included, has since been done:
   cylinder−box fine, and so does this build _in isolation_.
 - Tessellation LOD — no distance/zoom mesh simplification.
 
+**Measuring is passive and shared** (`selection/measure.ts`, `measurePair.ts`,
+`ui/MeasurePanel`): whatever is selected is measured in the box at the bottom
+right, in a part document and in an assembly alike (an assembly's picks on its
+placed meshes, so in assembly space; it has no part document, so sketch picks
+measure only in a part). One pick: area and diameter (a face), length or
+diameter (an edge), coordinates (a vertex). A faceted round face's diameter is
+fitted from its outline's corners — the boundary edges across its cluster, so
+a fan's hub, points a mesher adds inside and a seam corner's float32 twin
+don't skew it — or, in a part, traced to the sketch circle an extrude was
+drawn with. Two picks (any of vertex, edge, face, on one part or two): the
+true minimum Distance over their triangles and segments, then what their
+shapes mean — ΔX/ΔY/ΔZ, Parallel distance or Angle, centre or axis distance,
+a point's distance to a line, axis or plane — from the same fits a mate's
+connectors use (`frames.ts`). More picks: their count and total area.
+Measurements are transient by design: they follow the selection and go with
+it, so they're never stale and there's no mode or clutter.
+
 **Performance — two optimizations that measured well alone and badly together.**
 The warning is the point; `shelved/viewport-geom-reuse-and-lazy-regen` is deleted.
 **Opt A** stamps each mesh with its content hash (`ShapeMeshPayload.key`) and
@@ -169,7 +186,9 @@ blocking, or persisting the import's built body across reloads, over deferring.
   splines and text are excluded, matching mirror.
 - **Planes:** hinge on a picked edge; line+point and two-parallel-edges methods.
 - **Sweep/loft:** twist, multiple profiles, guide rails, ruled option.
-- **Measure:** the info pane reads a selection; no pick-two measure tool.
+- **Measure:** picking a whole body measures nothing (no volume, mass or
+  overall size), and the minimum distance is skipped for two very large faces
+  (over 2M primitive pairs) rather than computed slowly.
 - **STEP import:** drag-and-drop onto the viewport. Disjoint solids already split
   into parts, but unnamed — real part names need `STEPCAFControl_Reader`, which
   this wasm build does not expose, so that is a kernel rebuild before it is a

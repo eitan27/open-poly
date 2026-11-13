@@ -350,7 +350,7 @@ describe("distance between two parallel edges", () => {
     expect(distanceOf([b], [pick("b", 0), pick("b", 1), pick("b", 2)])).toBeUndefined();
   });
 
-  it("reports just the count and the distance, nothing else", () => {
+  it("reports the edges' minimum and parallel distances", () => {
     const b = body("b", [
       [
         [0, 0, 0],
@@ -361,9 +361,10 @@ describe("distance between two parallel edges", () => {
         [10, 4, 0],
       ],
     ]);
-    const rows = measureSelection([pick("b", 0), pick("b", 1)], doc, [b])!.rows;
-    expect(rows).toEqual([
-      { label: "Selected", value: "2" },
+    const m = measureSelection([pick("b", 0), pick("b", 1)], doc, [b])!;
+    expect(m.title).toBe("Edge ↔ Edge");
+    expect(m.rows).toEqual([
+      { label: "Distance", value: "4" },
       { label: "Parallel distance", value: "4" },
     ]);
   });
@@ -470,4 +471,116 @@ describe("logical circular-edge measurement", () => {
     expect(info?.title).toBe("Edge");
     expect(info?.rows).toContainEqual({ label: "Length", value: "8" });
   });
+});
+
+describe("faceted round face diameter, from the mesh alone (an assembly)", () => {
+  /** A 48-gon prism, radius 5, 4 tall, as the kernel tessellates an extruded
+   *  circle: wall facets in one cluster, the top cap a fan about its centre. */
+  function prism(): FeatureMesh {
+    const n = 48,
+      r = 5,
+      h = 4;
+    const vertices: number[] = [];
+    const triangles: number[] = [];
+    const faceGroups: { start: number; count: number; faceId: number; clusterId?: number }[] = [];
+    const at = (i: number, z: number) => [r * Math.cos((2 * Math.PI * i) / n), r * Math.sin((2 * Math.PI * i) / n), z];
+    for (let i = 0; i < n; i++) {
+      const b = vertices.length / 3;
+      vertices.push(...at(i, 0), ...at(i + 1, 0), ...at(i + 1, h), ...at(i, h));
+      faceGroups.push({ start: triangles.length, count: 6, faceId: 1 + i, clusterId: 1 });
+      triangles.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    }
+    const hub = vertices.length / 3;
+    vertices.push(0, 0, h);
+    const cap = triangles.length;
+    for (let i = 0; i < n; i++) {
+      const b = vertices.length / 3;
+      vertices.push(...at(i, h), ...at(i + 1, h));
+      triangles.push(hub, b, b + 1);
+    }
+    faceGroups.push({ start: cap, count: 3 * n, faceId: 0 });
+    return {
+      id: "p",
+      mesh: { name: "p", faces: { vertices, triangles, faceGroups }, edges: { lines: [] } },
+      color: 0,
+      opacity: 1,
+    } as unknown as FeatureMesh;
+  }
+  const diameter = (faceId: number) =>
+    measureSelection([{ kind: "face", featureId: "p", faceId }], null, [prism()])?.rows.find(
+      (r) => r.label === "Diameter",
+    )?.value;
+
+  it("reads a wall facet's cylinder", () => expect(diameter(7)).toBe("10"));
+  it("reads a fan-triangulated cap", () => expect(diameter(0)).toBe("10"));
+  it("reads a flat ring's two diameters", () => {
+    const n = 48;
+    const at = (r: number, i: number) => [r * Math.cos((2 * Math.PI * i) / n), r * Math.sin((2 * Math.PI * i) / n), 0];
+    const vertices: number[] = [];
+    const triangles: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const b = vertices.length / 3;
+      vertices.push(...at(3, i), ...at(6, i), ...at(6, i + 1), ...at(3, i + 1));
+      triangles.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    }
+    const ring = {
+      id: "r",
+      mesh: {
+        name: "r",
+        faces: { vertices, triangles, faceGroups: [{ start: 0, count: triangles.length, faceId: 0 }] },
+        edges: { lines: [] },
+      },
+      color: 0,
+      opacity: 1,
+    } as unknown as FeatureMesh;
+    const rows = measureSelection([{ kind: "face", featureId: "r", faceId: 0 }], null, [ring])?.rows;
+    expect(rows?.find((r) => r.label === "Outer diameter")?.value).toBe("12");
+    expect(rows?.find((r) => r.label === "Inner diameter")?.value).toBe("6");
+  });
+  it("reads a ring split into sector faces, with a seam's float twin and a point inside", () => {
+    // A revolve's flat end: one sector face per step, in one cluster. The last
+    // sector's closing corner is a hair off the first's (float32), and one
+    // sector carries a point a mesher put inside it.
+    const n = 48;
+    const at = (r: number, i: number) => [r * Math.cos((2 * Math.PI * i) / n), r * Math.sin((2 * Math.PI * i) / n), 0];
+    const vertices: number[] = [];
+    const triangles: number[] = [];
+    const faceGroups: { start: number; count: number; faceId: number; clusterId: number }[] = [];
+    for (let i = 0; i < n; i++) {
+      const b = vertices.length / 3;
+      const next =
+        i === n - 1 ? [at(3, n).map((x) => x + 2e-5), at(6, n).map((x) => x + 2e-5)] : [at(3, i + 1), at(6, i + 1)];
+      vertices.push(...at(3, i), ...at(6, i), ...next[1], ...next[0]);
+      const start = triangles.length;
+      if (i === 5) {
+        // A point inside the sector, the four triangles fanned about it.
+        const c = at(4.5, i + 0.5);
+        vertices.push(...c);
+        const m = b + 4;
+        triangles.push(b, b + 1, m, b + 1, b + 2, m, b + 2, b + 3, m, b + 3, b, m);
+      } else triangles.push(b, b + 1, b + 2, b, b + 2, b + 3);
+      faceGroups.push({ start, count: triangles.length - start, faceId: i, clusterId: 1 });
+    }
+    const ring = {
+      id: "r",
+      mesh: { name: "r", faces: { vertices, triangles, faceGroups }, edges: { lines: [] } },
+      color: 0,
+      opacity: 1,
+    } as unknown as FeatureMesh;
+    const rows = measureSelection([{ kind: "face", featureId: "r", faceId: 9 }], null, [ring])?.rows;
+    expect(rows?.find((r) => r.label === "Outer diameter")?.value).toBe("12");
+    expect(rows?.find((r) => r.label === "Inner diameter")?.value).toBe("6");
+  });
+  it("shows nothing for a square face", () => {
+    const sq = faceBody();
+    expect(
+      measureSelection([{ kind: "face", featureId: "f", faceId: 0 }], null, [sq])?.rows.find(
+        (r) => r.label === "Diameter",
+      ),
+    ).toBeUndefined();
+  });
+  it("shows nothing for a sketch entity without its document", () =>
+    expect(
+      measureSelection([{ kind: "sketchEntity", sketchId: "s", entityId: "e" } as Selection], null, []),
+    ).toBeNull());
 });

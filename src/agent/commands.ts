@@ -27,7 +27,6 @@ import {
   addSweep,
   addSketchEntities,
   addTransform,
-  addVariable,
   genId,
   removeSketchConstraint,
   setSketchEntities,
@@ -40,8 +39,7 @@ import {
   setFeatureOpacity,
   setRollbackIndex,
   updateParam,
-  updateVariable,
-  validateVariableNames,
+  setVariableByName,
 } from "../document/document";
 import { expandPickToChains } from "../geom/edgeChains";
 import { edgeLine } from "../geom/meshQuery";
@@ -71,7 +69,6 @@ import type {
   SketchEntity,
   SketchFeature,
   TransformAxis,
-  Variable,
   Vec2,
 } from "../document/types";
 import { listMeta } from "../storage/db";
@@ -79,12 +76,35 @@ import type { MeshedEdges, MeshedFaces, ShapeMeshPayload } from "../kernel/types
 import type { SectionViewState } from "../document/sectionView";
 import type { Selection } from "../selection/types";
 import type { ViewName } from "../viewport/types";
+import { assemblySummary, type AssemblyAgentState } from "./assemblySummary";
+import {
+  planAddRelation,
+  planDelete,
+  planDuplicate,
+  planEditMate,
+  planEditRelation,
+  planGround,
+  planSuppress,
+  planInsert,
+  planMate,
+  planSetMateValue,
+  planSetVariable,
+} from "./assemblyOps";
+import type { AssemblyDoc, Dof, Mat4, MateConnector } from "../assembly/types";
+import { animatableDofs, animator, defaultSpec } from "../assembly/animate";
+import { multiply } from "../assembly/placement";
+import { evaluateVariables } from "../document/document";
+import { invertRigid, isRotation } from "../assembly/solve";
+import { relationDriving } from "../assembly/relations";
+import type { SourceState } from "../assembly/useAssemblySources";
 import {
   expandEntities,
   type ConstraintSpec,
   type DimensionSpec,
   type Operation,
   type DocumentListing,
+  type AnimationFrames,
+  type AssemblySummary,
   type OpResult,
   type PlaneRefSpec,
   type ProfileSpec,
@@ -130,20 +150,40 @@ export interface AgentContext {
   /** Resolve after the next kernel regeneration settles — so a mutating op can
    *  report success/errors and a follow-up read/screenshot sees the result. */
   waitForRegen(): Promise<RegenSettle>;
+  /** The open assembly with its solution and sources, or null when the open
+   *  document is a part. */
+  getAssembly(): AssemblyAgentState | null;
+  /** Editing the open assembly: through its undo setter, like `setDoc`. */
+  assemblyEdit: {
+    /** Commit an edit (one undo step). */
+    commit(next: AssemblyDoc): void;
+    /** A part document as an insert source: its parts and meshes, built
+     *  first if it never was on this device. */
+    readSource(docId: string): Promise<SourceState>;
+    /** Resolve once the open assembly is no longer `before` and every source
+     *  has loaded and solved — what a read right after an edit should see. */
+    settle(before: AssemblyDoc): Promise<{ timedOut?: boolean }>;
+    /** A connector's frame in its part (or why it can't be found), for the
+     *  open assembly: what the solver works from. */
+    frameOf(c: MateConnector): Mat4 | string;
+  };
   /** The viewport API (camera + capturePNG), or null before it mounts. */
   getViewport(): {
     setView(name: ViewName): void;
     capturePNG(): string | null;
+    /** Pose bodies by matrix (see ViewportApi.poseBodies); null releases. */
+    poseBodies(poses: ReadonlyMap<string, readonly number[]> | null): void;
   } | null;
   /** Multi-document workspace. All mutations run through the
    *  App's switch flow (flush → load → adopt) — NEVER a raw setDoc — so
    *  autosave/undo/meshes stay consistent across the boundary. */
   documents: {
-    /** Active document identity (id + display name). */
-    info(): { id: string; name: string };
+    /** Active document identity (id + display name). `kind` absent = a part. */
+    info(): { id: string; name: string; kind?: "assembly" };
     open(id: string): Promise<void>;
-    /** Create + open an empty document (name auto-deduped "Untitled N"). */
-    create(): Promise<void>;
+    /** Create + open an empty document (name auto-deduped "Untitled N"): a
+     *  part unless `kind` says otherwise. */
+    create(kind?: "part" | "assembly"): Promise<void>;
     /** Duplicate `id` and open the copy. */
     duplicate(id: string): Promise<void>;
     rename(id: string, name: string): Promise<void>;
@@ -587,8 +627,178 @@ async function addConstraintSolved(
  *  are returned in `OpResult`). Mutations go through `ctx.setDoc` (undoable) and
  *  then **await the kernel regen** so the result reflects settled geometry (and a
  *  follow-up read/screenshot sees it). */
+/** The ops that act on the WORKSPACE (which document is open) rather than on
+ *  the open part — the only ones that make sense while an assembly is open. */
+const DOCUMENT_OPS: ReadonlySet<Operation["op"]> = new Set([
+  "openDocument",
+  "newDocument",
+  "renameDocument",
+  "duplicateDocument",
+]);
+
+/** The ops that edit an open assembly (agent/assemblyOps.ts). `delete` is
+ *  shared: on a part it deletes a feature. */
+const ASSEMBLY_OPS: ReadonlySet<Operation["op"]> = new Set([
+  "insertInstance",
+  "duplicateInstance",
+  "groundInstance",
+  "addMate",
+  "setMateValue",
+  "addRelation",
+  "editMate",
+  "editRelation",
+  "setSuppressed",
+  "setVariable",
+  "delete",
+]);
+const ASSEMBLY_ONLY: ReadonlySet<Operation["op"]> = new Set([
+  "insertInstance",
+  "duplicateInstance",
+  "groundInstance",
+  "addMate",
+  "setMateValue",
+  "addRelation",
+  "editMate",
+  "editRelation",
+  "setSuppressed",
+]);
+
+/** Apply an assembly op: plan it, commit it through the assembly's undo
+ *  setter, wait for it to solve, and report what the solver made of it. */
+async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op: Operation): Promise<OpResult> {
+  let next: AssemblyDoc;
+  let createdIds: string[] = [];
+  /** A note for the result's warnings, against the op's id. */
+  let note: string | undefined;
+  switch (op.op) {
+    case "insertInstance": {
+      const source = await ctx.assemblyEdit.readSource(op.documentId);
+      const r = planInsert(state, op, source, genId);
+      if ("error" in r) throw new OpError(source.status === "missing" ? "not_found" : "invalid_op", r.error);
+      next = r.assembly;
+      createdIds = r.ids;
+      break;
+    }
+    case "duplicateInstance": {
+      const r = planDuplicate(state, op, genId);
+      if ("error" in r) throw new OpError(/^No instance/.test(r.error) ? "not_found" : "invalid_op", r.error);
+      next = r.assembly;
+      createdIds = r.ids;
+      break;
+    }
+    case "groundInstance": {
+      const r = planGround(state, op);
+      if ("error" in r) throw new OpError("not_found", r.error);
+      next = r;
+      break;
+    }
+    case "addMate": {
+      const r = planMate(state, op, genId);
+      if ("error" in r) throw new OpError("invalid_op", r.error);
+      next = r.assembly;
+      createdIds = [r.id];
+      break;
+    }
+    case "setMateValue": {
+      const r = planSetMateValue(state, op, ctx.assemblyEdit.frameOf);
+      if ("error" in r) throw new OpError(/^No mate/.test(r.error) ? "not_found" : "invalid_op", r.error);
+      next = r;
+      break;
+    }
+    case "addRelation": {
+      const r = planAddRelation(state, op, genId);
+      if ("error" in r) throw new OpError("invalid_op", r.error);
+      next = r.assembly;
+      createdIds = [r.id];
+      break;
+    }
+    case "editMate": {
+      const r = planEditMate(state, op);
+      if ("error" in r) throw new OpError(/^No mate/.test(r.error) ? "not_found" : "invalid_op", r.error);
+      next = r.assembly;
+      if (r.dropped.length)
+        note = `A ${op.type} mate has no ${r.dropped.join(", ")}: their values and limits were dropped.`;
+      break;
+    }
+    case "setSuppressed": {
+      const r = planSuppress(state, op);
+      if ("error" in r) throw new OpError("not_found", r.error);
+      next = r;
+      break;
+    }
+    case "editRelation": {
+      const r = planEditRelation(state, op);
+      if ("error" in r) throw new OpError(/^No relation/.test(r.error) ? "not_found" : "invalid_op", r.error);
+      next = r;
+      break;
+    }
+    case "setVariable": {
+      const r = planSetVariable(state, op);
+      if ("error" in r) throw new OpError("invalid_op", r.error);
+      next = r.assembly;
+      createdIds = [r.id];
+      break;
+    }
+    case "delete": {
+      const r = planDelete(state, op.featureId);
+      if ("error" in r) throw new OpError("not_found", r.error);
+      next = r;
+      break;
+    }
+    default:
+      throw new OpError("invalid_op", `${op.op} doesn't apply to an assembly.`);
+  }
+  ctx.assemblyEdit.commit(next);
+  const { timedOut } = await ctx.assemblyEdit.settle(state.assembly);
+  const after = ctx.getAssembly();
+  const createdId =
+    createdIds[0] ??
+    (op.op === "groundInstance"
+      ? op.instanceId
+      : op.op === "setMateValue" || op.op === "editMate"
+        ? op.mateId
+        : op.op === "editRelation"
+          ? op.relationId
+          : op.op === "setSuppressed"
+            ? op.id
+            : undefined);
+  const multi = createdIds.length > 1 ? { createdIds } : {};
+  // What the solver says now: every mate's and relation's problem, and each
+  // re-found connector; a new mate that doesn't hold is the op's own failure.
+  const featureErrors: Record<string, string> = {};
+  for (const [id, p] of after?.solution?.problems ?? []) featureErrors[id] = p;
+  for (const [id, p] of after?.solution?.relationProblems ?? []) featureErrors[id] = p;
+  const warnings: Record<string, string> = {};
+  for (const [id, w] of after?.warnings ?? []) warnings[id] = w;
+  if (note && createdId) warnings[createdId] = note;
+  if (timedOut)
+    warnings[createdId ?? "assembly"] = "The assembly didn't finish loading in time; read it again shortly.";
+  const extra = {
+    ...(Object.keys(featureErrors).length ? { featureErrors } : {}),
+    ...(Object.keys(warnings).length ? { warnings } : {}),
+  };
+  // A mate or relation made or edited into one the solver can't hold.
+  const made = ["addMate", "addRelation", "editMate", "editRelation"].includes(op.op);
+  if (made && createdId && featureErrors[createdId])
+    return { ok: false, createdId, error: featureErrors[createdId], errorKind: "invalid_op", ...extra };
+  return { ok: true, ...(createdId ? { createdId } : {}), ...multi, ...extra };
+}
+
 export async function applyOperation(ctx: AgentContext, op: Operation): Promise<OpResult> {
   try {
+    const asm = ctx.documents.info().kind === "assembly" ? ctx.getAssembly() : null;
+    if (asm && ASSEMBLY_OPS.has(op.op)) return await applyAssemblyOp(ctx, asm, op);
+    if (ctx.documents.info().kind === "assembly" && !DOCUMENT_OPS.has(op.op)) {
+      throw new OpError(
+        "invalid_op",
+        `The open document is an assembly: ${op.op} models a part. On an assembly use insert_instance, duplicate_instance, ground_instance, add_mate, edit_mate, set_mate_value, add_relation, edit_relation, set_suppressed, set_variable and delete (an instance, mate or relation), read it with get_scene_summary and screenshot, and switch documents with the document tools.`,
+      );
+    }
+    if (ASSEMBLY_ONLY.has(op.op))
+      throw new OpError(
+        "invalid_op",
+        `${op.op} works on an assembly; the open document is a part. Open or create an assembly first.`,
+      );
     const doc = ctx.getDoc();
     let next: Document;
     let createdId: string | undefined;
@@ -1081,29 +1291,10 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         break;
       }
       case "setVariable": {
-        const existing = doc.variables.find((v) => v.name === op.name);
-        if (existing) {
-          next = updateVariable(doc, existing.id, "expression", op.expression);
-          createdId = existing.id;
-        } else {
-          // Validate the new name up front (letters-only, non-reserved, unique)
-          // so the agent gets a clear error rather than a variable that's
-          // silently dropped from scope at regen.
-          const candidate: Variable[] = [
-            ...doc.variables,
-            { id: "__candidate__", name: op.name, expression: op.expression },
-          ];
-          const nameError = validateVariableNames(candidate)["__candidate__"];
-          if (nameError) {
-            throw new OpError(
-              "invalid_op",
-              `Invalid variable name "${op.name}": ${nameError}. Variable names must be letters only — no digits, spaces, underscores, or reserved math names (pi, sin, …).`,
-            );
-          }
-          const r = addVariable(doc);
-          next = updateVariable(updateVariable(r.doc, r.id, "name", op.name), r.id, "expression", op.expression);
-          createdId = r.id;
-        }
+        const r = setVariableByName(doc, op.name, op.expression);
+        if ("error" in r) throw new OpError("invalid_op", r.error);
+        next = r.doc;
+        createdId = r.id;
         break;
       }
       case "setAppearance": {
@@ -1177,6 +1368,17 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       }
       // --- Multi-document ops: these switch/mutate the WORKSPACE, not `doc`,
       // so they bypass the shared setDoc tail and settle their own regen.
+      // Routed to applyAssemblyOp above while an assembly is open.
+      case "insertInstance":
+      case "duplicateInstance":
+      case "groundInstance":
+      case "addMate":
+      case "setMateValue":
+      case "addRelation":
+      case "editMate":
+      case "editRelation":
+      case "setSuppressed":
+        throw new OpError("invalid_op", `${op.op} works on an assembly.`);
       case "openDocument": {
         if (op.id === ctx.documents.info().id) return { ok: true, createdId: op.id };
         if (!(await listMeta()).some((m) => m.id === op.id)) {
@@ -1192,7 +1394,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         };
       }
       case "newDocument": {
-        await ctx.documents.create();
+        await ctx.documents.create(op.kind ?? "part");
         const id = ctx.documents.info().id;
         if (op.name) await ctx.documents.rename(id, op.name);
         await ctx.waitForRegen(); // empty doc — settles immediately
@@ -1258,8 +1460,10 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
 
 // --- Reads ----------------------------------------------------------------
 
-export function getDocument(ctx: AgentContext): Document {
-  return ctx.getDoc();
+/** The open document's ground truth: a part's Document, or an assembly's
+ *  AssemblyDoc (instances, mates, relations, variables). */
+export function getDocument(ctx: AgentContext): Document | AssemblyDoc {
+  return ctx.getAssembly()?.assembly ?? ctx.getDoc();
 }
 
 export function getSelection(ctx: AgentContext): Selection[] {
@@ -1308,6 +1512,14 @@ function constraintRefIds(c: SketchConstraint): string[] {
   }
 }
 
+/** The open document's summary — what the get_scene_summary read returns: an
+ *  assembly's (assemblySummary.ts) or a part's (getSceneSummary). */
+export function readSceneSummary(ctx: AgentContext): SceneSummary | AssemblySummary {
+  const a = ctx.getAssembly();
+  return a ? assemblySummary(a, ctx.documents.info()) : getSceneSummary(ctx);
+}
+
+/** A part document's summary. */
 export function getSceneSummary(ctx: AgentContext): SceneSummary {
   const doc = ctx.getDoc();
   const meshes = ctx.getMeshes();
@@ -1397,8 +1609,10 @@ export async function listDocuments(ctx: AgentContext): Promise<DocumentListing[
     id: m.id,
     name: m.name,
     updatedAt: m.updatedAt,
+    kind: m.kind ?? "part",
     featureCount: m.featureCount,
     partCount: m.partCount,
+    ...(m.kind === "assembly" ? { instanceCount: m.instanceCount ?? 0, mateCount: m.mateCount ?? 0 } : {}),
     active: m.id === activeId,
   }));
 }
@@ -1410,4 +1624,72 @@ export function screenshot(ctx: AgentContext, opts?: { view?: ViewName }): strin
   if (!vp) return null;
   if (opts?.view) vp.setView(opts.view);
   return vp.capturePNG();
+}
+
+/** Sweep a mate's DOF and screenshot it at evenly spaced values (the
+ *  animateMate read): each frame is a solve with the DOF driven, as the
+ *  Animate dialog's are, posed by matrix and captured, then released, so
+ *  nothing is written. A full turn's last frame would repeat its first, so a
+ *  sweep of whole turns stops a step short of it. Throws with a reason. */
+export function animateMate(
+  ctx: AgentContext,
+  q: { mateId: string; dof?: Dof; from?: number; to?: number; frames?: number; view?: ViewName },
+): AnimationFrames {
+  const state = ctx.getAssembly();
+  if (!state) throw new Error("animate_mate works on an assembly; the open document is a part.");
+  const vp = ctx.getViewport();
+  if (!vp) throw new Error("No viewport to capture.");
+  const { assembly, solution } = state;
+  if (!solution) throw new Error("The assembly is still loading; try again shortly.");
+  const mate = assembly.mates.find((m) => m.id === q.mateId);
+  if (!mate) throw new Error(`No mate "${q.mateId}" — ids are in get_scene_summary's mates.`);
+  const dofs = animatableDofs(assembly, mate);
+  const dof = q.dof ?? dofs[0];
+  if (!dof) {
+    const driven = relationDriving(assembly, mate.id, mate.type === "fastened" ? "rz" : (q.dof ?? "rz"));
+    throw new Error(
+      mate.type === "fastened"
+        ? `${mate.name} is fastened: nothing moves.`
+        : `${mate.name}'s free DOFs are driven by relations${driven ? ` (${driven.name})` : ""}: animate the driver.`,
+    );
+  }
+  if (!dofs.includes(dof)) {
+    const r = relationDriving(assembly, mate.id, dof);
+    throw new Error(
+      r
+        ? `${mate.name}'s ${dof} is driven by ${r.name}: animate its driver (${r.driver.mateId} ${r.driver.dof}).`
+        : `${mate.name} is ${mate.type}: it leaves ${dofs.join(", ")} free, not ${dof}.`,
+    );
+  }
+  const scope = evaluateVariables(assembly.variables).scope;
+  const spec = defaultSpec(mate, dof, solution.values.get(mate.id)?.[dof] ?? 0, scope);
+  const from = q.from ?? spec.from;
+  const to = q.to ?? spec.to;
+  const n = q.frames ?? 4;
+  const span = to - from;
+  const wholeTurns = isRotation(dof) && span !== 0 && Math.abs(span) % 360 < 1e-9;
+  const step = span / (wholeTurns ? n : n - 1);
+  const values = Array.from({ length: n }, (_, i) => from + step * i);
+  const run = animator(assembly, ctx.assemblyEdit.frameOf, { mateId: mate.id, dof });
+  if (q.view) vp.setView(q.view);
+  const frames: AnimationFrames["frames"] = [];
+  try {
+    for (const value of values) {
+      const s = run.at(value);
+      // Each part posed by its motion from where its mesh is baked.
+      const poses = new Map<string, Mat4>();
+      for (const [id, p] of s.placements) {
+        const was = solution.placements.get(id);
+        if (was) poses.set(id, multiply(p, invertRigid(was)));
+      }
+      vp.poseBodies(poses);
+      const image = vp.capturePNG();
+      if (!image) throw new Error("No viewport to capture.");
+      const fresh = [...s.problems].find(([id]) => !solution.problems.has(id));
+      frames.push({ value: Math.round(value * 1000) / 1000, image, ...(fresh ? { problem: fresh[1] } : {}) });
+    }
+  } finally {
+    vp.poseBodies(null);
+  }
+  return { mateId: mate.id, dof, from, to, frames };
 }

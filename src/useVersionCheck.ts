@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { checkForServiceWorkerUpdate } from "./pwa";
-import { newSince, parseWhatsNew } from "./whatsNew";
+import { newSince, parseWhatsNew, type WhatsNewItem } from "./whatsNew";
+import { markWhatsNewSeen } from "./useWhatsNew";
 
 // How often to poll the deployed version.json while the tab is open+visible.
 const POLL_MS = 2 * 60 * 1000;
@@ -19,7 +20,7 @@ const POLL_MS = 2 * 60 * 1000;
 /** What a newer deploy brings: null while this build is the latest; else the
  *  "what's new" items this tab's bundle didn't have — empty when the deploy
  *  added none, and the banner reads as it always did. */
-export type UpdateInfo = { items: string[] } | null;
+export type UpdateInfo = { items: WhatsNewItem[] } | null;
 
 export function useUpdateAvailable(): UpdateInfo {
   const [stale, setStale] = useState<UpdateInfo>(null);
@@ -39,9 +40,12 @@ export function useUpdateAvailable(): UpdateInfo {
         const { version, whatsNew } = (await res.json()) as { version?: string; whatsNew?: unknown };
         if (!active || !version || version === current) return;
         checkForServiceWorkerUpdate();
-        let items: string[] = [];
+        let items: WhatsNewItem[] = [];
         try {
-          items = whatsNew === undefined ? [] : newSince(parseWhatsNew(whatsNew), __WHATS_NEW__);
+          const served = whatsNew === undefined ? [] : parseWhatsNew(whatsNew);
+          items = newSince(served, __WHATS_NEW__);
+          // Shown here, so the page Refresh loads doesn't show them again.
+          if (items.length) markWhatsNewSeen(served);
         } catch {
           // A list this build can't read never costs the banner itself.
         }

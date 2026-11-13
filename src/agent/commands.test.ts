@@ -13,6 +13,14 @@ import type { Selection } from "../selection/types";
 // document-resolution errors (expressions / references) — the same surface the
 // real kernel would also report, minus actual geometry build failures.
 
+/** Assembly editing, for tests that don't open an assembly. */
+const NO_ASSEMBLY_EDIT: AgentContext["assemblyEdit"] = {
+  commit: () => {},
+  readSource: async () => ({ status: "missing" }),
+  settle: async () => ({}),
+  frameOf: () => "No assembly.",
+};
+
 /** Workspace stub for tests that don't exercise multi-document ops. */
 function stubDocuments(): AgentContext["documents"] {
   return {
@@ -41,6 +49,8 @@ function makeCtx(initial: Document = createDocument()) {
     getMeshes: () => [],
     getErrors: () => resolveDocument(doc).errors,
     waitForRegen: async () => ({ errors: resolveDocument(doc).errors }),
+    getAssembly: () => null,
+    assemblyEdit: NO_ASSEMBLY_EDIT,
     getViewport: () => null,
     documents: stubDocuments(),
   };
@@ -531,6 +541,8 @@ describe("applyOperation — construction, extent, revolve, mirror", () => {
       ],
       getErrors: () => resolveDocument(d).errors,
       waitForRegen: async () => ({ errors: resolveDocument(d).errors }),
+      getAssembly: () => null,
+      assemblyEdit: NO_ASSEMBLY_EDIT,
       getViewport: () => null,
       documents: stubDocuments(),
     };
@@ -1114,6 +1126,8 @@ describe("applyOperation — dressUp edge fingerprints", () => {
       ],
       getErrors: () => resolveDocument(d).errors,
       waitForRegen: async () => ({ errors: resolveDocument(d).errors }),
+      getAssembly: () => null,
+      assemblyEdit: NO_ASSEMBLY_EDIT,
       getViewport: () => null,
       documents: stubDocuments(),
     };
@@ -1154,6 +1168,8 @@ describe("applyOperation — regen warnings surface in the result", () => {
       getMeshes: () => [],
       getErrors: () => resolveDocument(d).errors,
       waitForRegen: async () => ({ errors: resolveDocument(d).errors, warnings: pendingWarnings }),
+      getAssembly: () => null,
+      assemblyEdit: NO_ASSEMBLY_EDIT,
       getViewport: () => null,
       documents: stubDocuments(),
     };
@@ -1188,8 +1204,8 @@ describe("applyOperation — multi-document ops", () => {
     ctx.documents = {
       info: () => ({ id: activeId, name: `Doc ${activeId}` }),
       open: async (id) => void calls.push(`open:${id}`),
-      create: async () => {
-        calls.push("create");
+      create: async (kind) => {
+        calls.push(`create:${kind}`);
         activeId = "fresh";
       },
       duplicate: async (id) => {
@@ -1223,7 +1239,14 @@ describe("applyOperation — multi-document ops", () => {
     const { ctx, calls } = recordingCtx("a");
     const r = await apply(ctx, { op: "newDocument", name: "Bracket" });
     expect(r).toMatchObject({ ok: true, createdId: "fresh" });
-    expect(calls).toEqual(["create", "rename:fresh:Bracket"]);
+    expect(calls).toEqual(["create:part", "rename:fresh:Bracket"]);
+  });
+
+  it("newDocument makes an assembly when asked", async () => {
+    await seedDb([]);
+    const { ctx, calls } = recordingCtx("a");
+    expect(await apply(ctx, { op: "newDocument", kind: "assembly" })).toMatchObject({ ok: true });
+    expect(calls).toEqual(["create:assembly"]);
   });
 
   it("duplicateDocument defaults to the active doc and reports the copy", async () => {
@@ -1242,5 +1265,72 @@ describe("applyOperation — multi-document ops", () => {
     expect(docs).toHaveLength(2);
     expect(docs.find((d) => d.id === "b")?.active).toBe(true);
     expect(docs.find((d) => d.id === "a")?.active).toBe(false);
+  });
+
+  it("listDocuments counts an assembly's instances and mates", async () => {
+    await seedDb(["a"]);
+    const { putDoc } = await import("../storage/db");
+    const assembly = {
+      instances: [0, 1].map((n) => ({
+        id: `i${n}`,
+        name: `I${n}`,
+        source: { docId: "a", partId: "p" },
+        transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      })),
+      mates: [
+        {
+          id: "m",
+          name: "Fastened 1",
+          type: "fastened" as const,
+          a: { instanceId: "i0", ref: { kind: "face" as const, name: "f" }, anchor: "center" as const },
+          b: { instanceId: "i1", ref: { kind: "face" as const, name: "f" }, anchor: "center" as const },
+        },
+      ],
+      variables: [],
+    };
+    await putDoc({ id: "asm", name: "Asm", doc: createDocument(), assembly, updatedAt: 2, createdAt: 2 });
+    const { ctx } = recordingCtx("a");
+    const { listDocuments } = await import("./commands");
+    const docs = await listDocuments(ctx);
+    expect(docs.find((d) => d.id === "asm")).toMatchObject({ kind: "assembly", instanceCount: 2, mateCount: 1 });
+    expect(docs.find((d) => d.id === "a")?.instanceCount).toBeUndefined();
+  });
+});
+
+describe("while an assembly is open", () => {
+  function assemblyCtx() {
+    const made = makeCtx();
+    made.ctx.documents = { ...stubDocuments(), info: () => ({ id: "asm", name: "Arm", kind: "assembly" }) };
+    return made;
+  }
+
+  it("refuses part edits, leaving the empty part model untouched", async () => {
+    const { ctx, doc } = assemblyCtx();
+    const r = await apply(ctx, { op: "addPrimitive", kind: "box" });
+    expect(r).toMatchObject({ ok: false, errorKind: "invalid_op" });
+    expect(r.error).toMatch(/assembly/);
+    expect(doc().features).toHaveLength(0);
+  });
+
+  it("reads the assembly, not the empty part model behind it", async () => {
+    const { ctx } = assemblyCtx();
+    const assembly = { instances: [], mates: [], variables: [] };
+    ctx.getAssembly = () => ({
+      assembly,
+      solution: null,
+      sources: new Map(),
+      settled: true,
+      warnings: new Map(),
+      selection: [],
+    });
+    const { getDocument, readSceneSummary } = await import("./commands");
+    expect(getDocument(ctx)).toBe(assembly);
+    expect(readSceneSummary(ctx)).toMatchObject({ kind: "assembly", documentId: "asm", documentName: "Arm" });
+  });
+
+  it("still lets the agent switch to another document", async () => {
+    const { ctx } = assemblyCtx();
+    const r = await apply(ctx, { op: "newDocument" });
+    expect(r.ok).toBe(true);
   });
 });

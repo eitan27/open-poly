@@ -1,6 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { bannerItems, newSince, parseWhatsNew, type WhatsNewEntry } from "./whatsNew";
+import {
+  bannerItems,
+  boldRuns,
+  entryKey,
+  newSince,
+  parseWhatsNew,
+  sinceLastVisit,
+  type WhatsNewEntry,
+} from "./whatsNew";
 
 const nov: WhatsNewEntry = {
   date: "2026-11-05",
@@ -21,8 +29,9 @@ describe("whatsNew", () => {
   });
 
   it("shows only what this tab's bundle didn't have, newest first", () => {
-    expect(newSince([nov, oct], [oct])).toEqual(nov.items);
-    expect(newSince([nov, oct], [])).toEqual([...nov.items, ...oct.items]);
+    const texts = (a: WhatsNewEntry[], b: WhatsNewEntry[]) => newSince(a, b).map((i) => i.text);
+    expect(texts([nov, oct], [oct])).toEqual(nov.items);
+    expect(texts([nov, oct], [])).toEqual([...nov.items, ...oct.items]);
   });
 
   it("a deploy with no new entry has nothing to show (the plain banner)", () => {
@@ -33,5 +42,68 @@ describe("whatsNew", () => {
   it("keeps the banner to a few items", () => {
     expect(bannerItems(["a", "b"])).toEqual({ shown: ["a", "b"], more: 0 });
     expect(bannerItems(["a", "b", "c", "d", "e"])).toEqual({ shown: ["a", "b", "c"], more: 2 });
+  });
+
+  it("takes bold phrases that appear in the entry's items, and nothing else", () => {
+    expect(parseWhatsNew([{ date: "2026-11-13", items: ["Assemblies: mates"], bold: ["Assemblies"] }])[0].bold).toEqual(
+      ["Assemblies"],
+    );
+    expect(() => parseWhatsNew([{ date: "2026-11-13", items: ["Assemblies"], bold: ["Sketch"] }])).toThrow(/bold/);
+    expect(() => parseWhatsNew([{ date: "2026-11-13", items: ["Assemblies"], bold: "Assemblies" }])).toThrow(/bold/);
+  });
+
+  it("gives each item the bold phrases in it", () => {
+    const e: WhatsNewEntry = {
+      date: "2026-11-13",
+      items: ["Assemblies: mates", "Press New → Assembly"],
+      bold: ["Assemblies", "New → Assembly"],
+    };
+    expect(newSince([e], [])).toEqual([
+      { text: "Assemblies: mates", bold: ["Assemblies"] },
+      { text: "Press New → Assembly", bold: ["New → Assembly"] },
+    ]);
+  });
+
+  it("an entry's bold doesn't change which entries a tab already has", () => {
+    // Tabs on builds before `bold` know the entry without it: still the same entry.
+    const e: WhatsNewEntry = { date: "2026-11-13", items: ["Assemblies"], bold: ["Assemblies"] };
+    expect(newSince([e], [{ date: e.date, items: e.items }])).toEqual([]);
+  });
+
+  it("cuts text into bold and plain runs", () => {
+    expect(boldRuns("Assemblies: join parts", ["Assemblies"])).toEqual([
+      { text: "Assemblies", bold: true },
+      { text: ": join parts", bold: false },
+    ]);
+    expect(boldRuns("Just press New → Assembly and insert", ["New → Assembly"])).toEqual([
+      { text: "Just press ", bold: false },
+      { text: "New → Assembly", bold: true },
+      { text: " and insert", bold: false },
+    ]);
+    expect(boldRuns("plain", [])).toEqual([{ text: "plain", bold: false }]);
+  });
+
+  describe("since the last visit", () => {
+    it("a first visit shows nothing, and records what's there", () => {
+      expect(sinceLastVisit([nov, oct], null)).toEqual({ items: [], seen: [entryKey(nov), entryKey(oct)] });
+    });
+    it("someone who used the app before the record existed gets the newest entry", () => {
+      expect(sinceLastVisit([nov, oct], null, true)).toEqual({
+        items: nov.items.map((text) => ({ text, bold: [] })),
+        seen: [entryKey(nov), entryKey(oct)],
+      });
+    });
+    it("a later visit shows the entries added since, once", () => {
+      const first = sinceLastVisit([oct], null);
+      const second = sinceLastVisit([nov, oct], first.seen);
+      expect(second.items.map((i) => i.text)).toEqual(nov.items);
+      expect(sinceLastVisit([nov, oct], second.seen).items).toEqual([]);
+    });
+    it("carries each item's bold phrases", () => {
+      const e: WhatsNewEntry = { date: "2026-11-13", items: ["Assemblies: mates"], bold: ["Assemblies"] };
+      expect(sinceLastVisit([e, oct], [entryKey(oct)]).items).toEqual([
+        { text: "Assemblies: mates", bold: ["Assemblies"] },
+      ]);
+    });
   });
 });

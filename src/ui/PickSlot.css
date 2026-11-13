@@ -249,6 +249,11 @@
   z-index: 30;
 }
 
+/* ExprInput's list: fixed in a portal at its field, so above every dialog. */
+.expr-suggest {
+  z-index: 1000;
+}
+
 .dim-suggest li {
   display: flex;
   justify-content: space-between;

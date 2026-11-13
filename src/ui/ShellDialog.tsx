@@ -1,5 +1,6 @@
 import { DraggableDialog } from "./DraggableDialog";
 import { PickButton, PickedRow, PickSlot } from "./PickSlot";
+import { ExprInput } from "./ExprInput";
 
 export interface ShellFaceRow {
   /** The persistent face name — the row's key and its tooltip. */
@@ -81,7 +82,7 @@ export function ShellDialog({
       </PickButton>
       <label className="ed-field">
         <span>Thickness</span>
-        <input
+        <ExprInput
           autoFocus
           onFocus={(e) => e.currentTarget.select()}
           value={thickness}

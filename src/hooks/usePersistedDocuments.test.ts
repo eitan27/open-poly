@@ -20,6 +20,9 @@ import { installWebStorage } from "../test/webStorage";
 import { usePersistedDocuments, type UsePersistedDocumentsParams } from "./usePersistedDocuments";
 import type { Document } from "../document/types";
 import type { ViewportApi } from "../viewport/types";
+import type { AssemblyDoc } from "../assembly/types";
+import { createAssembly } from "../assembly/assembly";
+import { IDENTITY } from "../assembly/placement";
 
 const record = (id: string, name: string, over: Partial<StoredDoc> = {}): StoredDoc => ({
   id,
@@ -40,6 +43,8 @@ function params(over: Partial<UsePersistedDocumentsParams> = {}) {
   const base = {
     doc: createDocument(),
     resetDoc: vi.fn(),
+    assembly: null as AssemblyDoc | null,
+    resetAssembly: vi.fn(),
     rawMeshes: [] as UsePersistedDocumentsParams["rawMeshes"],
     setRawMeshes: vi.fn(),
     regenSettledSeq: 0,
@@ -388,6 +393,106 @@ describe("export / import", () => {
       err = await result.current.importDocumentFile(file);
     });
     expect(err).toBeTruthy();
+  });
+});
+
+describe("assembly documents", () => {
+  const anAssembly = (): AssemblyDoc => ({
+    ...createAssembly(),
+    instances: [
+      { id: "i1", name: "Bracket <1>", source: { docId: "p", partId: "ext1" }, transform: IDENTITY, grounded: true },
+    ],
+  });
+
+  it("newDocument('assembly') stores an assembly record and hands it to the app", async () => {
+    const { result, p } = await boot();
+    await act(async () => {
+      await result.current.newDocument("assembly");
+    });
+    const rec = await loadDoc(result.current.docIdRef.current!);
+    expect(rec?.assembly).toEqual(createAssembly());
+    expect(p.resetAssembly).toHaveBeenLastCalledWith(createAssembly());
+    const meta = (await listMeta()).find((m) => m.id === rec!.id);
+    expect(meta?.kind).toBe("assembly");
+  });
+
+  it("newDocument() with no kind is still a part", async () => {
+    const { result, p } = await boot();
+    await act(async () => {
+      await result.current.newDocument();
+    });
+    expect((await loadDoc(result.current.docIdRef.current!))?.assembly).toBeUndefined();
+    expect(p.resetAssembly).toHaveBeenLastCalledWith(null);
+  });
+
+  it("opening an assembly hands the app its assembly; opening a part clears it", async () => {
+    const { result, p } = await boot();
+    await putDoc(record("asm", "Asm", { assembly: anAssembly() }));
+    await putDoc(record("part", "Part"));
+    await act(async () => {
+      await result.current.openDocument("asm");
+    });
+    expect(p.resetAssembly).toHaveBeenLastCalledWith(anAssembly());
+    await act(async () => {
+      await result.current.openDocument("part");
+    });
+    expect(p.resetAssembly).toHaveBeenLastCalledWith(null);
+  });
+
+  it("restores an assembly at boot", async () => {
+    await putDoc(record("asm", "Asm", { assembly: anAssembly() }));
+    setActiveDocId("asm");
+    const { p } = await boot();
+    expect(p.resetAssembly).toHaveBeenCalledWith(anAssembly());
+  });
+
+  it("refuses a record whose assembly is corrupt, without adopting its id", async () => {
+    await putDoc(record("bad", "Bad", { assembly: { instances: "no" } as unknown as AssemblyDoc }));
+    setActiveDocId("bad");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { result } = await boot();
+    expect(result.current.docIdRef.current).not.toBe("bad");
+    expect(result.current.docRecoveryBanner).toEqual({ kind: "corrupted", name: "Bad" });
+    warn.mockRestore();
+  });
+
+  it("autosaves the assembly, and no meshes with it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { result } = await boot({ assembly: anAssembly(), rawMeshes: [{ id: "m", mesh: {} as never }] });
+    const id = result.current.docIdRef.current!;
+    await act(async () => {
+      vi.advanceTimersByTime(700);
+    });
+    await waitFor(async () => expect(await loadDoc(id)).toBeTruthy());
+    const rec = await loadDoc(id);
+    expect(rec?.assembly).toEqual(anAssembly());
+    expect(rec?.meshes).toBeUndefined();
+    const meta = (await listMeta()).find((m) => m.id === id);
+    expect(meta).toMatchObject({ kind: "assembly", instanceCount: 1, mateCount: 0, partCount: 0 });
+    expect(meta?.unbuilt).toBeUndefined();
+  });
+
+  it("exports and re-imports an assembly as an assembly", async () => {
+    const { result, p } = await boot();
+    await putDoc(record("asm", "Asm", { assembly: anAssembly() }));
+    await act(async () => {
+      await result.current.exportDocument("asm");
+    });
+    const [blob] = p.downloadBlob.mock.calls[0] as [Blob, string];
+    // jsdom's Blob has no .text() (see fileWithText); FileReader it has.
+    const text = await new Promise<string>((resolve) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result as string);
+      fr.readAsText(blob);
+    });
+    let err: string | null = "unset";
+    await act(async () => {
+      err = await result.current.importDocumentFile(fileWithText(text, "Asm.openpoly.json"));
+    });
+    expect(err).toBeNull();
+    const imported = await loadDoc(result.current.docIdRef.current!);
+    expect(imported?.id).not.toBe("asm");
+    expect(imported?.assembly).toEqual(anAssembly());
   });
 });
 

@@ -60,10 +60,12 @@ const OP_DESCRIPTIONS: Record<string, string> = {
   extendEntity:
     "Extend a sketch edge: grows it from the end nearest `at` ([u,v] in the sketch plane) along its own path until it meets another edge, and RECORDS that meeting (coincident if it lands on the other edge's own end, else point-on) so it survives later solves. Errors when nothing lies ahead of that end. Circles have no end to extend.",
   setParam: 'Set a feature parameter to a number or expression (e.g. width = "plate/2").',
-  setVariable: "Create or update a named variable (drive dimensions with variables, then reference them in params).",
+  setVariable:
+    "Create or update a named variable (drive dimensions with variables, then reference them in params). On an assembly it sets the assembly's own variables, which mate values, limits, offsets and relation values can name.",
   setAppearance: "Set a body's color (0xRRGGBB), opacity (0..1), and/or hidden flag.",
   rename: "Rename a feature/body so later steps and the human can read it.",
-  delete: "Delete a feature (undoable).",
+  delete:
+    "Delete a feature (undoable). On an assembly: delete an instance (with the mates and relations that used it), a mate (with its relations) or a relation, by id — what's left stays where it is.",
   setRollback: "Move the timeline rollback bar to an index (features at/after it are not regenerated).",
   select: "Set the viewport selection (so a screenshot highlights what you mean).",
   setSectionView:
@@ -73,18 +75,41 @@ const OP_DESCRIPTIONS: Record<string, string> = {
     "Import a DXF drawing as an EDITABLE sketch (not an opaque body like import_step). source is the DXF file text; plane places the sketch (datum/planeId/body face); scale multiplies all coordinates (DXF is unitless — 25.4 if the drawing is in inches, else 1 = mm). Handles LINE/CIRCLE/ARC/POLYLINE(bulges)/SPLINE/TEXT; unsupported types are skipped and reported as a warning. Imported geometry is free (unconstrained).",
   openDocument:
     "Switch the working document to `id` (from list_documents). Resolves after its geometry regenerates; undo history resets. Check get_scene_summary's documentId/documentName before assuming which file you're in.",
-  newDocument: "Create and open a NEW empty document (optionally named). The previous document is autosaved.",
+  newDocument:
+    "Create and open a NEW empty document (optionally named): kind 'part' (default) to model, or 'assembly' to place and mate parts of other documents. The previous document is autosaved.",
   renameDocument: "Rename a document (id defaults to the active one). Display-name only — not an undoable model edit.",
+  insertInstance:
+    "ASSEMBLY only. Place a part document's parts (all of them, or just `partIds` — the body ids in that document's own get_scene_summary) into the open assembly, as instances: beside what's already there along +X, or with the part's origin at `position`. The assembly's first instance is grounded (fixed); mates then place the rest. `count` (1-100) inserts that many of each part, laid out in a grid so none overlap (with `position`, the grid starts there). Returns createdId (createdIds when several). `name` renames a single inserted instance.",
+  duplicateInstance:
+    "ASSEMBLY only. Copy instances, `count` of each (default 1), in a grid beside each original — or past everything if that spot is taken: turned as the original is, in its colour, with no mates and not grounded. Returns createdIds; mate the copies as you would new parts.",
+  groundInstance:
+    "ASSEMBLY only. Fix an instance where it is (grounded: true, the default) so mates place others against it, or free it (grounded: false).",
+  addMate:
+    "ASSEMBLY only. Join two instances with a mate; b moves to a. Each side names ONE entity of its instance's part from get_scene_summary's parts: {face} | {edge} | {vertex: {edge, end: 'start'|'end'}}, plus optional anchor ('center' default; a round wall also offers 'start'/'end') and offset {x,y,z} (mm in the connector's own frame). type: fastened (no motion), revolute (turns about Z: rz), slider (along Z: tz), cylindrical (tz + rz), planar (slides tx/ty and turns rz on the plane), ball (rx/ry/rz), width (centres b between two faces of a; give face AND face2 on both sides). Connector Z is a face's outward normal / an edge's direction / a round wall's axis; by default the two Z axes face each other (two faces touching) — flip:true points them the same way; turns (0-3) rotates b by quarter turns about Z. values set free DOFs (mm / degrees, numbers or variable expressions); limits {min,max} bound them. A mate the solver can't hold returns ok:false with its createdId and the reason — fix the cause or delete it.",
+  setMateValue:
+    "ASSEMBLY only. Set one free DOF of a mate (dof from get_scene_summary's mate `free` list: mm for t*, degrees for r*), a number or a variable expression (an expression keeps driving it); \"\" resets it to 0. A DOF a relation drives (`drivenBy`) can't take its own value: give a number and its driver is set to what puts it there. Inside a loop group a number drives the loop once (the rest moves as little as it must); if that needs an expression elsewhere in the loop cleared, it fails naming it — ask the user, then retry with clearExpressions: true to replace it with its plain number.",
+  editMate:
+    'ASSEMBLY only. Change a mate in place, keeping its id, name and the relations that use it — only the fields given change: type, a / b (a whole connector, as in add_mate), flip, turns, name; values merge in ("" clears one) and limits merge in per DOF (null clears one). Changing type drops the values and limits of DOFs the new type lacks (reported in warnings; a relation that used one then reports a problem). To become a width mate, give a and b again with face2. A mate edited into one the solver can\'t hold returns ok:false with the reason.',
+  setSuppressed:
+    "ASSEMBLY only. Leave a mate or relation out of the solve while keeping it (suppressed: true, the default), or bring it back (false). Parts a suppressed mate held stay where they are; a relation using a suppressed mate reports why it can't apply. Use it to find which mate over-constrains an assembly: suppress suspects one at a time and watch the problems go, without losing them.",
+  editRelation:
+    "ASSEMBLY only. Change a relation in place, keeping its id — only the fields given change: type, driver, driven, value, reverse, name. Ends are checked as in add_relation; one the solver then refuses (a loop, a DOF driven twice) returns ok:false with the reason.",
+  addRelation:
+    "ASSEMBLY only. Drive one mate's free DOF from another's, linearly: gear (rotation → rotation, value = ratio: driven turns per driver turn, opposite ways as meshed gears turn), rack (rotation ↔ translation, value = pinion radius mm), screw (rotation ↔ translation, value = pitch mm per turn — a cylindrical mate's own rz → tz is a screw). The driven DOF's own value becomes a phase added on top. reverse flips the direction. Relations chain (a gear train); a loop of them, or a DOF driven twice, is refused — returned as ok:false with the relation's createdId to delete.",
   duplicateDocument:
     "Duplicate a document (id defaults to the active one) and open the copy — a safe sandbox before risky edits.",
 };
 
 const READ_TOOLS: Record<string, { tool: string; description: string }> = {
-  document: { tool: "get_document", description: "Return the full document JSON (ground truth)." },
+  document: {
+    tool: "get_document",
+    description:
+      "Return the full document JSON (ground truth): a part's features, or an assembly's instances, mates, relations and variables.",
+  },
   sceneSummary: {
     tool: "get_scene_summary",
     description:
-      "Compact, LLM-first digest: bodies (named faces/edges, bbox), sketches (entities by id+type, regions, constraints by id+type+refs), planes, variables, rollback, selection. Your primary planning input — read it to get the entity id for a revolve axis, region ids, face/edge names, and constraint ids to remove.",
+      "Compact, LLM-first digest: bodies (named faces/edges, bbox), sketches (entities by id+type, regions, constraints by id+type+refs), planes, variables, rollback, selection. Your primary planning input — read it to get the entity id for a revolve axis, region ids, face/edge names, and constraint ids to remove. On an ASSEMBLY (kind: 'assembly') it lists instead: parts (each once, with the face/edge names a mate connector can use), instances (part, grounded, mated, world bbox), mates (type, both connectors, each free DOF with its value — `expression` when one drives it, `drivenBy` a relation id), relations (gear/rack/screw), loop groups, variables, and every problem or ⚠.",
   },
   selection: { tool: "get_selection", description: "Return the current viewport selection." },
   screenshot: {
@@ -92,10 +117,15 @@ const READ_TOOLS: Record<string, { tool: string; description: string }> = {
     description:
       "Render the viewport and return a PNG image (optionally snap to a standard view first). Use it to verify what you built.",
   },
+  animateMate: {
+    tool: "animate_mate",
+    description:
+      "ASSEMBLY only. See a mechanism move: sweep one free DOF of a mate (dof defaults to its first; one a relation drives can't be swept — sweep its driver, and everything it drives moves too) from `from` to `to` and return a screenshot at each of `frames` (2-8, default 4) evenly spaced values, captioned with the value. from/to default to the DOF's limits, else a full turn (rotation) or 20 mm (translation) from where it is. Nothing is saved. A frame where the motion jams (a mate that can't hold there) is captioned with why.",
+  },
   documents: {
     tool: "list_documents",
     description:
-      'All stored documents (id, name, edited time, feature/part counts), most-recently-edited first, with the ACTIVE one flagged. Entry point for "continue the X document" — find it here, then open_document.',
+      'All stored documents (id, name, kind part|assembly, edited time, feature/part counts, and for an assembly its instance/mate counts), most-recently-edited first, with the ACTIVE one flagged. Entry point for "continue the X document" — find it here, then open_document.',
   },
 };
 
@@ -150,6 +180,24 @@ export function registerBridgeTools(server: McpServer, hub: WsHub): void {
       async (args: Record<string, unknown>) => {
         const res = await forward(hub, "read", { read: readName, ...args });
         if (!res.ok) return toToolResult(res);
+        if (readName === "animateMate") {
+          const r = res.payload as {
+            mateId: string;
+            dof: string;
+            from: number;
+            to: number;
+            frames: { value: number; image: string; problem?: string }[];
+          };
+          const unit = r.dof.startsWith("r") ? "°" : " mm";
+          const content: CallToolResult["content"] = [
+            { type: "text", text: `${r.dof} of mate ${r.mateId}, ${r.from}${unit} → ${r.to}${unit}:` },
+          ];
+          for (const f of r.frames) {
+            content.push({ type: "text", text: `${r.dof} = ${f.value}${unit}${f.problem ? ` — ${f.problem}` : ""}` });
+            content.push({ type: "image", data: f.image.slice(f.image.indexOf(",") + 1), mimeType: "image/png" });
+          }
+          return { content };
+        }
         if (readName === "screenshot") {
           const url = res.payload as string | null;
           if (typeof url !== "string" || !url.startsWith("data:image/png;base64,")) {

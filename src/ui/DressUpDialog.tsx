@@ -2,6 +2,7 @@ import { Fragment } from "react";
 import { DraggableDialog } from "./DraggableDialog";
 import { PickButton, PickedRow } from "./PickSlot";
 import type { PickGroup } from "./pickRows";
+import { ExprInput } from "./ExprInput";
 
 export type DressUpOp = "chamfer" | "fillet";
 
@@ -98,7 +99,7 @@ export function DressUpDialog({
       )}
       <label className="ed-field">
         <span>{op === "chamfer" ? "Distance" : "Radius"}</span>
-        <input
+        <ExprInput
           autoFocus
           onFocus={selectAll}
           value={size}
@@ -113,7 +114,12 @@ export function DressUpDialog({
         <>
           <label className="ed-field">
             <span>Angle (°)</span>
-            <input value={angle} onFocus={selectAll} onChange={(e) => onAngleChange(e.target.value)} onKeyDown={keys} />
+            <ExprInput
+              value={angle}
+              onFocus={selectAll}
+              onChange={(e) => onAngleChange(e.target.value)}
+              onKeyDown={keys}
+            />
           </label>
           <label className="ed-field ed-flip" title="Measure the distance and angle from the edge's other face">
             <span>Flip angle</span>

@@ -10,10 +10,16 @@
 // entry's `mode` is what makes the reuse unambiguous. A "both" entry is live in
 // either mode and so collides with both.
 //
+// An open assembly is a third mode: its own "assembly" entries, plus the shared
+// ones marked `assembly: true` (undo, the views…). Nothing else is live there,
+// since the part bindings would act on the empty part model behind it.
+//
 // `mod` means ⌘ on a Mac and Ctrl elsewhere. `anyShift` marks the entries that
 // are not Shift-tested, so they fire whether or not Shift is down.
 
-export type ShortcutMode = "modeling" | "sketch" | "both";
+export type ShortcutMode = "modeling" | "sketch" | "both" | "assembly";
+/** The mode the app is in — what a keystroke is matched against. */
+export type ActiveMode = "modeling" | "sketch" | "assembly";
 export type ShortcutModifier = "mod" | "shift" | "alt";
 
 interface ShortcutDef {
@@ -27,6 +33,8 @@ interface ShortcutDef {
   readonly label: string;
   /** Fires with or without Shift held — see the note at the top of the file. */
   readonly anyShift?: boolean;
+  /** A modeling/"both" entry that is live in an open assembly too. */
+  readonly assembly?: boolean;
 }
 
 export const SHORTCUTS = [
@@ -38,27 +46,62 @@ export const SHORTCUTS = [
     key: "Escape",
     mode: "both",
     anyShift: true,
+    assembly: true,
     label: "Cancel the current pick, dialog or draft (a spline commits its points; otherwise leaves sketch edit)",
   },
-  { id: "app.toggleHints", key: "?", mode: "both", anyShift: true, label: "Show or hide the shortcut hints" },
-  { id: "app.toolSearch", key: "/", mode: "both", anyShift: true, label: "Search the live toolbar's tools" },
-  { id: "app.delete", key: "Delete", mode: "both", anyShift: true, label: "Delete the selection" },
-  { id: "app.deleteBack", key: "Backspace", mode: "both", anyShift: true, label: "Delete the selection" },
-  { id: "app.undo", key: "z", mods: ["mod"], mode: "both", label: "Undo" },
-  { id: "app.redo", key: "z", mods: ["mod", "shift"], mode: "both", label: "Redo" },
+  {
+    id: "app.toggleHints",
+    key: "?",
+    mode: "both",
+    anyShift: true,
+    assembly: true,
+    label: "Show or hide the shortcut hints",
+  },
+  {
+    id: "app.toolSearch",
+    key: "/",
+    mode: "both",
+    anyShift: true,
+    assembly: true,
+    label: "Search the live toolbar's tools",
+  },
+  { id: "app.delete", key: "Delete", mode: "both", anyShift: true, assembly: true, label: "Delete the selection" },
+  {
+    id: "app.deleteBack",
+    key: "Backspace",
+    mode: "both",
+    anyShift: true,
+    assembly: true,
+    label: "Delete the selection",
+  },
+  { id: "app.undo", key: "z", mods: ["mod"], mode: "both", assembly: true, label: "Undo" },
+  { id: "app.redo", key: "z", mods: ["mod", "shift"], mode: "both", assembly: true, label: "Redo" },
   { id: "app.importStep", key: "i", mods: ["mod"], mode: "both", anyShift: true, label: "Import a STEP file" },
 
   // ---- Standard views (1-7, in this order — do not renumber) ----
-  { id: "view.top", key: "1", mode: "both", anyShift: true, label: "Top view" },
-  { id: "view.front", key: "2", mode: "both", anyShift: true, label: "Front view" },
-  { id: "view.right", key: "3", mode: "both", anyShift: true, label: "Right view" },
-  { id: "view.back", key: "4", mode: "both", anyShift: true, label: "Back view" },
-  { id: "view.left", key: "5", mode: "both", anyShift: true, label: "Left view" },
-  { id: "view.bottom", key: "6", mode: "both", anyShift: true, label: "Bottom view" },
-  { id: "view.iso", key: "7", mode: "both", anyShift: true, label: "Isometric view" },
+  { id: "view.top", key: "1", mode: "both", anyShift: true, assembly: true, label: "Top view" },
+  { id: "view.front", key: "2", mode: "both", anyShift: true, assembly: true, label: "Front view" },
+  { id: "view.right", key: "3", mode: "both", anyShift: true, assembly: true, label: "Right view" },
+  { id: "view.back", key: "4", mode: "both", anyShift: true, assembly: true, label: "Back view" },
+  { id: "view.left", key: "5", mode: "both", anyShift: true, assembly: true, label: "Left view" },
+  { id: "view.bottom", key: "6", mode: "both", anyShift: true, assembly: true, label: "Bottom view" },
+  { id: "view.iso", key: "7", mode: "both", anyShift: true, assembly: true, label: "Isometric view" },
+
+  // ---- An open assembly ----
+  { id: "asm.insert", key: "i", mode: "assembly", anyShift: true, label: "Insert parts from another document" },
+  { id: "asm.mate", key: "m", mode: "assembly", anyShift: true, label: "Mate two parts (the last type used)" },
+  // One per mate type, like the toolbar's buttons: opens the Mate dialog on
+  // that type, or switches the open dialog to it.
+  { id: "asm.mateFastened", key: "f", mode: "assembly", anyShift: true, label: "Fastened mate" },
+  { id: "asm.mateRevolute", key: "r", mode: "assembly", anyShift: true, label: "Revolute mate" },
+  { id: "asm.mateSlider", key: "s", mode: "assembly", anyShift: true, label: "Slider mate" },
+  { id: "asm.mateCylindrical", key: "c", mode: "assembly", anyShift: true, label: "Cylindrical mate" },
+  { id: "asm.matePlanar", key: "p", mode: "assembly", anyShift: true, label: "Planar mate" },
+  { id: "asm.mateBall", key: "b", mode: "assembly", anyShift: true, label: "Ball mate" },
+  { id: "asm.mateWidth", key: "w", mode: "assembly", anyShift: true, label: "Width mate" },
 
   // ---- Modeling toolbar (only while NOT editing a sketch) ----
-  { id: "view.home", key: "h", mode: "modeling", anyShift: true, label: "Home view — fit everything" },
+  { id: "view.home", key: "h", mode: "modeling", anyShift: true, assembly: true, label: "Home view — fit everything" },
   {
     id: "feature.moveUp",
     key: "ArrowUp",
@@ -146,6 +189,12 @@ export function modsOf(s: Shortcut): readonly ShortcutModifier[] {
   return "mods" in s ? s.mods : [];
 }
 
+/** Whether this entry is live in `mode`. */
+export function liveIn(s: Shortcut, mode: ActiveMode): boolean {
+  if (mode === "assembly") return s.mode === "assembly" || ("assembly" in s && s.assembly);
+  return s.mode === "both" || s.mode === mode;
+}
+
 /** Whether this entry fires with or without Shift. */
 export function firesWithAnyShift(s: Shortcut): boolean {
   return "anyShift" in s && s.anyShift;
@@ -207,12 +256,9 @@ function matches(e: KeyboardEvent, s: Shortcut): boolean {
   return true;
 }
 
-/**
- * The entry a keystroke fires in `mode`, if any. "both" entries are candidates
- * in either mode.
- */
-export function matchShortcut(e: KeyboardEvent, mode: "modeling" | "sketch"): Shortcut | undefined {
-  return SHORTCUTS.find((s) => (s.mode === "both" || s.mode === mode) && matches(e, s));
+/** The entry a keystroke fires in `mode`, if any (see liveIn). */
+export function matchShortcut(e: KeyboardEvent, mode: ActiveMode): Shortcut | undefined {
+  return SHORTCUTS.find((s) => liveIn(s, mode) && matches(e, s));
 }
 
 /** Whether a keystroke is this one particular shortcut, mode notwithstanding. */
