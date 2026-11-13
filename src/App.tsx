@@ -186,6 +186,8 @@ import { useDressUpDialog } from "./hooks/useDressUpDialog";
 import { useShellDialog } from "./hooks/useShellDialog";
 import { usePatternDialog } from "./hooks/usePatternDialog";
 import { useRevolveDialog } from "./hooks/useRevolveDialog";
+import { useGearDialog } from "./hooks/useGearDialog";
+import { gearReadout, meshCandidates } from "./document/gear";
 import { usePersistedDocuments } from "./hooks/usePersistedDocuments";
 import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentContext, AgentMesh, RegenSettle } from "./agent/commands";
@@ -202,6 +204,7 @@ import { buildDressUpGroups, dressUpCountLabel, groupPickRows, type PickRowSpec 
 import { PlaneDialog } from "./ui/PlaneDialog";
 import { TransformArmingDialog, TransformDialog } from "./ui/TransformDialog";
 import { RevolveDialog } from "./ui/RevolveDialog";
+import { GearDialog } from "./ui/GearDialog";
 import { MirrorDialog } from "./ui/MirrorDialog";
 import { DxfImportDialog } from "./ui/DxfImportDialog";
 import { LoftDialog } from "./ui/LoftDialog";
@@ -1229,7 +1232,15 @@ export default function App() {
   // What the plane/face pick flow is for: starting a sketch, or the base of a
   // new reference plane.
   const [pickPurpose, setPickPurpose] = useState<
-    "sketch" | "plane" | "revolveAxis" | "patternAxis" | "patternDir" | "transformAxis" | "mirrorPlane" | "sectionPlane"
+    | "sketch"
+    | "plane"
+    | "revolveAxis"
+    | "patternAxis"
+    | "patternDir"
+    | "transformAxis"
+    | "mirrorPlane"
+    | "sectionPlane"
+    | "gearPlane"
   >("sketch");
   // The reference-plane dialog. `method` chooses the placement; the relevant
   // fields are filled by picks (base/refB planes-or-faces; points) or text inputs.
@@ -1523,6 +1534,23 @@ export default function App() {
   // values further down read `revolve.dialog` and `revolve.preview`. See
   // useRevolveDialog for why the dependency list is explicit rather than implicit.
   const revolve = useRevolveDialog({
+    doc,
+    setDoc,
+    ready,
+    kernelRef,
+    picking,
+    pickPurpose,
+    setPicking,
+    setPickPurpose,
+    beginEdit,
+    commitEdit,
+    cancelEdit,
+    shouldLiveApply,
+    selectFeature,
+  });
+  // The Gear dialog: opens on a default plane with the ghost already showing,
+  // and every field edit re-ghosts it (see useGearDialog).
+  const gear = useGearDialog({
     doc,
     setDoc,
     ready,
@@ -2426,6 +2454,7 @@ export default function App() {
     !!planeDialog ||
     !!extrudeDialog ||
     !!revolve.dialog ||
+    !!gear.dialog ||
     !!sweepDialog ||
     !!loftDialog ||
     !!dressUp.dialog ||
@@ -2570,6 +2599,7 @@ export default function App() {
         ? extrudePreview.map((p) => ({ mesh: p.mesh, ...(extrudeCutting ? { variant: "cut" as const } : {}) }))
         : []),
       ...(revolve.preview ? [{ mesh: revolve.preview }] : []),
+      ...(gear.preview ? [{ mesh: gear.preview }] : []),
       ...patternGhosts,
       ...mirrorGhost,
       // The chamfer/fillet delta: what the operation fills in and what it carves
@@ -2577,7 +2607,7 @@ export default function App() {
       ...(dressUp.preview?.added ?? []).map((mesh) => ({ mesh, variant: "fill" as const })),
       ...(dressUp.preview?.removed ?? []).map((mesh) => ({ mesh, variant: "cut" as const })),
     ],
-    [extrudePreview, extrudeCutting, revolve.preview, patternGhosts, mirrorGhost, dressUp.preview],
+    [extrudePreview, extrudeCutting, revolve.preview, gear.preview, patternGhosts, mirrorGhost, dressUp.preview],
   );
 
   // Feature ids that produced an actual rendered body — what the Solids list
@@ -3415,6 +3445,14 @@ export default function App() {
     return (world && viewApiRef.current?.worldToScreen(world)) || { x: 240, y: 140 };
   };
   const openRevolve = () => revolve.open(revolveInputs, revolvePanelAt());
+  /** Open the Gear dialog. A selected reference plane becomes its plane;
+   *  otherwise it starts on the Top datum, ghost showing straight away. */
+  const openGear = () => {
+    if (gear.dialog) return;
+    const sel = selection.length === 1 ? selection[0] : null;
+    const picked = sel?.kind === "feature" ? doc.features.find((f) => f.id === sel.id) : undefined;
+    gear.open(picked?.type === "plane" ? { kind: "plane", planeId: picked.id } : null);
+  };
   /** Re-open the revolve dialog to edit in place, seeded from the feature. */
   const editRevolve = (id: string) => {
     const f = doc.features.find((x) => x.id === id);
@@ -3547,6 +3585,7 @@ export default function App() {
       else if (polySidesOpen) setPolySidesOpen(false);
       else if (planeDialog) closePlaneDialog();
       else if (revolve.dialog) revolve.close();
+      else if (gear.dialog) gear.close();
       else if (mirrorDialog) closeMirror();
       else if (pattern.dialog) pattern.close();
       else if (shell.dialog) shell.close();
@@ -4192,6 +4231,17 @@ export default function App() {
       setMirrorDialog((d) => (d ? { ...d, plane: ref } : d));
       setPicking(false);
       setPickPurpose("sketch");
+    } else if (pickPurpose === "gearPlane") {
+      // Same guard as the mirror plane: a curved face only offers the tangent
+      // where the pointer landed, which isn't a plane anyone chose.
+      if (ref.kind === "face" && faceId !== undefined) {
+        const m = meshes.find((x) => x.id === ref.featureId);
+        if (!m || !faceNormal(m.mesh.faces, faceId)) {
+          flashMsg("That face isn't flat — a gear needs a planar face, a datum, or a reference plane.");
+          return;
+        }
+      }
+      gear.pickPlane(ref);
     } else if (pickPurpose === "sectionPlane") {
       setPicking(false);
       setPickPurpose("sketch");
@@ -4473,6 +4523,9 @@ export default function App() {
         break;
       case "revolve":
         editRevolve(id);
+        break;
+      case "gear":
+        gear.edit(f);
         break;
       case "boolean":
         editBoolean(id);
@@ -6522,6 +6575,15 @@ export default function App() {
       onSelect: openRevolve,
     },
     {
+      id: "gear",
+      icon: "⚙",
+      label: "Gear",
+      title: "Gear: a parametric involute spur or ring gear on a plane — set teeth, size and bore in the dialog",
+      keywords: ["spur", "involute", "teeth", "cog", "ring", "internal", "module"],
+      disabled: toolsLocked,
+      onSelect: openGear,
+    },
+    {
       id: "sweep",
       icon: "⊃",
       label: "Sweep",
@@ -8373,6 +8435,39 @@ export default function App() {
                     onSymmetricChange={(symmetric) => revolve.setDialog((d) => (d ? { ...d, symmetric } : d))}
                     onConfirm={revolve.confirm}
                     onCancel={revolve.close}
+                  />
+                );
+              })()}
+            {gear.dialog &&
+              (() => {
+                const d = gear.dialog;
+                const draft = { id: d.editId ?? "__gear_draft__", plane: d.plane, ...d.settings };
+                let readout = null;
+                let readoutError: string | null = null;
+                try {
+                  readout = gearReadout(doc, draft, resolved.scope, resolved.planeFrames);
+                } catch (err) {
+                  readoutError = String((err as Error).message ?? err);
+                }
+                const error = readoutError ?? (d.editId ? (resolved.errors[d.editId] ?? null) : gear.previewError);
+                return (
+                  <GearDialog
+                    editing={!!d.editId}
+                    settings={d.settings}
+                    planeLabel={mirrorPlaneLabel(d.plane, doc)}
+                    defaultPlane={d.defaultPlane}
+                    planeArmed={picking && pickPurpose === "gearPlane"}
+                    advanced={d.advanced}
+                    meshOptions={meshCandidates(doc, d.editId)}
+                    meshName={doc.features.find((f) => f.id === d.settings.meshWith)?.name}
+                    readout={readout}
+                    error={error?.replace(/^gear: /, "") ?? null}
+                    onArmPlane={gear.armPlane}
+                    onChange={gear.update}
+                    onParam={gear.updateParam}
+                    onToggleAdvanced={() => gear.setDialog((g) => (g ? { ...g, advanced: !g.advanced } : g))}
+                    onConfirm={gear.confirm}
+                    onCancel={gear.close}
                   />
                 );
               })()}

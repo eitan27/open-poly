@@ -1,0 +1,43 @@
+/* The gear dialog carries more fields than the other mini-dialogs, and labels
+   like "Profile shift (×m)", so it's a little wider. */
+.feature-dialog.gear-dialog {
+  width: 236px;
+  max-height: calc(100% - 80px);
+  overflow-y: auto;
+}
+
+.gear-dialog .ed-field select {
+  width: 128px;
+}
+
+/* The circles the settings make, read-only, under the fields. */
+.gear-readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 11px;
+  color: var(--text-7);
+  font-variant-numeric: tabular-nums;
+}
+
+.gear-meshed {
+  margin: 0;
+}
+
+.gear-advanced-toggle {
+  align-self: flex-start;
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--text-4);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.gear-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
