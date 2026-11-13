@@ -172,6 +172,9 @@ interface SceneState {
   ghostGroup: THREE.Group;
   ghostMaterial: THREE.MeshStandardMaterial;
   ghostLineMaterial: THREE.LineBasicMaterial;
+  /** The add ghost's edges where a body hides them: dashed and faint, drawn
+   *  only where they're BEHIND something (see the material's comment). */
+  ghostHiddenLineMaterial: THREE.LineDashedMaterial;
   /** Dress-up delta ghosts: material the operation adds / carves off. */
   ghostFillMaterial: THREE.MeshStandardMaterial;
   ghostFillLineMaterial: THREE.LineBasicMaterial;
@@ -922,6 +925,23 @@ export function Viewport({
       });
     const ghostMaterial = ghostFaceMat(GHOST_COLOR);
     const ghostLineMaterial = ghostLineMat(GHOST_COLOR);
+    // An "add" ghost stands where its body will, so it's depth-tested — and a
+    // body in front of it (the plate a gear is placed in, a wall a pattern
+    // runs behind) hides it entirely. Its edges are drawn a second time, dashed
+    // and faint, with the depth test REVERSED: only where something is in
+    // front of them. The visible part reads as before; the hidden part shows
+    // through as hidden lines do on a drawing. Ghost faces don't write depth,
+    // so a ghost never hides its own edges this way — only real geometry does.
+    const ghostHiddenLineMaterial = new THREE.LineDashedMaterial({
+      color: GHOST_COLOR,
+      transparent: true,
+      opacity: 0.55,
+      dashSize: 1.5,
+      gapSize: 1.2,
+      depthFunc: THREE.GreaterDepth,
+      depthWrite: false,
+      clippingPlanes: sectionClipPlanes,
+    });
     const ghostFillMaterial = ghostFaceMat(GHOST_FILL_COLOR, true);
     const ghostFillLineMaterial = ghostLineMat(GHOST_FILL_COLOR, true);
     const ghostCutMaterial = ghostFaceMat(GHOST_CUT_COLOR, true);
@@ -1413,6 +1433,7 @@ export function Viewport({
       ghostGroup,
       ghostMaterial,
       ghostLineMaterial,
+      ghostHiddenLineMaterial,
       ghostFillMaterial,
       ghostFillLineMaterial,
       ghostCutMaterial,
@@ -1908,6 +1929,63 @@ export function Viewport({
           const dist = (radius * MARGIN) / Math.sin(Math.min(vFov, hFov) / 2);
           startTween(center.clone().add(dir.clone().multiplyScalar(dist)), up, center);
         }
+      },
+      keepInView(min, max, opts) {
+        // The camera is already on its way somewhere (a view change): leave it be.
+        if (state.tween) return false;
+        const rect = renderer.domElement.getBoundingClientRect();
+        if (!rect.width || !rect.height) return false;
+        // The free part of the canvas: all of it, less the side `avoid` covers.
+        let [left, right] = [0, rect.width];
+        const a = opts?.avoid?.getBoundingClientRect();
+        if (a && a.width && a.left < rect.right && a.right > rect.left) {
+          if (a.left + a.width / 2 > rect.left + rect.width / 2) right = Math.min(right, a.left - rect.left);
+          else left = Math.max(left, a.right - rect.left);
+        }
+        if (right - left < rect.width / 4) [left, right] = [0, rect.width]; // too little room: ignore it
+        const PAD = 24;
+        const box = new THREE.Box3(new THREE.Vector3(...min), new THREE.Vector3(...max));
+        const corners: THREE.Vector3[] = [];
+        for (const x of [min[0], max[0]])
+          for (const y of [min[1], max[1]]) for (const z of [min[2], max[2]]) corners.push(new THREE.Vector3(x, y, z));
+        camera.updateMatrixWorld();
+        const inside = corners.every((c) => {
+          const v = c.clone().project(camera);
+          const px = ((v.x + 1) / 2) * rect.width;
+          const py = ((1 - v.y) / 2) * rect.height;
+          return v.z < 1 && px >= left + PAD && px <= right - PAD && py >= PAD && py <= rect.height - PAD;
+        });
+        if (inside) return false;
+
+        if (opts?.with)
+          box.union(new THREE.Box3(new THREE.Vector3(...opts.with.min), new THREE.Vector3(...opts.with.max)));
+        const center = box.getCenter(new THREE.Vector3());
+        const radius = Math.max(box.getBoundingSphere(new THREE.Sphere()).radius, 1e-3);
+        const fit = Math.min(right - left, rect.height) - 2 * PAD; // px the box must fit in
+        const toCam = camera.position.clone().sub(controls.target);
+        const dir = toCam.clone().normalize();
+        let dist = toCam.length() || VIEW_DISTANCE;
+        let unitsPerPx: number;
+        if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+          const oc = camera as THREE.OrthographicCamera;
+          const needZoom = ((oc.top - oc.bottom) * fit) / (2 * radius * rect.height);
+          if (needZoom < oc.zoom) {
+            oc.zoom = needZoom;
+            oc.updateProjectionMatrix();
+          }
+          unitsPerPx = (oc.top - oc.bottom) / oc.zoom / rect.height;
+        } else {
+          const tanHalf = Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2);
+          // Visible height at distance d is 2·d·tan(fov/2) across rect.height px.
+          dist = Math.max(dist, (radius * rect.height) / (fit * tanHalf));
+          unitsPerPx = (2 * dist * tanHalf) / rect.height;
+        }
+        // Aim so the box's center lands in the middle of the free part.
+        const camRight = new THREE.Vector3().crossVectors(camera.up, dir).normalize();
+        const dx = (left + right) / 2 - rect.width / 2;
+        const target = center.clone().addScaledVector(camRight, -dx * unitsPerPx);
+        startTween(target.clone().addScaledVector(dir, dist), camera.up.clone(), target);
+        return true;
       },
       setProjection(mode) {
         const isOrtho = (camera as THREE.OrthographicCamera).isOrthographicCamera === true;
@@ -3547,6 +3625,7 @@ export function Viewport({
       }
       ghostMaterial.dispose();
       ghostLineMaterial.dispose();
+      ghostHiddenLineMaterial.dispose();
       ghostFillMaterial.dispose();
       ghostFillLineMaterial.dispose();
       ghostCutMaterial.dispose();
@@ -3760,6 +3839,14 @@ export function Viewport({
       faceMesh.renderOrder = order;
       edges.renderOrder = order;
       state.ghostGroup.add(faceMesh, edges);
+      if (faceMat === state.ghostMaterial) {
+        // …and the add ghost's hidden edges (ghostHiddenLineMaterial). The
+        // line distances live on the shared geometry; only this material reads them.
+        const hidden = new THREE.LineSegments(geometry.lines, state.ghostHiddenLineMaterial);
+        hidden.computeLineDistances();
+        hidden.renderOrder = order;
+        state.ghostGroup.add(hidden);
+      }
     });
   }, [ghostMeshes]);
 
