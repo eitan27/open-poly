@@ -77,7 +77,15 @@ await shot("3-created");
 const faceNames = async (id) => {
   const sc = await op.scene();
   const body = sc.bodies.find((b) => b.id === id);
-  return (body?.faces ?? []).map((f) => (typeof f === "string" ? f : f.name));
+  // The summary folds numbered runs ("<id>/bore{n} (n = 0–77)"); unfold them.
+  return (body?.faces ?? []).flatMap((f) => {
+    const m = /^(.*)\{n\} \(n = (.*)\)$/.exec(f);
+    if (!m) return [f];
+    return m[2].split(", ").flatMap((r) => {
+      const [lo, hi = lo] = r.split("–").map(Number);
+      return Array.from({ length: hi - lo + 1 }, (_, i) => `${m[1]}${lo + i}`);
+    });
+  });
 };
 let names = await faceNames(gear1.id);
 check("bore walls are named bore<n>", names.includes(`${gear1.id}/bore0`), names.slice(0, 5).join(", "));
@@ -100,9 +108,9 @@ await page.waitForTimeout(600);
 const text = await dialog.textContent();
 check("meshed gear shows the partner's module", /Module 2 mm/.test(text), text.slice(0, 200));
 check("and the centre distance", /Centre distance to Gear 1: 51 mm/.test(text));
-await dialog.locator(".gear-advanced-toggle").click();
-await fieldInput("Centre X").fill("51");
-await fieldInput("Rotation").fill("180 + 180/31");
+// Meshing places it beside its partner by default: no Centre X, no Rotation.
+check("Place beside is on once it meshes", await dialog.locator(".gear-place-beside").isChecked());
+await fieldInput("Angle").fill("0");
 await page.waitForTimeout(1200);
 await shot("4-pair-ghost");
 await dialog.locator(".ed-primary").click();
@@ -125,6 +133,11 @@ if (b2) {
   const width = b2.max[0] - b2.min[0];
   // 31 teeth × 1.5 + 2 × 1.5 addendum = 49.5 across the tips.
   check("gear 2 follows gear 1's module", Math.abs(width - 49.5) < 0.6, `width=${width}`);
+  // …and stays beside it: 1.5 × (20 + 31) / 2 = 38.25 from gear 1's centre.
+  const b1 = bb(gear1.id);
+  const centre = (b) => (b.min[0] + b.max[0]) / 2;
+  const gap = centre(b2) - centre(b1);
+  check("…and moves to stay beside it", Math.abs(gap - 38.25) < 0.6, `centres ${gap.toFixed(2)} apart`);
 } else check("gear 2 has a bbox in the scene summary", false, JSON.stringify(scene.bodies?.[1] ?? {}).slice(0, 200));
 
 // 5. An internal gear.

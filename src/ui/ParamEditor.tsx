@@ -403,7 +403,7 @@ export function ParamEditor({
               <span className="param-label">{label}</span>
               <ExprInput
                 className="param-input"
-                value={feature.params[name]}
+                value={feature.params[name] ?? ""}
                 onChange={(e) => onChangeParam(feature.id, name, e.target.value)}
               />
             </label>

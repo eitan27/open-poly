@@ -109,10 +109,12 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
         gearType: feature.gearType,
         sizeBy: feature.sizeBy,
         meshWith: feature.meshWith,
+        placeBeside: feature.placeBeside,
         bore: feature.bore,
         extent: feature.extent,
         flip: feature.flip,
-        params: { ...feature.params },
+        // Defaults first: a gear made before a param existed lacks it.
+        params: { ...DEFAULT_GEAR_SETTINGS.params, ...feature.params },
       },
       advanced: false,
       editId: feature.id,

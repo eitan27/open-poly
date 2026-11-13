@@ -25,6 +25,9 @@ tools. A human is watching the same browser. Model deliberately and verifiably.
   full name (`<id>/side12`) in a tool call, never the folded pattern. A gear's
   bore walls are `<id>/bore{n}` (a D-flat's flat is `<id>/boreFlat`) and a ring
   gear's outside is `<id>/rim{n}`; those names don't change with the tooth count.
+  A gear that meshes with another (`meshWith`) and has `placeBeside` sits at
+  the meshing centre distance toward `params.placeAngle` (degrees), its teeth
+  already in mesh; `set_param placeAngle` moves it round its partner.
 
 ## Conventions (always)
 

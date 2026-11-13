@@ -18,6 +18,7 @@ import {
   type GearToothSpec,
 } from "../geom/gearProfile";
 import type { ResolvedFeature } from "../kernel/types";
+import { add, alignTurn, cross, dot, scale, sub, unit, type GearGeom, type Vec3 } from "../geom/gearAlign";
 
 export const GEAR_TYPE_LABELS: Record<GearType, string> = {
   spur: "Spur gear",
@@ -41,9 +42,13 @@ export const DEFAULT_GEAR_PARAMS: GearParams = {
   rotation: "0",
   centerX: "0",
   centerY: "0",
+  placeAngle: "0",
 };
 
-export type GearSettings = Pick<GearFeature, "gearType" | "sizeBy" | "meshWith" | "bore" | "extent" | "flip"> & {
+export type GearSettings = Pick<
+  GearFeature,
+  "gearType" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "extent" | "flip"
+> & {
   params: GearParams;
 };
 
@@ -133,9 +138,11 @@ export interface BakedGear {
  *  with a readable message — the same path the dialog's live readout uses. */
 export function bakeGear(
   doc: Document,
-  g: Pick<GearFeature, "id" | "gearType" | "plane" | "sizeBy" | "meshWith" | "bore" | "params">,
+  g: Pick<GearFeature, "id" | "gearType" | "plane" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "params">,
   scope: Scope,
   planeFrames?: Map<string, PlaneFrameData>,
+  /** Gears already being baked down a chain of placed partners (a guard). */
+  seen: ReadonlySet<string> = new Set(),
 ): BakedGear {
   const p = g.params;
   const { module, pressureAngle, teeth, from } = gearSizing(doc, g, scope);
@@ -160,7 +167,18 @@ export function bakeGear(
             diameter: num("bore", p.boreDiameter, scope),
             acrossFlat: num("D-flat", p.boreFlat, scope),
           };
-  const rotation = (num("rotation", p.rotation, scope) * Math.PI) / 180;
+  const frame = frameOf(g.plane, planeFrames);
+  let rotation = (num("rotation", p.rotation, scope) * Math.PI) / 180;
+  let cx: number;
+  let cy: number;
+  if (g.placeBeside && g.meshWith && from) {
+    const at = placeBesidePartner(doc, g, from, frame, spec, internal, scope, planeFrames, seen);
+    [cx, cy] = at.center;
+    rotation += at.rotation; // Rotation° is added to the meshing angle
+  } else {
+    cx = num("center X", p.centerX, scope);
+    cy = num("center Y", p.centerY, scope);
+  }
   const outline = gearOutline(spec, {
     internal,
     rotation,
@@ -168,14 +186,81 @@ export function bakeGear(
     rimWidth: internal ? num("rim width", p.rimWidth, scope) : undefined,
   });
   // Move the outline to its centre on the plane.
-  const cx = num("center X", p.centerX, scope);
-  const cy = num("center Y", p.centerY, scope);
   if (cx !== 0 || cy !== 0) {
     const shift = (pts: [number, number][]) => pts.map(([x, y]) => [x + cx, y + cy] as [number, number]);
     outline.outline = shift(outline.outline);
     outline.holes = outline.holes.map(shift);
   }
-  return { outline, spec, frame: frameOf(g.plane, planeFrames), thickness, from, center: [cx, cy], rotation };
+  return { outline, spec, frame, thickness, from, center: [cx, cy], rotation };
+}
+
+/** Where a gear placed beside its partner goes on its own plane, and the turn
+ *  that meshes its teeth: its centre at the meshing distance from the
+ *  partner's, toward `params.placeAngle`; its tooth 0 turned (from +u) so its
+ *  teeth sit in the partner's spaces (geom/gearAlign.ts). The partner is baked
+ *  first, so a chain of placed gears follows its first. */
+function placeBesidePartner(
+  doc: Document,
+  g: Pick<GearFeature, "id" | "params">,
+  partner: GearFeature,
+  frame: PlaneFrameData,
+  spec: GearToothSpec,
+  internal: boolean,
+  scope: Scope,
+  planeFrames: Map<string, PlaneFrameData> | undefined,
+  seen: ReadonlySet<string>,
+): { center: [number, number]; rotation: number } {
+  if (seen.has(partner.id)) throw new Error("gear: placed gears form a loop — one of them needs its own place");
+  // Placing reads where the partner is MADE; a Transform moving it afterwards
+  // would leave this gear beside where it used to be.
+  const moved = doc.features.find(
+    (f) => f.type === "transform" && f.targetId === partner.id && !f.copy && !f.suppressed,
+  );
+  if (moved)
+    throw new Error(
+      `gear: ${moved.name} moves ${partner.name} after it's made, so it can't be placed beside it — place ${partner.name} with its Centre X/Y instead, or untick Place beside`,
+    );
+  const pb = bakeGear(doc, partner, scope, planeFrames, new Set([...seen, g.id]));
+  const pf = pb.frame;
+  const at = (f: PlaneFrameData, u: number, v: number): Vec3 =>
+    add(add(f.origin, scale(f.uAxis, u)), scale(f.vAxis, v));
+  const n = unit(cross(frame.uAxis, frame.vAxis));
+  const np = unit(cross(pf.uAxis, pf.vAxis));
+  if (Math.abs(dot(n, np)) < 0.999)
+    throw new Error(`gear: to place it beside ${partner.name}, put it on a plane parallel to ${partner.name}'s`);
+  const partnerInternal = partner.gearType === "internal";
+  if (internal && partnerInternal) throw new Error("gear: two ring gears can't mesh");
+  const m = spec.module;
+  const Np = pb.spec.teeth;
+  const N = spec.teeth;
+  const ring = internal || partnerInternal;
+  const cd = ring ? (m * Math.abs(Np - N)) / 2 : (m * (Np + N)) / 2;
+  if (ring && cd < 1e-9) throw new Error("gear: a ring and a pinion with the same teeth can't mesh");
+  // The partner's centre in this gear's plane, then out along the angle.
+  const pc = at(pf, pb.center[0], pb.center[1]);
+  const d = sub(pc, frame.origin);
+  const a = (num("place angle", g.params.placeAngle ?? "0", scope) * Math.PI) / 180;
+  const center: [number, number] = [dot(d, frame.uAxis) + cd * Math.cos(a), dot(d, frame.vAxis) + cd * Math.sin(a)];
+  const partnerGeom: GearGeom = {
+    teeth: Np,
+    module: m,
+    internal: partnerInternal,
+    center: pc,
+    axis: np,
+    tooth: unit(add(scale(pf.uAxis, Math.cos(pb.rotation)), scale(pf.vAxis, Math.sin(pb.rotation)))),
+  };
+  const selfGeom: GearGeom = {
+    teeth: N,
+    module: m,
+    internal,
+    center: at(frame, center[0], center[1]),
+    axis: n,
+    tooth: unit(frame.uAxis),
+  };
+  const turn = alignTurn(partnerGeom, selfGeom);
+  if (typeof turn === "string") throw new Error(`gear: ${turn}`);
+  // alignTurn turns about the partner's axis; this plane's may face the other way.
+  return { center, rotation: dot(n, np) > 0 ? turn : -turn };
 }
 
 /** The gear as the kernel builds it: a "new" extrude of its outline. */

@@ -696,6 +696,9 @@ export interface GearParams {
   /** Centre offset within the plane (mm, along the plane's u / v axes). */
   centerX: string;
   centerY: string;
+  /** With placeBeside: the direction from the partner's centre to this
+   *  gear's, degrees from the plane's +u. Absent on gears made before it. */
+  placeAngle?: string;
 }
 
 /** A parametric involute gear on a plane. A body *producer*: it resolves to an
@@ -711,6 +714,12 @@ export interface GearFeature extends FeatureBase {
    *  pressure angle are taken from it — the two numbers a pair must share — so
    *  editing one gear's size carries to its partner. */
   meshWith?: string;
+  /** With `meshWith`: put this gear beside its partner — at the meshing centre
+   *  distance, in the direction `params.placeAngle`, its teeth turned into the
+   *  partner's spaces — instead of at `centerX`/`centerY`. Follows the partner
+   *  when it moves, turns or changes size. Needs a plane parallel to the
+   *  partner's. */
+  placeBeside?: boolean;
   bore: GearBore;
   /** One side of the plane (along its normal, or against it when flipped), or
    *  centred on it. */

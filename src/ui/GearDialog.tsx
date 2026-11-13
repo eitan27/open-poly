@@ -55,6 +55,7 @@ export function GearDialog({
   const p = settings.params;
   const internal = settings.gearType === "internal";
   const meshed = !!settings.meshWith;
+  const placed = meshed && !!settings.placeBeside;
 
   /** An expression field bound to one of the gear's params. Enter confirms,
    *  Escape cancels, as in every other feature dialog. */
@@ -63,7 +64,7 @@ export function GearDialog({
       <span>{label}</span>
       <ExprInput
         autoFocus={opts.autoFocus}
-        value={p[name]}
+        value={p[name] ?? ""}
         onChange={(e) => onParam(name, e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") onConfirm();
@@ -112,8 +113,9 @@ export function GearDialog({
           value={sizeKey(settings)}
           onChange={(e) => {
             const v = e.target.value;
-            if (v.startsWith("mesh:")) onChange({ meshWith: v.slice(5) });
-            else onChange({ meshWith: undefined, sizeBy: v as GearSettings["sizeBy"] });
+            // Meshing with a gear places it beside that gear unless asked not to.
+            if (v.startsWith("mesh:")) onChange({ meshWith: v.slice(5), placeBeside: settings.placeBeside ?? true });
+            else onChange({ meshWith: undefined, placeBeside: undefined, sizeBy: v as GearSettings["sizeBy"] });
           }}
         >
           <option value="module">Module</option>
@@ -130,9 +132,27 @@ export function GearDialog({
         </select>
       </label>
       {meshed ? (
-        <p className="ed-hint gear-meshed">
-          Module {readout ? fmt(readout.module) : "–"} mm, pressure angle from {meshName ?? "its partner"}
-        </p>
+        <>
+          <p className="ed-hint gear-meshed">
+            Module {readout ? fmt(readout.module) : "–"} mm, pressure angle from {meshName ?? "its partner"}
+          </p>
+          <label
+            className="ed-field ed-flip"
+            title={`Put it at the meshing distance from ${meshName ?? "its partner"}, teeth in mesh, and keep it there`}
+          >
+            <span>Place beside {meshName ?? "it"}</span>
+            <input
+              type="checkbox"
+              className="gear-place-beside"
+              checked={!!settings.placeBeside}
+              onChange={(e) => onChange({ placeBeside: e.target.checked })}
+            />
+          </label>
+          {placed &&
+            field("placeAngle", "Angle°", {
+              title: `Which side of ${meshName ?? "its partner"}: the direction from its centre to this one's, from the plane's X`,
+            })}
+        </>
       ) : settings.sizeBy === "module" ? (
         field("module", "Module (mm)", { title: "Pitch diameter ÷ teeth. Gears only mesh at the same module." })
       ) : (
@@ -208,9 +228,11 @@ export function GearDialog({
             title: "Positive moves the teeth outward: stronger roots on small gears, no undercut.",
           })}
           {!internal && field("rootFillet", "Root fillet (×m)", { title: "0.38 × module is standard" })}
-          {field("rotation", "Rotation°", { title: "Turn the teeth to line up with a partner" })}
-          {field("centerX", "Centre X")}
-          {field("centerY", "Centre Y")}
+          {placed
+            ? field("rotation", "Extra rotation°", { title: "Added to the angle that meshes its teeth" })
+            : field("rotation", "Rotation°", { title: "Turn the teeth to line up with a partner" })}
+          {!placed && field("centerX", "Centre X")}
+          {!placed && field("centerY", "Centre Y")}
         </div>
       )}
 

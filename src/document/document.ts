@@ -21,7 +21,7 @@ import { missingJoints } from "./joints";
 import { isBodyFeature, isHideableFeature } from "./parts";
 import { assertNever } from "../lib/assertNever";
 import { applyDerived, circularPatternAngles, resolvePatternCount } from "./derived";
-import { resolveGear, type GearSettings } from "./gear";
+import { DEFAULT_GEAR_PARAMS, resolveGear, type GearSettings } from "./gear";
 import type {
   BooleanFeature,
   DerivedOp,
@@ -943,7 +943,7 @@ export function updateParam(doc: Document, id: string, name: string, value: stri
     }
     if (f.type === "shell" && name === "thickness") return { ...f, thickness: value };
     if (f.type === "revolve" && name === "angle") return { ...f, angle: value };
-    if (f.type === "gear" && name in f.params) return { ...f, params: { ...f.params, [name]: value } };
+    if (f.type === "gear" && name in DEFAULT_GEAR_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
     if (f.type === "plane" && name === "angle") return { ...f, angle: value };
     if (f.type === "transform") {
