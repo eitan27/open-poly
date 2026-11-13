@@ -446,8 +446,10 @@ translation (bouncing).
   is the same per-frame solve, posed through `poseBodies` and drawn through
   `ViewportApi.drawFrame` (the view as it is, highlights off) onto a hidden
   canvas. Video: 30 fps, 1280 wide, through `captureStream` and a
-  `MediaRecorder` paced in real time — WebM, or MP4 where only that records
-  (Safari). GIF: 20 fps, 640 wide, each frame quantized to its own palette by
+  `MediaRecorder` paced in real time. **MP4 (H.264) first** where it records
+  (Chrome, Edge, Safari), as that's what plays on a Mac, an iPhone, in Keynote
+  / PowerPoint and in mail; WebM only where it doesn't (Firefox). H.264 is
+  named outright (`VIDEO_TYPES`): a bare `video/mp4` can be VP9 in Chrome. GIF: 20 fps, 640 wide, each frame quantized to its own palette by
   `gifenc`; a Once GIF plays once, the others repeat. Like Stop, it lets go of
   the poses when it's done; Cancel stops it with nothing saved.
 

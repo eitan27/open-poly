@@ -2,7 +2,7 @@
 // mate row's ▶ opens the Animate dialog, Play turns the arm in the view (the
 // frames differ mid-play and the readout counts), nothing is saved, and Stop
 // puts the arm back where it was. Export saves one cycle as a GIF or a
-// video (and Cancel stops one), leaving the view and the document as they were. NB if the local open-poly MCP hub is running, this headless tab
+// video (MP4 where the browser records it) (and Cancel stops one), leaving the view and the document as they were. NB if the local open-poly MCP hub is running, this headless tab
 // connects to it and can take the bridge from your own tab; reload yours after.
 import { chromium } from "playwright";
 
@@ -259,12 +259,18 @@ await page.waitForTimeout(300);
 check("…and lets the view go, as Stop does", same(await shot(), stillOpen));
 
 const video = await download(".asm-export-video");
+// MP4 (H.264) where the browser records it, as Chromium does; WebM where not.
+const mp4 = video.bytes.subarray(4, 8).toString() === "ftyp";
+const webm = video.bytes.readUInt32BE(0) === 0x1a45dfa3;
 check(
-  "Video downloads a WebM",
-  video.name.endsWith(".webm") && video.bytes.readUInt32BE(0) === 0x1a45dfa3 && video.bytes.length > 2000,
-  `${video.name}, ${video.bytes.length} bytes`,
+  "Video downloads an H.264 MP4 (or a WebM where MP4 doesn't record), named for what it is",
+  video.bytes.length > 2000 &&
+    ((mp4 && video.name.endsWith(".mp4") && video.bytes.includes("avc1")) || (webm && video.name.endsWith(".webm"))),
+  `${video.name}, ${video.bytes.length} bytes, ${mp4 ? "MP4" : webm ? "WebM" : "unknown"}`,
 );
-if (process.env.SHOTS) (await import("node:fs")).writeFileSync(`${process.env.SHOTS}/export.webm`, video.bytes);
+check("Chromium records MP4", mp4);
+if (process.env.SHOTS)
+  (await import("node:fs")).writeFileSync(`${process.env.SHOTS}/export.${mp4 ? "mp4" : "webm"}`, video.bytes);
 
 let downloaded = false;
 page.once("download", () => (downloaded = true));

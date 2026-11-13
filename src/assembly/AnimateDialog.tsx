@@ -84,7 +84,11 @@ export function AnimateDialog({ mate, anim, dofs }: { mate: Mate; anim: MateAnim
           <button
             className="asm-export-video"
             disabled={!canVideo || !exportable}
-            title={canVideo ? "Save one cycle as a video (WebM, or MP4 in Safari)" : "This browser can't record video"}
+            title={
+              canVideo
+                ? `Save one cycle as a video (${videoMimeType()!.includes("mp4") ? "MP4" : "WebM"})`
+                : "This browser can't record video"
+            }
             onClick={() => anim.exportAs("video")}
           >
             Video

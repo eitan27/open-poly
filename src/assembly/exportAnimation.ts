@@ -7,8 +7,10 @@
 //
 // Video: the frames go onto a hidden canvas whose captureStream feeds a
 // MediaRecorder, one requestFrame each, paced at the frame rate in real time
-// (the recorder stamps frames as they arrive). WebM where the browser can
-// record it, else MP4 (Safari). GIF: each frame quantized to its own
+// (the recorder stamps frames as they arrive). MP4 (H.264) where the browser
+// can record it — Chrome, Edge, Safari — since that's what plays everywhere
+// people take a video: QuickTime and Quick Look, an iPhone, Keynote and
+// PowerPoint, mail. Else WebM (Firefox). GIF: each frame quantized to its own
 // 256-colour palette and encoded with gifenc.
 import { applyPalette, GIFEncoder, quantize } from "gifenc";
 import { valueAt, type AnimateSpec } from "./animate";
@@ -39,12 +41,27 @@ export function exportSize(format: ExportFormat, aspect: number): { width: numbe
   return { width, height };
 }
 
+/** Recordable video types, best first. H.264 in MP4 is named outright: a bare
+ *  "video/mp4" could be VP9 in MP4 in Chrome, which plays almost nowhere that
+ *  WebM doesn't. High profile level 4.0 holds 1280×(up to 1080); Main, then
+ *  any avc1, for recorders without it. Bare MP4 comes last, for a Safari that
+ *  takes no codec string (its MP4 is H.264). */
+export const VIDEO_TYPES = [
+  "video/mp4;codecs=avc1.640028",
+  "video/mp4;codecs=avc1.4d0028",
+  "video/mp4;codecs=avc1",
+  "video/webm;codecs=vp9",
+  "video/webm;codecs=vp8",
+  "video/webm",
+  "video/mp4",
+];
+
 /** A recordable video type this browser has, or null if it can't record. */
-export function videoMimeType(): string | null {
-  if (typeof MediaRecorder === "undefined") return null;
-  for (const t of ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm", "video/mp4"])
-    if (MediaRecorder.isTypeSupported(t)) return t;
-  return null;
+export function videoMimeType(
+  supported: (type: string) => boolean = (t) =>
+    typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(t),
+): string | null {
+  return VIDEO_TYPES.find(supported) ?? null;
 }
 
 export interface ExportJob {
