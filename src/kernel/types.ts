@@ -101,6 +101,13 @@ export type ResolvedProfile =
       segmentStart?: [number, number];
       segments?: ProfileSegment[];
       holes?: [number, number][][];
+      /** Fixed names for some of the polyline edges, so the wall each one
+       *  extrudes into is `${id}/${name}` rather than `${id}/side${i}` (whose
+       *  index moves whenever an earlier edge is added or removed — a gear's
+       *  bore would be renumbered by a change of tooth count). `outline[i]`
+       *  names the edge from point i to i+1 (wrapping); `holes[h][i]` likewise
+       *  for hole h. null/absent = the default `side${i}`. */
+      edgeNames?: { outline?: (string | null)[] | null; holes?: ((string | null)[] | null)[] };
     }
   // `faceName` is the persistent topological name (preferred); `center` (+
   // optional `normal`, for planar faces) is the geometric fingerprint used to

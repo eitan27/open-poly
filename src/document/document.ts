@@ -21,6 +21,7 @@ import { missingJoints } from "./joints";
 import { isBodyFeature, isHideableFeature } from "./parts";
 import { assertNever } from "../lib/assertNever";
 import { applyDerived, circularPatternAngles, resolvePatternCount } from "./derived";
+import { DEFAULT_GEAR_PARAMS, resolveGear, type GearSettings } from "./gear";
 import type {
   BooleanFeature,
   DerivedOp,
@@ -29,6 +30,7 @@ import type {
   DressUpTargetSpec,
   FaceRef,
   ExtrudeFeature,
+  GearFeature,
   ExtrudeProfile,
   Feature,
   FeatureKind,
@@ -551,6 +553,29 @@ export function addLoft(
   return insertFeature(doc, feature);
 }
 
+/** A parametric gear on a plane (see document/gear.ts). */
+export function addGear(doc: Document, plane: SketchPlaneRef, settings: GearSettings): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "gear").length + 1;
+  const feature: GearFeature = {
+    id: uid(),
+    type: "gear",
+    name: `Gear ${ordinal}`,
+    suppressed: false,
+    plane,
+    ...settings,
+    params: { ...settings.params },
+    color: newBodyColor(),
+    opacity: 1,
+  };
+  return insertFeature(doc, feature);
+}
+
+export function updateGear(doc: Document, id: string, plane: SketchPlaneRef, settings: GearSettings): Document {
+  return mapFeature(doc, id, (f) =>
+    f.type === "gear" ? { ...f, plane, ...settings, params: { ...settings.params } } : f,
+  );
+}
+
 export function addImport(doc: Document, source: string, name?: string): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "import").length + 1;
   const feature: ImportFeature = {
@@ -918,6 +943,7 @@ export function updateParam(doc: Document, id: string, name: string, value: stri
     }
     if (f.type === "shell" && name === "thickness") return { ...f, thickness: value };
     if (f.type === "revolve" && name === "angle") return { ...f, angle: value };
+    if (f.type === "gear" && name in DEFAULT_GEAR_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
     if (f.type === "plane" && name === "angle") return { ...f, angle: value };
     if (f.type === "transform") {
@@ -1609,6 +1635,8 @@ export function resolveDocument(doc: Document): ResolveResult {
         features.push({ id: f.id, type: "loft", profiles });
       } else if (f.type === "import") {
         features.push({ id: f.id, type: "import", source: f.source });
+      } else if (f.type === "gear") {
+        features.push(resolveGear(doc, f, scope, planeFrames));
       } else if (f.type === "sketch" || f.type === "plane") {
         // No body of their own. A sketch is consumed by the features built on it
         // (and its derived geometry was applied into `dDoc` above); a plane is

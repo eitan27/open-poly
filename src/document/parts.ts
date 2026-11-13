@@ -80,6 +80,7 @@ const BODY_FEATURE_TYPES: Record<SolidFeature["type"], true> = {
   sweep: true,
   loft: true,
   import: true,
+  gear: true,
 };
 
 /** Does this feature produce a body of its own — and so own its appearance? A

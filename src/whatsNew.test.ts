@@ -99,6 +99,24 @@ describe("whatsNew", () => {
       expect(second.items.map((i) => i.text)).toEqual(nov.items);
       expect(sinceLastVisit([nov, oct], second.seen).items).toEqual([]);
     });
+    it("a returning visitor gets every entry since the record shipped, not just the newest", () => {
+      const asm: WhatsNewEntry = { date: "2026-11-13", items: ["Assemblies"] };
+      const gears: WhatsNewEntry = { date: "2026-11-20", items: ["Gears"] };
+      expect(sinceLastVisit([gears, asm, nov, oct], null, true).items.map((i) => i.text)).toEqual([
+        "Gears",
+        "Assemblies",
+      ]);
+      // An entry from the record's own day counts, even when it's the second.
+      const sameDay: WhatsNewEntry = { date: "2026-11-13", items: ["Gears"] };
+      expect(sinceLastVisit([sameDay, asm, nov], null, true).items.map((i) => i.text)).toEqual(["Gears", "Assemblies"]);
+    });
+    it("bolds a phrase with its spaces, so a lone letter key only matches as a word", () => {
+      expect(boldRuns("Gears: press G to try", [" G "])).toEqual([
+        { text: "Gears: press", bold: false },
+        { text: " G ", bold: true },
+        { text: "to try", bold: false },
+      ]);
+    });
     it("carries each item's bold phrases", () => {
       const e: WhatsNewEntry = { date: "2026-11-13", items: ["Assemblies: mates"], bold: ["Assemblies"] };
       expect(sinceLastVisit([e, oct], [entryKey(oct)]).items).toEqual([

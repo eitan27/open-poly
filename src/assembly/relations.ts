@@ -168,6 +168,38 @@ export function applyRelations(
   return { forced, problems };
 }
 
+/** `a` with relation `relId`'s phase — its driven DOF's own stored value — set
+ *  so that the relation, applied, leaves the driven part where `values` (the
+ *  current solve) has it: phase = where it is − k × the driver. Without this a
+ *  relation made or switched back on would turn the driven part to its old
+ *  phase plus k times wherever the driver now is, undoing a tooth alignment
+ *  done while it was off. `a` unchanged when the relation is suppressed, its
+ *  driven value is an expression, or either end has no solved value. */
+export function phaseToCurrentPose(
+  a: AssemblyDoc,
+  relId: string,
+  values: ReadonlyMap<string, Partial<Record<Dof, number>>>,
+  scope: Scope,
+): AssemblyDoc {
+  const r = relationsOf(a).find((x) => x.id === relId);
+  if (!r || r.suppressed) return a;
+  const driven = a.mates.find((m) => m.id === r.driven.mateId);
+  if (!driven || isDriven(driven, r.driven.dof)) return a;
+  const here = values.get(r.driven.mateId)?.[r.driven.dof];
+  const driver = values.get(r.driver.mateId)?.[r.driver.dof];
+  if (here === undefined || driver === undefined) return a;
+  let factor: number;
+  try {
+    factor = relationFactor(r, scope);
+  } catch {
+    return a;
+  }
+  const phase = formatValue(here - factor * driver, isRotation(r.driven.dof));
+  if (Number(driven.values?.[r.driven.dof] ?? 0) === Number(phase)) return a;
+  const next: Mate = { ...driven, values: { ...driven.values, [r.driven.dof]: phase } };
+  return { ...a, mates: a.mates.map((m) => (m.id === driven.id ? next : m)) };
+}
+
 /** A DOF's own stored value, not clamped to its limits: a driven DOF's phase. */
 function storedValue(mate: Mate, dof: Dof, scope: Scope): number {
   const t = mate.values?.[dof]?.trim();
@@ -266,6 +298,9 @@ export interface RelationDraft {
   driven: { mateId: string; dof: Dof } | null;
   value: string;
   reverse: boolean;
+  /** Gear relations between two gear parts: turn the driven gear on Add /
+   *  Done so its teeth sit in the driver's spaces. */
+  align?: boolean;
 }
 
 /** Why no relation can be made among `mates` (the movable, unsuppressed ones),

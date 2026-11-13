@@ -809,6 +809,8 @@ export interface SceneSummary {
   featureCount: number;
   selection: unknown[];
   errors: Record<string, string>;
+  /** Present when some face/edge names are folded runs: how to read them. */
+  nameNote?: string;
 }
 
 /** The scene summary of an open ASSEMBLY (see agent/assemblySummary.ts):
@@ -816,6 +818,8 @@ export interface SceneSummary {
  *  from a part's SceneSummary. */
 export interface AssemblySummary {
   kind: "assembly";
+  /** Present when some face/edge names are folded runs: how to read them. */
+  nameNote?: string;
   documentId: string;
   documentName: string;
   /** The parts instances are made from, each once: `key` is what an instance's

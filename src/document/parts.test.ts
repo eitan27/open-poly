@@ -123,6 +123,7 @@ const ALL_FEATURE_TYPES: Record<Feature["type"], true> = {
   sweep: true,
   loft: true,
   import: true,
+  gear: true,
 };
 const FEATURE_TYPES = Object.keys(ALL_FEATURE_TYPES) as Feature["type"][];
 const asFeature = (type: Feature["type"]) => ({ type }) as Feature;
@@ -133,6 +134,7 @@ describe("isBodyFeature / isHideableFeature", () => {
   const BODY = [
     "boolean",
     "extrude",
+    "gear",
     "import",
     "loft",
     "mirror",
@@ -143,7 +145,7 @@ describe("isBodyFeature / isHideableFeature", () => {
     "transform",
   ];
 
-  it("admits exactly the ten body-producing feature types", () => {
+  it("admits exactly the eleven body-producing feature types", () => {
     expect(typesWhere(isBodyFeature)).toEqual(BODY);
   });
 

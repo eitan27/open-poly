@@ -14,6 +14,8 @@ const URL = process.env.URL ?? "http://localhost:4173/";
 const SHOTS = process.env.SHOTS;
 const KEY = "openpoly.whatsNewSeen";
 const list = JSON.parse(readFileSync("dist/version.json", "utf8")).whatsNew;
+/** As RECORD_SINCE in src/whatsNew.ts. */
+const RECORD_SINCE = "2026-11-13";
 const entryKey = (e) => `${e.date}|${e.items.join("|")}`;
 const browser = await chromium.launch(process.env.PW_EXE ? { executablePath: process.env.PW_EXE } : {});
 let failures = 0;
@@ -46,7 +48,9 @@ const sinceBanner = (page) => page.locator(".whats-new-banner");
   );
 
   // Someone who used the app before the seen record existed: no record, but
-  // an open document from a past visit. They get the newest entry.
+  // an open document from a past visit. They get every entry from the day the
+  // record shipped on (RECORD_SINCE), and nothing older. The banner fits three
+  // items, so check its first line and the "+N more" for the rest.
   await page.evaluate((k) => localStorage.removeItem(k), KEY);
   check(
     "…a first visit leaves an open document id behind",
@@ -56,9 +60,14 @@ const sinceBanner = (page) => page.locator(".whats-new-banner");
   await ready(page);
   await sinceBanner(page).waitFor({ timeout: 10000 });
   const pre = await sinceBanner(page).innerText();
+  const since = list.filter((e, i) => i === 0 || e.date >= RECORD_SINCE);
+  const older = list.filter((e) => !since.includes(e));
+  const count = since.reduce((n, e) => n + e.items.length, 0);
   check(
-    "a visitor from before the record gets the newest entry only",
-    pre.includes(list[0].items[0]) && !list.slice(1).some((e) => e.items.some((t) => pre.includes(t))),
+    "a visitor from before the record gets every entry since it shipped, and nothing older",
+    pre.includes(list[0].items[0]) &&
+      (count <= 3 || pre.includes(`+${count - 3} more`)) &&
+      !older.some((e) => e.items.some((t) => pre.includes(t))),
     pre.replace(/\n/g, " ⏎ "),
   );
   await sinceBanner(page).getByText("Dismiss").click();

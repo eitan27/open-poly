@@ -135,6 +135,14 @@ included, has since been done:
   drop-in**: we are on the latest replicad (`0.23.1`, OCCT ~7.7–7.8) and 7.9.x means
   a custom `opencascade.js` build, with no certainty it helps — stock OCCT booleans
   cylinder−box fine, and so does this build _in isolation_.
+- **Smooth gear teeth — depends on the B-spline wall above.** Gear teeth are
+  polylines (`geom/gearProfile.ts`: 7 chords per involute flank, ~10 µm off at
+  module 2) because exact arcs in an extrude make `gp_Cyl` walls, which can't be
+  cut. That costs ~25 faces a tooth, which bloats the mesh, STEP files and the
+  agent's scene summary. Once a B-spline extruded wall is shown to boolean in the
+  full pipeline, give each flank one spline (or 3 arcs, if analytic walls ever
+  work: 1.4 µm, ~10 faces a tooth) and the bore a true circle. Check boolean
+  speed on a many-toothed gear too: B-spline booleans have been slow here.
 - Tessellation LOD — no distance/zoom mesh simplification.
 
 **Measuring is passive and shared** (`selection/measure.ts`, `measurePair.ts`,

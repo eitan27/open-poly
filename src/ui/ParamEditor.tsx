@@ -386,6 +386,29 @@ export function ParamEditor({
             <span className="param-static">a region along a path</span>
           </div>
         </div>
+      ) : feature.type === "gear" ? (
+        <div className="sketch-params">
+          {(
+            [
+              ["teeth", "Teeth"],
+              ...(feature.meshWith
+                ? []
+                : feature.sizeBy === "pitchDiameter"
+                  ? [["pitchDiameter", "Pitch Ø"]]
+                  : [["module", "Module"]]),
+              ["thickness", "Thickness"],
+            ] as [keyof typeof feature.params, string][]
+          ).map(([name, label]) => (
+            <label className="param-field" key={name}>
+              <span className="param-label">{label}</span>
+              <ExprInput
+                className="param-input"
+                value={feature.params[name] ?? ""}
+                onChange={(e) => onChangeParam(feature.id, name, e.target.value)}
+              />
+            </label>
+          ))}
+        </div>
       ) : feature.type === "loft" ? (
         <div className="sketch-params">
           <div className="param-field">

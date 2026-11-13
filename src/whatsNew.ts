@@ -66,20 +66,25 @@ export function newSince(served: WhatsNewEntry[], known: WhatsNewEntry[]): Whats
   return itemsOf(served.filter((e) => !seen.has(key(e))));
 }
 
+/** The day the since-last-visit record shipped (with the assemblies entry). */
+export const RECORD_SINCE = "2026-11-13";
+
 /** For a page just loaded: the items of `entries` (this build's list) the
  *  visitor hasn't seen, and the seen keys to store for next time. `seen` is
  *  what was stored, or null when nothing was. With nothing stored, a first
  *  visit shows nothing (all of it is new to them) and only records what's
  *  there now; but someone who used the app before this record existed
- *  (`returning`) gets the newest entry, the one that shipped with it. */
+ *  (`returning`) last loaded a build from before `recordSince`, so they get
+ *  every entry from that day on — and always the newest. */
 export function sinceLastVisit(
   entries: WhatsNewEntry[],
   seen: string[] | null,
   returning = false,
+  recordSince = RECORD_SINCE,
 ): { items: WhatsNewItem[]; seen: string[] } {
   const keys = entries.map(key);
   if (seen === null && !returning) return { items: [], seen: keys };
-  const had = new Set(seen ?? keys.slice(1));
+  const had = new Set(seen ?? entries.filter((e, i) => i > 0 && e.date < recordSince).map(key));
   return { items: itemsOf(entries.filter((e) => !had.has(key(e)))), seen: keys };
 }
 

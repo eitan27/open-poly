@@ -49,7 +49,7 @@ check(
 );
 
 // --- 1. Shell arms the BODY, not the clicked face --------------------------
-await page.keyboard.press("g");
+await page.keyboard.press("o");
 await dialog.waitFor({ state: "visible", timeout: 5000 });
 const text = await dialog.textContent();
 check("Shell dialog opened from a face pick", await dialog.isVisible());
@@ -133,7 +133,7 @@ await waitIdle();
 // on screen; the arming path under test is the same either way.
 await apply({ op: "select", refs: [{ kind: "feature", id: box2.createdId }] });
 await page.waitForTimeout(200);
-await page.keyboard.press("g");
+await page.keyboard.press("o");
 await dialog.waitFor({ state: "visible", timeout: 5000 });
 check(
   "dialog re-opens with the new body armed and no faces",
@@ -156,7 +156,7 @@ check("it opens NO faces — a sealed hollow shell", (sealed?.faces ?? []).lengt
 // the empty-handed path.
 await apply({ op: "select", refs: [] });
 await page.waitForTimeout(200);
-await page.keyboard.press("g");
+await page.keyboard.press("o");
 await dialog.waitFor({ state: "visible", timeout: 5000 });
 check("Shell opens with nothing selected at all", await dialog.isVisible());
 const emptyText = await dialog.textContent();
@@ -270,7 +270,7 @@ const box4 = await apply({ op: "addPrimitive", kind: "box", params: { width: 20,
 await waitIdle();
 await apply({ op: "select", refs: [{ kind: "feature", id: box4.createdId }] });
 await page.waitForTimeout(200);
-await page.keyboard.press("g");
+await page.keyboard.press("o");
 await dialog.waitFor({ state: "visible", timeout: 5000 });
 const thickness = dialog.locator("input").first();
 await thickness.fill("40"); // twice the box — the walls cannot meet
@@ -317,7 +317,7 @@ const box5 = await apply({ op: "addPrimitive", kind: "box", params: { width: 20,
 await waitIdle();
 await apply({ op: "select", refs: [{ kind: "feature", id: box5.createdId }] });
 await page.waitForTimeout(200);
-await page.keyboard.press("g");
+await page.keyboard.press("o");
 await dialog.waitFor({ state: "visible", timeout: 5000 });
 await dialog.locator("input").first().fill("40");
 await dialog.getByRole("button", { name: "Create" }).click();

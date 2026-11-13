@@ -127,11 +127,12 @@ export const SHORTCUTS = [
   { id: "model.loft", key: "l", mode: "modeling", anyShift: true, label: "Loft" },
   { id: "model.chamfer", key: "c", mode: "modeling", anyShift: true, label: "Chamfer" },
   { id: "model.fillet", key: "f", mode: "modeling", anyShift: true, label: "Fillet" },
-  { id: "model.shell", key: "g", mode: "modeling", anyShift: true, label: "Shell" },
+  { id: "model.shell", key: "o", mode: "modeling", anyShift: true, label: "Shell" },
   { id: "model.boolean", key: "b", mode: "modeling", anyShift: true, label: "Boolean" },
   { id: "model.transform", key: "t", mode: "modeling", anyShift: true, label: "Transform" },
   { id: "model.mirror", key: "m", mode: "modeling", anyShift: true, label: "Mirror a body" },
   { id: "model.pattern", key: "x", mode: "modeling", anyShift: true, label: "Pattern a body" },
+  { id: "model.gear", key: "g", mode: "modeling", anyShift: true, label: "Gear" },
 
   // Enter commits the sketch tools that preview before they commit — the
   // Mirror, Project/Convert and Pattern sessions. It is a "both" entry rather

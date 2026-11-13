@@ -660,6 +660,77 @@ export interface ImportFeature extends FeatureBase {
   hidden?: boolean;
 }
 
+/** Which gear a Gear feature makes. Both are a 2D involute outline extruded
+ *  to a thickness, so they share every setting but the bore/rim. */
+export type GearType = "spur" | "internal";
+
+/** What's cut from the middle of an external gear. */
+export type GearBore = "none" | "round" | "dflat";
+
+/** Every numeric setting of a gear, as an expression string. Kept together
+ *  under `params` (rather than as top-level fields) so a variable rename walks
+ *  all of them — `params` is one of the records `renameInFeatures` rewrites. */
+export interface GearParams {
+  teeth: string;
+  /** Module (mm) — read when `sizeBy` is "module" and the gear isn't meshed. */
+  module: string;
+  /** Pitch diameter (mm) — read when `sizeBy` is "pitchDiameter" instead. */
+  pitchDiameter: string;
+  /** Face width along the plane normal. */
+  thickness: string;
+  boreDiameter: string;
+  /** D-flat bore: the distance from the flat to the far side of the bore. */
+  boreFlat: string;
+  /** Internal gear: radial thickness of the ring beyond the tooth roots. */
+  rimWidth: string;
+  /** Degrees. Ignored when meshed (the partner's is used). */
+  pressureAngle: string;
+  /** Total play (mm) — each tooth is thinned by half of it. */
+  backlash: string;
+  /** Profile shift coefficient x (× module). */
+  profileShift: string;
+  /** Root fillet radius, as a multiple of the module (0.38 is standard). */
+  rootFillet: string;
+  /** Degrees about the gear's centre, to phase the teeth against a partner. */
+  rotation: string;
+  /** Centre offset within the plane (mm, along the plane's u / v axes). */
+  centerX: string;
+  centerY: string;
+  /** With placeBeside: the direction from the partner's centre to this
+   *  gear's, degrees from the plane's +u. Absent on gears made before it. */
+  placeAngle?: string;
+}
+
+/** A parametric involute gear on a plane. A body *producer*: it resolves to an
+ *  extrude of the baked gear outline (see document/gear.ts). */
+export interface GearFeature extends FeatureBase {
+  type: "gear";
+  gearType: GearType;
+  /** The plane (or planar face) the gear lies on, centred on its origin. */
+  plane: SketchPlaneRef;
+  /** Size the teeth by module, or by the pitch diameter (module = PD / teeth). */
+  sizeBy: "module" | "pitchDiameter";
+  /** Another gear (by feature id) this one meshes with: its module and
+   *  pressure angle are taken from it — the two numbers a pair must share — so
+   *  editing one gear's size carries to its partner. */
+  meshWith?: string;
+  /** With `meshWith`: put this gear beside its partner — at the meshing centre
+   *  distance, in the direction `params.placeAngle`, its teeth turned into the
+   *  partner's spaces — instead of at `centerX`/`centerY`. Follows the partner
+   *  when it moves, turns or changes size. Needs a plane parallel to the
+   *  partner's. */
+  placeBeside?: boolean;
+  bore: GearBore;
+  /** One side of the plane (along its normal, or against it when flipped), or
+   *  centred on it. */
+  extent: "blind" | "symmetric";
+  flip: boolean;
+  params: GearParams;
+  color: number;
+  opacity: number;
+  hidden?: boolean;
+}
+
 export type Feature =
   | PrimitiveFeature
   | SketchFeature
@@ -674,7 +745,8 @@ export type Feature =
   | RevolveFeature
   | SweepFeature
   | LoftFeature
-  | ImportFeature;
+  | ImportFeature
+  | GearFeature;
 
 export interface Variable {
   id: string;

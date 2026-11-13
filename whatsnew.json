@@ -2,6 +2,14 @@
   {
     "date": "2026-11-13",
     "items": [
+      "Gears: easily add spur and ring gears, with automatic placement and tooth alignment in parts and assemblies",
+      "Use the keyboard shortcut G to try it out"
+    ],
+    "bold": ["Gears", " G "]
+  },
+  {
+    "date": "2026-11-13",
+    "items": [
       "Assemblies: join parts with mates, gears and screws",
       "Animate a mate and save it as a video or GIF",
       "Just press New → Assembly and insert parts from any of your documents"

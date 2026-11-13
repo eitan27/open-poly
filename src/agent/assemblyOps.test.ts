@@ -445,6 +445,32 @@ describe("add_relation", () => {
     );
   });
 
+  it("starts from the pose the parts are in, and keeps it when switched off and back on", async () => {
+    const t = await twoHinges();
+    await t.apply({ op: "setMateValue", mateId: t.r1, dof: "rz", value: 30 });
+    await t.apply({ op: "setMateValue", mateId: t.r2, dof: "rz", value: 5 });
+    const g = (
+      await t.apply({
+        op: "addRelation",
+        type: "gear",
+        driver: { mateId: t.r1, dof: "rz" },
+        driven: { mateId: t.r2, dof: "rz" },
+        value: 2,
+      })
+    ).createdId!;
+    expect(value(t, t.r2)).toBeCloseTo(5); // not 5 − 60
+    // Off: line the teeth up by turning the driven one alone, and the driver too.
+    await t.apply({ op: "setSuppressed", id: g, suppressed: true });
+    await t.apply({ op: "setMateValue", mateId: t.r2, dof: "rz", value: 12 });
+    await t.apply({ op: "setMateValue", mateId: t.r1, dof: "rz", value: 50 });
+    // Back on: both stay where they are, and turn together from there.
+    await t.apply({ op: "setSuppressed", id: g, suppressed: false });
+    expect(value(t, t.r1)).toBeCloseTo(50);
+    expect(value(t, t.r2)).toBeCloseTo(12);
+    await t.apply({ op: "setMateValue", mateId: t.r1, dof: "rz", value: 55 });
+    expect(value(t, t.r2)).toBeCloseTo(2);
+  });
+
   it("refuses ends that don't fit, before making anything", async () => {
     const t = await twoHinges();
     const rel = (driven: { mateId: string; dof: "rz" | "tz" }, type: "gear" | "rack" = "gear") =>
@@ -742,11 +768,12 @@ describe("edit_relation", () => {
 
   it("changes its value, direction and name, keeping its id", async () => {
     const t = await geared();
-    expect(value(t, t.r2)).toBeCloseTo(-60);
+    // Adding it left B where it was (0°): its phase took up the −2 × 30°.
+    expect(value(t, t.r2)).toBeCloseTo(0);
     const r = await t.apply({ op: "editRelation", relationId: t.g, value: 3, reverse: true, name: "Belt" });
     expect(r).toMatchObject({ ok: true, createdId: t.g });
     expect(t.assembly().relations?.[0]).toMatchObject({ id: t.g, name: "Belt", value: "3", reverse: true });
-    expect(value(t, t.r2)).toBeCloseTo(90);
+    expect(value(t, t.r2)).toBeCloseTo(60 + 90); // the phase, plus 3 × 30°
     await t.apply({ op: "editRelation", relationId: t.g, reverse: false });
     expect(t.assembly().relations?.[0].reverse).toBeUndefined();
   });
