@@ -124,6 +124,17 @@ await page.waitForTimeout(400);
 await page.keyboard.press("Escape");
 await waitIdle();
 
+// With no mates yet, the Relations hint asks for two, a little below its header.
+{
+  const hint = await page.locator(".asm-empty").last().textContent();
+  check("with no mates, the Relations hint asks for two moving mates", /Add two moving mates/.test(hint), hint);
+  if (process.env.SHOTS)
+    await page.screenshot({
+      path: process.env.SHOTS + "/relation-empty.png",
+      clip: { x: 0, y: 60, width: 290, height: 400 },
+    });
+}
+
 const scene = await page.evaluate(() => window.__openpoly.read({ read: "sceneSummary" }));
 const [arm, base] = scene.instances.map((i) => i.id);
 const faceOf = (id, test) =>

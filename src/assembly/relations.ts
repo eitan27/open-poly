@@ -278,7 +278,8 @@ export function relationBlocker(mates: Mate[]): string | null {
   if (turns.length >= 2) return null;
   if (mates.some((m) => m.type === "cylindrical")) return null;
   if (turns.length === 1 && slides.some((m) => m.id !== turns[0].id)) return null;
-  if (mates.length === 0) return "Add a mate that moves (revolute, slider…), then relate it to another.";
+  if (mates.length === 0)
+    return "Add two moving mates (e.g. revolute, slider) to enable the creation of a relation between them.";
   if (turns.length === 0) return "Relations need a mate that turns (revolute, cylindrical…) to drive or be driven.";
   return "Add a second mate that moves to relate it to the first.";
 }

@@ -307,7 +307,7 @@ describe("relationBlocker", () => {
   const c = (i: string) => ({ instanceId: i, ref: { kind: "face" as const, name: "f" }, anchor: "center" as const });
   const m = (id: string, type: MateType) => mate(id, type, c("A"), c("B"));
   it("blocks with no mates, saying to add one that moves", () => {
-    expect(relationBlocker([])).toMatch(/Add a mate that moves/);
+    expect(relationBlocker([])).toMatch(/Add two moving mates/);
   });
   it("blocks a lone revolute, asking for a second mate", () => {
     expect(relationBlocker([m("r", "revolute")])).toMatch(/second mate/);
