@@ -116,10 +116,10 @@ describe("placing a gear beside its partner", () => {
     const one = addGear(createDocument(), TOP, settings({}, { teeth: "12" }));
     const moved = addTransform(one.doc, one.id, [0, 0, 0], { tx: "10" });
     const two = addGear(moved.doc, TOP, settings({ meshWith: one.id, placeBeside: true }, { teeth: "24" }));
-    expect(resolveDocument(two.doc).errors[two.id]).toMatch(/Transform 1 moves Gear 1 .* Centre X\/Y/);
+    expect(resolveDocument(two.doc).errors[two.id]).toMatch(/Transform 1 moves Gear 1 .* Center X\/Y/);
   });
 
-  it("leaves a gear made before Place beside where its Centre X/Y put it", () => {
+  it("leaves a gear made before Place beside where its Center X/Y put it", () => {
     const one = addGear(createDocument(), TOP, settings({}, { teeth: "12" }));
     const two = addGear(one.doc, TOP, settings({ meshWith: one.id }, { teeth: "24", centerX: "50" }));
     const { placeAngle: _drop, ...oldParams } = gearOf(two.doc, two.id).params;

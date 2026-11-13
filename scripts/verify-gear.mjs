@@ -107,7 +107,7 @@ await fieldSelect("Size by").selectOption({ label: gear1.name });
 await page.waitForTimeout(600);
 const text = await dialog.textContent();
 check("meshed gear shows the partner's module", /Module 2 mm/.test(text), text.slice(0, 200));
-check("and the centre distance, beside it", /Centre distance 51 mm/.test(text));
+check("and the center distance, on its own line", /Center distance between gears 51 mm/.test(text));
 // Meshing places it beside its partner by default: no Centre X, no Rotation.
 check("Place beside is on once it meshes", await dialog.locator(".gear-place-beside").isChecked());
 await fieldInput("Angle").fill("0");

@@ -66,8 +66,11 @@ await op.settle();
 await openGear();
 await fieldInput("Teeth").fill("24");
 await fieldSelect("Size by").selectOption({ label: "Gear 1" });
+// Placed by hand, not beside it: Place beside would mesh the teeth already,
+// leaving Align teeth nothing to do.
+await dialog.locator(".gear-place-beside").uncheck();
 await dialog.locator(".gear-advanced-toggle").click();
-await fieldInput("Centre X").fill("36");
+await fieldInput("Center X").fill("36");
 await page.waitForTimeout(400);
 await dialog.locator(".ed-primary").click();
 await op.settle();

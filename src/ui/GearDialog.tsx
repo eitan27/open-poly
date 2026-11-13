@@ -96,7 +96,7 @@ export function GearDialog({
         armed={planeArmed}
         value={defaultPlane ? `${planeLabel} (default)` : planeLabel}
         wide
-        title="The gear is centred on the plane's origin (offset it under Advanced)"
+        title="The gear is centered on the plane's origin (offset it under Advanced)"
         clearTitle="Pick a different plane or face"
         onArm={onArmPlane}
       />
@@ -139,8 +139,11 @@ export function GearDialog({
           <div className="gear-readout gear-meshed">
             <span>Module {readout ? fmt(readout.module) : "–"} mm</span>
             {readout?.centerDistance !== undefined && (
-              <span title={`How far this gear's centre is from ${meshName ?? "its partner"}'s, to mesh`}>
-                Centre distance {fmt(readout.centerDistance)} mm
+              <span
+                className="gear-center-distance"
+                title={`How far this gear's center is from ${meshName ?? "its partner"}'s, to mesh`}
+              >
+                Center distance between gears {fmt(readout.centerDistance)} mm
               </span>
             )}
           </div>
@@ -158,7 +161,7 @@ export function GearDialog({
           </label>
           {placed &&
             field("placeAngle", "Angle°", {
-              title: `Which side of ${meshName ?? "its partner"}: the direction from its centre to this one's, from the plane's X`,
+              title: `Which side of ${meshName ?? "its partner"}: the direction from its center to this one's, from the plane's X`,
             })}
         </>
       ) : settings.sizeBy === "module" ? (
@@ -239,8 +242,8 @@ export function GearDialog({
           {placed
             ? field("rotation", "Extra rotation°", { title: "Added to the angle that meshes its teeth" })
             : field("rotation", "Rotation°", { title: "Turn the teeth to line up with a partner" })}
-          {!placed && field("centerX", "Centre X")}
-          {!placed && field("centerY", "Centre Y")}
+          {!placed && field("centerX", "Center X")}
+          {!placed && field("centerY", "Center Y")}
         </div>
       )}
 

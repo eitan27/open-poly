@@ -63,7 +63,7 @@ export function alignTurn(fixed: GearGeom, moving: GearGeom): number | string {
   const want = ring ? (m * Math.abs(fixed.teeth - moving.teeth)) / 2 : (m * (fixed.teeth + moving.teeth)) / 2;
   if (dist < 1e-6) return "The gears are on the same axis.";
   if (Math.abs(dist - want) > 0.25 * m)
-    return `The gears' centres are ${round(dist)} mm apart; to mesh they need ${round(want)} mm.`;
+    return `The gears' centers are ${round(dist)} mm apart; to mesh they need ${round(want)} mm.`;
 
   const Nf = fixed.teeth;
   const Nm = moving.teeth;

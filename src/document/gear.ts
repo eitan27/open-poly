@@ -218,7 +218,7 @@ function placeBesidePartner(
   );
   if (moved)
     throw new Error(
-      `gear: ${moved.name} moves ${partner.name} after it's made, so it can't be placed beside it — place ${partner.name} with its Centre X/Y instead, or untick Place beside`,
+      `gear: ${moved.name} moves ${partner.name} after it's made, so it can't be placed beside it — place ${partner.name} with its Center X/Y instead, or untick Place beside`,
     );
   const pb = bakeGear(doc, partner, scope, planeFrames, new Set([...seen, g.id]));
   const pf = pb.frame;

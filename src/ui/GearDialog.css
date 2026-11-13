@@ -28,6 +28,11 @@
   margin: 0;
 }
 
+/* Its own line under the module, never beside it. */
+.gear-center-distance {
+  flex-basis: 100%;
+}
+
 .gear-advanced-toggle {
   align-self: flex-start;
   padding: 2px 0;
