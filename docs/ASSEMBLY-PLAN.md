@@ -135,6 +135,10 @@ document. Rules that fall out of this:
 - **No cycles:** assemblies may only insert _part_ documents.
 - **A missing source** (deleted, or not yet synced from Drive) draws nothing;
   its row shows ⚠ with the reason, and its mates are skipped with ⚠.
+- **A part that's gone from its document** (a cut split `ext1` into
+  `ext1#1`…, or a body was deleted) is the same: an instance resolves by its
+  `partId` alone, so one that no longer exists draws nothing and its row says
+  "This part no longer exists in …" with ⚠.
 - **Deleting a part document an assembly uses** warns and names the assembly,
   found through `referencedDocIds` on the assemblies' metas without loading
   them.
@@ -649,7 +653,8 @@ pinning (parts have no versions yet).
   mate count is in `src/storage/db.test.ts`.
 - Browser checks in `scripts/verify-assembly-*.mjs` (`a0`, `a1`, `a2`, `drag`,
   `width`, `loops`, `move`, `variables`, `pin`, `vertex`, `animate`,
-  `relations`, `loop-input`, `export`, `measure`, `insert-many`), and `verify-agent-assembly-read.mjs` and
+  `relations`, `loop-input`, `export`, `measure`, `insert-many`,
+  `animate-blocked`), and `verify-agent-assembly-read.mjs` and
   `verify-agent-assembly-edit.mjs` for the agent, against `npm run dev`. Set
   `PW_EXE` to use a pre-installed Chromium (scripts on
   `scripts/lib/harness.mjs` read `CHROMIUM_PATH` instead). `pin` is the one
@@ -664,9 +669,3 @@ pinning (parts have no versions yet).
   They share one dev server, whose hot reload swaps the page under a running
   check (it then hangs or fails for no reason of its own); run in parallel,
   the load brings out timing races the checks otherwise miss.
-
-## Open questions
-
-- When a source part's part count changes (a cut splits a body), what happens
-  to instances of `ext1#1`? Proposed: an instance resolves by `partId`; a
-  vanished `partId` is a missing source with ⚠.
