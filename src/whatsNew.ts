@@ -50,16 +50,37 @@ export function parseWhatsNew(raw: unknown): WhatsNewEntry[] {
   });
 }
 
-const key = (e: WhatsNewEntry) => `${e.date}|${e.items.join("|")}`;
+/** An entry's identity: its date and text, not its bold (which builds from
+ *  before `bold` don't see). */
+export const entryKey = (e: WhatsNewEntry) => `${e.date}|${e.items.join("|")}`;
+const key = entryKey;
+
+const itemsOf = (entries: WhatsNewEntry[]): WhatsNewItem[] =>
+  entries.flatMap((e) => e.items.map((text) => ({ text, bold: (e.bold ?? []).filter((b) => text.includes(b)) })));
 
 /** The items in `served` (the deployed list) that `known` (this tab's own
  *  bundle) didn't have, newest first. Empty when a deploy added no entry —
  *  the banner then reads as it always did. */
 export function newSince(served: WhatsNewEntry[], known: WhatsNewEntry[]): WhatsNewItem[] {
   const seen = new Set(known.map(key));
-  return served
-    .filter((e) => !seen.has(key(e)))
-    .flatMap((e) => e.items.map((text) => ({ text, bold: (e.bold ?? []).filter((b) => text.includes(b)) })));
+  return itemsOf(served.filter((e) => !seen.has(key(e))));
+}
+
+/** For a page just loaded: the items of `entries` (this build's list) the
+ *  visitor hasn't seen, and the seen keys to store for next time. `seen` is
+ *  what was stored, or null when nothing was. With nothing stored, a first
+ *  visit shows nothing (all of it is new to them) and only records what's
+ *  there now; but someone who used the app before this record existed
+ *  (`returning`) gets the newest entry, the one that shipped with it. */
+export function sinceLastVisit(
+  entries: WhatsNewEntry[],
+  seen: string[] | null,
+  returning = false,
+): { items: WhatsNewItem[]; seen: string[] } {
+  const keys = entries.map(key);
+  if (seen === null && !returning) return { items: [], seen: keys };
+  const had = new Set(seen ?? keys.slice(1));
+  return { items: itemsOf(entries.filter((e) => !had.has(key(e)))), seen: keys };
 }
 
 /** `text` cut into runs, each bold or not, for the phrases in `bold`. */

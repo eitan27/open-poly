@@ -15,6 +15,7 @@ import { clamp } from "./lib/clamp";
 import { formatRounded3 } from "./lib/format";
 import { useUpdateAvailable } from "./useVersionCheck";
 import { WhatsNewLine } from "./ui/WhatsNewLine";
+import { useWhatsNewSinceLastVisit } from "./useWhatsNew";
 import {
   addBoolean,
   addExtrude,
@@ -783,6 +784,9 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === "undefined" || window.innerWidth > 820);
   // True once a newer build has been deployed — surfaces a "refresh" banner.
   const updateAvailable = useUpdateAvailable();
+  // What's new since this browser last loaded the page (shown when no update
+  // banner is up: that one already says what's new).
+  const sinceLastVisit = useWhatsNewSinceLastVisit();
   const [selection, setSelection] = useState<Selection[]>([]);
   const selectedFeatureIds = useMemo(() => new Set(selection.map(featureIdOf)), [selection]);
   // Which rendered bodies a whole-feature selection should highlight. A body
@@ -6883,6 +6887,15 @@ export default function App() {
             )}
             <button className="banner-link" onClick={() => location.reload()}>
               Refresh
+            </button>
+          </div>
+        )}
+        {!updateAvailable && sinceLastVisit.items.length > 0 && (
+          // Already loaded, so no Refresh: just a way to put it away.
+          <div className="update-banner whats-new-banner">
+            <WhatsNewLine items={sinceLastVisit.items} />
+            <button className="banner-link" onClick={sinceLastVisit.dismiss}>
+              Dismiss
             </button>
           </div>
         )}

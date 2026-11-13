@@ -39,6 +39,18 @@
   flex: 1;
 }
 
+/* "What's new" in a banner: a small label on its own line over the items, so
+   the label reads as a heading and doesn't run into a bold first phrase. */
+.update-banner .whats-new-label {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-bright-2);
+}
+
 .update-banner .banner-link {
   color: var(--accent-bright-2);
 }

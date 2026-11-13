@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { checkForServiceWorkerUpdate } from "./pwa";
 import { newSince, parseWhatsNew, type WhatsNewItem } from "./whatsNew";
+import { markWhatsNewSeen } from "./useWhatsNew";
 
 // How often to poll the deployed version.json while the tab is open+visible.
 const POLL_MS = 2 * 60 * 1000;
@@ -41,7 +42,10 @@ export function useUpdateAvailable(): UpdateInfo {
         checkForServiceWorkerUpdate();
         let items: WhatsNewItem[] = [];
         try {
-          items = whatsNew === undefined ? [] : newSince(parseWhatsNew(whatsNew), __WHATS_NEW__);
+          const served = whatsNew === undefined ? [] : parseWhatsNew(whatsNew);
+          items = newSince(served, __WHATS_NEW__);
+          // Shown here, so the page Refresh loads doesn't show them again.
+          if (items.length) markWhatsNewSeen(served);
         } catch {
           // A list this build can't read never costs the banner itself.
         }

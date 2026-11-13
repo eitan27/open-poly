@@ -1,6 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { bannerItems, boldRuns, newSince, parseWhatsNew, type WhatsNewEntry } from "./whatsNew";
+import {
+  bannerItems,
+  boldRuns,
+  entryKey,
+  newSince,
+  parseWhatsNew,
+  sinceLastVisit,
+  type WhatsNewEntry,
+} from "./whatsNew";
 
 const nov: WhatsNewEntry = {
   date: "2026-11-05",
@@ -73,5 +81,29 @@ describe("whatsNew", () => {
       { text: " and insert", bold: false },
     ]);
     expect(boldRuns("plain", [])).toEqual([{ text: "plain", bold: false }]);
+  });
+
+  describe("since the last visit", () => {
+    it("a first visit shows nothing, and records what's there", () => {
+      expect(sinceLastVisit([nov, oct], null)).toEqual({ items: [], seen: [entryKey(nov), entryKey(oct)] });
+    });
+    it("someone who used the app before the record existed gets the newest entry", () => {
+      expect(sinceLastVisit([nov, oct], null, true)).toEqual({
+        items: nov.items.map((text) => ({ text, bold: [] })),
+        seen: [entryKey(nov), entryKey(oct)],
+      });
+    });
+    it("a later visit shows the entries added since, once", () => {
+      const first = sinceLastVisit([oct], null);
+      const second = sinceLastVisit([nov, oct], first.seen);
+      expect(second.items.map((i) => i.text)).toEqual(nov.items);
+      expect(sinceLastVisit([nov, oct], second.seen).items).toEqual([]);
+    });
+    it("carries each item's bold phrases", () => {
+      const e: WhatsNewEntry = { date: "2026-11-13", items: ["Assemblies: mates"], bold: ["Assemblies"] };
+      expect(sinceLastVisit([e, oct], [entryKey(oct)]).items).toEqual([
+        { text: "Assemblies: mates", bold: ["Assemblies"] },
+      ]);
+    });
   });
 });

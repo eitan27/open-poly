@@ -1,13 +1,15 @@
 import { Fragment } from "react";
 import { bannerItems, boldRuns, type WhatsNewItem } from "../whatsNew";
 
-/** The update banner's text when the new deploy brings "what's new" entries:
- *  "New in Open Poly: A · B · C +2 more" (see src/whatsNew.ts). */
+/** A banner's "what's new" text (see src/whatsNew.ts): a small "NEW IN OPEN
+ *  POLY" label on its own line, so its weight can't run into a bold phrase at
+ *  the start of the first item, then "A · B · C +2 more". Used by the update
+ *  banner and the since-your-last-visit one. */
 export function WhatsNewLine({ items }: { items: WhatsNewItem[] }) {
   const { shown, more } = bannerItems(items);
   return (
-    <span>
-      <strong>New in Open Poly:</strong>{" "}
+    <span className="whats-new">
+      <span className="whats-new-label">New in Open Poly</span>
       {shown.map((item, i) => (
         <Fragment key={i}>
           {i > 0 && " · "}
