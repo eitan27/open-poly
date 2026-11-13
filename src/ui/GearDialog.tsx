@@ -133,9 +133,17 @@ export function GearDialog({
       </label>
       {meshed ? (
         <>
-          <p className="ed-hint gear-meshed">
-            Module {readout ? fmt(readout.module) : "–"} mm, pressure angle from {meshName ?? "its partner"}
-          </p>
+          {/* What the pair shares, short enough not to wrap mid-phrase: each
+              figure is a span that wraps whole. The pressure angle is under
+              Advanced. */}
+          <div className="gear-readout gear-meshed">
+            <span>Module {readout ? fmt(readout.module) : "–"} mm</span>
+            {readout?.centerDistance !== undefined && (
+              <span title={`How far this gear's centre is from ${meshName ?? "its partner"}'s, to mesh`}>
+                Centre distance {fmt(readout.centerDistance)} mm
+              </span>
+            )}
+          </div>
           <label
             className="ed-field ed-flip"
             title={`Put it at the meshing distance from ${meshName ?? "its partner"}, teeth in mesh, and keep it there`}

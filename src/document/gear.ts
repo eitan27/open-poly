@@ -296,6 +296,8 @@ export interface GearReadout {
   module: number;
   dims: GearDims;
   notes: string[];
+  /** With a partner: how far apart the two centres go to mesh (mm). */
+  centerDistance?: number;
 }
 
 export function gearReadout(
@@ -313,6 +315,7 @@ export function gearReadout(
       `${spec.teeth} teeth undercut at this profile shift (${min}+ don't). Raise the profile shift in Advanced to strengthen the roots.`,
     );
   }
+  let centerDist: number | undefined;
   if (baked.from) {
     let partnerTeeth: number | null = null;
     try {
@@ -322,11 +325,13 @@ export function gearReadout(
     }
     if (partnerTeeth !== null) {
       const oneInternal = (g.gearType === "internal") !== (baked.from.gearType === "internal");
-      const cd = centerDistance(spec.module, spec.teeth, partnerTeeth, oneInternal);
-      notes.push(`Centre distance to ${baked.from.name}: ${fmt(cd)} mm`);
+      centerDist = centerDistance(spec.module, spec.teeth, partnerTeeth, oneInternal);
     }
   }
-  return { module: spec.module, dims: baked.outline.dims, notes };
+  return {
+    module: spec.module,
+    dims: baked.outline.dims,
+    notes,
+    ...(centerDist !== undefined ? { centerDistance: centerDist } : {}),
+  };
 }
-
-const fmt = (n: number) => String(Math.round(n * 1000) / 1000);

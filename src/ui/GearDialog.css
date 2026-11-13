@@ -20,6 +20,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+.gear-readout span {
+  white-space: nowrap;
+}
+
 .gear-meshed {
   margin: 0;
 }
