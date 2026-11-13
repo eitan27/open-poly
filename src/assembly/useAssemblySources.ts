@@ -27,6 +27,8 @@ export interface SourcePart {
   mesh: ShapeMeshPayload;
   /** Set when a Gear feature made this part: what a gear relation reads. */
   gear?: GearGeom;
+  /** Set instead when a Gear feature made it but its teeth can't be read. */
+  gearProblem?: string;
 }
 
 export type SourceState =
@@ -43,7 +45,9 @@ export type BuildDocument = (doc: Document) => Promise<{ id: string; mesh: Shape
 export function sourceParts(doc: Document, meshes: { id: string; mesh: ShapeMeshPayload }[]): SourcePart[] {
   return meshes.map((m) => {
     const look = partAppearance(doc, m.id, DEFAULT_SOLID_COLOR);
-    const gear = doc.features.some((f) => f.type === "gear") ? gearGeomOf(doc, m.id) : null;
+    const g = doc.features.some((f) => f.type === "gear") ? gearGeomOf(doc, m.id) : null;
+    const gear = g && "problem" in g ? null : g;
+    const gearProblem = g && "problem" in g ? g.problem : undefined;
     return {
       partId: m.id,
       name: look.name,
@@ -51,6 +55,7 @@ export function sourceParts(doc: Document, meshes: { id: string; mesh: ShapeMesh
       opacity: look.opacity,
       mesh: m.mesh,
       ...(gear ? { gear } : {}),
+      ...(gearProblem ? { gearProblem } : {}),
     };
   });
 }

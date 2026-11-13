@@ -38,7 +38,7 @@ export function RelationDialog({
   problem: string | null;
   /** When both ends turn gear parts: which, and why their teeth can't be
    *  lined up (if they can't). The ratio and Reverse are filled from them. */
-  gears?: { label: string; problem: string | null } | null;
+  gears?: { label: string | null; problem: string | null } | null;
   onChange: (d: RelationDraft) => void;
   onConfirm: () => void;
   onCancel: () => void;
@@ -123,7 +123,10 @@ export function RelationDialog({
           onChange={(e) => onChange({ ...draft, reverse: e.target.checked })}
         />
       </label>
-      {gears && (
+      {gears && !gears.label && gears.problem && (
+        <p className="ed-hint asm-relation-gears">Align teeth isn't available: {gears.problem}</p>
+      )}
+      {gears?.label && (
         <>
           <p className="ed-hint asm-relation-gears">{gears.label}: ratio and direction from their teeth.</p>
           <label

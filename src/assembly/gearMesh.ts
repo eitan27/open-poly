@@ -45,21 +45,25 @@ const cross = (a: Vec3, b: Vec3): Vec3 => [
 ];
 const unit = (a: Vec3): Vec3 => scale(a, 1 / Math.hypot(...a));
 
-/** The gear geometry of `partId` in `doc`, when a Gear feature made it and
- *  nothing has moved it since (an in-place Transform would; then null). Null
- *  too when the gear doesn't build. */
-export function gearGeomOf(doc: Document, partId: string): GearGeom | null {
+/** The gear geometry of `partId` in `doc`, when a Gear feature made it:
+ *  followed through any in-place Transforms after it, as the kernel applies
+ *  them (scale about the pivot, turn about the axis, then move). Null when the
+ *  part isn't a gear; `{ problem }` when it is one but its teeth can't be read
+ *  (it doesn't build, or a Transform turns it about a body edge, which only
+ *  the kernel can resolve). */
+export function gearGeomOf(doc: Document, partId: string): GearGeom | { problem: string } | null {
   const id = featureIdOfPart(partId);
   if (id !== partId) return null; // a second lump of something: not a gear
   const g = doc.features.find((f) => f.id === id);
   if (g?.type !== "gear") return null;
-  if (doc.features.some((f) => f.type === "transform" && f.targetId === id && !f.suppressed)) return null;
+  let resolved: ReturnType<typeof resolveDocument>;
+  let geom: GearGeom;
   try {
-    const { scope, planeFrames } = resolveDocument(doc);
-    const b = bakeGear(doc, g, scope, planeFrames);
+    resolved = resolveDocument(doc);
+    const b = bakeGear(doc, g, resolved.scope, resolved.planeFrames);
     const { origin, uAxis, vAxis } = b.frame;
     const at = (u: number, v: number): Vec3 => add(add(origin, scale(uAxis, u)), scale(vAxis, v));
-    return {
+    geom = {
       teeth: b.spec.teeth,
       module: b.spec.module,
       internal: g.gearType === "internal",
@@ -67,9 +71,43 @@ export function gearGeomOf(doc: Document, partId: string): GearGeom | null {
       axis: unit(cross(uAxis, vAxis)),
       tooth: unit(add(scale(uAxis, Math.cos(b.rotation)), scale(vAxis, Math.sin(b.rotation)))),
     };
-  } catch {
-    return null;
+  } catch (e) {
+    return { problem: `${g.name} doesn't build: ${(e as Error).message}` };
   }
+  for (const t of resolved.features) {
+    if (t.type !== "transform" || t.targetId !== id || t.copy) continue;
+    const f = doc.features.find((x) => x.id === t.id);
+    if (!f || f.suppressed) continue;
+    if (!t.axisOrigin || !t.axisDir)
+      return { problem: `${f.name} turns ${g.name} about a body edge, so its teeth can't be read here.` };
+    geom = transformGear(geom, t.scale, t.pivot, t.axisOrigin, t.axisDir, (t.angle * Math.PI) / 180, [
+      t.tx,
+      t.ty,
+      t.tz,
+    ]);
+  }
+  return geom;
+}
+
+/** `g` through a Transform feature: scaled about `pivot`, turned `angle`
+ *  (radians, right-handed) about the line through `o` along `dir`, then moved. */
+function transformGear(g: GearGeom, k: number, pivot: Vec3, o: Vec3, dir: Vec3, angle: number, move: Vec3): GearGeom {
+  const d = unit(dir);
+  const c = Math.cos(angle);
+  const sn = Math.sin(angle);
+  // Rodrigues: v cosθ + (d × v) sinθ + d (d·v)(1 − cosθ).
+  const turnV = (v: Vec3): Vec3 => add(add(scale(v, c), scale(cross(d, v), sn)), scale(d, dot(d, v) * (1 - c)));
+  const point = (p: Vec3): Vec3 => {
+    const scaled = add(pivot, scale(sub(p, pivot), k));
+    return add(add(o, turnV(sub(scaled, o))), move);
+  };
+  return {
+    ...g,
+    module: g.module * k,
+    center: point(g.center),
+    axis: unit(turnV(g.axis)),
+    tooth: unit(turnV(g.tooth)),
+  };
 }
 
 /** `g` placed by an instance transform. */

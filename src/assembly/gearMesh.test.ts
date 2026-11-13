@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import polygonClipping from "polygon-clipping";
 import { gearOutline, type Vec2 } from "../geom/gearProfile";
-import { alignRelation, alignTurn, gearRelationValue, placeGear, type GearGeom } from "./gearMesh";
+import { addGear, addTransform, createDocument } from "../document/document";
+import { DEFAULT_GEAR_SETTINGS, type GearSettings } from "../document/gear";
+import type { SketchPlaneRef } from "../document/planes";
+import { alignRelation, alignTurn, gearGeomOf, gearRelationValue, placeGear, type GearGeom } from "./gearMesh";
 import { IDENTITY } from "./placement";
 import { addRelation, phaseToCurrentPose } from "./relations";
 import { solve } from "./solve";
@@ -212,5 +215,41 @@ describe("alignRelation", () => {
   it("follows an upside-down axle: its angle turns the other way, so Reverse is on", () => {
     FR.axleF = frameAt(36, 0, true);
     check({ A: local(12), B: local(24) }, "axleF", "-15", "8", { reverse: true });
+  });
+});
+
+describe("gearGeomOf", () => {
+  const settings = (over: Partial<GearSettings["params"]> = {}): GearSettings => ({
+    ...DEFAULT_GEAR_SETTINGS,
+    params: { ...DEFAULT_GEAR_SETTINGS.params, teeth: "12", ...over },
+  });
+  const TOP: SketchPlaneRef = { kind: "datum", id: "plane-top" };
+
+  it("reads a gear's teeth, centre and tooth direction on its plane", () => {
+    const { doc, id } = addGear(createDocument(), TOP, settings({ centerX: "5", rotation: "90" }));
+    const g = gearGeomOf(doc, id) as GearGeom;
+    expect(g.teeth).toBe(12);
+    expect(g.center[0]).toBeCloseTo(5);
+    expect(Math.abs(g.axis[2])).toBeCloseTo(1);
+    // Tooth 0 turned 90° from the plane's u.
+    expect(Math.abs(g.tooth[0])).toBeLessThan(1e-9);
+  });
+
+  it("follows a Transform that moves and turns it, as the kernel applies it", () => {
+    const made = addGear(createDocument(), TOP, settings());
+    const before = gearGeomOf(made.doc, made.id) as GearGeom;
+    // Turn 90° about Z through the pivot (0,0,0), then move 30 along X.
+    const { doc } = addTransform(made.doc, made.id, [0, 0, 0], { angle: "90", axis: "z", tx: "30" });
+    const g = gearGeomOf(doc, made.id) as GearGeom;
+    expect(g.center[0]).toBeCloseTo(before.center[0] + 30);
+    // The tooth turned a quarter turn about Z.
+    const turned = Math.atan2(g.tooth[1], g.tooth[0]) - Math.atan2(before.tooth[1], before.tooth[0]);
+    expect(Math.abs(Math.sin(turned))).toBeCloseTo(1);
+  });
+
+  it("isn't a gear for other parts, and says why it can't read a broken one", () => {
+    const made = addGear(createDocument(), TOP, settings({ teeth: "3" }));
+    expect(gearGeomOf(made.doc, made.id)).toMatchObject({ problem: expect.stringMatching(/doesn't build/) });
+    expect(gearGeomOf(made.doc, "nope")).toBeNull();
   });
 });

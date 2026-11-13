@@ -51,6 +51,11 @@ export function useRelations({
     const src = inst ? sources.get(inst.source.docId) : undefined;
     return src?.status === "ready" ? (src.parts.find((p) => p.partId === inst!.source.partId)?.gear ?? null) : null;
   };
+  const gearProblemOf = (instanceId: string): string | undefined => {
+    const inst = assembly?.instances.find((i) => i.id === instanceId);
+    const src = inst ? sources.get(inst.source.docId) : undefined;
+    return src?.status === "ready" ? src.parts.find((p) => p.partId === inst!.source.partId)?.gearProblem : undefined;
+  };
   const solveAt = (a: AssemblyDoc) => solve(a, frameFor(a));
   const sameEnd = (x: RelationDraft["driver"], y: RelationDraft["driver"]) =>
     x?.mateId === y?.mateId && x?.dof === y?.dof;
@@ -68,7 +73,16 @@ export function useRelations({
   const gears = useMemo(() => {
     if (!session || !assembly || session.draft.type !== "gear") return null;
     const pair = relationGears(assembly, session.draft, gearOf);
-    if (!pair) return null;
+    if (!pair) {
+      // A gear part whose teeth can't be read: say why, rather than leave
+      // Align teeth out with no word.
+      const why = [session.draft.driver, session.draft.driven]
+        .map((e) => assembly.mates.find((m) => m.id === e?.mateId))
+        .flatMap((m) => (m ? [m.a.instanceId, m.b.instanceId] : []))
+        .map(gearProblemOf)
+        .find((p): p is string => !!p);
+      return why ? { label: null, problem: why } : null;
+    }
     const name = (g: { instanceId: string; geom: GearGeom }) =>
       `${assembly.instances.find((i) => i.id === g.instanceId)?.name ?? "?"} (${g.geom.teeth} teeth${g.geom.internal ? ", ring" : ""})`;
     let problem: string | null = null;
