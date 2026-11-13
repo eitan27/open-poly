@@ -121,7 +121,8 @@ import {
   type CoincidentCurve,
 } from "./sketch/coincidentSelection";
 import { pinConstraints } from "./sketch/snapPins";
-import type { BooleanOp, MeshedFaces } from "./kernel/types";
+import type { BooleanOp, MeshedFaces, ShapeMeshPayload } from "./kernel/types";
+import { meshBounds } from "./viewport/meshBounds";
 import { solveSketch } from "./sketch/solver";
 import { isVariableExpression, relinkDimensions, sketchesNeedingRelink } from "./document/dimensionExpr";
 import { measureSelection } from "./selection/measure";
@@ -2609,6 +2610,26 @@ export default function App() {
     ],
     [extrudePreview, extrudeCutting, revolve.preview, gear.preview, patternGhosts, mirrorGhost, dressUp.preview],
   );
+
+  // Keep the gear in view while its dialog is open. Place beside, a new size or
+  // a new partner can put it off screen — or behind the dialog — so when its
+  // ghost (or, editing, the gear itself) changes and isn't fully in view, the
+  // camera pans to it and its partner, clear of the dialog. Only on a change
+  // to the gear: orbiting away from it is left alone.
+  const gearShown =
+    gear.preview ?? (gear.dialog?.editId ? meshes.find((m) => m.id === gear.dialog?.editId)?.mesh : undefined);
+  const gearPartnerRef = useRef<ShapeMeshPayload | undefined>(undefined);
+  const meshWith = gear.dialog?.settings.meshWith;
+  gearPartnerRef.current = meshWith ? meshes.find((m) => m.id === meshWith)?.mesh : undefined;
+  useEffect(() => {
+    const box = gearShown && meshBounds(gearShown);
+    if (!box) return;
+    const partner = gearPartnerRef.current && meshBounds(gearPartnerRef.current);
+    viewApiRef.current?.keepInView(box.min, box.max, {
+      avoid: document.querySelector(".gear-dialog"),
+      ...(partner ? { with: partner } : {}),
+    });
+  }, [gearShown]);
 
   // Feature ids that produced an actual rendered body — what the Solids list
   // shows and what a Boolean can combine (primitives, "new" extrusions,

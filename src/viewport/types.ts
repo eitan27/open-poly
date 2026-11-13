@@ -163,6 +163,17 @@ export interface ViewportApi {
    *  geometry can sit far from the plane origin (and so be off-screen with the
    *  default framing). `min`/`max` are the entities' 2D bounding box. */
   frameSketchBounds(frame: PlaneFrameData, min: [number, number], max: [number, number]): void;
+  /** Bring the world box `min`–`max` into view if any of it is off screen:
+   *  pan (and zoom out only if it doesn't fit) so it — together with the
+   *  `with` box, when given (a partner it should be seen beside) — sits in the
+   *  canvas, the view direction kept. `avoid` is an element over the canvas (a
+   *  dialog) whose side of the canvas is left out of the space it's fitted
+   *  into. Does nothing, and returns false, when the box is already in view. */
+  keepInView(
+    min: [number, number, number],
+    max: [number, number, number],
+    opts?: { avoid?: Element | null; with?: { min: [number, number, number]; max: [number, number, number] } },
+  ): boolean;
   /** Project a world point to pixel coords relative to the canvas top-left. */
   worldToScreen(p: [number, number, number]): { x: number; y: number };
   /** Pose bodies by matrix, without re-baking their meshes: each id's motion
