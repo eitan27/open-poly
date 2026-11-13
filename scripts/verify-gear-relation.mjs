@@ -50,11 +50,11 @@ const dialog = page.locator(".gear-dialog");
 const fieldInput = (label) => dialog.locator(".ed-field", { hasText: label }).locator("input").first();
 const fieldSelect = (label) => dialog.locator(".ed-field", { hasText: label }).locator("select").first();
 async function openGear() {
-  const btn = page.locator('button[title^="Gear:"]').first();
+  const btn = page.locator('button[title^="Gear ("]').first();
   if (await btn.isVisible().catch(() => false)) await btn.click();
   else {
     await page.locator('button[title*="More"]').first().click();
-    await page.locator('[title^="Gear:"]').first().click();
+    await page.locator('[title^="Gear ("]').first().click();
   }
   await dialog.waitFor();
 }

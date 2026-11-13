@@ -2,6 +2,15 @@
   {
     "date": "2026-11-13",
     "items": [
+      "Gears: spur and ring gears with real involute teeth (press O)",
+      "Place a gear beside another and it meshes, at the right center distance",
+      "In an assembly, a gear relation reads the ratio from the teeth and lines them up"
+    ],
+    "bold": ["Gears"]
+  },
+  {
+    "date": "2026-11-13",
+    "items": [
       "Assemblies: join parts with mates, gears and screws",
       "Animate a mate and save it as a video or GIF",
       "Just press New → Assembly and insert parts from any of your documents"

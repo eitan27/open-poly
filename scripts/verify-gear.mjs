@@ -23,17 +23,22 @@ const fieldSelect = (label) => dialog.locator(".ed-field", { hasText: label }).l
 async function openGear() {
   // The toolbar may have folded Gear into its overflow; the search-by-title
   // works either way.
-  const btn = page.locator('button[title^="Gear:"]').first();
+  const btn = page.locator('button[title^="Gear ("]').first();
   if (await btn.isVisible().catch(() => false)) await btn.click();
   else {
     await page.locator('button[title*="More"]').first().click();
-    await page.locator('[title^="Gear:"]').first().click();
+    await page.locator('[title^="Gear ("]').first().click();
   }
   await dialog.waitFor();
 }
 
-// 1. Open: the ghost is there before touching anything.
-await openGear();
+// 1. Open, by its shortcut (O): the ghost is there before touching anything.
+await page
+  .locator(".viewport canvas")
+  .first()
+  .hover({ position: { x: 5, y: 5 } });
+await page.keyboard.press("o");
+await dialog.waitFor({ timeout: 3000 });
 await page.waitForTimeout(1500);
 await shot("1-open");
 check("dialog opens on the default plane", (await dialog.textContent()).includes("(default)"));

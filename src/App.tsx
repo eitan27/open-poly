@@ -3732,6 +3732,7 @@ export default function App() {
       "model.pattern": () => {
         if (!pattern.dialog) openPattern();
       },
+      "model.gear": () => openGear(),
     },
   });
 
@@ -6575,15 +6576,6 @@ export default function App() {
       onSelect: openRevolve,
     },
     {
-      id: "gear",
-      icon: "⚙",
-      label: "Gear",
-      title: "Gear: a parametric involute spur or ring gear on a plane — set teeth, size and bore in the dialog",
-      keywords: ["spur", "involute", "teeth", "cog", "ring", "internal", "module"],
-      disabled: toolsLocked,
-      onSelect: openGear,
-    },
-    {
       id: "sweep",
       icon: "⊃",
       label: "Sweep",
@@ -6699,6 +6691,16 @@ export default function App() {
       keywords: ["array", "linear", "circular", "grid", "repeat"],
       disabled: toolsLocked,
       onSelect: openPattern,
+    },
+    {
+      id: "gear",
+      icon: "⚙",
+      label: "Gear",
+      shortcut: shortcutHint("model.gear"),
+      title: `Gear (${shortcutName("model.gear")}): a parametric involute spur or ring gear on a plane — set teeth, size and bore in the dialog`,
+      keywords: ["spur", "involute", "teeth", "cog", "ring", "internal", "module"],
+      disabled: toolsLocked,
+      onSelect: openGear,
     },
   ];
 
