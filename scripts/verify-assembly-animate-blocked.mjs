@@ -218,8 +218,30 @@ check(
   heights.length === 3 && heights.every((h) => h === heights[0] && h < 30),
   JSON.stringify(heights),
 );
+const selectFits = await rel
+  .locator("select")
+  .evaluateAll((ss) =>
+    ss.map(
+      (el) =>
+        el.offsetWidth >= 134 &&
+        el.getBoundingClientRect().right <= el.closest(".asm-relation").getBoundingClientRect().right,
+    ),
+  );
+check(
+  "the mate pickers are wider and stay inside the dialog",
+  selectFits.length === 2 && selectFits.every(Boolean),
+  JSON.stringify(selectFits),
+);
 if (process.env.SHOTS)
   await page.screenshot({ path: process.env.SHOTS + "/relation.png", clip: await rel.boundingBox() });
+const insertTool = (await page.getByRole("button", { name: /Insert/ }).allInnerTexts()).join(" | ");
+check(
+  "the toolbar's Insert reads ＋ Insert, as the Instances list's",
+  /＋\s*Insert[\s\S]*＋\s*Insert/.test(insertTool),
+  insertTool,
+);
+if (process.env.SHOTS)
+  await page.screenshot({ path: process.env.SHOTS + "/toolbar.png", clip: { x: 0, y: 50, width: 1300, height: 160 } });
 
 await browser.close();
 console.log(failures ? `${failures} FAILED` : "ALL PASS");

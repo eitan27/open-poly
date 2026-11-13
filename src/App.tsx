@@ -6435,7 +6435,8 @@ export default function App() {
   const assemblyTools: ToolbarItem[] = [
     {
       id: "insert",
-      icon: "⤓",
+      // ＋ as the Instances list's "＋ Insert", so the two read as one action.
+      icon: "＋",
       label: "Insert",
       shortcut: shortcutHint("asm.insert"),
       title: `Insert (${shortcutName("asm.insert")}): place parts from a part document`,

@@ -291,3 +291,8 @@
 .asm-relation .ed-modes button {
   white-space: nowrap;
 }
+/* Its mate pickers: a fifth wider than a dialog's usual select (112px), as
+   "Driver" / "Driven" leave the room, so "Choose a mate" isn't cut off. */
+.asm-relation .ed-field select {
+  width: 134px;
+}
