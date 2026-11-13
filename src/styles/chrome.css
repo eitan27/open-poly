@@ -432,8 +432,14 @@ button:disabled .kbd-hint {
   cursor: pointer;
   white-space: nowrap;
 }
-.parts-import > button:hover {
+.parts-import > button:hover:not(:disabled) {
   background: var(--accent-surface-6);
+}
+/* Greyed as the toolbars' disabled buttons are, so ＋ Mate / ＋ Relation /
+   Export read as off, not as a click that does nothing. */
+.parts-import > button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 /* Right-align a flyout so it drops from a right-edge button and opens leftward,
  *  staying inside the scrollable .panel (which clips horizontal overflow) instead

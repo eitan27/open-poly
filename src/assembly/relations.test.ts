@@ -4,7 +4,7 @@ import { dragAssembly } from "./drag";
 import { animator } from "./animate";
 import { defaultX, frameMatrix } from "./frames";
 import { applyPoint, IDENTITY, type Vec3 } from "./placement";
-import { addRelation, relationFactor, removeRelations, routeToDriver } from "./relations";
+import { addRelation, relationBlocker, relationFactor, removeRelations, routeToDriver } from "./relations";
 import { solve } from "./solve";
 import type { AssemblyDoc, Dof, Instance, Mat4, Mate, MateConnector, MateType, Relation } from "./types";
 
@@ -300,5 +300,29 @@ describe("dragging through a relation", () => {
     expect(r.error).toBeNull();
     expect(r.after!.values.get("c")?.rz).toBeCloseTo(90, 1);
     expect(r.after!.values.get("c")?.tz).toBeCloseTo(0.5, 3);
+  });
+});
+
+describe("relationBlocker", () => {
+  const c = (i: string) => ({ instanceId: i, ref: { kind: "face" as const, name: "f" }, anchor: "center" as const });
+  const m = (id: string, type: MateType) => mate(id, type, c("A"), c("B"));
+  it("blocks with no mates, saying to add one that moves", () => {
+    expect(relationBlocker([])).toMatch(/Add a mate that moves/);
+  });
+  it("blocks a lone revolute, asking for a second mate", () => {
+    expect(relationBlocker([m("r", "revolute")])).toMatch(/second mate/);
+  });
+  it("blocks sliders alone: nothing turns", () => {
+    expect(relationBlocker([m("s1", "slider"), m("s2", "slider")])).toMatch(/turns/);
+  });
+  it("allows two mates that turn (a gear)", () => {
+    expect(relationBlocker([m("r1", "revolute"), m("r2", "revolute")])).toBeNull();
+    expect(relationBlocker([m("r", "revolute"), m("b", "ball")])).toBeNull();
+  });
+  it("allows one that turns and another that slides (a rack)", () => {
+    expect(relationBlocker([m("r", "revolute"), m("s", "slider")])).toBeNull();
+  });
+  it("allows a lone cylindrical mate (a screw on its own turn and slide)", () => {
+    expect(relationBlocker([m("c", "cylindrical")])).toBeNull();
   });
 });

@@ -203,11 +203,37 @@ check(
   "…and Play, GIF are enabled",
   !(await page.locator(".asm-animate-play").isDisabled()) && !(await page.locator(".asm-export-gif").isDisabled()),
 );
-void revolute;
 
 // --- The Relation dialog's types sit on one line each ---
 await page.locator(".asm-animate-close").click();
-await page.locator(".asm-new-relation").click();
+// One revolute alone can't be related to anything: ＋ Relation is off, and says why.
+const newRelation = page.locator(".asm-new-relation");
+const relHint = await page.locator(".asm-empty").last().textContent();
+check(
+  "＋ Relation is disabled with only one revolute, the hint asking for a second mate",
+  (await newRelation.isDisabled()) && /second mate/.test(relHint),
+  relHint,
+);
+// …and looks it: greyed out, not a live-looking button that does nothing.
+const looks = await newRelation.evaluate((b) => ({
+  opacity: getComputedStyle(b).opacity,
+  cursor: getComputedStyle(b).cursor,
+}));
+check("…and is visibly greyed out", Number(looks.opacity) < 0.5 && looks.cursor === "default", JSON.stringify(looks));
+if (process.env.SHOTS)
+  await page.screenshot({
+    path: process.env.SHOTS + "/relation-off.png",
+    clip: { x: 0, y: 60, width: 290, height: 380 },
+  });
+// A cylindrical mate can drive its own slide (a screw): it enables it.
+r = await apply({ op: "editMate", mateId: revolute, type: "cylindrical" });
+check("the revolute becomes cylindrical", r.ok, JSON.stringify(r));
+await waitIdle();
+check(
+  "…and ＋ Relation is enabled, at full strength",
+  !(await newRelation.isDisabled()) && (await newRelation.evaluate((b) => getComputedStyle(b).opacity)) === "1",
+);
+await newRelation.click();
 const rel = page.locator(".asm-relation");
 await rel.waitFor();
 const heights = await rel

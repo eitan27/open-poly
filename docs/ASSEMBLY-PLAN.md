@@ -487,6 +487,11 @@ A translation driving a rotation uses 1/k; Reverse negates k.
 - Removing a mate (or an instance) removes the relations that used it.
   `migrateAssembly` keeps and validates them. An assembly with none has no
   `relations` field, so it's saved and hashed without one.
+- **＋ Relation is off until one can be made** (`relationBlocker`), and the
+  empty list says what's missing: two mates that turn (a gear), one that
+  turns and another that slides (a rack, a screw), or one cylindrical mate on
+  its own (a screw on its own turn and slide). Fastened, suppressed and
+  slider-only sets can't make one.
 - The dialog chooses mates from lists, not picks in the view: a relation joins
   mates, which the view doesn't show. Its problem line is a solve of the
   assembly with the draft added, so it says what the solver would.

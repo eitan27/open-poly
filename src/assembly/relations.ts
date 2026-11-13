@@ -268,6 +268,21 @@ export interface RelationDraft {
   reverse: boolean;
 }
 
+/** Why no relation can be made among `mates` (the movable, unsuppressed ones),
+ *  or null if one can. A gear needs two mates that turn; a rack one that turns
+ *  and another that slides; a screw the same, or one cylindrical mate on its
+ *  own (its turn drives its slide). */
+export function relationBlocker(mates: Mate[]): string | null {
+  const turns = mates.filter((m) => MATE_DOFS[m.type].some(isRotation));
+  const slides = mates.filter((m) => MATE_DOFS[m.type].some((d) => !isRotation(d)));
+  if (turns.length >= 2) return null;
+  if (mates.some((m) => m.type === "cylindrical")) return null;
+  if (turns.length === 1 && slides.some((m) => m.id !== turns[0].id)) return null;
+  if (mates.length === 0) return "Add a mate that moves (revolute, slider…), then relate it to another.";
+  if (turns.length === 0) return "Relations need a mate that turns (revolute, cylindrical…) to drive or be driven.";
+  return "Add a second mate that moves to relate it to the first.";
+}
+
 /** The draft a new relation of `type` starts as: the first two mates whose
  *  DOFs fit, or for a screw, a cylindrical mate's own turn and slide. */
 export function defaultDraft(type: RelationType, mates: Mate[]): RelationDraft {

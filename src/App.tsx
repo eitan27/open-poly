@@ -7070,7 +7070,7 @@ export default function App() {
                   }}
                   relationProblems={mates.solution?.relationProblems ?? NO_PROBLEMS}
                   editingRelationId={mateRelations.editingId}
-                  canRelate={mateRelations.canRelate}
+                  relateBlocker={mateRelations.relateBlocker}
                   onNewRelation={() => openRelation()}
                   onEditRelation={(id) => openRelation(id)}
                   onRenameRelation={mateRelations.rename}

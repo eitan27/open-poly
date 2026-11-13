@@ -7,6 +7,7 @@ import {
   addRelation,
   defaultDraft,
   nextRelationName,
+  relationBlocker,
   removeRelations,
   updateRelation,
   type RelationDraft,
@@ -112,8 +113,8 @@ export function useRelations({
         }
       : null,
     editingId: session?.editingId ?? null,
-    /** A relation can be made: there's a mate with a free DOF. */
-    canRelate: mates.length > 0,
+    /** Why no relation can be made yet, or null if one can (relationBlocker). */
+    relateBlocker: relationBlocker(mates),
     openNew,
     openEdit,
     close,

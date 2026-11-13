@@ -56,7 +56,8 @@ interface Props {
   relationProblems: ReadonlyMap<string, string>;
   editingRelationId: string | null;
   /** A relation can be made: some mate has a free DOF. */
-  canRelate: boolean;
+  /** Why no relation can be made yet, or null if one can. */
+  relateBlocker: string | null;
   onNewRelation: () => void;
   onEditRelation: (id: string) => void;
   onRenameRelation: (id: string, name: string) => void;
@@ -347,8 +348,8 @@ function RelationsSection(p: Props & { open: boolean; onToggle: () => void; reve
           <button
             type="button"
             className="asm-new-relation"
-            title="Drive one mate from another: gears, a rack and pinion, a screw"
-            disabled={!p.canRelate}
+            title={p.relateBlocker ?? "Drive one mate from another: gears, a rack and pinion, a screw"}
+            disabled={p.relateBlocker !== null}
             onClick={() => {
               p.reveal();
               p.onNewRelation();
@@ -361,9 +362,7 @@ function RelationsSection(p: Props & { open: boolean; onToggle: () => void; reve
       {!p.open ? (
         <div className="asm-folded" />
       ) : relations.length === 0 ? (
-        <p className="asm-empty">
-          {p.canRelate ? "No relations yet." : "Mate parts so they can move, then relate their mates."}
-        </p>
+        <p className="asm-empty">{p.relateBlocker ?? "No relations yet."}</p>
       ) : (
         <div className="tree-list asm-list">
           {relations.map((r) => {
