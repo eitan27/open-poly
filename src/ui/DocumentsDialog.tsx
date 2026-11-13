@@ -307,7 +307,7 @@ export function DocumentsDialog({
                       {m.kind === "assembly" ? (
                         <span className="docs-kind">Assembly</span>
                       ) : (
-                        <span className="docs-kind docs-kind-parts">Parts</span>
+                        <span className="docs-kind docs-kind-part">Part</span>
                       )}
                       {active && <span className="docs-current"> · current</span>}
                     </button>

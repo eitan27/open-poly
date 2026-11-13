@@ -455,19 +455,19 @@
    document it is. The two pills are the same shape and weight, told apart by
    hue alone (blue, teal) so neither reads as the lesser kind. Teal, not the
    green, amber or red that mean success, warning and danger elsewhere. */
+/* A document's kind beside its name: text and border in the kind's colour. */
 .docs-kind {
   margin-left: 6px;
   padding: 0 5px;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--accent-palest);
-  border: 1px solid var(--accent);
+  color: var(--kind-assembly);
+  border: 1px solid currentColor;
   border-radius: 4px;
 }
-.docs-kind-parts {
-  color: var(--ok-teal);
-  border-color: var(--ok-teal);
+.docs-kind-part {
+  color: var(--kind-part);
 }
 
 /* "Used in Arm" — shown while deleting a part an assembly places. */
