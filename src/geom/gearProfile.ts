@@ -20,6 +20,8 @@
 // outside — so it's built with the same routine, addendum and dedendum swapped,
 // and cut as holes out of a ring.
 
+import { arcStations, circleStations, FACET_PITCH } from "./circleFacets";
+
 export type Vec2 = [number, number];
 
 export interface GearToothSpec {
@@ -54,6 +56,11 @@ export interface GearDims {
 export interface GearOutline {
   outline: Vec2[];
   holes: Vec2[][];
+  /** Fixed names for the round edges (the bore, its flat, a ring's rim), per
+   *  polyline edge — edge i runs from point i to i+1 — so the walls they
+   *  extrude into keep their names when the tooth count changes. The teeth are
+   *  left unnamed (null). */
+  edgeNames: { outline: (string | null)[] | null; holes: ((string | null)[] | null)[] };
   dims: GearDims;
   /** Non-fatal: the tooth count would undercut at this profile shift. */
   undercut: boolean;
@@ -264,30 +271,24 @@ function ringOfTeeth(half: Vec2[], teeth: number, rotation: number): Vec2[] {
   return out;
 }
 
-/** A circle as a polyline, CCW. */
-export function circlePoints(r: number, segs = 64, center: Vec2 = [0, 0]): Vec2[] {
-  const out: Vec2[] = [];
-  for (let i = 0; i < segs; i++) {
-    const a = (2 * Math.PI * i) / segs;
-    out.push([center[0] + r * Math.cos(a), center[1] + r * Math.sin(a)]);
-  }
-  return out;
+/** A round bore on the shared circle stations (geom/circleFacets), so a
+ *  cylinder or a sketched circle of the same size through it has the very
+ *  same facets — no slivers where a shaft meets the bore. */
+export function borePoints(diameter: number): Vec2[] {
+  const r = diameter / 2;
+  return circleStations().map((a) => polar(r, a));
 }
 
 /** A D-shaped bore: a circle of `diameter` with one side cut flat so the
- *  distance from the flat to the far side is `acrossFlat`. The flat faces +u. */
-export function dFlatPoints(diameter: number, acrossFlat: number, segs = 64): Vec2[] {
+ *  distance from the flat to the far side is `acrossFlat`. The flat faces +u.
+ *  The round part sits on the shared circle stations; the closing edge (from
+ *  the last point back to the first) is the flat. */
+export function dFlatPoints(diameter: number, acrossFlat: number): Vec2[] {
   const r = diameter / 2;
   const c = acrossFlat - r; // the flat's distance from the centre (signed)
   if (!(acrossFlat > 0) || acrossFlat >= diameter) throw new Error("gear: the D-flat must be smaller than the bore");
   const a0 = Math.acos(Math.max(-1, Math.min(1, c / r)));
-  const out: Vec2[] = [];
-  const n = Math.max(8, Math.round((segs * (2 * Math.PI - 2 * a0)) / (2 * Math.PI)));
-  for (let i = 0; i <= n; i++) {
-    const a = a0 + ((2 * Math.PI - 2 * a0) * i) / n;
-    out.push([r * Math.cos(a), r * Math.sin(a)]);
-  }
-  return out; // the closing edge is the flat
+  return arcStations(a0, 2 * Math.PI - a0).map((a) => polar(r, a));
 }
 
 function toothShape(spec: GearToothSpec, internal: boolean): ToothShape {
@@ -355,13 +356,28 @@ export function gearOutline(spec: GearToothSpec, opts: GearShapeOptions = {}): G
   if (internal) {
     const rim = opts.rimWidth ?? 2 * spec.module;
     if (!(rim > 0) || !Number.isFinite(rim)) throw new Error("gear: rim width must be greater than 0");
-    const outerR = dims.rootDiameter / 2 + rim;
-    // Rim facets fine enough that a chord never dips toward the tooth roots.
-    const segs = Math.max(96, Math.min(360, spec.teeth * 3));
-    return { outline: circlePoints(outerR, segs), holes: [teethRing], dims, undercut: false, rootFillet: 0 };
+    const rootR = dims.rootDiameter / 2;
+    const outerR = rootR + rim;
+    // The rim is on the shared circle stations, like every round wall. Its
+    // chords dip inside the circle, so the thinnest the ring gets is a little
+    // less than the rim width; refuse a rim the chords would cut through.
+    if (outerR * Math.cos(FACET_PITCH / 2) <= rootR + 1e-6)
+      throw new Error(
+        `gear: rim width must be at least ${round(outerR * (1 - Math.cos(FACET_PITCH / 2)) + 0.01)} mm at this size`,
+      );
+    const outline = circleStations().map((a) => polar(outerR, a));
+    return {
+      outline,
+      holes: [teethRing],
+      edgeNames: { outline: outline.map((_, i) => `rim${i}`), holes: [null] },
+      dims,
+      undercut: false,
+      rootFillet: 0,
+    };
   }
 
   const holes: Vec2[][] = [];
+  const holeNames: (string | null)[][] = [];
   const bore = opts.bore;
   if (bore) {
     if (!(bore.diameter > 0) || !Number.isFinite(bore.diameter))
@@ -370,9 +386,20 @@ export function gearOutline(spec: GearToothSpec, opts: GearShapeOptions = {}): G
       throw new Error(
         `gear: the bore (Ø${round(bore.diameter)}) must be smaller than the root diameter (Ø${round(dims.rootDiameter)})`,
       );
-    holes.push(bore.kind === "round" ? circlePoints(bore.diameter / 2) : dFlatPoints(bore.diameter, bore.acrossFlat));
+    const pts = bore.kind === "round" ? borePoints(bore.diameter) : dFlatPoints(bore.diameter, bore.acrossFlat);
+    holes.push(pts);
+    // Edge i runs from point i to i+1; a D-flat's last edge (closing back to
+    // point 0) is the flat.
+    holeNames.push(pts.map((_, i) => (bore.kind === "dflat" && i === pts.length - 1 ? "boreFlat" : `bore${i}`)));
   }
-  return { outline: teethRing, holes, dims, undercut, rootFillet: fillet };
+  return {
+    outline: teethRing,
+    holes,
+    edgeNames: { outline: null, holes: holeNames },
+    dims,
+    undercut,
+    rootFillet: fillet,
+  };
 }
 
 const round = (n: number) => Math.round(n * 100) / 100;

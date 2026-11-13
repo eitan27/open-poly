@@ -72,6 +72,26 @@ check("the gear builds without error", (await op.featureErrors()).length === 0, 
 check("one body", (await op.bodyCount()) === 1);
 await shot("3-created");
 
+// The bore's walls carry fixed names (bore0…, boreFlat), not side numbers that
+// move with the tooth count.
+const faceNames = async (id) => {
+  const sc = await op.scene();
+  const body = sc.bodies.find((b) => b.id === id);
+  return (body?.faces ?? []).map((f) => (typeof f === "string" ? f : f.name));
+};
+let names = await faceNames(gear1.id);
+check("bore walls are named bore<n>", names.includes(`${gear1.id}/bore0`), names.slice(0, 5).join(", "));
+check("the D-flat's flat is named boreFlat", names.includes(`${gear1.id}/boreFlat`));
+await op.apply({ op: "setParam", featureId: gear1.id, name: "teeth", value: "23" });
+await op.settle();
+names = await faceNames(gear1.id);
+check(
+  "bore names survive a tooth-count change",
+  names.includes(`${gear1.id}/bore0`) && names.includes(`${gear1.id}/boreFlat`),
+);
+await op.apply({ op: "setParam", featureId: gear1.id, name: "teeth", value: "20" });
+await op.settle();
+
 // 3. A second gear meshing with the first, moved over by the centre distance.
 await openGear();
 await fieldInput("Teeth").fill("31");
@@ -122,6 +142,11 @@ check(
   (await op.featureErrors()).join("; "),
 );
 await shot("7-ring");
+{
+  const ringId = (await op.features()).find((f) => f.type === "gear").id;
+  const n = await faceNames(ringId);
+  check("the ring's rim walls are named rim<n>", n.includes(`${ringId}/rim0`), n.slice(0, 5).join(", "));
+}
 
 // 6. Double-click the timeline row re-opens it for editing.
 await page.locator(".tree-row", { hasText: "Gear 1" }).first().dblclick();

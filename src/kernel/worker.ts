@@ -505,7 +505,13 @@ function facetedProfileFace(face: Face, normal: Vector): { face: Face; normal: V
 
 /** Extrude a profile face along `dir` and name the result from MakePrism's
  *  history: the two caps (start/end) and one side face per profile edge. */
-function prismFromFace(profileFace: Face, dir: Vector, signedDist: number, id: string): NamedShape {
+function prismFromFace(
+  profileFace: Face,
+  dir: Vector,
+  signedDist: number,
+  id: string,
+  sideName?: (edge: Edge) => string | undefined,
+): NamedShape {
   const oc = getOC();
   const vec = dir.normalized().multiply(signedDist);
   const builder = new oc.BRepPrimAPI_MakePrism_1(profileFace.wrapped, vec.wrapped, false, true);
@@ -516,7 +522,8 @@ function prismFromFace(profileFace: Face, dir: Vector, signedDist: number, id: s
   capHashes.set(hashOf(builder.LastShape_1()), `${id}/end`);
   const sideByHash = new Map<number, string>();
   profileFace.edges.forEach((e, i) => {
-    for (const g of drainList(builder.Generated(e.wrapped))) sideByHash.set(hashOf(g), `${id}/side${i}`);
+    const name = `${id}/${sideName?.(e) ?? `side${i}`}`;
+    for (const g of drainList(builder.Generated(e.wrapped))) sideByHash.set(hashOf(g), name);
   });
 
   // namesFromHistory gives any face history missed a stable `f{n}` fallback so
@@ -907,6 +914,61 @@ function loftBody(profiles: RegionProfile[], id: string, ruled = false): NamedSh
   progress.delete();
   builder.delete();
   return res;
+}
+
+/** A region profile's `edgeNames` as a lookup from a built profile-face edge
+ *  to its fixed name: by the edge's midpoint in the frame's (u, v), which is
+ *  exact for the straight edges a polyline profile is made of. Undefined when
+ *  the profile names nothing. */
+function profileEdgeNamer(profile: RegionProfile): ((edge: Edge) => string | undefined) | undefined {
+  const en = profile.edgeNames;
+  if (!en) return undefined;
+  const { origin, uAxis, vAxis } = profile.frame;
+  const CELL = 1e-3;
+  const cell = (u: number, v: number) => `${Math.round(u / CELL)},${Math.round(v / CELL)}`;
+  const byCell = new Map<string, { u: number; v: number; name: string }[]>();
+  const add = (ring: [number, number][], names: (string | null)[] | null | undefined) => {
+    if (!names) return;
+    const n =
+      ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]
+        ? ring.length - 1
+        : ring.length;
+    for (let i = 0; i < n; i++) {
+      const name = names[i];
+      if (!name) continue;
+      const a = ring[i];
+      const b = ring[(i + 1) % n];
+      const u = (a[0] + b[0]) / 2;
+      const v = (a[1] + b[1]) / 2;
+      const k = cell(u, v);
+      const list = byCell.get(k);
+      if (list) list.push({ u, v, name });
+      else byCell.set(k, [{ u, v, name }]);
+    }
+  };
+  add(profile.outline, en.outline);
+  (profile.holes ?? []).forEach((h, i) => add(h, en.holes?.[i]));
+  if (byCell.size === 0) return undefined;
+  const toUv = (p: V3): [number, number] => {
+    const d: V3 = [p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]];
+    return [vdot(d, uAxis as V3), vdot(d, vAxis as V3)];
+  };
+  return (edge) => {
+    const a = toUv(edge.startPoint.toTuple() as V3);
+    const b = toUv(edge.endPoint.toTuple() as V3);
+    const u = (a[0] + b[0]) / 2;
+    const v = (a[1] + b[1]) / 2;
+    const cu = Math.round(u / CELL);
+    const cv = Math.round(v / CELL);
+    let best: { d: number; name: string } | undefined;
+    for (let du = -1; du <= 1; du++)
+      for (let dv = -1; dv <= 1; dv++)
+        for (const c of byCell.get(`${cu + du},${cv + dv}`) ?? []) {
+          const d = Math.hypot(c.u - u, c.v - v);
+          if (d < 1e-5 && (!best || d < best.d)) best = { d, name: c.name };
+        }
+    return best?.name;
+  };
 }
 
 /** Resolve a sketch-region profile to the OCCT face it extrudes and the
@@ -3854,10 +3916,12 @@ function buildExtrudeFeature(feature: Extract<ResolvedFeature, { type: "extrude"
     // One profile face for region/body-face; many (one per glyph) for text.
     let faces: Face[];
     let normal: Vector;
+    let sideName: ((edge: Edge) => string | undefined) | undefined;
     if (profile.kind === "sketchRegion") {
       const r = sketchRegionFace(profile);
       faces = [r.face];
       normal = r.normal;
+      sideName = profileEdgeNamer(profile);
     } else if (profile.kind === "sketchText") {
       const r = sketchTextFaces(profile);
       faces = r.faces;
@@ -3934,7 +3998,7 @@ function buildExtrudeFeature(feature: Extract<ResolvedFeature, { type: "extrude"
       const prefix = faces.length > 1 ? `${prefixBase}/g${gi}` : prefixBase;
       let glyph: NamedShape | null = null;
       for (const len of lengths) {
-        let piece = prismFromFace(faces[gi], normal, len, prefix);
+        let piece = prismFromFace(faces[gi], normal, len, prefix, sideName);
         // Up to face/next: trim the long prism flush with the target plane.
         if (clip) {
           const box = halfSpaceBox(clip.point, clip.normal, clip.boxSize);

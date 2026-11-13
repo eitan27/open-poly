@@ -9,6 +9,7 @@ import {
   type GearToothSpec,
   type Vec2,
 } from "./gearProfile";
+import { CIRCLE_FACETS, FACET_PITCH } from "./circleFacets";
 
 const spec = (over: Partial<GearToothSpec> = {}): GearToothSpec => ({
   teeth: 20,
@@ -173,6 +174,34 @@ describe("gearOutline (external)", () => {
     expect(Math.max(...d.map((p) => p[0]))).toBeCloseTo(2, 6); // the flat sits 2 mm from centre
     expect(() => gearOutline(spec(), { bore: { kind: "round", diameter: 36 } })).toThrow(/root diameter/);
     expect(() => dFlatPoints(5, 5)).toThrow(/smaller/);
+  });
+
+  it("puts the bore and the rim on the shared circle stations, with fixed names", () => {
+    const onStation = (p: Vec2) => {
+      const k = Math.atan2(p[1], p[0]) / FACET_PITCH;
+      return Math.abs(k - Math.round(k)) < 1e-9;
+    };
+    const round = gearOutline(spec(), { bore: { kind: "round", diameter: 8 } });
+    expect(round.holes[0]).toHaveLength(CIRCLE_FACETS);
+    expect(round.holes[0].every(onStation)).toBe(true);
+    expect(round.edgeNames.holes[0]).toEqual(round.holes[0].map((_, i) => `bore${i}`));
+    expect(round.edgeNames.outline).toBeNull(); // the teeth keep their numbered names
+
+    // The bore's names don't depend on the tooth count.
+    const more = gearOutline(spec({ teeth: 37 }), { bore: { kind: "round", diameter: 8 } });
+    expect(more.edgeNames.holes[0]).toEqual(round.edgeNames.holes[0]);
+
+    // A D-flat: the round part on stations except its two ends, the last edge the flat.
+    const d = gearOutline(spec(), { bore: { kind: "dflat", diameter: 5, acrossFlat: 4.5 } });
+    expect(d.holes[0].slice(1, -1).every(onStation)).toBe(true);
+    const names = d.edgeNames.holes[0]!;
+    expect(names[names.length - 1]).toBe("boreFlat");
+    expect(names.slice(0, -1).every((n) => /^bore\d+$/.test(n!))).toBe(true);
+
+    const ring = gearOutline(spec({ teeth: 60 }), { internal: true, rimWidth: 4 });
+    expect(ring.outline.every(onStation)).toBe(true);
+    expect(ring.edgeNames.outline![0]).toBe("rim0");
+    expect(() => gearOutline(spec({ teeth: 60 }), { internal: true, rimWidth: 0.01 })).toThrow(/rim width/);
   });
 
   it("rotates as a whole", () => {

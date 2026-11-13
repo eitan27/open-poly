@@ -189,6 +189,7 @@ export function resolveGear(
         kind: "sketchRegion",
         outline: baked.outline.outline,
         holes: baked.outline.holes,
+        edgeNames: baked.outline.edgeNames,
         frame: baked.frame,
       },
     ],
