@@ -123,6 +123,10 @@ export interface BakedGear {
   thickness: number;
   /** The partner the size came from, if meshed. */
   from?: GearFeature;
+  /** Where the gear's centre is on its plane (u, v), and how far tooth 0 (a
+   *  ring's space 0) is turned from +u, radians: what meshing math needs. */
+  center: [number, number];
+  rotation: number;
 }
 
 /** Evaluate every setting and build the outline (in the plane's u, v). Throws
@@ -156,9 +160,10 @@ export function bakeGear(
             diameter: num("bore", p.boreDiameter, scope),
             acrossFlat: num("D-flat", p.boreFlat, scope),
           };
+  const rotation = (num("rotation", p.rotation, scope) * Math.PI) / 180;
   const outline = gearOutline(spec, {
     internal,
-    rotation: (num("rotation", p.rotation, scope) * Math.PI) / 180,
+    rotation,
     bore,
     rimWidth: internal ? num("rim width", p.rimWidth, scope) : undefined,
   });
@@ -170,7 +175,7 @@ export function bakeGear(
     outline.outline = shift(outline.outline);
     outline.holes = outline.holes.map(shift);
   }
-  return { outline, spec, frame: frameOf(g.plane, planeFrames), thickness, from };
+  return { outline, spec, frame: frameOf(g.plane, planeFrames), thickness, from, center: [cx, cy], rotation };
 }
 
 /** The gear as the kernel builds it: a "new" extrude of its outline. */

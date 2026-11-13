@@ -25,6 +25,7 @@ export function RelationDialog({
   draft,
   mates,
   problem,
+  gears,
   onChange,
   onConfirm,
   onCancel,
@@ -35,6 +36,9 @@ export function RelationDialog({
   mates: Mate[];
   /** Why the draft can't be made, or null. */
   problem: string | null;
+  /** When both ends turn gear parts: which, and why their teeth can't be
+   *  lined up (if they can't). The ratio and Reverse are filled from them. */
+  gears?: { label: string; problem: string | null } | null;
   onChange: (d: RelationDraft) => void;
   onConfirm: () => void;
   onCancel: () => void;
@@ -119,6 +123,24 @@ export function RelationDialog({
           onChange={(e) => onChange({ ...draft, reverse: e.target.checked })}
         />
       </label>
+      {gears && (
+        <>
+          <p className="ed-hint asm-relation-gears">{gears.label}: ratio and direction from their teeth.</p>
+          <label
+            className="ed-field ed-flip"
+            title="Turn the driven gear the least way that puts its teeth in the driver's spaces"
+          >
+            <span>Align teeth</span>
+            <input
+              type="checkbox"
+              className="asm-relation-align"
+              checked={!!draft.align}
+              onChange={(e) => onChange({ ...draft, align: e.target.checked })}
+            />
+          </label>
+          {draft.align && gears.problem && <p className="ed-hint">Can't align: {gears.problem}</p>}
+        </>
+      )}
       <p className="ed-hint">{meta.title}</p>
       {problem && <p className="ed-warning">{problem}</p>}
       <div className="ed-actions">

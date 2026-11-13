@@ -68,7 +68,13 @@ export function useAssemblyWorkspace({
     frameFor: mates.frameFor,
     viewApi,
   });
-  const relations = useRelations({ assembly, commit: mates.commit, frameFor: mates.frameFor, genId });
+  const relations = useRelations({
+    assembly,
+    commit: mates.commit,
+    frameFor: mates.frameFor,
+    genId,
+    sources: asmSources,
+  });
   /** Open the Relation dialog (on `id`, or a new one), closing what would
    *  compete with it. */
   const openRelation = (id?: string) => {

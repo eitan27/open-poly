@@ -298,6 +298,9 @@ export interface RelationDraft {
   driven: { mateId: string; dof: Dof } | null;
   value: string;
   reverse: boolean;
+  /** Gear relations between two gear parts: turn the driven gear on Add /
+   *  Done so its teeth sit in the driver's spaces. */
+  align?: boolean;
 }
 
 /** Why no relation can be made among `mates` (the movable, unsuppressed ones),

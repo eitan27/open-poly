@@ -10,6 +10,7 @@
 //
 // References are live: a source edited elsewhere is reloaded when this tab
 // next gets the focus (or the user asks).
+import { gearGeomOf, type GearGeom } from "./gearMesh";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { migrateDocument } from "../document/document";
 import { partAppearance } from "../document/parts";
@@ -24,6 +25,8 @@ export interface SourcePart {
   color: number;
   opacity: number;
   mesh: ShapeMeshPayload;
+  /** Set when a Gear feature made this part: what a gear relation reads. */
+  gear?: GearGeom;
 }
 
 export type SourceState =
@@ -40,7 +43,15 @@ export type BuildDocument = (doc: Document) => Promise<{ id: string; mesh: Shape
 export function sourceParts(doc: Document, meshes: { id: string; mesh: ShapeMeshPayload }[]): SourcePart[] {
   return meshes.map((m) => {
     const look = partAppearance(doc, m.id, DEFAULT_SOLID_COLOR);
-    return { partId: m.id, name: look.name, color: look.color, opacity: look.opacity, mesh: m.mesh };
+    const gear = doc.features.some((f) => f.type === "gear") ? gearGeomOf(doc, m.id) : null;
+    return {
+      partId: m.id,
+      name: look.name,
+      color: look.color,
+      opacity: look.opacity,
+      mesh: m.mesh,
+      ...(gear ? { gear } : {}),
+    };
   });
 }
 

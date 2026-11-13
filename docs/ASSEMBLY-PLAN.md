@@ -473,6 +473,16 @@ A translation driving a rotation uses 1/k; Reverse negates k.
   teeth up. So `keepSolved` never writes a loop's reading back onto a
   relation-driven DOF, and the Move panel's field for one reads the solved
   value, not the stored one.
+- **Gear parts** (`gearMesh.ts`): a part a Gear feature made carries its
+  teeth, type, centre, axis and tooth direction (`SourcePart.gear`; none if a
+  Transform moved it). When both ends of a gear relation turn gear parts, the
+  dialog fills the ratio (`12/24`) and Reverse, and **Align teeth** (on for a
+  new relation, off when editing) turns the driven gear the least way that
+  puts its teeth in the driver's spaces. Reverse is measured, not inferred
+  from the gear types: each mate is nudged a degree to see which way its gear
+  turns in the world, since a flipped axle turns the other way for the same
+  angle. It refuses, with why, gears not at meshing distance, with different
+  modules, non-parallel or concentric. Not on the agent's ops yet.
 - **A relation starts from the pose on screen** (`phaseToCurrentPose`): adding
   one, or switching it back on, sets the driven DOF's phase to where it is
   minus k times the driver, so nothing moves. Without it a relation switched
