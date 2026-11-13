@@ -3,6 +3,7 @@
 // many instances use it), instances, mates with what each leaves free,
 // relations, loop groups and problems. Pure: built from the assembly, its
 // solution and its sources, so it's testable without the app.
+import { FOLDED_NAMES_NOTE, foldNames } from "./nameRanges";
 import { evaluateVariables } from "../document/document";
 import type { ShapeMeshPayload } from "../kernel/types";
 import { dofLabel } from "../assembly/mateTypes";
@@ -45,10 +46,10 @@ export async function settleAssembly(
   }
 }
 
-/** The distinct names in a mesh's face or edge groups, in order. */
-const names = (groups: { name?: string }[] | undefined): string[] => [
-  ...new Set((groups ?? []).map((g) => g.name).filter((n): n is string => !!n)),
-];
+/** The distinct names in a mesh's face or edge groups, in order, with long
+ *  numbered runs folded (nameRanges.ts). */
+const names = (groups: { name?: string }[] | undefined): string[] =>
+  foldNames([...new Set((groups ?? []).map((g) => g.name).filter((n): n is string => !!n))]);
 
 /** World bounds of `mesh` placed at `m`: its local box's corners, moved. */
 export function placedBoundsOf(mesh: ShapeMeshPayload, m: Mat4): AssemblySummary["instances"][number]["bbox"] {
@@ -195,5 +196,8 @@ export function assemblySummary(state: AssemblyAgentState, info: { id: string; n
       value: resolved.scope[v.name],
     })),
     selection: state.selection,
+    ...(parts.some((p) => [...(p.faces ?? []), ...(p.edges ?? [])].some((n) => n.includes("{n")))
+      ? { nameNote: FOLDED_NAMES_NOTE }
+      : {}),
   };
 }

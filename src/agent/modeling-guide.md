@@ -18,6 +18,13 @@ tools. A human is watching the same browser. Model deliberately and verifiably.
   produce no body — they're inputs.
 - **Topological naming** is real: faces/edges have **persistent names** that
   survive edits, so reference them by name, not by guessing geometry.
+- **Folded names.** Round walls are faceted (one face per facet) and gears have
+  many faces a tooth, so the scene summary folds runs of numbered names:
+  `<id>/side{n} (n = 0–339)` stands for `<id>/side0` … `<id>/side339`, and
+  `<id>/side{n}∩<id>/side{n+1}` is the edge between neighbours. Always write a
+  full name (`<id>/side12`) in a tool call, never the folded pattern. A gear's
+  bore walls are `<id>/bore{n}` (a D-flat's flat is `<id>/boreFlat`) and a ring
+  gear's outside is `<id>/rim{n}`; those names don't change with the tooth count.
 
 ## Conventions (always)
 

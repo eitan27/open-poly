@@ -10,6 +10,7 @@
 // mutating op resolves — so the agent knows it actually succeeded — belongs to
 // the host's regen coordinator, a layer up; what this layer reports is the
 // synchronous resolve errors (bad expressions, missing refs).
+import { FOLDED_NAMES_NOTE, foldNames } from "./nameRanges";
 import {
   addBoolean,
   addDerivedOp,
@@ -1470,8 +1471,10 @@ export function getSelection(ctx: AgentContext): Selection[] {
   return ctx.getSelection();
 }
 
+/** The distinct names in a mesh's face or edge groups, in order, with long
+ *  numbered runs folded (nameRanges.ts). */
 const uniqueNames = (groups?: { name?: string }[]): string[] =>
-  groups ? [...new Set(groups.map((g) => g.name).filter((n): n is string => !!n))] : [];
+  groups ? foldNames([...new Set(groups.map((g) => g.name).filter((n): n is string => !!n))]) : [];
 
 /** Compact, LLM-first digest — the agent's primary planning input. Small and
  *  semantic (named faces/edges, region ids, variables), not raw geometry. */
@@ -1597,6 +1600,9 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
     featureCount: doc.features.length,
     selection: ctx.getSelection(),
     errors,
+    ...(bodies.some((b) => [...b.faces, ...b.edges].some((n) => n.includes("{n")))
+      ? { nameNote: FOLDED_NAMES_NOTE }
+      : {}),
   };
 }
 
