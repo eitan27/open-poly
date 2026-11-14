@@ -1,5 +1,14 @@
 [
   {
+    "date": "2026-11-15",
+    "items": [
+      "Holes and screws: counterbored, countersunk and tapped holes in metric sizes, and screws that drop straight into them",
+      "Boolean subtract and Extrude Remove take a clearance offset, for parts that need to fit",
+      "Use the keyboard shortcuts D (hole) and U (screw) to try them out"
+    ],
+    "bold": ["Holes and screws", "clearance offset", " D ", " U "]
+  },
+  {
     "date": "2026-11-13",
     "items": [
       "Gears: easily add spur and ring gears, with automatic placement and tooth alignment in parts and assemblies",
