@@ -105,10 +105,16 @@ order; each is its own commit:
    and the pressure angle at the pitch point; same highlight/click-to-focus
    contract as Hole (a click on an Advanced dimension opens Advanced). Shared
    primitives in `ui/diagram/Dims.tsx`.
-4. **Screw** — a parametric body like Gear: head type, size, length, pitch
-   from the table; cosmetic thread by default, modelled thread opt-in
-   (needs a spike: helical sweep + boolean on a faceted core). Links to
-   Hole's "clearance for Mx".
+4. **Screw** — DONE. ISO metric socket cap (4762), button (7380), countersunk
+   (10642) and hex (4017) heads, M2–M12, length under the head (overall for
+   countersunk), cosmetic thread. Placed either in a Hole feature (one screw per
+   hole, a metric hole's size wins, seated on a counterbore floor / flush in a
+   countersink, follows the hole's direction) or on a plane at a centre X/Y.
+   New body per feature (sub-parts keep the feature's colour). Kernel reuses
+   Hole's faceted solid of revolution; hex head is a prism fused on, the socket
+   is cut. Dialog with a to-scale side view. Agent op `addScrew`. Shortcut U.
+   Not done: nuts/washers, modelled threads, auto length (to fit the stack),
+   inch sizes.
 
 **More gear types.** Gear has spur and ring (internal) only. In rough order of
 usefulness:

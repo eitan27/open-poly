@@ -81,6 +81,7 @@ const BODY_FEATURE_TYPES: Record<SolidFeature["type"], true> = {
   loft: true,
   import: true,
   gear: true,
+  screw: true,
 };
 
 /** Does this feature produce a body of its own — and so own its appearance? A
@@ -129,7 +130,8 @@ export function partAppearance(doc: Document, partId: string, defaultColor: numb
     name: o?.name ?? `${base.name} (${partIndex(partId) + 1})`,
     // Siblings get their own colour rather than the feature's — three lumps
     // painted alike read as one object (see siblingBodyColor).
-    color: o?.color ?? siblingBodyColor(base.color, partIndex(partId)),
+    // Fasteners are the exception: a row of screws is meant to look alike.
+    color: o?.color ?? (feature?.type === "screw" ? base.color : siblingBodyColor(base.color, partIndex(partId))),
     opacity: o?.opacity ?? base.opacity,
     hidden: o?.hidden ?? base.hidden,
     owned,

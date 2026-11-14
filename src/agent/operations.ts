@@ -493,6 +493,22 @@ export const operationSchema = z.discriminatedUnion("op", [
     name: z.string().optional(),
   }),
   z.object({
+    op: z.literal("addScrew"),
+    head: z.enum(["socket", "button", "flat", "hex"]).optional(),
+    /** "M2" … "M12". Ignored when `holeId` names a metric hole (it follows the hole). */
+    size: z.string().optional(),
+    /** Put one screw in every hole of this Hole feature (seated on a
+     *  counterbore floor / flush in a countersink). Omit to place on `plane`. */
+    holeId: z.string().optional(),
+    /** Placement without a hole: the head sits on this plane, shank going in
+     *  against its normal (flip reverses), at params.centerX/centerY. */
+    plane: planeRefSchema.optional(),
+    flip: z.boolean().optional(),
+    /** length (under the head; overall for a countersunk head), centerX, centerY. */
+    params: z.record(z.string(), expr).optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
     op: z.literal("shell"),
     targetId: z.string(),
     /** Persistent face names from the scene summary — the faces to remove

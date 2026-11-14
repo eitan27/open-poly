@@ -239,6 +239,21 @@ export type ResolvedFeature =
       flip: boolean;
       previewTool?: boolean;
     }
+  // Screws: per centre, a solid of revolution (`profile`, same (radius, depth)
+  // convention as a hole, negative depth = above the plane) plus an optional
+  // hex prism head fused on and an optional hex socket cut into the top. Lands
+  // as one new body (a part per screw).
+  | {
+      id: string;
+      type: "screw";
+      frame: ResolvedFrame;
+      centers: [number, number][];
+      /** +1: into the plane against its normal (the default); −1: flipped. */
+      flip: boolean;
+      profile: [number, number][];
+      hexHead?: { across: number; z0: number; z1: number };
+      socket?: { across: number; z0: number; z1: number };
+    }
   // A boolean combines existing bodies (by id) from the running set.
   | {
       id: string;

@@ -786,6 +786,38 @@ export interface HoleFeature extends FeatureBase {
   params: HoleParams;
 }
 
+export type ScrewHead = "socket" | "button" | "flat" | "hex";
+
+export interface ScrewParams {
+  /** Nominal length, ISO-style: under the head, or overall for a flat
+   *  (countersunk) head. */
+  length: string;
+  /** Placed on a plane: centre within it (mm, along the plane's u / v). */
+  centerX: string;
+  centerY: string;
+}
+
+/** A metric screw (geom/metricFasteners sizes), built as a body. Placed either
+ *  IN a Hole feature — one screw per hole centre, seated on the counterbore
+ *  floor / flush in the countersink, its size following a metric hole's — or
+ *  on a plane at (centerX, centerY), head above the plane and shank going in
+ *  against its normal (Flip reverses). The thread is cosmetic: the shank is
+ *  drawn at the nominal diameter. */
+export interface ScrewFeature extends FeatureBase {
+  type: "screw";
+  head: ScrewHead;
+  /** "M3" … "M12". Ignored (follows the hole) when `holeId` names a hole with
+   *  a metric size. */
+  size: string;
+  holeId?: string;
+  plane: SketchPlaneRef;
+  flip: boolean;
+  params: ScrewParams;
+  color: number;
+  opacity: number;
+  hidden?: boolean;
+}
+
 export type Feature =
   | PrimitiveFeature
   | SketchFeature
@@ -802,7 +834,8 @@ export type Feature =
   | LoftFeature
   | ImportFeature
   | GearFeature
-  | HoleFeature;
+  | HoleFeature
+  | ScrewFeature;
 
 export interface Variable {
   id: string;

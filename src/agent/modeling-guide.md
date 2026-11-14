@@ -300,6 +300,13 @@ frame count that shows the motion you care about.
   `countersink` take the matching ISO head pocket; `tapped` drills the tap
   drill (the thread is cosmetic). Default is through all; `extent: "blind"`
   with `params.depth` (and `tipAngle`, 0 = flat bottom) for a blind hole.
+- **Screws:** `add_screw` makes metric screws as a new body (`head`: socket /
+  button / flat (countersunk) / hex, `size` M2–M12, `params.length` under the
+  head — overall for flat). With `holeId` of a Hole feature it puts one screw
+  in every hole, at the hole's metric size, seated on the counterbore floor (or
+  flush in the countersink); otherwise give `plane` and `params.centerX/Y` —
+  the head sits on the plane and the shank goes in against its normal (`flip`
+  reverses). The thread is cosmetic.
 - **Two-sided / centered feature:** `add_extrude` with `extent: "symmetric"` —
   the profile extrudes `distance` equally both ways (centered on the sketch).
 - **Extrude up to a face:** `add_extrude` with `extent: "upToFace"` and

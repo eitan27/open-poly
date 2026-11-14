@@ -12,6 +12,7 @@
 // synchronous resolve errors (bad expressions, missing refs).
 import { FOLDED_NAMES_NOTE, foldNames } from "./nameRanges";
 import { DEFAULT_HOLE_PARAMS, DEFAULT_HOLE_SETTINGS } from "../document/hole";
+import { DEFAULT_SCREW_PARAMS, DEFAULT_SCREW_SETTINGS } from "../document/screw";
 import { METRIC_SIZES, isMetricSize } from "../geom/metricFasteners";
 import {
   addBoolean,
@@ -26,6 +27,7 @@ import {
   addRevolve,
   addShell,
   addHole,
+  addScrew,
   addSketch,
   addSketchConstraints,
   addSweep,
@@ -1282,6 +1284,30 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           op.flip,
         );
         next = r.doc;
+        createdId = r.id;
+        break;
+      }
+      case "addScrew": {
+        if (op.holeId) {
+          const h = requireFeature(doc, op.holeId);
+          if (h.type !== "hole") throw new OpError("invalid_op", "addScrew: holeId must name a Hole feature.");
+        } else if (!op.plane) {
+          throw new OpError("invalid_op", "addScrew: give holeId (screws in a hole) or plane (one standalone).");
+        }
+        if (op.size && !isMetricSize(op.size)) {
+          throw new OpError("invalid_op", `addScrew: unknown size "${op.size}" — use ${METRIC_SIZES.join(", ")}.`);
+        }
+        const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_SCREW_PARAMS));
+        if (unknown.length) throw new OpError("invalid_op", `addScrew: unknown params ${unknown.join(", ")}.`);
+        const plane: SketchPlaneRef = op.plane ? resolvePlaneRef(ctx, op.plane) : { kind: "datum", id: "plane-top" };
+        const r = addScrew(doc, plane, {
+          head: op.head ?? DEFAULT_SCREW_SETTINGS.head,
+          size: op.size ?? DEFAULT_SCREW_SETTINGS.size,
+          ...(op.holeId ? { holeId: op.holeId } : {}),
+          flip: op.flip ?? false,
+          params: { ...DEFAULT_SCREW_PARAMS, ...op.params },
+        });
+        next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;
         break;
       }

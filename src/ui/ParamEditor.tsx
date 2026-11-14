@@ -2,6 +2,7 @@ import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "../document/featureDefs";
 import { planeRefLabel } from "../document/planes";
 import type { Feature } from "../document/types";
 import { HOLE_TYPE_LABELS } from "../document/hole";
+import { SCREW_HEAD_LABELS } from "../document/screw";
 import { ExprInput } from "./ExprInput";
 
 interface Props {
@@ -459,6 +460,23 @@ export function ParamEditor({
               />
             </label>
           )}
+        </div>
+      ) : feature.type === "screw" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Screw</span>
+            <span className="param-static">
+              {SCREW_HEAD_LABELS[feature.head]} {feature.holeId ? "(in hole)" : feature.size}
+            </span>
+          </div>
+          <label className="param-field">
+            <span className="param-label">Length</span>
+            <ExprInput
+              className="param-input"
+              value={feature.params.length}
+              onChange={(e) => onChangeParam(feature.id, "length", e.target.value)}
+            />
+          </label>
         </div>
       ) : feature.type === "loft" ? (
         <div className="sketch-params">

@@ -4265,7 +4265,7 @@ function buildExtrudeFeature(feature: Extract<ResolvedFeature, { type: "extrude"
   }
 }
 
-/** One hole as a FACETED solid of revolution: rings of `circleStations()` at
+/** A FACETED solid of revolution — one hole's drill tool, or one screw: rings of `circleStations()` at
  *  each (radius, depth) point of `profile`, joined by planar quads (two rings
  *  of the same polygon on parallel planes always make planar trapezoids),
  *  triangles where the profile meets the axis in a cone (a drill point), and a
@@ -4276,7 +4276,7 @@ function buildExtrudeFeature(feature: Extract<ResolvedFeature, { type: "extrude"
  *  `o` is the centre on the start plane, `down` the unit drilling direction,
  *  `u`/`v` the start plane's axes. Faces are named `${id}/top`, `${id}/s{i}/{k}`
  *  (segment i, facet k) and `${id}/floor`. */
-function holeToolShape(o: V3, down: V3, u: V3, v: V3, profile: [number, number][], id: string): NamedShape {
+function revolvedPolyhedron(o: V3, down: V3, u: V3, v: V3, profile: [number, number][], id: string): NamedShape {
   const stations = circleStations();
   const ring = (r: number, z: number): Point[] =>
     stations.map((a) => {
@@ -4291,10 +4291,24 @@ function holeToolShape(o: V3, down: V3, u: V3, v: V3, profile: [number, number][
   const at = (z: number): Point => [o[0] + down[0] * z, o[1] + down[1] * z, o[2] + down[2] * z] as Point;
   const faces: { face: Face; name: string }[] = [];
   const n = stations.length;
-  faces.push({ face: makePolygon(ring(profile[0][0], profile[0][1])), name: `${id}/top` });
+  // A profile that starts off the axis is closed by a flat cap there (a hole's
+  // mouth); one that starts ON the axis closes itself (a screw's head top).
+  if (profile[0][0] > 0) faces.push({ face: makePolygon(ring(profile[0][0], profile[0][1])), name: `${id}/top` });
   for (let i = 0; i + 1 < profile.length; i++) {
     const [ra, za] = profile[i];
     const [rb, zb] = profile[i + 1];
+    if (ra === 0 && rb > 0) {
+      // Leaving the axis: a flat disc, or a cone from an apex.
+      if (Math.abs(zb - za) < 1e-9) {
+        faces.push({ face: makePolygon(ring(rb, zb)), name: `${id}/s${i}` });
+      } else {
+        const B = ring(rb, zb);
+        const apex = at(za);
+        for (let k = 0; k < n; k++)
+          faces.push({ face: makePolygon([apex, B[(k + 1) % n], B[k]]), name: `${id}/s${i}/${k}` });
+      }
+      continue;
+    }
     if (rb === 0) {
       if (Math.abs(zb - za) < 1e-9) {
         faces.push({ face: makePolygon(ring(ra, za)), name: `${id}/floor` });
@@ -4314,6 +4328,14 @@ function holeToolShape(o: V3, down: V3, u: V3, v: V3, profile: [number, number][
       faces.push({ face: makePolygon([A[k], A[k1], B[k1], B[k]]), name: `${id}/s${i}/${k}` });
     }
   }
+  const last = profile[profile.length - 1];
+  if (last[0] > 0) faces.push({ face: makePolygon(ring(last[0], last[1])), name: `${id}/bottom` });
+  return weldNamed(faces);
+}
+
+/** Weld planar faces into a solid, carrying each face's name across the weld
+ *  (which rebuilds the faces) by matching centroids. */
+function weldNamed(faces: { face: Face; name: string }[]): NamedShape {
   const solid = makeSolid(faces.map((f) => f.face)) as unknown as Shape3D;
   // The weld rebuilds faces, so names are matched back by centroid.
   const names = new Map<number, string>();
@@ -4325,6 +4347,68 @@ function holeToolShape(o: V3, down: V3, u: V3, v: V3, profile: [number, number][
   }
   for (const f of faces) f.face.delete();
   return { shape: solid, names };
+}
+
+/** A hexagonal prism about the axis through `o` along `down`, `across` its
+ *  flats, from depth z0 to z1 — a hex screw head or the socket cut into one. */
+function hexPrismShape(o: V3, down: V3, u: V3, v: V3, across: number, z0: number, z1: number, id: string): NamedShape {
+  const R = across / Math.sqrt(3);
+  const ring = (z: number): Point[] =>
+    Array.from({ length: 6 }, (_, k) => {
+      const a = (k * Math.PI) / 3;
+      const c = Math.cos(a) * R;
+      const sn = Math.sin(a) * R;
+      return [
+        o[0] + down[0] * z + u[0] * c + v[0] * sn,
+        o[1] + down[1] * z + u[1] * c + v[1] * sn,
+        o[2] + down[2] * z + u[2] * c + v[2] * sn,
+      ] as Point;
+    });
+  const A = ring(z0);
+  const B = ring(z1);
+  const faces = [
+    { face: makePolygon(A), name: `${id}/top` },
+    { face: makePolygon(B), name: `${id}/bottom` },
+    ...A.map((_, k) => ({ face: makePolygon([A[k], A[(k + 1) % 6], B[(k + 1) % 6], B[k]]), name: `${id}/flat${k}` })),
+  ];
+  return weldNamed(faces);
+}
+
+function buildScrewFeature(feature: Extract<ResolvedFeature, { type: "screw" }>, ctx: BuildContext): void {
+  const { bodies } = ctx;
+  const { frame } = feature;
+  // Into the plane against its normal, like a hole; Flip reverses.
+  const sg = feature.flip ? 1 : -1;
+  const down: V3 = [frame.normal[0] * sg, frame.normal[1] * sg, frame.normal[2] * sg];
+  const screws = feature.centers.map(([cu, cv], i) => {
+    const o: V3 = [
+      frame.origin[0] + frame.uAxis[0] * cu + frame.vAxis[0] * cv,
+      frame.origin[1] + frame.uAxis[1] * cu + frame.vAxis[1] * cv,
+      frame.origin[2] + frame.uAxis[2] * cu + frame.vAxis[2] * cv,
+    ];
+    const id = feature.centers.length > 1 ? `${feature.id}/n${i}` : feature.id;
+    let screw = revolvedPolyhedron(o, down, frame.uAxis, frame.vAxis, feature.profile, id);
+    if (feature.hexHead) {
+      const { across, z0, z1 } = feature.hexHead;
+      const head = hexPrismShape(o, down, frame.uAxis, frame.vAxis, across, z0, z1, `${id}/head`);
+      const fused = booleanNamed("fuse", screw, head);
+      screw.shape.delete();
+      head.shape.delete();
+      screw = unifyBody(fused);
+    }
+    if (feature.socket) {
+      const { across, z0, z1 } = feature.socket;
+      // Start the cutter a little above the head so it doesn't share its face.
+      const cutter = hexPrismShape(o, down, frame.uAxis, frame.vAxis, across, z0 - 0.5, z1, `${id}/socket`);
+      const cut = booleanNamed("cut", screw, cutter);
+      screw.shape.delete();
+      cutter.shape.delete();
+      screw = unifyBody(cut);
+    }
+    return screw;
+  });
+  const built = screws.length === 1 ? screws[0] : compoundOf(screws);
+  bodies.push({ id: feature.id, key: contentKey(feature, []), ...built });
 }
 
 function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, ctx: BuildContext): void {
@@ -4359,7 +4443,7 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
       frame.origin[2] + frame.uAxis[2] * cu + frame.vAxis[2] * cv,
     ];
     const id = feature.centers.length > 1 ? `${feature.id}/h${i}` : feature.id;
-    return holeToolShape(o, down, frame.uAxis, frame.vAxis, profile, id);
+    return revolvedPolyhedron(o, down, frame.uAxis, frame.vAxis, profile, id);
   });
   const tool = tools.length === 1 ? tools[0] : compoundOf(tools);
   if (feature.previewTool) {
@@ -4798,6 +4882,9 @@ function buildBodies(
           break;
         case "hole":
           buildHoleFeature(feature, ctx);
+          break;
+        case "screw":
+          buildScrewFeature(feature, ctx);
           break;
         // Every member of ResolvedFeature is handled above, and the compiler
         // enforces that: this is the dispatch whose failure mode was invisible

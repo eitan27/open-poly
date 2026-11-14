@@ -23,6 +23,7 @@ import { assertNever } from "../lib/assertNever";
 import { applyDerived, circularPatternAngles, resolvePatternCount } from "./derived";
 import { DEFAULT_GEAR_PARAMS, resolveGear, type GearSettings } from "./gear";
 import { DEFAULT_HOLE_PARAMS, resolveHole, type HoleSettings } from "./hole";
+import { DEFAULT_SCREW_PARAMS, resolveScrew, type ScrewSettings } from "./screw";
 import type {
   BooleanFeature,
   DerivedOp,
@@ -33,6 +34,7 @@ import type {
   ExtrudeFeature,
   GearFeature,
   HoleFeature,
+  ScrewFeature,
   ExtrudeProfile,
   Feature,
   FeatureKind,
@@ -634,6 +636,32 @@ export function updateHole(
   );
 }
 
+/** A screw on `plane`, or in each hole of `settings.holeId` (see document/screw.ts). */
+export function addScrew(doc: Document, plane: SketchPlaneRef, settings: ScrewSettings): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "screw").length + 1;
+  const feature: ScrewFeature = {
+    id: uid(),
+    type: "screw",
+    name: `Screw ${ordinal}`,
+    suppressed: false,
+    plane,
+    ...settings,
+    params: { ...settings.params },
+    // Steel grey, rather than a random body colour: a fastener should read as one.
+    color: 0x9aa3ad,
+    opacity: 1,
+  };
+  return insertFeature(doc, feature);
+}
+
+export function updateScrew(doc: Document, id: string, plane: SketchPlaneRef, settings: ScrewSettings): Document {
+  return mapFeature(doc, id, (f) => {
+    if (f.type !== "screw") return f;
+    const { holeId: _h, ...rest } = f;
+    return { ...rest, plane, ...settings, params: { ...settings.params } };
+  });
+}
+
 export function addImport(doc: Document, source: string, name?: string): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "import").length + 1;
   const feature: ImportFeature = {
@@ -1029,6 +1057,7 @@ export function updateParam(doc: Document, id: string, name: string, value: stri
     if (f.type === "revolve" && name === "angle") return { ...f, angle: value };
     if (f.type === "gear" && name in DEFAULT_GEAR_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "hole" && name in DEFAULT_HOLE_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
+    if (f.type === "screw" && name in DEFAULT_SCREW_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
     if (f.type === "plane" && name === "angle") return { ...f, angle: value };
     if (f.type === "transform") {
@@ -1738,6 +1767,8 @@ export function resolveDocument(doc: Document): ResolveResult {
         features.push({ id: f.id, type: "import", source: f.source });
       } else if (f.type === "gear") {
         features.push(resolveGear(doc, f, scope, planeFrames));
+      } else if (f.type === "screw") {
+        features.push(resolveScrew(dDoc, f, scope, planeFrames));
       } else if (f.type === "hole") {
         const sketch = dDoc.features.find((x) => x.id === f.sketchId);
         features.push(resolveHole(f, sketch?.type === "sketch" ? sketch : undefined, scope, planeFrames));

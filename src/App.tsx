@@ -191,7 +191,9 @@ import { usePatternDialog } from "./hooks/usePatternDialog";
 import { useRevolveDialog } from "./hooks/useRevolveDialog";
 import { useGearDialog } from "./hooks/useGearDialog";
 import { holeSketches, useHoleDialog } from "./hooks/useHoleDialog";
+import { useScrewDialog } from "./hooks/useScrewDialog";
 import { holeCenters, holeDims, type HoleDims } from "./document/hole";
+import { screwDims, screwSize, type ScrewDims } from "./document/screw";
 import { gearReadout, meshCandidates } from "./document/gear";
 import { usePersistedDocuments } from "./hooks/usePersistedDocuments";
 import { useAgentBridge } from "./agent/useAgentBridge";
@@ -211,6 +213,7 @@ import { TransformArmingDialog, TransformDialog } from "./ui/TransformDialog";
 import { RevolveDialog } from "./ui/RevolveDialog";
 import { GearDialog } from "./ui/GearDialog";
 import { HoleDialog } from "./ui/HoleDialog";
+import { ScrewDialog } from "./ui/ScrewDialog";
 import { MirrorDialog } from "./ui/MirrorDialog";
 import { DxfImportDialog } from "./ui/DxfImportDialog";
 import { LoftDialog } from "./ui/LoftDialog";
@@ -1269,6 +1272,7 @@ export default function App() {
     | "mirrorPlane"
     | "sectionPlane"
     | "gearPlane"
+    | "screwPlane"
   >("sketch");
   // The reference-plane dialog. `method` chooses the placement; the relevant
   // fields are filled by picks (base/refB planes-or-faces; points) or text inputs.
@@ -1605,6 +1609,23 @@ export default function App() {
     shouldLiveApply,
     selectFeature,
   });
+  // The Screw dialog: screws in a Hole feature's holes, or on a plane.
+  const screw = useScrewDialog({
+    doc,
+    setDoc,
+    ready,
+    kernelRef,
+    picking,
+    pickPurpose,
+    setPicking,
+    setPickPurpose,
+    beginEdit,
+    commitEdit,
+    cancelEdit,
+    shouldLiveApply,
+    selectFeature,
+  });
+  const lastScrewDims = useRef<ScrewDims | null>(null);
   // The last hole settings that resolved, so the dialog's diagram holds still
   // while a field is half-typed rather than blinking out.
   const lastHoleDims = useRef<HoleDims | null>(null);
@@ -2504,6 +2525,7 @@ export default function App() {
     !!revolve.dialog ||
     !!gear.dialog ||
     !!hole.dialog ||
+    !!screw.dialog ||
     !!sweepDialog ||
     !!loftDialog ||
     !!dressUp.dialog ||
@@ -2651,6 +2673,7 @@ export default function App() {
       ...(gear.preview ? [{ mesh: gear.preview }] : []),
       // The drill tools are material about to go, like a Remove extrude's.
       ...(hole.preview ? [{ mesh: hole.preview, variant: "cut" as const }] : []),
+      ...(screw.preview ? [{ mesh: screw.preview }] : []),
       ...patternGhosts,
       ...mirrorGhost,
       // The chamfer/fillet delta: what the operation fills in and what it carves
@@ -2664,6 +2687,7 @@ export default function App() {
       revolve.preview,
       gear.preview,
       hole.preview,
+      screw.preview,
       patternGhosts,
       mirrorGhost,
       dressUp.preview,
@@ -3532,6 +3556,15 @@ export default function App() {
     }
     hole.open(sketchId, bodyId ?? booleanCandidates[0]?.id ?? null);
   };
+  /** Open the Screw dialog: in the selected Hole feature (else the newest),
+   *  or on a selected reference plane. */
+  const openScrew = () => {
+    if (screw.dialog) return;
+    const sel = selection.length === 1 ? selection[0] : null;
+    const picked = sel ? doc.features.find((f) => f.id === featureIdOf(sel)) : undefined;
+    if (picked?.type === "hole") screw.open(picked.id, null);
+    else screw.open(null, picked?.type === "plane" ? { kind: "plane", planeId: picked.id } : null);
+  };
   /** Re-open the revolve dialog to edit in place, seeded from the feature. */
   const editRevolve = (id: string) => {
     const f = doc.features.find((x) => x.id === id);
@@ -3666,6 +3699,7 @@ export default function App() {
       else if (revolve.dialog) revolve.close();
       else if (gear.dialog) gear.close();
       else if (hole.dialog) hole.close();
+      else if (screw.dialog) screw.close();
       else if (mirrorDialog) closeMirror();
       else if (pattern.dialog) pattern.close();
       else if (shell.dialog) shell.close();
@@ -3814,6 +3848,7 @@ export default function App() {
       },
       "model.gear": () => openGear(),
       "model.hole": () => openHole(),
+      "model.screw": () => openScrew(),
     },
   });
 
@@ -4324,6 +4359,15 @@ export default function App() {
         }
       }
       gear.pickPlane(ref);
+    } else if (pickPurpose === "screwPlane") {
+      if (ref.kind === "face" && faceId !== undefined) {
+        const m = meshes.find((x) => x.id === ref.featureId);
+        if (!m || !faceNormal(m.mesh.faces, faceId)) {
+          flashMsg("That face isn't flat — a screw needs a planar face, a datum, or a reference plane.");
+          return;
+        }
+      }
+      screw.pickPlane(ref);
     } else if (pickPurpose === "sectionPlane") {
       setPicking(false);
       setPickPurpose("sketch");
@@ -4629,6 +4673,9 @@ export default function App() {
       // kind forces an answer to "does this one have a dialog?" at compile time.
       case "hole":
         hole.edit(f);
+        break;
+      case "screw":
+        screw.edit(f);
         break;
       case "primitive":
       case "import":
@@ -6804,6 +6851,16 @@ export default function App() {
       disabled: toolsLocked,
       onSelect: openHole,
     },
+    {
+      id: "screw",
+      icon: "🔩",
+      label: "Screw",
+      shortcut: shortcutHint("model.screw"),
+      title: `Screw (${shortcutName("model.screw")}): metric socket, button, countersunk or hex screws — one in every hole of a Hole feature, or on a plane`,
+      keywords: ["bolt", "fastener", "socket", "cap", "hex", "countersunk", "button", "metric", "iso"],
+      disabled: toolsLocked,
+      onSelect: openScrew,
+    },
   ];
 
   /** A sketch feature's display name, for the dialogs that label a picked region
@@ -8610,6 +8667,42 @@ export default function App() {
                     onParam={hole.updateParam}
                     onConfirm={hole.confirm}
                     onCancel={hole.close}
+                  />
+                );
+              })()}
+            {screw.dialog &&
+              (() => {
+                const d = screw.dialog;
+                const size = screwSize(doc, d.settings);
+                let dims: ScrewDims | null = null;
+                let dimsError: string | null = null;
+                try {
+                  dims = screwDims(d.settings.head, size, evaluateExpression(d.settings.params.length, resolved.scope));
+                  lastScrewDims.current = dims;
+                } catch (err) {
+                  dimsError = String((err as Error).message ?? err);
+                }
+                const error = dimsError ?? (d.editId ? (resolved.errors[d.editId] ?? null) : screw.previewError);
+                return (
+                  <ScrewDialog
+                    editing={!!d.editId}
+                    settings={d.settings}
+                    holeOptions={doc.features.flatMap((f) =>
+                      f.type === "hole"
+                        ? [{ id: f.id, name: f.name, size: f.size === "custom" ? "custom" : f.size }]
+                        : [],
+                    )}
+                    effectiveSize={size}
+                    planeLabel={mirrorPlaneLabel(d.plane, doc)}
+                    defaultPlane={d.defaultPlane}
+                    planeArmed={picking && pickPurpose === "screwPlane"}
+                    dims={dims ?? lastScrewDims.current}
+                    error={error?.replace(/^screw: /, "") ?? null}
+                    onArmPlane={screw.armPlane}
+                    onChange={screw.update}
+                    onParam={screw.updateParam}
+                    onConfirm={screw.confirm}
+                    onCancel={screw.close}
                   />
                 );
               })()}

@@ -134,6 +134,7 @@ export const SHORTCUTS = [
   { id: "model.pattern", key: "x", mode: "modeling", anyShift: true, label: "Pattern a body" },
   { id: "model.gear", key: "g", mode: "modeling", anyShift: true, label: "Gear" },
   { id: "model.hole", key: "d", mode: "modeling", anyShift: true, label: "Hole (drill)" },
+  { id: "model.screw", key: "u", mode: "modeling", anyShift: true, label: "Screw" },
 
   // Enter commits the sketch tools that preview before they commit — the
   // Mirror, Project/Convert and Pattern sessions. It is a "both" entry rather
