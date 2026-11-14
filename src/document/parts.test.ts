@@ -124,6 +124,7 @@ const ALL_FEATURE_TYPES: Record<Feature["type"], true> = {
   loft: true,
   import: true,
   gear: true,
+  hole: true,
 };
 const FEATURE_TYPES = Object.keys(ALL_FEATURE_TYPES) as Feature["type"][];
 const asFeature = (type: Feature["type"]) => ({ type }) as Feature;
@@ -157,7 +158,7 @@ describe("isBodyFeature / isHideableFeature", () => {
   });
 
   it("excludes the features that modify someone else's body in place", () => {
-    for (const t of ["sketch", "dressup", "shell"] as const) {
+    for (const t of ["sketch", "dressup", "shell", "hole"] as const) {
       expect(isBodyFeature(asFeature(t))).toBe(false);
       expect(isHideableFeature(asFeature(t))).toBe(false);
     }

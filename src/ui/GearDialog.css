@@ -50,3 +50,14 @@
   padding-left: 8px;
   border-left: 1px solid var(--border);
 }
+
+/* The Hole dialog borrows the gear dialog's layout, a little wider for its
+   cross-section diagram. */
+.feature-dialog.hole-dialog {
+  width: 272px;
+}
+
+.hole-dialog .ed-modes button {
+  padding-left: 4px;
+  padding-right: 4px;
+}

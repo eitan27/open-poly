@@ -471,6 +471,28 @@ export const operationSchema = z.discriminatedUnion("op", [
     flip: z.boolean().optional(),
   }),
   z.object({
+    op: z.literal("addHole"),
+    /** The sketch whose POINT entities and CIRCLE centres place the holes. */
+    sketchId: z.string(),
+    /** The body to drill. Defaults to the body the sketch was drawn on. */
+    targetId: z.string().optional(),
+    holeType: z.enum(["simple", "counterbore", "countersink", "tapped"]).optional(),
+    /** "M2" | "M2.5" | "M3" | "M4" | "M5" | "M6" | "M8" | "M10" | "M12" (ISO
+     *  table: clearance / tap drill / counterbore / countersink sizes), or
+     *  "custom" to give the diameters yourself. Default M3. */
+    size: z.string().optional(),
+    /** Clearance fit for a metric non-tapped hole. Default normal. */
+    fit: z.enum(["close", "normal", "loose"]).optional(),
+    /** Default throughAll. */
+    extent: z.enum(["blind", "throughAll"]).optional(),
+    flip: z.boolean().optional(),
+    /** Custom sizes / blind depth: diameter, depth, counterboreDiameter,
+     *  counterboreDepth, countersinkDiameter, countersinkAngle, tipAngle (0 =
+     *  flat bottom; default 118), threadDepth. */
+    params: z.record(z.string(), expr).optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
     op: z.literal("shell"),
     targetId: z.string(),
     /** Persistent face names from the scene summary — the faces to remove

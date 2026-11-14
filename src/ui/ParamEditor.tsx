@@ -1,6 +1,7 @@
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "../document/featureDefs";
 import { planeRefLabel } from "../document/planes";
 import type { Feature } from "../document/types";
+import { HOLE_TYPE_LABELS } from "../document/hole";
 import { ExprInput } from "./ExprInput";
 
 interface Props {
@@ -429,6 +430,35 @@ export function ParamEditor({
               />
             </label>
           ))}
+        </div>
+      ) : feature.type === "hole" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Hole</span>
+            <span className="param-static">
+              {HOLE_TYPE_LABELS[feature.holeType]} {feature.size === "custom" ? "" : feature.size}
+            </span>
+          </div>
+          {feature.size === "custom" && (
+            <label className="param-field">
+              <span className="param-label">Diameter</span>
+              <ExprInput
+                className="param-input"
+                value={feature.params.diameter}
+                onChange={(e) => onChangeParam(feature.id, "diameter", e.target.value)}
+              />
+            </label>
+          )}
+          {feature.extent === "blind" && (
+            <label className="param-field">
+              <span className="param-label">Depth</span>
+              <ExprInput
+                className="param-input"
+                value={feature.params.depth}
+                onChange={(e) => onChangeParam(feature.id, "depth", e.target.value)}
+              />
+            </label>
+          )}
         </div>
       ) : feature.type === "loft" ? (
         <div className="sketch-params">

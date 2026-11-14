@@ -48,6 +48,8 @@ const OP_DESCRIPTIONS: Record<string, string> = {
     "Combine two or more bodies (union/subtract/intersect) by id. For subtract, the first operand is the base; subtract also takes `offset` (clearance grown around each tool) and `keepTools`.",
   dressUp:
     "Chamfer or fillet edges of a body, referencing edges by their persistent names from the summary. Pass `faces` instead of (or alongside) `edges` to dress every boundary edge of those faces — the reliable way to round a circular rim, since naming a cylinder's flat top beats listing its 96 rim chords. A chamfer takes an optional angle in degrees (0..90, default 45 = symmetric): size is measured along the reference face and the bevel leaves it at that angle; flip:true measures from the edge's other adjacent face instead.",
+  addHole:
+    "Drill holes into a body at every POINT entity and CIRCLE centre of a sketch, along the sketch normal into the body (flip reverses). holeType simple|counterbore|countersink|tapped; size M2..M12 takes clearance (fit close|normal|loose, ISO 273), tap-drill, counterbore and countersink sizes from the ISO tables, or size 'custom' with params.diameter etc. extent throughAll (default) or blind with params.depth (+ tipAngle, 0 = flat bottom). Tapped threads are cosmetic (recorded, not modelled). Holes are faceted like every round wall.",
   shell:
     "Hollow out a body: remove the named faces (they become openings) and leave a wall of `thickness` around what remains, growing inward. `faces` are persistent face names from the summary; omit/empty for a fully sealed hollow shell (no opening).",
   addConstraint:

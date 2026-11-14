@@ -11,6 +11,8 @@
 // the host's regen coordinator, a layer up; what this layer reports is the
 // synchronous resolve errors (bad expressions, missing refs).
 import { FOLDED_NAMES_NOTE, foldNames } from "./nameRanges";
+import { DEFAULT_HOLE_PARAMS, DEFAULT_HOLE_SETTINGS } from "../document/hole";
+import { METRIC_SIZES, isMetricSize } from "../geom/metricFasteners";
 import {
   addBoolean,
   addDerivedOp,
@@ -23,6 +25,7 @@ import {
   addPlane,
   addRevolve,
   addShell,
+  addHole,
   addSketch,
   addSketchConstraints,
   addSweep,
@@ -1279,6 +1282,31 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           op.flip,
         );
         next = r.doc;
+        createdId = r.id;
+        break;
+      }
+      case "addHole": {
+        const sk = requireSketch(doc, op.sketchId);
+        const targetId = op.targetId ?? (sk.plane.kind === "face" ? sk.plane.featureId : undefined);
+        if (!targetId) throw new OpError("invalid_op", "addHole: give targetId (the sketch isn't on a body face).");
+        requireFeature(doc, targetId);
+        if (op.size && op.size !== "custom" && !isMetricSize(op.size)) {
+          throw new OpError(
+            "invalid_op",
+            `addHole: unknown size "${op.size}" — use ${METRIC_SIZES.join(", ")} or "custom".`,
+          );
+        }
+        const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_HOLE_PARAMS));
+        if (unknown.length) throw new OpError("invalid_op", `addHole: unknown params ${unknown.join(", ")}.`);
+        const r = addHole(doc, op.sketchId, targetId, {
+          holeType: op.holeType ?? DEFAULT_HOLE_SETTINGS.holeType,
+          size: op.size ?? DEFAULT_HOLE_SETTINGS.size,
+          fit: op.fit ?? DEFAULT_HOLE_SETTINGS.fit,
+          extent: op.extent ?? DEFAULT_HOLE_SETTINGS.extent,
+          flip: op.flip ?? false,
+          params: { ...DEFAULT_HOLE_PARAMS, ...op.params },
+        });
+        next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;
         break;
       }

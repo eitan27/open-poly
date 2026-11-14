@@ -190,6 +190,8 @@ import { useShellDialog } from "./hooks/useShellDialog";
 import { usePatternDialog } from "./hooks/usePatternDialog";
 import { useRevolveDialog } from "./hooks/useRevolveDialog";
 import { useGearDialog } from "./hooks/useGearDialog";
+import { holeSketches, useHoleDialog } from "./hooks/useHoleDialog";
+import { holeCenters, holeDims, type HoleDims } from "./document/hole";
 import { gearReadout, meshCandidates } from "./document/gear";
 import { usePersistedDocuments } from "./hooks/usePersistedDocuments";
 import { useAgentBridge } from "./agent/useAgentBridge";
@@ -208,6 +210,7 @@ import { PlaneDialog } from "./ui/PlaneDialog";
 import { TransformArmingDialog, TransformDialog } from "./ui/TransformDialog";
 import { RevolveDialog } from "./ui/RevolveDialog";
 import { GearDialog } from "./ui/GearDialog";
+import { HoleDialog } from "./ui/HoleDialog";
 import { MirrorDialog } from "./ui/MirrorDialog";
 import { DxfImportDialog } from "./ui/DxfImportDialog";
 import { LoftDialog } from "./ui/LoftDialog";
@@ -1590,6 +1593,21 @@ export default function App() {
     shouldLiveApply,
     selectFeature,
   });
+  // The Hole dialog: holes at a sketch's points, ghosted as the drill tools.
+  const hole = useHoleDialog({
+    doc,
+    setDoc,
+    ready,
+    kernelRef,
+    beginEdit,
+    commitEdit,
+    cancelEdit,
+    shouldLiveApply,
+    selectFeature,
+  });
+  // The last hole settings that resolved, so the dialog's diagram holds still
+  // while a field is half-typed rather than blinking out.
+  const lastHoleDims = useRef<HoleDims | null>(null);
   // The extrude dialog (anchored at the profile) while choosing parameters.
   // `editId` set ⇒ editing an existing extrude in place (Confirm updates it);
   // else creating from the current profile selection.
@@ -2485,6 +2503,7 @@ export default function App() {
     !!extrudeDialog ||
     !!revolve.dialog ||
     !!gear.dialog ||
+    !!hole.dialog ||
     !!sweepDialog ||
     !!loftDialog ||
     !!dressUp.dialog ||
@@ -2630,6 +2649,8 @@ export default function App() {
         : []),
       ...(revolve.preview ? [{ mesh: revolve.preview }] : []),
       ...(gear.preview ? [{ mesh: gear.preview }] : []),
+      // The drill tools are material about to go, like a Remove extrude's.
+      ...(hole.preview ? [{ mesh: hole.preview, variant: "cut" as const }] : []),
       ...patternGhosts,
       ...mirrorGhost,
       // The chamfer/fillet delta: what the operation fills in and what it carves
@@ -2637,7 +2658,16 @@ export default function App() {
       ...(dressUp.preview?.added ?? []).map((mesh) => ({ mesh, variant: "fill" as const })),
       ...(dressUp.preview?.removed ?? []).map((mesh) => ({ mesh, variant: "cut" as const })),
     ],
-    [extrudePreview, extrudeCutting, revolve.preview, gear.preview, patternGhosts, mirrorGhost, dressUp.preview],
+    [
+      extrudePreview,
+      extrudeCutting,
+      revolve.preview,
+      gear.preview,
+      hole.preview,
+      patternGhosts,
+      mirrorGhost,
+      dressUp.preview,
+    ],
   );
 
   // Keep the gear in view while its dialog is open. Place beside, a new size or
@@ -3487,6 +3517,21 @@ export default function App() {
     const picked = sel?.kind === "feature" ? doc.features.find((f) => f.id === sel.id) : undefined;
     gear.open(picked?.type === "plane" ? { kind: "plane", planeId: picked.id } : null);
   };
+  /** Open the Hole dialog on the selected sketch (or the newest one with
+   *  points) and the selected body (or the sketch's own, or the first). */
+  const openHole = () => {
+    if (hole.dialog) return;
+    let sketchId: string | null = null;
+    let bodyId: string | null = null;
+    for (const sel of selection) {
+      if ("sketchId" in sel && typeof sel.sketchId === "string") sketchId ??= sel.sketchId;
+      const fid = featureIdOf(sel);
+      const f = doc.features.find((x) => x.id === fid);
+      if (f?.type === "sketch") sketchId ??= f.id;
+      else if (fid && booleanCandidates.some((c) => c.id === fid)) bodyId ??= fid;
+    }
+    hole.open(sketchId, bodyId ?? booleanCandidates[0]?.id ?? null);
+  };
   /** Re-open the revolve dialog to edit in place, seeded from the feature. */
   const editRevolve = (id: string) => {
     const f = doc.features.find((x) => x.id === id);
@@ -3620,6 +3665,7 @@ export default function App() {
       else if (planeDialog) closePlaneDialog();
       else if (revolve.dialog) revolve.close();
       else if (gear.dialog) gear.close();
+      else if (hole.dialog) hole.close();
       else if (mirrorDialog) closeMirror();
       else if (pattern.dialog) pattern.close();
       else if (shell.dialog) shell.close();
@@ -3767,6 +3813,7 @@ export default function App() {
         if (!pattern.dialog) openPattern();
       },
       "model.gear": () => openGear(),
+      "model.hole": () => openHole(),
     },
   });
 
@@ -4580,6 +4627,9 @@ export default function App() {
       // No creation dialog to re-open: the floating parameter panel IS their
       // editor. Listed rather than left to a `default` so that adding a feature
       // kind forces an answer to "does this one have a dialog?" at compile time.
+      case "hole":
+        hole.edit(f);
+        break;
       case "primitive":
       case "import":
       case "sweep":
@@ -6744,6 +6794,16 @@ export default function App() {
       disabled: toolsLocked,
       onSelect: openGear,
     },
+    {
+      id: "hole",
+      icon: "◎",
+      label: "Hole",
+      shortcut: shortcutHint("model.hole"),
+      title: `Hole (${shortcutName("model.hole")}): drill simple, counterbored, countersunk or tapped holes at a sketch's points — metric sizes and fits built in`,
+      keywords: ["drill", "counterbore", "countersink", "tapped", "thread", "bolt", "screw", "clearance", "tap"],
+      disabled: toolsLocked,
+      onSelect: openHole,
+    },
   ];
 
   /** A sketch feature's display name, for the dialogs that label a picked region
@@ -8515,6 +8575,41 @@ export default function App() {
                     onToggleAdvanced={() => gear.setDialog((g) => (g ? { ...g, advanced: !g.advanced } : g))}
                     onConfirm={gear.confirm}
                     onCancel={gear.close}
+                  />
+                );
+              })()}
+            {hole.dialog &&
+              (() => {
+                const d = hole.dialog;
+                let dims: HoleDims | null = null;
+                let dimsError: string | null = null;
+                try {
+                  dims = holeDims(d.settings, resolved.scope);
+                  lastHoleDims.current = dims;
+                } catch (err) {
+                  dimsError = String((err as Error).message ?? err);
+                }
+                const error = dimsError ?? (d.editId ? (resolved.errors[d.editId] ?? null) : hole.previewError);
+                return (
+                  <HoleDialog
+                    editing={!!d.editId}
+                    settings={d.settings}
+                    sketchId={d.sketchId}
+                    sketchOptions={holeSketches(doc).map((sk) => ({
+                      id: sk.id,
+                      name: sk.name,
+                      points: holeCenters(sk).length,
+                    }))}
+                    targetId={d.targetId}
+                    targetOptions={booleanCandidates}
+                    dims={dims ?? lastHoleDims.current}
+                    error={error?.replace(/^hole: /, "") ?? null}
+                    onSketchChange={hole.setSketch}
+                    onTargetChange={hole.setTarget}
+                    onChange={hole.update}
+                    onParam={hole.updateParam}
+                    onConfirm={hole.confirm}
+                    onCancel={hole.close}
                   />
                 );
               })()}

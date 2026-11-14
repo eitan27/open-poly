@@ -1,0 +1,83 @@
+/* The dialogs' 2D cross-section diagrams (Hole, Gear). Everything takes its
+   colour from the theme tokens, so light and dark both read. */
+.dg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 2px 0 4px;
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-subtle);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.dg-material {
+  fill: var(--bg-raised-3);
+  stroke: var(--text-7);
+  stroke-width: 0.8;
+}
+
+.dg-hatch line {
+  stroke: var(--text-7);
+  stroke-width: 0.5;
+  opacity: 0.45;
+}
+
+.dg-cut {
+  fill: var(--bg-sunken);
+  stroke: var(--text-4);
+  stroke-width: 1;
+}
+
+.dg-axis {
+  stroke: var(--text-7);
+  stroke-width: 0.6;
+  stroke-dasharray: 6 2 1 2;
+}
+
+.dg-thread {
+  stroke: var(--text-4);
+  stroke-width: 0.7;
+  stroke-dasharray: 2 1.5;
+  fill: none;
+}
+
+.dg-line,
+.dg-ext {
+  stroke: var(--text-7);
+  stroke-width: 0.7;
+  fill: none;
+}
+
+.dg-arrow {
+  fill: var(--text-7);
+}
+
+.dg-label {
+  fill: var(--text-4);
+}
+
+.dg-pickable {
+  cursor: pointer;
+}
+
+.dg-active .dg-line,
+.dg-active .dg-ext {
+  stroke: var(--accent);
+  stroke-width: 1.2;
+}
+
+.dg-active .dg-arrow,
+.dg-active .dg-label {
+  fill: var(--accent);
+}
+
+.dg-active .dg-label {
+  font-weight: 600;
+}
+
+.dg-pickable:hover .dg-label {
+  text-decoration: underline;
+}

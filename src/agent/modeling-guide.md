@@ -293,6 +293,13 @@ frame count that shows the motion you care about.
   A cut also takes `offset`: a clearance the profile is grown by sideways (the
   depth stays exact) — sketch the part's true outline and set `offset: 0.2` for
   a pocket it slides into, rather than drawing the pocket oversize by hand.
+- **Bolt holes:** `add_hole` instead of circles + a cut. Sketch POINTS (or
+  circles — their centres count) where the holes go, on the face to drill, then
+  `add_hole` with that `sketchId`: `size: "M3"` (M2–M12) picks the ISO clearance
+  diameter by `fit` (close/normal/loose), and `holeType` `counterbore` /
+  `countersink` take the matching ISO head pocket; `tapped` drills the tap
+  drill (the thread is cosmetic). Default is through all; `extent: "blind"`
+  with `params.depth` (and `tipAngle`, 0 = flat bottom) for a blind hole.
 - **Two-sided / centered feature:** `add_extrude` with `extent: "symmetric"` —
   the profile extrudes `distance` equally both ways (centered on the sketch).
 - **Extrude up to a face:** `add_extrude` with `extent: "upToFace"` and

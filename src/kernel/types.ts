@@ -224,6 +224,21 @@ export type ResolvedFeature =
   // parallel geometric fingerprint) and leave a wall of `thickness` around
   // what remains. Zero faces = a fully sealed hollow shell.
   | { id: string; type: "shell"; targetId: string; faces: string[]; faceRefs?: ResolvedFaceRef[]; thickness: number }
+  // Holes: one faceted solid of revolution per centre, cut from the target.
+  // `profile` is the hole's half cross-section as (radius, depth) points from
+  // the start plane down to the axis; with `throughAll` the deepest points are
+  // pushed far enough to clear the target. `previewTool` emits only the tools.
+  | {
+      id: string;
+      type: "hole";
+      targetId: string;
+      frame: ResolvedFrame;
+      centers: [number, number][];
+      profile: [number, number][];
+      throughAll: boolean;
+      flip: boolean;
+      previewTool?: boolean;
+    }
   // A boolean combines existing bodies (by id) from the running set.
   | {
       id: string;

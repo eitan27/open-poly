@@ -89,10 +89,17 @@ order; each is its own commit:
    3D, then trimmed back flush with both cap planes, so the cut widens but its
    depth stays exact). Not added to Union/Intersect/Shell/Pattern/Mirror/
    Transform: none of them cut a fitted cavity.
-2. **Hole** — simple / counterbore / countersink / tapped, ISO metric size
-   table with Close / Normal / Loose clearance fits, blind / through all /
-   up to next, placed at sketch points. The dialog carries a labelled 2D
-   cross-section that highlights the dimension whose field has focus.
+2. **Hole** — DONE. Simple / counterbore / countersink / tapped (cosmetic
+   thread), ISO metric M2–M12 table (`geom/metricFasteners.ts`) with Close /
+   Normal / Loose clearance fits or a custom size, blind (with a drill point,
+   0° = flat) or through all. Placed at every point entity and circle centre of
+   a chosen sketch, drilled against the sketch normal into a chosen body.
+   Kernel: one faceted solid of revolution per centre (planar quads between
+   rings on the shared circle stations, cones as triangles), welded and cut.
+   Dialog has a to-scale cross-section diagram; focusing a field (or hovering
+   it) lights its dimension, clicking a dimension focuses its field. Agent op
+   `addHole`. Shortcut D. Not done: up-to-next extent, picking a subset of the
+   sketch's points, modelled threads, inch sizes.
 3. **Gear diagram** — the same diagram component, showing one tooth with its
    tip/pitch/base/root circles, module, pressure angle, backlash and bore.
 4. **Screw** — a parametric body like Gear: head type, size, length, pitch

@@ -742,6 +742,50 @@ export interface GearFeature extends FeatureBase {
   hidden?: boolean;
 }
 
+export type HoleType = "simple" | "counterbore" | "countersink" | "tapped";
+
+/** A hole's sizes, as expression strings (mm, degrees). Which ones are read
+ *  depends on the hole type, and — when `size` names a standard metric size —
+ *  the diameters come from the table instead (document/hole.ts). */
+export interface HoleParams {
+  /** Drilled diameter (custom size only; a metric size uses its clearance /
+   *  tap-drill diameter). */
+  diameter: string;
+  /** Depth of the full-diameter bore, from the start plane (blind only). */
+  depth: string;
+  counterboreDiameter: string;
+  counterboreDepth: string;
+  countersinkDiameter: string;
+  /** Included angle of the countersink cone, degrees. */
+  countersinkAngle: string;
+  /** Included angle of the drill point at the bottom of a blind hole, degrees;
+   *  0 = flat bottom. */
+  tipAngle: string;
+  /** Tapped only: how deep the (cosmetic) thread runs. Recorded, not modelled. */
+  threadDepth: string;
+}
+
+/** Holes drilled into a body at every point (and circle centre) of a sketch,
+ *  along the sketch normal — INTO the body, like a Remove extrude, with `flip`
+ *  reversing it. The kernel builds each hole as a faceted solid of revolution
+ *  and cuts it from `targetId`. */
+export interface HoleFeature extends FeatureBase {
+  type: "hole";
+  holeType: HoleType;
+  /** A metric size from geom/metricFasteners ("M3"), or "custom" to use the
+   *  params' own diameters. */
+  size: string;
+  /** Clearance fit for a metric simple/counterbore/countersink hole. */
+  fit: "close" | "normal" | "loose";
+  /** The sketch whose points place the holes; its plane is where they start. */
+  sketchId: string;
+  /** The body the holes cut. */
+  targetId?: string;
+  extent: "blind" | "throughAll";
+  flip: boolean;
+  params: HoleParams;
+}
+
 export type Feature =
   | PrimitiveFeature
   | SketchFeature
@@ -757,7 +801,8 @@ export type Feature =
   | SweepFeature
   | LoftFeature
   | ImportFeature
-  | GearFeature;
+  | GearFeature
+  | HoleFeature;
 
 export interface Variable {
   id: string;

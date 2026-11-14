@@ -9,6 +9,7 @@ import {
   makeBaseBox,
   makeSphere,
   makeSolid,
+  makePolygon,
   draw,
   drawPointsInterpolation,
   Plane,
@@ -26,7 +27,7 @@ import {
   DistanceQuery,
   makeVertex,
 } from "replicad";
-import type { Shape3D, Face, Edge, Sketch } from "replicad";
+import type { Shape3D, Face, Edge, Sketch, Point } from "replicad";
 import type { Font as OpentypeFont } from "opentype.js";
 import { glyphFillPolygons } from "./glyphFill";
 
@@ -4264,6 +4265,121 @@ function buildExtrudeFeature(feature: Extract<ResolvedFeature, { type: "extrude"
   }
 }
 
+/** One hole as a FACETED solid of revolution: rings of `circleStations()` at
+ *  each (radius, depth) point of `profile`, joined by planar quads (two rings
+ *  of the same polygon on parallel planes always make planar trapezoids),
+ *  triangles where the profile meets the axis in a cone (a drill point), and a
+ *  flat polygon cap where it meets the axis square (a flat bottom). Faceted for
+ *  the reason every round wall here is — an analytic cylinder or cone can't be
+ *  booleaned in this OCCT build — and on the SAME stations as a sketch circle,
+ *  so a hole drilled at a circle's centre lands on that circle's vertices.
+ *  `o` is the centre on the start plane, `down` the unit drilling direction,
+ *  `u`/`v` the start plane's axes. Faces are named `${id}/top`, `${id}/s{i}/{k}`
+ *  (segment i, facet k) and `${id}/floor`. */
+function holeToolShape(o: V3, down: V3, u: V3, v: V3, profile: [number, number][], id: string): NamedShape {
+  const stations = circleStations();
+  const ring = (r: number, z: number): Point[] =>
+    stations.map((a) => {
+      const c = Math.cos(a) * r;
+      const sn = Math.sin(a) * r;
+      return [
+        o[0] + down[0] * z + u[0] * c + v[0] * sn,
+        o[1] + down[1] * z + u[1] * c + v[1] * sn,
+        o[2] + down[2] * z + u[2] * c + v[2] * sn,
+      ] as Point;
+    });
+  const at = (z: number): Point => [o[0] + down[0] * z, o[1] + down[1] * z, o[2] + down[2] * z] as Point;
+  const faces: { face: Face; name: string }[] = [];
+  const n = stations.length;
+  faces.push({ face: makePolygon(ring(profile[0][0], profile[0][1])), name: `${id}/top` });
+  for (let i = 0; i + 1 < profile.length; i++) {
+    const [ra, za] = profile[i];
+    const [rb, zb] = profile[i + 1];
+    if (rb === 0) {
+      if (Math.abs(zb - za) < 1e-9) {
+        faces.push({ face: makePolygon(ring(ra, za)), name: `${id}/floor` });
+      } else {
+        const A = ring(ra, za);
+        const apex = at(zb);
+        for (let k = 0; k < n; k++)
+          faces.push({ face: makePolygon([A[k], A[(k + 1) % n], apex]), name: `${id}/s${i}/${k}` });
+      }
+      continue;
+    }
+    if (Math.abs(ra - rb) < 1e-9 && Math.abs(za - zb) < 1e-9) continue;
+    const A = ring(ra, za);
+    const B = ring(rb, zb);
+    for (let k = 0; k < n; k++) {
+      const k1 = (k + 1) % n;
+      faces.push({ face: makePolygon([A[k], A[k1], B[k1], B[k]]), name: `${id}/s${i}/${k}` });
+    }
+  }
+  const solid = makeSolid(faces.map((f) => f.face)) as unknown as Shape3D;
+  // The weld rebuilds faces, so names are matched back by centroid.
+  const names = new Map<number, string>();
+  const key = (p: number[]) => p.map((x) => Math.round(x * 1e4)).join(",");
+  const byCenter = new Map(faces.map((f) => [key(f.face.center.toTuple()), f.name]));
+  for (const f of solid.faces) {
+    const nm = byCenter.get(key(f.center.toTuple()));
+    if (nm) names.set(f.hashCode, nm);
+  }
+  for (const f of faces) f.face.delete();
+  return { shape: solid, names };
+}
+
+function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, ctx: BuildContext): void {
+  const { bodies } = ctx;
+  const target = feature.previewTool
+    ? bodies.find((b) => b.id === feature.targetId)
+    : requireBody(bodies, feature.targetId);
+  const { frame } = feature;
+  // Like a Remove extrude: into the body is AGAINST the plane normal; Flip
+  // reverses it.
+  const s = feature.flip ? 1 : -1;
+  const down: V3 = [frame.normal[0] * s, frame.normal[1] * s, frame.normal[2] * s];
+  let profile = feature.profile;
+  if (feature.throughAll) {
+    // Push the bore's bottom far enough to clear the target from any centre.
+    let reach = 10;
+    if (target) {
+      const [mn, mx] = target.shape.boundingBox.bounds;
+      const c: V3 = [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2];
+      reach +=
+        bboxDiagonal(target.shape) + Math.hypot(c[0] - frame.origin[0], c[1] - frame.origin[1], c[2] - frame.origin[2]);
+      // ...and from the farthest centre, which may sit well off the frame origin.
+      const far = Math.max(...feature.centers.map(([cu, cv]) => Math.hypot(cu, cv)));
+      reach += far;
+    }
+    profile = profile.map(([r, z], i) => [r, i >= profile.length - 2 ? z + reach : z] as [number, number]);
+  }
+  const tools = feature.centers.map(([cu, cv], i) => {
+    const o: V3 = [
+      frame.origin[0] + frame.uAxis[0] * cu + frame.vAxis[0] * cv,
+      frame.origin[1] + frame.uAxis[1] * cu + frame.vAxis[1] * cv,
+      frame.origin[2] + frame.uAxis[2] * cu + frame.vAxis[2] * cv,
+    ];
+    const id = feature.centers.length > 1 ? `${feature.id}/h${i}` : feature.id;
+    return holeToolShape(o, down, frame.uAxis, frame.vAxis, profile, id);
+  });
+  const tool = tools.length === 1 ? tools[0] : compoundOf(tools);
+  if (feature.previewTool) {
+    bodies.push({ id: feature.id, key: contentKey(feature, []), noSplit: true, ...tool });
+    return;
+  }
+  const t = target!;
+  const before = measureVolume(t.shape);
+  const next = unifyBody(booleanNamed("cut", t, tool));
+  tool.shape.delete();
+  if (measureVolume(next.shape) >= before - VOLUME_EPS_REL * Math.max(before, 1)) {
+    next.shape.delete();
+    throw new Error("hole: the holes don't reach the body — check the sketch is on (or above) it, and try Flip.");
+  }
+  t.shape.delete();
+  t.shape = next.shape;
+  t.names = next.names;
+  t.key = contentKey(feature, [t.key]);
+}
+
 function buildDressUpFeature(feature: Extract<ResolvedFeature, { type: "dressup" }>, ctx: BuildContext): void {
   const { bodies, previews, usedDressUps, warn } = ctx;
   // Chamfer/fillet modifies each target body in place, keeping its id. One
@@ -4679,6 +4795,9 @@ function buildBodies(
           break;
         case "loft":
           buildLoftFeature(feature, ctx);
+          break;
+        case "hole":
+          buildHoleFeature(feature, ctx);
           break;
         // Every member of ResolvedFeature is handled above, and the compiler
         // enforces that: this is the dispatch whose failure mode was invisible
