@@ -13,6 +13,7 @@
 import { FOLDED_NAMES_NOTE, foldNames } from "./nameRanges";
 import { DEFAULT_HOLE_PARAMS, DEFAULT_HOLE_SETTINGS } from "../document/hole";
 import { DEFAULT_SCREW_PARAMS, DEFAULT_SCREW_SETTINGS } from "../document/screw";
+import { DEFAULT_GEAR_PARAMS, DEFAULT_GEAR_SETTINGS } from "../document/gear";
 import { METRIC_SIZES, isMetricSize } from "../geom/metricFasteners";
 import {
   addBoolean,
@@ -28,6 +29,7 @@ import {
   addShell,
   addHole,
   addScrew,
+  addGear,
   addSketch,
   addSketchConstraints,
   addSweep,
@@ -1284,6 +1286,35 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           op.flip,
         );
         next = r.doc;
+        createdId = r.id;
+        break;
+      }
+      case "addGear": {
+        if (op.meshWith) {
+          const partner = requireFeature(doc, op.meshWith);
+          if (partner.type !== "gear") throw new OpError("invalid_op", "addGear: meshWith must name a Gear feature.");
+        } else if (op.placeBeside) {
+          throw new OpError("invalid_op", "addGear: placeBeside needs meshWith (the gear to sit beside).");
+        }
+        const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_GEAR_PARAMS));
+        if (unknown.length) throw new OpError("invalid_op", `addGear: unknown params ${unknown.join(", ")}.`);
+        // Giving only a pitch diameter means "size it by that".
+        const sizeBy =
+          op.sizeBy ??
+          (op.params?.pitchDiameter !== undefined && op.params?.module === undefined ? "pitchDiameter" : "module");
+        const plane: SketchPlaneRef = op.plane ? resolvePlaneRef(ctx, op.plane) : { kind: "datum", id: "plane-top" };
+        const r = addGear(doc, plane, {
+          ...DEFAULT_GEAR_SETTINGS,
+          gearType: op.gearType ?? DEFAULT_GEAR_SETTINGS.gearType,
+          sizeBy,
+          ...(op.meshWith ? { meshWith: op.meshWith } : {}),
+          ...(op.meshWith && op.placeBeside ? { placeBeside: true } : {}),
+          bore: op.bore ?? DEFAULT_GEAR_SETTINGS.bore,
+          extent: op.extent ?? DEFAULT_GEAR_SETTINGS.extent,
+          flip: op.flip ?? false,
+          params: { ...DEFAULT_GEAR_PARAMS, ...op.params },
+        });
+        next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;
         break;
       }

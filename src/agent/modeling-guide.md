@@ -300,6 +300,15 @@ frame count that shows the motion you care about.
   `countersink` take the matching ISO head pocket; `tapped` drills the tap
   drill (the thread is cosmetic). Default is through all; `extent: "blind"`
   with `params.depth` (and `tipAngle`, 0 = flat bottom) for a blind hole.
+- **Gears:** `add_gear` makes an involute spur gear (or `gearType: "internal"`,
+  a ring gear) as a body on a plane: `params.teeth`, `params.module` (or
+  `params.pitchDiameter`), `params.thickness`, a `bore`. For a PAIR, make the
+  first gear, then the second with `meshWith: <first id>` and
+  `placeBeside: true` — it takes the module and pressure angle and is placed at
+  the meshing distance with its teeth in mesh, so never compute the centre
+  distance yourself; `params.placeAngle` (degrees) picks which side. A pinion
+  inside a ring gear works the same way. To animate them, use an assembly and a
+  gear relation (value = driver teeth / driven teeth).
 - **Screws:** `add_screw` makes metric screws as a new body (`head`: socket /
   button / flat (countersunk) / hex, `size` M2–M12, `params.length` under the
   head — overall for flat). With `holeId` of a Hole feature it puts one screw

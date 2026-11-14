@@ -493,6 +493,34 @@ export const operationSchema = z.discriminatedUnion("op", [
     name: z.string().optional(),
   }),
   z.object({
+    op: z.literal("addGear"),
+    /** spur (external, default) or internal (a ring gear: teeth inside a rim). */
+    gearType: z.enum(["spur", "internal"]).optional(),
+    /** The plane (or planar face) the gear lies on, centred on its origin (or
+     *  at params.centerX/centerY). Default the Top datum. */
+    plane: planeRefSchema.optional(),
+    /** Size the teeth by params.module (default) or params.pitchDiameter.
+     *  Inferred as pitchDiameter when only that one is given. */
+    sizeBy: z.enum(["module", "pitchDiameter"]).optional(),
+    /** Another gear's feature id to mesh with: its module and pressure angle
+     *  are taken, so the pair always fits. */
+    meshWith: z.string().optional(),
+    /** With meshWith: sit beside the partner at the meshing centre distance,
+     *  toward params.placeAngle (degrees), teeth already in mesh. Needs a plane
+     *  parallel to the partner's. */
+    placeBeside: z.boolean().optional(),
+    /** External gear's centre hole. Default round. */
+    bore: z.enum(["none", "round", "dflat"]).optional(),
+    /** blind (default): one side of the plane (flip = the other); symmetric: centred on it. */
+    extent: z.enum(["blind", "symmetric"]).optional(),
+    flip: z.boolean().optional(),
+    /** teeth, module, pitchDiameter, thickness, boreDiameter, boreFlat,
+     *  rimWidth, pressureAngle, backlash, profileShift, rootFillet, rotation,
+     *  centerX, centerY, placeAngle. */
+    params: z.record(z.string(), expr).optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
     op: z.literal("addScrew"),
     head: z.enum(["socket", "button", "flat", "hex"]).optional(),
     /** "M2" … "M12". Ignored when `holeId` names a metric hole (it follows the hole). */

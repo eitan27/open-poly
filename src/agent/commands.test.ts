@@ -1334,3 +1334,49 @@ describe("while an assembly is open", () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe("applyOperation — addGear", () => {
+  it("adds a spur gear on Top with overridden params, inferring sizeBy from a pitch diameter", async () => {
+    const { ctx, doc } = makeCtx();
+    const r = await apply(ctx, { op: "addGear", params: { teeth: 30, pitchDiameter: 60 }, name: "Drive" });
+    expect(r.ok).toBe(true);
+    const f = doc().features.find((x) => x.id === r.createdId);
+    expect(f).toMatchObject({
+      type: "gear",
+      name: "Drive",
+      gearType: "spur",
+      sizeBy: "pitchDiameter",
+      plane: { kind: "datum", id: "plane-top" },
+    });
+    expect(f && f.type === "gear" && f.params.teeth).toBe("30");
+    expect(f && f.type === "gear" && f.params.thickness).toBe("8");
+  });
+
+  it("meshes a second gear beside the first", async () => {
+    const { ctx, doc } = makeCtx();
+    const a = await apply(ctx, { op: "addGear", params: { teeth: 20, module: 1.5 } });
+    const b = await apply(ctx, {
+      op: "addGear",
+      meshWith: a.createdId!,
+      placeBeside: true,
+      params: { teeth: 12, placeAngle: 90 },
+    });
+    expect(b.ok).toBe(true);
+    expect(doc().features.find((x) => x.id === b.createdId)).toMatchObject({
+      meshWith: a.createdId,
+      placeBeside: true,
+      sizeBy: "module",
+    });
+    expect(resolveDocument(doc()).errors[b.createdId!]).toBeUndefined();
+  });
+
+  it("refuses a bad partner, placeBeside alone, and unknown params", async () => {
+    const { ctx } = makeCtx();
+    const box = await apply(ctx, { op: "addPrimitive", kind: "box" });
+    expect((await apply(ctx, { op: "addGear", meshWith: box.createdId! })).ok).toBe(false);
+    expect((await apply(ctx, { op: "addGear", placeBeside: true })).ok).toBe(false);
+    const bad = await apply(ctx, { op: "addGear", params: { tooth: 9 } });
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toMatch(/unknown params tooth/);
+  });
+});
