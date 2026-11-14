@@ -298,6 +298,11 @@ export interface GearReadout {
   notes: string[];
   /** With a partner: how far apart the two centres go to mesh (mm). */
   centerDistance?: number;
+  /** For the dialog's diagram: the outline (and bore) as built, recentred on
+   *  the gear's own centre, plus the tooth numbers it annotates. */
+  shape: { outline: [number, number][]; holes: [number, number][][] };
+  spec: GearToothSpec;
+  internal: boolean;
 }
 
 export function gearReadout(
@@ -328,9 +333,14 @@ export function gearReadout(
       centerDist = centerDistance(spec.module, spec.teeth, partnerTeeth, oneInternal);
     }
   }
+  const [cx, cy] = baked.center;
+  const recentre = (pts: [number, number][]) => pts.map(([x, y]) => [x - cx, y - cy] as [number, number]);
   return {
     module: spec.module,
     dims: baked.outline.dims,
+    shape: { outline: recentre(baked.outline.outline), holes: baked.outline.holes.map(recentre) },
+    spec,
+    internal: g.gearType === "internal",
     notes,
     ...(centerDist !== undefined ? { centerDistance: centerDist } : {}),
   };

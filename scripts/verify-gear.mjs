@@ -43,6 +43,11 @@ await page.waitForTimeout(1500);
 await shot("1-open");
 check("dialog opens on the default plane", (await dialog.textContent()).includes("(default)"));
 check("readout shows the default circles", (await dialog.textContent()).includes("Pitch Ø 40"));
+// The diagram: drawn with its circles, and focusing a field lights the part it
+// moves (Teeth → the outline and the pitch circle).
+check("the dialog draws a gear diagram", (await dialog.locator("svg.dg").count()) === 1);
+await fieldInput("Teeth").focus();
+check("focusing Teeth lights the pitch circle", (await dialog.locator('.dg-active[data-dim^="module"]').count()) >= 1);
 
 // 2. Edit: teeth 12 → undercut note; profile shift clears it.
 await fieldInput("Teeth").fill("12");

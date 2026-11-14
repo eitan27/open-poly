@@ -100,8 +100,11 @@ order; each is its own commit:
    it) lights its dimension, clicking a dimension focuses its field. Agent op
    `addHole`. Shortcut D. Not done: up-to-next extent, picking a subset of the
    sketch's points, modelled threads, inch sizes.
-3. **Gear diagram** — the same diagram component, showing one tooth with its
-   tip/pitch/base/root circles, module, pressure angle, backlash and bore.
+3. **Gear diagram** — DONE. The Gear dialog draws the whole gear as built
+   and one tooth zoomed (turned tip-up) with tip / pitch / base / root circles
+   and the pressure angle at the pitch point; same highlight/click-to-focus
+   contract as Hole (a click on an Advanced dimension opens Advanced). Shared
+   primitives in `ui/diagram/Dims.tsx`.
 4. **Screw** — a parametric body like Gear: head type, size, length, pitch
    from the table; cosmetic thread by default, modelled thread opt-in
    (needs a spike: helical sweep + boolean on a faceted core). Links to

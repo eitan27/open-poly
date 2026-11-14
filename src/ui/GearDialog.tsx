@@ -4,6 +4,8 @@ import type { GearFeature, GearParams, GearType } from "../document/types";
 import { DraggableDialog } from "./DraggableDialog";
 import { ExprInput } from "./ExprInput";
 import { PickSlot } from "./PickSlot";
+import { GearDiagram } from "./diagram/GearDiagram";
+import { useRef, useState } from "react";
 import "./GearDialog.css";
 
 interface Props {
@@ -54,16 +56,41 @@ export function GearDialog({
 }: Props) {
   const p = settings.params;
   const internal = settings.gearType === "internal";
+  // The diagram lights the dimension of whichever field has focus (or is
+  // hovered); a click on a dimension focuses its field, opening Advanced
+  // first when that's where the field lives.
+  const [focused, setFocused] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const inputs = useRef(new Map<string, HTMLInputElement>());
+  const ADVANCED = new Set(["pressureAngle", "backlash", "profileShift", "rootFillet", "rotation"]);
+  const pickDim = (name: string) => {
+    const focus = () => inputs.current.get(name)?.focus();
+    if (ADVANCED.has(name) && !advanced) {
+      onToggleAdvanced();
+      setTimeout(focus, 0);
+    } else focus();
+  };
   const meshed = !!settings.meshWith;
   const placed = meshed && !!settings.placeBeside;
 
   /** An expression field bound to one of the gear's params. Enter confirms,
    *  Escape cancels, as in every other feature dialog. */
   const field = (name: keyof GearParams, label: string, opts: { autoFocus?: boolean; title?: string } = {}) => (
-    <label className="ed-field" title={opts.title}>
+    <label
+      className="ed-field"
+      title={opts.title}
+      onMouseEnter={() => setHovered(name)}
+      onMouseLeave={() => setHovered(null)}
+    >
       <span>{label}</span>
       <ExprInput
+        ref={(el: HTMLInputElement | null) => {
+          if (el) inputs.current.set(name, el);
+          else inputs.current.delete(name);
+        }}
         autoFocus={opts.autoFocus}
+        onFocus={() => setFocused(name)}
+        onBlur={() => setFocused(null)}
         value={p[name] ?? ""}
         onChange={(e) => onParam(name, e.target.value)}
         onKeyDown={(e) => {
@@ -89,6 +116,8 @@ export function GearDialog({
           ))}
         </select>
       </label>
+
+      {readout && <GearDiagram readout={readout} bore={settings.bore} active={focused ?? hovered} onPick={pickDim} />}
 
       <div className="bool-group-label">Plane or face</div>
       <PickSlot

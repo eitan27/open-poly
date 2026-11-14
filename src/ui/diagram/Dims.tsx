@@ -9,6 +9,8 @@ import type { ReactNode } from "react";
 export type P = [number, number];
 
 interface DimProps {
+  /** The param this dimension stands for; several, space-separated, when more
+   *  than one field moves it (the first is the one a click focuses). */
   name: string;
   /** The param whose field has focus (or is hovered), if any. */
   active: string | null;
@@ -20,12 +22,12 @@ interface DimProps {
 export function DimGroup({ name, active, onPick, children }: DimProps) {
   return (
     <g
-      className={`dg-dim${active === name ? " dg-active" : ""}${onPick ? " dg-pickable" : ""}`}
+      className={`dg-dim${active && name.split(" ").includes(active) ? " dg-active" : ""}${onPick ? " dg-pickable" : ""}`}
       data-dim={name}
       onMouseDown={(e) => {
         if (!onPick) return;
         e.preventDefault(); // keep focus moving to the field, not the svg
-        onPick(name);
+        onPick(name.split(" ")[0]);
       }}
     >
       {children}

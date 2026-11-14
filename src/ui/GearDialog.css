@@ -1,7 +1,7 @@
 /* The gear dialog carries more fields than the other mini-dialogs, and labels
    like "Profile shift (×m)", so it's a little wider. */
 .feature-dialog.gear-dialog {
-  width: 236px;
+  width: 272px;
   max-height: calc(100% - 80px);
   overflow-y: auto;
 }

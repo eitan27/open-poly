@@ -4,6 +4,9 @@
   display: block;
   width: 100%;
   height: auto;
+  /* The dialogs are flex columns that scroll when tall; without this the
+     diagram is the thing that gets squashed (and letterboxed) instead. */
+  flex-shrink: 0;
   margin: 2px 0 4px;
   border-radius: 6px;
   background: var(--bg-sunken);
@@ -80,4 +83,42 @@
 
 .dg-pickable:hover .dg-label {
   text-decoration: underline;
+}
+
+/* Gear diagram. */
+.dg-inset {
+  fill: none;
+  stroke: var(--border-subtle);
+}
+
+.dg-pitch {
+  fill: none;
+  stroke: var(--text-4);
+  stroke-width: 0.8;
+  stroke-dasharray: 5 2 1 2;
+}
+
+.dg-base {
+  fill: none;
+  stroke: var(--text-7);
+  stroke-width: 0.6;
+  stroke-dasharray: 1.5 1.5;
+}
+
+.dg-circle {
+  fill: none;
+  stroke: var(--text-7);
+  stroke-width: 0.6;
+}
+
+.dg-active .dg-outline {
+  stroke: var(--accent);
+  stroke-width: 1.2;
+}
+
+.dg-active .dg-pitch,
+.dg-active .dg-base,
+.dg-active .dg-circle {
+  stroke: var(--accent);
+  stroke-width: 1.3;
 }
