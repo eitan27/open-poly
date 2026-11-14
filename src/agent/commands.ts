@@ -881,7 +881,11 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           throw new OpError("invalid_op", 'extent "upToFace" requires `upTo` (the target face).');
         }
         const upTo = op.extent === "upToFace" && op.upTo ? resolveUpToFace(ctx, op.upTo) : undefined;
+        if (op.offset !== undefined && op.mode !== "remove") {
+          throw new OpError("invalid_op", 'extrude: `offset` (clearance) only applies to mode "remove".');
+        }
         const r = addExtrude(doc, profile, {
+          offset: op.offset,
           distance: op.distance,
           flip: op.flip,
           extent: op.extent,
@@ -1210,7 +1214,13 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       }
       case "boolean": {
         for (const id of op.operands) requireFeature(doc, id);
-        const r = addBoolean(doc, op.kind, op.operands);
+        if ((op.offset !== undefined || op.keepTools) && op.kind !== "subtract") {
+          throw new Error("boolean: offset and keepTools only apply to subtract.");
+        }
+        const r = addBoolean(doc, op.kind, op.operands, {
+          offset: op.offset === undefined ? undefined : String(op.offset),
+          keepTools: op.keepTools,
+        });
         next = r.doc;
         createdId = r.id;
         break;

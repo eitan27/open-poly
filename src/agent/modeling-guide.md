@@ -290,6 +290,9 @@ frame count that shows the motion you care about.
   For a hole/pocket that must pass entirely through, set `extent: "throughAll"`
   (with the `targetId`) instead of guessing a distance. **`throughAll` is for
   cuts only** (`mode: "remove"`) — it's not offered for new/add.
+  A cut also takes `offset`: a clearance the profile is grown by sideways (the
+  depth stays exact) — sketch the part's true outline and set `offset: 0.2` for
+  a pocket it slides into, rather than drawing the pocket oversize by hand.
 - **Two-sided / centered feature:** `add_extrude` with `extent: "symmetric"` —
   the profile extrudes `distance` equally both ways (centered on the sketch).
 - **Extrude up to a face:** `add_extrude` with `extent: "upToFace"` and
@@ -382,6 +385,11 @@ entityId}` (get the id from `get_scene_summary`); a plane `{plane: …}` (the ax
   opening. The new inner-wall faces are named `"<kept-face-name>/in"` for
   later reference (e.g. filleting an inside corner).
 - **Combine two bodies:** `boolean` (union/subtract/intersect) by body ids.
+  For a **subtract**, `offset` adds a clearance around every tool before it
+  cuts (0.2 = a pocket 0.2mm looser all round than the part; negative = an
+  interference fit) — it works on boxes, cylinders and extrudes, not on
+  freeform lofted/swept tools. `keepTools: true` leaves the tools in place as
+  bodies (cut a pocket for a part and keep the part).
 - **Place/duplicate a body:** `transform` (translate + rotate). Set
   `copy: true` to keep the original and emit a moved copy as a new part.
   `axis` picks what the rotation turns about: a world axis (`"x"|"y"|"z"`,

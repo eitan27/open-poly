@@ -340,6 +340,10 @@ export interface ExtrudeFeature extends FeatureBase {
   targetId?: string;
   /** For extent "upToFace": the target face the extrude reaches up to. */
   upTo?: UpToFaceRef;
+  /** Remove only: clearance around the profile, as an expression (mm). The cut
+   *  is the profile grown sideways by this much (its depth is unchanged);
+   *  negative shrinks it. Absent/blank/0 ⇒ none. */
+  offset?: string;
   /** Display color/opacity for a "new" extrusion's body (like primitives).
    *  Ignored when the extrude is add/remove (it modifies an existing body). */
   color: number;
@@ -353,6 +357,13 @@ export interface BooleanFeature extends FeatureBase {
   type: "boolean";
   op: BooleanOp;
   operands: string[];
+  /** Subtract only: clearance added around every tool before it cuts, as an
+   *  expression string (mm). Positive grows the tools (a looser pocket), negative
+   *  shrinks them (an interference fit). Absent/blank/0 ⇒ no offset. */
+  offset?: string;
+  /** Subtract only: the tools survive the cut as bodies of their own (the part
+   *  you cut a pocket for stays put). Absent ⇒ the tools are consumed. */
+  keepTools?: boolean;
   /** Inherited from the first operand at creation time — see document/colors.ts. */
   color: number;
   opacity: number;

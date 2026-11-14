@@ -170,6 +170,27 @@ export function ParamEditor({
             <span className="param-label">Operands</span>
             <span className="param-static">{feature.operands.length}</span>
           </div>
+          {feature.op === "subtract" && (
+            <>
+              <label className="param-field" title="Clearance added around every tool before it cuts">
+                <span className="param-label">Offset</span>
+                <ExprInput
+                  className="param-input"
+                  value={feature.offset ?? ""}
+                  placeholder="0"
+                  onChange={(e) => onChangeParam(feature.id, "offset", e.target.value)}
+                />
+              </label>
+              <label className="param-field" title="Leave the tool bodies in place after the cut">
+                <span className="param-label">Keep tools</span>
+                <input
+                  type="checkbox"
+                  checked={!!feature.keepTools}
+                  onChange={(e) => onChangeParam(feature.id, "keepTools", String(e.target.checked))}
+                />
+              </label>
+            </>
+          )}
         </div>
       ) : feature.type === "plane" ? (
         <div className="sketch-params">

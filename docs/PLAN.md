@@ -79,6 +79,51 @@ Roughly ordered by how often a user meets them.
 - Project: vertex projection is best-effort (re-projects a stored world point,
   doesn't track the source body); no agent op.
 
+**Mechanical features** (branch `feat/clearance-holes-screws`, 2026-11-15). In
+order; each is its own commit:
+
+1. **Clearance offset** — DONE. Boolean subtract takes `offset` (each tool is
+   grown by it before cutting, via `MakeOffsetShape` with an INTERSECTION join
+   so planar tools stay planar; freeform lofted tools fail with a clear message)
+   and `keepTools`. Extrude Remove takes `offset` (the tool prism is offset in
+   3D, then trimmed back flush with both cap planes, so the cut widens but its
+   depth stays exact). Not added to Union/Intersect/Shell/Pattern/Mirror/
+   Transform: none of them cut a fitted cavity.
+2. **Hole** — simple / counterbore / countersink / tapped, ISO metric size
+   table with Close / Normal / Loose clearance fits, blind / through all /
+   up to next, placed at sketch points. The dialog carries a labelled 2D
+   cross-section that highlights the dimension whose field has focus.
+3. **Gear diagram** — the same diagram component, showing one tooth with its
+   tip/pitch/base/root circles, module, pressure angle, backlash and bore.
+4. **Screw** — a parametric body like Gear: head type, size, length, pitch
+   from the table; cosmetic thread by default, modelled thread opt-in
+   (needs a spike: helical sweep + boolean on a faceted core). Links to
+   Hole's "clearance for Mx".
+
+**More gear types.** Gear has spur and ring (internal) only. In rough order of
+usefulness:
+
+- **Rack** — a straight toothed bar with the same module/pressure angle as a
+  spur, for rack-and-pinion. The assembly already has a rack RELATION
+  (`relations`: gear/rack/screw) but no rack BODY to put it on, so today the
+  relation drives a plain box. Profile is the basic rack (straight flanks at
+  the pressure angle), so it's simpler than the involute; placement "beside"
+  a pinion is pitch line tangent to the pinion's pitch circle.
+- **Helical** — spur with a helix angle (and hand). No twisted-extrude in the
+  kernel: build as a loft through N rotated copies of the profile, or a sweep
+  with an auxiliary twist. Meshing pair needs opposite hands; the normal module
+  vs transverse module distinction must be explicit in the dialog.
+- **Herringbone** — two mirrored helical halves; very popular for 3D printing
+  (self-centring, no axial thrust). Falls out of helical.
+- **Planetary set** — a generator rather than a new tooth form: sun + N
+  planets + ring with the assembly constraint (sun + ring teeth divisible by N)
+  checked, placed as separate parts.
+- **Timing pulley (GT2 / HTD)** — not involute; a table-driven tooth profile.
+  High demand for printed motion systems.
+- **Bevel** and **worm / worm wheel** — conical / enveloping geometry; the
+  hardest, and likely blocked on the same B-spline-wall question as smooth
+  teeth. Last.
+
 **Split (body)** — the largest unbuilt feature. Cut one body into two or more
 **independent** parts with a plane, a planar face, or a sketch line/arc/spline;
 unlike `boolean subtract` both pieces survive as separately colourable, hideable,

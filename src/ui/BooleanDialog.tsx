@@ -2,6 +2,7 @@ import { BOOLEAN_OPS, BOOLEAN_OP_LABELS } from "../document/featureDefs";
 import type { BooleanOp } from "../kernel/types";
 import { DraggableDialog } from "./DraggableDialog";
 import { PickButton, PickedRow, PickSlot } from "./PickSlot";
+import { ExprInput } from "./ExprInput";
 
 export interface BooleanCandidate {
   id: string;
@@ -20,6 +21,14 @@ interface Props {
   tools: string[];
   /** Subtract: which slot the next viewport click fills. */
   armed: "base" | "tools" | null;
+  /** Subtract: clearance around every tool (expression, mm; blank = none). */
+  offset: string;
+  /** Subtract: the tools survive the cut. */
+  keepTools: boolean;
+  /** Parse error for `offset`, if any (blocks Confirm). */
+  offsetError?: string | null;
+  onOffsetChange: (offset: string) => void;
+  onKeepToolsChange: (keep: boolean) => void;
   onOpChange: (op: BooleanOp) => void;
   onArm: (slot: "base" | "tools") => void;
   onRemoveOperand: (id: string) => void;
@@ -37,6 +46,11 @@ export function BooleanDialog({
   base,
   tools,
   armed,
+  offset,
+  keepTools,
+  offsetError,
+  onOffsetChange,
+  onKeepToolsChange,
   onOpChange,
   onArm,
   onRemoveOperand,
@@ -46,7 +60,7 @@ export function BooleanDialog({
   onCancel,
 }: Props) {
   const nameOf = (id: string) => candidates.find((c) => c.id === id)?.name ?? id;
-  const canConfirm = op === "subtract" ? !!base && tools.length >= 1 : operandIds.length >= 2;
+  const canConfirm = op === "subtract" ? !!base && tools.length >= 1 && !offsetError : operandIds.length >= 2;
   // The tool opens whatever the document holds (every modeling button does), so
   // it has to say why there is nothing to pick rather than arriving inert.
   const tooFewBodies = candidates.length < 2;
@@ -97,6 +111,26 @@ export function BooleanDialog({
           {tools.length > 0 && (
             <div className="bool-operands">{tools.map((id) => row(id, () => onRemoveTool(id)))}</div>
           )}
+          <label
+            className="ed-field"
+            title="Grow every tool by this much before cutting, so the pocket is looser than the part (negative: tighter)"
+          >
+            <span>Offset (clearance)</span>
+            <ExprInput
+              value={offset}
+              placeholder="0"
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => onOffsetChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && canConfirm) onConfirm();
+              }}
+            />
+          </label>
+          <label className="ed-field ed-flip" title="Leave the tool bodies in place after the cut">
+            <span>Keep tools</span>
+            <input type="checkbox" checked={keepTools} onChange={(e) => onKeepToolsChange(e.target.checked)} />
+          </label>
+          {offsetError && <p className="ed-warning">{offsetError}</p>}
         </>
       ) : (
         <>

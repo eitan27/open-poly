@@ -3660,7 +3660,80 @@ function countSolids(shape: Shape3D): number {
 /** Combine operand bodies left-to-right with name propagation, validating that
  *  the solids actually overlap. Returns a fresh NamedShape; the operand bodies'
  *  shapes are left for the caller to dispose (after removing them from the set). */
-function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): NamedShape {
+const BOOLEAN_OFFSET_FAILED =
+  "Couldn't offset this tool body for the clearance. The offset works on boxes, cylinders and " +
+  "extrudes; freeform (lofted/swept) tools usually can't be offset. Set the offset to 0, or " +
+  "build the tool slightly larger instead.";
+
+/** A subtract tool grown (or, negative `d`, shrunk) by `d` all round — the
+ *  boolean's clearance offset. Uses the same OCCT offsetter Shell does
+ *  (`MakeOffsetShape.PerformByJoin`), but with an INTERSECTION join: sharp
+ *  corners stay sharp and planar faces stay planar. An arc join would round
+ *  every convex edge into an analytic cylinder/torus, which this OCCT build
+ *  can't boolean — the very next step. Face names carry over to the offset
+ *  images, so the pocket walls are named after the tool faces exactly as an
+ *  un-offset cut names them. Throws one actionable message on any failure. */
+function offsetToolShape(tool: NamedShape, d: number): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const off = new oc.BRepOffsetAPI_MakeOffsetShape();
+  const progress = new oc.Message_ProgressRange_1();
+  let shape: Shape3D;
+  try {
+    off.PerformByJoin(
+      tool.shape.wrapped,
+      d,
+      1e-3,
+      oc.BRepOffset_Mode.BRepOffset_Skin,
+      false,
+      false,
+      oc.GeomAbs_JoinType.GeomAbs_Intersection,
+      false,
+      progress,
+    );
+    if (!off.IsDone()) throw new Error(BOOLEAN_OFFSET_FAILED);
+    shape = cast(off.Shape()) as Shape3D;
+    if (shape.faces.length === 0) throw new Error(BOOLEAN_OFFSET_FAILED);
+  } catch {
+    off.delete();
+    progress.delete();
+    throw new Error(BOOLEAN_OFFSET_FAILED);
+  }
+  // MakeOffsetShape hands back a closed SHELL for a solid input on some
+  // inputs; a boolean needs a solid, so close it up when that happens.
+  if (countSolids(shape) === 0) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const solid = makeSolid([shape as any]) as unknown as Shape3D;
+      shape = solid;
+    } catch {
+      off.delete();
+      progress.delete();
+      shape.delete();
+      throw new Error(BOOLEAN_OFFSET_FAILED);
+    }
+  }
+  const names = new Map<number, string>();
+  for (const f of tool.shape.faces) {
+    const nm = tool.names.get(f.hashCode);
+    if (!nm) continue;
+    const images = [...drainList(off.Generated(f.wrapped)), ...drainList(off.Modified(f.wrapped))];
+    for (const img of images) names.set(hashOf(img), nm);
+  }
+  off.delete();
+  progress.delete();
+  // A shrink can collapse a thin tool to nothing (or invert it) and still
+  // "succeed"; growing can't, but a zero-volume result is never usable.
+  const vol = measureVolume(shape);
+  const srcVol = measureVolume(tool.shape);
+  if (!(vol > srcVol * 1e-6) || (d > 0 ? vol <= srcVol : vol >= srcVol)) {
+    shape.delete();
+    throw new Error(BOOLEAN_OFFSET_FAILED);
+  }
+  return { shape, names };
+}
+
+function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[], toolOffset = 0): NamedShape {
   const ops = operandIds.map((id) => requireBody(bodies, id));
   if (ops.length < 2) throw new Error("A boolean needs at least two operands.");
   let acc: NamedShape = { shape: ops[0].shape, names: ops[0].names };
@@ -3670,7 +3743,20 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[]): Nam
   let accVol = op === "union" ? 0 : measureVolume(acc.shape);
   let accIsIntermediate = false;
   for (let i = 1; i < ops.length; i++) {
-    const next = booleanRetrying(BOOL_OCC[op], acc, ops[i]);
+    // The clearance offset applies to subtract tools only (the resolver never
+    // sends one otherwise). The grown copy is temporary: the tool body itself
+    // is left alone, so "keep tools" keeps it at its modelled size.
+    let offsetTool: NamedShape | null = null;
+    let next: NamedShape;
+    try {
+      if (op === "subtract" && toolOffset !== 0) offsetTool = offsetToolShape(ops[i], toolOffset);
+      next = booleanRetrying(BOOL_OCC[op], acc, offsetTool ?? ops[i]);
+    } catch (e) {
+      offsetTool?.shape.delete();
+      if (accIsIntermediate) acc.shape.delete();
+      throw e;
+    }
+    offsetTool?.shape.delete();
     // A DEGENERATE result (no solids) has to be caught here, before the
     // op-specific tests below: an empty cut has volume 0, so `nextVol >= accVol`
     // is false and it would sail through the "nothing to subtract" guard as if
@@ -3872,6 +3958,50 @@ function buildImportFeature(feature: Extract<ResolvedFeature, { type: "import" }
   });
 }
 
+/** A Remove extrude's clearance: the prism `piece` (profile plane through `p0`,
+ *  swept `len` along unit `n`) grown sideways by `d` — the profile offset in 2D,
+ *  holes shrinking as the outline grows — while its two caps stay put, so the
+ *  cut's depth is still exactly what was asked for. Built as a 3D offset of the
+ *  prism (which grows the caps too) trimmed back flush with both cap planes;
+ *  the trim's new faces take the original `start`/`end` cap names so a sketch
+ *  on the pocket floor still resolves. */
+function offsetPrismSideways(piece: NamedShape, p0: Vec3, n: Vec3, len: number, d: number): NamedShape {
+  const grown = offsetToolShape(piece, d);
+  const dir: Vec3 = len >= 0 ? n : [-n[0], -n[1], -n[2]];
+  const back: Vec3 = [-dir[0], -dir[1], -dir[2]];
+  const far: Vec3 = [p0[0] + n[0] * len, p0[1] + n[1] * len, p0[2] + n[2] * len];
+  const bb = grown.shape.boundingBox.bounds;
+  const size = Math.hypot(bb[1][0] - bb[0][0], bb[1][1] - bb[0][1], bb[1][2] - bb[0][2]) * 2 + Math.abs(d) * 4 + 10;
+  let acc = grown;
+  for (const [q, m] of [
+    [p0, back],
+    [far, dir],
+  ] as [Vec3, Vec3][]) {
+    const box = halfSpaceBox(q, m, size);
+    const cut = booleanNamed("cut", acc, { shape: box, names: new Map() });
+    box.delete();
+    acc.shape.delete();
+    acc = cut;
+  }
+  // Re-name the trimmed caps from the prism's own, matched by which cap plane
+  // the face lies on.
+  const capName = (which: "start" | "end") => {
+    for (const nm of piece.names.values()) if (nm.endsWith(`/${which}`)) return nm;
+    return undefined;
+  };
+  const startName = capName("start");
+  const endName = capName("end");
+  const tol = 1e-4 * Math.max(1, Math.abs(len));
+  for (const f of acc.shape.faces) {
+    if (f.geomType !== "PLANE") continue;
+    const c = f.center.toTuple() as Vec3;
+    const t = (c[0] - p0[0]) * n[0] + (c[1] - p0[1]) * n[1] + (c[2] - p0[2]) * n[2];
+    if (Math.abs(t) < tol && startName) acc.names.set(f.hashCode, startName);
+    else if (Math.abs(t - len) < tol && endName) acc.names.set(f.hashCode, endName);
+  }
+  return acc;
+}
+
 function buildExtrudeFeature(feature: Extract<ResolvedFeature, { type: "extrude" }>, ctx: BuildContext): void {
   const { bodies, keyOf, warn } = ctx;
   const { flip, distance, extent, mode } = feature;
@@ -3999,6 +4129,19 @@ function buildExtrudeFeature(feature: Extract<ResolvedFeature, { type: "extrude"
       let glyph: NamedShape | null = null;
       for (const len of lengths) {
         let piece = prismFromFace(faces[gi], normal, len, prefix, sideName);
+        // Clearance on a cut: widen the tool before any up-to clip, so the clip
+        // still decides where it stops. The ghost shows the widened tool too.
+        if (mode === "remove" && feature.offset) {
+          const widened = offsetPrismSideways(
+            piece,
+            faces[gi].center.toTuple() as Vec3,
+            normal.normalized().toTuple() as Vec3,
+            len,
+            feature.offset,
+          );
+          piece.shape.delete();
+          piece = widened;
+        }
         // Up to face/next: trim the long prism flush with the target plane.
         if (clip) {
           const box = halfSpaceBox(clip.point, clip.normal, clip.boxSize);
@@ -4263,8 +4406,12 @@ function buildBooleanFeature(feature: Extract<ResolvedFeature, { type: "boolean"
   const key = contentKey(feature, operandKeys);
   // Unify inside the cached builder (so it runs only on a cache miss and the
   // merged result is what's stored) — no black seam where operands met.
-  const result = buildCached(key, used, () => unifyBody(combineBodies(feature.op, feature.operands, bodies)));
-  const operandSet = new Set(feature.operands);
+  const result = buildCached(key, used, () =>
+    unifyBody(combineBodies(feature.op, feature.operands, bodies, feature.offset ?? 0)),
+  );
+  // "Keep tools" consumes only the base: the tools stay in the running set,
+  // under their own ids and at their modelled (un-offset) size.
+  const operandSet = new Set(feature.keepTools ? feature.operands.slice(0, 1) : feature.operands);
   const remaining: Body[] = [];
   for (const b of bodies) {
     if (operandSet.has(b.id))

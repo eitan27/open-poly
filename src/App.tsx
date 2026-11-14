@@ -99,6 +99,7 @@ import type {
   FaceRef,
   Feature,
   ExtrudeExtent,
+  ExtrudeMode,
   ExtrudeProfile,
   FeatureKind,
   UpToFaceRef,
@@ -142,6 +143,7 @@ import {
 } from "./document/planes";
 import { DEFAULT_SECTION_VIEW, type SectionViewState } from "./document/sectionView";
 import { evaluateExpression } from "./document/expression";
+import { parseNumericField } from "./document/numericField";
 import { validateDressUpDialog } from "./document/dressUpValidation";
 import { dressUpTargetsFromPicks } from "./document/dressUpTarget";
 import { validateShellThickness } from "./document/shellValidation";
@@ -724,6 +726,28 @@ const VIEW_BY_SHORTCUT: Partial<Record<ShortcutId, ViewName>> = {
 };
 
 const NO_PROBLEMS: ReadonlyMap<string, never> = new Map<string, never>();
+
+/** The feature options the extrude dialog's state stands for (create, live
+ *  edit and the ghost all build from the same thing). */
+function extrudeOptsOf(d: {
+  distance: string;
+  flip: boolean;
+  extent: ExtrudeExtent;
+  mode: ExtrudeMode;
+  targetId: string | null;
+  upTo: UpToFaceRef | null;
+  offset: string;
+}) {
+  return {
+    distance: d.distance,
+    flip: d.flip,
+    extent: d.extent,
+    mode: d.mode,
+    targetId: d.mode === "new" ? undefined : (d.targetId ?? undefined),
+    upTo: d.extent === "upToFace" ? (d.upTo ?? undefined) : undefined,
+    offset: d.mode === "remove" ? d.offset : "",
+  };
+}
 
 export default function App() {
   const kernelRef = useRef<KernelClient | null>(null);
@@ -1576,6 +1600,8 @@ export default function App() {
     extent: ExtrudeExtent;
     targetId: string | null;
     upTo: UpToFaceRef | null;
+    /** Remove only: clearance around the profile (expression; blank = none). */
+    offset: string;
     /** The profiles this dialog extrudes — its OWN accumulated picks, not the
      *  viewport selection, so an empty-space click can't wipe them. Resolved by
      *  extrudeProfilesFromPicks (sketch edges only become a profile when,
@@ -2084,6 +2110,9 @@ export default function App() {
     base: string | null;
     tools: string[];
     armed: "base" | "tools" | null;
+    /** Subtract options (see BooleanFeature.offset / keepTools). */
+    offset: string;
+    keepTools: boolean;
     editId?: string;
   } | null>(null);
 
@@ -2965,6 +2994,8 @@ export default function App() {
         : { error: null, value: null },
     [extrudeDialog, resolved.scope],
   );
+  const extrudeOffsetError =
+    extrudeDialog?.mode === "remove" ? parseNumericField(extrudeDialog.offset, resolved.scope).error : null;
   const extrudeDistanceSatisfied =
     !extrudeDialog || !extrudeUsesDistance(extrudeDialog.extent) || extrudeDistanceCheck.value !== null;
 
@@ -3135,6 +3166,7 @@ export default function App() {
       flip: false,
       extent: "blind",
       upTo: null,
+      offset: "",
       picks,
       stored: [],
       arming: profiles.length === 0,
@@ -3151,15 +3183,8 @@ export default function App() {
     // Up to face requires a chosen target face.
     if (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) return;
     // A blank/garbage/≤ 0 distance is never built (the button is disabled too).
-    if (!extrudeDistanceSatisfied) return;
-    const opts = {
-      distance: extrudeDialog.distance,
-      flip: extrudeDialog.flip,
-      extent: extrudeDialog.extent,
-      mode: extrudeDialog.mode,
-      targetId: extrudeDialog.mode === "new" ? undefined : (extrudeDialog.targetId ?? undefined),
-      upTo: extrudeDialog.extent === "upToFace" ? (extrudeDialog.upTo ?? undefined) : undefined,
-    };
+    if (!extrudeDistanceSatisfied || extrudeOffsetError) return;
+    const opts = extrudeOptsOf(extrudeDialog);
     // Hide each source sketch once it's been consumed by an extrude. It stays in
     // place and editable — toggle the timeline eye (or edit it) to bring it back.
     const hideSources = (base: Document) =>
@@ -3198,14 +3223,7 @@ export default function App() {
     if (!d?.editId) return;
     const profile = extrudeDialogProfiles[0];
     if (!profile) return;
-    const opts = {
-      distance: d.distance,
-      flip: d.flip,
-      extent: d.extent,
-      mode: d.mode,
-      targetId: d.mode === "new" ? undefined : (d.targetId ?? undefined),
-      upTo: d.extent === "upToFace" ? (d.upTo ?? undefined) : undefined,
-    };
+    const opts = extrudeOptsOf(d);
     if (!shouldLiveApply(JSON.stringify({ e: d.editId, profile, opts }))) return;
     setDoc((prev) => updateExtrude(prev, d.editId!, profile, opts), `edit:${d.editId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3217,6 +3235,7 @@ export default function App() {
     extrudeDialog?.mode,
     extrudeDialog?.targetId,
     extrudeDialog?.upTo,
+    extrudeDialog?.offset,
     extrudeDialogProfiles,
   ]);
 
@@ -3265,6 +3284,7 @@ export default function App() {
       extent: f.extent,
       targetId: f.targetId ?? null,
       upTo: f.upTo ?? null,
+      offset: f.offset ?? "",
       ...picksFromProfiles(f.profiles),
       arming: false,
       modeTouched: true,
@@ -3303,14 +3323,7 @@ export default function App() {
     // in `previewTool` mode so the kernel emits only the swept tool (the
     // changing portion) — the existing bodies are left untouched and keep their
     // own colour, so only the new material reads as cyan.
-    const { doc: previewDoc, id: previewId } = addExtrude(doc, extrudeDialogProfiles, {
-      distance: extrudeDialog.distance,
-      flip: extrudeDialog.flip,
-      extent: extrudeDialog.extent,
-      mode: extrudeDialog.mode,
-      targetId: extrudeDialog.mode === "new" ? undefined : (extrudeDialog.targetId ?? undefined),
-      upTo: extrudeDialog.extent === "upToFace" ? (extrudeDialog.upTo ?? undefined) : undefined,
-    });
+    const { doc: previewDoc, id: previewId } = addExtrude(doc, extrudeDialogProfiles, extrudeOptsOf(extrudeDialog));
     const createdIds = [previewId];
     const created = new Set(createdIds);
     const previewResolved = resolveDocument(previewDoc);
@@ -6013,6 +6026,8 @@ export default function App() {
       base: operandIds[0] ?? null,
       tools: operandIds.slice(1),
       armed: null,
+      offset: "",
+      keepTools: false,
     });
   };
 
@@ -6039,6 +6054,8 @@ export default function App() {
       : d.operandIds.length >= 2
         ? d.operandIds
         : null;
+  const booleanOffsetError = booleanDialog ? parseNumericField(booleanDialog.offset, resolved.scope).error : null;
+  const booleanOpts = (d: NonNullable<typeof booleanDialog>) => ({ offset: d.offset, keepTools: d.keepTools });
   const closeBooleanDialog = () => {
     setBooleanDialog(null);
     cancelEdit();
@@ -6049,23 +6066,25 @@ export default function App() {
     if (!d?.editId) return;
     const operands = booleanOperands(d);
     if (!operands) return;
-    if (!shouldLiveApply(JSON.stringify({ e: d.editId, op: d.op, operands }))) return;
-    setDoc((prev) => updateBoolean(prev, d.editId!, d.op, operands), `edit:${d.editId}`);
+    if (parseNumericField(d.offset, resolved.scope).error) return;
+    const opts = booleanOpts(d);
+    if (!shouldLiveApply(JSON.stringify({ e: d.editId, op: d.op, operands, opts }))) return;
+    setDoc((prev) => updateBoolean(prev, d.editId!, d.op, operands, opts), `edit:${d.editId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booleanDialog]);
   const confirmBoolean = () => {
     if (!booleanDialog) return;
     const d = booleanDialog;
     const operands = booleanOperands(d);
-    if (!operands) return;
+    if (!operands || booleanOffsetError) return;
     if (d.editId) {
-      setDoc(updateBoolean(doc, d.editId, d.op, operands));
+      setDoc(updateBoolean(doc, d.editId, d.op, operands, booleanOpts(d)));
       selectFeature(d.editId);
       commitEdit();
       closeBooleanDialog();
       return;
     }
-    const { doc: next } = addBoolean(doc, d.op, operands);
+    const { doc: next } = addBoolean(doc, d.op, operands, booleanOpts(d));
     setDoc(next);
     selectFeature(null);
     closeBooleanDialog();
@@ -6084,6 +6103,8 @@ export default function App() {
       base: f.operands[0] ?? null,
       tools: f.operands.slice(1),
       armed: null,
+      offset: f.offset ?? "",
+      keepTools: !!f.keepTools,
       editId: id,
     });
   };
@@ -8233,9 +8254,12 @@ export default function App() {
                     : null
                 }
                 faceArmed={pickingUpFace}
-                message={extrudeDistanceCheck.error ?? extrudePreviewError}
+                offset={extrudeDialog.offset}
+                onOffsetChange={(offset) => setExtrudeDialog((d) => (d ? { ...d, offset } : d))}
+                message={extrudeDistanceCheck.error ?? extrudeOffsetError ?? extrudePreviewError}
                 confirmDisabled={
                   extrudeDialogProfiles.length === 0 ||
+                  !!extrudeOffsetError ||
                   (extrudeDialog.mode !== "new" && !extrudeTargetSatisfied) ||
                   (extrudeDialog.extent === "upToFace" && !extrudeDialog.upTo) ||
                   !extrudeDistanceSatisfied
@@ -8642,6 +8666,11 @@ export default function App() {
             base={booleanDialog.base}
             tools={booleanDialog.tools}
             armed={booleanDialog.armed}
+            offset={booleanDialog.offset}
+            keepTools={booleanDialog.keepTools}
+            offsetError={booleanOffsetError}
+            onOffsetChange={(offset) => setBooleanDialog((d) => (d ? { ...d, offset } : d))}
+            onKeepToolsChange={(keepTools) => setBooleanDialog((d) => (d ? { ...d, keepTools } : d))}
             onOpChange={setBooleanOp}
             onArm={(slot) => setBooleanDialog((d) => (d ? { ...d, armed: slot } : d))}
             onRemoveOperand={(id) =>

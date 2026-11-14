@@ -239,6 +239,7 @@ export function addExtrude(
     mode?: ExtrudeFeature["mode"];
     targetId?: string;
     upTo?: ExtrudeFeature["upTo"];
+    offset?: string;
   } = {},
 ): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "extrude").length + 1;
@@ -254,6 +255,7 @@ export function addExtrude(
     mode: opts.mode ?? "new",
     targetId: opts.targetId,
     upTo: opts.upTo,
+    ...(opts.offset?.trim() ? { offset: opts.offset.trim() } : {}),
     color: newBodyColor(),
     opacity: 1,
   };
@@ -268,7 +270,27 @@ function colorOfFeature(doc: Document, id: string): number {
   return isBodyFeature(f) ? f.color : newBodyColor();
 }
 
-export function addBoolean(doc: Document, op: BooleanOp, operands: string[]): { doc: Document; id: string } {
+/** The subtract-only options of a boolean. Stored as given; ignored by the
+ *  resolver on union/intersect. */
+export interface BooleanOptions {
+  offset?: string;
+  keepTools?: boolean;
+}
+
+/** Drop unset options so a plain boolean doesn't carry `offset: ""` around. */
+function booleanOptionFields(opts: BooleanOptions): BooleanOptions {
+  return {
+    ...(opts.offset?.trim() ? { offset: opts.offset.trim() } : {}),
+    ...(opts.keepTools ? { keepTools: true } : {}),
+  };
+}
+
+export function addBoolean(
+  doc: Document,
+  op: BooleanOp,
+  operands: string[],
+  opts: BooleanOptions = {},
+): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "boolean").length + 1;
   const feature: BooleanFeature = {
     id: uid(),
@@ -277,6 +299,7 @@ export function addBoolean(doc: Document, op: BooleanOp, operands: string[]): { 
     suppressed: false,
     op,
     operands,
+    ...booleanOptionFields(opts),
     color: colorOfFeature(doc, operands[0]),
     opacity: 1,
   };
@@ -596,6 +619,15 @@ export function addImport(doc: Document, source: string, name?: string): { doc: 
 //     identity (id, name, suppressed) + appearance (color/opacity/hidden) and its
 //     timeline position, swapping only the inputs/params. ---
 
+/** `f` with its clearance `offset` replaced (undefined = unchanged, blank =
+ *  removed), never leaving `offset: ""` on the feature. */
+function withOffset<T extends { offset?: string }>(f: T, offset: string | undefined): T {
+  if (offset === undefined) return f;
+
+  const { offset: _old, ...rest } = f;
+  return (offset.trim() ? { ...rest, offset: offset.trim() } : rest) as T;
+}
+
 export function updateExtrude(
   doc: Document,
   id: string,
@@ -607,12 +639,14 @@ export function updateExtrude(
     mode?: ExtrudeFeature["mode"];
     targetId?: string;
     upTo?: ExtrudeFeature["upTo"];
+    /** Undefined leaves the stored offset alone; "" clears it. */
+    offset?: string;
   } = {},
 ): Document {
   return mapFeature(doc, id, (f) =>
     f.type === "extrude"
       ? {
-          ...f,
+          ...withOffset(f, opts.offset),
           profiles: Array.isArray(profiles) ? profiles : [profiles],
           distance: opts.distance ?? f.distance,
           flip: opts.flip ?? f.flip,
@@ -625,8 +659,20 @@ export function updateExtrude(
   );
 }
 
-export function updateBoolean(doc: Document, id: string, op: BooleanOp, operands: string[]): Document {
-  return mapFeature(doc, id, (f) => (f.type === "boolean" ? { ...f, op, operands } : f));
+export function updateBoolean(
+  doc: Document,
+  id: string,
+  op: BooleanOp,
+  operands: string[],
+  opts?: BooleanOptions,
+): Document {
+  return mapFeature(doc, id, (f) => {
+    if (f.type !== "boolean") return f;
+    if (!opts) return { ...f, op, operands };
+
+    const { offset: _o, keepTools: _k, ...rest } = f;
+    return { ...rest, op, operands, ...booleanOptionFields(opts) };
+  });
 }
 
 export function updateDressUp(
@@ -929,6 +975,7 @@ export function updateParam(doc: Document, id: string, name: string, value: stri
       ) {
         return { ...f, extent: value };
       }
+      if (name === "offset") return { ...f, offset: value };
       if (name === "mode" && (value === "new" || value === "add" || value === "remove")) {
         // Through All is only meaningful for a cut (Remove); leaving New/Add reverts it.
         const extent = value !== "remove" && f.extent === "throughAll" ? "blind" : f.extent;
@@ -942,6 +989,8 @@ export function updateParam(doc: Document, id: string, name: string, value: stri
       if (name === "flip" && f.op === "chamfer") return { ...f, flip: value === "true" };
     }
     if (f.type === "shell" && name === "thickness") return { ...f, thickness: value };
+    if (f.type === "boolean" && name === "offset") return { ...f, offset: value };
+    if (f.type === "boolean" && name === "keepTools") return { ...f, keepTools: value === "true" };
     if (f.type === "revolve" && name === "angle") return { ...f, angle: value };
     if (f.type === "gear" && name in DEFAULT_GEAR_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
@@ -1314,6 +1363,7 @@ export function resolveDocument(doc: Document): ResolveResult {
           f.extent === "upToFace" && f.upTo
             ? { sourceId: f.upTo.featureId, faceName: f.upTo.faceName, center: f.upTo.center, normal: f.upTo.normal }
             : undefined;
+        const cutOffset = f.mode === "remove" && f.offset?.trim() ? evaluateExpression(f.offset, scope) : 0;
         features.push({
           id: f.id,
           type: "extrude",
@@ -1324,6 +1374,9 @@ export function resolveDocument(doc: Document): ResolveResult {
           mode: f.mode,
           targetId: f.targetId,
           upTo,
+          // Left off unless set on a Remove, so every other extrude keeps the
+          // content key it had before the field existed.
+          ...(cutOffset !== 0 ? { offset: cutOffset } : {}),
         });
       } else if (f.type === "dressup") {
         // A chamfer angle is optional (and fillets have none): leave it off the
@@ -1362,7 +1415,19 @@ export function resolveDocument(doc: Document): ResolveResult {
         });
       } else if (f.type === "boolean") {
         if (f.operands.length < 2) throw new Error("A boolean needs at least two operands.");
-        features.push({ id: f.id, type: "boolean", op: f.op, operands: f.operands });
+        // Offset and keep-tools only mean something on a subtract; they're left
+        // off the resolved feature otherwise (and when unset), so a boolean
+        // keeps the kernel content key it had before these fields existed.
+        const sub = f.op === "subtract";
+        const offset = sub && f.offset?.trim() ? evaluateExpression(f.offset, scope) : 0;
+        features.push({
+          id: f.id,
+          type: "boolean",
+          op: f.op,
+          operands: f.operands,
+          ...(offset !== 0 ? { offset } : {}),
+          ...(sub && f.keepTools ? { keepTools: true } : {}),
+        });
       } else if (f.type === "transform") {
         // A zero or negative factor would collapse or invert the body (OCCT
         // happily builds either), so it's rejected here rather than baked.

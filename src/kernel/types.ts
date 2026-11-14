@@ -187,6 +187,9 @@ export type ResolvedFeature =
       mode: ExtrudeMode;
       targetId?: string;
       upTo?: ResolvedUpToFace;
+      /** Remove only: clearance (mm) the profile is grown by sideways before
+       *  cutting (negative shrinks it). Omitted when zero. */
+      offset?: number;
       previewTool?: boolean;
     }
   // `edges` are persistent names; `edgeRefs` (parallel, when the doc has them)
@@ -222,7 +225,18 @@ export type ResolvedFeature =
   // what remains. Zero faces = a fully sealed hollow shell.
   | { id: string; type: "shell"; targetId: string; faces: string[]; faceRefs?: ResolvedFaceRef[]; thickness: number }
   // A boolean combines existing bodies (by id) from the running set.
-  | { id: string; type: "boolean"; op: BooleanOp; operands: string[] }
+  | {
+      id: string;
+      type: "boolean";
+      op: BooleanOp;
+      operands: string[];
+      /** Subtract only: grow (or, negative, shrink) every tool by this distance
+       *  before cutting — a clearance for fits. Omitted when zero. */
+      offset?: number;
+      /** Subtract only: leave the tools in the running set instead of consuming
+       *  them. Omitted when false. */
+      keepTools?: boolean;
+    }
   // A transform moves a body (by id) — uniform scale about `pivot`, then rotate
   // about the axis LINE, then translate. `scale` is always > 0 (validated when
   // resolving). `copy` keeps the original and emits the moved body as a NEW body

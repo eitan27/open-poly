@@ -227,6 +227,9 @@ export const operationSchema = z.discriminatedUnion("op", [
     mode: z.enum(["new", "add", "remove"]).optional(),
     /** For add/remove: the body (feature id) to fuse into / cut from. */
     targetId: z.string().optional(),
+    /** Remove only: clearance (mm) — the cut is the profile grown sideways by
+     *  this much (depth unchanged); negative shrinks it. */
+    offset: expr.optional(),
     name: z.string().optional(),
   }),
   z.object({
@@ -441,6 +444,11 @@ export const operationSchema = z.discriminatedUnion("op", [
     op: z.literal("boolean"),
     kind: booleanKind,
     operands: z.array(z.string()).min(2),
+    /** Subtract only: clearance (mm) grown around every tool before cutting;
+     *  negative shrinks the tools (interference fit). */
+    offset: expr.optional(),
+    /** Subtract only: keep the tool bodies after the cut. */
+    keepTools: z.boolean().optional(),
   }),
   z.object({
     op: z.literal("dressUp"),

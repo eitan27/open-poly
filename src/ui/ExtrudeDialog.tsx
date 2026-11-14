@@ -36,6 +36,9 @@ interface Props {
   targetOptions: ExtrudeTargetOption[];
   distance: string;
   flip: boolean;
+  /** Remove only: clearance around the profile (expression; blank = none). */
+  offset: string;
+  onOffsetChange: (offset: string) => void;
   /** Resolved label for the up-to face, null while empty. */
   upToLabel: string | null;
   /** True while the next viewport click fills the up-to face slot. */
@@ -73,6 +76,8 @@ export function ExtrudeDialog({
   targetOptions,
   distance,
   flip,
+  offset,
+  onOffsetChange,
   upToLabel,
   faceArmed,
   message,
@@ -169,6 +174,24 @@ export function ExtrudeDialog({
               if (e.key === "Enter") onConfirm();
               // The field has autoFocus, so Escape almost always lands here
               // rather than at the global handler.
+              else if (e.key === "Escape") onEscape();
+            }}
+          />
+        </label>
+      )}
+      {mode === "remove" && (
+        <label
+          className="ed-field"
+          title="Grow the cut sideways by this much so a part fits in it (negative: tighter). The depth is unchanged."
+        >
+          <span>Offset (clearance)</span>
+          <ExprInput
+            value={offset}
+            placeholder="0"
+            onFocus={(e) => e.currentTarget.select()}
+            onChange={(e) => onOffsetChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onConfirm();
               else if (e.key === "Escape") onEscape();
             }}
           />
