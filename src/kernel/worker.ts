@@ -52,7 +52,7 @@ import type {
 import { DRESSUP_DELTA_IDS, dressUpDeltaBase } from "./types";
 import { builderKey, contentKey } from "./cache";
 import { CIRCLE_FACETS, circleStations } from "../geom/circleFacets";
-import { threadMesh } from "../geom/thread";
+import { segmentsStep, threadDepth, threadMesh, threadSegments } from "../geom/thread";
 import { newell, type PolyMesh } from "../geom/polyMesh";
 import { screwMesh } from "../geom/screwMesh";
 import { expandToChains, expansionCount } from "../geom/edgeChains";
@@ -4504,8 +4504,9 @@ function threadBoolean(
   base: NamedShape,
   tool: (segments?: number) => NamedShape,
   ok: (result: NamedShape) => boolean,
+  densities: (number | undefined)[] = [undefined, 48, 64],
 ): NamedShape | null {
-  for (const segments of [undefined, 48, 64]) {
+  for (const segments of densities) {
     const t = tool(segments);
     // Tight tolerance, not BOOL_FUZZY: thread facets are a few hundredths of
     // a mm apart along the axis (P/64 between a vertex row and the head's
@@ -4570,6 +4571,110 @@ function screwBody(feature: Extract<ResolvedFeature, { type: "screw" }>): NamedS
     return translatedNamed(first, [o[0] - o0[0], o[1] - o0[1], o[2] - o0[2]], id0, idOf(i));
   });
   return screws.length === 1 ? screws[0] : compoundOf(screws);
+}
+
+/** The rods (external) or cavities (internal) of a Thread feature: one
+ *  built, the rest copies. An internal thread's lead-in is a countersink cut
+ *  separately, not a clamp on the cavity, so it is left off here. */
+function threadRods(feature: Extract<ResolvedFeature, { type: "thread" }>, segments?: number): NamedShape {
+  const { frame, down, centers } = feature;
+  const idOf = (i: number) => (centers.length > 1 ? `${feature.id}/t${i}` : feature.id);
+  const t = feature.internal ? { ...feature.thread, startChamfer: false } : feature.thread;
+  const o0 = framePoint(frame, ...centers[0]);
+  const first = threadSolid(t, o0, down, frame.uAxis, idOf(0), segments);
+  const rods = centers.map(([cu, cv], i) => {
+    if (i === 0) return first;
+    const o = framePoint(frame, cu, cv);
+    return translatedNamed(first, [o[0] - o0[0], o[1] - o0[1], o[2] - o0[2]], idOf(0), idOf(i));
+  });
+  return rods.length === 1 ? rods[0] : compoundOf(rods);
+}
+
+function buildThreadFeature(feature: Extract<ResolvedFeature, { type: "thread" }>, ctx: BuildContext): void {
+  const { bodies, used } = ctx;
+  if (!feature.internal) {
+    // A threaded rod: one mesh, no booleans, cached like a screw.
+    const key = builderKey(feature);
+    used.add(key);
+    let entry = builderCache.get(key);
+    if (!entry) {
+      entry = threadRods(feature);
+      builderCache.set(key, entry);
+    }
+    bodies.push({ id: feature.id, key, ...sharedNamed(entry) });
+    return;
+  }
+  if (feature.previewTool) {
+    bodies.push({ id: feature.id, key: contentKey(feature, []), noSplit: true, ...threadRods(feature) });
+    return;
+  }
+  const target = requireBody(bodies, feature.targetId!);
+  const cacheKey = contentKey(feature, ["thread", target.key]);
+  ctx.usedDressUps.add(cacheKey);
+  const hit = dressUpCache.get(cacheKey);
+  let next: NamedShape;
+  if (hit) next = sharedNamed(hit.result);
+  else {
+    const t = feature.thread;
+    const before = measureVolume(target.shape);
+    // Finer facet counts to retry with, on this profile's step.
+    const N = threadSegments(t.d / 2 + t.offset, 0.02, t.profile, t.starts);
+    const step = segmentsStep(t.profile, t.starts);
+    const cut = threadBoolean(
+      "cut",
+      target,
+      (seg) => threadRods(feature, seg),
+      (r) => {
+        const v = measureVolume(r.shape);
+        return v < before - 1e-3 && v > 0 && countSolids(r.shape) <= countSolids(target.shape);
+      },
+      [undefined, N + step, N + 2 * step],
+    );
+    if (!cut) throw new Error("thread: the cut missed the body — check the sketch is on it, and try Flip");
+    next = cut;
+    if (t.startChamfer) {
+      // The lead-in: a 45° countersink at each mouth, from the cavity's crest
+      // down to its root — so a printed bolt finds the thread, and the first
+      // layer's squish doesn't close the opening.
+      const crest = t.d / 2 + t.offset;
+      const root = crest - threadDepth(t.pitch, t.profile);
+      const depth = crest - root;
+      const profile: [number, number][] = [
+        [0, -1],
+        [crest + 1, -1],
+        [root, depth],
+        [0, depth],
+      ];
+      const cones = feature.centers.map(([cu, cv], i) =>
+        revolvedPolyhedron(
+          framePoint(feature.frame, cu, cv),
+          feature.down,
+          feature.frame.uAxis,
+          feature.frame.vAxis,
+          profile,
+          `${feature.id}/leadIn${i}`,
+        ),
+      );
+      const tool = cones.length === 1 ? cones[0] : compoundOf(cones);
+      const v0 = measureVolume(next.shape);
+      const sunk = booleanNamed("cut", next, tool, THREAD_FUZZY);
+      tool.shape.delete();
+      const v1 = measureVolume(sunk.shape);
+      if (v1 < v0 && v1 > 0 && countSolids(sunk.shape) <= countSolids(next.shape)) {
+        next.shape.delete();
+        next = sunk;
+      } else {
+        sunk.shape.delete();
+        ctx.warn("the lead-in countersink couldn't be cut; the thread is there without it");
+      }
+    }
+    dressUpCache.set(cacheKey, { result: next });
+    next = sharedNamed(next);
+  }
+  target.shape.delete();
+  target.shape = next.shape;
+  target.names = next.names;
+  target.key = contentKey(feature, [target.key]);
 }
 
 function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, ctx: BuildContext): void {
@@ -4666,10 +4771,13 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
   let next: NamedShape;
   if (hit) {
     tool.shape.delete();
-    next = copyNamed(hit.result);
+    next = sharedNamed(hit.result);
   } else {
+    // The cache keeps this one; the fold gets a second handle on it (see
+    // sharedNamed) — a deep copy of a threaded body was ~100 ms a regen.
     next = cutHoles(t, tool);
-    dressUpCache.set(cacheKey, { result: copyNamed(next) });
+    dressUpCache.set(cacheKey, { result: next });
+    next = sharedNamed(next);
   }
   t.shape.delete();
   t.shape = next.shape;
@@ -5098,6 +5206,9 @@ function buildBodies(
           break;
         case "screw":
           buildScrewFeature(feature, ctx);
+          break;
+        case "thread":
+          buildThreadFeature(feature, ctx);
           break;
         // Every member of ResolvedFeature is handled above, and the compiler
         // enforces that: this is the dispatch whose failure mode was invisible

@@ -191,6 +191,8 @@ import { usePatternDialog } from "./hooks/usePatternDialog";
 import { useRevolveDialog } from "./hooks/useRevolveDialog";
 import { useGearDialog } from "./hooks/useGearDialog";
 import { holeSketches, useHoleDialog } from "./hooks/useHoleDialog";
+import { useThreadDialog } from "./hooks/useThreadDialog";
+import { threadDims, type ThreadDims } from "./document/threadFeature";
 import { useScrewDialog } from "./hooks/useScrewDialog";
 import { holeCenters, holeDims, type HoleDims } from "./document/hole";
 import { screwDims, screwSize, type ScrewDims } from "./document/screw";
@@ -213,6 +215,7 @@ import { TransformArmingDialog, TransformDialog } from "./ui/TransformDialog";
 import { RevolveDialog } from "./ui/RevolveDialog";
 import { GearDialog } from "./ui/GearDialog";
 import { HoleDialog } from "./ui/HoleDialog";
+import { ThreadDialog } from "./ui/ThreadDialog";
 import { ScrewDialog } from "./ui/ScrewDialog";
 import { MirrorDialog } from "./ui/MirrorDialog";
 import { DxfImportDialog } from "./ui/DxfImportDialog";
@@ -1609,6 +1612,19 @@ export default function App() {
     shouldLiveApply,
     selectFeature,
   });
+  // The Thread dialog: custom threads at a sketch's points — a rod, or cut.
+  const thread = useThreadDialog({
+    doc,
+    setDoc,
+    ready,
+    kernelRef,
+    beginEdit,
+    commitEdit,
+    cancelEdit,
+    shouldLiveApply,
+    selectFeature,
+  });
+  const lastThreadDims = useRef<ThreadDims | null>(null);
   // The Screw dialog: screws in a Hole feature's holes, or on a plane.
   const screw = useScrewDialog({
     doc,
@@ -2526,6 +2542,7 @@ export default function App() {
     !!gear.dialog ||
     !!hole.dialog ||
     !!screw.dialog ||
+    !!thread.dialog ||
     !!sweepDialog ||
     !!loftDialog ||
     !!dressUp.dialog ||
@@ -2674,6 +2691,15 @@ export default function App() {
       // The drill tools are material about to go, like a Remove extrude's.
       ...(hole.preview ? [{ mesh: hole.preview, variant: "cut" as const }] : []),
       ...(screw.preview ? [{ mesh: screw.preview }] : []),
+      // An internal thread's ghost is the cavity — material about to go.
+      ...(thread.preview
+        ? [
+            {
+              mesh: thread.preview,
+              ...(thread.dialog?.settings.side === "internal" ? { variant: "cut" as const } : {}),
+            },
+          ]
+        : []),
       ...patternGhosts,
       ...mirrorGhost,
       // The chamfer/fillet delta: what the operation fills in and what it carves
@@ -2688,6 +2714,8 @@ export default function App() {
       gear.preview,
       hole.preview,
       screw.preview,
+      thread.preview,
+      thread.dialog?.settings.side,
       patternGhosts,
       mirrorGhost,
       dressUp.preview,
@@ -3556,6 +3584,21 @@ export default function App() {
     }
     hole.open(sketchId, bodyId ?? booleanCandidates[0]?.id ?? null);
   };
+  /** Open the Thread dialog like the Hole one: the selected sketch (or the
+   *  newest with points) and body. */
+  const openThread = () => {
+    if (thread.dialog) return;
+    let sketchId: string | null = null;
+    let bodyId: string | null = null;
+    for (const sel of selection) {
+      if ("sketchId" in sel && typeof sel.sketchId === "string") sketchId ??= sel.sketchId;
+      const fid = featureIdOf(sel);
+      const f = doc.features.find((x) => x.id === fid);
+      if (f?.type === "sketch") sketchId ??= f.id;
+      else if (fid && booleanCandidates.some((c) => c.id === fid)) bodyId ??= fid;
+    }
+    thread.open(sketchId, bodyId ?? booleanCandidates[0]?.id ?? null);
+  };
   /** Open the Screw dialog: in the selected Hole feature (else the newest),
    *  or on a selected reference plane. */
   const openScrew = () => {
@@ -3700,6 +3743,7 @@ export default function App() {
       else if (gear.dialog) gear.close();
       else if (hole.dialog) hole.close();
       else if (screw.dialog) screw.close();
+      else if (thread.dialog) thread.close();
       else if (mirrorDialog) closeMirror();
       else if (pattern.dialog) pattern.close();
       else if (shell.dialog) shell.close();
@@ -3849,6 +3893,7 @@ export default function App() {
       "model.gear": () => openGear(),
       "model.hole": () => openHole(),
       "model.screw": () => openScrew(),
+      "model.thread": () => openThread(),
     },
   });
 
@@ -4676,6 +4721,9 @@ export default function App() {
         break;
       case "screw":
         screw.edit(f);
+        break;
+      case "thread":
+        thread.edit(f);
         break;
       case "primitive":
       case "import":
@@ -6861,6 +6909,28 @@ export default function App() {
       disabled: toolsLocked,
       onSelect: openScrew,
     },
+    {
+      id: "thread",
+      icon: "🌀",
+      label: "Thread",
+      shortcut: shortcutHint("model.thread"),
+      title: `Thread (${shortcutName("model.thread")}): a custom thread at a sketch's points — any diameter and pitch, printable 45°, ISO or trapezoid — as a threaded rod, or cut into a body`,
+      keywords: [
+        "helix",
+        "printable",
+        "3d print",
+        "lid",
+        "jar",
+        "nut",
+        "rod",
+        "stud",
+        "lead screw",
+        "trapezoid",
+        "acme",
+      ],
+      disabled: toolsLocked,
+      onSelect: openThread,
+    },
   ];
 
   /** A sketch feature's display name, for the dialogs that label a picked region
@@ -8710,6 +8780,41 @@ export default function App() {
                     onParam={screw.updateParam}
                     onConfirm={screw.confirm}
                     onCancel={screw.close}
+                  />
+                );
+              })()}
+            {thread.dialog &&
+              (() => {
+                const d = thread.dialog;
+                let dims: ThreadDims | null = null;
+                let dimsError: string | null = null;
+                try {
+                  dims = threadDims(d.settings, resolved.scope);
+                  lastThreadDims.current = dims;
+                } catch (err) {
+                  dimsError = String((err as Error).message ?? err);
+                }
+                const error = dimsError ?? (d.editId ? (resolved.errors[d.editId] ?? null) : thread.previewError);
+                return (
+                  <ThreadDialog
+                    editing={!!d.editId}
+                    settings={d.settings}
+                    sketchId={d.sketchId}
+                    sketchOptions={holeSketches(doc).map((sk) => ({
+                      id: sk.id,
+                      name: sk.name,
+                      points: holeCenters(sk).length,
+                    }))}
+                    targetId={d.targetId}
+                    targetOptions={booleanCandidates}
+                    dims={dims ?? lastThreadDims.current}
+                    error={error?.replace(/^thread: /, "") ?? null}
+                    onSketchChange={thread.setSketch}
+                    onTargetChange={thread.setTarget}
+                    onChange={thread.update}
+                    onParam={thread.updateParam}
+                    onConfirm={thread.confirm}
+                    onCancel={thread.close}
                   />
                 );
               })()}

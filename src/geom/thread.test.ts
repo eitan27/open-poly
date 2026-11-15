@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { meshVolume, minorDiameter, threadMesh, type ThreadMesh } from "./thread";
+import { meshVolume, minorDiameter, threadDepth, threadMesh, type ThreadMesh, type ThreadProfile } from "./thread";
 
 /** Every edge used exactly once in each direction: closed and consistently wound. */
 function edgeProblems(m: ThreadMesh): number {
@@ -91,5 +91,73 @@ describe("threadMesh", () => {
   it("refuses a thread shorter than a pitch, or a clearance that eats the core", () => {
     expect(() => threadMesh({ d: 3, pitch: 0.5, offset: 0, z0: 0, z1: 0.4 })).toThrow(/too short/);
     expect(() => threadMesh({ d: 3, pitch: 0.5, offset: -1.3, z0: 0, z1: 5 })).toThrow(/no core/);
+  });
+
+  for (const profile of ["printable", "trapezoid", "iso"] as ThreadProfile[])
+    for (const starts of [1, 2, 3])
+      for (const leftHand of [false, true])
+        it(`${profile}, ${starts} start(s)${leftHand ? ", left-hand" : ""}: closed, outward, planar, sensible volume`, () => {
+          const d = 20;
+          const P = 2.5;
+          const L = 12;
+          const m = threadMesh({
+            d,
+            pitch: P,
+            offset: 0,
+            z0: 0,
+            z1: L,
+            profile,
+            starts,
+            leftHand,
+            tipChamfer: true,
+            startChamfer: true,
+          });
+          expect(edgeProblems(m)).toBe(0);
+          expect(maxNonPlanarity(m)).toBeLessThan(1e-9);
+          const v = meshVolume(m);
+          const rootR = d / 2 - threadDepth(P, profile);
+          // More than the core (less its chamfers), less than the outer cylinder.
+          expect(v).toBeGreaterThan(Math.PI * rootR ** 2 * (L - 2 * P));
+          expect(v).toBeLessThan(Math.PI * (d / 2) ** 2 * L);
+        });
+
+  it("a left-hand thread climbs the other way", () => {
+    const crestAt = (leftHand: boolean) => {
+      const m = threadMesh({ d: 10, pitch: 2, offset: 0, z0: 0, z1: 10, profile: "printable", leftHand });
+      // The crest vertex nearest +x, between z 4 and 6 — and the one a few
+      // stations on, counter-clockwise: deeper for right-hand, shallower for left.
+      const crest = m.vertices.filter(([x, y, z]) => Math.abs(Math.hypot(x, y) - 5) < 1e-9 && z > 4 && z < 6);
+      const near = (target: number) =>
+        crest.reduce((best, p) => {
+          const da = Math.abs(Math.atan2(p[1], p[0]) - target);
+          const db = Math.abs(Math.atan2(best[1], best[0]) - target);
+          return da < db ? p : best;
+        });
+      const a = near(0.05);
+      // The same crest edge row: within a pitch's 0.2 crest flat.
+      const b = crest.filter((p) => Math.atan2(p[1], p[0]) > 0.3 && Math.atan2(p[1], p[0]) < 0.6);
+      const sameRow = b.find((p) => Math.abs(p[2] - a[2]) < 0.4);
+      return sameRow![2] - a[2];
+    };
+    expect(crestAt(false)).toBeGreaterThan(0);
+    expect(crestAt(true)).toBeLessThan(0);
+  });
+
+  it("two starts double the lead: the crest rises 2P a turn", () => {
+    const one = threadMesh({ d: 10, pitch: 2, offset: 0, z0: 0, z1: 10, profile: "printable" });
+    const two = threadMesh({ d: 10, pitch: 2, offset: 0, z0: 0, z1: 10, profile: "printable", starts: 2 });
+    // Same tooth spacing along the axis, so about the same volume.
+    expect(Math.abs(meshVolume(two) - meshVolume(one)) / meshVolume(one)).toBeLessThan(0.03);
+    // Steeper flanks: each facet climbs twice as far per station.
+    const climb = (m: ThreadMesh) =>
+      Math.max(
+        ...m.faces
+          .filter((f) => f.kind === "thread" && f.loop.length === 4)
+          .map((f) => {
+            const zs = f.loop.map((i) => m.vertices[i][2]);
+            return Math.max(...zs) - Math.min(...zs);
+          }),
+      );
+    expect(climb(two)).toBeGreaterThan(climb(one));
   });
 });

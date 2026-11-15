@@ -1380,3 +1380,56 @@ describe("applyOperation — addGear", () => {
     expect(bad.error).toMatch(/unknown params tooth/);
   });
 });
+
+describe("applyOperation — addThread", () => {
+  it("adds a printable threaded rod at a sketch's point, with param overrides", async () => {
+    const { ctx, doc } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch",
+      plane: { datum: "top" },
+      entities: [{ shape: "point", p: [0, 0] }],
+    });
+    const r = await apply(ctx, { op: "addThread", sketchId: sk.createdId!, params: { diameter: 16, pitch: 2.5 } });
+    expect(r.ok).toBe(true);
+    const f = doc().features.find((x) => x.id === r.createdId);
+    expect(f).toMatchObject({ type: "thread", side: "external", profile: "printable", leadIn: true });
+    expect(f && f.type === "thread" && f.params).toMatchObject({ diameter: "16", pitch: "2.5", clearance: "0.15" });
+    expect(f && f.type === "thread" && f.targetId).toBeUndefined();
+    expect(resolveDocument(doc()).errors[r.createdId!]).toBeUndefined();
+  });
+
+  it("an internal thread cuts its targetId, and needs one off a body face", async () => {
+    const { ctx, doc } = makeCtx();
+    const box = await apply(ctx, { op: "addPrimitive", kind: "box" });
+    const sk = await apply(ctx, {
+      op: "addSketch",
+      plane: { datum: "top" },
+      entities: [{ shape: "point", p: [0, 0] }],
+    });
+    const r = await apply(ctx, {
+      op: "addThread",
+      sketchId: sk.createdId!,
+      side: "internal",
+      targetId: box.createdId!,
+    });
+    expect(r.ok).toBe(true);
+    expect(doc().features.find((x) => x.id === r.createdId)).toMatchObject({
+      side: "internal",
+      targetId: box.createdId,
+    });
+    const bad = await apply(ctx, { op: "addThread", sketchId: sk.createdId!, side: "internal" });
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toMatch(/targetId/);
+  });
+
+  it("refuses unknown params", async () => {
+    const { ctx } = makeCtx();
+    const sk = await apply(ctx, {
+      op: "addSketch",
+      plane: { datum: "top" },
+      entities: [{ shape: "point", p: [0, 0] }],
+    });
+    const bad = await apply(ctx, { op: "addThread", sketchId: sk.createdId!, params: { lead: 4 } });
+    expect(bad.error).toMatch(/unknown params lead/);
+  });
+});

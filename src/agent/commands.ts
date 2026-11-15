@@ -10,6 +10,7 @@
 // mutating op resolves — so the agent knows it actually succeeded — belongs to
 // the host's regen coordinator, a layer up; what this layer reports is the
 // synchronous resolve errors (bad expressions, missing refs).
+import { DEFAULT_THREAD_PARAMS, DEFAULT_THREAD_SETTINGS } from "../document/threadFeature";
 import { FOLDED_NAMES_NOTE, foldNames } from "./nameRanges";
 import { DEFAULT_HOLE_PARAMS, DEFAULT_HOLE_SETTINGS } from "../document/hole";
 import { DEFAULT_SCREW_PARAMS, DEFAULT_SCREW_SETTINGS } from "../document/screw";
@@ -29,6 +30,7 @@ import {
   addShell,
   addHole,
   addScrew,
+  addThread,
   addGear,
   addSketch,
   addSketchConstraints,
@@ -1338,6 +1340,33 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           ...(op.holeId ? { holeId: op.holeId } : {}),
           flip: op.flip ?? false,
           params: { ...DEFAULT_SCREW_PARAMS, ...op.params },
+        });
+        next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
+        createdId = r.id;
+        break;
+      }
+      case "addThread": {
+        const sk = requireSketch(doc, op.sketchId);
+        const side = op.side ?? DEFAULT_THREAD_SETTINGS.side;
+        let targetId: string | undefined;
+        if (side === "internal") {
+          targetId = op.targetId ?? (sk.plane.kind === "face" ? sk.plane.featureId : undefined);
+          if (!targetId)
+            throw new OpError(
+              "invalid_op",
+              "addThread: an internal thread needs targetId (the sketch isn't on a body face).",
+            );
+          requireFeature(doc, targetId);
+        }
+        const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_THREAD_PARAMS));
+        if (unknown.length) throw new OpError("invalid_op", `addThread: unknown params ${unknown.join(", ")}.`);
+        const r = addThread(doc, op.sketchId, targetId, {
+          side,
+          profile: op.profile ?? DEFAULT_THREAD_SETTINGS.profile,
+          leftHand: op.leftHand ?? false,
+          leadIn: op.leadIn ?? DEFAULT_THREAD_SETTINGS.leadIn,
+          flip: op.flip ?? false,
+          params: { ...DEFAULT_THREAD_PARAMS, ...op.params },
         });
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;

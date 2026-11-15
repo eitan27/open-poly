@@ -2,6 +2,7 @@
 // types — replicad / OpenCascade never leak past this boundary. This is the
 // swap-point that lets us replace the implementation with direct opencascade.js
 // calls later without touching the rest of the app.
+import type { ThreadProfile } from "../geom/thread";
 
 // Mesh buffers are typed arrays (Float32Array positions/normals, Uint32Array
 // indices) so the worker→main postMessage copies raw ArrayBuffers (a fast memcpy)
@@ -177,6 +178,12 @@ export interface ThreadResolved {
   z0: number;
   z1: number;
   tipChamfer: boolean;
+  /** The Thread feature's extras (geom/thread.ts ThreadSpec); ISO, one
+   *  right-hand start, when absent. */
+  startChamfer?: boolean;
+  profile?: ThreadProfile;
+  starts?: number;
+  leftHand?: boolean;
 }
 
 export type ResolvedFeature =
@@ -271,6 +278,21 @@ export type ResolvedFeature =
       /** A modelled thread fused on: then `profile` is the head alone (empty
        *  for a hex head, which is the prism). */
       thread?: ThreadResolved;
+    }
+  // A custom thread at each centre (document/threadFeature.ts): external, a
+  // threaded rod as a new body; internal, cut into `targetId`. Local depth z
+  // runs along `down` — out of the plane for external, in for internal (both
+  // already flipped as asked).
+  | {
+      id: string;
+      type: "thread";
+      frame: ResolvedFrame;
+      centers: [number, number][];
+      down: [number, number, number];
+      internal: boolean;
+      targetId?: string;
+      thread: ThreadResolved;
+      previewTool?: boolean;
     }
   // A boolean combines existing bodies (by id) from the running set.
   | {

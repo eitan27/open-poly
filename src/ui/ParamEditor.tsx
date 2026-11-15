@@ -3,6 +3,7 @@ import { planeRefLabel } from "../document/planes";
 import type { Feature } from "../document/types";
 import { HOLE_TYPE_LABELS } from "../document/hole";
 import { SCREW_HEAD_LABELS } from "../document/screw";
+import { THREAD_PROFILE_LABELS } from "../document/threadFeature";
 import { ExprInput } from "./ExprInput";
 
 interface Props {
@@ -497,6 +498,34 @@ export function ParamEditor({
               />
             </label>
           )}
+        </div>
+      ) : feature.type === "thread" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Thread</span>
+            <span className="param-static">
+              {THREAD_PROFILE_LABELS[feature.profile]}, {feature.side}
+              {feature.leftHand ? ", left-hand" : ""}
+            </span>
+          </div>
+          {(
+            [
+              ["diameter", "Diameter"],
+              ["pitch", "Pitch"],
+              ["length", "Length"],
+              ["starts", "Starts"],
+              ["clearance", "Clearance"],
+            ] as const
+          ).map(([name, label]) => (
+            <label className="param-field" key={name}>
+              <span className="param-label">{label}</span>
+              <ExprInput
+                className="param-input"
+                value={feature.params[name]}
+                onChange={(e) => onChangeParam(feature.id, name, e.target.value)}
+              />
+            </label>
+          ))}
         </div>
       ) : feature.type === "loft" ? (
         <div className="sketch-params">

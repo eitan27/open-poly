@@ -497,6 +497,29 @@ export const operationSchema = z.discriminatedUnion("op", [
     name: z.string().optional(),
   }),
   z.object({
+    op: z.literal("addThread"),
+    /** The sketch whose POINT entities and CIRCLE centres place the threads. */
+    sketchId: z.string(),
+    /** "external" (default): a threaded rod as a new body, standing out of
+     *  the sketch plane along its normal. "internal": the matching thread cut
+     *  into targetId, going in against the normal. */
+    side: z.enum(["external", "internal"]).optional(),
+    /** Internal only: the body to cut. Defaults to the body the sketch is on. */
+    targetId: z.string().optional(),
+    /** "printable" (default): 45° flanks, wide flats — prints upright with no
+     *  supports. "iso": the 60° metric form. "trapezoid": ≈15°, lead screws. */
+    profile: z.enum(["printable", "iso", "trapezoid"]).optional(),
+    leftHand: z.boolean().optional(),
+    /** 45° lead-in: a chamfer at the rod's tip / a countersink at the
+     *  internal thread's mouth. Default true. */
+    leadIn: z.boolean().optional(),
+    flip: z.boolean().optional(),
+    /** diameter (major, default 10), pitch (default 2), length (default 12),
+     *  starts (default 1), clearance (mm per part, default 0.15). */
+    params: z.record(z.string(), expr).optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
     op: z.literal("addGear"),
     /** spur (external, default) or internal (a ring gear: teeth inside a rim). */
     gearType: z.enum(["spur", "internal"]).optional(),

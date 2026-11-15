@@ -2,6 +2,7 @@
 // plus a set of variables. Regeneration replays the features up to the rollback
 // point. This is the backbone every later feature (sketches, extrude, …) plugs
 // into.
+import type { ThreadProfile } from "../geom/thread";
 import type { BooleanOp, PrimitiveKind } from "../kernel/types";
 import type { SketchPlaneRef } from "./planes";
 
@@ -852,7 +853,8 @@ export type Feature =
   | ImportFeature
   | GearFeature
   | HoleFeature
-  | ScrewFeature;
+  | ScrewFeature
+  | ThreadFeature;
 
 export interface Variable {
   id: string;
@@ -880,4 +882,40 @@ export interface Document {
   /** Number of features evaluated, 0..features.length. Features at index >=
    *  rollbackIndex are "rolled back" (not regenerated). */
   rollbackIndex: number;
+}
+
+/** A custom thread's parameters (expressions). */
+export interface ThreadParams {
+  /** Major diameter of the external thread — the one a nut's thread mates. */
+  diameter: string;
+  pitch: string;
+  length: string;
+  /** Radial gap per part (mm): an external thread shrinks by it, an internal
+   *  one grows, so two printed halves fit. */
+  clearance: string;
+  /** Interleaved helices (a faster-closing jar lid has 2–4). */
+  starts: string;
+}
+
+/** A thread of any diameter and pitch, at every point (and circle centre) of
+ *  a sketch — the route for 3D-printed fasteners, lids and lead screws, where
+ *  ISO metric pitches are too fine to print. External: a threaded rod as a new
+ *  body, standing out of the sketch plane. Internal: the matching thread cut
+ *  into `targetId`, going in against the plane normal. `flip` reverses either.
+ *  Built as a faceted helix (geom/thread.ts). */
+export interface ThreadFeature extends FeatureBase {
+  type: "thread";
+  side: "external" | "internal";
+  profile: ThreadProfile;
+  sketchId: string;
+  targetId?: string;
+  leftHand: boolean;
+  /** 45° chamfer where the thread starts to engage: the rod's tip, the
+   *  internal thread's mouth. */
+  leadIn: boolean;
+  flip: boolean;
+  params: ThreadParams;
+  color: number;
+  opacity: number;
+  hidden?: boolean;
 }

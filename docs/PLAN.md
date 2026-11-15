@@ -143,7 +143,44 @@ order; each is its own commit:
    - Printing guidance in the dialog tooltips / modeling guide: print screws
      standing on the head; 0.15–0.2 clearance for a tight printer; prefer M5+.
      Not done: thread on custom-size holes (needs a pitch field), partial-length
-     threads (a plain shank under the head), nut feature, left-hand threads.
+     threads (a plain shank under the head), nut feature.
+   - SUPERSEDED (item 6): the head/socket/thread booleans and the 1e-5 fuzz
+     for the screw — a screw is now one mesh. Holes still cut their cavity
+     with a boolean.
+6. **Screw as one mesh; set screw / no head; cosmetic default** — DONE. A
+   screw (head, socket and thread) is stitched together in JS as ONE closed
+   polygon mesh (`geom/screwMesh.ts`, `geom/polyMesh.ts`), no booleans: the
+   thread is clipped where the head ends and its start-cap outline is a HOLE
+   in the head's underside face; the socket is a hex hole in the top face.
+   `meshSolid` builds faces with holes (wires run each loop in order, edges
+   reversed as needed). Thread ends snap to the station grid. Heads `set`
+   (ISO 4026, socket in the thread's end) and `none` (a stud). The button
+   head is flat across the top where its socket goes. Screws and tapped holes
+   default to a COSMETIC thread (fast; ISO pitches under ~M8 don't print well
+   anyway). Speed work that helps every document: cached screws / hole cuts /
+   thread cuts are shared handles, not deep copies (`sharedNamed`; was ~100 ms
+   per threaded body per regen); `splitLumps` counts solids before copying
+   (it copied every body every regen); planar faces take their normal from
+   the plane in the crease pass; large meshes are packed as typed arrays.
+   Modelled M5 socket screw: regen 1.8 s → 0.58 s; unchanged screws 0 ms.
+   Headless Playwright frames take ~450 ms with a few threaded screws
+   (SwiftShader), so harness wall times overstate the cost.
+7. **Thread feature** — DONE. Any diameter/pitch at a sketch's points
+   (`document/threadFeature.ts`): external = a threaded rod as a new body (out
+   of the plane), internal = the matching thread cut into a body (verified cut,
+   cached like a hole's). Profiles: **printable** (default; 45° flanks, 0.2P
+   flats, 0.3P deep — prints upright without supports), ISO 60°, trapezoid
+   (≈14°, 0.5P deep). Starts 1–8 (one strip per start, start k a pitch above
+   k−1), left-hand (mirrored mesh), lead-in (a chamfer at the rod's tip; a 45°
+   countersink cut at the internal mouth — warns rather than fails if that cut
+   misses). Clearance per part (default 0.15). Profile breakpoints are on a
+   per-profile grid (P/16 or P/20) and facets per turn a multiple of
+   grid × starts, so PHASE still keeps every vertex off the cut planes.
+   Dialog (shortcut J) with a magnified tooth diagram; agent op `addThread`;
+   `scripts/verify-thread.mjs` (all profiles build; a rod in its internal
+   thread doesn't touch it; an oversized one does). Not done: threading an
+   EXISTING cylindrical face (pick the face; needs axis recovery from a
+   faceted cluster), an internal lead-in by clamping, a tapered (pipe) thread.
 
 **More gear types.** Gear has spur and ring (internal) only. In rough order of
 usefulness:

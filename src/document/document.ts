@@ -23,6 +23,7 @@ import { assertNever } from "../lib/assertNever";
 import { applyDerived, circularPatternAngles, resolvePatternCount } from "./derived";
 import { DEFAULT_GEAR_PARAMS, resolveGear, type GearSettings } from "./gear";
 import { DEFAULT_HOLE_PARAMS, resolveHole, type HoleSettings } from "./hole";
+import { DEFAULT_THREAD_PARAMS, resolveThread, type ThreadSettings } from "./threadFeature";
 import { DEFAULT_SCREW_PARAMS, resolveScrew, type ScrewSettings } from "./screw";
 import type {
   BooleanFeature,
@@ -34,6 +35,7 @@ import type {
   ExtrudeFeature,
   GearFeature,
   HoleFeature,
+  ThreadFeature,
   ScrewFeature,
   ExtrudeProfile,
   Feature,
@@ -662,6 +664,50 @@ export function updateScrew(doc: Document, id: string, plane: SketchPlaneRef, se
   });
 }
 
+/** A thread at every point of `sketchId`: a threaded rod (external), or cut
+ *  into `targetId` (internal) — see document/threadFeature.ts. */
+export function addThread(
+  doc: Document,
+  sketchId: string,
+  targetId: string | undefined,
+  settings: ThreadSettings,
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "thread").length + 1;
+  const feature: ThreadFeature = {
+    id: uid(),
+    type: "thread",
+    name: `Thread ${ordinal}`,
+    suppressed: false,
+    sketchId,
+    ...(settings.side === "internal" && targetId ? { targetId } : {}),
+    ...settings,
+    params: { ...settings.params },
+    color: newBodyColor(),
+    opacity: 1,
+  };
+  return insertFeature(doc, feature);
+}
+
+export function updateThread(
+  doc: Document,
+  id: string,
+  sketchId: string,
+  targetId: string | undefined,
+  settings: ThreadSettings,
+): Document {
+  return mapFeature(doc, id, (f) => {
+    if (f.type !== "thread") return f;
+    const { targetId: _t, ...rest } = f;
+    return {
+      ...rest,
+      sketchId,
+      ...(settings.side === "internal" && targetId ? { targetId } : {}),
+      ...settings,
+      params: { ...settings.params },
+    };
+  });
+}
+
 export function addImport(doc: Document, source: string, name?: string): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "import").length + 1;
   const feature: ImportFeature = {
@@ -1058,6 +1104,7 @@ export function updateParam(doc: Document, id: string, name: string, value: stri
     if (f.type === "gear" && name in DEFAULT_GEAR_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "hole" && name in DEFAULT_HOLE_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "screw" && name in DEFAULT_SCREW_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
+    if (f.type === "thread" && name in DEFAULT_THREAD_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
     if (f.type === "plane" && name === "angle") return { ...f, angle: value };
     if (f.type === "transform") {
@@ -1772,6 +1819,9 @@ export function resolveDocument(doc: Document): ResolveResult {
       } else if (f.type === "hole") {
         const sketch = dDoc.features.find((x) => x.id === f.sketchId);
         features.push(resolveHole(f, sketch?.type === "sketch" ? sketch : undefined, scope, planeFrames));
+      } else if (f.type === "thread") {
+        const sketch = dDoc.features.find((x) => x.id === f.sketchId);
+        features.push(resolveThread(f, sketch?.type === "sketch" ? sketch : undefined, scope, planeFrames));
       } else if (f.type === "sketch" || f.type === "plane") {
         // No body of their own. A sketch is consumed by the features built on it
         // (and its derived geometry was applied into `dDoc` above); a plane is
