@@ -118,6 +118,43 @@ for (const [diameter, expectOverlap] of [
   }
 }
 
+// A rod subtracted from a gear's bore, with a clearance: the rod is a
+// generated mesh OCCT can't offset, so the tool is rebuilt grown instead.
+// Offset 0.3 (twice the rod's 0.15) leaves the cavity an Internal thread
+// would: a Ø16.4 rod then clears it, though it overlaps the un-offset cut.
+for (const [offset, expectOverlap] of [
+  [0, true],
+  [0.3, false],
+]) {
+  await op.newDocument();
+  const g = (
+    await op.applySettled({
+      op: "addGear",
+      bore: "round",
+      params: { teeth: "30", module: "2", thickness: "10", boreDiameter: "10" },
+    })
+  ).createdId;
+  const sk = (
+    await op.applySettled({ op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "point", p: [0, 0] }] })
+  ).createdId;
+  const tool = (
+    await op.applySettled({ op: "addThread", sketchId: sk, params: { diameter: 16, pitch: 2, length: 10 } })
+  ).createdId;
+  const t0 = Date.now();
+  const cut = await op.applySettled({ op: "boolean", kind: "subtract", operands: [g, tool], offset });
+  check(`gear − rod, offset ${offset}: builds (${Date.now() - t0} ms)`, cut.ok, JSON.stringify(cut));
+  const probe = (
+    await op.applySettled({ op: "addThread", sketchId: sk, params: { diameter: 16.4, pitch: 2, length: 10 } })
+  ).createdId;
+  const x = await op.applySettled({ op: "boolean", kind: "intersect", operands: [cut.createdId, probe] });
+  check(
+    `gear − rod, offset ${offset}: a Ø16.4 rod ${expectOverlap ? "overlaps" : "clears"} the cut`,
+    x.ok === expectOverlap,
+    JSON.stringify(x).slice(0, 160),
+  );
+}
+check("every face meshed (booleans)", unmeshed.length === 0, unmeshed.join("\n"));
+
 // The dialog: J opens it on the newest sketch with points.
 await op.newDocument();
 await op.applySettled({ op: "addSketch", plane: { datum: "top" }, entities: [{ shape: "point", p: [0, 0] }] });

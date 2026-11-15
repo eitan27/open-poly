@@ -335,7 +335,11 @@ frame count that shows the motion you care about.
   `"iso"`, `"trapezoid"`. Pitch 1.5 mm and up for FDM; `starts` 2–4 for a lid
   that closes in a fraction of a turn (both halves need the same starts and
   hand). To put a printed thread on a part, make the rod and `boolean` union
-  it; for a nut, sketch on the part's face and cut an internal thread.
+  it; for a nut, sketch on the part's face and cut an internal thread. A rod
+  (or a screw) can also be `boolean` subtracted with an `offset`: it's
+  rebuilt grown by the offset, so offset 2 × the rod's clearance leaves the
+  cavity an internal thread would. Subtract before moving or patterning it —
+  a moved thread can't be offset.
 - **Two-sided / centered feature:** `add_extrude` with `extent: "symmetric"` —
   the profile extrudes `distance` equally both ways (centered on the sketch).
 - **Extrude up to a face:** `add_extrude` with `extent: "upToFace"` and

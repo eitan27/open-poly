@@ -196,6 +196,15 @@ type Body = NamedShape & {
    *  the things whose lumps aren't parts in any useful sense: extruded text
    *  (one solid per glyph) and the live preview tool. */
   noSplit?: boolean;
+  /** Built facet by facet (a thread, a screw, or a body one was booleaned
+   *  into): booleans on it use the tight THREAD_FUZZY, and skip the
+   *  coplanar-face merge. */
+  faceted?: boolean;
+  /** Rebuild this body grown by `d` all round — the boolean clearance offset
+   *  for a generated body, whose facets OCCT's offsetter can't follow. Valid
+   *  only while the body's key is still `key`: a transform or anything else
+   *  that changes the body changes its key, and the offsetter is used again. */
+  regrow?: { key: string; build: (d: number) => NamedShape };
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1435,9 +1444,14 @@ function booleanNamed(
  *  the correct solid at the next, so one attempt isn't enough. Returns the first
  *  result with a solid in it; if every tolerance degenerates, returns the last
  *  one and lets the caller report the failure. */
-function booleanRetrying(op: "fuse" | "cut" | "common", base: NamedShape, tool: NamedShape): NamedShape {
+function booleanRetrying(
+  op: "fuse" | "cut" | "common",
+  base: NamedShape,
+  tool: NamedShape,
+  fuzzies: readonly number[] = BOOL_FUZZY_FALLBACKS,
+): NamedShape {
   let last: NamedShape | null = null;
-  for (const fuzzy of BOOL_FUZZY_FALLBACKS) {
+  for (const fuzzy of fuzzies) {
     const next = booleanNamed(op, base, tool, fuzzy);
     if (countSolids(next.shape) > 0) {
       if (last) last.shape.delete();
@@ -3675,6 +3689,11 @@ const BOOLEAN_OFFSET_FAILED =
   "extrudes; freeform (lofted/swept) tools usually can't be offset. Set the offset to 0, or " +
   "build the tool slightly larger instead.";
 
+const BOOLEAN_OFFSET_FACETED =
+  "Couldn't offset this tool for the clearance: a thread or screw can only be grown as it was " +
+  "built, before it's moved, patterned or cut. Put the offset on a boolean with the thread itself, " +
+  "or set its clearance in the Thread feature instead.";
+
 /** A subtract tool grown (or, negative `d`, shrunk) by `d` all round — the
  *  boolean's clearance offset. Uses the same OCCT offsetter Shell does
  *  (`MakeOffsetShape.PerformByJoin`), but with an INTERSECTION join: sharp
@@ -3746,6 +3765,7 @@ function offsetToolShape(tool: NamedShape, d: number): NamedShape {
 function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[], toolOffset = 0): NamedShape {
   const ops = operandIds.map((id) => requireBody(bodies, id));
   if (ops.length < 2) throw new Error("A boolean needs at least two operands.");
+  const faceted = ops.some((b) => b.faceted);
   let acc: NamedShape = { shape: ops[0].shape, names: ops[0].names };
   // Volume integration (BRepGProp) is expensive on complex solids; a UNION's
   // validity uses countSolids, not volume, so compute volumes lazily and only
@@ -3759,8 +3779,16 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[], tool
     let offsetTool: NamedShape | null = null;
     let next: NamedShape;
     try {
-      if (op === "subtract" && toolOffset !== 0) offsetTool = offsetToolShape(ops[i], toolOffset);
-      next = booleanRetrying(BOOL_OCC[op], acc, offsetTool ?? ops[i]);
+      if (op === "subtract" && toolOffset !== 0) {
+        const re = ops[i].regrow;
+        if (re && re.key === ops[i].key) offsetTool = re.build(toolOffset);
+        else if (ops[i].faceted) throw new Error(BOOLEAN_OFFSET_FACETED);
+        else offsetTool = offsetToolShape(ops[i], toolOffset);
+      }
+      // A thread's facets sit a few hundredths apart along its axis, right at
+      // BOOL_FUZZY — which snaps them together (see threadBoolean).
+      const fuzzies = faceted ? THREAD_FUZZIES : BOOL_FUZZY_FALLBACKS;
+      next = booleanRetrying(BOOL_OCC[op], acc, offsetTool ?? ops[i], fuzzies);
     } catch (e) {
       offsetTool?.shape.delete();
       if (accIsIntermediate) acc.shape.delete();
@@ -4492,6 +4520,7 @@ function threadSolid(t: ThreadResolved, o: V3, down: V3, u: V3, id: string, segm
 }
 
 const THREAD_FUZZY = 1e-5;
+const THREAD_FUZZIES = [THREAD_FUZZY, 0] as const;
 
 /** Fuse or cut a thread into `base`, checking the result. OCCT's boolean
  *  between a faceted helix and a solid occasionally misses the intersection
@@ -4530,7 +4559,30 @@ function buildScrewFeature(feature: Extract<ResolvedFeature, { type: "screw" }>,
     entry = screwBody(feature);
     builderCache.set(key, entry);
   }
-  bodies.push({ id: feature.id, key, ...sharedNamed(entry) });
+  bodies.push({
+    id: feature.id,
+    key,
+    faceted: true,
+    regrow: { key, build: (d) => screwBody(grownScrew(feature, d)) },
+    ...sharedNamed(entry),
+  });
+}
+
+/** A screw grown by `d` all round, as a clearance tool: every radius out by
+ *  `d` (the hex head's flats too, the thread's whole profile), and no socket
+ *  — subtracted, a socket would leave a hex post standing in the pocket.
+ *  The ends stay put: the head still seats where the screw's does. */
+function grownScrew(
+  feature: Extract<ResolvedFeature, { type: "screw" }>,
+  d: number,
+): Extract<ResolvedFeature, { type: "screw" }> {
+  return {
+    ...feature,
+    profile: feature.profile.map(([r, z]) => [r > 1e-9 ? Math.max(1e-3, r + d) : r, z]),
+    hexHead: feature.hexHead && { ...feature.hexHead, across: feature.hexHead.across + 2 * d },
+    socket: undefined,
+    thread: feature.thread && { ...feature.thread, offset: feature.thread.offset + d },
+  };
 }
 
 /** A second handle on a cached shape, sharing its topology — not the deep
@@ -4601,7 +4653,12 @@ function buildThreadFeature(feature: Extract<ResolvedFeature, { type: "thread" }
       entry = threadRods(feature);
       builderCache.set(key, entry);
     }
-    bodies.push({ id: feature.id, key, ...sharedNamed(entry) });
+    // Grown, the whole profile moves out radially — what an internal thread
+    // does with its clearance, so a rod cut into a bore with offset 2 × its
+    // clearance leaves the same cavity an Internal thread would.
+    const regrow = (d: number) =>
+      threadRods({ ...feature, thread: { ...feature.thread, offset: feature.thread.offset + d } });
+    bodies.push({ id: feature.id, key, faceted: true, regrow: { key, build: regrow }, ...sharedNamed(entry) });
     return;
   }
   if (feature.previewTool) {
@@ -4675,6 +4732,7 @@ function buildThreadFeature(feature: Extract<ResolvedFeature, { type: "thread" }
   target.shape = next.shape;
   target.names = next.names;
   target.key = contentKey(feature, [target.key]);
+  target.faceted = true;
 }
 
 function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, ctx: BuildContext): void {
@@ -4783,6 +4841,7 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
   t.shape = next.shape;
   t.names = next.names;
   t.key = contentKey(feature, [t.key]);
+  if (feature.thread) t.faceted = true;
 }
 
 function buildDressUpFeature(feature: Extract<ResolvedFeature, { type: "dressup" }>, ctx: BuildContext): void {
@@ -4927,9 +4986,15 @@ function buildBooleanFeature(feature: Extract<ResolvedFeature, { type: "boolean"
   const key = contentKey(feature, operandKeys);
   // Unify inside the cached builder (so it runs only on a cache miss and the
   // merged result is what's stored) — no black seam where operands met.
-  const result = buildCached(key, used, () =>
-    unifyBody(combineBodies(feature.op, feature.operands, bodies, feature.offset ?? 0)),
-  );
+  // ...except where a faceted body (a thread, a screw) took part: its
+  // thousands of facets have no coplanar neighbours to merge, and the pass
+  // over them was 1.4 s of a 2 s thread cut.
+  const operandBodies = feature.operands.map((id) => requireBody(bodies, id));
+  const faceted = operandBodies.some((b) => b.faceted);
+  const result = buildCached(key, used, () => {
+    const c = combineBodies(feature.op, feature.operands, bodies, feature.offset ?? 0);
+    return faceted ? c : unifyBody(c);
+  });
   // "Keep tools" consumes only the base: the tools stay in the running set,
   // under their own ids and at their modelled (un-offset) size.
   const operandSet = new Set(feature.keepTools ? feature.operands.slice(0, 1) : feature.operands);
@@ -4940,7 +5005,7 @@ function buildBooleanFeature(feature: Extract<ResolvedFeature, { type: "boolean"
     else remaining.push(b);
   }
   bodies.length = 0;
-  bodies.push(...remaining, { id: feature.id, key, ...result });
+  bodies.push(...remaining, { id: feature.id, key, faceted, ...result });
 }
 
 function buildTransformFeature(feature: Extract<ResolvedFeature, { type: "transform" }>, ctx: BuildContext): void {
@@ -4971,7 +5036,7 @@ function buildTransformFeature(feature: Extract<ResolvedFeature, { type: "transf
     // Keep the original; add the transformed copy as a NEW body keyed by
     // this feature (transformNamed builds a fresh shape, never consuming
     // the target).
-    bodies.push({ id: feature.id, key, ...res });
+    bodies.push({ id: feature.id, key, faceted: target.faceted, ...res });
   } else {
     // Move the target in place, keeping its id and names.
     target.shape.delete();
@@ -4987,7 +5052,7 @@ function buildMirrorFeature(feature: Extract<ResolvedFeature, { type: "mirror" }
   // mirrored body as a NEW body keyed by this feature.
   const src = requireBody(bodies, feature.targetId);
   const res = mirrorNamed(src, feature.origin, feature.normal, feature.id);
-  bodies.push({ id: feature.id, key: contentKey(feature, [src.key]), ...res });
+  bodies.push({ id: feature.id, key: contentKey(feature, [src.key]), faceted: src.faceted, ...res });
 }
 
 function buildPatternFeature(feature: Extract<ResolvedFeature, { type: "pattern" }>, ctx: BuildContext): void {
@@ -5014,7 +5079,7 @@ function buildPatternFeature(feature: Extract<ResolvedFeature, { type: "pattern"
   }
   const key = contentKey(feature, depKeys);
   const res = buildCached(key, used, () => patternNamed(src, feature, axisOrigin, axisDir));
-  bodies.push({ id: feature.id, key, ...res });
+  bodies.push({ id: feature.id, key, faceted: src.faceted, ...res });
 }
 
 function buildRevolveFeature(feature: Extract<ResolvedFeature, { type: "revolve" }>, ctx: BuildContext): void {
