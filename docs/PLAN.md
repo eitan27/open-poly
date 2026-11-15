@@ -99,7 +99,7 @@ order; each is its own commit:
    Dialog has a to-scale cross-section diagram; focusing a field (or hovering
    it) lights its dimension, clicking a dimension focuses its field. Agent op
    `addHole`. Shortcut D. Not done: up-to-next extent, picking a subset of the
-   sketch's points, modelled threads, inch sizes.
+   sketch's points, inch sizes.
 3. **Gear diagram** — DONE. The Gear dialog draws the whole gear as built
    and one tooth zoomed (turned tip-up) with tip / pitch / base / root circles
    and the pressure angle at the pitch point; same highlight/click-to-focus
@@ -107,14 +107,43 @@ order; each is its own commit:
    primitives in `ui/diagram/Dims.tsx`.
 4. **Screw** — DONE. ISO metric socket cap (4762), button (7380), countersunk
    (10642) and hex (4017) heads, M2–M12, length under the head (overall for
-   countersunk), cosmetic thread. Placed either in a Hole feature (one screw per
+   countersunk), modelled or cosmetic thread (item 5). Placed either in a Hole feature (one screw per
    hole, a metric hole's size wins, seated on a counterbore floor / flush in a
    countersink, follows the hole's direction) or on a plane at a centre X/Y.
    New body per feature (sub-parts keep the feature's colour). Kernel reuses
    Hole's faceted solid of revolution; hex head is a prism fused on, the socket
    is cut. Dialog with a to-scale side view. Agent op `addScrew`. Shortcut U.
-   Not done: nuts/washers, modelled threads, auto length (to fit the stack),
-   inch sizes.
+   Not done: nuts/washers, auto length (to fit the stack), inch sizes.
+5. **Modelled threads** — DONE. Screws and metric tapped holes get a real ISO
+   68-1 thread by default (`thread: "modelled"`; old documents stay cosmetic).
+   Built the way the printable-thread libraries do it (OpenSCAD threads.scad,
+   BOSL2): not a helical sweep (B-spline faces this OCCT can't boolean) but a
+   polyhedron of planar facets (`geom/thread.ts`): the basic trapezoid (P/8
+   crest flat, P/4 root flat, 60° flanks) swept as a helical strip of four
+   bands, 32–64 facets a turn (a multiple of 16), clipped flat at both ends,
+   with a 45° lead-in chamfer at a screw's tip. The worker turns it into a
+   solid from SHARED vertices/edges (`meshSolid`, TopoDS_Builder — no sewing)
+   on planes carrying the mesh's own normals. Clearance (`params.clearance`,
+   default 0.1 mm per part) shifts the profile radially: −c for a screw, +c for
+   a hole's cavity, same phase, so a screw in a tapped hole nests with an even
+   0.2 mm radial gap (verified: their intersection is empty; a cosmetic shank's
+   isn't). A modelled tapped hole's drill is capped at the cavity's minor
+   diameter so the crests stay whole. Hard-won details:
+   - Thread booleans run at fuzzy 1e-5, not BOOL_FUZZY (0.01): vertex rows sit
+     P/64 from the head floor, right at the fuzz, which snapped them into
+     two-edged slivers the mesher dropped and made M4/M5 miss the fuse.
+   - The helix starts half a station past θ = 0 so no vertex lies ON z = 0
+     (the head floor / the hole's mouth).
+   - Every thread boolean is checked (one solid after a fuse; material removed
+     after a cut) and retried at 48 then 64 facets a turn.
+   - Speed: socket/hex booleaned on the small head BEFORE the thread is fused;
+     no face-merging pass after it (2 s of 10); screws cached by builder key,
+     hole cuts cached like dress-ups; a feature's screws/cavities are built
+     once and translated. ~1–2 s per new screw or hole set.
+   - Printing guidance in the dialog tooltips / modeling guide: print screws
+     standing on the head; 0.15–0.2 clearance for a tight printer; prefer M5+.
+     Not done: thread on custom-size holes (needs a pitch field), partial-length
+     threads (a plain shank under the head), nut feature, left-hand threads.
 
 **More gear types.** Gear has spur and ring (internal) only. In rough order of
 usefulness:

@@ -477,6 +477,10 @@ export const operationSchema = z.discriminatedUnion("op", [
     /** The body to drill. Defaults to the body the sketch was drawn on. */
     targetId: z.string().optional(),
     holeType: z.enum(["simple", "counterbore", "countersink", "tapped"]).optional(),
+    /** Tapped, metric: "modelled" (default) cuts a real ISO thread, grown by
+     *  params.clearance (default 0.1 mm) so a printed screw fits; "cosmetic"
+     *  drills the tap drill only. */
+    thread: z.enum(["modelled", "cosmetic"]).optional(),
     /** "M2" | "M2.5" | "M3" | "M4" | "M5" | "M6" | "M8" | "M10" | "M12" (ISO
      *  table: clearance / tap drill / counterbore / countersink sizes), or
      *  "custom" to give the diameters yourself. Default M3. */
@@ -488,7 +492,7 @@ export const operationSchema = z.discriminatedUnion("op", [
     flip: z.boolean().optional(),
     /** Custom sizes / blind depth: diameter, depth, counterboreDiameter,
      *  counterboreDepth, countersinkDiameter, countersinkAngle, tipAngle (0 =
-     *  flat bottom; default 118), threadDepth. */
+     *  flat bottom; default 118), threadDepth, clearance (modelled thread). */
     params: z.record(z.string(), expr).optional(),
     name: z.string().optional(),
   }),
@@ -523,6 +527,10 @@ export const operationSchema = z.discriminatedUnion("op", [
   z.object({
     op: z.literal("addScrew"),
     head: z.enum(["socket", "button", "flat", "hex"]).optional(),
+    /** "modelled" (default): a real ISO thread, shrunk by params.clearance
+     *  (default 0.1 mm) so it fits a printed nut/tapped hole; "cosmetic": a
+     *  plain shank at the nominal diameter. */
+    thread: z.enum(["modelled", "cosmetic"]).optional(),
     /** "M2" … "M12". Ignored when `holeId` names a metric hole (it follows the hole). */
     size: z.string().optional(),
     /** Put one screw in every hole of this Hole feature (seated on a
@@ -532,7 +540,7 @@ export const operationSchema = z.discriminatedUnion("op", [
      *  against its normal (flip reverses), at params.centerX/centerY. */
     plane: planeRefSchema.optional(),
     flip: z.boolean().optional(),
-    /** length (under the head; overall for a countersunk head), centerX, centerY. */
+    /** length (under the head; overall for a countersunk head), centerX, centerY, clearance. */
     params: z.record(z.string(), expr).optional(),
     name: z.string().optional(),
   }),

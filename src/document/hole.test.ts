@@ -155,3 +155,49 @@ describe("holeCenters + resolve", () => {
     expect((updateParam(doc, id, "depth", "7").features.at(-1) as HoleFeature).params.depth).toBe("7");
   });
 });
+
+describe("modelled tapped thread", () => {
+  it("cuts a real thread for a metric tapped hole, its drill no wider than the grown minor diameter", () => {
+    const d = holeDims(settings({ holeType: "tapped", size: "M8", thread: "modelled" }, { clearance: "0" }), {});
+    expect(d.modelledThread).toBe(true);
+    // M8 tap drill is 6.8; the basic minor diameter is 8 − 1.0825·1.25 ≈ 6.647.
+    expect(d.diameter).toBeCloseTo(6.647, 3);
+    const grown = holeDims(settings({ holeType: "tapped", size: "M8", thread: "modelled" }, { clearance: "0.1" }), {});
+    expect(grown.diameter).toBe(6.8);
+  });
+
+  it("stays cosmetic for a custom size or an old hole", () => {
+    expect(holeDims(settings({ holeType: "tapped", size: "custom", thread: "modelled" }), {}).modelledThread).toBe(
+      false,
+    );
+    expect(holeDims(settings({ holeType: "tapped", size: "M4", thread: undefined }), {}).modelledThread).toBe(false);
+  });
+
+  it("resolves with the cavity's thread, starting above the mouth", () => {
+    const base: Document = { ...createDocument() };
+    const withSketch: Document = {
+      ...base,
+      features: [
+        ...base.features,
+        {
+          id: "s",
+          type: "sketch",
+          name: "Sketch",
+          suppressed: false,
+          plane: { kind: "datum", id: "plane-top" },
+          entities: [{ type: "point", id: "a", p: [0, 0] }],
+          constraints: [],
+        } as SketchFeature,
+      ],
+    };
+    const { doc, id } = addHole(
+      withSketch,
+      "s",
+      "body",
+      settings({ holeType: "tapped", size: "M5", thread: "modelled" }),
+    );
+    const rf = resolveDocument(doc).features.find((f) => f.id === id);
+    expect(rf).toMatchObject({ thread: { d: 5, pitch: 0.8, offset: 0.1, tipChamfer: false } });
+    expect((rf as { thread: { z0: number } }).thread.z0).toBeLessThan(0);
+  });
+});

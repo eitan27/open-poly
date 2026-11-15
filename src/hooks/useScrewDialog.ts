@@ -86,6 +86,7 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
       defaultPlane: false,
       settings: {
         head: f.head,
+        ...(f.thread ? { thread: f.thread } : {}),
         size: f.size,
         flip: f.flip,
         ...(f.holeId ? { holeId: f.holeId } : {}),

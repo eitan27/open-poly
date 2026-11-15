@@ -3,10 +3,11 @@
     "date": "2026-11-15",
     "items": [
       "Holes and screws: counterbored, countersunk and tapped holes in metric sizes, and screws that drop straight into them",
+      "Screws and tapped holes get real threads you can 3D print, with a clearance so they fit",
       "Boolean subtract and Extrude Remove take a clearance offset, for parts that need to fit",
       "Use the keyboard shortcuts D (hole) and U (screw) to try them out"
     ],
-    "bold": ["Holes and screws", "clearance offset", " D ", " U "]
+    "bold": ["Holes and screws", "real threads", "clearance offset", " D ", " U "]
   },
   {
     "date": "2026-11-13",

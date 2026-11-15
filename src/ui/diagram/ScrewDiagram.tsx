@@ -1,8 +1,11 @@
 // The Screw dialog's side view: the screw to scale, head up, with the head's
 // size and height, the shank diameter, the length, and (for socket heads) the
-// hex key, each lit when its field has focus. The thread is drawn as the
-// conventional thin line at the minor diameter, since it is cosmetic.
-import { screwProfile, socketDepth, type ScrewDims } from "../../document/screw";
+// hex key, each lit when its field has focus. A modelled thread is drawn as
+// its real teeth (the far side half a pitch on, as a section shows it); a
+// cosmetic one as the conventional thin line at the minor diameter.
+import { headBottom, screwProfile, socketDepth, type ScrewDims } from "../../document/screw";
+import { minorDiameter } from "../../geom/thread";
+import { threadSection } from "./threadSection";
 import { DimGroup, LinearDim, type P } from "./Dims";
 import { fmtDim } from "./fmtDim";
 import "./Diagram.css";
@@ -17,11 +20,13 @@ const LEFT = 36;
 
 interface Props {
   dims: ScrewDims;
+  /** Modelled thread's clearance; undefined for a cosmetic thread. */
+  clearance?: number;
   active: string | null;
   onPick?: (name: string) => void;
 }
 
-export function ScrewDiagram({ dims: d, active, onPick }: Props) {
+export function ScrewDiagram({ dims: d, clearance, active, onPick }: Props) {
   // Lay the screw on its side: depth runs left → right, radius up/down.
   const head = d.head === "flat" ? 0 : d.headHeight;
   const total = head + d.length;
@@ -31,14 +36,32 @@ export function ScrewDiagram({ dims: d, active, onPick }: Props) {
   const cy = DH / 2 - 4;
   const pt = (z: number, r: number): P => [x0 + z * s, cy - r * s];
   // A hex head's shank starts inside the prism so the two fuse; drawn, it starts at the seat.
-  const prof = screwProfile(d).map(([r, z]): [number, number] => [r, Math.max(z, d.head === "hex" ? 0 : z)]);
-  const outline = [
-    ...prof.map(([r, z]) => pt(z, r)),
-    ...prof
-      .slice(1, -1)
-      .reverse()
-      .map(([r, z]) => pt(z, -r)),
-  ];
+  const modelled = clearance !== undefined;
+  let outline: P[];
+  if (modelled) {
+    const c = clearance;
+    const start = headBottom(d);
+    const rootR = minorDiameter(d.d, d.pitch) / 2 - c;
+    // The lead-in chamfer at the tip, as in geom/thread.ts.
+    const teeth = (phase: number) =>
+      threadSection(d.d / 2 - c, rootR, d.pitch, start, d.length, phase).map(([r, z]): [number, number] => [
+        Math.min(r, rootR + (d.length - z)),
+        z,
+      ]);
+    const headTop = d.head === "hex" ? [[0, 0] as [number, number]] : screwProfile(d, true).slice(0, -1);
+    const topSide: [number, number][] = [...headTop, ...teeth(0), [0, d.length]];
+    const bottomSide = [...headTop.slice(1), ...teeth(d.pitch / 2)].reverse();
+    outline = [...topSide.map(([r, z]) => pt(z, r)), ...bottomSide.map(([r, z]) => pt(z, -r))];
+  } else {
+    const prof = screwProfile(d).map(([r, z]): [number, number] => [r, Math.max(z, d.head === "hex" ? 0 : z)]);
+    outline = [
+      ...prof.map(([r, z]) => pt(z, r)),
+      ...prof
+        .slice(1, -1)
+        .reverse()
+        .map(([r, z]) => pt(z, -r)),
+    ];
+  }
   const path = outline.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`).join(" ") + " Z";
   const hexHalf = d.headDiameter / 2; // a hex head seen across its flats, as dimensioned
   const minor = d.d / 2 - d.pitch * 0.6;
@@ -68,20 +91,24 @@ export function ScrewDiagram({ dims: d, active, onPick }: Props) {
           strokeDasharray="2 1.5"
         />
       )}
-      <line
-        className="dg-thread"
-        x1={pt(0.3, 0)[0]}
-        y1={cy - minor * s}
-        x2={pt(d.length - d.pitch, 0)[0]}
-        y2={cy - minor * s}
-      />
-      <line
-        className="dg-thread"
-        x1={pt(0.3, 0)[0]}
-        y1={cy + minor * s}
-        x2={pt(d.length - d.pitch, 0)[0]}
-        y2={cy + minor * s}
-      />
+      {!modelled && (
+        <>
+          <line
+            className="dg-thread"
+            x1={pt(0.3, 0)[0]}
+            y1={cy - minor * s}
+            x2={pt(d.length - d.pitch, 0)[0]}
+            y2={cy - minor * s}
+          />
+          <line
+            className="dg-thread"
+            x1={pt(0.3, 0)[0]}
+            y1={cy + minor * s}
+            x2={pt(d.length - d.pitch, 0)[0]}
+            y2={cy + minor * s}
+          />
+        </>
+      )}
       <line className="dg-axis" x1={pt(top, 0)[0] - 6} y1={cy} x2={pt(d.length, 0)[0] + 6} y2={cy} />
 
       <DimGroup name="size" active={active} onPick={onPick}>
@@ -116,7 +143,7 @@ export function ScrewDiagram({ dims: d, active, onPick }: Props) {
         </text>
       )}
       <text className="dg-label" x={6} y={H - 5}>
-        {d.size}×{fmtDim(d.pitch)} · thread cosmetic
+        {d.size}×{fmtDim(d.pitch)} · {modelled ? `thread modelled, −${fmtDim(clearance)}` : "thread cosmetic"}
       </text>
     </svg>
   );

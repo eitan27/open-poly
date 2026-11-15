@@ -80,6 +80,7 @@ export function useHoleDialog(deps: HoleDialogDeps): HoleDialogApi {
       targetId: feature.targetId ?? null,
       settings: {
         holeType: feature.holeType,
+        ...(feature.thread ? { thread: feature.thread } : {}),
         size: feature.size,
         fit: feature.fit,
         extent: feature.extent,

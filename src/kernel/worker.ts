@@ -44,12 +44,14 @@ import type {
   ResolvedEdgeRef,
   ResolvedFaceRef,
   ResolvedFeature,
+  ThreadResolved,
   ResolvedFrame,
   ResolvedProfile,
 } from "./types";
 import { DRESSUP_DELTA_IDS, dressUpDeltaBase } from "./types";
 import { builderKey, contentKey } from "./cache";
 import { CIRCLE_FACETS, circleStations } from "../geom/circleFacets";
+import { threadMesh, type ThreadFaceKind, type ThreadMesh } from "../geom/thread";
 import { expandToChains, expansionCount } from "../geom/edgeChains";
 import { fitRing } from "../geom/ringFit";
 import {
@@ -4349,6 +4351,99 @@ function weldNamed(faces: { face: Face; name: string }[]): NamedShape {
   return { shape: solid, names };
 }
 
+/** A closed polygon mesh (geom/thread.ts) as a solid, built the way an STL
+ *  becomes a BRep: one vertex per mesh vertex and one edge per mesh edge, SHARED
+ *  by the two faces either side, so the shell is closed by construction and
+ *  needs no sewing (sewing thousands of thread facets is what makes the naive
+ *  makePolygon + makeSolid route slow). Each face is made on a plane carrying
+ *  the mesh's own outward normal, so the orientations agree too.
+ *  Local (x, y, z) maps to (u, down × u, down) — right-handed, so a right-hand
+ *  thread stays one. Faces are named by `nameOf(kind, index)`. */
+function meshSolid(
+  mesh: ThreadMesh,
+  o: V3,
+  down: V3,
+  u: V3,
+  nameOf: (kind: ThreadFaceKind, i: number) => string,
+): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const e2 = vcross(down, u);
+  const world = mesh.vertices.map(([x, y, z]): V3 => [
+    o[0] + u[0] * x + e2[0] * y + down[0] * z,
+    o[1] + u[1] * x + e2[1] * y + down[1] * z,
+    o[2] + u[2] * x + e2[2] * y + down[2] * z,
+  ]);
+  const verts = world.map((p) => {
+    const pnt = new oc.gp_Pnt_3(p[0], p[1], p[2]);
+    const mv = new oc.BRepBuilderAPI_MakeVertex(pnt);
+    const v = mv.Vertex();
+    mv.delete();
+    pnt.delete();
+    return v;
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const edges = new Map<number, any>();
+  const nv = verts.length;
+  const edgeOf = (a: number, b: number) => {
+    const k = a < b ? a * nv + b : b * nv + a;
+    let e = edges.get(k);
+    if (!e) {
+      const me = new oc.BRepBuilderAPI_MakeEdge_2(verts[Math.min(a, b)], verts[Math.max(a, b)]);
+      e = me.Edge();
+      me.delete();
+      edges.set(k, e);
+    }
+    return e;
+  };
+  const shell = new oc.TopoDS_Shell();
+  const builder = new oc.TopoDS_Builder();
+  builder.MakeShell(shell);
+  const faceNames: string[] = [];
+  const counts = new Map<ThreadFaceKind, number>();
+  for (const { loop, kind } of mesh.faces) {
+    const mw = new oc.BRepBuilderAPI_MakeWire_1();
+    for (let i = 0; i < loop.length; i++) mw.Add_1(edgeOf(loop[i], loop[(i + 1) % loop.length]));
+    const wire = mw.Wire();
+    mw.delete();
+    // Newell's normal of the loop: outward, since the mesh winds that way.
+    let nx = 0;
+    let ny = 0;
+    let nz = 0;
+    for (let i = 0; i < loop.length; i++) {
+      const a = world[loop[i]];
+      const b = world[loop[(i + 1) % loop.length]];
+      nx += (a[1] - b[1]) * (a[2] + b[2]);
+      ny += (a[2] - b[2]) * (a[0] + b[0]);
+      nz += (a[0] - b[0]) * (a[1] + b[1]);
+    }
+    const p0 = world[loop[0]];
+    const pnt = new oc.gp_Pnt_3(p0[0], p0[1], p0[2]);
+    const dir = new oc.gp_Dir_4(nx, ny, nz);
+    const pln = new oc.gp_Pln_3(pnt, dir);
+    const mf = new oc.BRepBuilderAPI_MakeFace_16(pln, wire, true);
+    if (!mf.IsDone()) throw new Error("thread: a facet could not be built");
+    builder.Add(shell, mf.Face());
+    mf.delete();
+    pln.delete();
+    dir.delete();
+    pnt.delete();
+    const n = counts.get(kind) ?? 0;
+    counts.set(kind, n + 1);
+    faceNames.push(nameOf(kind, n));
+  }
+  const ms = new oc.BRepBuilderAPI_MakeSolid_3(shell);
+  const solid = cast(ms.Solid()) as Shape3D;
+  ms.delete();
+  builder.delete();
+  for (const v of verts) v.delete();
+  // Faces come back in the order they were added.
+  const names = new Map<number, string>();
+  solid.faces.forEach((f, i) => names.set(f.hashCode, faceNames[i]));
+  if (measureVolume(solid) <= 0) throw new Error("thread: the thread solid came out inside-out");
+  return { shape: solid, names };
+}
+
 /** A hexagonal prism about the axis through `o` along `down`, `across` its
  *  flats, from depth z0 to z1 — a hex screw head or the socket cut into one. */
 function hexPrismShape(o: V3, down: V3, u: V3, v: V3, across: number, z0: number, z1: number, id: string): NamedShape {
@@ -4374,41 +4469,128 @@ function hexPrismShape(o: V3, down: V3, u: V3, v: V3, across: number, z0: number
   return weldNamed(faces);
 }
 
+/** A copy of a named solid moved by `d`, its names re-prefixed `from` → `to`
+ *  (faces keep their order through a transform, so names follow by index). */
+function translatedNamed(src: NamedShape, d: V3, from: string, to: string): NamedShape {
+  const byIndex = src.shape.faces.map((f) => src.names.get(f.hashCode));
+  const shape = src.shape.clone().translate(d[0], d[1], d[2]) as Shape3D;
+  const names = new Map<number, string>();
+  shape.faces.forEach((f, i) => {
+    const nm = byIndex[i];
+    if (nm) names.set(f.hashCode, nm.startsWith(from) ? to + nm.slice(from.length) : nm);
+  });
+  return { shape, names };
+}
+
+/** The frame point at sketch (u, v). */
+function framePoint(frame: { origin: V3; uAxis: V3; vAxis: V3 }, cu: number, cv: number): V3 {
+  return [
+    frame.origin[0] + frame.uAxis[0] * cu + frame.vAxis[0] * cv,
+    frame.origin[1] + frame.uAxis[1] * cu + frame.vAxis[1] * cv,
+    frame.origin[2] + frame.uAxis[2] * cu + frame.vAxis[2] * cv,
+  ];
+}
+
+/** A modelled thread as a solid about the axis through `o` along `down`, its
+ *  phase set by `u` (θ = 0) and depth 0 at `o` — the same for a screw and the
+ *  tapped hole it sits in, so the two nest. */
+function threadSolid(t: ThreadResolved, o: V3, down: V3, u: V3, id: string, segments?: number): NamedShape {
+  return meshSolid(threadMesh({ ...t, segments }), o, down, u, (kind, i) =>
+    kind === "thread" ? `${id}/thread${i}` : `${id}/thread${kind === "start" ? "Start" : "End"}`,
+  );
+}
+
+const THREAD_FUZZY = 1e-5;
+
+/** Fuse or cut a thread into `base`, checking the result. OCCT's boolean
+ *  between a faceted helix and a solid occasionally misses the intersection
+ *  outright for one facet density and not another (M4 at 32 facets a turn
+ *  fused into two separate lumps; at 48 or 64 it joins), so a result that
+ *  fails `ok` is retried finer. `base` is left untouched; null when every
+ *  density fails. */
+function threadBoolean(
+  op: "fuse" | "cut",
+  base: NamedShape,
+  tool: (segments?: number) => NamedShape,
+  ok: (result: NamedShape) => boolean,
+): NamedShape | null {
+  for (const segments of [undefined, 48, 64]) {
+    const t = tool(segments);
+    // Tight tolerance, not BOOL_FUZZY: thread facets are a few hundredths of
+    // a mm apart along the axis (P/64 between a vertex row and the head's
+    // floor), right at the 0.01 fuzz — which snapped rows together, left
+    // two-edged sliver faces the mesher drops, and for M4/M5 missed the fuse.
+    // All-planar facets need no fuzz to intersect cleanly.
+    const r = booleanNamed(op, base, t, THREAD_FUZZY);
+    t.shape.delete();
+    if (ok(r)) return r;
+    r.shape.delete();
+  }
+  return null;
+}
+
 function buildScrewFeature(feature: Extract<ResolvedFeature, { type: "screw" }>, ctx: BuildContext): void {
-  const { bodies } = ctx;
+  const { bodies, used } = ctx;
+  const key = builderKey(feature);
+  bodies.push({ id: feature.id, key, ...buildCached(key, used, () => screwBody(feature)) });
+}
+
+/** The screws of a feature, as one shape. Order matters for speed: the hex
+ *  head and the socket are booleaned on the small revolved head FIRST, and the
+ *  thread (thousands of facets) is fused on last, with no face-merging pass
+ *  after it — a helix has no coplanar neighbours to merge, and that pass was
+ *  most of the time. */
+function screwBody(feature: Extract<ResolvedFeature, { type: "screw" }>): NamedShape {
   const { frame } = feature;
   // Into the plane against its normal, like a hole; Flip reverses.
   const sg = feature.flip ? 1 : -1;
   const down: V3 = [frame.normal[0] * sg, frame.normal[1] * sg, frame.normal[2] * sg];
+  const idOf = (i: number) => (feature.centers.length > 1 ? `${feature.id}/n${i}` : feature.id);
+  const combine = (a: NamedShape, b: NamedShape, op: "fuse" | "cut", unify = true): NamedShape => {
+    const raw = booleanNamed(op, a, b);
+    const r = unify ? unifyBody(raw) : raw;
+    a.shape.delete();
+    b.shape.delete();
+    return r;
+  };
+  // Build the first screw; the rest are copies of it.
+  const o0 = framePoint(frame, ...feature.centers[0]);
+  const id0 = idOf(0);
+  let screw: NamedShape | null = feature.profile.length
+    ? revolvedPolyhedron(o0, down, frame.uAxis, frame.vAxis, feature.profile, id0)
+    : null;
+  if (feature.hexHead) {
+    const { across, z0, z1 } = feature.hexHead;
+    const head = hexPrismShape(o0, down, frame.uAxis, frame.vAxis, across, z0, z1, `${id0}/head`);
+    screw = screw ? combine(screw, head, "fuse") : head;
+  }
+  if (!screw) throw new Error("screw: nothing to build");
+  if (feature.socket) {
+    const { across, z0, z1 } = feature.socket;
+    // Start the cutter a little above the head so it doesn't share its face.
+    const cutter = hexPrismShape(o0, down, frame.uAxis, frame.vAxis, across, z0 - 0.5, z1, `${id0}/socket`);
+    screw = combine(screw, cutter, "cut");
+  }
+  if (feature.thread) {
+    const t = feature.thread;
+    const head = screw;
+    screw = threadBoolean(
+      "fuse",
+      head,
+      (seg) => threadSolid(t, o0, down, frame.uAxis, id0, seg),
+      (r) => countSolids(r.shape) === 1,
+    );
+    head.shape.delete();
+    if (!screw) throw new Error("screw: the thread wouldn't join the head");
+  }
+
+  const first = screw;
   const screws = feature.centers.map(([cu, cv], i) => {
-    const o: V3 = [
-      frame.origin[0] + frame.uAxis[0] * cu + frame.vAxis[0] * cv,
-      frame.origin[1] + frame.uAxis[1] * cu + frame.vAxis[1] * cv,
-      frame.origin[2] + frame.uAxis[2] * cu + frame.vAxis[2] * cv,
-    ];
-    const id = feature.centers.length > 1 ? `${feature.id}/n${i}` : feature.id;
-    let screw = revolvedPolyhedron(o, down, frame.uAxis, frame.vAxis, feature.profile, id);
-    if (feature.hexHead) {
-      const { across, z0, z1 } = feature.hexHead;
-      const head = hexPrismShape(o, down, frame.uAxis, frame.vAxis, across, z0, z1, `${id}/head`);
-      const fused = booleanNamed("fuse", screw, head);
-      screw.shape.delete();
-      head.shape.delete();
-      screw = unifyBody(fused);
-    }
-    if (feature.socket) {
-      const { across, z0, z1 } = feature.socket;
-      // Start the cutter a little above the head so it doesn't share its face.
-      const cutter = hexPrismShape(o, down, frame.uAxis, frame.vAxis, across, z0 - 0.5, z1, `${id}/socket`);
-      const cut = booleanNamed("cut", screw, cutter);
-      screw.shape.delete();
-      cutter.shape.delete();
-      screw = unifyBody(cut);
-    }
-    return screw;
+    if (i === 0) return first;
+    const o = framePoint(frame, cu, cv);
+    return translatedNamed(first, [o[0] - o0[0], o[1] - o0[1], o[2] - o0[2]], id0, idOf(i));
   });
-  const built = screws.length === 1 ? screws[0] : compoundOf(screws);
-  bodies.push({ id: feature.id, key: contentKey(feature, []), ...built });
+  return screws.length === 1 ? screws[0] : compoundOf(screws);
 }
 
 function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, ctx: BuildContext): void {
@@ -4445,18 +4627,70 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
     const id = feature.centers.length > 1 ? `${feature.id}/h${i}` : feature.id;
     return revolvedPolyhedron(o, down, frame.uAxis, frame.vAxis, profile, id);
   });
+  // A modelled thread: one cavity per hole, cut after the drill. Built once
+  // and copied, like the screws that go in them.
+  const threadTool = (segments?: number): NamedShape | null => {
+    if (!feature.thread) return null;
+    const reach = feature.throughAll ? profile[profile.length - 1][1] : feature.thread.z1;
+    const t = { ...feature.thread, z1: reach };
+    const ids = (i: number) => (feature.centers.length > 1 ? `${feature.id}/h${i}` : feature.id);
+    const o0 = framePoint(frame, ...feature.centers[0]);
+    const first = threadSolid(t, o0, down, frame.uAxis, ids(0), segments);
+    const rods = feature.centers.map(([cu, cv], i) => {
+      if (i === 0) return first;
+      const o = framePoint(frame, cu, cv);
+      return translatedNamed(first, [o[0] - o0[0], o[1] - o0[1], o[2] - o0[2]], ids(0), ids(i));
+    });
+    return rods.length === 1 ? rods[0] : compoundOf(rods);
+  };
+  const cutHoles = (t: Body, tool: NamedShape): NamedShape => {
+    const before = measureVolume(t.shape);
+    let next = unifyBody(booleanNamed("cut", t, tool));
+    tool.shape.delete();
+    if (measureVolume(next.shape) >= before - VOLUME_EPS_REL * Math.max(before, 1)) {
+      next.shape.delete();
+      throw new Error("hole: the holes don't reach the body — check the sketch is on (or above) it, and try Flip.");
+    }
+    if (feature.thread) {
+      // The cut must take material (the thread's flanks out past the drill);
+      // a boolean that missed the helix leaves the volume as it was.
+      const drilled = measureVolume(next.shape);
+      const threaded = threadBoolean(
+        "cut",
+        next,
+        (seg) => threadTool(seg)!,
+        (r) => {
+          const v = measureVolume(r.shape);
+          return v < drilled - 1e-3 && v > 0 && countSolids(r.shape) <= countSolids(next.shape);
+        },
+      );
+      next.shape.delete();
+      if (!threaded) throw new Error("hole: the thread couldn't be cut — try a cosmetic thread");
+      next = threaded;
+    }
+    return next;
+  };
   const tool = tools.length === 1 ? tools[0] : compoundOf(tools);
   if (feature.previewTool) {
+    // The ghost shows the drills; the thread cavities add nothing to read
+    // at ghost scale and cost a lot to mesh.
     bodies.push({ id: feature.id, key: contentKey(feature, []), noSplit: true, ...tool });
     return;
   }
   const t = target!;
-  const before = measureVolume(t.shape);
-  const next = unifyBody(booleanNamed("cut", t, tool));
-  tool.shape.delete();
-  if (measureVolume(next.shape) >= before - VOLUME_EPS_REL * Math.max(before, 1)) {
-    next.shape.delete();
-    throw new Error("hole: the holes don't reach the body — check the sketch is on (or above) it, and try Flip.");
+  // The cut over this exact input is cached like a dress-up's (same cache and
+  // sweep): a modelled thread makes it seconds, and without the cache every
+  // later edit anywhere in the document re-cut every hole.
+  const cacheKey = contentKey(feature, ["hole", t.key]);
+  ctx.usedDressUps.add(cacheKey);
+  const hit = dressUpCache.get(cacheKey);
+  let next: NamedShape;
+  if (hit) {
+    tool.shape.delete();
+    next = copyNamed(hit.result);
+  } else {
+    next = cutHoles(t, tool);
+    dressUpCache.set(cacheKey, { result: copyNamed(next) });
   }
   t.shape.delete();
   t.shape = next.shape;

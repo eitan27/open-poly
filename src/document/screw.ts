@@ -10,7 +10,7 @@ import { frameOf, type PlaneFrameData } from "./planes";
 import { holeCenters, holeDims } from "./hole";
 import type { Document, HoleFeature, ScrewFeature, ScrewHead, ScrewParams, SketchFeature } from "./types";
 import { METRIC, isMetricSize, type MetricSize } from "../geom/metricFasteners";
-import type { ResolvedFeature } from "../kernel/types";
+import type { ResolvedFeature, ThreadResolved } from "../kernel/types";
 
 export const SCREW_HEAD_LABELS: Record<ScrewHead, string> = {
   socket: "Socket",
@@ -19,12 +19,15 @@ export const SCREW_HEAD_LABELS: Record<ScrewHead, string> = {
   hex: "Hex",
 };
 
-export const DEFAULT_SCREW_PARAMS: ScrewParams = { length: "12", centerX: "0", centerY: "0" };
+export const DEFAULT_SCREW_PARAMS: ScrewParams = { length: "12", centerX: "0", centerY: "0", clearance: "0.1" };
 
-export type ScrewSettings = Pick<ScrewFeature, "head" | "size" | "holeId" | "flip"> & { params: ScrewParams };
+export type ScrewSettings = Pick<ScrewFeature, "head" | "thread" | "size" | "holeId" | "flip"> & {
+  params: ScrewParams;
+};
 
 export const DEFAULT_SCREW_SETTINGS: ScrewSettings = {
   head: "socket",
+  thread: "modelled",
   size: "M3",
   flip: false,
   params: DEFAULT_SCREW_PARAMS,
@@ -103,8 +106,17 @@ export function screwDims(head: ScrewHead, size: string, length: number): ScrewD
 
 /** The screw's half cross-section, (radius, depth) from the top of the head on
  *  the axis to the tip on the axis. A hex head's prism is separate (its
- *  revolved part is just the shank, started inside the prism so they fuse). */
-export function screwProfile(d: ScrewDims): [number, number][] {
+ *  revolved part is just the shank, started inside the prism so they fuse).
+ *  `headOnly`: a modelled thread replaces the shank, so the profile closes
+ *  back to the axis under the head (and is empty for a hex head). */
+export function screwProfile(d: ScrewDims, headOnly = false): [number, number][] {
+  if (headOnly) {
+    const full = screwProfile(d);
+    if (d.head === "hex") return [];
+    const bottom = headBottom(d);
+    const head = full.slice(0, full.findIndex(([, z]) => z >= bottom - 1e-9) + 1);
+    return [...head, [0, bottom]];
+  }
   const r = d.d / 2;
   // Tip chamfer, roughly the thread depth.
   const c = Math.min(d.pitch * 0.6, r * 0.5);
@@ -141,6 +153,23 @@ export function screwProfile(d: ScrewDims): [number, number][] {
     case "hex":
       return [[0, -d.headHeight / 2], [r, -d.headHeight / 2], ...tip];
   }
+}
+
+/** Depth where the head ends and the shank begins: the seat, or the bottom of
+ *  a countersunk head's cone. */
+export function headBottom(d: ScrewDims): number {
+  return d.head === "flat" ? d.coneDepth : 0;
+}
+
+/** A modelled thread's run: from a little inside the head (so the two fuse
+ *  through shared volume rather than a shared face) to the tip, with a lead-in
+ *  chamfer there. */
+export function screwThread(d: ScrewDims, clearance: number): ThreadResolved {
+  if (!(clearance >= 0)) throw new Error("screw: clearance can't be negative");
+  if (!(clearance <= 0.25 * d.pitch))
+    throw new Error(`screw: clearance can be at most ${0.25 * d.pitch} for ${d.size}`);
+  const overlap = Math.min(0.3, d.head === "flat" ? d.coneDepth / 2 : d.headHeight / 3);
+  return { d: d.d, pitch: d.pitch, offset: -clearance, z0: headBottom(d) - overlap, z1: d.length, tipChamfer: true };
 }
 
 /** Where a screw in a hole sits: on the counterbore's floor, flush at the
@@ -181,7 +210,9 @@ export function resolveScrew(
     frame = frameOf(f.plane, planeFrames);
     centers = [[num("center X", f.params.centerX, scope), num("center Y", f.params.centerY, scope)]];
   }
-  const profile = screwProfile(dims).map(([r, z]) => [r, z + seat] as [number, number]);
+  const thread =
+    f.thread === "modelled" ? screwThread(dims, num("clearance", f.params.clearance ?? "0", scope)) : undefined;
+  const profile = screwProfile(dims, !!thread).map(([r, z]) => [r, z + seat] as [number, number]);
   const top = (dims.head === "flat" ? 0 : -dims.headHeight) + seat;
   return {
     id: f.id,
@@ -192,6 +223,7 @@ export function resolveScrew(
     profile,
     ...(dims.head === "hex" ? { hexHead: { across: dims.headDiameter, z0: top, z1: seat } } : {}),
     ...(dims.key > 0 ? { socket: { across: dims.key, z0: top, z1: top + socketDepth(dims) } } : {}),
+    ...(thread ? { thread: { ...thread, z0: thread.z0 + seat, z1: thread.z1 + seat } } : {}),
   };
 }
 

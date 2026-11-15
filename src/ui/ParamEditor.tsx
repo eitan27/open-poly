@@ -460,6 +460,16 @@ export function ParamEditor({
               />
             </label>
           )}
+          {feature.holeType === "tapped" && feature.thread === "modelled" && feature.size !== "custom" && (
+            <label className="param-field" title="Radial clearance the thread is grown by, so a printed screw fits">
+              <span className="param-label">Clearance</span>
+              <ExprInput
+                className="param-input"
+                value={feature.params.clearance ?? "0"}
+                onChange={(e) => onChangeParam(feature.id, "clearance", e.target.value)}
+              />
+            </label>
+          )}
         </div>
       ) : feature.type === "screw" ? (
         <div className="sketch-params">
@@ -477,6 +487,16 @@ export function ParamEditor({
               onChange={(e) => onChangeParam(feature.id, "length", e.target.value)}
             />
           </label>
+          {feature.thread === "modelled" && (
+            <label className="param-field" title="Radial clearance the thread is shrunk by, so it fits a printed nut">
+              <span className="param-label">Clearance</span>
+              <ExprInput
+                className="param-input"
+                value={feature.params.clearance ?? "0"}
+                onChange={(e) => onChangeParam(feature.id, "clearance", e.target.value)}
+              />
+            </label>
+          )}
         </div>
       ) : feature.type === "loft" ? (
         <div className="sketch-params">

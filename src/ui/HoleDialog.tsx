@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { HOLE_FIT_LABELS, HOLE_TYPE_LABELS, holeReadout, type HoleDims, type HoleSettings } from "../document/hole";
-import type { HoleParams, HoleType } from "../document/types";
+import type { HoleParams, HoleType, ThreadMode } from "../document/types";
 import { METRIC, METRIC_SIZES, isMetricSize, type HoleFit } from "../geom/metricFasteners";
 import { DraggableDialog } from "./DraggableDialog";
 import { ExprInput } from "./ExprInput";
@@ -83,7 +83,13 @@ export function HoleDialog({
   const metric = isMetricSize(settings.size);
 
   const field = (name: keyof HoleParams, label: string, title?: string) => {
-    const fixed = metricValue(settings, name);
+    // A modelled thread's drill is capped at the thread's minor diameter
+    // (plus clearance), which depends on the clearance expression — so it is
+    // read from the resolved dims rather than the table.
+    const fixed =
+      name === "diameter" && t === "tapped" && dims?.modelledThread
+        ? String(Math.round(dims.diameter * 1000) / 1000)
+        : metricValue(settings, name);
     return (
       <label
         className="ed-field"
@@ -192,13 +198,35 @@ export function HoleDialog({
         </div>
       )}
 
-      {field("diameter", t === "tapped" ? "Tap drill Ø" : "Diameter")}
+      {t === "tapped" && (
+        <div
+          title={
+            metric
+              ? "Modelled: a real ISO thread you can 3D print (grown by the clearance so a printed screw fits). Cosmetic: just the tap drill, for a thread tapped after."
+              : "Modelled threads need a metric size"
+          }
+        >
+          {seg(
+            metric ? (settings.thread ?? "cosmetic") : "cosmetic",
+            ["modelled", "cosmetic"] as const as ThreadMode[],
+            { modelled: "Modelled thread", cosmetic: "Cosmetic" },
+            (thread) => metric && onChange({ thread }),
+          )}
+        </div>
+      )}
+      {field("diameter", t === "tapped" ? (dims?.modelledThread ? "Drill Ø" : "Tap drill Ø") : "Diameter")}
       {t === "counterbore" && field("counterboreDiameter", "Counterbore Ø")}
       {t === "counterbore" && field("counterboreDepth", "Counterbore depth")}
       {t === "countersink" && field("countersinkDiameter", "Countersink Ø")}
       {t === "countersink" && field("countersinkAngle", "Countersink °")}
+      {t === "tapped" && blind && field("threadDepth", "Thread depth", "How deep the thread runs")}
       {t === "tapped" &&
-        field("threadDepth", "Thread depth", "How deep the thread runs (cosmetic: recorded, not modelled)")}
+        dims?.modelledThread &&
+        field(
+          "clearance",
+          "Clearance",
+          "Radial gap (mm) the thread is grown by so a printed screw fits — 0.1 suits most FDM printers; 0.15–0.2 if tight; 0 for an exact ISO thread",
+        )}
 
       {seg(
         settings.extent,

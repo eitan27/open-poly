@@ -761,17 +761,26 @@ export interface HoleParams {
   /** Included angle of the drill point at the bottom of a blind hole, degrees;
    *  0 = flat bottom. */
   tipAngle: string;
-  /** Tapped only: how deep the (cosmetic) thread runs. Recorded, not modelled. */
+  /** Tapped only: how deep the thread runs. */
   threadDepth: string;
+  /** Tapped + modelled thread: radial clearance (mm) the thread cavity is
+   *  grown by, so a printed screw fits. Absent on holes made before it. */
+  clearance?: string;
 }
 
 /** Holes drilled into a body at every point (and circle centre) of a sketch,
  *  along the sketch normal — INTO the body, like a Remove extrude, with `flip`
  *  reversing it. The kernel builds each hole as a faceted solid of revolution
  *  and cuts it from `targetId`. */
+/** A thread drawn as a plain cylinder at the nominal size (cosmetic, and what
+ *  documents made before modelled threads have), or built as a real helix. */
+export type ThreadMode = "cosmetic" | "modelled";
+
 export interface HoleFeature extends FeatureBase {
   type: "hole";
   holeType: HoleType;
+  /** Tapped holes: absent = cosmetic. */
+  thread?: ThreadMode;
   /** A metric size from geom/metricFasteners ("M3"), or "custom" to use the
    *  params' own diameters. */
   size: string;
@@ -795,17 +804,23 @@ export interface ScrewParams {
   /** Placed on a plane: centre within it (mm, along the plane's u / v). */
   centerX: string;
   centerY: string;
+  /** Modelled thread: radial clearance (mm) the thread is shrunk by, so it
+   *  fits a printed nut. Absent on screws made before it. */
+  clearance?: string;
 }
 
 /** A metric screw (geom/metricFasteners sizes), built as a body. Placed either
  *  IN a Hole feature — one screw per hole centre, seated on the counterbore
  *  floor / flush in the countersink, its size following a metric hole's — or
  *  on a plane at (centerX, centerY), head above the plane and shank going in
- *  against its normal (Flip reverses). The thread is cosmetic: the shank is
- *  drawn at the nominal diameter. */
+ *  against its normal (Flip reverses). The thread is modelled (a real ISO
+ *  helix, see geom/thread.ts) or cosmetic (the shank drawn at the nominal
+ *  diameter). */
 export interface ScrewFeature extends FeatureBase {
   type: "screw";
   head: ScrewHead;
+  /** Absent = cosmetic (screws made before modelled threads). */
+  thread?: ThreadMode;
   /** "M3" … "M12". Ignored (follows the hole) when `holeId` names a hole with
    *  a metric size. */
   size: string;

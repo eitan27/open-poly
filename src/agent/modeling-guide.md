@@ -298,7 +298,7 @@ frame count that shows the motion you care about.
   `add_hole` with that `sketchId`: `size: "M3"` (M2–M12) picks the ISO clearance
   diameter by `fit` (close/normal/loose), and `holeType` `counterbore` /
   `countersink` take the matching ISO head pocket; `tapped` drills the tap
-  drill (the thread is cosmetic). Default is through all; `extent: "blind"`
+  drill and a real ISO thread (`thread: "modelled"`, the default; `params.clearance`, default 0.1 mm per part, keeps a printed screw from binding — `"cosmetic"` skips the thread). Default is through all; `extent: "blind"`
   with `params.depth` (and `tipAngle`, 0 = flat bottom) for a blind hole.
 - **Gears:** `add_gear` makes an involute spur gear (or `gearType: "internal"`,
   a ring gear) as a body on a plane: `params.teeth`, `params.module` (or
@@ -315,7 +315,12 @@ frame count that shows the motion you care about.
   in every hole, at the hole's metric size, seated on the counterbore floor (or
   flush in the countersink); otherwise give `plane` and `params.centerX/Y` —
   the head sits on the plane and the shank goes in against its normal (`flip`
-  reverses). The thread is cosmetic.
+  reverses). The thread is modelled (a real ISO helix with a lead-in chamfer,
+  shrunk by `params.clearance`, default 0.1 mm) — a screw in a modelled
+  tapped hole nests with a 0.2 mm radial gap, so both can be 3D printed.
+  Printing tips worth passing on: print screws standing on their head, raise
+  the clearance to 0.15–0.2 for a tight printer, and prefer M5 and up (finer
+  pitches print poorly). `thread: "cosmetic"` gives a plain, fast shank.
 - **Two-sided / centered feature:** `add_extrude` with `extent: "symmetric"` —
   the profile extrudes `distance` equally both ways (centered on the sketch).
 - **Extrude up to a face:** `add_extrude` with `extent: "upToFace"` and

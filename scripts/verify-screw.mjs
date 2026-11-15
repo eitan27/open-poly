@@ -1,6 +1,8 @@
-// Screw feature end to end: every head builds on a plane, a screw follows a
-// metric hole's size and sits on its counterbore floor (one per hole), and the
-// dialog opens with its diagram and ghost. Screenshots go to $SHOTS.
+// Screw feature end to end: every head builds on a plane (with a modelled
+// thread), a screw follows a metric hole's size and sits on its counterbore
+// floor (one per hole), a modelled screw fits a modelled tapped hole without
+// touching it (a cosmetic one doesn't), and the dialog opens with its diagram
+// and ghost. Screenshots go to $SHOTS.
 //
 //   URL=http://localhost:5173/ node scripts/verify-screw.mjs
 import os from "node:os";
@@ -59,8 +61,57 @@ check("in a hole: seated on the counterbore floor", Math.abs(top - 11.6) < 0.05,
 const w = parts[0] ? parts[0].bbox.max[0] - parts[0].bbox.min[0] : 0;
 check("in a hole: takes the hole's M5 size (8.5 head)", Math.abs(w - 8.5) < 0.1, String(w));
 check("no feature errors", (await op.featureErrors()).length === 0, JSON.stringify(await op.featureErrors()));
+{
+  const b = (await op.bodies()).find((x) => x.id === inHole.createdId);
+  // The summary folds the run of facet names: `<id>/thread{n} (n = …, 161–3053)`
+  // (the first turn's facets sit inside the head and go in the fuse).
+  const run = b?.faces.find((f) => f.includes("/thread{n}")) ?? "";
+  const n = Number(/(\d+)\)$/.exec(run)?.[1] ?? 0);
+  check("the thread is modelled: hundreds of named thread facets", n > 500, run);
+}
 await op.apply({ op: "screenshot", view: "iso" }).catch(() => {});
 await shot("built");
+
+// Fit: an M6 modelled screw in an M6 modelled tapped hole leaves a gap all
+// round (their intersection is empty); a cosmetic shank overlaps the crests.
+for (const [thread, expectOverlap] of [
+  ["modelled", false],
+  ["cosmetic", true],
+]) {
+  await op.newDocument();
+  const blk = (await op.applySettled({ op: "addPrimitive", kind: "box", params: { width: 14, depth: 14, height: 10 } }))
+    .createdId;
+  const s1 = (
+    await op.applySettled({
+      op: "addSketch",
+      plane: { bodyId: blk, faceName: `${blk}/+z` },
+      entities: [{ shape: "point", p: [0, 0] }],
+    })
+  ).createdId;
+  const tapped = await op.applySettled({ op: "addHole", sketchId: s1, holeType: "tapped", size: "M6" });
+  check(`${thread}: the tapped hole builds`, tapped.ok, JSON.stringify(tapped));
+  const sc = await op.applySettled({ op: "addScrew", holeId: tapped.createdId, thread, params: { length: 16 } });
+  check(`${thread}: the screw builds`, sc.ok && (await op.bodyCount()) === 2, JSON.stringify(sc));
+  const x = await op.applySettled({ op: "boolean", kind: "intersect", operands: [blk, sc.createdId] });
+  check(
+    `${thread} screw in a modelled M6 hole: ${expectOverlap ? "overlaps" : "doesn't touch it"}`,
+    x.ok === expectOverlap,
+    JSON.stringify(x).slice(0, 160),
+  );
+}
+await op.newDocument();
+{
+  const blk = (await op.applySettled({ op: "addPrimitive", kind: "box", params: { width: 60, depth: 40, height: 12 } }))
+    .createdId;
+  const s1 = (
+    await op.applySettled({
+      op: "addSketch",
+      plane: { bodyId: blk, faceName: `${blk}/+z` },
+      entities: [{ shape: "point", p: [0, 0] }],
+    })
+  ).createdId;
+  await op.applySettled({ op: "addHole", sketchId: s1, holeType: "counterbore", size: "M5" });
+}
 
 // The dialog: U opens it in the newest hole; diagram + ghost; focus lights a dimension.
 await page
@@ -84,13 +135,22 @@ for (const h of ["Button", "Countersunk", "Hex", "Socket"]) {
 await shot("ghost");
 await dialog.locator("button", { hasText: "On a plane" }).click();
 await page.waitForTimeout(300);
+check(
+  "modelled thread offers a clearance",
+  (await dialog.locator(".ed-field", { hasText: "Clearance" }).count()) === 1,
+);
+await dialog.locator("button", { hasText: "Cosmetic" }).click();
+await page.waitForTimeout(300);
+check("cosmetic hides it", (await dialog.locator(".ed-field", { hasText: "Clearance" }).count()) === 0);
+await dialog.locator("button", { hasText: "Modelled thread" }).click();
 check("on a plane offers centre fields", (await dialog.locator(".ed-field", { hasText: "Center X" }).count()) === 1);
 const before = (await op.features()).filter((f) => f.type === "screw").length;
 await dialog.locator(".ed-primary").click();
 await op.settle();
 check("Create adds a screw", (await op.features()).filter((f) => f.type === "screw").length === before + 1);
 
-const real = errors.filter((e) => !/Failed to load resource/.test(e));
+// The modelled fit check's intersect is meant to come back empty.
+const real = errors.filter((e) => !/Failed to load resource/.test(e) && !/"Intersect \d+".*empty result/.test(e));
 check("no page errors", real.length === 0, real.join("\n"));
 await close();
 done();

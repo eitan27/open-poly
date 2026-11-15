@@ -5,6 +5,8 @@ import { useId } from "react";
 import { countersinkDepth, holeProfile, tipDepth, type HoleDims } from "../../document/hole";
 import { AngleDim, DimGroup, LinearDim, type P } from "./Dims";
 import { fmtDim } from "./fmtDim";
+import { threadSection } from "./threadSection";
+import { minorDiameter } from "../../geom/thread";
 import "./Diagram.css";
 
 const W = 260;
@@ -77,7 +79,28 @@ export function HoleDiagram({ dims: d, size, active, onPick }: Props) {
         fill={`url(#${hatchId})`}
       />
       <path className="dg-cut" d={cut} />
-      {d.holeType === "tapped" && d.threadDiameter && (
+      {d.holeType === "tapped" && d.threadDiameter && d.modelledThread && d.pitch && (
+        <>
+          {[1, -1].map((side) => {
+            // The cavity: the basic profile grown by the clearance, teeth
+            // out from the drilled wall; the far side half a pitch on.
+            const depth = d.throughAll ? T : d.threadDepth;
+            const teeth = threadSection(
+              d.threadDiameter! / 2 + d.clearance,
+              minorDiameter(d.threadDiameter!, d.pitch!) / 2 + d.clearance,
+              d.pitch!,
+              0,
+              depth,
+              side > 0 ? 0 : d.pitch! / 2,
+            );
+            const ptsPath = [[r, 0] as [number, number], ...teeth, [r, depth] as [number, number]]
+              .map(([tr, tz], i) => `${i ? "L" : "M"}${X(side * tr)},${Y(tz)}`)
+              .join(" ");
+            return <path key={side} className="dg-cut" d={ptsPath + " Z"} />;
+          })}
+        </>
+      )}
+      {d.holeType === "tapped" && d.threadDiameter && !d.modelledThread && (
         <>
           <line
             className="dg-thread"
@@ -171,14 +194,16 @@ export function HoleDiagram({ dims: d, size, active, onPick }: Props) {
               label={`${size}×${fmtDim(d.pitch ?? 0)}`}
             />
           </DimGroup>
-          <DimGroup name="threadDepth" active={active} onPick={onPick}>
-            <LinearDim
-              a={pt(-d.threadDiameter / 2, 0)}
-              b={pt(-d.threadDiameter / 2, d.threadDepth)}
-              offset={X(-d.threadDiameter / 2) - leftX}
-              label={fmtDim(d.threadDepth)}
-            />
-          </DimGroup>
+          {!d.throughAll && (
+            <DimGroup name="threadDepth" active={active} onPick={onPick}>
+              <LinearDim
+                a={pt(-d.threadDiameter / 2, 0)}
+                b={pt(-d.threadDiameter / 2, d.threadDepth)}
+                offset={X(-d.threadDiameter / 2) - leftX}
+                label={fmtDim(d.threadDepth)}
+              />
+            </DimGroup>
+          )}
         </>
       )}
     </svg>

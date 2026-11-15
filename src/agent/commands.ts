@@ -1333,6 +1333,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         const plane: SketchPlaneRef = op.plane ? resolvePlaneRef(ctx, op.plane) : { kind: "datum", id: "plane-top" };
         const r = addScrew(doc, plane, {
           head: op.head ?? DEFAULT_SCREW_SETTINGS.head,
+          thread: op.thread ?? DEFAULT_SCREW_SETTINGS.thread,
           size: op.size ?? DEFAULT_SCREW_SETTINGS.size,
           ...(op.holeId ? { holeId: op.holeId } : {}),
           flip: op.flip ?? false,
@@ -1357,6 +1358,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         if (unknown.length) throw new OpError("invalid_op", `addHole: unknown params ${unknown.join(", ")}.`);
         const r = addHole(doc, op.sketchId, targetId, {
           holeType: op.holeType ?? DEFAULT_HOLE_SETTINGS.holeType,
+          thread: op.thread ?? DEFAULT_HOLE_SETTINGS.thread,
           size: op.size ?? DEFAULT_HOLE_SETTINGS.size,
           fit: op.fit ?? DEFAULT_HOLE_SETTINGS.fit,
           extent: op.extent ?? DEFAULT_HOLE_SETTINGS.extent,

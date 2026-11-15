@@ -8697,6 +8697,13 @@ export default function App() {
                     defaultPlane={d.defaultPlane}
                     planeArmed={picking && pickPurpose === "screwPlane"}
                     dims={dims ?? lastScrewDims.current}
+                    clearance={(() => {
+                      try {
+                        return evaluateExpression(d.settings.params.clearance ?? "0", resolved.scope);
+                      } catch {
+                        return undefined;
+                      }
+                    })()}
                     error={error?.replace(/^screw: /, "") ?? null}
                     onArmPlane={screw.armPlane}
                     onChange={screw.update}

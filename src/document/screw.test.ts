@@ -102,3 +102,41 @@ describe("resolve", () => {
     expect((updateParam(doc, id, "length", "30").features.at(-1) as ScrewFeature).params.length).toBe("30");
   });
 });
+
+describe("modelled thread", () => {
+  it("is the default: the profile stops at the head and a thread runs from inside it to the tip", () => {
+    const { doc, id } = addScrew(createDocument(), TOP, screw({ size: "M5" }, { length: "16" }));
+    const rf = resolveDocument(doc).features.find((x) => x.id === id) as {
+      profile: [number, number][];
+      thread?: { d: number; pitch: number; offset: number; z0: number; z1: number; tipChamfer: boolean };
+    };
+    expect(rf.thread).toMatchObject({ d: 5, pitch: 0.8, offset: -0.1, z1: 16, tipChamfer: true });
+    // Starts inside the head (above the seat), so the fuse is through shared volume.
+    expect(rf.thread!.z0).toBeLessThan(0);
+    expect(rf.profile.at(-1)).toEqual([0, 0]);
+  });
+
+  it("a countersunk head's thread starts inside its cone", () => {
+    const { doc, id } = addScrew(createDocument(), TOP, screw({ head: "flat", size: "M4" }));
+    const rf = resolveDocument(doc).features.find((x) => x.id === id) as { thread?: { z0: number } };
+    const cone = screwDims("flat", "M4", 12).coneDepth;
+    expect(rf.thread!.z0).toBeLessThan(cone);
+    expect(rf.thread!.z0).toBeGreaterThan(0);
+  });
+
+  it("a screw from before modelled threads (no `thread`) stays cosmetic", () => {
+    const { doc, id } = addScrew(createDocument(), TOP, screw());
+    const old: Document = {
+      ...doc,
+      features: doc.features.map((f) => (f.id === id ? { ...f, thread: undefined } : f)),
+    };
+    const rf = resolveDocument(old).features.find((x) => x.id === id) as { thread?: unknown; profile: number[][] };
+    expect(rf.thread).toBeUndefined();
+    expect(rf.profile.at(-1)).toEqual([0, 12]);
+  });
+
+  it("refuses a clearance that would eat the thread", () => {
+    const { doc, id } = addScrew(createDocument(), TOP, screw({ size: "M3" }, { clearance: "0.2" }));
+    expect(resolveDocument(doc).errors[id]).toMatch(/clearance can be at most 0.125/);
+  });
+});

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { SCREW_HEAD_LABELS, type ScrewDims, type ScrewSettings } from "../document/screw";
-import type { ScrewHead, ScrewParams } from "../document/types";
+import type { ScrewHead, ScrewParams, ThreadMode } from "../document/types";
 import { METRIC_SIZES } from "../geom/metricFasteners";
 import { DraggableDialog } from "./DraggableDialog";
 import { ExprInput } from "./ExprInput";
@@ -21,6 +21,8 @@ interface Props {
   /** The last settings that made a screw, so the diagram holds still while a
    *  field is half-typed. */
   dims: ScrewDims | null;
+  /** A modelled thread's clearance, resolved (undefined when cosmetic or unreadable). */
+  clearance?: number;
   error: string | null;
   onArmPlane: () => void;
   onChange: (patch: Partial<ScrewSettings>) => void;
@@ -40,6 +42,7 @@ export function ScrewDialog({
   defaultPlane,
   planeArmed,
   dims,
+  clearance,
   error,
   onArmPlane,
   onChange,
@@ -98,7 +101,14 @@ export function ScrewDialog({
         ))}
       </div>
 
-      {dims && <ScrewDiagram dims={dims} active={focused ?? hovered} onPick={pick} />}
+      {dims && (
+        <ScrewDiagram
+          dims={dims}
+          clearance={settings.thread === "modelled" ? clearance : undefined}
+          active={focused ?? hovered}
+          onPick={pick}
+        />
+      )}
 
       <div className="ed-modes">
         <button
@@ -169,6 +179,25 @@ export function ScrewDialog({
         settings.head === "flat" ? "Length (overall)" : "Length",
         "ISO length: under the head, or overall for a countersunk head",
       )}
+      <div title="Modelled: a real ISO thread you can 3D print (print it standing on its head). Cosmetic: a plain shank, much faster to build.">
+        <div className="ed-modes">
+          {(["modelled", "cosmetic"] as ThreadMode[]).map((m) => (
+            <button
+              key={m}
+              className={(settings.thread ?? "cosmetic") === m ? "active" : ""}
+              onClick={() => onChange({ thread: m })}
+            >
+              {m === "modelled" ? "Modelled thread" : "Cosmetic"}
+            </button>
+          ))}
+        </div>
+      </div>
+      {settings.thread === "modelled" &&
+        field(
+          "clearance",
+          "Clearance",
+          "Radial gap (mm) the thread is shrunk by so it fits a printed nut or tapped hole — 0.1 suits most FDM printers; 0.15–0.2 if tight; 0 for an exact ISO thread",
+        )}
       <label className="ed-field ed-flip" title="Point the screw the other way">
         <span>Flip direction</span>
         <input type="checkbox" checked={settings.flip} onChange={(e) => onChange({ flip: e.target.checked })} />
