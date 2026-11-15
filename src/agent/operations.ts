@@ -477,9 +477,9 @@ export const operationSchema = z.discriminatedUnion("op", [
     /** The body to drill. Defaults to the body the sketch was drawn on. */
     targetId: z.string().optional(),
     holeType: z.enum(["simple", "counterbore", "countersink", "tapped"]).optional(),
-    /** Tapped, metric: "modelled" (default) cuts a real ISO thread, grown by
-     *  params.clearance (default 0.1 mm) so a printed screw fits; "cosmetic"
-     *  drills the tap drill only. */
+    /** Tapped, metric: "cosmetic" (default) drills the tap drill only;
+     *  "modelled" cuts a real ISO thread, grown by params.clearance (default
+     *  0.1 mm) so a printed screw fits. */
     thread: z.enum(["modelled", "cosmetic"]).optional(),
     /** "M2" | "M2.5" | "M3" | "M4" | "M5" | "M6" | "M8" | "M10" | "M12" (ISO
      *  table: clearance / tap drill / counterbore / countersink sizes), or
@@ -526,10 +526,10 @@ export const operationSchema = z.discriminatedUnion("op", [
   }),
   z.object({
     op: z.literal("addScrew"),
-    head: z.enum(["socket", "button", "flat", "hex"]).optional(),
-    /** "modelled" (default): a real ISO thread, shrunk by params.clearance
-     *  (default 0.1 mm) so it fits a printed nut/tapped hole; "cosmetic": a
-     *  plain shank at the nominal diameter. */
+    head: z.enum(["socket", "button", "flat", "hex", "set", "none"]).optional(),
+    /** "cosmetic" (default): a plain shank at the nominal diameter;
+     *  "modelled": a real ISO thread, shrunk by params.clearance (default
+     *  0.1 mm) so it fits a printed nut/tapped hole. */
     thread: z.enum(["modelled", "cosmetic"]).optional(),
     /** "M2" … "M12". Ignored when `holeId` names a metric hole (it follows the hole). */
     size: z.string().optional(),

@@ -44,7 +44,9 @@ export type HoleSettings = Pick<HoleFeature, "holeType" | "thread" | "size" | "f
 
 export const DEFAULT_HOLE_SETTINGS: HoleSettings = {
   holeType: "simple",
-  thread: "modelled",
+  // Cosmetic by default, like a screw: fast, and the tap drill is right for a
+  // thread tapped after. Modelled is a toggle away.
+  thread: "cosmetic",
   size: "M3",
   fit: "normal",
   extent: "throughAll",

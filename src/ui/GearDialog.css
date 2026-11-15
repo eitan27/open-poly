@@ -61,3 +61,9 @@
   padding-left: 4px;
   padding-right: 4px;
 }
+
+/* Six screw heads: two rows of three rather than one row too narrow to read. */
+.hole-dialog .ed-modes.screw-heads {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}

@@ -84,15 +84,28 @@ const EPS = 1e-9;
  *  Screw and hole share it, so they still nest. */
 const PHASE = 0.5;
 
+/** The nearest plane a thread end can be cut at: a whole number of station
+ *  rises P/N, which with PHASE is as far from every vertex level as it gets.
+ *  Moves an end by at most P/(2N) — under 0.03 mm for every size here. */
+export function snapToThreadGrid(z: number, pitch: number, segments: number): number {
+  const step = pitch / segments;
+  return Math.round(z / step) * step;
+}
+
 export function threadMesh(spec: ThreadSpec): ThreadMesh {
-  const { d, pitch: P, offset, z0, z1 } = spec;
+  const { d, pitch: P, offset } = spec;
   if (!(P > 0) || !(d > 0)) throw new Error("thread: bad size");
   // Longer than a pitch, so no facet spans both end planes.
-  if (!(z1 - z0 > P)) throw new Error("thread: too short to thread");
+  if (!(spec.z1 - spec.z0 > P)) throw new Error("thread: too short to thread");
   const { u, r } = bands(d, P, offset);
   if (!(r[2] > 0)) throw new Error("thread: the clearance leaves no core");
   const N = spec.segments ?? threadSegments(r[0]);
   if (N % 16 !== 0) throw new Error("thread: facets per turn must be a multiple of 16");
+  // The end planes go on the grid midway between vertex levels (see PHASE),
+  // so a cut never lands a hair from a vertex and leaves a sliver edge.
+  const z0 = snapToThreadGrid(spec.z0, P, N);
+  const z1 = snapToThreadGrid(spec.z1, P, N);
+  if (!(z1 - z0 > P)) throw new Error("thread: too short to thread");
   const jA = Math.floor(((z0 - P) * N) / P) - 1;
   const jB = Math.ceil((z1 * N) / P) + 1;
   const jMax = jB + N + 1;

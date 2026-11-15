@@ -10,6 +10,7 @@ import { frameOf, type PlaneFrameData } from "./planes";
 import { holeCenters, holeDims } from "./hole";
 import type { Document, HoleFeature, ScrewFeature, ScrewHead, ScrewParams, SketchFeature } from "./types";
 import { METRIC, isMetricSize, type MetricSize } from "../geom/metricFasteners";
+import { maxSocketInThread } from "../geom/screwMesh";
 import type { ResolvedFeature, ThreadResolved } from "../kernel/types";
 
 export const SCREW_HEAD_LABELS: Record<ScrewHead, string> = {
@@ -17,6 +18,8 @@ export const SCREW_HEAD_LABELS: Record<ScrewHead, string> = {
   button: "Button",
   flat: "Countersunk",
   hex: "Hex",
+  set: "Set screw",
+  none: "No head",
 };
 
 export const DEFAULT_SCREW_PARAMS: ScrewParams = { length: "12", centerX: "0", centerY: "0", clearance: "0.1" };
@@ -27,7 +30,10 @@ export type ScrewSettings = Pick<ScrewFeature, "head" | "thread" | "size" | "hol
 
 export const DEFAULT_SCREW_SETTINGS: ScrewSettings = {
   head: "socket",
-  thread: "modelled",
+  // Cosmetic by default: it builds in a blink, and a modelled thread at
+  // these sizes is too fine to print anyway — the Thread feature's printable
+  // profile is the route for printed fasteners.
+  thread: "cosmetic",
   size: "M3",
   flip: false,
   params: DEFAULT_SCREW_PARAMS,
@@ -97,6 +103,12 @@ export function screwDims(head: ScrewHead, size: string, length: number): ScrewD
     case "hex":
       dims = { ...base, headDiameter: m.hexHead.s, headHeight: m.hexHead.k, coneDepth: 0, key: 0 };
       break;
+    case "set":
+      dims = { ...base, headDiameter: m.d, headHeight: 0, coneDepth: 0, key: m.setScrewKey };
+      break;
+    case "none":
+      dims = { ...base, headDiameter: m.d, headHeight: 0, coneDepth: 0, key: 0 };
+      break;
   }
   if (!(length > 0)) throw new Error("screw: length must be greater than 0");
   if (head === "flat" && !(length > dims.coneDepth))
@@ -111,6 +123,7 @@ export function screwDims(head: ScrewHead, size: string, length: number): ScrewD
  *  back to the axis under the head (and is empty for a hex head). */
 export function screwProfile(d: ScrewDims, headOnly = false): [number, number][] {
   if (headOnly) {
+    if (!hasHead(d.head)) return [];
     const full = screwProfile(d);
     if (d.head === "hex") return [];
     const bottom = headBottom(d);
@@ -145,14 +158,28 @@ export function screwProfile(d: ScrewDims, headOnly = false): [number, number][]
         const t = (Math.PI / 2) * (1 - i / steps); // π/2 → 0
         dome.push([R * Math.cos(t), -rim - (d.headHeight - rim) * Math.sin(t)]);
       }
-      dome[0] = [0, -d.headHeight];
-      return [...dome, [R, 0], [r, 0], ...tip];
+      // Flat across the top where the socket goes (as ISO 7380 heads are),
+      // so the socket is a hole in a flat face.
+      const flatR = d.key / Math.sqrt(3) + Math.max(0.25, R * 0.1);
+      const i = Math.max(
+        1,
+        dome.findIndex(([x]) => x >= flatR),
+      );
+      return [[0, dome[i][1]], ...dome.slice(i), [R, 0], [r, 0], ...tip];
     }
     case "flat":
       return [[0, 0], [R, 0], [r, d.coneDepth], ...tip];
     case "hex":
       return [[0, -d.headHeight / 2], [r, -d.headHeight / 2], ...tip];
+    case "set":
+    case "none":
+      return [[0, 0], [r, 0], ...tip];
   }
+}
+
+/** Whether a head of this kind stands proud of the thread at all. */
+export function hasHead(head: ScrewHead): boolean {
+  return head !== "set" && head !== "none";
 }
 
 /** Depth where the head ends and the shank begins: the seat, or the bottom of
@@ -161,15 +188,18 @@ export function headBottom(d: ScrewDims): number {
   return d.head === "flat" ? d.coneDepth : 0;
 }
 
-/** A modelled thread's run: from a little inside the head (so the two fuse
- *  through shared volume rather than a shared face) to the tip, with a lead-in
+/** A modelled thread's run: from where the head ends (it is stitched onto the
+ *  head's underside there, geom/screwMesh.ts) to the tip, with a lead-in
  *  chamfer there. */
 export function screwThread(d: ScrewDims, clearance: number): ThreadResolved {
   if (!(clearance >= 0)) throw new Error("screw: clearance can't be negative");
   if (!(clearance <= 0.25 * d.pitch))
     throw new Error(`screw: clearance can be at most ${0.25 * d.pitch} for ${d.size}`);
-  const overlap = Math.min(0.3, d.head === "flat" ? d.coneDepth / 2 : d.headHeight / 3);
-  return { d: d.d, pitch: d.pitch, offset: -clearance, z0: headBottom(d) - overlap, z1: d.length, tipChamfer: true };
+  if (d.key > 0 && !hasHead(d.head)) {
+    const fits = maxSocketInThread(d.d, d.pitch, -clearance);
+    if (d.key > fits) throw new Error(`screw: a ${d.size} set screw's thread is too fine for its ${d.key} mm socket`);
+  }
+  return { d: d.d, pitch: d.pitch, offset: -clearance, z0: headBottom(d), z1: d.length, tipChamfer: true };
 }
 
 /** Where a screw in a hole sits: on the counterbore's floor, flush at the
@@ -229,5 +259,6 @@ export function resolveScrew(
 
 /** How deep the hex socket goes. */
 export function socketDepth(d: ScrewDims): number {
+  if (d.head === "set") return Math.min(0.6 * d.d, 0.5 * d.length);
   return d.head === "flat" ? d.coneDepth * 0.7 : d.headHeight * (d.head === "button" ? 0.55 : 0.6);
 }

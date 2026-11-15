@@ -93,7 +93,11 @@ export function ScrewDialog({
       <div className="ed-title" data-drag-handle>
         {editing ? "Edit screw" : "Screw"}
       </div>
-      <div className="ed-modes" onMouseEnter={() => setHovered("head")} onMouseLeave={() => setHovered(null)}>
+      <div
+        className="ed-modes screw-heads"
+        onMouseEnter={() => setHovered("head")}
+        onMouseLeave={() => setHovered(null)}
+      >
         {HEADS.map((h) => (
           <button key={h} className={settings.head === h ? "active" : ""} onClick={() => onChange({ head: h })}>
             {SCREW_HEAD_LABELS[h]}

@@ -37,6 +37,8 @@ export interface MetricSpec {
   hexHead: { s: number; k: number };
   /** ISO 4032 hex nut: across flats, height. */
   nut: { s: number; m: number };
+  /** ISO 4026 hex socket set screw: hex key size. */
+  setScrewKey: number;
 }
 
 export const METRIC: Record<MetricSize, MetricSpec> = {
@@ -52,6 +54,7 @@ export const METRIC: Record<MetricSize, MetricSpec> = {
     flatHead: { dk: 4, key: 1.3 },
     hexHead: { s: 4, k: 1.4 },
     nut: { s: 4, m: 1.6 },
+    setScrewKey: 0.9,
   },
   "M2.5": {
     d: 2.5,
@@ -65,6 +68,7 @@ export const METRIC: Record<MetricSize, MetricSpec> = {
     flatHead: { dk: 5, key: 1.5 },
     hexHead: { s: 5, k: 1.7 },
     nut: { s: 5, m: 2 },
+    setScrewKey: 1.3,
   },
   M3: {
     d: 3,
@@ -78,6 +82,7 @@ export const METRIC: Record<MetricSize, MetricSpec> = {
     flatHead: { dk: 6, key: 2 },
     hexHead: { s: 5.5, k: 2 },
     nut: { s: 5.5, m: 2.4 },
+    setScrewKey: 1.5,
   },
   M4: {
     d: 4,
@@ -91,6 +96,7 @@ export const METRIC: Record<MetricSize, MetricSpec> = {
     flatHead: { dk: 8, key: 2.5 },
     hexHead: { s: 7, k: 2.8 },
     nut: { s: 7, m: 3.2 },
+    setScrewKey: 2,
   },
   M5: {
     d: 5,
@@ -104,6 +110,7 @@ export const METRIC: Record<MetricSize, MetricSpec> = {
     flatHead: { dk: 10, key: 3 },
     hexHead: { s: 8, k: 3.5 },
     nut: { s: 8, m: 4.7 },
+    setScrewKey: 2.5,
   },
   M6: {
     d: 6,
@@ -117,6 +124,7 @@ export const METRIC: Record<MetricSize, MetricSpec> = {
     flatHead: { dk: 12, key: 4 },
     hexHead: { s: 10, k: 4 },
     nut: { s: 10, m: 5.2 },
+    setScrewKey: 3,
   },
   M8: {
     d: 8,
@@ -130,6 +138,7 @@ export const METRIC: Record<MetricSize, MetricSpec> = {
     flatHead: { dk: 16, key: 5 },
     hexHead: { s: 13, k: 5.3 },
     nut: { s: 13, m: 6.8 },
+    setScrewKey: 4,
   },
   M10: {
     d: 10,
@@ -143,6 +152,7 @@ export const METRIC: Record<MetricSize, MetricSpec> = {
     flatHead: { dk: 20, key: 6 },
     hexHead: { s: 16, k: 6.4 },
     nut: { s: 16, m: 8.4 },
+    setScrewKey: 5,
   },
   M12: {
     d: 12,
@@ -156,6 +166,7 @@ export const METRIC: Record<MetricSize, MetricSpec> = {
     flatHead: { dk: 24, key: 8 },
     hexHead: { s: 18, k: 7.5 },
     nut: { s: 18, m: 10.8 },
+    setScrewKey: 6,
   },
 };
 

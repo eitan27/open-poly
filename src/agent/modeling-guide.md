@@ -298,7 +298,7 @@ frame count that shows the motion you care about.
   `add_hole` with that `sketchId`: `size: "M3"` (M2–M12) picks the ISO clearance
   diameter by `fit` (close/normal/loose), and `holeType` `counterbore` /
   `countersink` take the matching ISO head pocket; `tapped` drills the tap
-  drill and a real ISO thread (`thread: "modelled"`, the default; `params.clearance`, default 0.1 mm per part, keeps a printed screw from binding — `"cosmetic"` skips the thread). Default is through all; `extent: "blind"`
+  drill — cosmetic by default; `thread: "modelled"` cuts a real ISO thread (`params.clearance`, default 0.1 mm per part, keeps a printed screw from binding). Default is through all; `extent: "blind"`
   with `params.depth` (and `tipAngle`, 0 = flat bottom) for a blind hole.
 - **Gears:** `add_gear` makes an involute spur gear (or `gearType: "internal"`,
   a ring gear) as a body on a plane: `params.teeth`, `params.module` (or
@@ -310,17 +310,21 @@ frame count that shows the motion you care about.
   inside a ring gear works the same way. To animate them, use an assembly and a
   gear relation (value = driver teeth / driven teeth).
 - **Screws:** `add_screw` makes metric screws as a new body (`head`: socket /
-  button / flat (countersunk) / hex, `size` M2–M12, `params.length` under the
-  head — overall for flat). With `holeId` of a Hole feature it puts one screw
-  in every hole, at the hole's metric size, seated on the counterbore floor (or
-  flush in the countersink); otherwise give `plane` and `params.centerX/Y` —
-  the head sits on the plane and the shank goes in against its normal (`flip`
-  reverses). The thread is modelled (a real ISO helix with a lead-in chamfer,
-  shrunk by `params.clearance`, default 0.1 mm) — a screw in a modelled
-  tapped hole nests with a 0.2 mm radial gap, so both can be 3D printed.
-  Printing tips worth passing on: print screws standing on their head, raise
-  the clearance to 0.15–0.2 for a tight printer, and prefer M5 and up (finer
-  pitches print poorly). `thread: "cosmetic"` gives a plain, fast shank.
+  button / flat (countersunk) / hex, or `set` — a headless set screw with a hex
+  socket in its end — or `none` — just the threaded shank, a stud or threaded
+  rod; `size` M2–M12, `params.length` under the head — overall for flat).
+  With `holeId` of a Hole feature it puts one screw in every hole, at the
+  hole's metric size, seated on the counterbore floor (or flush in the
+  countersink); otherwise give `plane` and `params.centerX/Y` — the head sits
+  on the plane and the shank goes in against its normal (`flip` reverses).
+  The thread is cosmetic by default (a plain shank — quick, and right for a
+  bought screw in a CAD model). `thread: "modelled"` gives a real ISO helix
+  with a lead-in chamfer, shrunk by `params.clearance` (default 0.1 mm); in a
+  modelled tapped hole (`add_hole` with `thread: "modelled"`) it nests with a
+  0.2 mm radial gap, so both can be 3D printed. Printing tips worth passing
+  on: ISO pitches below about M8 print poorly on FDM, so prefer a larger
+  size; print screws standing on their head (or a headless one upright);
+  raise the clearance to 0.15–0.2 for a tight printer.
 - **Two-sided / centered feature:** `add_extrude` with `extent: "symmetric"` —
   the profile extrudes `distance` equally both ways (centered on the sketch).
 - **Extrude up to a face:** `add_extrude` with `extent: "upToFace"` and

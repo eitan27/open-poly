@@ -795,7 +795,9 @@ export interface HoleFeature extends FeatureBase {
   params: HoleParams;
 }
 
-export type ScrewHead = "socket" | "button" | "flat" | "hex";
+/** `set`: a headless set screw (ISO 4026) with a hex socket in its end;
+ *  `none`: just the threaded shank — a stud or threaded rod. */
+export type ScrewHead = "socket" | "button" | "flat" | "hex" | "set" | "none";
 
 export interface ScrewParams {
   /** Nominal length, ISO-style: under the head, or overall for a flat

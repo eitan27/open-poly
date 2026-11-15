@@ -3,7 +3,7 @@
 // hex key, each lit when its field has focus. A modelled thread is drawn as
 // its real teeth (the far side half a pitch on, as a section shows it); a
 // cosmetic one as the conventional thin line at the minor diameter.
-import { headBottom, screwProfile, socketDepth, type ScrewDims } from "../../document/screw";
+import { hasHead, headBottom, screwProfile, socketDepth, type ScrewDims } from "../../document/screw";
 import { minorDiameter } from "../../geom/thread";
 import { threadSection } from "./threadSection";
 import { DimGroup, LinearDim, type P } from "./Dims";
@@ -48,7 +48,8 @@ export function ScrewDiagram({ dims: d, clearance, active, onPick }: Props) {
         Math.min(r, rootR + (d.length - z)),
         z,
       ]);
-    const headTop = d.head === "hex" ? [[0, 0] as [number, number]] : screwProfile(d, true).slice(0, -1);
+    const headTop =
+      d.head === "hex" || !hasHead(d.head) ? [[0, 0] as [number, number]] : screwProfile(d, true).slice(0, -1);
     const topSide: [number, number][] = [...headTop, ...teeth(0), [0, d.length]];
     const bottomSide = [...headTop.slice(1), ...teeth(d.pitch / 2)].reverse();
     outline = [...topSide.map(([r, z]) => pt(z, r)), ...bottomSide.map(([r, z]) => pt(z, -r))];
@@ -123,16 +124,18 @@ export function ScrewDiagram({ dims: d, clearance, active, onPick }: Props) {
           labelSide={1}
         />
       </DimGroup>
-      <DimGroup name="head size" active={active} onPick={onPick}>
-        <LinearDim
-          a={pt(top, -(d.head === "hex" ? hexHalf : R))}
-          b={pt(top, d.head === "hex" ? hexHalf : R)}
-          offset={-12}
-          label={`${d.head === "hex" ? "AF " : "Ø"}${fmtDim(d.headDiameter)}`}
-          labelSide={-1}
-        />
-      </DimGroup>
-      {d.head !== "flat" && (
+      {hasHead(d.head) && (
+        <DimGroup name="head size" active={active} onPick={onPick}>
+          <LinearDim
+            a={pt(top, -(d.head === "hex" ? hexHalf : R))}
+            b={pt(top, d.head === "hex" ? hexHalf : R)}
+            offset={-12}
+            label={`${d.head === "hex" ? "AF " : "Ø"}${fmtDim(d.headDiameter)}`}
+            labelSide={-1}
+          />
+        </DimGroup>
+      )}
+      {d.head !== "flat" && hasHead(d.head) && (
         <DimGroup name="head size" active={active} onPick={onPick}>
           <LinearDim a={pt(-d.headHeight, R)} b={pt(0, R)} offset={-10} label={fmtDim(d.headHeight)} />
         </DimGroup>

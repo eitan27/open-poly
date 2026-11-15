@@ -37,6 +37,7 @@ import type {
   ExportFormat,
   ExtrudeExtent,
   FaceSurface,
+  FloatBuffer,
   MeshedEdges,
   MeshedFaces,
   RegenFeatureResult,
@@ -51,7 +52,9 @@ import type {
 import { DRESSUP_DELTA_IDS, dressUpDeltaBase } from "./types";
 import { builderKey, contentKey } from "./cache";
 import { CIRCLE_FACETS, circleStations } from "../geom/circleFacets";
-import { threadMesh, type ThreadFaceKind, type ThreadMesh } from "../geom/thread";
+import { threadMesh } from "../geom/thread";
+import { newell, type PolyMesh } from "../geom/polyMesh";
+import { screwMesh } from "../geom/screwMesh";
 import { expandToChains, expansionCount } from "../geom/edgeChains";
 import { fitRing } from "../geom/ringFit";
 import {
@@ -381,6 +384,10 @@ function solidsOnly(named: NamedShape, minVolume: number): NamedShape | null {
 function splitLumps(named: NamedShape): NamedShape[] | null {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
+  // Count first: almost every body is one solid, and copying it only to
+  // throw the copy away cost a full geometric copy per body per regen (50 ms
+  // for a modelled screw).
+  if (countSolids(named.shape) < 2) return null;
   const out: NamedShape[] = [];
   // Each lump is copied inside the loop: TopExp_Explorer.Current() is a
   // reference into the explorer, invalid the moment Next() is called.
@@ -4351,21 +4358,16 @@ function weldNamed(faces: { face: Face; name: string }[]): NamedShape {
   return { shape: solid, names };
 }
 
-/** A closed polygon mesh (geom/thread.ts) as a solid, built the way an STL
+/** A closed polygon mesh (geom/polyMesh.ts) as a solid, built the way an STL
  *  becomes a BRep: one vertex per mesh vertex and one edge per mesh edge, SHARED
  *  by the two faces either side, so the shell is closed by construction and
  *  needs no sewing (sewing thousands of thread facets is what makes the naive
- *  makePolygon + makeSolid route slow). Each face is made on a plane carrying
- *  the mesh's own outward normal, so the orientations agree too.
+ *  makePolygon + makeSolid route slow) and no booleans. Each face is made on a
+ *  plane carrying the mesh's own outward normal, its wires running the mesh's
+ *  loops in order — so a hole, wound the other way, comes out a hole.
  *  Local (x, y, z) maps to (u, down × u, down) — right-handed, so a right-hand
- *  thread stays one. Faces are named by `nameOf(kind, index)`. */
-function meshSolid(
-  mesh: ThreadMesh,
-  o: V3,
-  down: V3,
-  u: V3,
-  nameOf: (kind: ThreadFaceKind, i: number) => string,
-): NamedShape {
+ *  thread stays one. Faces are named `${prefix}/${face.name}`. */
+function meshSolid(mesh: PolyMesh, o: V3, down: V3, u: V3, prefix: string): NamedShape {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
   const e2 = vcross(down, u);
@@ -4382,98 +4384,80 @@ function meshSolid(
     pnt.delete();
     return v;
   });
+  // Each edge is made once, low vertex → high; a loop running it the other
+  // way takes it reversed, so every wire follows its loop exactly.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const edges = new Map<number, any>();
+  const edges = new Map<number, { fwd: any; rev: any }>();
   const nv = verts.length;
   const edgeOf = (a: number, b: number) => {
     const k = a < b ? a * nv + b : b * nv + a;
     let e = edges.get(k);
     if (!e) {
       const me = new oc.BRepBuilderAPI_MakeEdge_2(verts[Math.min(a, b)], verts[Math.max(a, b)]);
-      e = me.Edge();
+      const fwd = me.Edge();
       me.delete();
+      e = { fwd, rev: oc.TopoDS.Edge_1(fwd.Reversed()) };
       edges.set(k, e);
     }
-    return e;
+    return a < b ? e.fwd : e.rev;
   };
-  const shell = new oc.TopoDS_Shell();
-  const builder = new oc.TopoDS_Builder();
-  builder.MakeShell(shell);
-  const faceNames: string[] = [];
-  const counts = new Map<ThreadFaceKind, number>();
-  for (const { loop, kind } of mesh.faces) {
+  const wireOf = (loop: number[]) => {
     const mw = new oc.BRepBuilderAPI_MakeWire_1();
     for (let i = 0; i < loop.length; i++) mw.Add_1(edgeOf(loop[i], loop[(i + 1) % loop.length]));
     const wire = mw.Wire();
     mw.delete();
-    // Newell's normal of the loop: outward, since the mesh winds that way.
-    let nx = 0;
-    let ny = 0;
-    let nz = 0;
-    for (let i = 0; i < loop.length; i++) {
-      const a = world[loop[i]];
-      const b = world[loop[(i + 1) % loop.length]];
-      nx += (a[1] - b[1]) * (a[2] + b[2]);
-      ny += (a[2] - b[2]) * (a[0] + b[0]);
-      nz += (a[0] - b[0]) * (a[1] + b[1]);
-    }
-    const p0 = world[loop[0]];
+    return wire;
+  };
+  const shell = new oc.TopoDS_Shell();
+  const builder = new oc.TopoDS_Builder();
+  builder.MakeShell(shell);
+  for (const face of mesh.faces) {
+    const [nx, ny, nz] = newell(world, face.loop);
+    const p0 = world[face.loop[0]];
     const pnt = new oc.gp_Pnt_3(p0[0], p0[1], p0[2]);
     const dir = new oc.gp_Dir_4(nx, ny, nz);
     const pln = new oc.gp_Pln_3(pnt, dir);
-    const mf = new oc.BRepBuilderAPI_MakeFace_16(pln, wire, true);
-    if (!mf.IsDone()) throw new Error("thread: a facet could not be built");
+    const mf = new oc.BRepBuilderAPI_MakeFace_16(pln, wireOf(face.loop), true);
+    for (const h of face.holes ?? []) mf.Add(wireOf(h));
+    if (!mf.IsDone()) throw new Error(`${prefix}: a facet could not be built`);
     builder.Add(shell, mf.Face());
     mf.delete();
     pln.delete();
     dir.delete();
     pnt.delete();
-    const n = counts.get(kind) ?? 0;
-    counts.set(kind, n + 1);
-    faceNames.push(nameOf(kind, n));
   }
   const ms = new oc.BRepBuilderAPI_MakeSolid_3(shell);
   const solid = cast(ms.Solid()) as Shape3D;
   ms.delete();
   builder.delete();
   for (const v of verts) v.delete();
+  for (const e of edges.values()) {
+    e.fwd.delete();
+    e.rev.delete();
+  }
   // Faces come back in the order they were added.
   const names = new Map<number, string>();
-  solid.faces.forEach((f, i) => names.set(f.hashCode, faceNames[i]));
-  if (measureVolume(solid) <= 0) throw new Error("thread: the thread solid came out inside-out");
+  solid.faces.forEach((f, i) => names.set(f.hashCode, `${prefix}/${mesh.faces[i].name}`));
+  if (measureVolume(solid) <= 0) throw new Error(`${prefix}: the solid came out inside-out`);
   return { shape: solid, names };
-}
-
-/** A hexagonal prism about the axis through `o` along `down`, `across` its
- *  flats, from depth z0 to z1 — a hex screw head or the socket cut into one. */
-function hexPrismShape(o: V3, down: V3, u: V3, v: V3, across: number, z0: number, z1: number, id: string): NamedShape {
-  const R = across / Math.sqrt(3);
-  const ring = (z: number): Point[] =>
-    Array.from({ length: 6 }, (_, k) => {
-      const a = (k * Math.PI) / 3;
-      const c = Math.cos(a) * R;
-      const sn = Math.sin(a) * R;
-      return [
-        o[0] + down[0] * z + u[0] * c + v[0] * sn,
-        o[1] + down[1] * z + u[1] * c + v[1] * sn,
-        o[2] + down[2] * z + u[2] * c + v[2] * sn,
-      ] as Point;
-    });
-  const A = ring(z0);
-  const B = ring(z1);
-  const faces = [
-    { face: makePolygon(A), name: `${id}/top` },
-    { face: makePolygon(B), name: `${id}/bottom` },
-    ...A.map((_, k) => ({ face: makePolygon([A[k], A[(k + 1) % 6], B[(k + 1) % 6], B[k]]), name: `${id}/flat${k}` })),
-  ];
-  return weldNamed(faces);
 }
 
 /** A copy of a named solid moved by `d`, its names re-prefixed `from` → `to`
  *  (faces keep their order through a transform, so names follow by index). */
 function translatedNamed(src: NamedShape, d: V3, from: string, to: string): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
   const byIndex = src.shape.faces.map((f) => src.names.get(f.hashCode));
-  const shape = src.shape.clone().translate(d[0], d[1], d[2]) as Shape3D;
+  // Moved by a location, sharing the topology: a copy of a thousand-facet
+  // screw costs nothing, where a geometric copy cost as much as building it.
+  const vec = new oc.gp_Vec_4(d[0], d[1], d[2]);
+  const trsf = new oc.gp_Trsf_1();
+  trsf.SetTranslation_1(vec);
+  const loc = new oc.TopLoc_Location_2(trsf);
+  const shape = cast(src.shape.wrapped.Moved(loc, false)) as Shape3D;
+  loc.delete();
+  trsf.delete();
+  vec.delete();
   const names = new Map<number, string>();
   shape.faces.forEach((f, i) => {
     const nm = byIndex[i];
@@ -4495,9 +4479,16 @@ function framePoint(frame: { origin: V3; uAxis: V3; vAxis: V3 }, cu: number, cv:
  *  phase set by `u` (θ = 0) and depth 0 at `o` — the same for a screw and the
  *  tapped hole it sits in, so the two nest. */
 function threadSolid(t: ThreadResolved, o: V3, down: V3, u: V3, id: string, segments?: number): NamedShape {
-  return meshSolid(threadMesh({ ...t, segments }), o, down, u, (kind, i) =>
-    kind === "thread" ? `${id}/thread${i}` : `${id}/thread${kind === "start" ? "Start" : "End"}`,
-  );
+  const m = threadMesh({ ...t, segments });
+  let i = 0;
+  const mesh: PolyMesh = {
+    vertices: m.vertices,
+    faces: m.faces.map((f) => ({
+      loop: f.loop,
+      name: f.kind === "thread" ? `thread${i++}` : f.kind === "start" ? "threadStart" : "threadEnd",
+    })),
+  };
+  return meshSolid(mesh, o, down, u, id);
 }
 
 const THREAD_FUZZY = 1e-5;
@@ -4532,59 +4523,47 @@ function threadBoolean(
 function buildScrewFeature(feature: Extract<ResolvedFeature, { type: "screw" }>, ctx: BuildContext): void {
   const { bodies, used } = ctx;
   const key = builderKey(feature);
-  bodies.push({ id: feature.id, key, ...buildCached(key, used, () => screwBody(feature)) });
+  used.add(key);
+  let entry = builderCache.get(key);
+  if (!entry) {
+    entry = screwBody(feature);
+    builderCache.set(key, entry);
+  }
+  bodies.push({ id: feature.id, key, ...sharedNamed(entry) });
 }
 
-/** The screws of a feature, as one shape. Order matters for speed: the hex
- *  head and the socket are booleaned on the small revolved head FIRST, and the
- *  thread (thousands of facets) is fused on last, with no face-merging pass
- *  after it — a helix has no coplanar neighbours to merge, and that pass was
- *  most of the time. */
+/** A second handle on a cached shape, sharing its topology — not the deep
+ *  copy buildCached makes. For a modelled screw (thousands of faces) the deep
+ *  copy was ~100 ms on EVERY regen, for every screw in the document, though
+ *  nothing about them had changed. Safe for a body nothing edits in place:
+ *  booleans and transforms build new shapes from it, and a mesh written onto
+ *  the shared faces is the same mesh either way. The faces keep their hash
+ *  codes, so the names carry straight over. */
+function sharedNamed(src: NamedShape): NamedShape {
+  const loc = src.shape.wrapped.Location_1();
+  const shape = cast(src.shape.wrapped.Located(loc, false)) as Shape3D;
+  loc.delete();
+  return { shape, names: new Map(src.names) };
+}
+
+/** The screws of a feature, as one shape. The first is ONE mesh — head,
+ *  socket and thread stitched together in JS (geom/screwMesh.ts) and made a
+ *  solid in a single pass, no booleans; the rest are copies of it. */
 function screwBody(feature: Extract<ResolvedFeature, { type: "screw" }>): NamedShape {
   const { frame } = feature;
   // Into the plane against its normal, like a hole; Flip reverses.
   const sg = feature.flip ? 1 : -1;
   const down: V3 = [frame.normal[0] * sg, frame.normal[1] * sg, frame.normal[2] * sg];
   const idOf = (i: number) => (feature.centers.length > 1 ? `${feature.id}/n${i}` : feature.id);
-  const combine = (a: NamedShape, b: NamedShape, op: "fuse" | "cut", unify = true): NamedShape => {
-    const raw = booleanNamed(op, a, b);
-    const r = unify ? unifyBody(raw) : raw;
-    a.shape.delete();
-    b.shape.delete();
-    return r;
-  };
-  // Build the first screw; the rest are copies of it.
   const o0 = framePoint(frame, ...feature.centers[0]);
   const id0 = idOf(0);
-  let screw: NamedShape | null = feature.profile.length
-    ? revolvedPolyhedron(o0, down, frame.uAxis, frame.vAxis, feature.profile, id0)
-    : null;
-  if (feature.hexHead) {
-    const { across, z0, z1 } = feature.hexHead;
-    const head = hexPrismShape(o0, down, frame.uAxis, frame.vAxis, across, z0, z1, `${id0}/head`);
-    screw = screw ? combine(screw, head, "fuse") : head;
-  }
-  if (!screw) throw new Error("screw: nothing to build");
-  if (feature.socket) {
-    const { across, z0, z1 } = feature.socket;
-    // Start the cutter a little above the head so it doesn't share its face.
-    const cutter = hexPrismShape(o0, down, frame.uAxis, frame.vAxis, across, z0 - 0.5, z1, `${id0}/socket`);
-    screw = combine(screw, cutter, "cut");
-  }
-  if (feature.thread) {
-    const t = feature.thread;
-    const head = screw;
-    screw = threadBoolean(
-      "fuse",
-      head,
-      (seg) => threadSolid(t, o0, down, frame.uAxis, id0, seg),
-      (r) => countSolids(r.shape) === 1,
-    );
-    head.shape.delete();
-    if (!screw) throw new Error("screw: the thread wouldn't join the head");
-  }
-
-  const first = screw;
+  const mesh = screwMesh({
+    profile: feature.profile,
+    hexHead: feature.hexHead,
+    socket: feature.socket,
+    thread: feature.thread,
+  });
+  const first = meshSolid(mesh, o0, down, frame.uAxis, id0);
   const screws = feature.centers.map(([cu, cv], i) => {
     if (i === 0) return first;
     const o = framePoint(frame, cu, cv);
@@ -5136,6 +5115,30 @@ function buildBodies(
   return { bodies, previews, failures, timings, warnings };
 }
 
+/** Numbers in a mesh above which it travels as typed arrays. A small mesh's
+ *  number[] clones across the worker boundary instantly; a big one — a
+ *  modelled thread is a few hundred thousand numbers — was cloned element by
+ *  element twice per regen and then AGAIN by every autosave's IndexedDB write,
+ *  which for a handful of threaded screws froze the page for over a second
+ *  after each edit. Typed arrays clone as a memcpy. */
+const PACK_MESH_ABOVE = 30_000;
+
+function packLargeMesh(m: { faces: MeshedFaces; edges: MeshedEdges }): { faces: MeshedFaces; edges: MeshedEdges } {
+  const { faces, edges } = m;
+  const size = faces.vertices.length + faces.triangles.length + (faces.normals?.length ?? 0) + edges.lines.length;
+  if (size <= PACK_MESH_ABOVE) return m;
+  const f32 = (a: FloatBuffer) => (a instanceof Float32Array ? a : new Float32Array(a));
+  return {
+    faces: {
+      ...faces,
+      vertices: f32(faces.vertices),
+      triangles: faces.triangles instanceof Uint32Array ? faces.triangles : new Uint32Array(faces.triangles),
+      ...(faces.normals ? { normals: f32(faces.normals) } : {}),
+    },
+    edges: { ...edges, lines: f32(edges.lines) },
+  };
+}
+
 /** Bodies with more faces than this mesh per-face (see `meshFaceByFace`); below it,
  *  replicad's one-shot whole-shape mesh is faster. Large imported STEP assemblies
  *  (a populated PCB is ~80k faces) are the case this guards against. */
@@ -5251,6 +5254,12 @@ type FaceNormalStats = { fallback: number; unknown: number };
  *  normal over the boundary ring, which needs only the 3D edges. Null when even
  *  that is degenerate. */
 function faceOutwardNormal(f: Face, stats?: FaceNormalStats): V3 | null {
+  // A plane's normal is just its axis — no centre of mass to integrate and no
+  // point to project, which is most of what the general route costs. Faceted
+  // walls make planes the overwhelming majority (a modelled screw is
+  // thousands of them).
+  const planar = planeFaceNormal(f);
+  if (planar) return planar;
   try {
     return vunit(f.normalAt(f.center).normalized().toTuple() as V3);
   } catch {
@@ -5300,6 +5309,32 @@ function faceOutwardNormal(f: Face, stats?: FaceNormalStats): V3 | null {
       stats.unknown++;
     }
     return null;
+  }
+}
+
+/** A planar face's outward normal from its plane's axis (the adaptor applies
+ *  the face's location), reversed with the face; null for any other surface. */
+function planeFaceNormal(f: Face): V3 | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let ad: any = null;
+  try {
+    ad = new oc.BRepAdaptor_Surface_2(f.wrapped, false);
+    if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) return null;
+    const pln = ad.Plane();
+    const ax = pln.Axis();
+    const d = ax.Direction();
+    const s = f.wrapped.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED ? -1 : 1;
+    const n: V3 = [d.X() * s, d.Y() * s, d.Z() * s];
+    d.delete();
+    ax.delete();
+    pln.delete();
+    return n;
+  } catch {
+    return null;
+  } finally {
+    ad?.delete();
   }
 }
 
@@ -6018,9 +6053,8 @@ function regenerate(
           );
           edges = { lines: [], edgeGroups: [] }; // edges omitted for a reference body
         } else {
-          // Normal body: replicad's one-shot mesh (number[]). Small meshes clone
-          // across the worker boundary instantly, so typed-array repacking would
-          // only add overhead with no transfer benefit.
+          // Normal body: replicad's one-shot mesh (number[]); a big one is
+          // repacked into typed arrays below.
           faces = b.shape.mesh(MESH_OPTS);
           edges = b.shape.meshEdges(MESH_OPTS);
           // Recover any face the one-shot mesh silently dropped, before anything
@@ -6086,7 +6120,7 @@ function regenerate(
             chainId: chains?.get(g.edgeId),
           }));
         }
-        cached = { faces, edges };
+        cached = packLargeMesh({ faces, edges });
         meshCache.set(b.key, cached);
       }
       result = { id: b.id, ok: true, mesh: { name: b.id, faces: cached.faces, edges: cached.edges } };
