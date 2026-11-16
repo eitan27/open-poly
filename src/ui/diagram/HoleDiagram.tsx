@@ -48,13 +48,23 @@ export function HoleDiagram({ dims: d, size, active, onPick }: Props) {
   const Y = (y: number) => top + y * s;
   const pt = (x: number, y: number): P => [X(x), Y(y)];
 
-  const prof = holeProfile(d, T + 2);
-  const right = prof.map(([pr, pz]) => pt(pr, Math.min(pz, T + 2)));
+  // The cut, filled; its outline drawn OPEN — no line across the mouth, and
+  // for a through hole none across the exit, so it reads as running out of
+  // the block's underside rather than ending in a flat floor. The fill runs a
+  // pixel past the block to cover the block's own bottom edge there.
+  const exit = T + 1.5 / s;
+  const prof = holeProfile(d, exit);
+  const clip = (pz: number) => Math.min(pz, exit);
+  const right = prof.map(([pr, pz]) => pt(pr, clip(pz)));
   const left = prof
     .slice(0, -1)
     .reverse()
-    .map(([pr, pz]) => pt(-pr, Math.min(pz, T + 2)));
-  const cut = [...right, ...left].map(([x, y], i) => `${i ? "L" : "M"}${x},${y}`).join(" ") + " Z";
+    .map(([pr, pz]) => pt(-pr, clip(pz)));
+  const path = (pts: P[]) => pts.map(([x, y], i) => `${i ? "L" : "M"}${x},${y}`).join(" ");
+  const cut = path([...right, ...left]) + " Z";
+  // Through: each wall alone, down to the exit (the profile's last point is
+  // the axis, which a through hole never reaches).
+  const walls = d.throughAll ? [path(right.slice(0, -1)), path(left.slice(1))] : [path([...right, ...left])];
 
   const boreTop = Math.max(cbDepth, csDepth);
   const boreBottom = d.throughAll ? T : d.depth;
@@ -78,7 +88,10 @@ export function HoleDiagram({ dims: d, size, active, onPick }: Props) {
         height={T * s}
         fill={`url(#${hatchId})`}
       />
-      <path className="dg-cut" d={cut} />
+      <path className="dg-cut-fill" d={cut} />
+      {walls.map((w, i) => (
+        <path key={i} className="dg-cut-edge" d={w} />
+      ))}
       {d.holeType === "tapped" && d.threadDiameter && d.modelledThread && d.pitch && (
         <>
           {[1, -1].map((side) => {

@@ -7,7 +7,15 @@
 // isn't.
 import { evaluateExpression, type Scope } from "./expression";
 import { frameOf, type PlaneFrameData } from "./planes";
-import type { HoleFeature, HoleParams, HoleType, SketchFeature } from "./types";
+import type {
+  HoleFeature,
+  HoleParams,
+  HolePointAt,
+  HolePointRef,
+  HoleType,
+  SketchEntity,
+  SketchFeature,
+} from "./types";
 import { METRIC, isMetricSize, type HoleFit } from "../geom/metricFasteners";
 import { minorDiameter } from "../geom/thread";
 import type { ResolvedFeature } from "../kernel/types";
@@ -38,7 +46,7 @@ export const DEFAULT_HOLE_PARAMS: HoleParams = {
   clearance: "0.1",
 };
 
-export type HoleSettings = Pick<HoleFeature, "holeType" | "thread" | "size" | "fit" | "extent" | "flip"> & {
+export type HoleSettings = Pick<HoleFeature, "holeType" | "thread" | "size" | "fit" | "extent" | "flip" | "points"> & {
   params: HoleParams;
 };
 
@@ -188,15 +196,88 @@ export function holeProfile(d: HoleDims, bottom = d.depth): [number, number][] {
   return pts;
 }
 
-/** Where the holes go: every point entity and every circle centre in the
- *  sketch, in sketch (u, v). Duplicates (a point on a circle's centre) count
- *  once. */
-export function holeCenters(sketch: SketchFeature): [number, number][] {
+/** A snap point of an entity, in sketch (u, v); null when the entity has
+ *  no such point (a circle has no ends, a point no midpoint). */
+export function snapPoint(e: SketchEntity, at: HolePointAt): [number, number] | null {
+  const arcEnd = (a: number): [number, number] =>
+    e.type === "arc" ? [e.c[0] + e.r * Math.cos(a), e.c[1] + e.r * Math.sin(a)] : [0, 0];
+  switch (e.type) {
+    case "point":
+      return at === "point" ? [e.p[0], e.p[1]] : null;
+    case "circle":
+      return at === "center" ? [e.c[0], e.c[1]] : null;
+    case "arc":
+      return at === "center"
+        ? [e.c[0], e.c[1]]
+        : at === "start"
+          ? arcEnd(e.start)
+          : at === "end"
+            ? arcEnd(e.end)
+            : null;
+    case "line":
+      return at === "start"
+        ? [e.a[0], e.a[1]]
+        : at === "end"
+          ? [e.b[0], e.b[1]]
+          : at === "mid"
+            ? [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2]
+            : null;
+    default:
+      return null;
+  }
+}
+
+/** The points a hole takes by default: every point entity and circle
+ *  centre, as an older hole (no `points`) still does. */
+export function defaultHolePoints(sketch: SketchFeature): HolePointRef[] {
+  const out: HolePointRef[] = [];
+  for (const e of sketch.entities) {
+    if (e.type === "point") out.push({ entityId: e.id, at: "point" });
+    else if (e.type === "circle") out.push({ entityId: e.id, at: "center" });
+  }
+  return out;
+}
+
+/** The snap point a click on a whole entity means: a point is itself, a
+ *  circle or arc its centre, a line its midpoint (its ends are picked as
+ *  vertices). Null for what has no single point (a spline, text). */
+export function entityHolePoint(e: SketchEntity): HolePointRef | null {
+  const at: HolePointAt | null =
+    e.type === "point"
+      ? "point"
+      : e.type === "circle" || e.type === "arc"
+        ? "center"
+        : e.type === "line"
+          ? "mid"
+          : null;
+  return at ? { entityId: e.id, at } : null;
+}
+
+/** The snap point at a picked sketch vertex (u, v): a point entity there
+ *  first, then a centre, then a line's or arc's end. */
+export function holePointAt(sketch: SketchFeature, uv: [number, number], tol = 1e-6): HolePointRef | null {
+  const order: HolePointAt[] = ["point", "center", "start", "end", "mid"];
+  for (const at of order)
+    for (const e of sketch.entities) {
+      const p = snapPoint(e, at);
+      if (p && Math.hypot(p[0] - uv[0], p[1] - uv[1]) <= tol) return { entityId: e.id, at };
+    }
+  return null;
+}
+
+export const sameHolePoint = (a: HolePointRef, b: HolePointRef) => a.entityId === b.entityId && a.at === b.at;
+
+/** Where the holes go, in sketch (u, v): `refs` when given, else every point
+ *  entity and circle centre. Coincident points count once. Throws when a
+ *  referenced entity is gone. */
+export function holeCenters(sketch: SketchFeature, refs?: HolePointRef[]): [number, number][] {
   const out: [number, number][] = [];
   const seen = (p: [number, number]) => out.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < 1e-6);
-  for (const e of sketch.entities) {
-    const p = e.type === "point" ? e.p : e.type === "circle" ? e.c : null;
-    if (p && !seen(p)) out.push([p[0], p[1]]);
+  for (const ref of refs ?? defaultHolePoints(sketch)) {
+    const e = sketch.entities.find((x) => x.id === ref.entityId);
+    const p = e && snapPoint(e, ref.at);
+    if (!p) throw new Error("hole: a point it was placed on is gone from the sketch — pick its points again");
+    if (!seen(p)) out.push(p);
   }
   return out;
 }
@@ -211,9 +292,13 @@ export function resolveHole(
 ): ResolvedFeature {
   if (!sketch) throw new Error("hole: its sketch no longer exists — pick another");
   if (!f.targetId) throw new Error("hole: choose the body to drill");
-  const centers = holeCenters(sketch);
+  const centers = holeCenters(sketch, f.points);
   if (centers.length === 0)
-    throw new Error("hole: the sketch has no points — add a point (or a circle) where each hole goes");
+    throw new Error(
+      f.points
+        ? "hole: select where the holes go — points, circle or arc centres, line ends or midpoints"
+        : "hole: the sketch has no points — add a point (or a circle) where each hole goes",
+    );
   const dims = holeDims(f, scope);
   return {
     id: f.id,

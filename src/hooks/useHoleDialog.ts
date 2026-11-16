@@ -3,8 +3,14 @@
 // EDIT applies live to the real document.
 import { useEffect, useState } from "react";
 import { addHole, resolveDocument, updateHole } from "../document/document";
-import { DEFAULT_HOLE_SETTINGS, holeCenters, type HoleSettings } from "../document/hole";
-import type { Document, Feature, HoleFeature, SketchFeature } from "../document/types";
+import {
+  DEFAULT_HOLE_SETTINGS,
+  defaultHolePoints,
+  holeCenters,
+  sameHolePoint,
+  type HoleSettings,
+} from "../document/hole";
+import type { Document, Feature, HoleFeature, HolePointRef, SketchFeature } from "../document/types";
 import type { KernelClient } from "../kernel/KernelClient";
 import type { ShapeMeshPayload } from "../kernel/types";
 
@@ -15,6 +21,9 @@ export interface HoleDialogState {
   targetId: string | null;
   settings: HoleSettings;
   editId?: string;
+  /** The Location slot is listening: the next sketch point, circle, arc or
+   *  line clicked adds (or removes) a hole there. */
+  picking: boolean;
 }
 
 export interface HoleDialogDeps {
@@ -40,6 +49,11 @@ export interface HoleDialogApi {
   close: () => void;
   confirm: () => void;
   setSketch: (id: string) => void;
+  /** A snap point clicked while picking: toggles it, or — in another sketch —
+   *  starts over in that one (a hole's points share one sketch's plane). */
+  pickPoint: (sketchId: string, ref: HolePointRef) => void;
+  clearPoints: () => void;
+  setPicking: (on: boolean) => void;
   setTarget: (id: string) => void;
   update: (patch: Partial<HoleSettings>) => void;
   updateParam: (name: keyof HoleSettings["params"], value: string) => void;
@@ -65,14 +79,23 @@ export function useHoleDialog(deps: HoleDialogDeps): HoleDialogApi {
   const open = (sketchId: string | null, fallbackTarget: string | null) => {
     const sketches = holeSketches(doc);
     const sk = sketchId && sketches.some((s) => s.id === sketchId) ? sketchId : (sketches.at(-1)?.id ?? null);
+    const sketch = sketches.find((s) => s.id === sk);
     setDialog({
       sketchId: sk,
       targetId: sketchBody(doc, sk) ?? fallbackTarget,
-      settings: { ...DEFAULT_HOLE_SETTINGS, params: { ...DEFAULT_HOLE_SETTINGS.params } },
+      // Start on every point and circle centre of the sketch — the quick
+      // path — with the slot listening, so a click narrows or extends it.
+      settings: {
+        ...DEFAULT_HOLE_SETTINGS,
+        points: sketch ? defaultHolePoints(sketch) : [],
+        params: { ...DEFAULT_HOLE_SETTINGS.params },
+      },
+      picking: true,
     });
   };
 
   const edit = (feature: HoleFeature) => {
+    const sketch = doc.features.find((f): f is SketchFeature => f.id === feature.sketchId && f.type === "sketch");
     beginEdit(feature);
     selectFeature(feature.id);
     setDialog({
@@ -85,9 +108,11 @@ export function useHoleDialog(deps: HoleDialogDeps): HoleDialogApi {
         fit: feature.fit,
         extent: feature.extent,
         flip: feature.flip,
+        points: feature.points ?? (sketch ? defaultHolePoints(sketch) : []),
         params: { ...DEFAULT_HOLE_SETTINGS.params, ...feature.params },
       },
       editId: feature.id,
+      picking: false,
     });
   };
 
@@ -97,7 +122,7 @@ export function useHoleDialog(deps: HoleDialogDeps): HoleDialogApi {
   };
 
   const confirm = () => {
-    if (!dialog?.sketchId || !dialog.targetId) return;
+    if (!dialog?.sketchId || !dialog.targetId || !dialog.settings.points?.length) return;
     if (dialog.editId) {
       setDoc(updateHole(doc, dialog.editId, dialog.sketchId, dialog.targetId, dialog.settings));
       selectFeature(dialog.editId);
@@ -112,7 +137,33 @@ export function useHoleDialog(deps: HoleDialogDeps): HoleDialogApi {
   };
 
   const setSketch = (id: string) =>
-    setDialog((d) => (d ? { ...d, sketchId: id, targetId: sketchBody(doc, id) ?? d.targetId } : d));
+    setDialog((d) => {
+      if (!d) return d;
+      const sk = doc.features.find((f): f is SketchFeature => f.id === id && f.type === "sketch");
+      return {
+        ...d,
+        sketchId: id,
+        targetId: sketchBody(doc, id) ?? d.targetId,
+        settings: { ...d.settings, points: sk ? defaultHolePoints(sk) : [] },
+      };
+    });
+  const pickPoint = (sketchId: string, ref: HolePointRef) =>
+    setDialog((d) => {
+      if (!d) return d;
+      if (d.sketchId !== sketchId)
+        return {
+          ...d,
+          sketchId,
+          targetId: sketchBody(doc, sketchId) ?? d.targetId,
+          settings: { ...d.settings, points: [ref] },
+        };
+      const pts = d.settings.points ?? [];
+      const next = pts.some((p) => sameHolePoint(p, ref)) ? pts.filter((p) => !sameHolePoint(p, ref)) : [...pts, ref];
+      return { ...d, settings: { ...d.settings, points: next } };
+    });
+  const clearPoints = () =>
+    setDialog((d) => (d ? { ...d, picking: true, settings: { ...d.settings, points: [] } } : d));
+  const setPicking = (on: boolean) => setDialog((d) => (d ? { ...d, picking: on } : d));
   const setTarget = (id: string) => setDialog((d) => (d ? { ...d, targetId: id } : d));
   const update = (patch: Partial<HoleSettings>) =>
     setDialog((d) => (d ? { ...d, settings: { ...d.settings, ...patch } } : d));
@@ -178,5 +229,20 @@ export function useHoleDialog(deps: HoleDialogDeps): HoleDialogApi {
     setDoc((prev) => updateHole(prev, editId, sketchId, targetId, settings), `edit:${editId}`);
   }, [editId, sketchId, targetId, settings, setDoc, shouldLiveApply]);
 
-  return { dialog, preview, previewError, open, edit, close, confirm, setSketch, setTarget, update, updateParam };
+  return {
+    dialog,
+    preview,
+    previewError,
+    open,
+    edit,
+    close,
+    confirm,
+    setSketch,
+    pickPoint,
+    clearPoints,
+    setPicking,
+    setTarget,
+    update,
+    updateParam,
+  };
 }

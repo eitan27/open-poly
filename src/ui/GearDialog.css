@@ -62,6 +62,25 @@
   padding-right: 4px;
 }
 
+/* Location: the pick button with its ✕ beside it. */
+.hole-location {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* A value read from the ISO table: plain text where a field would be. */
+.hole-dialog .ed-derived-value {
+  color: var(--text-4);
+  font-variant-numeric: tabular-nums;
+  padding-right: 8px;
+}
+
+.hole-dialog .ed-modes.ed-inline {
+  flex: 0 0 auto;
+  width: 160px;
+}
+
 /* Six screw heads: two rows of three rather than one row too narrow to read. */
 .hole-dialog .ed-modes.screw-heads {
   display: grid;

@@ -109,6 +109,7 @@ import type {
   PlaneFeature,
   PlaneMethod,
   PointRef,
+  HolePointRef,
   RevolveProfile,
   SketchConstraint,
   SketchEntity,
@@ -194,7 +195,7 @@ import { holeSketches, useHoleDialog } from "./hooks/useHoleDialog";
 import { useThreadDialog } from "./hooks/useThreadDialog";
 import { threadDims, type ThreadDims } from "./document/threadFeature";
 import { useScrewDialog } from "./hooks/useScrewDialog";
-import { holeCenters, holeDims, type HoleDims } from "./document/hole";
+import { entityHolePoint, holeCenters, holeDims, holePointAt, type HoleDims } from "./document/hole";
 import { screwDims, screwSize, type ScrewDims } from "./document/screw";
 import { gearReadout, meshCandidates } from "./document/gear";
 import { usePersistedDocuments } from "./hooks/usePersistedDocuments";
@@ -891,6 +892,24 @@ export default function App() {
           setPickingUpFace(false);
         }
       }
+      return;
+    }
+    // Hole Location slot listening: a sketch point, circle, arc or line adds
+    // a hole at its snap point (a second click removes it). Anything else
+    // keeps the slot listening, with a word on what it wants.
+    if (hole.dialog?.picking) {
+      const sk =
+        picked && (picked.kind === "sketchPoint" || picked.kind === "sketchEntity")
+          ? doc.features.find((f) => f.id === picked.sketchId)
+          : undefined;
+      let ref: HolePointRef | null = null;
+      if (sk?.type === "sketch" && picked?.kind === "sketchPoint") ref = holePointAt(sk, picked.point, 1e-3);
+      else if (sk?.type === "sketch" && picked?.kind === "sketchEntity") {
+        const ent = sk.entities.find((e) => e.id === picked.entityId);
+        ref = ent ? entityHolePoint(ent) : null;
+      }
+      if (sk && ref) hole.pickPoint(sk.id, ref);
+      else if (picked) flashMsg("Holes go on sketch points, circle or arc centres, and line ends or midpoints.");
       return;
     }
     // Through-3-points plane pick armed: read a world point from the clicked
@@ -7580,6 +7599,7 @@ export default function App() {
               }
               sketchTool={sketchTool}
               sketches={renderSketchesWithPreview}
+              sketchSnapDots={!!hole.dialog?.picking}
               activeSketchId={editingSketchId}
               sketchFullyConstrained={fullyConstrained}
               draft={draft}
@@ -8721,17 +8741,14 @@ export default function App() {
                   <HoleDialog
                     editing={!!d.editId}
                     settings={d.settings}
-                    sketchId={d.sketchId}
-                    sketchOptions={holeSketches(doc).map((sk) => ({
-                      id: sk.id,
-                      name: sk.name,
-                      points: holeCenters(sk).length,
-                    }))}
+                    sketchName={doc.features.find((f) => f.id === d.sketchId)?.name ?? null}
+                    picking={d.picking}
                     targetId={d.targetId}
                     targetOptions={booleanCandidates}
                     dims={dims ?? lastHoleDims.current}
                     error={error?.replace(/^hole: /, "") ?? null}
-                    onSketchChange={hole.setSketch}
+                    onPickingChange={hole.setPicking}
+                    onClearPoints={hole.clearPoints}
                     onTargetChange={hole.setTarget}
                     onChange={hole.update}
                     onParam={hole.updateParam}

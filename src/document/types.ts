@@ -777,6 +777,15 @@ export interface HoleParams {
  *  documents made before modelled threads have), or built as a real helix. */
 export type ThreadMode = "cosmetic" | "modelled";
 
+/** Which snap point of a sketch entity a hole sits on: a point entity
+ *  itself, a circle's or arc's centre, a line's or arc's ends, or a line's
+ *  midpoint. By entity, not position, so the hole follows the sketch. */
+export type HolePointAt = "point" | "center" | "start" | "end" | "mid";
+export interface HolePointRef {
+  entityId: string;
+  at: HolePointAt;
+}
+
 export interface HoleFeature extends FeatureBase {
   type: "hole";
   holeType: HoleType;
@@ -787,8 +796,12 @@ export interface HoleFeature extends FeatureBase {
   size: string;
   /** Clearance fit for a metric simple/counterbore/countersink hole. */
   fit: "close" | "normal" | "loose";
-  /** The sketch whose points place the holes; its plane is where they start. */
+  /** The sketch the holes are placed in; its plane is where they start. */
   sketchId: string;
+  /** Where in that sketch, each a snap point of one of its entities. Absent
+   *  (older documents, and the agent's default): every point entity and
+   *  circle centre in the sketch. */
+  points?: HolePointRef[];
   /** The body the holes cut. */
   targetId?: string;
   extent: "blind" | "throughAll";

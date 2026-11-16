@@ -3,6 +3,7 @@ import { HOLE_FIT_LABELS, HOLE_TYPE_LABELS, holeReadout, type HoleDims, type Hol
 import type { HoleParams, HoleType, ThreadMode } from "../document/types";
 import { METRIC, METRIC_SIZES, isMetricSize, type HoleFit } from "../geom/metricFasteners";
 import { DraggableDialog } from "./DraggableDialog";
+import { PickButton } from "./PickSlot";
 import { ExprInput } from "./ExprInput";
 import { HoleDiagram } from "./diagram/HoleDiagram";
 import "./GearDialog.css";
@@ -15,9 +16,10 @@ export interface HoleOption {
 interface Props {
   editing?: boolean;
   settings: HoleSettings;
-  sketchId: string | null;
-  /** Sketches with at least one point or circle, newest last. */
-  sketchOptions: (HoleOption & { points: number })[];
+  /** The sketch the picked points are in, by name (null before any pick). */
+  sketchName: string | null;
+  /** The Location slot is listening for clicks in the viewport. */
+  picking: boolean;
   targetId: string | null;
   targetOptions: HoleOption[];
   /** The settings resolved to numbers — the last ones that made a hole, so
@@ -25,7 +27,8 @@ interface Props {
    *  nothing valid has been entered yet. */
   dims: HoleDims | null;
   error: string | null;
-  onSketchChange: (id: string) => void;
+  onPickingChange: (on: boolean) => void;
+  onClearPoints: () => void;
   onTargetChange: (id: string) => void;
   onChange: (patch: Partial<HoleSettings>) => void;
   onParam: (name: keyof HoleParams, value: string) => void;
@@ -59,13 +62,14 @@ function metricValue(settings: HoleSettings, name: keyof HoleParams): string | n
 export function HoleDialog({
   editing,
   settings,
-  sketchId,
-  sketchOptions,
+  sketchName,
+  picking,
   targetId,
   targetOptions,
   dims,
   error,
-  onSketchChange,
+  onPickingChange,
+  onClearPoints,
   onTargetChange,
   onChange,
   onParam,
@@ -81,6 +85,8 @@ export function HoleDialog({
   const t = settings.holeType;
   const blind = settings.extent === "blind";
   const metric = isMetricSize(settings.size);
+  const nPoints = settings.points?.length ?? 0;
+  const drillPoint = Number(p.tipAngle) !== 0;
 
   const field = (name: keyof HoleParams, label: string, title?: string) => {
     // A modelled thread's drill is capped at the thread's minor diameter
@@ -90,6 +96,20 @@ export function HoleDialog({
       name === "diameter" && t === "tapped" && dims?.modelledThread
         ? String(Math.round(dims.diameter * 1000) / 1000)
         : metricValue(settings, name);
+    // From the table: a value to read, not a greyed-out box to puzzle over.
+    if (fixed !== null)
+      return (
+        <div
+          className="ed-field ed-derived"
+          title={`${title ? title + ". " : ""}From the ${settings.size} table — choose Custom size to type your own`}
+          onMouseEnter={() => setHovered(name)}
+          onMouseLeave={() => setHovered(null)}
+          onClick={() => setFocused(name)}
+        >
+          <span>{label}</span>
+          <span className="ed-derived-value">{fixed}</span>
+        </div>
+      );
     return (
       <label
         className="ed-field"
@@ -142,23 +162,41 @@ export function HoleDialog({
       <div className="ed-title" data-drag-handle>
         {editing ? "Edit hole" : "Hole"}
       </div>
-      {seg(t, HOLE_TYPES, HOLE_TYPE_LABELS, (holeType) => onChange({ holeType }))}
-
-      {dims && <HoleDiagram dims={dims} size={settings.size} active={focused ?? hovered} onPick={pick} />}
-
       <label className="ed-field">
-        <span>Sketch</span>
-        <select value={sketchId ?? ""} onChange={(e) => onSketchChange(e.target.value)}>
-          <option value="" disabled>
-            {sketchOptions.length ? "Select a sketch…" : "No sketch with points"}
-          </option>
-          {sketchOptions.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name} ({s.points} {s.points === 1 ? "hole" : "holes"})
+        <span>Type</span>
+        <select value={t} onChange={(e) => onChange({ holeType: e.target.value as HoleType })}>
+          {HOLE_TYPES.map((h) => (
+            <option key={h} value={h}>
+              {HOLE_TYPE_LABELS[h]}
             </option>
           ))}
         </select>
       </label>
+
+      {dims && <HoleDiagram dims={dims} size={settings.size} active={focused ?? hovered} onPick={pick} />}
+
+      <div
+        className="ed-field"
+        title="Where the holes go: sketch points, circle or arc centres, line ends or midpoints"
+      >
+        <span>Location</span>
+        <span className="hole-location">
+          <PickButton noun="points" armed={picking} onClick={() => onPickingChange(!picking)}>
+            {nPoints ? `${nPoints} ${nPoints === 1 ? "point" : "points"}` : undefined}
+          </PickButton>
+          {nPoints > 0 && (
+            <button type="button" className="bool-operand-x" title="Clear the points" onClick={onClearPoints}>
+              ✕
+            </button>
+          )}
+        </span>
+      </div>
+      {picking && (
+        <p className="ed-hint">
+          Click sketch points, circles or arcs (their centres), or lines (their midpoints, or an end). Click one again
+          to remove it.{sketchName ? ` In ${sketchName}.` : ""}
+        </p>
+      )}
       <label className="ed-field">
         <span>Body</span>
         <select value={targetId ?? ""} onChange={(e) => onTargetChange(e.target.value)}>
@@ -173,8 +211,17 @@ export function HoleDialog({
         </select>
       </label>
 
-      <label className="ed-field" onMouseEnter={() => setHovered("size")} onMouseLeave={() => setHovered(null)}>
-        <span>Size</span>
+      <label
+        className="ed-field"
+        title={
+          t === "tapped"
+            ? "The thread to tap: the screw's nominal diameter × pitch. The hole drilled for it (the tap drill) is smaller — the thread's teeth are cut into its wall"
+            : "The screw this hole is for. The hole itself is a little wider (its clearance), so the screw passes freely"
+        }
+        onMouseEnter={() => setHovered("size")}
+        onMouseLeave={() => setHovered(null)}
+      >
+        <span>{t === "tapped" ? "Thread" : "Screw size"}</span>
         <select
           ref={(el) => {
             if (el) inputs.current.set("size", el);
@@ -186,7 +233,7 @@ export function HoleDialog({
         >
           {METRIC_SIZES.map((m) => (
             <option key={m} value={m}>
-              {m}
+              {t === "tapped" ? `${m} × ${METRIC[m].pitch}` : m}
             </option>
           ))}
           <option value="custom">Custom</option>
@@ -214,7 +261,13 @@ export function HoleDialog({
           )}
         </div>
       )}
-      {field("diameter", t === "tapped" ? (dims?.modelledThread ? "Drill Ø" : "Tap drill Ø") : "Diameter")}
+      {field(
+        "diameter",
+        t === "tapped" ? (dims?.modelledThread ? "Drill Ø" : "Tap drill Ø") : metric ? "Clearance Ø" : "Diameter",
+        t === "tapped"
+          ? "The hole drilled before tapping: smaller than the thread, which is cut into its wall"
+          : "The hole's diameter: wider than the screw, by the fit",
+      )}
       {t === "counterbore" && field("counterboreDiameter", "Counterbore Ø")}
       {t === "counterbore" && field("counterboreDepth", "Counterbore depth")}
       {t === "countersink" && field("countersinkDiameter", "Countersink Ø")}
@@ -235,7 +288,25 @@ export function HoleDialog({
         (extent) => onChange({ extent }),
       )}
       {blind && field("depth", "Depth")}
-      {blind && field("tipAngle", "Tip angle °", "Included angle of the drill point; 0 for a flat bottom")}
+      {blind && (
+        <div
+          className="ed-field"
+          title="The end of a blind hole: flat (an end mill, or a printed pocket), or the cone a twist drill leaves"
+        >
+          <span>Bottom</span>
+          <div className="ed-modes ed-inline">
+            <button className={!drillPoint ? "active" : ""} onClick={() => onParam("tipAngle", "0")}>
+              Flat
+            </button>
+            <button className={drillPoint ? "active" : ""} onClick={() => !drillPoint && onParam("tipAngle", "118")}>
+              Drill point
+            </button>
+          </div>
+        </div>
+      )}
+      {blind &&
+        drillPoint &&
+        field("tipAngle", "Point angle °", "Included angle of the drill point: 118° for a standard twist drill")}
       <label className="ed-field ed-flip" title="Drill the other way (out of the sketch plane's front)">
         <span>Flip direction</span>
         <input type="checkbox" checked={settings.flip} onChange={(e) => onChange({ flip: e.target.checked })} />
@@ -244,7 +315,7 @@ export function HoleDialog({
       {dims && !error && <div className="gear-readout">{holeReadout(dims, settings.size)}</div>}
       {error && <p className="ed-warning">{error}</p>}
       <div className="ed-actions">
-        <button className="ed-primary" disabled={!!error || !sketchId || !targetId} onClick={onConfirm}>
+        <button className="ed-primary" disabled={!!error || nPoints === 0 || !targetId} onClick={onConfirm}>
           {editing ? "Done" : "Create"}
         </button>
         <button onClick={onCancel}>Cancel</button>

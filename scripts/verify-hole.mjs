@@ -93,9 +93,10 @@ for (const [holeType, extra] of [
   await dialog.waitFor({ timeout: 3000 });
   await page.waitForTimeout(1500);
   check("the dialog shows a diagram", (await dialog.locator("svg.dg").count()) === 1);
-  await dialog.locator("button", { hasText: "Counterbore" }).click();
+  const typeSel = dialog.locator(".ed-field", { hasText: "Type" }).locator("select");
+  await typeSel.selectOption("counterbore");
   await dialog.locator("button", { hasText: "Blind" }).click();
-  await dialog.locator(".ed-field", { hasText: "Depth" }).last().locator("input").fill("9");
+  await dialog.locator(".ed-field", { hasText: /^Depth/ }).locator("input").fill("9");
   await dialog
     .locator(".ed-field", { hasText: /^Depth/ })
     .locator("input")
@@ -105,7 +106,7 @@ for (const [holeType, extra] of [
   await dialog.screenshot({ path: path.join(SHOTS, "hole-dialog-cbore.png") });
   await shot("ghost");
   for (const t of ["Countersink", "Tapped", "Simple"]) {
-    await dialog.locator("button", { hasText: t }).click();
+    await typeSel.selectOption(t.toLowerCase());
     await page.waitForTimeout(300);
     await dialog.screenshot({ path: path.join(SHOTS, `hole-dialog-${t.toLowerCase()}.png`) });
   }

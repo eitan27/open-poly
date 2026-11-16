@@ -3,7 +3,11 @@ import { addHole, createDocument, resolveDocument, updateParam } from "./documen
 import {
   DEFAULT_HOLE_SETTINGS,
   countersinkDepth,
+  defaultHolePoints,
+  entityHolePoint,
   holeCenters,
+  holePointAt,
+  snapPoint,
   holeDims,
   holeProfile,
   tipDepth,
@@ -199,5 +203,70 @@ describe("modelled tapped thread", () => {
     const rf = resolveDocument(doc).features.find((f) => f.id === id);
     expect(rf).toMatchObject({ thread: { d: 5, pitch: 0.8, offset: 0.1, tipChamfer: false } });
     expect((rf as { thread: { z0: number } }).thread.z0).toBeLessThan(0);
+  });
+});
+
+describe("hole points", () => {
+  const sk: SketchFeature = {
+    id: "s",
+    type: "sketch",
+    name: "Sketch 1",
+    suppressed: false,
+    plane: { kind: "datum", datumId: "top" },
+    entities: [
+      { type: "point", id: "p", p: [1, 2] },
+      { type: "line", id: "l", a: [0, 0], b: [10, 0] },
+      { type: "circle", id: "c", c: [5, 5], r: 2 },
+      { type: "arc", id: "a", c: [0, 10], r: 3, start: 0, end: Math.PI / 2 },
+    ],
+    constraints: [],
+  } as unknown as SketchFeature;
+  const ent = (id: string) => sk.entities.find((e) => e.id === id)!;
+
+  it("finds each entity's snap points, and none it doesn't have", () => {
+    expect(snapPoint(ent("l"), "mid")).toEqual([5, 0]);
+    expect(snapPoint(ent("l"), "end")).toEqual([10, 0]);
+    expect(snapPoint(ent("c"), "center")).toEqual([5, 5]);
+    const arcEnd = snapPoint(ent("a"), "end")!;
+    expect(arcEnd[0]).toBeCloseTo(0);
+    expect(arcEnd[1]).toBeCloseTo(13);
+    expect(snapPoint(ent("c"), "start")).toBeNull();
+    expect(snapPoint(ent("p"), "mid")).toBeNull();
+  });
+
+  it("reads a click on a whole entity as its centre, midpoint or itself", () => {
+    expect(entityHolePoint(ent("l"))).toEqual({ entityId: "l", at: "mid" });
+    expect(entityHolePoint(ent("a"))).toEqual({ entityId: "a", at: "center" });
+    expect(entityHolePoint(ent("p"))).toEqual({ entityId: "p", at: "point" });
+  });
+
+  it("names the snap point at a picked vertex", () => {
+    expect(holePointAt(sk, [10, 0])).toEqual({ entityId: "l", at: "end" });
+    expect(holePointAt(sk, [5, 5])).toEqual({ entityId: "c", at: "center" });
+    expect(holePointAt(sk, [3, 3])).toBeNull();
+  });
+
+  it("places holes at the picked points — or, with none given, every point and circle centre", () => {
+    expect(holeCenters(sk, [{ entityId: "l", at: "mid" }])).toEqual([[5, 0]]);
+    expect(holeCenters(sk)).toEqual([
+      [1, 2],
+      [5, 5],
+    ]);
+    expect(defaultHolePoints(sk)).toEqual([
+      { entityId: "p", at: "point" },
+      { entityId: "c", at: "center" },
+    ]);
+  });
+
+  it("follows the sketch: a moved line moves its midpoint hole", () => {
+    const moved = {
+      ...sk,
+      entities: sk.entities.map((e) => (e.id === "l" ? { ...e, b: [20, 0] } : e)),
+    } as SketchFeature;
+    expect(holeCenters(moved, [{ entityId: "l", at: "mid" }])).toEqual([[10, 0]]);
+  });
+
+  it("says so when a picked entity is gone", () => {
+    expect(() => holeCenters(sk, [{ entityId: "gone", at: "point" }])).toThrow(/gone from the sketch/);
   });
 });

@@ -28,6 +28,17 @@
   opacity: 0.45;
 }
 
+.dg-cut-fill {
+  fill: var(--bg-sunken);
+  stroke: none;
+}
+
+.dg-cut-edge {
+  fill: none;
+  stroke: var(--text-4);
+  stroke-width: 1;
+}
+
 .dg-cut {
   fill: var(--bg-sunken);
   stroke: var(--text-4);

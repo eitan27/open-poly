@@ -233,7 +233,7 @@ export function resolveScrew(
     const sketch = doc.features.find((x) => x.id === hole.sketchId) as SketchFeature | undefined;
     if (sketch?.type !== "sketch") throw new Error("screw: the hole's sketch no longer exists");
     frame = frameOf(sketch.plane, planeFrames);
-    centers = holeCenters(sketch);
+    centers = holeCenters(sketch, hole.points);
     flip = hole.flip !== f.flip;
     seat = seatDepth(hole, scope);
   } else {

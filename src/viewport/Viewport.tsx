@@ -303,6 +303,17 @@ const EDGE_HOV_COLOR = new THREE.Color(0x36d6c3);
 // sketch, so the grabbable key points are discoverable. Colour matches the sketch
 // line (recoloured live with its constrained state — see applyHighlights); the
 // hover/selection marker is larger and translucent so this dot shows through it.
+// Point entities of the sketches NOT being edited (they draw no line, so
+// without a dot they'd be invisible and unclickable), and every snap point
+// while a dialog asks for one.
+const sketchPointMaterial = new THREE.PointsMaterial({
+  color: 0x8fb4ff,
+  size: 6,
+  sizeAttenuation: false,
+  depthTest: false,
+  transparent: true,
+  opacity: 0.95,
+});
 const sketchDotMaterial = new THREE.PointsMaterial({
   color: 0x4d8dff,
   size: 5,
@@ -425,6 +436,7 @@ export function Viewport({
   activeSketchFace,
   sketchTool,
   sketches,
+  sketchSnapDots = false,
   activeSketchId,
   sketchFullyConstrained,
   draft,
@@ -524,6 +536,10 @@ export function Viewport({
   activeSketchFace: { bodyId: string; frame: PlaneFrameData } | null;
   sketchTool: SketchTool;
   sketches: RenderSketch[];
+  /** Mark every snap point of every visible sketch — centres, line ends and
+   *  midpoints, point entities — while a dialog is waiting for one (the Hole
+   *  dialog's Location). */
+  sketchSnapDots?: boolean;
   activeSketchId: string | null;
   sketchFullyConstrained: boolean;
   draft: Vec2[];
@@ -2550,6 +2566,28 @@ export function Viewport({
       if (flt.edge && edgeOk && (!sketchOk || edgeHit!.distance <= sketchHit!.distance)) {
         return { kind: "edge", featureId: edgeInfo!.fid, edgeId: edgeInfo!.edgeId! };
       }
+      // A sketch's standalone POINT has no line for the ray to hit, so it is
+      // found by pixel distance instead — a vertex's gate, and not when a
+      // face stands in front of it.
+      {
+        let best: Selection | null = null;
+        let bestPx = VERTEX_PICK_PX;
+        for (const sk of sketchesRef.current) {
+          if (sk.id === activeSid) continue;
+          for (const e of sk.entities) {
+            if (e.type !== "point") continue;
+            const w = new THREE.Vector3(...uvToWorld(sk.frame, e.p[0], e.p[1]));
+            if (camera.position.distanceTo(w) > faceDist + PICK_DEPTH_TOL) continue;
+            const q = projectToPx(w);
+            const d = Math.hypot(q.x - clientX, q.y - clientY);
+            if (d < bestPx) {
+              bestPx = d;
+              best = { kind: "sketchPoint", sketchId: sk.id, point: [e.p[0], e.p[1]] };
+            }
+          }
+        }
+        if (best) return best;
+      }
       if (sketchOk) {
         const obj = sketchHit!.object as THREE.LineSegments;
         const sid = obj.userData.sketchId as string | undefined;
@@ -4213,6 +4251,26 @@ export function Viewport({
           dots.userData.isSketchDots = true;
           state.sketchGroup.add(dots);
         }
+      } else {
+        const uvs = sketchSnapDots
+          ? [
+              ...sketchPointCandidates(s)
+                .slice(1)
+                .map((c) => c.uv),
+              ...lineMidpoints(s),
+            ]
+          : s.entities.flatMap((e) => (e.type === "point" ? [e.p] : []));
+        if (uvs.length > 0) {
+          const pos = new Float32Array(uvs.length * 3);
+          uvs.forEach((uv, i) => pos.set(uvToWorld(s.frame, uv[0], uv[1]), i * 3));
+          const g = new THREE.BufferGeometry();
+          g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+          const dots = new THREE.Points(g, sketchPointMaterial);
+          dots.frustumCulled = false;
+          dots.renderOrder = 12;
+          dots.userData.isSketchDots = true;
+          state.sketchGroup.add(dots);
+        }
       }
 
       // Enclosed regions ("sketch faces"): a transparent, pickable fill that
@@ -4383,7 +4441,7 @@ export function Viewport({
     snapPointsRef.current = points;
     snapLinesRef.current = lines;
     snapCirclesRef.current = [...circles, ...sketchRings];
-  }, [sketches, activeSketchId, meshes, sketchFullyConstrained, fontTick]);
+  }, [sketches, sketchSnapDots, activeSketchId, meshes, sketchFullyConstrained, fontTick]);
 
   // Resolve which faces of the sketched body lie on the sketch plane, so the
   // face-material loop can tint them. A planar face is classified from one
@@ -4530,6 +4588,14 @@ function previewPolyline(
     default:
       return null;
   }
+}
+
+/** The midpoints of a sketch's lines — snap points for a dialog, not
+ *  vertices (a click on the line itself picks them). */
+function lineMidpoints(sketch: RenderSketch): Vec2[] {
+  return sketch.entities.flatMap((e) =>
+    e.type === "line" ? [[(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2] as Vec2] : [],
+  );
 }
 
 /** Selectable points of a sketch: line endpoints, circle centres, arc ends. */
