@@ -195,7 +195,7 @@ import { holeSketches, useHoleDialog } from "./hooks/useHoleDialog";
 import { useThreadDialog } from "./hooks/useThreadDialog";
 import { threadDims, type ThreadDims } from "./document/threadFeature";
 import { useScrewDialog } from "./hooks/useScrewDialog";
-import { entityHolePoint, holeCenters, holeDims, holePointAt, type HoleDims } from "./document/hole";
+import { holeCenters, holeDims, holePointAt, type HoleDims } from "./document/hole";
 import { screwDims, screwSize, type ScrewDims } from "./document/screw";
 import { gearReadout, meshCandidates } from "./document/gear";
 import { usePersistedDocuments } from "./hooks/usePersistedDocuments";
@@ -268,6 +268,7 @@ import type {
   TransformMode,
   ViewName,
   ViewportApi,
+  PlacementPick,
 } from "./viewport/types";
 import "./App.css";
 
@@ -894,22 +895,13 @@ export default function App() {
       }
       return;
     }
-    // Hole Location slot listening: a sketch point, circle, arc or line adds
-    // a hole at its snap point (a second click removes it). Anything else
-    // keeps the slot listening, with a word on what it wants.
-    if (hole.dialog?.picking) {
-      const sk =
-        picked && (picked.kind === "sketchPoint" || picked.kind === "sketchEntity")
-          ? doc.features.find((f) => f.id === picked.sketchId)
-          : undefined;
-      let ref: HolePointRef | null = null;
-      if (sk?.type === "sketch" && picked?.kind === "sketchPoint") ref = holePointAt(sk, picked.point, 1e-3);
-      else if (sk?.type === "sketch" && picked?.kind === "sketchEntity") {
-        const ent = sk.entities.find((e) => e.id === picked.entityId);
-        ref = ent ? entityHolePoint(ent) : null;
-      }
-      if (sk && ref) hole.pickPoint(sk.id, ref);
-      else if (picked) flashMsg("Holes go on sketch points, circle or arc centres, and line ends or midpoints.");
+    // Hole dialog's Parts slot listening: a clicked part joins (or leaves)
+    // the parts it cuts. (Its Location slot takes clicks as placement picks
+    // instead — see onHolePlacementPick.)
+    if (hole.dialog?.armed === "parts") {
+      const fid = picked ? featureIdOfPart(featureIdOf(picked)) : null;
+      if (fid && booleanCandidates.some((c) => featureIdOfPart(c.id) === fid)) hole.togglePart(fid);
+      else if (picked) flashMsg("Select the parts the holes should cut.");
       return;
     }
     // Through-3-points plane pick armed: read a world point from the clicked
@@ -2554,6 +2546,16 @@ export default function App() {
    *
    *  `transform.arming` and `transform.editId` count: the transform gizmo is a
    *  dialog by any other name. */
+  // The Hole dialog's Location slot: the viewport places points (the sketch
+  // Point tool's snapping) on the hole's plane, or the face under the pointer
+  // until the first pick fixes it.
+  const holePlacing = hole.dialog?.armed === "points";
+  const holePlane = hole.dialog?.settings.plane;
+  const holePlacementFrame = useMemo(
+    () =>
+      holePlane && planeResolves(holePlane, resolved.planeFrames) ? frameOf(holePlane, resolved.planeFrames) : null,
+    [holePlane, resolved.planeFrames],
+  );
   const anyDialogOpen =
     !!planeDialog ||
     !!extrudeDialog ||
@@ -3601,7 +3603,44 @@ export default function App() {
       if (f?.type === "sketch") sketchId ??= f.id;
       else if (fid && booleanCandidates.some((c) => c.id === fid)) bodyId ??= fid;
     }
-    hole.open(sketchId, bodyId ?? booleanCandidates[0]?.id ?? null);
+    void bodyId;
+    hole.open(sketchId);
+  };
+  /** A point placed in the viewport for the Hole dialog. The first fixes the
+   *  plane the holes start on: the face it was on, or the sketch's plane. A
+   *  snap onto a sketch's own point, centre, end or midpoint keeps a live
+   *  link to that entity; anything else is a fixed spot on the plane. */
+  const onHolePlacementPick = (pick: PlacementPick) => {
+    const d = hole.dialog;
+    if (!d) return;
+    let plane = d.settings.plane;
+    if (!plane) {
+      if (pick.source.kind === "face") plane = { kind: "face", featureId: pick.source.featureId, frame: pick.frame };
+      else if (pick.source.kind === "sketch") {
+        const sid = pick.source.sketchId;
+        const sk = doc.features.find((f) => f.id === sid);
+        if (sk?.type !== "sketch") return;
+        plane = sk.plane;
+      } else return;
+    }
+    const frame = frameOf(plane, resolved.planeFrames);
+    const w = pick.world;
+    let ref: HolePointRef | null = null;
+    for (const sk of doc.features) {
+      if (sk.type !== "sketch" || !planeResolves(sk.plane, resolved.planeFrames)) continue;
+      const f = frameOf(sk.plane, resolved.planeFrames);
+      const d0 = [w[0] - f.origin[0], w[1] - f.origin[1], w[2] - f.origin[2]];
+      const dot = (a: number[]) => d0[0] * a[0] + d0[1] * a[1] + d0[2] * a[2];
+      if (Math.abs(dot(f.normal)) > 1e-3) continue;
+      ref = holePointAt(sk, [dot(f.uAxis), dot(f.vAxis)], 1e-3);
+      if (ref) break;
+    }
+    if (!ref) {
+      const d0 = [w[0] - frame.origin[0], w[1] - frame.origin[1], w[2] - frame.origin[2]];
+      const dot = (a: number[]) => d0[0] * a[0] + d0[1] * a[1] + d0[2] * a[2];
+      ref = { uv: [dot(frame.uAxis), dot(frame.vAxis)] };
+    }
+    hole.pickPoint(plane, ref);
   };
   /** Open the Thread dialog like the Hole one: the selected sketch (or the
    *  newest with points) and body. */
@@ -7598,8 +7637,10 @@ export default function App() {
                   : null
               }
               sketchTool={sketchTool}
+              placing={holePlacing && !editingSketchId}
+              placementFrame={holePlacementFrame}
+              onPlacementPick={onHolePlacementPick}
               sketches={renderSketchesWithPreview}
-              sketchSnapDots={!!hole.dialog?.picking}
               activeSketchId={editingSketchId}
               sketchFullyConstrained={fullyConstrained}
               draft={draft}
@@ -8741,15 +8782,14 @@ export default function App() {
                   <HoleDialog
                     editing={!!d.editId}
                     settings={d.settings}
-                    sketchName={doc.features.find((f) => f.id === d.sketchId)?.name ?? null}
-                    picking={d.picking}
-                    targetId={d.targetId}
-                    targetOptions={booleanCandidates}
+                    armed={d.armed}
+                    partOptions={booleanCandidates}
                     dims={dims ?? lastHoleDims.current}
                     error={error?.replace(/^hole: /, "") ?? null}
-                    onPickingChange={hole.setPicking}
+                    onArm={hole.setArmed}
                     onClearPoints={hole.clearPoints}
-                    onTargetChange={hole.setTarget}
+                    onRemovePart={hole.togglePart}
+                    onAllParts={hole.allParts}
                     onChange={hole.update}
                     onParam={hole.updateParam}
                     onConfirm={hole.confirm}

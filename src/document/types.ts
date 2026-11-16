@@ -781,10 +781,11 @@ export type ThreadMode = "cosmetic" | "modelled";
  *  itself, a circle's or arc's centre, a line's or arc's ends, or a line's
  *  midpoint. By entity, not position, so the hole follows the sketch. */
 export type HolePointAt = "point" | "center" | "start" | "end" | "mid";
-export interface HolePointRef {
-  entityId: string;
-  at: HolePointAt;
-}
+/** Where one hole goes. Either a snap point of a sketch entity — by entity,
+ *  not position, so the hole follows the sketch (`sketchId` absent: the
+ *  hole's own `sketchId`, as older holes stored it) — or a fixed spot in the
+ *  hole's plane: a body edge's midpoint, a rim's centre, a face's centre. */
+export type HolePointRef = { sketchId?: string; entityId: string; at: HolePointAt } | { uv: Vec2 };
 
 export interface HoleFeature extends FeatureBase {
   type: "hole";
@@ -796,14 +797,20 @@ export interface HoleFeature extends FeatureBase {
   size: string;
   /** Clearance fit for a metric simple/counterbore/countersink hole. */
   fit: "close" | "normal" | "loose";
-  /** The sketch the holes are placed in; its plane is where they start. */
-  sketchId: string;
+  /** Older holes: the sketch they're placed in — its plane is where they
+   *  start, and with no `points`, every point and circle centre in it. */
+  sketchId?: string;
+  /** Where the holes start: a face, a datum or reference plane. Set on new
+   *  holes; an older one uses its sketch's plane. */
+  plane?: SketchPlaneRef;
   /** Where in that sketch, each a snap point of one of its entities. Absent
    *  (older documents, and the agent's default): every point entity and
    *  circle centre in the sketch. */
   points?: HolePointRef[];
-  /** The body the holes cut. */
+  /** Older holes: the one body they cut. */
   targetId?: string;
+  /** The parts to cut. Absent: every part the holes reach (or `targetId`). */
+  scope?: string[];
   extent: "blind" | "throughAll";
   flip: boolean;
   params: HoleParams;

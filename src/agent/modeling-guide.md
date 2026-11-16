@@ -299,7 +299,8 @@ frame count that shows the motion you care about.
   diameter by `fit` (close/normal/loose), and `holeType` `counterbore` /
   `countersink` take the matching ISO head pocket; `tapped` drills the tap
   drill — cosmetic by default; `thread: "modelled"` cuts a real ISO thread (`params.clearance`, default 0.1 mm per part, keeps a printed screw from binding). Default is through all; `extent: "blind"`
-  with `params.depth` (and `tipAngle`, 0 = flat bottom) for a blind hole.
+  with `params.depth` (and `tipAngle`, 0 = flat bottom) for a blind hole. Holes cut every part they reach; pass `targetId` to
+  cut only that one.
 - **Gears:** `add_gear` makes an involute spur gear (or `gearType: "internal"`,
   a ring gear) as a body on a plane: `params.teeth`, `params.module` (or
   `params.pitchDiameter`), `params.thickness`, a `bore`. For a PAIR, make the

@@ -77,8 +77,9 @@
 }
 
 .hole-dialog .ed-modes.ed-inline {
-  flex: 0 0 auto;
-  width: 160px;
+  flex: 0 1 auto;
+  width: 184px;
+  white-space: nowrap;
 }
 
 /* Six screw heads: two rows of three rather than one row too narrow to read. */

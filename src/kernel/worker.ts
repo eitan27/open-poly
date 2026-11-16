@@ -4737,9 +4737,14 @@ function buildThreadFeature(feature: Extract<ResolvedFeature, { type: "thread" }
 
 function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, ctx: BuildContext): void {
   const { bodies } = ctx;
-  const target = feature.previewTool
-    ? bodies.find((b) => b.id === feature.targetId)
-    : requireBody(bodies, feature.targetId);
+  // The parts to cut: the picked ones, or every real body (narrowed below to
+  // the ones the holes reach).
+  const picked = !!feature.targets;
+  const candidates = picked
+    ? feature
+        .targets!.map((id) => (feature.previewTool ? bodies.find((b) => b.id === id) : requireBody(bodies, id)))
+        .filter((b): b is Body => !!b)
+    : bodies.filter((b) => !b.preview && b.id !== feature.id);
   const { frame } = feature;
   // Like a Remove extrude: into the body is AGAINST the plane normal; Flip
   // reverses it.
@@ -4747,17 +4752,20 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
   const down: V3 = [frame.normal[0] * s, frame.normal[1] * s, frame.normal[2] * s];
   let profile = feature.profile;
   if (feature.throughAll) {
-    // Push the bore's bottom far enough to clear the target from any centre.
+    // Push the bore's bottom far enough to clear every candidate from any centre.
     let reach = 10;
-    if (target) {
+    for (const target of candidates) {
       const [mn, mx] = target.shape.boundingBox.bounds;
       const c: V3 = [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2];
-      reach +=
-        bboxDiagonal(target.shape) + Math.hypot(c[0] - frame.origin[0], c[1] - frame.origin[1], c[2] - frame.origin[2]);
-      // ...and from the farthest centre, which may sit well off the frame origin.
-      const far = Math.max(...feature.centers.map(([cu, cv]) => Math.hypot(cu, cv)));
-      reach += far;
+      reach = Math.max(
+        reach,
+        10 +
+          bboxDiagonal(target.shape) +
+          Math.hypot(c[0] - frame.origin[0], c[1] - frame.origin[1], c[2] - frame.origin[2]),
+      );
     }
+    // ...and from the farthest centre, which may sit well off the frame origin.
+    reach += Math.max(...feature.centers.map(([cu, cv]) => Math.hypot(cu, cv)));
     profile = profile.map(([r, z], i) => [r, i >= profile.length - 2 ? z + reach : z] as [number, number]);
   }
   const tools = feature.centers.map(([cu, cv], i) => {
@@ -4785,13 +4793,14 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
     });
     return rods.length === 1 ? rods[0] : compoundOf(rods);
   };
-  const cutHoles = (t: Body, tool: NamedShape): NamedShape => {
+  // The cut through one part, or null when the holes miss it. The tool is
+  // left for the caller (it is reused across parts).
+  const cutHoles = (t: Body, tool: NamedShape): NamedShape | null => {
     const before = measureVolume(t.shape);
     let next = unifyBody(booleanNamed("cut", t, tool));
-    tool.shape.delete();
     if (measureVolume(next.shape) >= before - VOLUME_EPS_REL * Math.max(before, 1)) {
       next.shape.delete();
-      throw new Error("hole: the holes don't reach the body — check the sketch is on (or above) it, and try Flip.");
+      return null;
     }
     if (feature.thread) {
       // The cut must take material (the thread's flanks out past the drill);
@@ -4819,30 +4828,58 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
     bodies.push({ id: feature.id, key: contentKey(feature, []), noSplit: true, ...tool });
     return;
   }
-  const t = target!;
-  // The cut over this exact input is cached like a dress-up's (same cache and
-  // sweep): a modelled thread makes it seconds, and without the cache every
-  // later edit anywhere in the document re-cut every hole.
-  const cacheKey = contentKey(feature, ["hole", t.key]);
-  ctx.usedDressUps.add(cacheKey);
-  const hit = dressUpCache.get(cacheKey);
-  let next: NamedShape;
-  if (hit) {
+  // A part whose box the holes' box misses can't be cut: skip the boolean.
+  const [tmn, tmx] = tool.shape.boundingBox.bounds;
+  const boxesMeet = (b: Body) => {
+    const [mn, mx] = b.shape.boundingBox.bounds;
+    return [0, 1, 2].every((k) => mn[k] <= tmx[k] + 1e-6 && mx[k] >= tmn[k] - 1e-6);
+  };
+  let cut = 0;
+  try {
+    for (const t of candidates) {
+      if (!picked && !boxesMeet(t)) continue;
+      // The cut over this exact input is cached like a dress-up's (same cache
+      // and sweep): a modelled thread makes it seconds, and without the cache
+      // every later edit anywhere in the document re-cut every hole. A miss
+      // is remembered too, so "every part it reaches" doesn't re-test the
+      // parts beside the holes on every regen.
+      const cacheKey = contentKey(feature, ["hole", t.key]);
+      ctx.usedDressUps.add(cacheKey);
+      if (holeMisses.has(cacheKey)) continue;
+      const hit = dressUpCache.get(cacheKey);
+      let next: NamedShape;
+      if (hit) next = sharedNamed(hit.result);
+      else {
+        const done = cutHoles(t, tool);
+        if (!done) {
+          if (picked)
+            throw new Error("hole: the holes don't reach a part it should cut — check where they start, and try Flip.");
+          if (holeMisses.size > 2000) holeMisses.clear();
+          holeMisses.add(cacheKey);
+          continue;
+        }
+        // The cache keeps this one; the fold gets a second handle on it (see
+        // sharedNamed) — a deep copy of a threaded body was ~100 ms a regen.
+        dressUpCache.set(cacheKey, { result: done });
+        next = sharedNamed(done);
+      }
+      t.shape.delete();
+      t.shape = next.shape;
+      t.names = next.names;
+      t.key = contentKey(feature, [t.key]);
+      if (feature.thread) t.faceted = true;
+      cut++;
+    }
+  } finally {
     tool.shape.delete();
-    next = sharedNamed(hit.result);
-  } else {
-    // The cache keeps this one; the fold gets a second handle on it (see
-    // sharedNamed) — a deep copy of a threaded body was ~100 ms a regen.
-    next = cutHoles(t, tool);
-    dressUpCache.set(cacheKey, { result: next });
-    next = sharedNamed(next);
   }
-  t.shape.delete();
-  t.shape = next.shape;
-  t.names = next.names;
-  t.key = contentKey(feature, [t.key]);
-  if (feature.thread) t.faceted = true;
+  if (cut === 0) throw new Error("hole: the holes don't reach any part — check where they start, and try Flip.");
 }
+
+/** Hole cuts that took nothing, by cache key — so "every part it reaches"
+ *  tests a part beside the holes once, not on every regen. Keys are content
+ *  hashes, so a stale one is merely unused; the set is dropped when large. */
+const holeMisses = new Set<string>();
 
 function buildDressUpFeature(feature: Extract<ResolvedFeature, { type: "dressup" }>, ctx: BuildContext): void {
   const { bodies, previews, usedDressUps, warn } = ctx;

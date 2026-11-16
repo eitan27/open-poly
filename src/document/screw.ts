@@ -7,7 +7,7 @@
 // unit-testable in Node.
 import { evaluateExpression, type Scope } from "./expression";
 import { frameOf, type PlaneFrameData } from "./planes";
-import { holeCenters, holeDims } from "./hole";
+import { holeDims, holePlacement } from "./hole";
 import type { Document, HoleFeature, ScrewFeature, ScrewHead, ScrewParams, SketchFeature } from "./types";
 import { METRIC, isMetricSize, type MetricSize } from "../geom/metricFasteners";
 import { maxSocketInThread } from "../geom/screwMesh";
@@ -230,10 +230,15 @@ export function resolveScrew(
     const hole = doc.features.find((x) => x.id === f.holeId);
     if (hole?.type !== "hole")
       throw new Error("screw: its hole no longer exists — pick another, or place it on a plane");
-    const sketch = doc.features.find((x) => x.id === hole.sketchId) as SketchFeature | undefined;
-    if (sketch?.type !== "sketch") throw new Error("screw: the hole's sketch no longer exists");
-    frame = frameOf(sketch.plane, planeFrames);
-    centers = holeCenters(sketch, hole.points);
+    try {
+      ({ frame, centers } = holePlacement(
+        hole,
+        (id) => doc.features.find((x): x is SketchFeature => x.id === id && x.type === "sketch"),
+        planeFrames,
+      ));
+    } catch (err) {
+      throw new Error(`screw: its hole can't be placed — ${(err as Error).message.replace(/^hole: /, "")}`);
+    }
     flip = hole.flip !== f.flip;
     seat = seatDepth(hole, scope);
   } else {

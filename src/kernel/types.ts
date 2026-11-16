@@ -250,7 +250,8 @@ export type ResolvedFeature =
   | {
       id: string;
       type: "hole";
-      targetId: string;
+      /** The parts to cut; undefined: every part the holes reach. */
+      targets?: string[];
       frame: ResolvedFrame;
       centers: [number, number][];
       profile: [number, number][];

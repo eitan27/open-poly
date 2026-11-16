@@ -6,6 +6,8 @@ import {
   defaultHolePoints,
   entityHolePoint,
   holeCenters,
+  holePlacement,
+  holeScope,
   holePointAt,
   snapPoint,
   holeDims,
@@ -146,9 +148,14 @@ describe("holeCenters + resolve", () => {
     };
     const { doc, id } = addHole(withSketch, "s", "body", settings());
     const rf = resolveDocument(doc).features.find((f) => f.id === id);
-    expect(rf).toMatchObject({ type: "hole", targetId: "body", centers: [[1, 2]], throughAll: true });
+    expect(rf).toMatchObject({ type: "hole", targets: ["body"], centers: [[1, 2]], throughAll: true });
+    // No body: every part the holes reach.
     const noTarget = addHole(withSketch, "s", undefined, settings());
-    expect(resolveDocument(noTarget.doc).errors[noTarget.id]).toMatch(/body/);
+    expect(resolveDocument(noTarget.doc).errors[noTarget.id]).toBeUndefined();
+    expect(resolveDocument(noTarget.doc).features.find((f) => f.id === noTarget.id)).toMatchObject({
+      type: "hole",
+      targets: undefined,
+    });
     const empty: Document = { ...base, features: [...base.features, sketch([])] };
     const e = addHole(empty, "s", "body", settings());
     expect(resolveDocument(e.doc).errors[e.id]).toMatch(/no points/);
@@ -241,8 +248,8 @@ describe("hole points", () => {
   });
 
   it("names the snap point at a picked vertex", () => {
-    expect(holePointAt(sk, [10, 0])).toEqual({ entityId: "l", at: "end" });
-    expect(holePointAt(sk, [5, 5])).toEqual({ entityId: "c", at: "center" });
+    expect(holePointAt(sk, [10, 0])).toEqual({ sketchId: "s", entityId: "l", at: "end" });
+    expect(holePointAt(sk, [5, 5])).toEqual({ sketchId: "s", entityId: "c", at: "center" });
     expect(holePointAt(sk, [3, 3])).toBeNull();
   });
 
@@ -268,5 +275,52 @@ describe("hole points", () => {
 
   it("says so when a picked entity is gone", () => {
     expect(() => holeCenters(sk, [{ entityId: "gone", at: "point" }])).toThrow(/gone from the sketch/);
+  });
+});
+
+describe("holePlacement", () => {
+  const face = {
+    kind: "face" as const,
+    featureId: "box",
+    frame: {
+      origin: [0, 0, 15] as [number, number, number],
+      uAxis: [1, 0, 0] as [number, number, number],
+      vAxis: [0, 1, 0] as [number, number, number],
+      normal: [0, 0, 1] as [number, number, number],
+    },
+  };
+  // A sketch on the Top datum (z = 0), below the face.
+  const top = {
+    id: "t",
+    type: "sketch",
+    name: "Sketch 1",
+    suppressed: false,
+    plane: { kind: "datum", id: "plane-top" },
+    entities: [{ type: "line", id: "l", a: [0, 0], b: [10, 0] }],
+    constraints: [],
+  } as unknown as SketchFeature;
+  const hole = (patch: Partial<HoleFeature>): HoleFeature =>
+    ({ id: "h", type: "hole", name: "Hole 1", suppressed: false, ...settings(), ...patch }) as HoleFeature;
+  const sketchOf = (id: string) => (id === "t" ? top : undefined);
+
+  it("places fixed spots on its plane", () => {
+    const p = holePlacement(hole({ plane: face, points: [{ uv: [3, 4] }, { uv: [3, 4] }] }), sketchOf, new Map());
+    expect(p.frame.origin).toEqual([0, 0, 15]);
+    expect(p.centers).toEqual([[3, 4]]); // coincident spots count once
+  });
+
+  it("carries another sketch's point onto its plane, and follows it", () => {
+    const ref = { sketchId: "t", entityId: "l", at: "mid" as const };
+    expect(holePlacement(hole({ plane: face, points: [ref] }), sketchOf, new Map()).centers).toEqual([[5, 0]]);
+  });
+
+  it("asks for a location before it has one", () => {
+    expect(() => holePlacement(hole({ points: [] }), sketchOf, new Map())).toThrow(/select where/);
+  });
+
+  it("cuts its picked parts, an older hole's one body, or everything it reaches", () => {
+    expect(holeScope(hole({ scope: ["a", "b"] }))).toEqual(["a", "b"]);
+    expect(holeScope(hole({ sketchId: "t", targetId: "x" }))).toEqual(["x"]);
+    expect(holeScope(hole({ plane: face }))).toBeUndefined();
   });
 });

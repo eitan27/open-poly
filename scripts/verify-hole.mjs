@@ -82,8 +82,10 @@ for (const [holeType, extra] of [
 
 // The dialog: open with D, diagram + ghost, focus lights a dimension, create.
 {
-  const { box } = await plate();
+  const { box, sk } = await plate();
   void box;
+  // With a sketch selected, D opens on its points.
+  await op.apply({ op: "select", refs: [{ kind: "feature", id: sk }] });
   await page
     .locator(".viewport canvas")
     .first()
@@ -96,7 +98,10 @@ for (const [holeType, extra] of [
   const typeSel = dialog.locator(".ed-field", { hasText: "Type" }).locator("select");
   await typeSel.selectOption("counterbore");
   await dialog.locator("button", { hasText: "Blind" }).click();
-  await dialog.locator(".ed-field", { hasText: /^Depth/ }).locator("input").fill("9");
+  await dialog
+    .locator(".ed-field", { hasText: /^Depth/ })
+    .locator("input")
+    .fill("9");
   await dialog
     .locator(".ed-field", { hasText: /^Depth/ })
     .locator("input")

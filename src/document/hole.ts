@@ -6,7 +6,7 @@
 // the same numbers — and so it is unit-testable in Node, which the kernel
 // isn't.
 import { evaluateExpression, type Scope } from "./expression";
-import { frameOf, type PlaneFrameData } from "./planes";
+import { frameOf, uvToWorld, type PlaneFrameData } from "./planes";
 import type {
   HoleFeature,
   HoleParams,
@@ -46,7 +46,10 @@ export const DEFAULT_HOLE_PARAMS: HoleParams = {
   clearance: "0.1",
 };
 
-export type HoleSettings = Pick<HoleFeature, "holeType" | "thread" | "size" | "fit" | "extent" | "flip" | "points"> & {
+export type HoleSettings = Pick<
+  HoleFeature,
+  "holeType" | "thread" | "size" | "fit" | "extent" | "flip" | "points" | "plane" | "scope"
+> & {
   params: HoleParams;
 };
 
@@ -260,12 +263,17 @@ export function holePointAt(sketch: SketchFeature, uv: [number, number], tol = 1
   for (const at of order)
     for (const e of sketch.entities) {
       const p = snapPoint(e, at);
-      if (p && Math.hypot(p[0] - uv[0], p[1] - uv[1]) <= tol) return { entityId: e.id, at };
+      if (p && Math.hypot(p[0] - uv[0], p[1] - uv[1]) <= tol) return { sketchId: sketch.id, entityId: e.id, at };
     }
   return null;
 }
 
-export const sameHolePoint = (a: HolePointRef, b: HolePointRef) => a.entityId === b.entityId && a.at === b.at;
+/** The same spot: one entity's snap point, or two fixed spots within a
+ *  micron. */
+export function sameHolePoint(a: HolePointRef, b: HolePointRef): boolean {
+  if ("uv" in a || "uv" in b) return "uv" in a && "uv" in b && Math.hypot(a.uv[0] - b.uv[0], a.uv[1] - b.uv[1]) < 1e-3;
+  return a.entityId === b.entityId && a.at === b.at && (a.sketchId ?? null) === (b.sketchId ?? null);
+}
 
 /** Where the holes go, in sketch (u, v): `refs` when given, else every point
  *  entity and circle centre. Coincident points count once. Throws when a
@@ -274,6 +282,7 @@ export function holeCenters(sketch: SketchFeature, refs?: HolePointRef[]): [numb
   const out: [number, number][] = [];
   const seen = (p: [number, number]) => out.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < 1e-6);
   for (const ref of refs ?? defaultHolePoints(sketch)) {
+    if ("uv" in ref) continue; // not a sketch point
     const e = sketch.entities.find((x) => x.id === ref.entityId);
     const p = e && snapPoint(e, ref.at);
     if (!p) throw new Error("hole: a point it was placed on is gone from the sketch — pick its points again");
@@ -282,29 +291,90 @@ export function holeCenters(sketch: SketchFeature, refs?: HolePointRef[]): [numb
   return out;
 }
 
-/** The hole as the kernel builds it. `sketch` is the sketch with its derived
- *  geometry and entity expressions applied (the resolver's `dDoc` copy). */
+/** Where a hole starts and where each one goes: its plane's frame, and every
+ *  centre in that frame's (u, v). */
+export interface HolePlacement {
+  frame: PlaneFrameData;
+  centers: [number, number][];
+}
+
+/** A hole's placement. `sketchOf` looks a sketch up with its derived
+ *  geometry and expressions applied (the resolver's `dDoc`). A sketch point
+ *  in another sketch is carried into the hole's plane along its normal.
+ *  Throws a readable "hole: …" message when it can't be placed. */
+export function holePlacement(
+  f: HoleFeature,
+  sketchOf: (id: string) => SketchFeature | undefined,
+  planeFrames: Map<string, PlaneFrameData>,
+): HolePlacement {
+  const own = f.sketchId ? sketchOf(f.sketchId) : undefined;
+  if (f.sketchId && !own && !f.plane) throw new Error("hole: its sketch no longer exists — pick its points again");
+  const planeRef = f.plane ?? own?.plane;
+  if (!planeRef) throw new Error("hole: select where the holes go — click a face, an edge's point or a sketch point");
+  const frame = frameOf(planeRef, planeFrames);
+  // An older hole without a point list: every point and circle centre.
+  if (!f.points) {
+    const centers = own ? holeCenters(own) : [];
+    if (centers.length === 0)
+      throw new Error("hole: the sketch has no points — add a point (or a circle) where each hole goes");
+    return {
+      frame,
+      centers: own && own.plane === planeRef ? centers : centers.map((c) => carry(own!, c, frame, planeFrames)),
+    };
+  }
+  const centers: [number, number][] = [];
+  for (const ref of f.points) {
+    let uv: [number, number];
+    if ("uv" in ref) uv = [ref.uv[0], ref.uv[1]];
+    else {
+      const sk = sketchOf(ref.sketchId ?? f.sketchId ?? "");
+      const e = sk?.entities.find((x) => x.id === ref.entityId);
+      const p = e && snapPoint(e, ref.at);
+      if (!sk || !p) throw new Error("hole: a sketch point it was placed on is gone — pick its points again");
+      uv = carry(sk, p, frame, planeFrames);
+    }
+    if (!centers.some((q) => Math.hypot(q[0] - uv[0], q[1] - uv[1]) < 1e-6)) centers.push(uv);
+  }
+  if (centers.length === 0)
+    throw new Error("hole: select where the holes go — click a face, an edge's point or a sketch point");
+  return { frame, centers };
+}
+
+/** A sketch's (u, v) as (u, v) in `frame`: out to the world, then dropped
+ *  onto the frame's plane along its normal. */
+function carry(
+  sketch: SketchFeature,
+  p: [number, number],
+  frame: PlaneFrameData,
+  planeFrames: Map<string, PlaneFrameData>,
+): [number, number] {
+  const w = uvToWorld(frameOf(sketch.plane, planeFrames), p[0], p[1]);
+  const d = [w[0] - frame.origin[0], w[1] - frame.origin[1], w[2] - frame.origin[2]];
+  const dot = (a: number[]) => d[0] * a[0] + d[1] * a[1] + d[2] * a[2];
+  return [dot(frame.uAxis), dot(frame.vAxis)];
+}
+
+/** The parts a hole cuts: its picked parts, an older hole's one body, or
+ *  (undefined) every part it reaches. */
+export function holeScope(f: HoleFeature): string[] | undefined {
+  if (f.scope?.length) return f.scope;
+  return f.targetId && !f.plane ? [f.targetId] : undefined;
+}
+
+/** The hole as the kernel builds it. */
 export function resolveHole(
   f: HoleFeature,
-  sketch: SketchFeature | undefined,
+  sketchOf: (id: string) => SketchFeature | undefined,
   scope: Scope,
   planeFrames: Map<string, PlaneFrameData>,
 ): ResolvedFeature {
-  if (!sketch) throw new Error("hole: its sketch no longer exists — pick another");
-  if (!f.targetId) throw new Error("hole: choose the body to drill");
-  const centers = holeCenters(sketch, f.points);
-  if (centers.length === 0)
-    throw new Error(
-      f.points
-        ? "hole: select where the holes go — points, circle or arc centres, line ends or midpoints"
-        : "hole: the sketch has no points — add a point (or a circle) where each hole goes",
-    );
+  const { frame, centers } = holePlacement(f, sketchOf, planeFrames);
   const dims = holeDims(f, scope);
   return {
     id: f.id,
     type: "hole",
-    targetId: f.targetId,
-    frame: frameOf(sketch.plane, planeFrames),
+    targets: holeScope(f),
+    frame,
     centers,
     profile: holeProfile(dims, 0),
     throughAll: dims.throughAll,

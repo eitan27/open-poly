@@ -606,9 +606,17 @@ export function updateGear(doc: Document, id: string, plane: SketchPlaneRef, set
 }
 
 /** Holes at every point of `sketchId`, cut from `targetId` (see document/hole.ts). */
+/** A sketch of `doc` by id, or undefined. */
+const sketchIn =
+  (doc: Document) =>
+  (id: string): SketchFeature | undefined => {
+    const f = doc.features.find((x) => x.id === id);
+    return f?.type === "sketch" ? f : undefined;
+  };
+
 export function addHole(
   doc: Document,
-  sketchId: string,
+  sketchId: string | undefined,
   targetId: string | undefined,
   settings: HoleSettings,
 ): { doc: Document; id: string } {
@@ -629,12 +637,25 @@ export function addHole(
 export function updateHole(
   doc: Document,
   id: string,
-  sketchId: string,
+  sketchId: string | undefined,
   targetId: string | undefined,
   settings: HoleSettings,
 ): Document {
+  // Plane, points and scope are written outright: absent means "none"/"all",
+  // not "leave as it was".
   return mapFeature(doc, id, (f) =>
-    f.type === "hole" ? { ...f, sketchId, targetId, ...settings, params: { ...settings.params } } : f,
+    f.type === "hole"
+      ? {
+          ...f,
+          sketchId,
+          targetId,
+          ...settings,
+          plane: settings.plane,
+          points: settings.points,
+          scope: settings.scope,
+          params: { ...settings.params },
+        }
+      : f,
   );
 }
 
@@ -1817,8 +1838,7 @@ export function resolveDocument(doc: Document): ResolveResult {
       } else if (f.type === "screw") {
         features.push(resolveScrew(dDoc, f, scope, planeFrames));
       } else if (f.type === "hole") {
-        const sketch = dDoc.features.find((x) => x.id === f.sketchId);
-        features.push(resolveHole(f, sketch?.type === "sketch" ? sketch : undefined, scope, planeFrames));
+        features.push(resolveHole(f, sketchIn(dDoc), scope, planeFrames));
       } else if (f.type === "thread") {
         const sketch = dDoc.features.find((x) => x.id === f.sketchId);
         features.push(resolveThread(f, sketch?.type === "sketch" ? sketch : undefined, scope, planeFrames));

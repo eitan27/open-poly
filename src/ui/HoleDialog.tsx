@@ -3,7 +3,7 @@ import { HOLE_FIT_LABELS, HOLE_TYPE_LABELS, holeReadout, type HoleDims, type Hol
 import type { HoleParams, HoleType, ThreadMode } from "../document/types";
 import { METRIC, METRIC_SIZES, isMetricSize, type HoleFit } from "../geom/metricFasteners";
 import { DraggableDialog } from "./DraggableDialog";
-import { PickButton } from "./PickSlot";
+import { PickButton, PickedRow } from "./PickSlot";
 import { ExprInput } from "./ExprInput";
 import { HoleDiagram } from "./diagram/HoleDiagram";
 import "./GearDialog.css";
@@ -16,20 +16,19 @@ export interface HoleOption {
 interface Props {
   editing?: boolean;
   settings: HoleSettings;
-  /** The sketch the picked points are in, by name (null before any pick). */
-  sketchName: string | null;
-  /** The Location slot is listening for clicks in the viewport. */
-  picking: boolean;
-  targetId: string | null;
-  targetOptions: HoleOption[];
+  /** Which slot the next viewport click fills. */
+  armed: "points" | "parts" | null;
+  /** Every part, for naming the picked ones. */
+  partOptions: HoleOption[];
   /** The settings resolved to numbers — the last ones that made a hole, so
    *  the diagram doesn't vanish while a field is half-typed. Null only when
    *  nothing valid has been entered yet. */
   dims: HoleDims | null;
   error: string | null;
-  onPickingChange: (on: boolean) => void;
+  onArm: (slot: "points" | "parts" | null) => void;
   onClearPoints: () => void;
-  onTargetChange: (id: string) => void;
+  onRemovePart: (id: string) => void;
+  onAllParts: () => void;
   onChange: (patch: Partial<HoleSettings>) => void;
   onParam: (name: keyof HoleParams, value: string) => void;
   onConfirm: () => void;
@@ -62,15 +61,14 @@ function metricValue(settings: HoleSettings, name: keyof HoleParams): string | n
 export function HoleDialog({
   editing,
   settings,
-  sketchName,
-  picking,
-  targetId,
-  targetOptions,
+  armed,
+  partOptions,
   dims,
   error,
-  onPickingChange,
+  onArm,
   onClearPoints,
-  onTargetChange,
+  onRemovePart,
+  onAllParts,
   onChange,
   onParam,
   onConfirm,
@@ -86,6 +84,7 @@ export function HoleDialog({
   const blind = settings.extent === "blind";
   const metric = isMetricSize(settings.size);
   const nPoints = settings.points?.length ?? 0;
+  const scoped = !!settings.scope?.length || armed === "parts";
   const drillPoint = Number(p.tipAngle) !== 0;
 
   const field = (name: keyof HoleParams, label: string, title?: string) => {
@@ -175,13 +174,14 @@ export function HoleDialog({
 
       {dims && <HoleDiagram dims={dims} size={settings.size} active={focused ?? hovered} onPick={pick} />}
 
-      <div
-        className="ed-field"
-        title="Where the holes go: sketch points, circle or arc centres, line ends or midpoints"
-      >
+      <div className="ed-field" title="Where the holes go">
         <span>Location</span>
         <span className="hole-location">
-          <PickButton noun="points" armed={picking} onClick={() => onPickingChange(!picking)}>
+          <PickButton
+            noun="points"
+            armed={armed === "points"}
+            onClick={() => onArm(armed === "points" ? null : "points")}
+          >
             {nPoints ? `${nPoints} ${nPoints === 1 ? "point" : "points"}` : undefined}
           </PickButton>
           {nPoints > 0 && (
@@ -191,25 +191,43 @@ export function HoleDialog({
           )}
         </span>
       </div>
-      {picking && (
+      {armed === "points" && (
         <p className="ed-hint">
-          Click sketch points, circles or arcs (their centres), or lines (their midpoints, or an end). Click one again
-          to remove it.{sketchName ? ` In ${sketchName}.` : ""}
+          {nPoints === 0
+            ? "Hover a flat face or a sketch: its corners, edge midpoints and rim centres light up. Click one — or the face itself, for its centre."
+            : "Click more points on the same plane; click one again to remove it."}
         </p>
       )}
-      <label className="ed-field">
-        <span>Body</span>
-        <select value={targetId ?? ""} onChange={(e) => onTargetChange(e.target.value)}>
-          <option value="" disabled>
-            Select a part…
-          </option>
-          {targetOptions.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
+
+      <div className="ed-field" title="The parts the holes cut">
+        <span>Parts</span>
+        <div className="ed-modes ed-inline">
+          <button className={!scoped ? "active" : ""} onClick={onAllParts}>
+            All it reaches
+          </button>
+          <button className={scoped ? "active" : ""} onClick={() => onArm("parts")}>
+            Selected
+          </button>
+        </div>
+      </div>
+      {scoped && (
+        <div className="bool-operands">
+          {(settings.scope ?? []).map((id) => (
+            <PickedRow
+              key={id}
+              label={partOptions.find((o) => o.id === id)?.name ?? id}
+              clearTitle="Remove"
+              onClear={() => onRemovePart(id)}
+            />
           ))}
-        </select>
-      </label>
+          <PickButton
+            noun="parts"
+            armed={armed === "parts"}
+            wide
+            onClick={() => onArm(armed === "parts" ? null : "parts")}
+          />
+        </div>
+      )}
 
       <label
         className="ed-field"
@@ -315,7 +333,7 @@ export function HoleDialog({
       {dims && !error && <div className="gear-readout">{holeReadout(dims, settings.size)}</div>}
       {error && <p className="ed-warning">{error}</p>}
       <div className="ed-actions">
-        <button className="ed-primary" disabled={!!error || nPoints === 0 || !targetId} onClick={onConfirm}>
+        <button className="ed-primary" disabled={!!error || nPoints === 0} onClick={onConfirm}>
           {editing ? "Done" : "Create"}
         </button>
         <button onClick={onCancel}>Cancel</button>

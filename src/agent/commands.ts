@@ -1373,10 +1373,11 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         break;
       }
       case "addHole": {
-        const sk = requireSketch(doc, op.sketchId);
-        const targetId = op.targetId ?? (sk.plane.kind === "face" ? sk.plane.featureId : undefined);
-        if (!targetId) throw new OpError("invalid_op", "addHole: give targetId (the sketch isn't on a body face).");
-        requireFeature(doc, targetId);
+        requireSketch(doc, op.sketchId);
+        // A target narrows the cut to that part; without one the holes cut
+        // every part they reach.
+        if (op.targetId) requireFeature(doc, op.targetId);
+        const targetId = op.targetId;
         if (op.size && op.size !== "custom" && !isMetricSize(op.size)) {
           throw new OpError(
             "invalid_op",
