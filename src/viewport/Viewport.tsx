@@ -232,6 +232,9 @@ interface SceneState {
   // Lights up the WHOLE edge being snapped to (not just the marker dot), so you
   // can see it's a real in-plane edge and its extent. Fat line (screen-px width).
   snapEdgeLine: LineSegments2;
+  // While placing a hole: the hole's rim on the hovered face + a stub along
+  // its drill direction, in place of the snap dot.
+  placeRing: LineSegments2;
   // Dotted inference/alignment guides shown while an inference snap is active
   // (fat dashed line), plus small square markers on each anchor point (fat solid).
   guideOverlay: LineSegments2;
@@ -442,6 +445,7 @@ export function Viewport({
   sketches,
   placing = false,
   placementFrame = null,
+  placementCursor = null,
   onPlacementPick,
   activeSketchId,
   sketchFullyConstrained,
@@ -549,6 +553,11 @@ export function Viewport({
    *  lands on the centre of the face under it. */
   placing?: boolean;
   placementFrame?: PlaneFrameData | null;
+  /** While placing: the cursor is the hole itself instead of a dot — a ring
+   *  of this radius lying on the face under the pointer, with a stub along
+   *  the way it drills (−normal, or +normal when flipped), so it's plain
+   *  which face of an edge it will go into. */
+  placementCursor?: { radius: number; flip: boolean } | null;
   onPlacementPick?: (pick: PlacementPick) => void;
   activeSketchId: string | null;
   sketchFullyConstrained: boolean;
@@ -698,6 +707,8 @@ export function Viewport({
   placingRef.current = placing;
   const placementFrameRef = useRef(placementFrame);
   placementFrameRef.current = placementFrame;
+  const placementCursorRef = useRef(placementCursor);
+  placementCursorRef.current = placementCursor;
   const onPlacementPickRef = useRef(onPlacementPick);
   onPlacementPickRef.current = onPlacementPick;
   /** While placing with no fixed plane: the face or sketch plane last under
@@ -1407,6 +1418,15 @@ export function Viewport({
     snapEdgeLine.renderOrder = 11;
     snapEdgeLine.frustumCulled = false;
     snapEdgeLine.visible = false;
+    const placeRing = new LineSegments2(
+      new LineSegmentsGeometry(),
+      buttCaps(
+        new LineMaterial({ color: 0xffe14a, linewidth: 3, worldUnits: false, depthTest: false, transparent: true }),
+      ),
+    );
+    placeRing.renderOrder = 12;
+    placeRing.frustumCulled = false;
+    placeRing.visible = false;
     // Dotted inference/alignment guides — a fat dashed line so its width reads,
     // and small square markers on each anchor point in the same colour + width.
     const guideMaterial = new LineMaterial({
@@ -1436,7 +1456,7 @@ export function Viewport({
     anchorOverlay.renderOrder = 10;
     anchorOverlay.frustumCulled = false;
     anchorOverlay.visible = false;
-    scene.add(trimLine, previewLine, snapMarker, snapEdgeLine, guideOverlay, anchorOverlay);
+    scene.add(trimLine, previewLine, snapMarker, snapEdgeLine, placeRing, guideOverlay, anchorOverlay);
     // Appended to <body> (not the canvas container) so it can't be clipped, and
     // styled from App.css rather than inline so it picks up the colour theme
     // like every other chip — only `display` and the cursor-following position
@@ -1483,6 +1503,7 @@ export function Viewport({
       trimLine,
       snapMarker,
       snapEdgeLine,
+      placeRing,
       guideOverlay,
       anchorOverlay,
       guideBadge,
@@ -3012,6 +3033,7 @@ export function Viewport({
         if (!raw) {
           state.previewLine.visible = false;
           state.snapMarker.visible = false;
+          state.placeRing.visible = false;
           state.snapEdgeLine.visible = false;
           state.guideOverlay.visible = false;
           state.anchorOverlay.visible = false;
@@ -3026,15 +3048,40 @@ export function Viewport({
           const rect = renderer.domElement.getBoundingClientRect();
           onDraftCursorRef.current({ uv, x: e.clientX - rect.left, y: e.clientY - rect.top });
         }
-        if (kind === "point" || kind === "edge" || kind === "guide") {
+        const cursor = placingNow ? placementCursorRef.current : null;
+        if ((kind === "point" || kind === "edge" || kind === "guide") && cursor) {
+          // The hole itself: where a click puts it (a rim snap goes to the
+          // centre, as the click does), flat on this face, drilling inward.
+          const c = circle ? circle.c : uv;
+          const o = uvToWorld(frame, c[0], c[1]);
+          const r = cursor.radius;
+          const pos: number[] = [];
+          const N = 48;
+          const at = (a: number) => uvToWorld(frame, c[0] + r * Math.cos(a), c[1] + r * Math.sin(a));
+          for (let i = 0; i < N; i++) pos.push(...at((2 * Math.PI * i) / N), ...at((2 * Math.PI * (i + 1)) / N));
+          const n = frame.normal;
+          const len = Math.max(2 * r, 3) * (cursor.flip ? 1 : -1);
+          pos.push(...o, o[0] + n[0] * len, o[1] + n[1] * len, o[2] + n[2] * len);
+          const g = new LineSegmentsGeometry();
+          g.setPositions(pos);
+          state.placeRing.geometry.dispose();
+          state.placeRing.geometry = g;
+          (state.placeRing.material as LineMaterial).color.set(
+            kind === "edge" ? 0x36d6c3 : kind === "guide" ? GUIDE_COLOR : 0xffe14a,
+          );
+          state.placeRing.visible = true;
+          state.snapMarker.visible = false;
+        } else if (kind === "point" || kind === "edge" || kind === "guide") {
           const w = uvToWorld(frame, uv[0], uv[1]);
           state.snapMarker.position.set(w[0], w[1], w[2]);
           (state.snapMarker.material as THREE.MeshBasicMaterial).color.set(
             kind === "edge" ? 0x36d6c3 : kind === "guide" ? GUIDE_COLOR : 0xffe14a,
           );
           state.snapMarker.visible = true;
+          state.placeRing.visible = false;
         } else {
           state.snapMarker.visible = false;
+          state.placeRing.visible = false;
         }
         // Light up the whole edge when snapping to one — dashed if it's a
         // construction line, so the highlight matches the line's own style. A
@@ -3133,6 +3180,7 @@ export function Viewport({
       if (frame) {
         state.previewLine.visible = false;
         state.snapMarker.visible = false;
+        state.placeRing.visible = false;
         state.snapEdgeLine.visible = false;
         state.guideOverlay.visible = false;
         state.anchorOverlay.visible = false;
@@ -3772,6 +3820,8 @@ export function Viewport({
       snapMarker.geometry.dispose();
       snapEdgeLine.geometry.dispose();
       (snapEdgeLine.material as THREE.Material).dispose();
+      placeRing.geometry.dispose();
+      (placeRing.material as THREE.Material).dispose();
       guideOverlay.geometry.dispose();
       (guideOverlay.material as THREE.Material).dispose();
       anchorOverlay.geometry.dispose();
@@ -4426,6 +4476,7 @@ export function Viewport({
     if (!active && !placeFrame) {
       state.previewLine.visible = false;
       state.snapMarker.visible = false;
+      state.placeRing.visible = false;
       state.snapEdgeLine.visible = false;
       state.guideOverlay.visible = false;
       state.anchorOverlay.visible = false;

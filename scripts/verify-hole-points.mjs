@@ -217,11 +217,14 @@ await op.clickWorld([20, 6, 5]);
 check("targets on three faces at different levels", (await count()) === "3 targets", await count());
 // The top's +x edge midpoint, first from the top (a fourth target)…
 await hover([19.6, 0.4, Z]);
+// The cursor is the hole's rim, flat on the face it would drill (look).
+await page.screenshot({ path: path.join(SHOTS, "hole-cursor-top.png") });
 await op.clickWorld([19.6, 0.4, Z]);
 check("an edge's midpoint from the top adds a target", (await count()) === "4 targets", await count());
 // …then from the side: the same spot, re-aimed to drill from the side.
 await hover([20, 4, 10]);
 await hover([20, 0.4, 14.6]);
+await page.screenshot({ path: path.join(SHOTS, "hole-cursor-side.png") });
 await op.clickWorld([20, 0.4, 14.6]);
 check("the same spot from the edge's other face re-aims it", (await count()) === "4 targets", await count());
 await extentSel.selectOption("blind");

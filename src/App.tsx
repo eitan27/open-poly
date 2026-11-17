@@ -3613,6 +3613,21 @@ export default function App() {
    *  midpoint keeps a live link to that entity; anything else is a fixed spot
    *  on the face. A pick on a target already there removes it — or, from the
    *  other face of an edge, re-aims it to drill from this one. */
+  // The placement cursor is the hole's own rim: its bore (a tapped hole's
+  // thread), at the size the dialog shows now.
+  const holeCursor = (() => {
+    const d = hole.dialog;
+    if (!d) return null;
+    let dims: HoleDims | null = lastHoleDims.current;
+    try {
+      dims = holeDims(d.settings, resolved.scope);
+    } catch {
+      // keep the last good size
+    }
+    if (!dims) return null;
+    const dia = dims.holeType === "tapped" && dims.threadDiameter ? dims.threadDiameter : dims.diameter;
+    return { radius: dia / 2, flip: d.settings.flip };
+  })();
   const onHolePlacementPick = (pick: PlacementPick) => {
     const d = hole.dialog;
     if (!d) return;
@@ -7677,6 +7692,7 @@ export default function App() {
               }
               sketchTool={sketchTool}
               placing={holePlacing && !editingSketchId}
+              placementCursor={holeCursor}
               onPlacementPick={onHolePlacementPick}
               sketches={renderSketchesWithPreview}
               activeSketchId={editingSketchId}
