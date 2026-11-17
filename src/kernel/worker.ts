@@ -4768,28 +4768,38 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
     reach += Math.max(...feature.centers.map(([cu, cv]) => Math.hypot(cu, cv)));
     profile = profile.map(([r, z], i) => [r, i >= profile.length - 2 ? z + reach : z] as [number, number]);
   }
+  // Up to next: each hole's own depth, where it leaves the first stretch of
+  // material in its way. Each bore ends there (never above the counterbore or
+  // countersink over it), so a hole through a plate over a gap stops in the
+  // gap instead of carrying on into what's beyond.
+  const depths = feature.upToNext ? upToNextDepths(feature, candidates, down, profile) : null;
+  const profileAt = (i: number): [number, number][] => {
+    if (!depths) return profile;
+    const base = feature.profile;
+    return base.map(([r, z], k) => [r, k >= base.length - 2 ? Math.max(z, depths[i]) : z] as [number, number]);
+  };
   const tools = feature.centers.map(([cu, cv], i) => {
-    const o: V3 = [
-      frame.origin[0] + frame.uAxis[0] * cu + frame.vAxis[0] * cv,
-      frame.origin[1] + frame.uAxis[1] * cu + frame.vAxis[1] * cv,
-      frame.origin[2] + frame.uAxis[2] * cu + frame.vAxis[2] * cv,
-    ];
+    const o = framePoint(frame, cu, cv);
     const id = feature.centers.length > 1 ? `${feature.id}/h${i}` : feature.id;
-    return revolvedPolyhedron(o, down, frame.uAxis, frame.vAxis, profile, id);
+    return revolvedPolyhedron(o, down, frame.uAxis, frame.vAxis, profileAt(i), id);
   });
   // A modelled thread: one cavity per hole, cut after the drill. Built once
   // and copied, like the screws that go in them.
   const threadTool = (segments?: number): NamedShape | null => {
     if (!feature.thread) return null;
-    const reach = feature.throughAll ? profile[profile.length - 1][1] : feature.thread.z1;
-    const t = { ...feature.thread, z1: reach };
+    const thread = feature.thread;
+    const reach = (i: number) =>
+      depths ? profileAt(i).at(-1)![1] : feature.throughAll ? profile[profile.length - 1][1] : thread.z1;
     const ids = (i: number) => (feature.centers.length > 1 ? `${feature.id}/h${i}` : feature.id);
     const o0 = framePoint(frame, ...feature.centers[0]);
-    const first = threadSolid(t, o0, down, frame.uAxis, ids(0), segments);
+    const first = threadSolid({ ...thread, z1: reach(0) }, o0, down, frame.uAxis, ids(0), segments);
     const rods = feature.centers.map(([cu, cv], i) => {
       if (i === 0) return first;
       const o = framePoint(frame, cu, cv);
-      return translatedNamed(first, [o[0] - o0[0], o[1] - o0[1], o[2] - o0[2]], ids(0), ids(i));
+      // Same length: a moved copy of the first (cheap); up to next can differ.
+      if (Math.abs(reach(i) - reach(0)) < 1e-9)
+        return translatedNamed(first, [o[0] - o0[0], o[1] - o0[1], o[2] - o0[2]], ids(0), ids(i));
+      return threadSolid({ ...thread, z1: reach(i) }, o, down, frame.uAxis, ids(i), segments);
     });
     return rods.length === 1 ? rods[0] : compoundOf(rods);
   };
@@ -4843,7 +4853,8 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
       // every later edit anywhere in the document re-cut every hole. A miss
       // is remembered too, so "every part it reaches" doesn't re-test the
       // parts beside the holes on every regen.
-      const cacheKey = contentKey(feature, ["hole", t.key]);
+      // Up to next depends on every part in the way, not just this one.
+      const cacheKey = contentKey(feature, ["hole", t.key, ...(depths ? [depths.join(",")] : [])]);
       ctx.usedDressUps.add(cacheKey);
       if (holeMisses.has(cacheKey)) continue;
       const hit = dressUpCache.get(cacheKey);
@@ -4875,6 +4886,106 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
   }
   if (cut === 0) throw new Error("hole: the holes don't reach any part — check where they start, and try Flip.");
 }
+
+/** Up to next: for each hole, how deep (along `down`, from its start) it must
+ *  go to leave the first stretch of material in its way — touching parts
+ *  count as one stretch — plus a hair, so the bore breaks out cleanly rather
+ *  than ending on the exit face. Found by intersecting a through-all bore with
+ *  each part and measuring the pieces along the axis. Cached by the hole and
+ *  the parts' content. */
+function upToNextDepths(
+  feature: Extract<ResolvedFeature, { type: "hole" }>,
+  candidates: Body[],
+  down: V3,
+  reachProfile: [number, number][],
+): number[] {
+  const key = contentKey(feature, ["upToNext", ...candidates.map((c) => c.key)]);
+  const hit = upToNextCache.get(key);
+  if (hit) return hit;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const { frame } = feature;
+  const r = reachProfile[reachProfile.length - 2][0];
+  const far = reachProfile[reachProfile.length - 1][1];
+  // A rotation taking `down` onto +z, so a piece's bounding box in z is its
+  // extent along the hole (exact for any tilt, unlike a world box).
+  const trsf = new oc.gp_Trsf_1();
+  const cz = clamp(down[2], -1, 1);
+  if (cz < 1 - 1e-12) {
+    let ax = vcross(down, [0, 0, 1]);
+    if (Math.hypot(...ax) < 1e-9) ax = [1, 0, 0];
+    const pnt = new oc.gp_Pnt_3(0, 0, 0);
+    const dir = new oc.gp_Dir_4(...vunit(ax));
+    const ax1 = new oc.gp_Ax1_2(pnt, dir);
+    trsf.SetRotation_1(ax1, Math.acos(cz));
+    ax1.delete();
+    dir.delete();
+    pnt.delete();
+  }
+  const loc = new oc.TopLoc_Location_2(trsf);
+  const depths: number[] = [];
+  try {
+    feature.centers.forEach(([cu, cv], i) => {
+      const o = framePoint(frame, cu, cv);
+      const o0 = vdot(o, down);
+      const probe = revolvedPolyhedron(
+        o,
+        down,
+        frame.uAxis,
+        frame.vAxis,
+        [
+          [0, -1e-3],
+          [r, -1e-3],
+          [r, far],
+          [0, far],
+        ],
+        "probe",
+      );
+      const [pmn, pmx] = probe.shape.boundingBox.bounds;
+      const spans: [number, number][] = [];
+      try {
+        for (const b of candidates) {
+          const [mn, mx] = b.shape.boundingBox.bounds;
+          if (![0, 1, 2].every((k) => mn[k] <= pmx[k] + 1e-6 && mx[k] >= pmn[k] - 1e-6)) continue;
+          const common = booleanNamed("common", b, probe);
+          const ex = new oc.TopExp_Explorer_2(
+            common.shape.wrapped,
+            oc.TopAbs_ShapeEnum.TopAbs_SOLID,
+            oc.TopAbs_ShapeEnum.TopAbs_SHAPE,
+          );
+          for (; ex.More(); ex.Next()) {
+            const moved = cast(ex.Current().Moved(loc, false)) as Shape3D;
+            const [lo, hi] = [moved.boundingBox.bounds[0][2], moved.boundingBox.bounds[1][2]];
+            moved.delete();
+            if (hi - lo > 1e-6) spans.push([lo - o0, hi - o0]);
+          }
+          ex.delete();
+          common.shape.delete();
+        }
+      } finally {
+        probe.shape.delete();
+      }
+      spans.sort((a, b) => a[0] - b[0]);
+      if (!spans.length)
+        throw new Error(
+          `hole: up to next — nothing lies ahead of target ${i + 1} to drill through. Try Flip, or another extent.`,
+        );
+      // The first stretch, carried on through parts that touch it.
+      let exit = spans[0][1];
+      let k = 1;
+      while (k < spans.length && spans[k][0] <= exit + 1e-3) exit = Math.max(exit, spans[k++][1]);
+      const gap = k < spans.length ? spans[k][0] - exit : Infinity;
+      depths.push(exit + Math.min(0.05, gap / 2));
+    });
+  } finally {
+    loc.delete();
+    trsf.delete();
+  }
+  if (upToNextCache.size > 500) upToNextCache.clear();
+  upToNextCache.set(key, depths);
+  return depths;
+}
+const upToNextCache = new Map<string, number[]>();
 
 /** Hole cuts that took nothing, by cache key — so "every part it reaches"
  *  tests a part beside the holes once, not on every regen. Keys are content

@@ -256,6 +256,9 @@ export type ResolvedFeature =
       centers: [number, number][];
       profile: [number, number][];
       throughAll: boolean;
+      /** With throughAll: each hole stops where it leaves the first stretch
+       *  of material along its axis, not past every part. */
+      upToNext?: boolean;
       flip: boolean;
       previewTool?: boolean;
       /** A modelled internal thread: the cavity cut after the drill. Through

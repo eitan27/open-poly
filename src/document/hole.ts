@@ -16,7 +16,7 @@ import type {
   SketchEntity,
   SketchFeature,
 } from "./types";
-import { METRIC, isMetricSize, type HoleFit } from "../geom/metricFasteners";
+import { METRIC, clearanceHoleDiameter, isMetricSize, type HoleFit } from "../geom/metricFasteners";
 import { minorDiameter } from "../geom/thread";
 import type { ResolvedFeature } from "../kernel/types";
 
@@ -31,6 +31,7 @@ export const HOLE_FIT_LABELS: Record<HoleFit, string> = {
   close: "Close",
   normal: "Normal",
   loose: "Loose",
+  exact: "Exact",
 };
 
 /** Custom-size defaults: an M3-ish clearance hole, 10 deep with a drill point. */
@@ -72,9 +73,13 @@ export const DEFAULT_HOLE_SETTINGS: HoleSettings = {
 export interface HoleDims {
   holeType: HoleType;
   diameter: number;
-  /** Bore depth (blind). Ignored for through-all. */
+  /** Bore depth (blind). Ignored for through-all and up-to-next. */
   depth: number;
+  /** Open-ended: through all, or up to next — no depth, no drill point. */
   throughAll: boolean;
+  /** Up to next: each hole stops where it breaks out of the first stretch of
+   *  material it meets (the kernel finds it). */
+  upToNext: boolean;
   counterboreDiameter: number;
   counterboreDepth: number;
   countersinkDiameter: number;
@@ -109,16 +114,22 @@ export function holeDims(s: HoleSettings, scope: Scope): HoleDims {
   // Modelled threads need a pitch, so a metric size.
   const modelledThread = tapped && !!metric && s.thread === "modelled";
   const clearance = modelledThread ? num("clearance", p.clearance ?? "0", scope) : 0;
-  let diameter = metric ? (tapped ? metric.tapDrill : metric.clearance[s.fit]) : num("diameter", p.diameter, scope);
+  let diameter = metric
+    ? tapped
+      ? metric.tapDrill
+      : clearanceHoleDiameter(metric, s.fit)
+    : num("diameter", p.diameter, scope);
   // A real tap drill can be a shade wider than the basic minor diameter (it
   // truncates the nut's crests); a modelled thread keeps its full crests.
   if (modelledThread) diameter = Math.min(diameter, minorDiameter(metric.d, metric.pitch) + 2 * clearance);
-  const throughAll = s.extent === "throughAll";
+  // Up to next breaks through like through all: no depth, no drill point.
+  const throughAll = s.extent !== "blind";
   const dims: HoleDims = {
     holeType: s.holeType,
     diameter,
     depth: throughAll ? 0 : num("depth", p.depth, scope),
     throughAll,
+    upToNext: s.extent === "upToNext",
     counterboreDiameter: metric
       ? metric.counterbore.diameter
       : num("counterbore diameter", p.counterboreDiameter, scope),
@@ -380,6 +391,7 @@ export function resolveHole(
     centers,
     profile: holeProfile(dims, 0),
     throughAll: dims.throughAll,
+    ...(dims.upToNext ? { upToNext: true } : {}),
     flip: f.flip,
     ...(dims.modelledThread && dims.threadDiameter && dims.pitch
       ? {
@@ -403,7 +415,7 @@ export function holeReadout(d: HoleDims, size: string): string {
   if (d.holeType === "tapped" && d.threadDiameter) {
     parts.push(
       d.modelledThread
-        ? `${size}×${d.pitch} thread, ${d.throughAll ? "through" : `${fmt(d.threadDepth)} deep`}, +${fmt(d.clearance)} clearance`
+        ? `${size}×${d.pitch} thread, ${d.throughAll ? "all the way" : `${fmt(d.threadDepth)} deep`}, +${fmt(d.clearance)} clearance`
         : `${size}×${d.pitch}, thread not modelled`,
     );
     parts.push(`${d.modelledThread ? "drill" : "tap drill"} Ø${fmt(d.diameter)}`);
@@ -412,7 +424,7 @@ export function holeReadout(d: HoleDims, size: string): string {
     parts.push(`counterbore Ø${fmt(d.counterboreDiameter)} × ${fmt(d.counterboreDepth)}`);
   if (d.holeType === "countersink")
     parts.push(`countersink Ø${fmt(d.countersinkDiameter)} at ${fmt(d.countersinkAngle)}°`);
-  parts.push(d.throughAll ? "through all" : `${fmt(d.depth)} deep`);
+  parts.push(d.upToNext ? "up to next" : d.throughAll ? "through all" : `${fmt(d.depth)} deep`);
   return parts.join(" · ");
 }
 

@@ -29,7 +29,7 @@ await page.keyboard.press("d");
 const dialog = page.locator(".hole-dialog");
 await dialog.waitFor({ timeout: 5000 });
 await page.waitForTimeout(500);
-const loc = dialog.locator(".ed-field", { hasText: "Positions" }).locator(".ed-pick-btn");
+const loc = dialog.locator(".ed-field", { hasText: "Targets" }).locator(".ed-pick-btn");
 const count = async () => (await loc.textContent())?.trim();
 check("opens listening for points", (await loc.getAttribute("class"))?.includes("active"));
 check("no Body dropdown", (await dialog.locator(".ed-field", { hasText: "Body" }).count()) === 0);
@@ -43,34 +43,51 @@ const hover = async (w) => {
 // Hover the plate's top, then click its flat area: its centre.
 await hover([8, 6, Z]);
 await op.clickWorld([8, 6, Z]);
-check("a click on a face's flat area adds a point", (await count()) === "1 position", await count());
+check("a click on a face's flat area adds a point", (await count()) === "1 target", await count());
 // Near the back edge's midpoint, and near a corner: they snap.
 await hover([0.4, 14.7, Z]);
 await op.clickWorld([0.4, 14.7, Z]);
 await hover([19.6, 14.6, Z]);
 await op.clickWorld([19.6, 14.6, Z]);
-check("an edge midpoint and a corner add points", (await count()) === "3 positions", await count());
+check("an edge midpoint and a corner add points", (await count()) === "3 targets", await count());
 await page.waitForTimeout(1200);
 await page.screenshot({ path: path.join(SHOTS, "hole-points-ghost.png") });
 // Clicking the corner again removes it.
 await op.clickWorld([19.6, 14.6, Z]);
-check("clicking a point again removes it", (await count()) === "2 positions", await count());
+check("clicking a point again removes it", (await count()) === "2 targets", await count());
 
 // Type dropdown and the table readouts.
 const typeSel = dialog.locator(".ed-field", { hasText: "Type" }).locator("select");
 check("type is a dropdown", (await typeSel.count()) === 1);
+check("clearance Ø is a read-only value", (await dialog.locator(".ed-derived", { hasText: "Hole Ø" }).count()) === 1);
+const fitSel = dialog.locator(".ed-field", { hasText: "Fit" }).locator("select");
 check(
-  "clearance Ø is a read-only value",
-  (await dialog.locator(".ed-derived", { hasText: "Clearance Ø" }).count()) === 1,
+  "fit is a dropdown showing each gap, with Exact",
+  (await fitSel.locator("option").allTextContents()).join("|") === "Close (+0.2)|Normal (+0.4)|Loose (+0.6)|Exact (+0)",
+  (await fitSel.locator("option").allTextContents()).join("|"),
 );
+await fitSel.selectOption("exact");
+await page.waitForTimeout(200);
+check(
+  "exact: the hole is the screw's own diameter",
+  (await dialog.locator(".ed-derived", { hasText: "Hole Ø" }).textContent()).includes("3") &&
+    !(await dialog.locator(".ed-derived", { hasText: "Hole Ø" }).textContent()).includes("3.4"),
+  await dialog.locator(".ed-derived", { hasText: "Hole Ø" }).textContent(),
+);
+await fitSel.selectOption("normal");
+const modelHole = dialog.locator(".ed-field", { hasText: "Model the thread" }).locator("input");
 await typeSel.selectOption("tapped");
 await page.waitForTimeout(300);
 check(
   "tapped: the size reads as a thread",
   (await dialog.locator(".ed-field", { hasText: "Thread" }).locator("option:checked").textContent()) === "M3 × 0.5",
 );
-check("blind by default", (await dialog.locator("button.active", { hasText: "Blind" }).count()) === 1);
-const modelHole = dialog.locator(".ed-field", { hasText: "Model the thread" }).locator("input");
+const extentSel = dialog.locator(".ed-field", { hasText: "Extent" }).locator("select");
+check("blind by default", (await extentSel.inputValue()) === "blind");
+check(
+  "extent offers up to next",
+  (await extentSel.locator("option").allTextContents()).join("|") === "Blind|Up to next|Through all",
+);
 check("tapped: thread not modelled by default", !(await modelHole.isChecked()));
 check(
   "a plain tapped bore has no thread depth",
@@ -81,9 +98,16 @@ await page.waitForTimeout(300);
 check("a modelled one does", (await dialog.locator(".ed-field", { hasText: "Thread depth" }).count()) === 1);
 await modelHole.uncheck();
 await typeSel.selectOption("simple");
-await dialog.locator("button", { hasText: "Through all" }).click();
+await extentSel.selectOption("throughAll");
 check("through all: no Bottom choice", (await dialog.locator(".ed-field", { hasText: "Bottom" }).count()) === 0);
-await dialog.locator("button", { hasText: "Blind" }).click();
+await extentSel.selectOption("upToNext");
+await page.waitForTimeout(200);
+check("up to next: no Bottom choice either", (await dialog.locator(".ed-field", { hasText: "Bottom" }).count()) === 0);
+check(
+  "up to next: the diagram says so",
+  (await dialog.locator("svg.dg text", { hasText: "up to next" }).count()) === 1,
+);
+await extentSel.selectOption("blind");
 await page.waitForTimeout(300);
 check(
   "blind: drill point by default",
@@ -91,7 +115,7 @@ check(
 );
 await dialog.locator("button", { hasText: "Flat" }).click();
 check("flat hides the point angle", (await dialog.locator(".ed-field", { hasText: "Point angle" }).count()) === 0);
-await dialog.locator("button", { hasText: "Through all" }).click();
+await extentSel.selectOption("throughAll");
 await dialog.screenshot({ path: path.join(SHOTS, "hole-dialog.png") });
 
 await dialog.locator(".ed-primary").click();
@@ -125,11 +149,11 @@ await page.keyboard.press("d");
 await dialog.waitFor({ timeout: 5000 });
 await hover([-12, 0, 30]);
 await op.clickWorld([-12, 0, 30]);
-check("a click on the post's top adds its centre", (await count()) === "1 position", await count());
+check("a click on the post's top adds its centre", (await count()) === "1 target", await count());
 const partsSel = dialog.locator(".ed-field", { hasText: "Affected parts" }).locator("select");
 check("Affected parts: All parts by default", (await partsSel.inputValue()) === "all");
 check("no part picker until Subset", (await dialog.locator(".ed-pick-btn", { hasText: /part/ }).count()) === 0);
-await dialog.locator("button", { hasText: "Through all" }).click();
+await extentSel.selectOption("throughAll");
 await dialog.locator(".ed-primary").click();
 await op.settle();
 const h2 = (await op.features()).find((f) => f.type === "hole");
@@ -144,7 +168,7 @@ await page.keyboard.press("d");
 await dialog.waitFor({ timeout: 5000 });
 await hover([-12, 0, 30]);
 await op.clickWorld([-12, 0, 30]);
-await dialog.locator("button", { hasText: "Through all" }).click();
+await extentSel.selectOption("throughAll");
 await partsSel.selectOption("subset");
 await page.waitForTimeout(200);
 await op.clickWorld([10, 5, 15]);

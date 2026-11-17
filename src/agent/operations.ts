@@ -485,10 +485,12 @@ export const operationSchema = z.discriminatedUnion("op", [
      *  table: clearance / tap drill / counterbore / countersink sizes), or
      *  "custom" to give the diameters yourself. Default M3. */
     size: z.string().optional(),
-    /** Clearance fit for a metric non-tapped hole. Default normal. */
-    fit: z.enum(["close", "normal", "loose"]).optional(),
-    /** Default throughAll. */
-    extent: z.enum(["blind", "throughAll"]).optional(),
+    /** Clearance fit for a metric non-tapped hole (ISO 273), or exact = the
+     *  screw's own diameter. Default normal. */
+    fit: z.enum(["close", "normal", "loose", "exact"]).optional(),
+    /** Default throughAll. upToNext: through the first stretch of material
+     *  each hole meets, stopping at the gap after it. */
+    extent: z.enum(["blind", "throughAll", "upToNext"]).optional(),
     flip: z.boolean().optional(),
     /** Custom sizes / blind depth: diameter, depth, counterboreDiameter,
      *  counterboreDepth, countersinkDiameter, countersinkAngle, tipAngle (0 =

@@ -1,7 +1,14 @@
 import { useRef, useState } from "react";
 import { HOLE_FIT_LABELS, HOLE_TYPE_LABELS, holeReadout, type HoleDims, type HoleSettings } from "../document/hole";
 import type { HoleParams, HoleType } from "../document/types";
-import { METRIC, METRIC_SIZES, isMetricSize, type HoleFit } from "../geom/metricFasteners";
+import {
+  METRIC,
+  METRIC_SIZES,
+  clearanceHoleDiameter,
+  isMetricSize,
+  type HoleFit,
+  type MetricSize,
+} from "../geom/metricFasteners";
 import { DraggableDialog } from "./DraggableDialog";
 import { PickButton } from "./PickSlot";
 import { ExprInput } from "./ExprInput";
@@ -36,6 +43,7 @@ interface Props {
 
 const HOLE_TYPES = Object.keys(HOLE_TYPE_LABELS) as HoleType[];
 const FITS = Object.keys(HOLE_FIT_LABELS) as HoleFit[];
+const fmtGap = (n: number) => String(Math.round(n * 100) / 100);
 
 /** Which table value stands in for a param when the size is metric. */
 function metricValue(settings: HoleSettings, name: keyof HoleParams): string | null {
@@ -43,7 +51,7 @@ function metricValue(settings: HoleSettings, name: keyof HoleParams): string | n
   const m = METRIC[settings.size];
   switch (name) {
     case "diameter":
-      return String(settings.holeType === "tapped" ? m.tapDrill : m.clearance[settings.fit]);
+      return String(settings.holeType === "tapped" ? m.tapDrill : clearanceHoleDiameter(m, settings.fit));
     case "counterboreDiameter":
       return String(m.counterbore.diameter);
     case "counterboreDepth":
@@ -146,16 +154,6 @@ export function HoleDialog({
     else inputs.current.get("size")?.focus();
   };
 
-  const seg = <T extends string>(value: T, options: T[], labels: Record<T, string>, set: (v: T) => void) => (
-    <div className="ed-modes">
-      {options.map((o) => (
-        <button key={o} className={value === o ? "active" : ""} onClick={() => set(o)}>
-          {labels[o]}
-        </button>
-      ))}
-    </div>
-  );
-
   return (
     <DraggableDialog className="feature-dialog gear-dialog hole-dialog" style={{ right: 16, top: 64 }} baseTransform="">
       <div className="ed-title" data-drag-handle>
@@ -175,17 +173,17 @@ export function HoleDialog({
       {dims && <HoleDiagram dims={dims} size={settings.size} active={focused ?? hovered} onPick={pick} />}
 
       <div className="ed-field" title="Where the holes go: points, faces (their centre) or sketch entities">
-        <span>Positions</span>
+        <span>Targets</span>
         <span className="hole-location">
           <PickButton
-            noun="positions"
+            noun="targets"
             armed={armed === "points"}
             onClick={() => onArm(armed === "points" ? null : "points")}
           >
-            {nPoints ? `${nPoints} ${nPoints === 1 ? "position" : "positions"}` : "Select…"}
+            {nPoints ? `${nPoints} ${nPoints === 1 ? "target" : "targets"}` : "Select…"}
           </PickButton>
           {nPoints > 0 && (
-            <button type="button" className="bool-operand-x" title="Clear the positions" onClick={onClearPoints}>
+            <button type="button" className="bool-operand-x" title="Clear the targets" onClick={onClearPoints}>
               ✕
             </button>
           )}
@@ -266,9 +264,23 @@ export function HoleDialog({
         </select>
       </label>
       {metric && t !== "tapped" && (
-        <div title="Clearance for the screw: ISO 273 fine / medium / coarse">
-          {seg(settings.fit, FITS, HOLE_FIT_LABELS, (fit) => onChange({ fit }))}
-        </div>
+        <label
+          className="ed-field"
+          title="How much wider than the screw the hole is: ISO 273 fine / medium / coarse, or Exact — the screw's own diameter, for a press fit or a printer that adds its own gap"
+        >
+          <span>Fit</span>
+          <select value={settings.fit} onChange={(e) => onChange({ fit: e.target.value as HoleFit })}>
+            {FITS.map((f) => (
+              <option key={f} value={f}>
+                {HOLE_FIT_LABELS[f]} (+
+                {fmtGap(
+                  clearanceHoleDiameter(METRIC[settings.size as MetricSize], f) - METRIC[settings.size as MetricSize].d,
+                )}
+                )
+              </option>
+            ))}
+          </select>
+        </label>
       )}
 
       {t === "tapped" && (
@@ -291,7 +303,7 @@ export function HoleDialog({
       )}
       {field(
         "diameter",
-        t === "tapped" ? (dims?.modelledThread ? "Drill Ø" : "Tap drill Ø") : metric ? "Clearance Ø" : "Diameter",
+        t === "tapped" ? (dims?.modelledThread ? "Drill Ø" : "Tap drill Ø") : metric ? "Hole Ø" : "Diameter",
         t === "tapped"
           ? "The hole drilled before tapping: smaller than the thread, which is cut into its wall"
           : "The hole's diameter: wider than the screw, by the fit",
@@ -312,12 +324,20 @@ export function HoleDialog({
           "Radial gap (mm) the thread is grown by so a printed screw fits — 0.1 suits most FDM printers; 0.15–0.2 if tight; 0 for an exact ISO thread",
         )}
 
-      {seg(
-        settings.extent,
-        ["blind", "throughAll"] as const as ("blind" | "throughAll")[],
-        { blind: "Blind", throughAll: "Through all" },
-        (extent) => onChange({ extent }),
-      )}
+      <label
+        className="ed-field"
+        title="Blind: to a depth, with a flat or drill-point bottom. Up to next: through the first stretch of material each hole meets, stopping at the gap after it. Through all: through every part in its way."
+      >
+        <span>Extent</span>
+        <select
+          value={settings.extent}
+          onChange={(e) => onChange({ extent: e.target.value as HoleSettings["extent"] })}
+        >
+          <option value="blind">Blind</option>
+          <option value="upToNext">Up to next</option>
+          <option value="throughAll">Through all</option>
+        </select>
+      </label>
       {blind && field("depth", "Depth")}
       {blind && (
         <div

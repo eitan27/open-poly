@@ -140,7 +140,7 @@ export function HoleDiagram({ dims: d, size, active, onPick }: Props) {
       {d.throughAll ? (
         <DimGroup name="extent" active={active} onPick={onPick}>
           <text className="dg-label" x={X(0)} y={Y(T) + 18} textAnchor="middle">
-            through all
+            {d.upToNext ? "up to next" : "through all"}
           </text>
         </DimGroup>
       ) : (

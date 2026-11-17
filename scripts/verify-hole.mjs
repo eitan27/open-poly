@@ -97,7 +97,7 @@ for (const [holeType, extra] of [
   check("the dialog shows a diagram", (await dialog.locator("svg.dg").count()) === 1);
   const typeSel = dialog.locator(".ed-field", { hasText: "Type" }).locator("select");
   await typeSel.selectOption("counterbore");
-  await dialog.locator("button", { hasText: "Blind" }).click();
+  await dialog.locator(".ed-field", { hasText: "Extent" }).locator("select").selectOption("blind");
   await dialog
     .locator(".ed-field", { hasText: /^Depth/ })
     .locator("input")
@@ -123,6 +123,48 @@ for (const [holeType, extra] of [
     JSON.stringify(await op.featureErrors()),
   );
   await shot("created");
+}
+
+// Up to next: through the first plate, stopping in the gap above the second
+// (a hole per point, each finding its own exit); through all takes both.
+for (const [extent, extra, cutsLower] of [
+  ["upToNext", {}, false],
+  ["upToNext", { holeType: "tapped", thread: "modelled" }, false],
+  ["throughAll", {}, true],
+]) {
+  await op.newDocument();
+  const upper = (
+    await op.applySettled({ op: "addPrimitive", kind: "box", params: { width: 40, depth: 30, height: 10 } })
+  ).createdId;
+  const lower = (
+    await op.applySettled({ op: "addPrimitive", kind: "box", params: { width: 40, depth: 30, height: 10 } })
+  ).createdId;
+  await op.applySettled({ op: "transform", targetId: lower, tx: "0", ty: "0", tz: "-15" });
+  const sk = (
+    await op.applySettled({
+      op: "addSketch",
+      plane: { bodyId: upper, faceName: `${upper}/+z` },
+      entities: [
+        { shape: "point", p: [-8, 0] },
+        { shape: "point", p: [8, 4] },
+      ],
+    })
+  ).createdId;
+  const r = await op.applySettled({ op: "addHole", sketchId: sk, extent, ...extra });
+  const faces = async (id) => (await op.scene()).bodies.find((b) => b.id === id)?.faces ?? [];
+  const cuts = async (id) => (await faces(id)).some((n) => n.startsWith(r.createdId));
+  const label = `${extent}${extra.thread ? " (modelled thread)" : ""}`;
+  check(
+    `${label}: builds`,
+    r.ok && (await op.featureErrors()).length === 0,
+    JSON.stringify(r.error ?? (await op.featureErrors())),
+  );
+  check(`${label}: cuts the upper plate`, await cuts(upper));
+  check(
+    `${label}: ${cutsLower ? "and the lower one" : "leaves the lower plate alone"}`,
+    (await cuts(lower)) === cutsLower,
+  );
+  if (extent === "upToNext" && !extra.thread) await shot("up-to-next");
 }
 
 const real = errors.filter((e) => !/Failed to load resource/.test(e));

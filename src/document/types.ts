@@ -796,7 +796,7 @@ export interface HoleFeature extends FeatureBase {
    *  params' own diameters. */
   size: string;
   /** Clearance fit for a metric simple/counterbore/countersink hole. */
-  fit: "close" | "normal" | "loose";
+  fit: "close" | "normal" | "loose" | "exact";
   /** Older holes: the sketch they're placed in — its plane is where they
    *  start, and with no `points`, every point and circle centre in it. */
   sketchId?: string;
@@ -811,7 +811,8 @@ export interface HoleFeature extends FeatureBase {
   targetId?: string;
   /** The parts to cut. Absent: every part the holes reach (or `targetId`). */
   scope?: string[];
-  extent: "blind" | "throughAll";
+  /** Up to next: through the first stretch of material each hole meets. */
+  extent: "blind" | "throughAll" | "upToNext";
   flip: boolean;
   params: HoleParams;
 }

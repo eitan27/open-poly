@@ -16,7 +16,15 @@ export type MetricSize = "M2" | "M2.5" | "M3" | "M4" | "M5" | "M6" | "M8" | "M10
 
 export const METRIC_SIZES: MetricSize[] = ["M2", "M2.5", "M3", "M4", "M5", "M6", "M8", "M10", "M12"];
 
-export type HoleFit = "close" | "normal" | "loose";
+/** How much wider than the screw a clearance hole is: ISO 273's fine /
+ *  medium / coarse series, or `exact` — the screw's own nominal diameter (a
+ *  press or printed fit, where the slicer or reamer sets the gap). */
+export type HoleFit = "close" | "normal" | "loose" | "exact";
+
+/** The clearance hole's diameter for `fit`. */
+export function clearanceHoleDiameter(m: MetricSpec, fit: HoleFit): number {
+  return fit === "exact" ? m.d : m.clearance[fit];
+}
 
 export interface MetricSpec {
   /** Nominal (major) diameter. */
@@ -24,7 +32,7 @@ export interface MetricSpec {
   /** Coarse thread pitch. */
   pitch: number;
   tapDrill: number;
-  clearance: Record<HoleFit, number>;
+  clearance: Record<Exclude<HoleFit, "exact">, number>;
   counterbore: { diameter: number; depth: number };
   countersink: { diameter: number; angle: number };
   /** ISO 4762 socket head cap: head diameter, height, hex key size. */
