@@ -73,6 +73,15 @@
   fill: var(--text-4);
 }
 
+/* A label drawn over the hatched material: a halo of the material's own
+   colour keeps it legible. */
+.dg-label-halo {
+  paint-order: stroke;
+  stroke: var(--bg-raised-3);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
 .dg-pickable {
   cursor: pointer;
 }

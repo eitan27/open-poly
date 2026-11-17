@@ -67,6 +67,7 @@ export function LinearDim({
   labelSide = -1,
   extA,
   extB,
+  outside = false,
 }: {
   a: P;
   b: P;
@@ -79,6 +80,9 @@ export function LinearDim({
   label: string;
   /** Which side of the line the text sits (−1 above/left, 1 below/right). */
   labelSide?: -1 | 1;
+  /** Too narrow to hold its label: arrows outside a and b pointing in, and
+   *  the label past b on a short leader (drafting's narrow-feature form). */
+  outside?: boolean;
 }) {
   const d = sub(b, a);
   const l = len(d) || 1;
@@ -95,6 +99,24 @@ export function LinearDim({
         y2={q[1] + n[1] * Math.sign(offset) * 3}
       />
     );
+  if (outside) {
+    const u: P = [d[0] / l, d[1] / l];
+    const stub = 9;
+    const out = (p: P, k: number): P => [p[0] + u[0] * k, p[1] + u[1] * k];
+    const lead = out(B, stub + 3);
+    return (
+      <>
+        {ext(extA ?? a, A)}
+        {ext(extB ?? b, B)}
+        <line className="dg-line" x1={out(A, -stub)[0]} y1={out(A, -stub)[1]} x2={lead[0]} y2={lead[1]} />
+        <Arrow tip={A} from={out(A, -stub)} />
+        <Arrow tip={B} from={out(B, stub)} />
+        <text className="dg-label dg-label-halo" x={lead[0] + 2} y={lead[1] + 3.5} textAnchor="start">
+          {label}
+        </text>
+      </>
+    );
+  }
   const mid: P = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
   const vertical = Math.abs(d[0]) < Math.abs(d[1]);
   const tx = mid[0] + (vertical ? labelSide * 4 : 0);

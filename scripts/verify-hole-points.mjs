@@ -123,6 +123,16 @@ check(
   "blind: drill point by default",
   (await dialog.locator("button.active", { hasText: "Drill point" }).count()) === 1,
 );
+const depthIn = dialog.locator(".ed-field", { hasText: /^Depth/ }).locator("input");
+const diaAnchor = () => dialog.locator('[data-dim="diameter"] text').getAttribute("text-anchor");
+await depthIn.fill("15");
+await depthIn.blur();
+await page.waitForTimeout(200);
+check("a deep, thin bore puts its Ø outside the walls", (await diaAnchor()) === "start");
+await depthIn.fill("6");
+await depthIn.blur();
+await page.waitForTimeout(200);
+check("a shallow one keeps it between them", (await diaAnchor()) === "middle");
 await dialog.locator("button", { hasText: "Flat" }).click();
 check("flat hides the point angle", (await dialog.locator(".ed-field", { hasText: "Point angle" }).count()) === 0);
 await extentSel.selectOption("throughAll");

@@ -40,8 +40,18 @@ export function HoleDiagram({ dims: d, size, active, onPick }: Props) {
   const T = d.throughAll
     ? head + Math.max(d.diameter * 2.2, 4)
     : d.depth + tip + Math.max(d.depth * 0.3, d.diameter * 0.6);
-  const halfW = topR * 1.9 + Math.max(d.diameter * 0.6, 1);
-  const s = Math.min((W - 110) / (2 * halfW), (H - 58) / T);
+  // The bore's Ø goes outside the walls when the bore is long and thin
+  // (deeper than 4 diameters) or drawn too narrow for its label; then the
+  // block widens, if the height allows, to hold the label beside the bore.
+  const diaLabel = `Ø${fmtDim(d.diameter)}`;
+  const labelW = diaLabel.length * 5.6;
+  const sH = (H - 58) / T;
+  const fit = (hw: number) => Math.min((W - 110) / (2 * hw), sH);
+  let halfW = topR * 1.9 + Math.max(d.diameter * 0.6, 1);
+  const boreLen = (d.throughAll ? T : d.depth) - head;
+  const diaOutside = boreLen / d.diameter > 4 || d.diameter * fit(halfW) < labelW + 12;
+  if (diaOutside) halfW = Math.max(halfW, r + (labelW + 18) / sH);
+  const s = fit(halfW);
   const cx = W / 2 - 6;
   const top = 34;
   const X = (x: number) => cx + x * s;
@@ -135,7 +145,7 @@ export function HoleDiagram({ dims: d, size, active, onPick }: Props) {
       <line className="dg-axis" x1={X(0)} y1={Y(0) - 22} x2={X(0)} y2={Y(T) + 8} />
 
       <DimGroup name="diameter" active={active} onPick={onPick}>
-        <LinearDim a={pt(-r, boreMid)} b={pt(r, boreMid)} label={`Ø${fmtDim(d.diameter)}`} />
+        <LinearDim a={pt(-r, boreMid)} b={pt(r, boreMid)} label={diaLabel} outside={diaOutside} />
       </DimGroup>
 
       {d.throughAll ? (
