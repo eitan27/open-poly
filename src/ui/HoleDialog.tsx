@@ -1,9 +1,9 @@
 import { useRef, useState } from "react";
 import { HOLE_FIT_LABELS, HOLE_TYPE_LABELS, holeReadout, type HoleDims, type HoleSettings } from "../document/hole";
-import type { HoleParams, HoleType, ThreadMode } from "../document/types";
+import type { HoleParams, HoleType } from "../document/types";
 import { METRIC, METRIC_SIZES, isMetricSize, type HoleFit } from "../geom/metricFasteners";
 import { DraggableDialog } from "./DraggableDialog";
-import { PickButton, PickedRow } from "./PickSlot";
+import { PickButton } from "./PickSlot";
 import { ExprInput } from "./ExprInput";
 import { HoleDiagram } from "./diagram/HoleDiagram";
 import "./GearDialog.css";
@@ -27,7 +27,6 @@ interface Props {
   error: string | null;
   onArm: (slot: "points" | "parts" | null) => void;
   onClearPoints: () => void;
-  onRemovePart: (id: string) => void;
   onAllParts: () => void;
   onChange: (patch: Partial<HoleSettings>) => void;
   onParam: (name: keyof HoleParams, value: string) => void;
@@ -67,7 +66,6 @@ export function HoleDialog({
   error,
   onArm,
   onClearPoints,
-  onRemovePart,
   onAllParts,
   onChange,
   onParam,
@@ -84,7 +82,7 @@ export function HoleDialog({
   const blind = settings.extent === "blind";
   const metric = isMetricSize(settings.size);
   const nPoints = settings.points?.length ?? 0;
-  const scoped = !!settings.scope?.length || armed === "parts";
+  const nParts = settings.scope?.length ?? 0;
   const drillPoint = Number(p.tipAngle) !== 0;
 
   const field = (name: keyof HoleParams, label: string, title?: string) => {
@@ -199,34 +197,29 @@ export function HoleDialog({
         </p>
       )}
 
-      <div className="ed-field" title="The parts the holes cut">
+      <div
+        className="ed-field"
+        title="The parts the holes cut: every part they reach, unless you pick some (as with a merge scope)"
+      >
         <span>Parts</span>
-        <div className="ed-modes ed-inline">
-          <button className={!scoped ? "active" : ""} onClick={onAllParts}>
-            All it reaches
-          </button>
-          <button className={scoped ? "active" : ""} onClick={() => onArm("parts")}>
-            Selected
-          </button>
-        </div>
+        <span className="hole-location">
+          <PickButton noun="parts" armed={armed === "parts"} onClick={() => onArm(armed === "parts" ? null : "parts")}>
+            {nParts ? `${nParts} ${nParts === 1 ? "part" : "parts"}` : armed === "parts" ? undefined : "All it reaches"}
+          </PickButton>
+          {nParts > 0 && (
+            <button type="button" className="bool-operand-x" title="Back to every part it reaches" onClick={onAllParts}>
+              ✕
+            </button>
+          )}
+        </span>
       </div>
-      {scoped && (
-        <div className="bool-operands">
-          {(settings.scope ?? []).map((id) => (
-            <PickedRow
-              key={id}
-              label={partOptions.find((o) => o.id === id)?.name ?? id}
-              clearTitle="Remove"
-              onClear={() => onRemovePart(id)}
-            />
-          ))}
-          <PickButton
-            noun="parts"
-            armed={armed === "parts"}
-            wide
-            onClick={() => onArm(armed === "parts" ? null : "parts")}
-          />
-        </div>
+      {(armed === "parts" || nParts > 0) && (
+        <p className="ed-hint">
+          {nParts > 0
+            ? `Cuts only ${(settings.scope ?? []).map((id) => partOptions.find((o) => o.id === id)?.name ?? id).join(", ")}.`
+            : "Cuts every part it reaches."}
+          {armed === "parts" ? " Click parts to add or drop them." : ""}
+        </p>
       )}
 
       <label
@@ -264,20 +257,22 @@ export function HoleDialog({
       )}
 
       {t === "tapped" && (
-        <div
+        <label
+          className="ed-field ed-flip"
           title={
             metric
-              ? "Modelled: a real ISO thread you can 3D print (grown by the clearance so a printed screw fits). Cosmetic: just the tap drill, for a thread tapped after."
+              ? "Cut the real ISO thread into the wall, to 3D print (grown by the clearance so a printed screw fits). Off: just the tap drill's plain bore, for a thread tapped afterwards."
               : "Modelled threads need a metric size"
           }
         >
-          {seg(
-            metric ? (settings.thread ?? "cosmetic") : "cosmetic",
-            ["modelled", "cosmetic"] as const as ThreadMode[],
-            { modelled: "Modelled thread", cosmetic: "Cosmetic" },
-            (thread) => metric && onChange({ thread }),
-          )}
-        </div>
+          <span>Model the thread</span>
+          <input
+            type="checkbox"
+            disabled={!metric}
+            checked={metric && settings.thread === "modelled"}
+            onChange={(e) => onChange({ thread: e.target.checked ? "modelled" : "cosmetic" })}
+          />
+        </label>
       )}
       {field(
         "diameter",
@@ -290,7 +285,10 @@ export function HoleDialog({
       {t === "counterbore" && field("counterboreDepth", "Counterbore depth")}
       {t === "countersink" && field("countersinkDiameter", "Countersink Ø")}
       {t === "countersink" && field("countersinkAngle", "Countersink °")}
-      {t === "tapped" && blind && field("threadDepth", "Thread depth", "How deep the thread runs")}
+      {t === "tapped" &&
+        blind &&
+        dims?.modelledThread &&
+        field("threadDepth", "Thread depth", "How deep the thread runs")}
       {t === "tapped" &&
         dims?.modelledThread &&
         field(

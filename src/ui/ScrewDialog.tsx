@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { SCREW_HEAD_LABELS, type ScrewDims, type ScrewSettings } from "../document/screw";
-import type { ScrewHead, ScrewParams, ThreadMode } from "../document/types";
+import type { ScrewHead, ScrewParams } from "../document/types";
 import { METRIC_SIZES } from "../geom/metricFasteners";
 import { DraggableDialog } from "./DraggableDialog";
 import { ExprInput } from "./ExprInput";
@@ -183,19 +183,17 @@ export function ScrewDialog({
         settings.head === "flat" ? "Length (overall)" : "Length",
         "ISO length: under the head, or overall for a countersunk head",
       )}
-      <div title="Modelled: a real ISO thread you can 3D print (print it standing on its head). Cosmetic: a plain shank, much faster to build.">
-        <div className="ed-modes">
-          {(["modelled", "cosmetic"] as ThreadMode[]).map((m) => (
-            <button
-              key={m}
-              className={(settings.thread ?? "cosmetic") === m ? "active" : ""}
-              onClick={() => onChange({ thread: m })}
-            >
-              {m === "modelled" ? "Modelled thread" : "Cosmetic"}
-            </button>
-          ))}
-        </div>
-      </div>
+      <label
+        className="ed-field ed-flip"
+        title="Cut the real ISO thread, to 3D print (stand it on its head). Off: a plain shank, much faster to build."
+      >
+        <span>Model the thread</span>
+        <input
+          type="checkbox"
+          checked={settings.thread === "modelled"}
+          onChange={(e) => onChange({ thread: e.target.checked ? "modelled" : "cosmetic" })}
+        />
+      </label>
       {settings.thread === "modelled" &&
         field(
           "clearance",

@@ -47,13 +47,18 @@ describe("holeDims", () => {
     expect(holeDims(settings({ extent: "throughAll" }, { tipAngle: "118" }), {}).tipAngle).toBe(0);
   });
 
+  it("gives a plain (unmodelled) tapped bore no thread depth to get wrong", () => {
+    const h = { ...settings(), holeType: "tapped" as const, thread: "cosmetic" as const, extent: "blind" as const };
+    expect(() => holeDims({ ...h, params: { ...h.params, depth: "5", threadDepth: "6" } }, {})).not.toThrow();
+  });
+
   it("refuses shapes that aren't a hole", () => {
     const bad: [Partial<HoleSettings>, Partial<HoleSettings["params"]>, RegExp][] = [
       [{ size: "custom" }, { diameter: "0" }, /diameter/],
       [{ extent: "blind" }, { depth: "0" }, /depth/],
       [{ holeType: "counterbore", size: "custom" }, { diameter: "8", counterboreDiameter: "6" }, /wider/],
       [{ holeType: "counterbore", extent: "blind", size: "M3" }, { depth: "2" }, /shallower/],
-      [{ holeType: "tapped", extent: "blind" }, { depth: "5", threadDepth: "6" }, /deeper/],
+      [{ holeType: "tapped", thread: "modelled", extent: "blind" }, { depth: "5", threadDepth: "6" }, /deeper/],
       [{ extent: "blind" }, { tipAngle: "180" }, /tip angle/],
     ];
     for (const [patch, params, msg] of bad) expect(() => holeDims(settings(patch, params), {})).toThrow(msg);

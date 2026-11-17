@@ -1986,6 +1986,8 @@ export default function App() {
   // with the other document state further up because its inputs — the viewport
   // ref, rawMeshes, regenSettledSeq — are declared above this line and nothing
   // between reads what it returns.
+  // Every feature dialog's close, set further down once they're all declared.
+  const closeDialogsRef = useRef<() => void>(() => {});
   const {
     docIdRef,
     docName,
@@ -2019,7 +2021,12 @@ export default function App() {
     // The Variables panel defaults open/collapsed by the incoming document's
     // variable count — a panel concern, so the hook takes it as a callback
     // rather than knowing about VARS_OPEN_THRESHOLD.
-    onDocumentAdopted: (next) => setVariablesOpen(next.variables.length < VARS_OPEN_THRESHOLD),
+    // A dialog belongs to the document it was opened on: switching documents
+    // (New, Open, Duplicate) closes it and its ghost.
+    onDocumentAdopted: (next) => {
+      setVariablesOpen(next.variables.length < VARS_OPEN_THRESHOLD);
+      closeDialogsRef.current();
+    },
     downloadBlob,
     safeFilename,
   });
@@ -6263,6 +6270,28 @@ export default function App() {
     setBooleanDialog(null);
     cancelEdit();
   };
+  closeDialogsRef.current = () => {
+    // An in-place edit's snapshot is the OLD document's feature: drop it, not
+    // restore it, so closing doesn't write into the new document.
+    editSnapshotRef.current = null;
+    if (planeDialog) closePlaneDialog();
+    if (revolve.dialog) revolve.close();
+    if (gear.dialog) gear.close();
+    if (hole.dialog) hole.close();
+    if (screw.dialog) screw.close();
+    if (thread.dialog) thread.close();
+    if (mirrorDialog) closeMirror();
+    if (pattern.dialog) pattern.close();
+    if (shell.dialog) shell.close();
+    if (sweepDialog) closeSweep();
+    if (loftDialog) closeLoft();
+    if (extrudeDialog) closeExtrudeDialog();
+    if (dressUp.dialog) dressUp.close();
+    if (booleanDialog) closeBooleanDialog();
+    if (transform.editId) transform.cancel();
+    if (transform.arming) transform.cancelArming();
+    setEditParamsId(null);
+  };
   // Live-preview a boolean edit as operands/op change.
   useEffect(() => {
     const d = booleanDialog;
@@ -8788,7 +8817,6 @@ export default function App() {
                     error={error?.replace(/^hole: /, "") ?? null}
                     onArm={hole.setArmed}
                     onClearPoints={hole.clearPoints}
-                    onRemovePart={hole.togglePart}
                     onAllParts={hole.allParts}
                     onChange={hole.update}
                     onParam={hole.updateParam}

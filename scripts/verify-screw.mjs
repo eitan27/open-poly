@@ -145,17 +145,18 @@ for (const h of ["Button", "Countersunk", "Hex", "Set screw", "No head", "Socket
 await shot("ghost");
 await dialog.locator("button", { hasText: "On a plane" }).click();
 await page.waitForTimeout(300);
+const modelThread = dialog.locator(".ed-field", { hasText: "Model the thread" }).locator("input");
 check("cosmetic by default: no clearance", (await dialog.locator(".ed-field", { hasText: "Clearance" }).count()) === 0);
-await dialog.locator("button", { hasText: "Modelled thread" }).click();
+await modelThread.check();
 await page.waitForTimeout(300);
 check(
   "modelled thread offers a clearance",
   (await dialog.locator(".ed-field", { hasText: "Clearance" }).count()) === 1,
 );
-await dialog.locator("button", { hasText: "Cosmetic" }).click();
+await modelThread.uncheck();
 await page.waitForTimeout(300);
 check("cosmetic hides it", (await dialog.locator(".ed-field", { hasText: "Clearance" }).count()) === 0);
-await dialog.locator("button", { hasText: "Modelled thread" }).click();
+await modelThread.check();
 check("on a plane offers centre fields", (await dialog.locator(".ed-field", { hasText: "Center X" }).count()) === 1);
 const before = (await op.features()).filter((f) => f.type === "screw").length;
 await dialog.locator(".ed-primary").click();

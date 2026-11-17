@@ -154,9 +154,10 @@ function validateHoleDims(d: HoleDims): void {
       throw new Error("hole: the countersink reaches deeper than the hole");
   }
   if (d.holeType === "tapped") {
-    if (!(d.threadDepth > 0)) throw new Error("hole: thread depth must be greater than 0");
-    if (!d.throughAll && d.threadDepth > d.depth) throw new Error("hole: the thread can't run deeper than the hole");
+    // Only a modelled thread has a depth: a plain bore is just the tap drill.
     if (d.modelledThread && d.pitch) {
+      if (!(d.threadDepth > 0)) throw new Error("hole: thread depth must be greater than 0");
+      if (!d.throughAll && d.threadDepth > d.depth) throw new Error("hole: the thread can't run deeper than the hole");
       if (!(d.clearance >= 0)) throw new Error("hole: clearance can't be negative");
       if (!(d.clearance <= 0.25 * d.pitch))
         throw new Error(`hole: clearance can be at most ${0.25 * d.pitch} for this size`);
@@ -400,7 +401,9 @@ export function holeReadout(d: HoleDims, size: string): string {
   const parts: string[] = [];
   if (d.holeType === "tapped" && d.threadDiameter) {
     parts.push(
-      `${size}×${d.pitch} thread, ${d.throughAll ? "through" : `${fmt(d.threadDepth)} deep`} (${d.modelledThread ? `modelled, +${fmt(d.clearance)} clearance` : "cosmetic"})`,
+      d.modelledThread
+        ? `${size}×${d.pitch} thread, ${d.throughAll ? "through" : `${fmt(d.threadDepth)} deep`}, +${fmt(d.clearance)} clearance`
+        : `${size}×${d.pitch}, thread not modelled`,
     );
     parts.push(`${d.modelledThread ? "drill" : "tap drill"} Ø${fmt(d.diameter)}`);
   } else parts.push(`Ø${fmt(d.diameter)}`);

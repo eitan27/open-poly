@@ -29,7 +29,7 @@ await page.keyboard.press("d");
 const dialog = page.locator(".hole-dialog");
 await dialog.waitFor({ timeout: 5000 });
 await page.waitForTimeout(500);
-const loc = dialog.locator(".hole-location .ed-pick-btn");
+const loc = dialog.locator(".ed-field", { hasText: "Location" }).locator(".ed-pick-btn");
 const count = async () => (await loc.textContent())?.trim();
 check("opens listening for points", (await loc.getAttribute("class"))?.includes("active"));
 check("no Body dropdown", (await dialog.locator(".ed-field", { hasText: "Body" }).count()) === 0);
@@ -69,6 +69,18 @@ check(
   "tapped: the size reads as a thread",
   (await dialog.locator(".ed-field", { hasText: "Thread" }).locator("option:checked").textContent()) === "M3 × 0.5",
 );
+const modelHole = dialog.locator(".ed-field", { hasText: "Model the thread" }).locator("input");
+check("tapped: thread not modelled by default", !(await modelHole.isChecked()));
+await dialog.locator("button", { hasText: "Blind" }).click();
+check(
+  "a plain tapped bore has no thread depth",
+  (await dialog.locator(".ed-field", { hasText: "Thread depth" }).count()) === 0,
+);
+await modelHole.check();
+await page.waitForTimeout(300);
+check("a modelled one does", (await dialog.locator(".ed-field", { hasText: "Thread depth" }).count()) === 1);
+await modelHole.uncheck();
+await dialog.locator("button", { hasText: "Through all" }).click();
 await typeSel.selectOption("simple");
 check("through all: no Bottom choice", (await dialog.locator(".ed-field", { hasText: "Bottom" }).count()) === 0);
 await dialog.locator("button", { hasText: "Blind" }).click();
@@ -114,12 +126,26 @@ await dialog.waitFor({ timeout: 5000 });
 await hover([-12, 0, 30]);
 await op.clickWorld([-12, 0, 30]);
 check("a click on the post's top adds its centre", (await count()) === "1 point", await count());
+const partsBtn = dialog.locator(".ed-field", { hasText: "Parts" }).locator(".ed-pick-btn");
+check("Parts reads 'All it reaches' by default", (await partsBtn.textContent())?.trim() === "All it reaches");
 await dialog.locator(".ed-primary").click();
 await op.settle();
 const h2 = (await op.features()).find((f) => f.type === "hole");
 check("all it reaches: cuts the post", await cutByH(h2, post));
 check("all it reaches: and the plate below it", await cutByH(h2, plate));
-await op.applySettled({ op: "setParam", featureId: h2.id, name: "extent", value: "throughAll" }).catch(() => {});
+
+// New document: an open dialog (and its ghost) goes with the old one.
+await canvas.hover({ position: { x: 5, y: 5 } });
+await page.keyboard.press("d");
+await dialog.waitFor({ timeout: 5000 });
+await hover([8, 6, Z]);
+await op.clickWorld([8, 6, Z]);
+await page.waitForTimeout(800);
+await op.newDocument();
+await page.waitForTimeout(800);
+check("New closes the Hole dialog", (await dialog.count()) === 0);
+check("New leaves no ghost", (await op.scene()).bodies.length === 0);
+await page.screenshot({ path: path.join(SHOTS, "hole-new-doc.png") });
 
 async function cutByH(h, bodyId) {
   return ((await op.scene()).bodies.find((b) => b.id === bodyId)?.faces ?? []).some((n) => n.startsWith(h.id));
