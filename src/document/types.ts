@@ -781,11 +781,16 @@ export type ThreadMode = "cosmetic" | "modelled";
  *  itself, a circle's or arc's centre, a line's or arc's ends, or a line's
  *  midpoint. By entity, not position, so the hole follows the sketch. */
 export type HolePointAt = "point" | "center" | "start" | "end" | "mid";
-/** Where one hole goes. Either a snap point of a sketch entity — by entity,
- *  not position, so the hole follows the sketch (`sketchId` absent: the
- *  hole's own `sketchId`, as older holes stored it) — or a fixed spot in the
- *  hole's plane: a body edge's midpoint, a rim's centre, a face's centre. */
-export type HolePointRef = { sketchId?: string; entityId: string; at: HolePointAt } | { uv: Vec2 };
+/** Where one hole goes, and so which way it drills. Either a snap point of
+ *  a sketch entity — by entity, not position, so the hole follows the sketch
+ *  (`sketchId` absent: the hole's own `sketchId`, as older holes stored it),
+ *  drilled along that sketch's normal — or a fixed spot on the face it was
+ *  placed from (`plane`): a body edge's midpoint, a rim's centre, a face's
+ *  centre. Each target has its own plane, so one hole feature can drill a
+ *  stepped part's levels, or a top and a side. An older hole with a feature
+ *  `plane` keeps every target on that one plane. */
+export type HolePointRef =
+  { sketchId?: string; entityId: string; at: HolePointAt } | { uv: Vec2; plane?: SketchPlaneRef };
 
 export interface HoleFeature extends FeatureBase {
   type: "hole";
@@ -800,8 +805,9 @@ export interface HoleFeature extends FeatureBase {
   /** Older holes: the sketch they're placed in — its plane is where they
    *  start, and with no `points`, every point and circle centre in it. */
   sketchId?: string;
-  /** Where the holes start: a face, a datum or reference plane. Set on new
-   *  holes; an older one uses its sketch's plane. */
+  /** Older holes (one plane for every target): where they start. New holes
+   *  leave it unset — each target carries its own plane. Absent on both: an
+   *  older sketch-based hole, on its sketch's plane. */
   plane?: SketchPlaneRef;
   /** Where in that sketch, each a snap point of one of its entities. Absent
    *  (older documents, and the agent's default): every point entity and

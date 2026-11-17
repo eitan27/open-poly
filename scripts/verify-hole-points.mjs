@@ -1,4 +1,4 @@
-// The Hole dialog's Positions and Affected parts. Positions places points the way the
+// The Hole dialog's Targets and Affected parts. Targets places points the way the
 // sketch tools snap: hovering a flat face makes it the plane; a click that
 // snaps to nothing lands on the face's centre; edge midpoints and corners
 // snap. Affected parts: All parts by default, or a picked Subset. Also the
@@ -141,16 +141,16 @@ await dialog.screenshot({ path: path.join(SHOTS, "hole-dialog.png") });
 await dialog.locator(".ed-primary").click();
 await op.settle();
 const holeF = (await op.features()).find((f) => f.type === "hole");
-const world = (uv) => {
-  const f = holeF.plane.frame;
-  return [0, 1, 2].map((k) => f.origin[k] + uv[0] * f.uAxis[k] + uv[1] * f.vAxis[k]);
+const world = (p) => {
+  const f = p.plane.frame;
+  return [0, 1, 2].map((k) => f.origin[k] + p.uv[0] * f.uAxis[k] + p.uv[1] * f.vAxis[k]);
 };
 const near = (a, b) => a.every((v, k) => Math.abs(v - b[k]) < 0.01);
-const pts = (holeF?.points ?? []).map((p) => world(p.uv));
+const pts = (holeF?.points ?? []).map(world);
 check(
   "on the plate's top face",
-  holeF?.plane?.kind === "face" && holeF.plane.featureId === plate,
-  JSON.stringify(holeF?.plane),
+  (holeF?.points ?? []).every((p) => p.plane?.kind === "face" && p.plane.featureId === plate),
+  JSON.stringify(holeF?.points),
 );
 check("the first at the face's centre", near(pts[0] ?? [], [0, 0, Z]), JSON.stringify(pts));
 check("the second at the edge's midpoint", near(pts[1] ?? [], [0, 15, Z]), JSON.stringify(pts));
@@ -199,6 +199,72 @@ await op.settle();
 const h3 = (await op.features()).find((f) => f.type === "hole");
 check("Subset: cuts the plate", await cutByH(h3, plate));
 check("Subset: leaves the post", !(await cutByH(h3, post)));
+
+// Targets on different faces, one feature: the plate's top, the post's top
+// (15 higher) and the plate's +x side — each drills into its own face.
+await op.apply({ op: "delete", featureId: h3.id });
+await op.settle();
+await canvas.hover({ position: { x: 5, y: 5 } });
+await page.keyboard.press("d");
+await dialog.waitFor({ timeout: 5000 });
+await hover([8, 6, Z]);
+await op.clickWorld([8, 6, Z]);
+await hover([-12, 0, 30]);
+await op.clickWorld([-12, 0, 30]);
+// The +x side (x = 20): hover it, then its flat area → its centre.
+await hover([20, 6, 5]);
+await op.clickWorld([20, 6, 5]);
+check("targets on three faces at different levels", (await count()) === "3 targets", await count());
+// The top's +x edge midpoint, first from the top (a fourth target)…
+await hover([19.6, 0.4, Z]);
+await op.clickWorld([19.6, 0.4, Z]);
+check("an edge's midpoint from the top adds a target", (await count()) === "4 targets", await count());
+// …then from the side: the same spot, re-aimed to drill from the side.
+await hover([20, 4, 10]);
+await hover([20, 0.4, 14.6]);
+await op.clickWorld([20, 0.4, 14.6]);
+check("the same spot from the edge's other face re-aims it", (await count()) === "4 targets", await count());
+await extentSel.selectOption("blind");
+await page.waitForTimeout(1200);
+await page.screenshot({ path: path.join(SHOTS, "hole-multi-plane-ghost.png") });
+await dialog.locator(".ed-primary").click();
+await op.settle();
+const h4 = (await op.features()).find((f) => f.type === "hole");
+const normals = (h4?.points ?? []).map((p) => p.plane?.frame?.normal?.map((v) => Math.round(v)).join(","));
+check(
+  "each target keeps its face's normal",
+  JSON.stringify(normals) === JSON.stringify(["0,0,1", "0,0,1", "1,0,0", "1,0,0"]),
+  JSON.stringify(normals),
+);
+check("no feature plane", h4 && !h4.plane);
+check(
+  "multi-plane: no feature errors",
+  (await op.featureErrors()).length === 0,
+  JSON.stringify(await op.featureErrors()),
+);
+check("multi-plane: cuts the plate", await cutByH(h4, plate));
+check("multi-plane: cuts the post", await cutByH(h4, post));
+const holeWalls = ((await op.scene()).bodies.find((b) => b.id === plate)?.faces ?? []).filter((n) =>
+  n.startsWith(h4.id),
+);
+check(
+  "multi-plane: the plate has the top's and the side's holes",
+  ["/h0/", "/h2/", "/h3/"].every((k) => holeWalls.some((n) => n.includes(k))),
+  holeWalls.slice(0, 8).join(" "),
+);
+await page.screenshot({ path: path.join(SHOTS, "hole-multi-plane-result.png") });
+// Screws in it: one per hole, each along its own hole.
+const sc = await op.applySettled({ op: "addScrew", holeId: h4.id, head: "socket", params: { length: "8" } });
+check(
+  "screws in a multi-plane hole build",
+  sc.ok && (await op.featureErrors()).length === 0,
+  JSON.stringify(sc.error ?? (await op.featureErrors())),
+);
+const screwBody = (await op.scene()).bodies.find((b) => b.id === sc.createdId);
+check("one screw per hole", (screwBody?.faces ?? []).filter((n) => /\/n\d+\//.test(n)).length > 0);
+await page.screenshot({ path: path.join(SHOTS, "hole-multi-plane-screws.png") });
+await op.apply({ op: "delete", featureId: sc.createdId });
+await op.settle();
 
 // New document: an open dialog (and its ghost) goes with the old one.
 await canvas.hover({ position: { x: 5, y: 5 } });

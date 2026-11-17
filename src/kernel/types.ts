@@ -254,6 +254,9 @@ export type ResolvedFeature =
       targets?: string[];
       frame: ResolvedFrame;
       centers: [number, number][];
+      /** Targets on more than one plane: each centre's own frame (its (u, v)
+       *  is in that frame). Absent: all in `frame`. */
+      frames?: ResolvedFrame[];
       profile: [number, number][];
       throughAll: boolean;
       /** With throughAll: each hole stops where it leaves the first stretch
@@ -274,6 +277,8 @@ export type ResolvedFeature =
       type: "screw";
       frame: ResolvedFrame;
       centers: [number, number][];
+      /** In a hole whose targets span planes: each centre's own frame. */
+      frames?: ResolvedFrame[];
       /** +1: into the plane against its normal (the default); −1: flipped. */
       flip: boolean;
       profile: [number, number][];

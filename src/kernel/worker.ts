@@ -4495,6 +4495,94 @@ function translatedNamed(src: NamedShape, d: V3, from: string, to: string): Name
 }
 
 /** The frame point at sketch (u, v). */
+/** replicad's `meshEdges`, less a bug: an edge with no polygon on its
+ *  face's triangulation (every edge of a copy moved by a location — the
+ *  screws after the first, see translatedNamed) is sampled from its curve,
+ *  which already carries the location — and replicad then moved it again by
+ *  the last face's location, drawing the copy's edges at twice its offset. */
+function meshEdgesOf(
+  shape: Shape3D,
+  { tolerance = 1e-3, angularTolerance = 0.1 }: { tolerance?: number; angularTolerance?: number } = {},
+): MeshedEdges {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const lines: number[] = [];
+  const edgeGroups: MeshedEdges["edgeGroups"] = [];
+  const recorded = new Set<number>();
+  const record = (hash: number, pts: number[][]) => {
+    const start = lines.length / 3;
+    for (let i = 1; i < pts.length; i++) lines.push(...pts[i - 1], ...pts[i]);
+    edgeGroups.push({ start, count: lines.length / 3 - start, edgeId: hash });
+    recorded.add(hash);
+  };
+  const faceLoc = new oc.TopLoc_Location_1();
+  try {
+    for (const face of shape.faces) {
+      const triangulation = oc.BRep_Tool.Triangulation(face.wrapped, faceLoc, 0);
+      if (triangulation.IsNull()) {
+        triangulation.delete();
+        face.delete();
+        continue;
+      }
+      const tri = triangulation.get();
+      for (const edge of face.edges) {
+        const hash = edge.hashCode;
+        if (recorded.has(hash)) {
+          edge.delete();
+          continue;
+        }
+        const edgeLoc = new oc.TopLoc_Location_1();
+        const polygon = oc.BRep_Tool.PolygonOnTriangulation_1(edge.wrapped, triangulation, edgeLoc);
+        const nodes = polygon.IsNull() ? null : polygon.get().Nodes();
+        if (nodes) {
+          const tr = edgeLoc.Transformation();
+          const pts: number[][] = [];
+          for (let i = nodes.Lower(); i <= nodes.Upper(); i++) {
+            const n = tri.Node(nodes.Value(i));
+            const p = n.Transformed(tr);
+            pts.push([p.X(), p.Y(), p.Z()]);
+            p.delete();
+            n.delete();
+          }
+          nodes.delete();
+          record(hash, pts);
+        }
+        polygon.delete();
+        edgeLoc.delete();
+        edge.delete();
+      }
+      triangulation.delete();
+      face.delete();
+    }
+  } finally {
+    faceLoc.delete();
+  }
+  for (const edge of shape.edges) {
+    const hash = edge.hashCode;
+    if (!recorded.has(hash)) {
+      // The curve as the edge sees it: its location is already applied.
+      const curve = new oc.BRepAdaptor_Curve_2(edge.wrapped);
+      const tang = new oc.GCPnts_TangentialDeflection_2(curve, tolerance, angularTolerance, 2, 1e-9, 1e-7);
+      const pts: number[][] = [];
+      for (let j = 1; j <= tang.NbPoints(); j++) {
+        const p = tang.Value(j);
+        pts.push([p.X(), p.Y(), p.Z()]);
+        p.delete();
+      }
+      tang.delete();
+      curve.delete();
+      record(hash, pts);
+    }
+    edge.delete();
+  }
+  return { lines, edgeGroups };
+}
+
+/** Two frames turned the same way (their origins may differ). */
+function sameAxes(a: { uAxis: V3; normal: V3 }, b: { uAxis: V3; normal: V3 }): boolean {
+  return a === b || (vdot(a.uAxis, b.uAxis) > 1 - 1e-12 && vdot(a.normal, b.normal) > 1 - 1e-12);
+}
+
 function framePoint(frame: { origin: V3; uAxis: V3; vAxis: V3 }, cu: number, cv: number): V3 {
   return [
     frame.origin[0] + frame.uAxis[0] * cu + frame.vAxis[0] * cv,
@@ -4603,12 +4691,16 @@ function sharedNamed(src: NamedShape): NamedShape {
  *  socket and thread stitched together in JS (geom/screwMesh.ts) and made a
  *  solid in a single pass, no booleans; the rest are copies of it. */
 function screwBody(feature: Extract<ResolvedFeature, { type: "screw" }>): NamedShape {
-  const { frame } = feature;
-  // Into the plane against its normal, like a hole; Flip reverses.
+  // Into the plane against its normal, like a hole; Flip reverses. In a
+  // hole whose targets span planes, each screw takes its own hole's frame.
   const sg = feature.flip ? 1 : -1;
-  const down: V3 = [frame.normal[0] * sg, frame.normal[1] * sg, frame.normal[2] * sg];
+  const frameAt = (i: number) => feature.frames?.[i] ?? feature.frame;
+  const downAt = (i: number): V3 => {
+    const n = frameAt(i).normal;
+    return [n[0] * sg, n[1] * sg, n[2] * sg];
+  };
   const idOf = (i: number) => (feature.centers.length > 1 ? `${feature.id}/n${i}` : feature.id);
-  const o0 = framePoint(frame, ...feature.centers[0]);
+  const o0 = framePoint(frameAt(0), ...feature.centers[0]);
   const id0 = idOf(0);
   const mesh = screwMesh({
     profile: feature.profile,
@@ -4616,11 +4708,14 @@ function screwBody(feature: Extract<ResolvedFeature, { type: "screw" }>): NamedS
     socket: feature.socket,
     thread: feature.thread,
   });
-  const first = meshSolid(mesh, o0, down, frame.uAxis, id0);
+  const first = meshSolid(mesh, o0, downAt(0), frameAt(0).uAxis, id0);
   const screws = feature.centers.map(([cu, cv], i) => {
     if (i === 0) return first;
-    const o = framePoint(frame, cu, cv);
-    return translatedNamed(first, [o[0] - o0[0], o[1] - o0[1], o[2] - o0[2]], id0, idOf(i));
+    const o = framePoint(frameAt(i), cu, cv);
+    // Same orientation: a moved copy of the first (cheap); else placed anew.
+    if (sameAxes(frameAt(i), frameAt(0)))
+      return translatedNamed(first, [o[0] - o0[0], o[1] - o0[1], o[2] - o0[2]], id0, idOf(i));
+    return meshSolid(mesh, o, downAt(i), frameAt(i).uAxis, idOf(i));
   });
   return screws.length === 1 ? screws[0] : compoundOf(screws);
 }
@@ -4745,43 +4840,34 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
         .targets!.map((id) => (feature.previewTool ? bodies.find((b) => b.id === id) : requireBody(bodies, id)))
         .filter((b): b is Body => !!b)
     : bodies.filter((b) => !b.preview && b.id !== feature.id);
-  const { frame } = feature;
   // Like a Remove extrude: into the body is AGAINST the plane normal; Flip
-  // reverses it.
-  const s = feature.flip ? 1 : -1;
-  const down: V3 = [frame.normal[0] * s, frame.normal[1] * s, frame.normal[2] * s];
+  // reverses it. Each hole starts on its own target's plane.
+  const holes = holeAxes(feature);
   let profile = feature.profile;
   if (feature.throughAll) {
-    // Push the bore's bottom far enough to clear every candidate from any centre.
+    // Push the bore's bottom far enough to clear every candidate from any hole.
     let reach = 10;
     for (const target of candidates) {
       const [mn, mx] = target.shape.boundingBox.bounds;
       const c: V3 = [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2];
-      reach = Math.max(
-        reach,
-        10 +
-          bboxDiagonal(target.shape) +
-          Math.hypot(c[0] - frame.origin[0], c[1] - frame.origin[1], c[2] - frame.origin[2]),
-      );
+      const far = Math.max(...holes.map(({ o }) => Math.hypot(c[0] - o[0], c[1] - o[1], c[2] - o[2])));
+      reach = Math.max(reach, 10 + bboxDiagonal(target.shape) + far);
     }
-    // ...and from the farthest centre, which may sit well off the frame origin.
-    reach += Math.max(...feature.centers.map(([cu, cv]) => Math.hypot(cu, cv)));
     profile = profile.map(([r, z], i) => [r, i >= profile.length - 2 ? z + reach : z] as [number, number]);
   }
   // Up to next: each hole's own depth, where it leaves the first stretch of
   // material in its way. Each bore ends there (never above the counterbore or
   // countersink over it), so a hole through a plate over a gap stops in the
   // gap instead of carrying on into what's beyond.
-  const depths = feature.upToNext ? upToNextDepths(feature, candidates, down, profile) : null;
+  const depths = feature.upToNext ? upToNextDepths(feature, candidates, holes, profile) : null;
   const profileAt = (i: number): [number, number][] => {
     if (!depths) return profile;
     const base = feature.profile;
     return base.map(([r, z], k) => [r, k >= base.length - 2 ? Math.max(z, depths[i]) : z] as [number, number]);
   };
-  const tools = feature.centers.map(([cu, cv], i) => {
-    const o = framePoint(frame, cu, cv);
-    const id = feature.centers.length > 1 ? `${feature.id}/h${i}` : feature.id;
-    return revolvedPolyhedron(o, down, frame.uAxis, frame.vAxis, profileAt(i), id);
+  const tools = holes.map(({ o, down, u, v }, i) => {
+    const id = holes.length > 1 ? `${feature.id}/h${i}` : feature.id;
+    return revolvedPolyhedron(o, down, u, v, profileAt(i), id);
   });
   // A modelled thread: one cavity per hole, cut after the drill. Built once
   // and copied, like the screws that go in them.
@@ -4790,16 +4876,16 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
     const thread = feature.thread;
     const reach = (i: number) =>
       depths ? profileAt(i).at(-1)![1] : feature.throughAll ? profile[profile.length - 1][1] : thread.z1;
-    const ids = (i: number) => (feature.centers.length > 1 ? `${feature.id}/h${i}` : feature.id);
-    const o0 = framePoint(frame, ...feature.centers[0]);
-    const first = threadSolid({ ...thread, z1: reach(0) }, o0, down, frame.uAxis, ids(0), segments);
-    const rods = feature.centers.map(([cu, cv], i) => {
+    const ids = (i: number) => (holes.length > 1 ? `${feature.id}/h${i}` : feature.id);
+    const h0 = holes[0];
+    const first = threadSolid({ ...thread, z1: reach(0) }, h0.o, h0.down, h0.u, ids(0), segments);
+    const rods = holes.map((h, i) => {
       if (i === 0) return first;
-      const o = framePoint(frame, cu, cv);
-      // Same length: a moved copy of the first (cheap); up to next can differ.
-      if (Math.abs(reach(i) - reach(0)) < 1e-9)
-        return translatedNamed(first, [o[0] - o0[0], o[1] - o0[1], o[2] - o0[2]], ids(0), ids(i));
-      return threadSolid({ ...thread, z1: reach(i) }, o, down, frame.uAxis, ids(i), segments);
+      // Same length and way: a moved copy of the first (cheap); up to next,
+      // or a target on another plane, builds its own.
+      if (Math.abs(reach(i) - reach(0)) < 1e-9 && sameAxes(h.frame, h0.frame))
+        return translatedNamed(first, [h.o[0] - h0.o[0], h.o[1] - h0.o[1], h.o[2] - h0.o[2]], ids(0), ids(i));
+      return threadSolid({ ...thread, z1: reach(i) }, h.o, h.down, h.u, ids(i), segments);
     });
     return rods.length === 1 ? rods[0] : compoundOf(rods);
   };
@@ -4896,7 +4982,7 @@ function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, c
 function upToNextDepths(
   feature: Extract<ResolvedFeature, { type: "hole" }>,
   candidates: Body[],
-  down: V3,
+  holes: HoleAxis[],
   reachProfile: [number, number][],
 ): number[] {
   const key = contentKey(feature, ["upToNext", ...candidates.map((c) => c.key)]);
@@ -4904,35 +4990,33 @@ function upToNextDepths(
   if (hit) return hit;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
-  const { frame } = feature;
   const r = reachProfile[reachProfile.length - 2][0];
   const far = reachProfile[reachProfile.length - 1][1];
-  // A rotation taking `down` onto +z, so a piece's bounding box in z is its
-  // extent along the hole (exact for any tilt, unlike a world box).
-  const trsf = new oc.gp_Trsf_1();
-  const cz = clamp(down[2], -1, 1);
-  if (cz < 1 - 1e-12) {
-    let ax = vcross(down, [0, 0, 1]);
-    if (Math.hypot(...ax) < 1e-9) ax = [1, 0, 0];
-    const pnt = new oc.gp_Pnt_3(0, 0, 0);
-    const dir = new oc.gp_Dir_4(...vunit(ax));
-    const ax1 = new oc.gp_Ax1_2(pnt, dir);
-    trsf.SetRotation_1(ax1, Math.acos(cz));
-    ax1.delete();
-    dir.delete();
-    pnt.delete();
-  }
-  const loc = new oc.TopLoc_Location_2(trsf);
   const depths: number[] = [];
-  try {
-    feature.centers.forEach(([cu, cv], i) => {
-      const o = framePoint(frame, cu, cv);
+  holes.forEach(({ o, down, u, v }, i) => {
+    // A rotation taking this hole's `down` onto +z, so a piece's bounding box
+    // in z is its extent along the hole (exact for any tilt, unlike a world box).
+    const trsf = new oc.gp_Trsf_1();
+    const cz = clamp(down[2], -1, 1);
+    if (cz < 1 - 1e-12) {
+      let ax = vcross(down, [0, 0, 1]);
+      if (Math.hypot(...ax) < 1e-9) ax = [1, 0, 0];
+      const pnt = new oc.gp_Pnt_3(0, 0, 0);
+      const dir = new oc.gp_Dir_4(...vunit(ax));
+      const ax1 = new oc.gp_Ax1_2(pnt, dir);
+      trsf.SetRotation_1(ax1, Math.acos(cz));
+      ax1.delete();
+      dir.delete();
+      pnt.delete();
+    }
+    const loc = new oc.TopLoc_Location_2(trsf);
+    try {
       const o0 = vdot(o, down);
       const probe = revolvedPolyhedron(
         o,
         down,
-        frame.uAxis,
-        frame.vAxis,
+        u,
+        v,
         [
           [0, -1e-3],
           [r, -1e-3],
@@ -4976,16 +5060,41 @@ function upToNextDepths(
       while (k < spans.length && spans[k][0] <= exit + 1e-3) exit = Math.max(exit, spans[k++][1]);
       const gap = k < spans.length ? spans[k][0] - exit : Infinity;
       depths.push(exit + Math.min(0.05, gap / 2));
-    });
-  } finally {
-    loc.delete();
-    trsf.delete();
-  }
+    } finally {
+      loc.delete();
+      trsf.delete();
+    }
+  });
   if (upToNextCache.size > 500) upToNextCache.clear();
   upToNextCache.set(key, depths);
   return depths;
 }
 const upToNextCache = new Map<string, number[]>();
+
+/** One hole's start and axes, in the world: where it starts, the way it
+ *  drills (into its plane, or out with Flip), and its plane's u / v. */
+interface HoleAxis {
+  frame: ResolvedFrame;
+  o: V3;
+  down: V3;
+  u: V3;
+  v: V3;
+}
+
+function holeAxes(feature: Extract<ResolvedFeature, { type: "hole" }>): HoleAxis[] {
+  const s = feature.flip ? 1 : -1;
+  return feature.centers.map(([cu, cv], i) => {
+    const frame = feature.frames?.[i] ?? feature.frame;
+    const n = frame.normal;
+    return {
+      frame,
+      o: framePoint(frame, cu, cv),
+      down: [n[0] * s, n[1] * s, n[2] * s],
+      u: frame.uAxis,
+      v: frame.vAxis,
+    };
+  });
+}
 
 /** Hole cuts that took nothing, by cache key — so "every part it reaches"
  *  tests a part beside the holes once, not on every regen. Keys are content
@@ -6380,7 +6489,7 @@ function regenerate(
           // Normal body: replicad's one-shot mesh (number[]); a big one is
           // repacked into typed arrays below.
           faces = b.shape.mesh(MESH_OPTS);
-          edges = b.shape.meshEdges(MESH_OPTS);
+          edges = meshEdgesOf(b.shape, MESH_OPTS);
           // Recover any face the one-shot mesh silently dropped, before anything
           // downstream reads the buffers. Runs after meshEdges, which wants the
           // triangulation the whole-shape pass left on the shape. Both outcomes

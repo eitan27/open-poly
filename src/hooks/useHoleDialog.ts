@@ -2,20 +2,14 @@
 // regenerate ghosts a NEW hole (only the drill tools, drawn as a cut), and an
 // EDIT applies live to the real document.
 //
-// Where the holes go is picked in the viewport (see App's onPlacementPick):
-// the first pick fixes the plane they start on — the face clicked, or a
-// sketch's plane — and every pick toggles a point. Which parts they cut is
-// every part they reach, unless parts are picked.
+// Where the holes go is picked in the viewport (see App's onHolePlacementPick):
+// each target keeps the face it was placed from — or its sketch's plane — and
+// drills along that face's normal, so one hole can take a stepped part's
+// levels, or a top and a side. Which parts they cut is every part they
+// reach, unless parts are picked.
 import { useEffect, useState } from "react";
 import { addHole, resolveDocument, updateHole } from "../document/document";
-import {
-  DEFAULT_HOLE_SETTINGS,
-  defaultHolePoints,
-  holeCenters,
-  sameHolePoint,
-  type HoleSettings,
-} from "../document/hole";
-import type { SketchPlaneRef } from "../document/planes";
+import { DEFAULT_HOLE_SETTINGS, defaultHolePoints, holeCenters, type HoleSettings } from "../document/hole";
 import type { Document, Feature, HoleFeature, HolePointRef, SketchFeature } from "../document/types";
 import type { KernelClient } from "../kernel/KernelClient";
 import type { ShapeMeshPayload } from "../kernel/types";
@@ -58,10 +52,10 @@ export interface HoleDialogApi {
   edit: (feature: HoleFeature) => void;
   close: () => void;
   confirm: () => void;
-  /** A point picked in the viewport. The first fixes the plane; a point
-   *  already there is removed. */
-  pickPoint: (plane: SketchPlaneRef, ref: HolePointRef) => void;
-  /** Drop every point and the plane, and listen for a fresh first pick. */
+  /** The targets, as the viewport's picks leave them (App works out whether
+   *  a pick adds, removes or re-aims one). */
+  setPoints: (points: HolePointRef[]) => void;
+  /** Drop every target, and listen for a fresh first pick. */
   clearPoints: () => void;
   setArmed: (slot: HoleSlot | null) => void;
   /** A part clicked while the Parts slot listens: toggled in the scope. */
@@ -91,7 +85,6 @@ export function useHoleDialog(deps: HoleDialogDeps): HoleDialogApi {
         // A selected sketch with points: start on them (the quick path).
         ...(sketch
           ? {
-              plane: sketch.plane,
               points: defaultHolePoints(sketch).map((r) => ({ ...r, sketchId: sketch.id })),
             }
           : { points: [] }),
@@ -115,8 +108,14 @@ export function useHoleDialog(deps: HoleDialogDeps): HoleDialogApi {
         fit: feature.fit,
         extent: feature.extent,
         flip: feature.flip,
-        plane: feature.plane ?? sketch?.plane,
-        points: feature.points ?? (sketch ? defaultHolePoints(sketch) : []),
+        // An older hole's one plane moves onto its fixed spots, so targets
+        // picked now can each have their own. Its sketch points then drill
+        // along their sketch's normal (the same plane, for the coplanar
+        // sketches it could pick from).
+        plane: undefined,
+        points: (feature.points ?? (sketch ? defaultHolePoints(sketch) : [])).map((r) =>
+          "uv" in r && !r.plane ? { ...r, plane: feature.plane ?? sketch?.plane } : r,
+        ),
         scope: feature.scope,
         params: { ...DEFAULT_HOLE_SETTINGS.params, ...feature.params },
       },
@@ -149,13 +148,8 @@ export function useHoleDialog(deps: HoleDialogDeps): HoleDialogApi {
     close();
   };
 
-  const pickPoint = (plane: SketchPlaneRef, ref: HolePointRef) =>
-    setDialog((d) => {
-      if (!d) return d;
-      const pts = d.settings.points ?? [];
-      const next = pts.some((p) => sameHolePoint(p, ref)) ? pts.filter((p) => !sameHolePoint(p, ref)) : [...pts, ref];
-      return { ...d, settings: { ...d.settings, plane: d.settings.plane ?? plane, points: next } };
-    });
+  const setPoints = (points: HolePointRef[]) =>
+    setDialog((d) => (d ? { ...d, settings: { ...d.settings, points } } : d));
   const clearPoints = () =>
     setDialog((d) =>
       d ? { ...d, armed: "points", sketchId: null, settings: { ...d.settings, plane: undefined, points: [] } } : d,
@@ -242,7 +236,7 @@ export function useHoleDialog(deps: HoleDialogDeps): HoleDialogApi {
     edit,
     close,
     confirm,
-    pickPoint,
+    setPoints,
     clearPoints,
     setArmed,
     togglePart,

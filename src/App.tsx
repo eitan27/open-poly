@@ -195,7 +195,7 @@ import { holeSketches, useHoleDialog } from "./hooks/useHoleDialog";
 import { useThreadDialog } from "./hooks/useThreadDialog";
 import { threadDims, type ThreadDims } from "./document/threadFeature";
 import { useScrewDialog } from "./hooks/useScrewDialog";
-import { holeCenters, holeDims, holePointAt, type HoleDims } from "./document/hole";
+import { holeCenters, holeDims, holePointAt, holeTarget, type HoleDims } from "./document/hole";
 import { screwDims, screwSize, type ScrewDims } from "./document/screw";
 import { gearReadout, meshCandidates } from "./document/gear";
 import { usePersistedDocuments } from "./hooks/usePersistedDocuments";
@@ -2557,12 +2557,6 @@ export default function App() {
   // Point tool's snapping) on the hole's plane, or the face under the pointer
   // until the first pick fixes it.
   const holePlacing = hole.dialog?.armed === "points";
-  const holePlane = hole.dialog?.settings.plane;
-  const holePlacementFrame = useMemo(
-    () =>
-      holePlane && planeResolves(holePlane, resolved.planeFrames) ? frameOf(holePlane, resolved.planeFrames) : null,
-    [holePlane, resolved.planeFrames],
-  );
   const anyDialogOpen =
     !!planeDialog ||
     !!extrudeDialog ||
@@ -3613,41 +3607,57 @@ export default function App() {
     void bodyId;
     hole.open(sketchId);
   };
-  /** A point placed in the viewport for the Hole dialog. The first fixes the
-   *  plane the holes start on: the face it was on, or the sketch's plane. A
-   *  snap onto a sketch's own point, centre, end or midpoint keeps a live
-   *  link to that entity; anything else is a fixed spot on the plane. */
+  /** A point placed in the viewport for the Hole dialog. It drills from the
+   *  face it was placed on (or its sketch's plane), along that face's normal
+   *  — each target its own. A snap onto a sketch's own point, centre, end or
+   *  midpoint keeps a live link to that entity; anything else is a fixed spot
+   *  on the face. A pick on a target already there removes it — or, from the
+   *  other face of an edge, re-aims it to drill from this one. */
   const onHolePlacementPick = (pick: PlacementPick) => {
     const d = hole.dialog;
     if (!d) return;
-    let plane = d.settings.plane;
-    if (!plane) {
-      if (pick.source.kind === "face") plane = { kind: "face", featureId: pick.source.featureId, frame: pick.frame };
-      else if (pick.source.kind === "sketch") {
-        const sid = pick.source.sketchId;
-        const sk = doc.features.find((f) => f.id === sid);
-        if (sk?.type !== "sketch") return;
-        plane = sk.plane;
-      } else return;
-    }
+    let plane: SketchPlaneRef;
+    if (pick.source.kind === "face") plane = { kind: "face", featureId: pick.source.featureId, frame: pick.frame };
+    else if (pick.source.kind === "sketch") {
+      const sid = pick.source.sketchId;
+      const sk = doc.features.find((f) => f.id === sid);
+      if (sk?.type !== "sketch") return;
+      plane = sk.plane;
+    } else return;
     const frame = frameOf(plane, resolved.planeFrames);
     const w = pick.world;
+    const along = (f: PlaneFrameData, a: number[]) =>
+      (w[0] - f.origin[0]) * a[0] + (w[1] - f.origin[1]) * a[1] + (w[2] - f.origin[2]) * a[2];
+    const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     let ref: HolePointRef | null = null;
     for (const sk of doc.features) {
       if (sk.type !== "sketch" || !planeResolves(sk.plane, resolved.planeFrames)) continue;
       const f = frameOf(sk.plane, resolved.planeFrames);
-      const d0 = [w[0] - f.origin[0], w[1] - f.origin[1], w[2] - f.origin[2]];
-      const dot = (a: number[]) => d0[0] * a[0] + d0[1] * a[1] + d0[2] * a[2];
-      if (Math.abs(dot(f.normal)) > 1e-3) continue;
-      ref = holePointAt(sk, [dot(f.uAxis), dot(f.vAxis)], 1e-3);
+      // A sketch on this face, facing the same way (one on a datum under a
+      // downward face would drill the other way).
+      if (Math.abs(along(f, f.normal)) > 1e-3 || dot(f.normal, frame.normal) < 1 - 1e-6) continue;
+      ref = holePointAt(sk, [along(f, f.uAxis), along(f, f.vAxis)], 1e-3);
       if (ref) break;
     }
-    if (!ref) {
-      const d0 = [w[0] - frame.origin[0], w[1] - frame.origin[1], w[2] - frame.origin[2]];
-      const dot = (a: number[]) => d0[0] * a[0] + d0[1] * a[1] + d0[2] * a[2];
-      ref = { uv: [dot(frame.uAxis), dot(frame.vAxis)] };
-    }
-    hole.pickPoint(plane, ref);
+    ref ??= { uv: [along(frame, frame.uAxis), along(frame, frame.vAxis)], plane };
+    const sketchOf = (id: string) => doc.features.find((f): f is SketchFeature => f.id === id && f.type === "sketch");
+    const owner = { plane: d.settings.plane, sketchId: d.sketchId ?? undefined };
+    const targetOf = (p: HolePointRef) => {
+      try {
+        return holeTarget(owner, p, sketchOf, resolved.planeFrames);
+      } catch {
+        return null;
+      }
+    };
+    const pts = d.settings.points ?? [];
+    const at = pts.findIndex((p) => {
+      const t = targetOf(p);
+      const q = t && uvToWorld(t.frame, t.center[0], t.center[1]);
+      return !!q && Math.hypot(q[0] - w[0], q[1] - w[1], q[2] - w[2]) < 1e-3;
+    });
+    if (at < 0) return hole.setPoints([...pts, ref]);
+    const sameFace = dot(targetOf(pts[at])!.frame.normal, frame.normal) > 1 - 1e-6;
+    hole.setPoints(sameFace ? pts.filter((_, i) => i !== at) : pts.map((p, i) => (i === at ? ref : p)));
   };
   /** Open the Thread dialog like the Hole one: the selected sketch (or the
    *  newest with points) and body. */
@@ -7667,7 +7677,6 @@ export default function App() {
               }
               sketchTool={sketchTool}
               placing={holePlacing && !editingSketchId}
-              placementFrame={holePlacementFrame}
               onPlacementPick={onHolePlacementPick}
               sketches={renderSketchesWithPreview}
               activeSketchId={editingSketchId}

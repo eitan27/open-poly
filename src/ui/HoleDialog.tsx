@@ -193,7 +193,7 @@ export function HoleDialog({
         <p className="ed-hint">
           {nPoints === 0
             ? "Select points, faces (their centre) or sketch entities (centres, ends, midpoints)."
-            : "Select more on the same plane; select one again to remove it."}
+            : "Select more — each drills into the face it's on. Select one again to remove it, or from an edge's other face to drill from there."}
         </p>
       )}
 

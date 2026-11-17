@@ -7,6 +7,8 @@ import {
   entityHolePoint,
   holeCenters,
   holePlacement,
+  resolvedHoleFrames,
+  sameHolePoint,
   holeScope,
   holePointAt,
   snapPoint,
@@ -308,15 +310,88 @@ describe("holePlacement", () => {
     ({ id: "h", type: "hole", name: "Hole 1", suppressed: false, ...settings(), ...patch }) as HoleFeature;
   const sketchOf = (id: string) => (id === "t" ? top : undefined);
 
-  it("places fixed spots on its plane", () => {
+  // The plate's +x side: a face facing x.
+  const side = {
+    kind: "face" as const,
+    featureId: "box",
+    frame: {
+      origin: [20, 0, 7.5] as [number, number, number],
+      uAxis: [0, 1, 0] as [number, number, number],
+      vAxis: [0, 0, 1] as [number, number, number],
+      normal: [1, 0, 0] as [number, number, number],
+    },
+  };
+
+  it("an older hole: fixed spots on its one plane", () => {
     const p = holePlacement(hole({ plane: face, points: [{ uv: [3, 4] }, { uv: [3, 4] }] }), sketchOf, new Map());
-    expect(p.frame.origin).toEqual([0, 0, 15]);
-    expect(p.centers).toEqual([[3, 4]]); // coincident spots count once
+    expect(p.holes).toHaveLength(1); // coincident spots count once
+    expect(p.holes[0].frame.origin).toEqual([0, 0, 15]);
+    expect(p.holes[0].center).toEqual([3, 4]);
   });
 
-  it("carries another sketch's point onto its plane, and follows it", () => {
+  it("an older hole: carries another sketch's point onto its plane, and follows it", () => {
     const ref = { sketchId: "t", entityId: "l", at: "mid" as const };
-    expect(holePlacement(hole({ plane: face, points: [ref] }), sketchOf, new Map()).centers).toEqual([[5, 0]]);
+    const p = holePlacement(hole({ plane: face, points: [ref] }), sketchOf, new Map());
+    expect(p.holes[0].frame.origin).toEqual([0, 0, 15]);
+    expect(p.holes[0].center).toEqual([5, 0]);
+  });
+
+  it("each target drills from its own plane", () => {
+    const p = holePlacement(
+      hole({
+        points: [
+          { uv: [3, 4], plane: face },
+          { uv: [0, 0], plane: side },
+        ],
+      }),
+      sketchOf,
+      new Map(),
+    );
+    expect(p.holes.map((h) => h.frame.normal)).toEqual([
+      [0, 0, 1],
+      [1, 0, 0],
+    ]);
+    const r = resolvedHoleFrames(p);
+    expect(r.frame.normal).toEqual([0, 0, 1]);
+    expect(r.centers).toEqual([
+      [3, 4],
+      [0, 0],
+    ]);
+    expect(r.frames?.map((f) => f.normal)).toEqual([
+      [0, 0, 1],
+      [1, 0, 0],
+    ]);
+  });
+
+  it("a sketch point drills from its own sketch's plane", () => {
+    const ref = { sketchId: "t", entityId: "l", at: "mid" as const };
+    const p = holePlacement(hole({ points: [ref] }), sketchOf, new Map());
+    expect(p.holes[0].frame.origin).toEqual([0, 0, 0]);
+    expect(p.holes[0].center).toEqual([5, 0]);
+  });
+
+  it("one plane: no per-hole frames", () => {
+    const p = holePlacement(
+      hole({
+        points: [
+          { uv: [3, 4], plane: face },
+          { uv: [-3, 1], plane: face },
+        ],
+      }),
+      sketchOf,
+      new Map(),
+    );
+    expect(resolvedHoleFrames(p).frames).toBeUndefined();
+  });
+
+  it("the same spot from two faces is two holes; from one face, one", () => {
+    // The top's +x edge midpoint, from the top and from the side.
+    const fromTop = { uv: [20, 0] as [number, number], plane: face };
+    const fromSide = { uv: [0, 7.5] as [number, number], plane: side };
+    expect(holePlacement(hole({ points: [fromTop, fromSide] }), sketchOf, new Map()).holes).toHaveLength(2);
+    expect(holePlacement(hole({ points: [fromTop, { ...fromTop }] }), sketchOf, new Map()).holes).toHaveLength(1);
+    expect(sameHolePoint(fromTop, { ...fromTop })).toBe(true);
+    expect(sameHolePoint(fromTop, { uv: [20, 0], plane: side })).toBe(false);
   });
 
   it("asks for a location before it has one", () => {

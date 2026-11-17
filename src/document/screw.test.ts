@@ -82,6 +82,34 @@ describe("resolve", () => {
     expect(profile[0][1]).toBeCloseTo(5.4 - 5);
   });
 
+  it("in a hole whose targets span planes, each screw takes its hole's frame", () => {
+    const FRONT = { kind: "datum", id: "plane-front" } as const;
+    const h = addHole(
+      createDocument(),
+      undefined,
+      undefined,
+      hole({
+        points: [
+          { uv: [1, 2], plane: TOP },
+          { uv: [3, 4], plane: FRONT },
+        ],
+      }),
+    );
+    const { doc, id } = addScrew(h.doc, TOP, screw({ holeId: h.id }));
+    const rf = resolveDocument(doc).features.find((x) => x.id === id) as {
+      centers: [number, number][];
+      frames?: { normal: number[] }[];
+    };
+    expect(rf.centers).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
+    expect(rf.frames).toHaveLength(2);
+    expect(rf.frames![0].normal).not.toEqual(rf.frames![1].normal);
+    const rh = resolveDocument(doc).features.find((x) => x.id === h.id) as { frames?: unknown[] };
+    expect(rh.frames).toHaveLength(2);
+  });
+
   it("stands alone on a plane at its centre", () => {
     const { doc, id } = addScrew(createDocument(), TOP, screw({}, { centerX: "3", centerY: "-2" }));
     expect(resolveDocument(doc).features.find((x) => x.id === id)).toMatchObject({ centers: [[3, -2]] });
