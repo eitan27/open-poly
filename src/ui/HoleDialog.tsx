@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { HOLE_FIT_LABELS, HOLE_TYPE_LABELS, holeReadout, type HoleDims, type HoleSettings } from "../document/hole";
+import { HOLE_FIT_LABELS, HOLE_TYPE_LABELS, type HoleDims, type HoleSettings } from "../document/hole";
 import type { HoleParams, HoleType } from "../document/types";
 import {
   METRIC,
@@ -363,7 +363,6 @@ export function HoleDialog({
         <input type="checkbox" checked={settings.flip} onChange={(e) => onChange({ flip: e.target.checked })} />
       </label>
 
-      {dims && !error && <div className="gear-readout">{holeReadout(dims, settings.size)}</div>}
       {error && <p className="ed-warning">{error}</p>}
       <div className="ed-actions">
         <button className="ed-primary" disabled={!!error || nPoints === 0} onClick={onConfirm}>

@@ -466,24 +466,3 @@ export function resolveHole(
       : {}),
   };
 }
-
-/** The one-line summary under the dialog's fields. */
-export function holeReadout(d: HoleDims, size: string): string {
-  const parts: string[] = [];
-  if (d.holeType === "tapped" && d.threadDiameter) {
-    parts.push(
-      d.modelledThread
-        ? `${size}×${d.pitch} thread, ${d.throughAll ? "all the way" : `${fmt(d.threadDepth)} deep`}, +${fmt(d.clearance)} clearance`
-        : `${size}×${d.pitch}, thread not modelled`,
-    );
-    parts.push(`${d.modelledThread ? "drill" : "tap drill"} Ø${fmt(d.diameter)}`);
-  } else parts.push(`Ø${fmt(d.diameter)}`);
-  if (d.holeType === "counterbore")
-    parts.push(`counterbore Ø${fmt(d.counterboreDiameter)} × ${fmt(d.counterboreDepth)}`);
-  if (d.holeType === "countersink")
-    parts.push(`countersink Ø${fmt(d.countersinkDiameter)} at ${fmt(d.countersinkAngle)}°`);
-  parts.push(d.upToNext ? "up to next" : d.throughAll ? "through all" : `${fmt(d.depth)} deep`);
-  return parts.join(" · ");
-}
-
-const fmt = (n: number) => String(Math.round(n * 1000) / 1000);
