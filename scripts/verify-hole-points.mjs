@@ -63,9 +63,10 @@ check("clearance Ø is a read-only value", (await dialog.locator(".ed-derived", 
 const fitSel = dialog.locator(".ed-field", { hasText: "Fit" }).locator("select");
 check(
   "fit is a dropdown showing each gap, with Exact",
-  (await fitSel.locator("option").allTextContents()).join("|") === "Close (+0.2)|Normal (+0.4)|Loose (+0.6)|Exact (+0)",
+  (await fitSel.locator("option").allTextContents()).join("|") === "Exact (+0)|Close (+0.2)|Normal (+0.4)|Loose (+0.6)",
   (await fitSel.locator("option").allTextContents()).join("|"),
 );
+check("fit defaults to Normal", (await fitSel.inputValue()) === "normal");
 await fitSel.selectOption("exact");
 await page.waitForTimeout(200);
 check(
@@ -98,10 +99,19 @@ await page.waitForTimeout(300);
 check("a modelled one does", (await dialog.locator(".ed-field", { hasText: "Thread depth" }).count()) === 1);
 await modelHole.uncheck();
 await typeSel.selectOption("simple");
+const bothWalls = async () =>
+  (
+    await dialog
+      .locator("svg.dg path.dg-cut-edge")
+      .evaluateAll((ps) => ps.map((p) => (p.getAttribute("d") ?? "").split("L").length))
+  ).filter((n) => n >= 2).length === 2;
 await extentSel.selectOption("throughAll");
+await page.waitForTimeout(200);
+check("through all: both walls of the bore drawn", await bothWalls());
 check("through all: no Bottom choice", (await dialog.locator(".ed-field", { hasText: "Bottom" }).count()) === 0);
 await extentSel.selectOption("upToNext");
 await page.waitForTimeout(200);
+check("up to next: both walls of the bore drawn", await bothWalls());
 check("up to next: no Bottom choice either", (await dialog.locator(".ed-field", { hasText: "Bottom" }).count()) === 0);
 check(
   "up to next: the diagram says so",

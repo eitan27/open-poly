@@ -62,9 +62,10 @@ export function HoleDiagram({ dims: d, size, active, onPick }: Props) {
     .map(([pr, pz]) => pt(-pr, clip(pz)));
   const path = (pts: P[]) => pts.map(([x, y], i) => `${i ? "L" : "M"}${x},${y}`).join(" ");
   const cut = path([...right, ...left]) + " Z";
-  // Through: each wall alone, down to the exit (the profile's last point is
-  // the axis, which a through hole never reaches).
-  const walls = d.throughAll ? [path(right.slice(0, -1)), path(left.slice(1))] : [path([...right, ...left])];
+  // Through: each wall alone, down to the exit. The right side drops the
+  // profile's last point (the axis, which a through hole never reaches); the
+  // left already lacks it and starts at the exit.
+  const walls = d.throughAll ? [path(right.slice(0, -1)), path(left)] : [path([...right, ...left])];
 
   const boreTop = Math.max(cbDepth, csDepth);
   const boreBottom = d.throughAll ? T : d.depth;

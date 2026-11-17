@@ -28,10 +28,10 @@ export const HOLE_TYPE_LABELS: Record<HoleType, string> = {
 };
 
 export const HOLE_FIT_LABELS: Record<HoleFit, string> = {
+  exact: "Exact",
   close: "Close",
   normal: "Normal",
   loose: "Loose",
-  exact: "Exact",
 };
 
 /** Custom-size defaults: an M3-ish clearance hole, 10 deep with a drill point. */
