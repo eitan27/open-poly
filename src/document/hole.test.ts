@@ -151,7 +151,7 @@ describe("holeCenters + resolve", () => {
       ...base,
       features: [...base.features, sketch([{ type: "point", id: "a", p: [1, 2] }])],
     };
-    const { doc, id } = addHole(withSketch, "s", "body", settings());
+    const { doc, id } = addHole(withSketch, "s", "body", { ...settings(), extent: "throughAll" });
     const rf = resolveDocument(doc).features.find((f) => f.id === id);
     expect(rf).toMatchObject({ type: "hole", targets: ["body"], centers: [[1, 2]], throughAll: true });
     // No body: every part the holes reach.

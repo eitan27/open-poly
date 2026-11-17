@@ -83,6 +83,8 @@ export function HoleDialog({
   const metric = isMetricSize(settings.size);
   const nPoints = settings.points?.length ?? 0;
   const nParts = settings.scope?.length ?? 0;
+  // "Subset" chosen but nothing picked yet still cuts everything.
+  const [subset, setSubset] = useState(nParts > 0);
   const drillPoint = Number(p.tipAngle) !== 0;
 
   const field = (name: keyof HoleParams, label: string, title?: string) => {
@@ -172,18 +174,18 @@ export function HoleDialog({
 
       {dims && <HoleDiagram dims={dims} size={settings.size} active={focused ?? hovered} onPick={pick} />}
 
-      <div className="ed-field" title="Where the holes go">
-        <span>Location</span>
+      <div className="ed-field" title="Where the holes go: points, faces (their centre) or sketch entities">
+        <span>Positions</span>
         <span className="hole-location">
           <PickButton
-            noun="points"
+            noun="positions"
             armed={armed === "points"}
             onClick={() => onArm(armed === "points" ? null : "points")}
           >
-            {nPoints ? `${nPoints} ${nPoints === 1 ? "point" : "points"}` : undefined}
+            {nPoints ? `${nPoints} ${nPoints === 1 ? "position" : "positions"}` : "Select…"}
           </PickButton>
           {nPoints > 0 && (
-            <button type="button" className="bool-operand-x" title="Clear the points" onClick={onClearPoints}>
+            <button type="button" className="bool-operand-x" title="Clear the positions" onClick={onClearPoints}>
               ✕
             </button>
           )}
@@ -192,33 +194,46 @@ export function HoleDialog({
       {armed === "points" && (
         <p className="ed-hint">
           {nPoints === 0
-            ? "Hover a flat face or a sketch: its corners, edge midpoints and rim centres light up. Click one — or the face itself, for its centre."
-            : "Click more points on the same plane; click one again to remove it."}
+            ? "Select points, faces (their centre) or sketch entities (centres, ends, midpoints)."
+            : "Select more on the same plane; select one again to remove it."}
         </p>
       )}
 
-      <div
-        className="ed-field"
-        title="The parts the holes cut: every part they reach, unless you pick some (as with a merge scope)"
-      >
-        <span>Parts</span>
-        <span className="hole-location">
-          <PickButton noun="parts" armed={armed === "parts"} onClick={() => onArm(armed === "parts" ? null : "parts")}>
-            {nParts ? `${nParts} ${nParts === 1 ? "part" : "parts"}` : armed === "parts" ? undefined : "All it reaches"}
-          </PickButton>
-          {nParts > 0 && (
-            <button type="button" className="bool-operand-x" title="Back to every part it reaches" onClick={onAllParts}>
-              ✕
-            </button>
-          )}
-        </span>
-      </div>
-      {(armed === "parts" || nParts > 0) && (
+      <label className="ed-field" title="The parts the holes cut: every part they reach, or only the ones you pick">
+        <span>Affected parts</span>
+        <select
+          value={subset ? "subset" : "all"}
+          onChange={(e) => {
+            if (e.target.value === "subset") {
+              setSubset(true);
+              onArm("parts");
+            } else {
+              setSubset(false);
+              onAllParts();
+            }
+          }}
+        >
+          <option value="all">All parts</option>
+          <option value="subset">Subset</option>
+        </select>
+      </label>
+      {subset && (
+        <div className="ed-field" title="Select the parts to cut; select one again to drop it">
+          <span />
+          <span className="hole-location">
+            <PickButton
+              noun="parts"
+              armed={armed === "parts"}
+              onClick={() => onArm(armed === "parts" ? null : "parts")}
+            >
+              {nParts ? `${nParts} ${nParts === 1 ? "part" : "parts"}` : "Select…"}
+            </PickButton>
+          </span>
+        </div>
+      )}
+      {subset && nParts > 0 && (
         <p className="ed-hint">
-          {nParts > 0
-            ? `Cuts only ${(settings.scope ?? []).map((id) => partOptions.find((o) => o.id === id)?.name ?? id).join(", ")}.`
-            : "Cuts every part it reaches."}
-          {armed === "parts" ? " Click parts to add or drop them." : ""}
+          Cuts only {(settings.scope ?? []).map((id) => partOptions.find((o) => o.id === id)?.name ?? id).join(", ")}.
         </p>
       )}
 

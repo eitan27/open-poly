@@ -3309,6 +3309,8 @@ export function Viewport({
         if (!pf || !raw) return;
         const sn = snap(raw, e.clientX, e.clientY);
         if (sn.kind === "free") return;
+        // On a circle or arc's rim: a hole goes at its centre, not on the rim.
+        if (sn.circle) sn.uv = sn.circle.c;
         const source: PlacementSource = placementFrameRef.current
           ? { kind: "fixed" }
           : (tentativeRef.current?.source ?? { kind: "fixed" });

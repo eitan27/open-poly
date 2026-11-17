@@ -1391,7 +1391,8 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           thread: op.thread ?? DEFAULT_HOLE_SETTINGS.thread,
           size: op.size ?? DEFAULT_HOLE_SETTINGS.size,
           fit: op.fit ?? DEFAULT_HOLE_SETTINGS.fit,
-          extent: op.extent ?? DEFAULT_HOLE_SETTINGS.extent,
+          // The agent's documented default: a bolt hole goes through.
+          extent: op.extent ?? "throughAll",
           flip: op.flip ?? false,
           params: { ...DEFAULT_HOLE_PARAMS, ...op.params },
         });

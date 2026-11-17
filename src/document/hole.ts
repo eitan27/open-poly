@@ -60,7 +60,8 @@ export const DEFAULT_HOLE_SETTINGS: HoleSettings = {
   thread: "cosmetic",
   size: "M3",
   fit: "normal",
-  extent: "throughAll",
+  // Blind, so the diagram shows the drill point a real drill leaves.
+  extent: "blind",
   flip: false,
   params: DEFAULT_HOLE_PARAMS,
 };
