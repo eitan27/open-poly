@@ -43,7 +43,7 @@ const contrast = (a: number, b: number) => {
 };
 
 /** Bodies closer than this to the ghost's colour hide its dashes. */
-export const GHOST_SIMILAR = 0.12;
+export const GHOST_SIMILAR = 0.15;
 const ALTERNATES = [0xf4f7fb, 0x102a4c];
 
 /** The colour a ghost's hidden dashes take behind `occluders`: its own unless
