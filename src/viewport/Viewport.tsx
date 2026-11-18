@@ -46,6 +46,8 @@ import {
   sampleSpline,
 } from "../document/sketchTools";
 import { getSketchFont, loadSketchFont, textToContours } from "../document/text";
+import { hiddenDashColor } from "./ghostContrast";
+import { meshBounds } from "./meshBounds";
 import { sameSelection, type DatumId, type Selection, type SelectionFilter } from "../selection/types";
 import type {
   ExtrudeGizmo,
@@ -179,7 +181,6 @@ interface SceneState {
   /** The add ghost's edges where a body hides them: dashed and faint, drawn
    *  only where they're BEHIND something (see the material's comment). */
   ghostHiddenLineMaterial: THREE.LineDashedMaterial;
-  ghostHiddenUnderMaterial: THREE.LineBasicMaterial;
   /** Dress-up delta ghosts: material the operation adds / carves off. */
   ghostFillMaterial: THREE.MeshStandardMaterial;
   ghostFillLineMaterial: THREE.LineBasicMaterial;
@@ -986,20 +987,9 @@ export function Viewport({
     const ghostHiddenLineMaterial = new THREE.LineDashedMaterial({
       color: GHOST_COLOR,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.55,
       dashSize: 1.5,
       gapSize: 1.2,
-      depthFunc: THREE.GreaterDepth,
-      depthWrite: false,
-      clippingPlanes: sectionClipPlanes,
-    });
-    // Under those dashes, the same edges solid and near-black: the gaps between
-    // dashes go dark, so the pattern reads on a body of any colour — one the
-    // ghost's own blue would vanish into included — not just on a contrasting one.
-    const ghostHiddenUnderMaterial = new THREE.LineBasicMaterial({
-      color: 0x0b0e13,
-      transparent: true,
-      opacity: 0.7,
       depthFunc: THREE.GreaterDepth,
       depthWrite: false,
       clippingPlanes: sectionClipPlanes,
@@ -1505,7 +1495,6 @@ export function Viewport({
       ghostMaterial,
       ghostLineMaterial,
       ghostHiddenLineMaterial,
-      ghostHiddenUnderMaterial,
       ghostFillMaterial,
       ghostFillLineMaterial,
       ghostCutMaterial,
@@ -3822,7 +3811,6 @@ export function Viewport({
       ghostMaterial.dispose();
       ghostLineMaterial.dispose();
       ghostHiddenLineMaterial.dispose();
-      ghostHiddenUnderMaterial.dispose();
       ghostFillMaterial.dispose();
       ghostFillLineMaterial.dispose();
       ghostCutMaterial.dispose();
@@ -4014,8 +4002,15 @@ export function Viewport({
     if (!state) return;
     for (const c of state.ghostGroup.children) {
       if (c instanceof THREE.Mesh || c instanceof THREE.LineSegments) c.geometry.dispose();
+      // A per-ghost recolour of the hidden dashes (see below) is its own copy.
+      if (c.userData.ownMaterial) ((c as THREE.LineSegments).material as THREE.Material).dispose();
     }
     state.ghostGroup.clear();
+    // The bodies around each ghost, for the hidden dashes' colour.
+    const bodyBoxes = meshes
+      .filter((m) => m.opacity > 0)
+      .map((m) => ({ color: m.color, box: meshBounds(m.mesh) }))
+      .filter((b): b is { color: number; box: NonNullable<ReturnType<typeof meshBounds>> } => !!b.box);
     ghostMeshes.forEach((ghost, i) => {
       const geometry = syncBodyGeometry(`ghost${i}`, ghost.mesh.faces, ghost.mesh.edges);
       // Depth-testless delta ghosts also need an explicit renderOrder — with the
@@ -4041,15 +4036,29 @@ export function Viewport({
       if (faceMat === state.ghostMaterial) {
         // …and the add ghost's hidden edges (ghostHiddenLineMaterial). The
         // line distances live on the shared geometry; only this material reads them.
-        const under = new THREE.LineSegments(geometry.lines, state.ghostHiddenUnderMaterial);
-        under.renderOrder = order;
-        const hidden = new THREE.LineSegments(geometry.lines, state.ghostHiddenLineMaterial);
+        // Behind a body nearly the ghost's own colour, the dashes would vanish:
+        // there (only) they take a colour that stands out against it.
+        const gb = meshBounds(ghost.mesh);
+        const around = gb
+          ? bodyBoxes
+              .filter(({ box }) => [0, 1, 2].every((k) => box.min[k] <= gb.max[k] && box.max[k] >= gb.min[k]))
+              .map((b) => b.color)
+          : [];
+        const dash = hiddenDashColor(GHOST_COLOR, around);
+        let hiddenMat = state.ghostHiddenLineMaterial;
+        if (dash !== GHOST_COLOR) {
+          hiddenMat = state.ghostHiddenLineMaterial.clone();
+          hiddenMat.color.set(dash);
+          hiddenMat.opacity = 0.85;
+        }
+        const hidden = new THREE.LineSegments(geometry.lines, hiddenMat);
+        if (hiddenMat !== state.ghostHiddenLineMaterial) hidden.userData.ownMaterial = true;
         hidden.computeLineDistances();
-        hidden.renderOrder = order + 0.001; // over the dark underlay
-        state.ghostGroup.add(under, hidden);
+        hidden.renderOrder = order;
+        state.ghostGroup.add(hidden);
       }
     });
-  }, [ghostMeshes]);
+  }, [ghostMeshes, meshes]);
 
   // Re-apply highlighting when the external selection (or resolved body set)
   // changes.
