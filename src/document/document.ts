@@ -583,10 +583,18 @@ export function addLoft(
 }
 
 /** A parametric gear on a plane (see document/gear.ts). */
-export function addGear(doc: Document, plane: SketchPlaneRef, settings: GearSettings): { doc: Document; id: string } {
+/** `id`: the dialog's draft id, so the gear Create adds is the very one its
+ *  ghost built — the kernel's cache keys on the feature, id included, so the
+ *  body is already built and meshed when it lands. */
+export function addGear(
+  doc: Document,
+  plane: SketchPlaneRef,
+  settings: GearSettings,
+  id: string = uid(),
+): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "gear").length + 1;
   const feature: GearFeature = {
-    id: uid(),
+    id,
     type: "gear",
     name: `Gear ${ordinal}`,
     suppressed: false,

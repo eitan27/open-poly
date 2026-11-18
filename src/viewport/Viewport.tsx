@@ -179,6 +179,7 @@ interface SceneState {
   /** The add ghost's edges where a body hides them: dashed and faint, drawn
    *  only where they're BEHIND something (see the material's comment). */
   ghostHiddenLineMaterial: THREE.LineDashedMaterial;
+  ghostHiddenUnderMaterial: THREE.LineBasicMaterial;
   /** Dress-up delta ghosts: material the operation adds / carves off. */
   ghostFillMaterial: THREE.MeshStandardMaterial;
   ghostFillLineMaterial: THREE.LineBasicMaterial;
@@ -985,9 +986,20 @@ export function Viewport({
     const ghostHiddenLineMaterial = new THREE.LineDashedMaterial({
       color: GHOST_COLOR,
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.9,
       dashSize: 1.5,
       gapSize: 1.2,
+      depthFunc: THREE.GreaterDepth,
+      depthWrite: false,
+      clippingPlanes: sectionClipPlanes,
+    });
+    // Under those dashes, the same edges solid and near-black: the gaps between
+    // dashes go dark, so the pattern reads on a body of any colour — one the
+    // ghost's own blue would vanish into included — not just on a contrasting one.
+    const ghostHiddenUnderMaterial = new THREE.LineBasicMaterial({
+      color: 0x0b0e13,
+      transparent: true,
+      opacity: 0.7,
       depthFunc: THREE.GreaterDepth,
       depthWrite: false,
       clippingPlanes: sectionClipPlanes,
@@ -1493,6 +1505,7 @@ export function Viewport({
       ghostMaterial,
       ghostLineMaterial,
       ghostHiddenLineMaterial,
+      ghostHiddenUnderMaterial,
       ghostFillMaterial,
       ghostFillLineMaterial,
       ghostCutMaterial,
@@ -3809,6 +3822,7 @@ export function Viewport({
       ghostMaterial.dispose();
       ghostLineMaterial.dispose();
       ghostHiddenLineMaterial.dispose();
+      ghostHiddenUnderMaterial.dispose();
       ghostFillMaterial.dispose();
       ghostFillLineMaterial.dispose();
       ghostCutMaterial.dispose();
@@ -4027,10 +4041,12 @@ export function Viewport({
       if (faceMat === state.ghostMaterial) {
         // …and the add ghost's hidden edges (ghostHiddenLineMaterial). The
         // line distances live on the shared geometry; only this material reads them.
+        const under = new THREE.LineSegments(geometry.lines, state.ghostHiddenUnderMaterial);
+        under.renderOrder = order;
         const hidden = new THREE.LineSegments(geometry.lines, state.ghostHiddenLineMaterial);
         hidden.computeLineDistances();
-        hidden.renderOrder = order;
-        state.ghostGroup.add(hidden);
+        hidden.renderOrder = order + 0.001; // over the dark underlay
+        state.ghostGroup.add(under, hidden);
       }
     });
   }, [ghostMeshes]);

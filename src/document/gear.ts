@@ -83,6 +83,8 @@ function leadsTo(doc: Document, from: GearFeature, target: string): boolean {
 }
 
 const num = (label: string, expr: string, scope: Scope): number => {
+  // A field cleared to type a new value: say so plainly, not as a parse error.
+  if (!expr.trim()) throw new Error(`gear: ${label}: enter a value`);
   let v: number;
   try {
     v = evaluateExpression(expr, scope);

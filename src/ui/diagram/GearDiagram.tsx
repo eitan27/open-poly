@@ -1,5 +1,6 @@
-// The Gear dialog's diagram: the whole gear as built (left) and one tooth
-// zoomed in (right) with its four circles — tip, pitch, base, root — and the
+// The Gear dialog's diagram: the whole gear as built (left), its pitch
+// diameter dimensioned — the number a pair is sized by — and one tooth zoomed
+// in (right) with its four circles — tip, pitch, base, root — and the
 // pressure angle at the pitch point. The ghost shows the gear in place; this
 // shows which number moves which part of the tooth. Same highlight contract
 // as the Hole diagram: the focused field's dimension lights up, and clicking a
@@ -99,15 +100,28 @@ export function GearDiagram({ readout, bore, active, onPick }: Props) {
     const dy = Math.sqrt(Math.max(r * r - dx * dx, 0));
     return center[1] - dy * zs;
   };
-  const circleLabel = (r: number, text: string, below = false) => (
-    <text className="dg-label" x={IX0 + 3} y={labelY(r) + (below ? 9 : -2.5)}>
+  // The circles' labels down the inset's left edge, each just above or below
+  // its circle — then nudged apart, since circles a module apart sit close
+  // enough for their labels to overlap (a ring gear's base and inner).
+  const LABEL_GAP = 10;
+  const labelYs = (() => {
+    const want = [
+      { key: "tip", y: labelY(rt) + (internal ? 9 : -2.5) },
+      { key: "base", y: labelY(rb) + 9 },
+      { key: "root", y: labelY(rr) + (internal ? -2.5 : 9) },
+    ].sort((p, q) => p.y - q.y);
+    for (let i = 1; i < want.length; i++) want[i].y = Math.max(want[i].y, want[i - 1].y + LABEL_GAP);
+    return new Map(want.map((w) => [w.key, w.y]));
+  })();
+  const circleLabel = (key: string, text: string) => (
+    <text className="dg-label" x={IX0 + 3} y={labelYs.get(key)}>
       {text}
     </text>
   );
   // The pressure angle at the pitch point: the line of action, tangent to the
   // base circle, against the pitch circle's tangent.
   const a = (spec.pressureAngle * Math.PI) / 180;
-  const L = 34;
+  const L = 27;
   const lineOfAction: [P, P] = [
     [PX - Math.cos(a) * L, PY - Math.sin(a) * L],
     [PX + Math.cos(a) * L, PY + Math.sin(a) * L],
@@ -127,6 +141,7 @@ export function GearDiagram({ readout, bore, active, onPick }: Props) {
       </DimGroup>
       <DimGroup name="module pitchDiameter teeth" active={active} onPick={onPick}>
         <circle className="dg-pitch" cx={GX} cy={GY} r={rp * s} />
+        <LinearDim a={g(-rp, 0)} b={g(rp, 0)} offset={-(GR + 6)} label={`pitch Ø${fmtDim(rp * 2)}`} />
       </DimGroup>
       <line className="dg-axis" x1={GX - GR - 4} y1={GY} x2={GX + GR + 4} y2={GY} />
       <line className="dg-axis" x1={GX} y1={GY - GR - 4} x2={GX} y2={GY + GR + 4} />
@@ -158,19 +173,18 @@ export function GearDiagram({ readout, bore, active, onPick }: Props) {
         </DimGroup>
         <DimGroup name="profileShift" active={active} onPick={onPick}>
           {circle(rt, "dg-circle")}
-          {circleLabel(rt, `${internal ? "inner" : "tip"} Ø${fmtDim(rt * 2)}`, internal)}
+          {circleLabel("tip", `${internal ? "inner" : "tip"} Ø${fmtDim(rt * 2)}`)}
         </DimGroup>
         <DimGroup name="module pitchDiameter teeth" active={active} onPick={onPick}>
           {circle(rp, "dg-pitch")}
-          {circleLabel(rp, `pitch Ø${fmtDim(rp * 2)}`)}
         </DimGroup>
         <DimGroup name="pressureAngle" active={active} onPick={onPick}>
           {circle(rb, "dg-base")}
-          {circleLabel(rb, `base Ø${fmtDim(rb * 2)}`, true)}
+          {circleLabel("base", `base Ø${fmtDim(rb * 2)}`)}
         </DimGroup>
         <DimGroup name="rootFillet profileShift" active={active} onPick={onPick}>
           {circle(rr, "dg-circle")}
-          {circleLabel(rr, `root Ø${fmtDim(rr * 2)}`, !internal)}
+          {circleLabel("root", `root Ø${fmtDim(rr * 2)}`)}
         </DimGroup>
         <DimGroup name="pressureAngle" active={active} onPick={onPick}>
           <line

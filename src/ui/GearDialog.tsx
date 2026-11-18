@@ -125,7 +125,7 @@ export function GearDialog({
         armed={planeArmed}
         value={defaultPlane ? `${planeLabel} (default)` : planeLabel}
         wide
-        title="The gear is centered on the plane's origin (offset it under Advanced)"
+        title="The gear is centered on the plane's origin; move it afterwards with Transform"
         clearTitle="Pick a different plane or face"
         onArm={onArmPlane}
       />
@@ -271,8 +271,6 @@ export function GearDialog({
           {placed
             ? field("rotation", "Extra rotation°", { title: "Added to the angle that meshes its teeth" })
             : field("rotation", "Rotation°", { title: "Turn the teeth to line up with a partner" })}
-          {!placed && field("centerX", "Center X")}
-          {!placed && field("centerY", "Center Y")}
         </div>
       )}
 

@@ -9,7 +9,7 @@
 // a NEW gear, and a live apply of an EDIT to the real document (so the edited
 // gear itself changes in place, no ghost on top of it).
 import { useEffect, useState } from "react";
-import { addGear, resolveDocument, updateGear } from "../document/document";
+import { addGear, genId, resolveDocument, updateGear } from "../document/document";
 import { DEFAULT_GEAR_SETTINGS, type GearSettings } from "../document/gear";
 import type { SketchPlaneRef } from "../document/planes";
 import type { Document, Feature, GearFeature } from "../document/types";
@@ -26,6 +26,9 @@ export interface GearDialogState {
   settings: GearSettings;
   advanced: boolean;
   editId?: string;
+  /** A new gear's id, fixed for the dialog's life: the ghost and the gear
+   *  Create adds share it, so Create reuses the ghost's build. */
+  draftId: string;
 }
 
 export interface GearDialogDeps {
@@ -96,6 +99,7 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
       defaultPlane: !plane,
       settings: { ...DEFAULT_GEAR_SETTINGS, params: { ...DEFAULT_GEAR_SETTINGS.params } },
       advanced: false,
+      draftId: genId(),
     });
   };
 
@@ -118,6 +122,7 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
       },
       advanced: false,
       editId: feature.id,
+      draftId: feature.id,
     });
   };
 
@@ -136,7 +141,7 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
       close();
       return;
     }
-    const { doc: created } = addGear(doc, dialog.plane, dialog.settings);
+    const { doc: created } = addGear(doc, dialog.plane, dialog.settings, dialog.draftId);
     setDoc(created);
     selectFeature(null);
     close();
@@ -164,6 +169,7 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
   const plane = dialog?.plane;
   const settings = dialog?.settings;
   const creating = !!dialog && !dialog.editId;
+  const draftId = dialog?.draftId;
   useEffect(() => {
     if (!creating || !plane || !settings) {
       setPreview(null);
@@ -174,7 +180,7 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
     if (!ready || !kernel) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      const { doc: previewDoc, id } = addGear(doc, plane, settings);
+      const { doc: previewDoc, id } = addGear(doc, plane, settings, draftId);
       const resolved = resolveDocument(previewDoc);
       const err = resolved.errors[id];
       if (err) {
@@ -182,6 +188,9 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
         setPreviewError(err);
         return;
       }
+      // The settings make a gear again: drop the last one's error now, not
+      // once the kernel is done (which, in a heavy part, is a while).
+      setPreviewError(null);
       kernel
         .regenerate(resolved.features)
         .then(({ results }) => {
@@ -205,7 +214,7 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [creating, plane, settings, doc, ready, kernelRef]);
+  }, [creating, draftId, plane, settings, doc, ready, kernelRef]);
 
   // An EDIT applies live to the real document; the feature's own error (if
   // any) shows in the dialog via the document's resolve, not a ghost.

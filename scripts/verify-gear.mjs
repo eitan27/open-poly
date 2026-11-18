@@ -64,6 +64,24 @@ await fieldSelect("Bore").selectOption("dflat");
 await page.waitForTimeout(1200);
 await shot("2-dflat");
 
+// Clearing a field to retype it says what's missing, not a parse error — and
+// the message goes as soon as the value is back (not when the kernel's done).
+const mod = fieldInput("Module");
+await mod.fill("");
+await page.waitForTimeout(400);
+check("an empty module asks for a value", /module: enter a value/.test(await dialog.textContent()));
+await mod.fill("2");
+await page.waitForTimeout(250);
+check(
+  "retyping it clears the message at once",
+  (await dialog.locator(".ed-warning").count()) === 0,
+  await dialog.textContent(),
+);
+// Its centre isn't a field: it sits on the plane's origin, moved with Transform.
+await dialog.locator(".gear-advanced-toggle").click();
+check("Advanced has no Center X / Y", !/Center X|Center Y/.test(await dialog.textContent()));
+await dialog.locator(".gear-advanced-toggle").click();
+
 // A bad value: error, Create disabled.
 await fieldInput("Bore Ø").fill("50");
 await page.waitForTimeout(500);

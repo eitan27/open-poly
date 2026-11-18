@@ -2696,6 +2696,26 @@ export default function App() {
     return [{ mesh: transformMeshPayload(m.mesh, mapPt, mapVec, true) }];
   }, [mirrorDialog, meshes, resolved.planeFrames]);
 
+  // A gear just created: its ghost stays until the gear itself is drawn, so
+  // Create goes straight from one to the other instead of a blank gap while
+  // the document regenerates. Cleared once a regen has its body (or its
+  // error), or after a few seconds whatever happens.
+  const [gearLanding, setGearLanding] = useState<{ id: string; mesh: ShapeMeshPayload } | null>(null);
+  const confirmGear = () => {
+    const d = gear.dialog;
+    if (d && !d.editId && gear.preview) setGearLanding({ id: d.draftId, mesh: gear.preview });
+    gear.confirm();
+  };
+  useEffect(() => {
+    if (!gearLanding) return;
+    if (rawMeshes.some((m) => m.id === gearLanding.id) || errors[gearLanding.id]) {
+      setGearLanding(null);
+      return;
+    }
+    const t = setTimeout(() => setGearLanding(null), 4000);
+    return () => clearTimeout(t);
+  }, [gearLanding, rawMeshes, errors]);
+
   const ghostMeshes = useMemo<GhostMesh[]>(
     () => [
       // An extrude previews the swept TOOL, and in Remove mode that tool is the
@@ -2710,6 +2730,7 @@ export default function App() {
         : []),
       ...(revolve.preview ? [{ mesh: revolve.preview }] : []),
       ...(gear.preview ? [{ mesh: gear.preview }] : []),
+      ...(gearLanding && !gear.preview ? [{ mesh: gearLanding.mesh }] : []),
       // The drill tools are material about to go, like a Remove extrude's.
       ...(hole.preview ? [{ mesh: hole.preview, variant: "cut" as const }] : []),
       ...(screw.preview ? [{ mesh: screw.preview }] : []),
@@ -2734,6 +2755,7 @@ export default function App() {
       extrudeCutting,
       revolve.preview,
       gear.preview,
+      gearLanding,
       hole.preview,
       screw.preview,
       thread.preview,
@@ -8815,7 +8837,7 @@ export default function App() {
                     onChange={gear.update}
                     onParam={gear.updateParam}
                     onToggleAdvanced={() => gear.setDialog((g) => (g ? { ...g, advanced: !g.advanced } : g))}
-                    onConfirm={gear.confirm}
+                    onConfirm={confirmGear}
                     onCancel={gear.close}
                   />
                 );
