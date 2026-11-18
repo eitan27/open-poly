@@ -718,8 +718,14 @@ export interface GearParams {
 export interface GearFeature extends FeatureBase {
   type: "gear";
   gearType: GearType;
-  /** The plane (or planar face) the gear lies on, centred on its origin. */
+  /** The plane (or planar face) the gear lies on — centred on its origin
+   *  unless `center` says where. With a `center`, this is its plane as picked
+   *  (a sketch point's own sketch plane wins, so the gear follows the sketch). */
   plane: SketchPlaneRef;
+  /** Where its centre is: a sketch point (followed as it moves — the gear lies
+   *  on that sketch's plane) or a fixed spot on a face, both as a Hole target
+   *  is. Absent: the plane's origin, offset by the older `centerX`/`centerY`. */
+  center?: HolePointRef;
   /** Size the teeth by module, or by the pitch diameter (module = PD / teeth). */
   sizeBy: "module" | "pitchDiameter";
   /** Another gear (by feature id) this one meshes with: its module and
@@ -728,7 +734,7 @@ export interface GearFeature extends FeatureBase {
   meshWith?: string;
   /** With `meshWith`: put this gear beside its partner — at the meshing centre
    *  distance, in the direction `params.placeAngle`, its teeth turned into the
-   *  partner's spaces — instead of at `centerX`/`centerY`. Follows the partner
+   *  partner's spaces — instead of at its `center`. Follows the partner
    *  when it moves, turns or changes size. Needs a plane parallel to the
    *  partner's. */
   placeBeside?: boolean;

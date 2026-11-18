@@ -11,10 +11,12 @@ import "./GearDialog.css";
 interface Props {
   editing?: boolean;
   settings: GearSettings;
-  /** The plane slot's label; `defaultPlane` marks it as the untouched default. */
-  planeLabel: string;
-  defaultPlane: boolean;
-  planeArmed: boolean;
+  /** Where it is, as the Location slot names it; `defaultLocation` marks the
+   *  untouched default (the Top plane's origin). */
+  locationLabel: string;
+  defaultLocation: boolean;
+  /** The slot is listening: the next viewport pick places the gear. */
+  locating: boolean;
   advanced: boolean;
   /** Other gears this one can take its module + pressure angle from. */
   meshOptions: Pick<GearFeature, "id" | "name">[];
@@ -23,7 +25,7 @@ interface Props {
   /** Live dimensions (null when the settings don't make a gear) + its error. */
   readout: GearReadout | null;
   error: string | null;
-  onArmPlane: () => void;
+  onArmLocation: () => void;
   onChange: (patch: Partial<GearSettings>) => void;
   onParam: (name: keyof GearParams, value: string) => void;
   onToggleAdvanced: () => void;
@@ -39,15 +41,15 @@ const sizeKey = (s: GearSettings) => (s.meshWith ? `mesh:${s.meshWith}` : s.size
 export function GearDialog({
   editing,
   settings,
-  planeLabel,
-  defaultPlane,
-  planeArmed,
+  locationLabel,
+  defaultLocation,
+  locating,
   advanced,
   meshOptions,
   meshName,
   readout,
   error,
-  onArmPlane,
+  onArmLocation,
   onChange,
   onParam,
   onToggleAdvanced,
@@ -119,16 +121,23 @@ export function GearDialog({
 
       {readout && <GearDiagram readout={readout} bore={settings.bore} active={focused ?? hovered} onPick={pickDim} />}
 
-      <div className="bool-group-label">Plane or face</div>
+      <div className="bool-group-label">Location</div>
       <PickSlot
-        noun="a plane or face"
-        armed={planeArmed}
-        value={defaultPlane ? `${planeLabel} (default)` : planeLabel}
+        noun="a location"
+        armed={locating}
+        value={defaultLocation ? `${locationLabel} (default)` : locationLabel}
         wide
-        title="The gear is centered on the plane's origin; move it afterwards with Transform"
-        clearTitle="Pick a different plane or face"
-        onArm={onArmPlane}
+        title="Where the gear's center goes: a plane's origin, a point, or a spot on a face"
+        clearTitle="Select a different location"
+        onArm={onArmLocation}
       />
+      {locating && (
+        <p className="ed-hint">
+          {placed
+            ? `It goes beside ${meshName ?? "its partner"}; a pick sets only the plane it's on.`
+            : `Click a plane, a face, or a point to center it on. Until then it's on ${locationLabel}.`}
+        </p>
+      )}
 
       {field("teeth", "Teeth", { autoFocus: !editing })}
 

@@ -8,7 +8,8 @@
 // no gear code at all.
 import { evaluateExpression, type Scope } from "./expression";
 import { frameOf, type PlaneFrameData } from "./planes";
-import type { Document, Feature, GearFeature, GearParams, GearType } from "./types";
+import type { Document, Feature, GearFeature, GearParams, GearType, HolePointRef } from "./types";
+import { snapPoint } from "./hole";
 import {
   centerDistance,
   gearOutline,
@@ -47,7 +48,7 @@ export const DEFAULT_GEAR_PARAMS: GearParams = {
 
 export type GearSettings = Pick<
   GearFeature,
-  "gearType" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "extent" | "flip"
+  "gearType" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "extent" | "flip" | "center"
 > & {
   params: GearParams;
 };
@@ -140,7 +141,10 @@ export interface BakedGear {
  *  with a readable message — the same path the dialog's live readout uses. */
 export function bakeGear(
   doc: Document,
-  g: Pick<GearFeature, "id" | "gearType" | "plane" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "params">,
+  g: Pick<
+    GearFeature,
+    "id" | "gearType" | "plane" | "center" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "params"
+  >,
   scope: Scope,
   planeFrames?: Map<string, PlaneFrameData>,
   /** Gears already being baked down a chain of placed partners (a guard). */
@@ -169,7 +173,8 @@ export function bakeGear(
             diameter: num("bore", p.boreDiameter, scope),
             acrossFlat: num("D-flat", p.boreFlat, scope),
           };
-  const frame = frameOf(g.plane, planeFrames);
+  const located = g.center ? gearLocation(doc, g.center, g.plane, planeFrames) : null;
+  const frame = located?.frame ?? frameOf(g.plane, planeFrames);
   let rotation = (num("rotation", p.rotation, scope) * Math.PI) / 180;
   let cx: number;
   let cy: number;
@@ -177,6 +182,8 @@ export function bakeGear(
     const at = placeBesidePartner(doc, g, from, frame, spec, internal, scope, planeFrames, seen);
     [cx, cy] = at.center;
     rotation += at.rotation; // Rotation° is added to the meshing angle
+  } else if (located) {
+    [cx, cy] = located.center;
   } else {
     cx = num("center X", p.centerX, scope);
     cy = num("center Y", p.centerY, scope);
@@ -194,6 +201,24 @@ export function bakeGear(
     outline.holes = outline.holes.map(shift);
   }
   return { outline, spec, frame, thickness, from, center: [cx, cy], rotation };
+}
+
+/** A picked location: the plane it puts the gear on, and its centre there. A
+ *  sketch point is read live, on its sketch's own plane, so the gear follows
+ *  the sketch; a spot on a face is fixed in the plane it was picked from. */
+function gearLocation(
+  doc: Document,
+  ref: HolePointRef,
+  plane: GearFeature["plane"],
+  planeFrames: Map<string, PlaneFrameData> | undefined,
+): { frame: PlaneFrameData; center: [number, number] } {
+  if ("uv" in ref) return { frame: frameOf(ref.plane ?? plane, planeFrames), center: [ref.uv[0], ref.uv[1]] };
+  const sk = doc.features.find((f) => f.id === ref.sketchId && f.type === "sketch");
+  const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === ref.entityId) : undefined;
+  const p = e && snapPoint(e, ref.at);
+  if (sk?.type !== "sketch" || !p)
+    throw new Error("gear: the sketch point it was placed on is gone — select its location again");
+  return { frame: frameOf(sk.plane, planeFrames), center: p };
 }
 
 /** Where a gear placed beside its partner goes on its own plane, and the turn
@@ -220,7 +245,7 @@ function placeBesidePartner(
   );
   if (moved)
     throw new Error(
-      `gear: ${moved.name} moves ${partner.name} after it's made, so it can't be placed beside it — place ${partner.name} with its Center X/Y instead, or untick Place beside`,
+      `gear: ${moved.name} moves ${partner.name} after it's made, so it can't be placed beside it — give ${partner.name} a location in its dialog instead, or untick Place beside`,
     );
   const pb = bakeGear(doc, partner, scope, planeFrames, new Set([...seen, g.id]));
   const pf = pb.frame;
@@ -309,7 +334,7 @@ export interface GearReadout {
 
 export function gearReadout(
   doc: Document,
-  g: Pick<GearFeature, "id" | "gearType" | "plane" | "sizeBy" | "meshWith" | "bore" | "params">,
+  g: Pick<GearFeature, "id" | "gearType" | "plane" | "center" | "sizeBy" | "meshWith" | "bore" | "params">,
   scope: Scope,
   planeFrames?: Map<string, PlaneFrameData>,
 ): GearReadout {

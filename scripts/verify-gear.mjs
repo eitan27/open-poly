@@ -41,7 +41,7 @@ await page.keyboard.press("g");
 await dialog.waitFor({ timeout: 3000 });
 await page.waitForTimeout(1500);
 await shot("1-open");
-check("dialog opens on the default plane", (await dialog.textContent()).includes("(default)"));
+check("dialog opens on the default plane", (await dialog.textContent()).includes("Until then it's on Top plane"));
 check("readout shows the default circles", (await dialog.textContent()).includes("Pitch Ø 40"));
 // The diagram: drawn with its circles, and focusing a field lights the part it
 // moves (Teeth → the outline and the pitch circle).

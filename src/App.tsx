@@ -197,7 +197,7 @@ import { threadDims, type ThreadDims } from "./document/threadFeature";
 import { useScrewDialog } from "./hooks/useScrewDialog";
 import { holeCenters, holeDims, holePointAt, holeTarget, type HoleDims } from "./document/hole";
 import { screwDims, screwSize, type ScrewDims } from "./document/screw";
-import { gearReadout, meshCandidates } from "./document/gear";
+import { gearReadout, gearSizing, meshCandidates } from "./document/gear";
 import { usePersistedDocuments } from "./hooks/usePersistedDocuments";
 import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentContext, AgentMesh, RegenSettle } from "./agent/commands";
@@ -444,6 +444,16 @@ function mirrorPlaneLabel(ref: SketchPlaneRef, doc: Document): string {
   if (ref.kind === "face") return `${doc.features.find((f) => f.id === ref.featureId)?.name ?? "Body"} · face`;
   if (ref.kind === "plane") return doc.features.find((f) => f.id === ref.planeId)?.name ?? "Reference plane";
   return planeRefLabel(ref);
+}
+
+/** Where a gear is, as its Location slot names it: the sketch point it's
+ *  centred on, the face it's on, or the plane (centred on its origin). */
+function gearLocationLabel(plane: SketchPlaneRef, center: HolePointRef | undefined, doc: Document): string {
+  if (center && !("uv" in center)) {
+    const sk = doc.features.find((f) => f.id === center.sketchId);
+    return `${sk?.name ?? "Sketch"} · ${center.at === "point" ? "point" : center.at}`;
+  }
+  return mirrorPlaneLabel(center && "uv" in center && center.plane ? center.plane : plane, doc);
 }
 
 /** A `"datum:<id>"` / `"plane:<featureId>"` dropdown key as a plane reference.
@@ -1285,7 +1295,6 @@ export default function App() {
     | "transformAxis"
     | "mirrorPlane"
     | "sectionPlane"
-    | "gearPlane"
     | "screwPlane"
   >("sketch");
   // The reference-plane dialog. `method` chooses the placement; the relevant
@@ -1601,10 +1610,6 @@ export default function App() {
     setDoc,
     ready,
     kernelRef,
-    picking,
-    pickPurpose,
-    setPicking,
-    setPickPurpose,
     beginEdit,
     commitEdit,
     cancelEdit,
@@ -2557,6 +2562,7 @@ export default function App() {
   // Point tool's snapping) on the hole's plane, or the face under the pointer
   // until the first pick fixes it.
   const holePlacing = hole.dialog?.armed === "points";
+  const gearPlacing = !!gear.dialog?.locating;
   const anyDialogOpen =
     !!planeDialog ||
     !!extrudeDialog ||
@@ -3648,35 +3654,69 @@ export default function App() {
     }
     if (!dims) return null;
     const dia = dims.holeType === "tapped" && dims.threadDiameter ? dims.threadDiameter : dims.diameter;
-    return { radius: dia / 2, flip: d.settings.flip };
+    // The stub runs the way it drills: into the face, or out when flipped.
+    return { radius: dia / 2, stub: Math.max(dia, 3) * (d.settings.flip ? 1 : -1) };
   })();
-  const onHolePlacementPick = (pick: PlacementPick) => {
-    const d = hole.dialog;
-    if (!d) return;
+  // …and a gear's is its pitch circle, the stub its thickness the way it
+  // extrudes (none when symmetric about the face).
+  const gearCursor = (() => {
+    const d = gear.dialog;
+    if (!d?.locating) return null;
+    try {
+      const { module, teeth } = gearSizing(doc, { id: d.editId ?? d.draftId, ...d.settings }, resolved.scope);
+      const t = evaluateExpression(d.settings.params.thickness, resolved.scope);
+      const stub = d.settings.extent === "symmetric" ? 0 : t * (d.settings.flip ? -1 : 1);
+      return { radius: (module * teeth) / 2, stub };
+    } catch {
+      return null;
+    }
+  })();
+  /** What a placement pick points at: the plane it was made on (the face's,
+   *  or the sketch's), and the target there — a snap onto a sketch's point,
+   *  centre, end or midpoint as a live link to that entity (when the sketch
+   *  lies on this face facing the same way), else a fixed spot on the face. */
+  const placementTarget = (
+    pick: PlacementPick,
+  ): { plane: SketchPlaneRef; ref: HolePointRef; frame: PlaneFrameData } | null => {
     let plane: SketchPlaneRef;
     if (pick.source.kind === "face") plane = { kind: "face", featureId: pick.source.featureId, frame: pick.frame };
     else if (pick.source.kind === "sketch") {
       const sid = pick.source.sketchId;
       const sk = doc.features.find((f) => f.id === sid);
-      if (sk?.type !== "sketch") return;
+      if (sk?.type !== "sketch") return null;
       plane = sk.plane;
-    } else return;
+    } else return null;
     const frame = frameOf(plane, resolved.planeFrames);
     const w = pick.world;
     const along = (f: PlaneFrameData, a: number[]) =>
       (w[0] - f.origin[0]) * a[0] + (w[1] - f.origin[1]) * a[1] + (w[2] - f.origin[2]) * a[2];
     const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    let ref: HolePointRef | null = null;
     for (const sk of doc.features) {
       if (sk.type !== "sketch" || !planeResolves(sk.plane, resolved.planeFrames)) continue;
       const f = frameOf(sk.plane, resolved.planeFrames);
       // A sketch on this face, facing the same way (one on a datum under a
       // downward face would drill the other way).
       if (Math.abs(along(f, f.normal)) > 1e-3 || dot(f.normal, frame.normal) < 1 - 1e-6) continue;
-      ref = holePointAt(sk, [along(f, f.uAxis), along(f, f.vAxis)], 1e-3);
-      if (ref) break;
+      const ref = holePointAt(sk, [along(f, f.uAxis), along(f, f.vAxis)], 1e-3);
+      if (ref) return { plane: sk.plane, ref, frame };
     }
-    ref ??= { uv: [along(frame, frame.uAxis), along(frame, frame.vAxis)], plane };
+    return { plane, ref: { uv: [along(frame, frame.uAxis), along(frame, frame.vAxis)], plane }, frame };
+  };
+  /** The gear's Location, picked in the viewport: a point or face spot to
+   *  centre it on (that face's or sketch's plane), or a plane — its origin. */
+  const onGearPlacementPick = (pick: PlacementPick) => {
+    const t = placementTarget(pick);
+    if (t) gear.setLocation(t.plane, t.ref);
+  };
+  const onGearPlanePick = (plane: SketchPlaneRef) => gear.setLocation(plane);
+  const onHolePlacementPick = (pick: PlacementPick) => {
+    const d = hole.dialog;
+    if (!d) return;
+    const t = placementTarget(pick);
+    if (!t) return;
+    const { ref, frame } = t;
+    const w = pick.world;
+    const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     const sketchOf = (id: string) => doc.features.find((f): f is SketchFeature => f.id === id && f.type === "sketch");
     const owner = { plane: d.settings.plane, sketchId: d.sketchId ?? undefined };
     const targetOf = (p: HolePointRef) => {
@@ -4505,17 +4545,6 @@ export default function App() {
       setMirrorDialog((d) => (d ? { ...d, plane: ref } : d));
       setPicking(false);
       setPickPurpose("sketch");
-    } else if (pickPurpose === "gearPlane") {
-      // Same guard as the mirror plane: a curved face only offers the tangent
-      // where the pointer landed, which isn't a plane anyone chose.
-      if (ref.kind === "face" && faceId !== undefined) {
-        const m = meshes.find((x) => x.id === ref.featureId);
-        if (!m || !faceNormal(m.mesh.faces, faceId)) {
-          flashMsg("That face isn't flat — a gear needs a planar face, a datum, or a reference plane.");
-          return;
-        }
-      }
-      gear.pickPlane(ref);
     } else if (pickPurpose === "screwPlane") {
       if (ref.kind === "face" && faceId !== undefined) {
         const m = meshes.find((x) => x.id === ref.featureId);
@@ -7713,9 +7742,10 @@ export default function App() {
                   : null
               }
               sketchTool={sketchTool}
-              placing={holePlacing && !editingSketchId}
-              placementCursor={holeCursor}
-              onPlacementPick={onHolePlacementPick}
+              placing={(holePlacing || gearPlacing) && !editingSketchId}
+              placementCursor={gearPlacing ? gearCursor : holeCursor}
+              onPlacementPick={gearPlacing ? onGearPlacementPick : onHolePlacementPick}
+              onPlacementPlanePick={gearPlacing ? onGearPlanePick : undefined}
               sketches={renderSketchesWithPreview}
               activeSketchId={editingSketchId}
               sketchFullyConstrained={fullyConstrained}
@@ -8825,15 +8855,15 @@ export default function App() {
                   <GearDialog
                     editing={!!d.editId}
                     settings={d.settings}
-                    planeLabel={mirrorPlaneLabel(d.plane, doc)}
-                    defaultPlane={d.defaultPlane}
-                    planeArmed={picking && pickPurpose === "gearPlane"}
+                    locationLabel={gearLocationLabel(d.plane, d.settings.center, doc)}
+                    defaultLocation={d.defaultPlane}
+                    locating={d.locating}
                     advanced={d.advanced}
                     meshOptions={meshCandidates(doc, d.editId)}
                     meshName={doc.features.find((f) => f.id === d.settings.meshWith)?.name}
                     readout={readout}
                     error={error?.replace(/^gear: /, "") ?? null}
-                    onArmPlane={gear.armPlane}
+                    onArmLocation={gear.armLocation}
                     onChange={gear.update}
                     onParam={gear.updateParam}
                     onToggleAdvanced={() => gear.setDialog((g) => (g ? { ...g, advanced: !g.advanced } : g))}

@@ -1842,7 +1842,7 @@ export function resolveDocument(doc: Document): ResolveResult {
       } else if (f.type === "import") {
         features.push({ id: f.id, type: "import", source: f.source });
       } else if (f.type === "gear") {
-        features.push(resolveGear(doc, f, scope, planeFrames));
+        features.push(resolveGear(dDoc, f, scope, planeFrames));
       } else if (f.type === "screw") {
         features.push(resolveScrew(dDoc, f, scope, planeFrames));
       } else if (f.type === "hole") {

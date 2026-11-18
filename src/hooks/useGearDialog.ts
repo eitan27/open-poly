@@ -3,7 +3,9 @@
 // A gear needs only a plane, and the dialog opens WITH one — the pre-selected
 // plane/face if there is one, else the Top datum — so the ghost is on screen
 // the moment the tool is clicked and every field edit after that is visible.
-// The plane slot can be re-armed to move it.
+// Its Location slot opens listening, though: the first click in the viewport
+// — a plane (centred on its origin), a face, or a point to centre on, picked
+// as a Hole's targets are (see App's onGearPlacementPick) — moves it there.
 //
 // Two effects, as in Revolve: a debounced throwaway regenerate for the ghost of
 // a NEW gear, and a live apply of an EDIT to the real document (so the edited
@@ -12,7 +14,7 @@ import { useEffect, useState } from "react";
 import { addGear, genId, resolveDocument, updateGear } from "../document/document";
 import { DEFAULT_GEAR_SETTINGS, type GearSettings } from "../document/gear";
 import type { SketchPlaneRef } from "../document/planes";
-import type { Document, Feature, GearFeature } from "../document/types";
+import type { Document, Feature, GearFeature, HolePointRef } from "../document/types";
 import type { KernelClient } from "../kernel/KernelClient";
 import type { ShapeMeshPayload } from "../kernel/types";
 
@@ -25,6 +27,8 @@ export interface GearDialogState {
   defaultPlane: boolean;
   settings: GearSettings;
   advanced: boolean;
+  /** The Location slot is listening: the next viewport pick places the gear. */
+  locating: boolean;
   editId?: string;
   /** A new gear's id, fixed for the dialog's life: the ghost and the gear
    *  Create adds share it, so Create reuses the ghost's build. */
@@ -36,10 +40,6 @@ export interface GearDialogDeps {
   setDoc: (next: Document | ((prev: Document) => Document), coalesceKey?: string) => void;
   ready: boolean;
   kernelRef: React.RefObject<KernelClient | null>;
-  picking: boolean;
-  pickPurpose: string;
-  setPicking: (on: boolean) => void;
-  setPickPurpose: (purpose: "sketch" | "gearPlane") => void;
   beginEdit: (feature: Feature) => void;
   commitEdit: () => void;
   cancelEdit: () => void;
@@ -56,9 +56,11 @@ export interface GearDialogApi {
   edit: (feature: GearFeature) => void;
   close: () => void;
   confirm: () => void;
-  armPlane: () => void;
-  /** A plane/face pick landed while the plane slot was armed. */
-  pickPlane: (ref: SketchPlaneRef) => void;
+  /** Listen for a location (the slot's button, or its ✕). */
+  armLocation: () => void;
+  /** A location picked in the viewport: the plane the gear goes on, and the
+   *  point to centre it on there (none: the plane's origin). */
+  setLocation: (plane: SketchPlaneRef, center?: HolePointRef) => void;
   update: (patch: Partial<GearSettings>) => void;
   updateParam: (name: keyof GearSettings["params"], value: string) => void;
 }
@@ -66,32 +68,11 @@ export interface GearDialogApi {
 const TOP: SketchPlaneRef = { kind: "datum", id: "plane-top" };
 
 export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
-  const {
-    doc,
-    setDoc,
-    ready,
-    kernelRef,
-    picking,
-    pickPurpose,
-    setPicking,
-    setPickPurpose,
-    beginEdit,
-    commitEdit,
-    cancelEdit,
-    shouldLiveApply,
-    selectFeature,
-  } = deps;
+  const { doc, setDoc, ready, kernelRef, beginEdit, commitEdit, cancelEdit, shouldLiveApply, selectFeature } = deps;
 
   const [dialog, setDialog] = useState<GearDialogState | null>(null);
   const [preview, setPreview] = useState<ShapeMeshPayload | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
-
-  const cancelPlanePick = () => {
-    if (picking && pickPurpose === "gearPlane") {
-      setPicking(false);
-      setPickPurpose("sketch");
-    }
-  };
 
   const open = (plane: SketchPlaneRef | null) => {
     setDialog({
@@ -99,6 +80,7 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
       defaultPlane: !plane,
       settings: { ...DEFAULT_GEAR_SETTINGS, params: { ...DEFAULT_GEAR_SETTINGS.params } },
       advanced: false,
+      locating: true,
       draftId: genId(),
     });
   };
@@ -114,6 +96,7 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
         sizeBy: feature.sizeBy,
         meshWith: feature.meshWith,
         placeBeside: feature.placeBeside,
+        center: feature.center,
         bore: feature.bore,
         extent: feature.extent,
         flip: feature.flip,
@@ -121,6 +104,7 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
         params: { ...DEFAULT_GEAR_SETTINGS.params, ...feature.params },
       },
       advanced: false,
+      locating: false,
       editId: feature.id,
       draftId: feature.id,
     });
@@ -128,7 +112,6 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
 
   const close = () => {
     setDialog(null);
-    cancelPlanePick();
     cancelEdit();
   };
 
@@ -147,16 +130,22 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
     close();
   };
 
-  const armPlane = () => {
-    setPickPurpose("gearPlane");
-    setPicking(true);
-  };
+  const armLocation = () => setDialog((d) => (d ? { ...d, locating: true } : d));
 
-  const pickPlane = (ref: SketchPlaneRef) => {
-    setDialog((d) => (d ? { ...d, plane: ref, defaultPlane: false } : d));
-    setPicking(false);
-    setPickPurpose("sketch");
-  };
+  // A picked location replaces any older Center X / Y offset (no longer in
+  // the dialog), so the gear lands where it was put.
+  const setLocation = (plane: SketchPlaneRef, center?: HolePointRef) =>
+    setDialog((d) =>
+      d
+        ? {
+            ...d,
+            plane,
+            defaultPlane: false,
+            locating: false,
+            settings: { ...d.settings, center, params: { ...d.settings.params, centerX: "0", centerY: "0" } },
+          }
+        : d,
+    );
 
   const update = (patch: Partial<GearSettings>) =>
     setDialog((d) => (d ? { ...d, settings: { ...d.settings, ...patch } } : d));
@@ -234,8 +223,8 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
     edit,
     close,
     confirm,
-    armPlane,
-    pickPlane,
+    armLocation,
+    setLocation,
     update,
     updateParam,
   };

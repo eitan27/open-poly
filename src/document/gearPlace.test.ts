@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import polygonClipping from "polygon-clipping";
-import { addGear, addTransform, createDocument, evaluateVariables, updateParam, resolveDocument } from "./document";
+import {
+  addGear,
+  addSketch,
+  addSketchEntity,
+  addTransform,
+  createDocument,
+  evaluateVariables,
+  updateParam,
+  resolveDocument,
+} from "./document";
 import { bakeGear, DEFAULT_GEAR_SETTINGS, type GearSettings } from "./gear";
 import type { SketchPlaneRef } from "./planes";
 import type { Document, GearFeature } from "./types";
@@ -116,7 +125,7 @@ describe("placing a gear beside its partner", () => {
     const one = addGear(createDocument(), TOP, settings({}, { teeth: "12" }));
     const moved = addTransform(one.doc, one.id, [0, 0, 0], { tx: "10" });
     const two = addGear(moved.doc, TOP, settings({ meshWith: one.id, placeBeside: true }, { teeth: "24" }));
-    expect(resolveDocument(two.doc).errors[two.id]).toMatch(/Transform 1 moves Gear 1 .* Center X\/Y/);
+    expect(resolveDocument(two.doc).errors[two.id]).toMatch(/Transform 1 moves Gear 1 .* give Gear 1 a location/);
   });
 
   it("leaves a gear made before Place beside where its Center X/Y put it", () => {
@@ -130,3 +139,64 @@ describe("placing a gear beside its partner", () => {
     expect(baked(old, two.id).center).toEqual([50, 0]);
   });
 });
+
+describe("a gear's picked location", () => {
+  const withPoint = (plane: SketchPlaneRef, p: [number, number]) => {
+    const s = addSketch(createDocument(), plane);
+    return { doc: addSketchEntity(s.doc, s.id, { type: "point", id: "pt", p }), sketchId: s.id };
+  };
+  const movePoint = (doc: Document, sketchId: string, p: [number, number]) => mapSketchPoint(doc, sketchId, p);
+
+  it("centres on a sketch point, on that sketch's plane, and follows the point", () => {
+    const { doc, sketchId } = withPoint(FRONT, [12, -4]);
+    // Its own plane says Top; the sketch's (Front) wins, so it follows the sketch.
+    const g = addGear(doc, TOP, settings({ center: { sketchId, entityId: "pt", at: "point" } }));
+    let b = baked(g.doc, g.id);
+    expect(b.center).toEqual([12, -4]);
+    expect(b.frame.normal.map((x) => Math.round(Math.abs(x)))).toEqual([0, 1, 0]);
+    b = baked(movePoint(g.doc, sketchId, [30, 2]), g.id);
+    expect(b.center).toEqual([30, 2]);
+  });
+
+  it("centres on a fixed spot of the plane it was picked from", () => {
+    const g = addGear(createDocument(), TOP, settings({ center: { uv: [7, 9], plane: FRONT } }));
+    const b = baked(g.doc, g.id);
+    expect(b.center).toEqual([7, 9]);
+    expect(b.frame.normal.map((x) => Math.round(Math.abs(x)))).toEqual([0, 1, 0]);
+  });
+
+  it("a location wins over an older gear's Center X / Y", () => {
+    const g = addGear(createDocument(), TOP, settings({ center: { uv: [1, 2], plane: TOP } }, { centerX: "50" }));
+    expect(baked(g.doc, g.id).center).toEqual([1, 2]);
+    const old = addGear(createDocument(), TOP, settings({}, { centerX: "50", centerY: "5" }));
+    expect(baked(old.doc, old.id).center).toEqual([50, 5]);
+  });
+
+  it("a gear placed beside one with a location meshes around where it is", () => {
+    const one = addGear(createDocument(), TOP, settings({ center: { uv: [10, 20], plane: TOP } }, { teeth: "12" }));
+    const two = addGear(
+      one.doc,
+      TOP,
+      settings({ meshWith: one.id, placeBeside: true }, { teeth: "24", placeAngle: "0" }),
+    );
+    expect(baked(two.doc, two.id).center[0]).toBeCloseTo(10 + 36);
+    expect(baked(two.doc, two.id).center[1]).toBeCloseTo(20);
+  });
+
+  it("a sketch point that's gone is a readable error", () => {
+    const { doc, sketchId } = withPoint(TOP, [0, 0]);
+    const g = addGear(doc, TOP, settings({ center: { sketchId, entityId: "nope", at: "point" } }));
+    expect(() => baked(g.doc, g.id)).toThrow(/sketch point it was placed on is gone/);
+  });
+});
+
+function mapSketchPoint(doc: Document, sketchId: string, p: [number, number]): Document {
+  return {
+    ...doc,
+    features: doc.features.map((f) =>
+      f.id === sketchId && f.type === "sketch"
+        ? { ...f, entities: f.entities.map((e) => (e.id === "pt" && e.type === "point" ? { ...e, p } : e)) }
+        : f,
+    ),
+  };
+}

@@ -28,6 +28,7 @@ import type { SketchEntity, Vec2 } from "../document/types";
 import { buildGuides, snapToGuides, type Guide } from "../sketch/inference";
 import {
   deriveFaceFrame,
+  frameOf,
   uvToWorld,
   type PlaneFrameData,
   type SketchPlaneId,
@@ -449,6 +450,7 @@ export function Viewport({
   placementFrame = null,
   placementCursor = null,
   onPlacementPick,
+  onPlacementPlanePick,
   activeSketchId,
   sketchFullyConstrained,
   draft,
@@ -555,12 +557,17 @@ export function Viewport({
    *  lands on the centre of the face under it. */
   placing?: boolean;
   placementFrame?: PlaneFrameData | null;
-  /** While placing: the cursor is the hole itself instead of a dot — a ring
-   *  of this radius lying on the face under the pointer, with a stub along
-   *  the way it drills (−normal, or +normal when flipped), so it's plain
-   *  which face of an edge it will go into. */
-  placementCursor?: { radius: number; flip: boolean } | null;
+  /** While placing: the cursor is the thing being placed instead of a dot — a
+   *  ring of this radius (a hole's rim, a gear's pitch circle) lying on the
+   *  face under the pointer, with a stub `stub` long along the face's normal
+   *  (negative: into it; 0: none) the way it drills or extrudes, so it's plain
+   *  which face of an edge it will go on. */
+  placementCursor?: { radius: number; stub: number } | null;
   onPlacementPick?: (pick: PlacementPick) => void;
+  /** While placing: a click on a datum or reference plane where nothing on a
+   *  face snaps (a gear centres on the plane's origin). Unset: planes aren't
+   *  placement targets. */
+  onPlacementPlanePick?: (plane: SketchPlaneRef) => void;
   activeSketchId: string | null;
   sketchFullyConstrained: boolean;
   draft: Vec2[];
@@ -711,6 +718,8 @@ export function Viewport({
   placementFrameRef.current = placementFrame;
   const placementCursorRef = useRef(placementCursor);
   placementCursorRef.current = placementCursor;
+  const onPlacementPlanePickRef = useRef(onPlacementPlanePick);
+  onPlacementPlanePickRef.current = onPlacementPlanePick;
   const onPlacementPickRef = useRef(onPlacementPick);
   onPlacementPickRef.current = onPlacementPick;
   /** While placing with no fixed plane: the face or sketch plane last under
@@ -2504,6 +2513,21 @@ export function Viewport({
       const faceId = hit.faceIndex != null ? getFaceId(hit.faceIndex, mesh.geometry) : undefined;
       return { kind: "face" as const, mesh, point: hit.point.clone(), normal, featureId, faceId };
     };
+    /** While placing, for a dialog that takes planes (see onPlacementPlanePick):
+     *  the datum or reference plane under the pointer, with its frame. */
+    const placementPlaneAt = (clientX: number, clientY: number) => {
+      if (!onPlacementPlanePickRef.current) return null;
+      const p = pick(clientX, clientY);
+      if (p?.kind === "datum" && p.id !== "origin") {
+        const ref: SketchPlaneRef = { kind: "datum", id: p.id };
+        return { ref, frame: frameOf(ref) };
+      }
+      if (p?.kind === "userplane") {
+        const up = userPlanesRef.current.find((u) => u.id === p.planeId);
+        if (up) return { ref: { kind: "plane", planeId: p.planeId } as SketchPlaneRef, frame: up.frame };
+      }
+      return null;
+    };
     // The flat body face under the pointer: its feature, face id and mesh.
     const flatFaceAt = (clientX: number, clientY: number) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -2843,6 +2867,54 @@ export function Viewport({
       return null;
     };
 
+    /** The placement cursor (see `placementCursor`): its ring centred at `c` on
+     *  `frame`, and its stub along the normal. */
+    const showPlaceRing = (frame: PlaneFrameData, c: Vec2, color: number) => {
+      const cursor = placementCursorRef.current;
+      if (!cursor) {
+        state.placeRing.visible = false;
+        return;
+      }
+      const o = uvToWorld(frame, c[0], c[1]);
+      const r = cursor.radius;
+      const pos: number[] = [];
+      const N = 48;
+      const at = (a: number) => uvToWorld(frame, c[0] + r * Math.cos(a), c[1] + r * Math.sin(a));
+      for (let i = 0; i < N; i++) pos.push(...at((2 * Math.PI * i) / N), ...at((2 * Math.PI * (i + 1)) / N));
+      const n = frame.normal;
+      const len = cursor.stub;
+      if (len) pos.push(...o, o[0] + n[0] * len, o[1] + n[1] * len, o[2] + n[2] * len);
+      const g = new LineSegmentsGeometry();
+      g.setPositions(pos);
+      state.placeRing.geometry.dispose();
+      state.placeRing.geometry = g;
+      (state.placeRing.material as LineMaterial).color.set(color);
+      state.placeRing.visible = true;
+    };
+    /** Light up a placement plane (a datum or reference plane), or none. */
+    const setPlacementPlaneHover = (ref: SketchPlaneRef | null) => {
+      const datum = ref?.kind === "datum" ? (ref.id as DatumId) : null;
+      const user = ref?.kind === "plane" ? ref.planeId : null;
+      if (hoverPlaneRef.current !== datum) {
+        hoverPlaneRef.current = datum;
+        applyDatumAppearance(state, datum);
+      }
+      if (hoverUserPlaneRef.current !== user) {
+        hoverUserPlaneRef.current = user;
+        applyHighlights();
+      }
+      renderer.domElement.style.cursor = ref ? "pointer" : "";
+    };
+    /** While placing, the plane under the pointer lit, with the ring at its
+     *  origin — where a click there puts the thing being placed. */
+    const hoverPlacementPlane = (clientX: number, clientY: number) => {
+      const hit = placementPlaneAt(clientX, clientY);
+      setPlacementPlaneHover(hit?.ref ?? null);
+      if (hit) {
+        showPlaceRing(hit.frame, [0, 0], 0xffe14a);
+        state.snapMarker.visible = false;
+      }
+    };
     const clearHover = () => {
       if (hoverBodyRef.current) {
         hoverBodyRef.current.mesh.material = hoverBodyRef.current.prev;
@@ -3030,6 +3102,12 @@ export function Viewport({
       const placingNow = placingRef.current && !activeSketchIdRef.current;
       if (placingNow) adoptPlaneAt(e.clientX, e.clientY);
       const frame = activeFrameRef.current;
+      if (placingNow && !frame) {
+        // No face picked up yet: only a plane can be the target.
+        state.placeRing.visible = false;
+        hoverPlacementPlane(e.clientX, e.clientY);
+        return;
+      }
       if (frame && (placingNow || !isPickTool(sketchToolRef.current))) {
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) {
@@ -3040,6 +3118,7 @@ export function Viewport({
           state.guideOverlay.visible = false;
           state.anchorOverlay.visible = false;
           state.guideBadge.style.display = "none";
+          if (placingNow) hoverPlacementPlane(e.clientX, e.clientY);
           return;
         }
         const { uv, kind, seg, on, guideLines, meanings, construction, circle } = snap(raw, e.clientX, e.clientY);
@@ -3052,26 +3131,13 @@ export function Viewport({
         }
         const cursor = placingNow ? placementCursorRef.current : null;
         if ((kind === "point" || kind === "edge" || kind === "guide") && cursor) {
-          // The hole itself: where a click puts it (a rim snap goes to the
-          // centre, as the click does), flat on this face, drilling inward.
-          const c = circle ? circle.c : uv;
-          const o = uvToWorld(frame, c[0], c[1]);
-          const r = cursor.radius;
-          const pos: number[] = [];
-          const N = 48;
-          const at = (a: number) => uvToWorld(frame, c[0] + r * Math.cos(a), c[1] + r * Math.sin(a));
-          for (let i = 0; i < N; i++) pos.push(...at((2 * Math.PI * i) / N), ...at((2 * Math.PI * (i + 1)) / N));
-          const n = frame.normal;
-          const len = Math.max(2 * r, 3) * (cursor.flip ? 1 : -1);
-          pos.push(...o, o[0] + n[0] * len, o[1] + n[1] * len, o[2] + n[2] * len);
-          const g = new LineSegmentsGeometry();
-          g.setPositions(pos);
-          state.placeRing.geometry.dispose();
-          state.placeRing.geometry = g;
-          (state.placeRing.material as LineMaterial).color.set(
+          // The thing itself: where a click puts it (a rim snap goes to the
+          // centre, as the click does), flat on this face.
+          showPlaceRing(
+            frame,
+            circle ? circle.c : uv,
             kind === "edge" ? 0x36d6c3 : kind === "guide" ? GUIDE_COLOR : 0xffe14a,
           );
-          state.placeRing.visible = true;
           state.snapMarker.visible = false;
         } else if (kind === "point" || kind === "edge" || kind === "guide") {
           const w = uvToWorld(frame, uv[0], uv[1]);
@@ -3084,6 +3150,12 @@ export function Viewport({
         } else {
           state.snapMarker.visible = false;
           state.placeRing.visible = false;
+        }
+        // Nothing on a face to snap to: a plane under the pointer, if this
+        // dialog takes planes, lights up — with the ring at its origin.
+        if (placingNow) {
+          if (kind === "free") hoverPlacementPlane(e.clientX, e.clientY);
+          else setPlacementPlaneHover(null);
         }
         // Light up the whole edge when snapping to one — dashed if it's a
         // construction line, so the highlight matches the line's own style. A
@@ -3356,9 +3428,16 @@ export function Viewport({
       if (placingRef.current && !activeSketchIdRef.current) {
         const pf = activeFrameRef.current;
         const raw = pf && planeHitUv(e.clientX, e.clientY);
-        if (!pf || !raw) return;
-        const sn = snap(raw, e.clientX, e.clientY);
-        if (sn.kind === "free") return;
+        const sn = pf && raw ? snap(raw, e.clientX, e.clientY) : null;
+        // Nothing to snap to on a face: a plane, for a dialog that takes them.
+        if (!pf || !sn || sn.kind === "free") {
+          const plane = placementPlaneAt(e.clientX, e.clientY);
+          if (plane) {
+            setPlacementPlaneHover(null);
+            onPlacementPlanePickRef.current?.(plane.ref);
+          }
+          return;
+        }
         // On a circle or arc's rim: a hole goes at its centre, not on the rim.
         if (sn.circle) sn.uv = sn.circle.c;
         const source: PlacementSource = placementFrameRef.current
