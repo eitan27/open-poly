@@ -1,5 +1,5 @@
-// The Gear dialog's Location slot, end to end: it opens listening, with the
-// ghost already on the Top plane's origin; hovering a face shows the gear's
+// The Gear dialog's Location slot, end to end: it opens on the Top plane's
+// origin, said as the default, and its ✕ starts listening; hovering a face shows the gear's
 // pitch circle where a click would centre it; a click on a face, a sketch
 // point or a datum plane moves it there; the gear Create builds is centred
 // where it was put, and one on a sketch point follows that point.
@@ -38,6 +38,11 @@ const openGear = async () => {
   await dialog.waitFor({ timeout: 5000 });
   await page.waitForTimeout(1200);
 };
+/** The slot's ✕: listen for a location. */
+const relocate = async () => {
+  await dialog.locator(".bool-operand-x").first().click();
+  await page.waitForTimeout(200);
+};
 const create = async () => {
   await dialog.locator(".ed-primary").click();
   await op.settle();
@@ -53,11 +58,14 @@ const lastGear = async () => {
 };
 const near = (a, b, tol = 0.6) => Math.abs(a - b) < tol;
 
-// 1. Opens listening, ghost on the default.
+// 1. Opens on the default, saying so; its ✕ starts listening.
 await openGear();
-check("the Location slot opens listening", (await slot.getAttribute("class"))?.includes("active"));
-check("…and says what to click, and where it is until then", /Until then it's on Top/.test(await slotText()));
+check("the Location slot opens on Top, as the default", /Top plane \(default\)/.test(await slotText()));
+check("…not listening", !(await slot.getAttribute("class"))?.includes("active"));
 await shot("1-open");
+await relocate();
+check("its ✕ starts listening", (await slot.getAttribute("class"))?.includes("active"));
+check("…and says what to click, and where it is until then", /Until then it stays on Top/.test(await slotText()));
 
 // 2. The plate's top: the pitch circle shows on it; a click centres the gear there.
 await hover([4, 3, 15]);
@@ -74,6 +82,7 @@ check("…centred on the face", near(g.c[0], 0) && near(g.c[1], 0), JSON.stringi
 
 // 3. A sketch point: centred on it, and it follows the point.
 await openGear();
+await relocate();
 await hover([45, 0, 0]);
 await shot("4-hover-point");
 await op.clickWorld([45, 0, 0]);
@@ -88,6 +97,7 @@ check("…and follows it when the point moves", near(g.c[0], 60) && near(g.c[1],
 
 // 4. A datum plane where nothing on a face snaps: centred on its origin.
 await openGear();
+await relocate();
 await hover([-12, 0, 34]);
 await shot("5-hover-plane");
 await op.clickWorld([-12, 0, 34]);

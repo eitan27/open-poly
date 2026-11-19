@@ -3,9 +3,10 @@
 // A gear needs only a plane, and the dialog opens WITH one — the pre-selected
 // plane/face if there is one, else the Top datum — so the ghost is on screen
 // the moment the tool is clicked and every field edit after that is visible.
-// Its Location slot opens listening, though: the first click in the viewport
-// — a plane (centred on its origin), a face, or a point to centre on, picked
-// as a Hole's targets are (see App's onGearPlacementPick) — moves it there.
+// The Location slot shows that default as a choice; its ✕ starts listening,
+// and the next click in the viewport — a plane (centred on its origin), a
+// face, or a point to centre on, picked as a Hole's targets are (see App's
+// onGearPlacementPick) — moves it there.
 //
 // Two effects, as in Revolve: a debounced throwaway regenerate for the ghost of
 // a NEW gear, and a live apply of an EDIT to the real document (so the edited
@@ -80,7 +81,7 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
       defaultPlane: !plane,
       settings: { ...DEFAULT_GEAR_SETTINGS, params: { ...DEFAULT_GEAR_SETTINGS.params } },
       advanced: false,
-      locating: true,
+      locating: false,
       draftId: genId(),
     });
   };

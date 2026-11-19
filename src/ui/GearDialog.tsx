@@ -135,7 +135,7 @@ export function GearDialog({
         <p className="ed-hint">
           {placed
             ? `It goes beside ${meshName ?? "its partner"}; a pick sets only the plane it's on.`
-            : `Click a plane, a face, or a point to center it on. Until then it's on ${locationLabel}.`}
+            : `Click a plane, a face, or a point to center it on. Until then it stays on ${locationLabel}.`}
         </p>
       )}
 
