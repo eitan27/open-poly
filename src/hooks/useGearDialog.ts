@@ -11,13 +11,14 @@
 // Two effects, as in Revolve: a debounced throwaway regenerate for the ghost of
 // a NEW gear, and a live apply of an EDIT to the real document (so the edited
 // gear itself changes in place, no ghost on top of it).
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { addGear, genId, resolveDocument, updateGear } from "../document/document";
 import { DEFAULT_GEAR_SETTINGS, type GearSettings } from "../document/gear";
 import type { SketchPlaneRef } from "../document/planes";
 import type { Document, Feature, GearFeature, HolePointRef } from "../document/types";
 import type { KernelClient } from "../kernel/KernelClient";
 import type { ShapeMeshPayload } from "../kernel/types";
+import { ghostPlacement, moveGhostMesh, type GhostPlacement } from "./ghostMove";
 
 const PREVIEW_DEBOUNCE_MS = 120;
 
@@ -160,46 +161,67 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
   const settings = dialog?.settings;
   const creating = !!dialog && !dialog.editId;
   const draftId = dialog?.draftId;
+  // The last ghost the kernel built, and where: a new location with the same
+  // gear moves it there at once (see ghostMove) rather than waiting on a
+  // rebuild that, gear-sized, takes a few hundred ms.
+  const builtRef = useRef<{ at: GhostPlacement; mesh: ShapeMeshPayload } | null>(null);
+  const lastShapeRef = useRef<string | null>(null);
   useEffect(() => {
     if (!creating || !plane || !settings) {
       setPreview(null);
       setPreviewError(null);
+      builtRef.current = null;
+      lastShapeRef.current = null;
       return;
     }
     const kernel = kernelRef.current;
     if (!ready || !kernel) return;
+    // Only the location changed (a pick): no typing to wait out, so no debounce.
+    const { center: _c, ...shape } = settings;
+    const shapeKey = JSON.stringify(shape);
+    const moved = lastShapeRef.current === shapeKey;
+    lastShapeRef.current = shapeKey;
     let cancelled = false;
-    const timer = setTimeout(() => {
-      const { doc: previewDoc, id } = addGear(doc, plane, settings, draftId);
-      const resolved = resolveDocument(previewDoc);
-      const err = resolved.errors[id];
-      if (err) {
-        setPreview(null);
-        setPreviewError(err);
-        return;
-      }
-      // The settings make a gear again: drop the last one's error now, not
-      // once the kernel is done (which, in a heavy part, is a while).
-      setPreviewError(null);
-      kernel
-        .regenerate(resolved.features)
-        .then(({ results }) => {
-          if (cancelled) return;
-          const hit = results.find((r) => r.id === id);
-          if (hit?.ok) {
-            setPreview(hit.mesh);
-            setPreviewError(null);
-          } else {
-            setPreview(null);
-            setPreviewError(hit && !hit.ok ? hit.error : "Preview failed.");
-          }
-        })
-        .catch((e) => {
-          if (cancelled) return;
+    const timer = setTimeout(
+      () => {
+        const { doc: previewDoc, id } = addGear(doc, plane, settings, draftId);
+        const resolved = resolveDocument(previewDoc);
+        const err = resolved.errors[id];
+        if (err) {
           setPreview(null);
-          setPreviewError(String(e?.message ?? e));
-        });
-    }, PREVIEW_DEBOUNCE_MS);
+          setPreviewError(err);
+          return;
+        }
+        // The settings make a gear again: drop the last one's error now, not
+        // once the kernel is done (which, in a heavy part, is a while).
+        setPreviewError(null);
+        const at = ghostPlacement(resolved.features.find((f) => f.id === id));
+        const built = builtRef.current;
+        if (at && built && built.at.sig === at.sig) setPreview(moveGhostMesh(built.mesh, built.at, at));
+        // The kernel still builds the gear where it now is: its mesh replaces
+        // the moved one, and Create reuses the build (same draftId).
+        kernel
+          .regenerate(resolved.features)
+          .then(({ results }) => {
+            if (cancelled) return;
+            const hit = results.find((r) => r.id === id);
+            if (hit?.ok) {
+              builtRef.current = at ? { at, mesh: hit.mesh } : null;
+              setPreview(hit.mesh);
+              setPreviewError(null);
+            } else {
+              setPreview(null);
+              setPreviewError(hit && !hit.ok ? hit.error : "Preview failed.");
+            }
+          })
+          .catch((e) => {
+            if (cancelled) return;
+            setPreview(null);
+            setPreviewError(String(e?.message ?? e));
+          });
+      },
+      moved ? 0 : PREVIEW_DEBOUNCE_MS,
+    );
     return () => {
       cancelled = true;
       clearTimeout(timer);
