@@ -5,8 +5,9 @@ import { ghostPlacement, moveGhostMesh } from "./ghostMove";
 type V3 = [number, number, number];
 const TOP: ResolvedFrame = { origin: [0, 0, 0], uAxis: [1, 0, 0], vAxis: [0, 1, 0], normal: [0, 0, 1] };
 // A face on the Front side of a part, offset in space.
-const FRONT: ResolvedFrame = { origin: [5, -15, 7], uAxis: [1, 0, 0], vAxis: [0, 0, 1], normal: [0, -1, 0] };
-const MIRRORED: ResolvedFrame = { origin: [0, 0, 0], uAxis: [0, 1, 0], vAxis: [1, 0, 0], normal: [0, 0, 1] };
+const FACE: ResolvedFrame = { origin: [5, -15, 7], uAxis: [1, 0, 0], vAxis: [0, 0, 1], normal: [0, -1, 0] };
+// The Front datum: u × v = −normal, a mirrored frame.
+const FRONT: ResolvedFrame = { origin: [0, 0, 0], uAxis: [1, 0, 0], vAxis: [0, 0, 1], normal: [0, 1, 0] };
 
 const shape: [number, number][] = [
   [0, 0],
@@ -45,20 +46,33 @@ const close = (a: ArrayLike<number>, b: ArrayLike<number>) => {
 describe("moving a gear's ghost to a new location", () => {
   it("lands where the kernel would have built it", () => {
     const from = ghostPlacement(gear(TOP, [0, 0]))!;
-    const to = ghostPlacement(gear(FRONT, [12, -3]))!;
+    const to = ghostPlacement(gear(FACE, [12, -3]))!;
     expect(from.sig).toBe(to.sig);
     const moved = moveGhostMesh(meshAt(TOP, [0, 0]), from, to);
-    const want = meshAt(FRONT, [12, -3]);
+    const want = meshAt(FACE, [12, -3]);
     close(moved.faces.vertices, want.faces.vertices);
     close(moved.faces.normals!, want.faces.normals!);
     close(moved.edges.lines, want.edges.lines);
     expect(Array.from(moved.faces.triangles)).toEqual([0, 1, 2]);
   });
 
-  it("won't move a different gear, or into a mirrored frame", () => {
+  it("onto the mirrored Front datum: reflected, with each triangle turned around", () => {
+    const from = ghostPlacement(gear(TOP, [0, 0]))!;
+    const to = ghostPlacement(gear(FRONT, [2, 5]))!;
+    expect([from.hand, to.hand]).toEqual([1, -1]);
+    expect(from.sig).toBe(to.sig);
+    const moved = moveGhostMesh(meshAt(TOP, [0, 0]), from, to);
+    const want = meshAt(FRONT, [2, 5]);
+    close(moved.faces.vertices, want.faces.vertices);
+    close(moved.faces.normals!, want.faces.normals!);
+    expect(Array.from(moved.faces.triangles)).toEqual([0, 2, 1]);
+    // …and back again restores the winding.
+    expect(Array.from(moveGhostMesh(moved, to, from).faces.triangles)).toEqual([0, 1, 2]);
+  });
+
+  it("won't move a different gear", () => {
     const at = ghostPlacement(gear(TOP, [0, 0]))!;
     expect(ghostPlacement(gear(TOP, [3, 3], 10))!.sig).not.toBe(at.sig);
-    expect(ghostPlacement(gear(MIRRORED, [0, 0]))!.sig).not.toBe(at.sig);
   });
 
   it("leaves an extrude that depends on other bodies to the kernel", () => {

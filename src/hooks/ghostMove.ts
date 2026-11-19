@@ -16,6 +16,9 @@ export interface GhostPlacement {
   /** Equal signatures = the same solid, up to where it's placed. */
   sig: string;
   frame: ResolvedFrame;
+  /** +1 for a right-handed frame (u × v = normal), −1 for a mirrored one (the
+   *  Front datum's is). */
+  hand: number;
   /** The outline's first point, in plane coordinates: the reference the shape
    *  is carried by. */
   anchor: [number, number];
@@ -34,17 +37,19 @@ export function ghostPlacement(f: ResolvedFeature | undefined): GhostPlacement |
   if (p.kind !== "sketchRegion" || p.segments || !p.outline.length) return null;
   const [ax, ay] = p.outline[0];
   const rel = (pts: [number, number][]) => pts.map(([x, y]) => [r6(x - ax), r6(y - ay)]);
-  // A mirrored frame would turn the solid inside out, so handedness is part
-  // of the shape.
-  const hand = Math.sign(dot(cross(p.frame.uAxis, p.frame.vAxis), p.frame.normal));
+  const hand = Math.sign(dot(cross(p.frame.uAxis, p.frame.vAxis), p.frame.normal)) || 1;
   const sig = JSON.stringify({
     ...f,
-    profiles: [{ ...p, frame: hand, outline: rel(p.outline), holes: (p.holes ?? []).map(rel) }],
+    profiles: [{ ...p, frame: null, outline: rel(p.outline), holes: (p.holes ?? []).map(rel) }],
   });
-  return { sig, frame: p.frame, anchor: [ax, ay] };
+  return { sig, frame: p.frame, hand, anchor: [ax, ay] };
 }
 
-/** The mesh built at `from`, carried rigidly to `to` (same signature). */
+/** The mesh built at `from`, carried to `to` (same signature). Plane
+ *  coordinates map to plane coordinates, exactly as the kernel lays the
+ *  profile out — a rotation, or, between a right- and a left-handed frame, a
+ *  reflection, which also turns each triangle's corners around so its front
+ *  stays outward. */
 export function moveGhostMesh(mesh: ShapeMeshPayload, from: GhostPlacement, to: GhostPlacement): ShapeMeshPayload {
   const a = from.frame;
   const b = to.frame;
@@ -72,11 +77,22 @@ export function moveGhostMesh(mesh: ShapeMeshPayload, from: GhostPlacement, to: 
     }
     return out;
   };
+  let triangles = mesh.faces.triangles;
+  if (from.hand !== to.hand) {
+    const t = new Uint32Array(triangles.length);
+    for (let i = 0; i < t.length; i += 3) {
+      t[i] = triangles[i];
+      t[i + 1] = triangles[i + 2];
+      t[i + 2] = triangles[i + 1];
+    }
+    triangles = t;
+  }
   return {
     ...mesh,
     faces: {
       ...mesh.faces,
       vertices: point(mesh.faces.vertices),
+      triangles,
       ...(mesh.faces.normals ? { normals: dir(mesh.faces.normals) } : {}),
     },
     edges: { ...mesh.edges, lines: point(mesh.edges.lines) },
