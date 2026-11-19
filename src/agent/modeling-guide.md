@@ -309,7 +309,11 @@ frame count that shows the motion you care about.
   first gear, then the second with `meshWith: <first id>` and
   `placeBeside: true` — it takes the module and pressure angle and is placed at
   the meshing distance with its teeth in mesh, so never compute the centre
-  distance yourself; `params.placeAngle` (degrees) picks which side. A pinion
+  distance yourself; `params.placeAngle` (degrees) picks which side. A meshed
+  gear keeps no module or pressure angle of its own (don't pass them; the
+  scene summary's `gears` shows the ones it uses), so changing the first
+  gear's module resizes both. Deleting the first gear leaves the second where
+  it is, with those values as its own. A pinion
   inside a ring gear works the same way. To animate them, use an assembly and a
   gear relation (value = driver teeth / driven teeth).
 - **Screws:** `add_screw` makes metric screws as a new body (`head`: socket /

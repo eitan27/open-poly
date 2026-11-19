@@ -21,7 +21,7 @@ import { missingJoints } from "./joints";
 import { isBodyFeature, isHideableFeature } from "./parts";
 import { assertNever } from "../lib/assertNever";
 import { applyDerived, circularPatternAngles, resolvePatternCount } from "./derived";
-import { DEFAULT_GEAR_PARAMS, resolveGear, type GearSettings } from "./gear";
+import { DEFAULT_GEAR_PARAMS, resolveGear, unlinkGear, withoutSharedParams, type GearSettings } from "./gear";
 import { DEFAULT_HOLE_PARAMS, resolveHole, type HoleSettings } from "./hole";
 import { DEFAULT_THREAD_PARAMS, resolveThread, type ThreadSettings } from "./threadFeature";
 import { DEFAULT_SCREW_PARAMS, resolveScrew, type ScrewSettings } from "./screw";
@@ -600,7 +600,7 @@ export function addGear(
     suppressed: false,
     plane,
     ...settings,
-    params: { ...settings.params },
+    params: gearParamsToSave(settings),
     color: newBodyColor(),
     opacity: 1,
   };
@@ -609,9 +609,13 @@ export function addGear(
 
 export function updateGear(doc: Document, id: string, plane: SketchPlaneRef, settings: GearSettings): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "gear" ? { ...f, plane, ...settings, params: { ...settings.params } } : f,
+    f.type === "gear" ? { ...f, plane, ...settings, params: gearParamsToSave(settings) } : f,
   );
 }
+
+/** A meshed gear keeps no module, pitch diameter or pressure angle of its own
+ *  (its partner's are used; see unlinkGear for when it gets them back). */
+const gearParamsToSave = (s: GearSettings) => (s.meshWith ? withoutSharedParams(s.params) : { ...s.params });
 
 /** Holes at every point of `sketchId`, cut from `targetId` (see document/hole.ts). */
 /** A sketch of `doc` by id, or undefined. */
@@ -1078,7 +1082,30 @@ export function removeSketchEntity(doc: Document, sketchId: string, entityId: st
 export function removeFeature(doc: Document, id: string): Document {
   const idx = doc.features.findIndex((f) => f.id === id);
   if (idx === -1) return doc;
-  const features = doc.features.filter((f) => f.id !== id);
+  // Gears meshed with this one carry on without it: each keeps the module,
+  // pressure angle — and, placed beside it, the spot and tooth phase — it has
+  // now, as values of its own (worked out before the partner goes).
+  const followers = doc.features.filter((f) => f.type === "gear" && f.meshWith === id);
+  let unlinked = new Map<string, Feature>();
+  if (followers.length) {
+    const r = resolveDocument(doc);
+    unlinked = new Map(
+      followers.map((g) => {
+        const gear = g as GearFeature;
+        const patch = unlinkGear(doc, gear, r.scope, r.planeFrames);
+        // One that no longer resolves anyway still drops the dangling link,
+        // with the defaults for what it has no value of its own for.
+        const fallback = {
+          ...gear,
+          meshWith: undefined,
+          placeBeside: undefined,
+          params: { ...DEFAULT_GEAR_PARAMS, ...gear.params },
+        };
+        return [g.id, patch ? { ...gear, ...patch } : fallback];
+      }),
+    );
+  }
+  const features = doc.features.filter((f) => f.id !== id).map((f) => unlinked.get(f.id) ?? f);
   const rollbackIndex = idx < doc.rollbackIndex ? doc.rollbackIndex - 1 : Math.min(doc.rollbackIndex, features.length);
   return { ...doc, features, rollbackIndex };
 }

@@ -83,9 +83,9 @@ function leadsTo(doc: Document, from: GearFeature, target: string): boolean {
   return false;
 }
 
-const num = (label: string, expr: string, scope: Scope): number => {
+const num = (label: string, expr: string | undefined, scope: Scope): number => {
   // A field cleared to type a new value: say so plainly, not as a parse error.
-  if (!expr.trim()) throw new Error(`gear: ${label}: enter a value`);
+  if (!expr?.trim()) throw new Error(`gear: ${label}: enter a value`);
   let v: number;
   try {
     v = evaluateExpression(expr, scope);
@@ -315,6 +315,63 @@ export function resolveGear(
     extent: g.extent,
     mode: "new",
   };
+}
+
+/** The params a meshed gear takes from its partner, so it keeps none of its
+ *  own: a stored module would be a stale default that only comes into play,
+ *  wrongly, once the link is gone. */
+export const MESH_SHARED_PARAMS = ["module", "pitchDiameter", "pressureAngle"] as const;
+
+/** A meshed gear's params without the ones its partner supplies. */
+export function withoutSharedParams(params: GearParams): GearParams {
+  const out = { ...params };
+  for (const k of MESH_SHARED_PARAMS) delete out[k];
+  return out;
+}
+
+/** A number as a param expression: short, but exact to the micron. */
+const asParam = (v: number) => String(Number(v.toFixed(6)));
+
+/** What a meshed gear becomes when its link to its partner ends — the user
+ *  picks Module or Pitch diameter in its dialog, or the partner is deleted:
+ *  the same gear, standing on its own. Its module, pitch diameter and
+ *  pressure angle become its own values; placed beside the partner, its
+ *  centre becomes a fixed spot and its tooth phase its own rotation, so
+ *  nothing about it moves. Returns null for a gear that isn't meshed, or one
+ *  that no longer resolves (nothing to keep — it keeps what it has). */
+export function unlinkGear(
+  doc: Document,
+  g: GearFeature,
+  scope: Scope,
+  planeFrames: Map<string, PlaneFrameData> | undefined,
+  sizeBy: GearFeature["sizeBy"] = g.sizeBy,
+): Pick<GearFeature, "sizeBy" | "meshWith" | "placeBeside" | "center" | "params"> | null {
+  if (!g.meshWith) return null;
+  let baked: BakedGear;
+  try {
+    baked = bakeGear(doc, g, scope, planeFrames);
+  } catch {
+    return null;
+  }
+  const { module, pressureAngle, teeth } = baked.spec;
+  const params: GearParams = {
+    ...g.params,
+    module: asParam(module),
+    pitchDiameter: asParam(module * teeth),
+    pressureAngle: asParam(pressureAngle),
+  };
+  let center = g.center;
+  if (g.placeBeside) {
+    // The plane its centre was worked out on: a picked sketch point's sketch,
+    // a picked spot's plane, or its own.
+    const ref = g.center;
+    const sketch =
+      ref && !("uv" in ref) ? doc.features.find((f) => f.id === ref.sketchId && f.type === "sketch") : undefined;
+    const plane = sketch?.type === "sketch" ? sketch.plane : ref && "uv" in ref ? (ref.plane ?? g.plane) : g.plane;
+    center = { uv: [Number(baked.center[0].toFixed(6)), Number(baked.center[1].toFixed(6))], plane };
+    params.rotation = asParam((baked.rotation * 180) / Math.PI);
+  }
+  return { sizeBy, meshWith: undefined, placeBeside: undefined, center, params };
 }
 
 /** What the dialog shows under the fields: the circles, and the notes worth a

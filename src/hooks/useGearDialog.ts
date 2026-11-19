@@ -13,7 +13,7 @@
 // gear itself changes in place, no ghost on top of it).
 import { useEffect, useRef, useState } from "react";
 import { addGear, genId, resolveDocument, updateGear } from "../document/document";
-import { DEFAULT_GEAR_SETTINGS, type GearSettings } from "../document/gear";
+import { DEFAULT_GEAR_PARAMS, DEFAULT_GEAR_SETTINGS, unlinkGear, type GearSettings } from "../document/gear";
 import type { SketchPlaneRef } from "../document/planes";
 import type { Document, Feature, GearFeature, HolePointRef } from "../document/types";
 import type { KernelClient } from "../kernel/KernelClient";
@@ -64,6 +64,10 @@ export interface GearDialogApi {
    *  point to centre it on there (none: the plane's origin). */
   setLocation: (plane: SketchPlaneRef, center?: HolePointRef) => void;
   update: (patch: Partial<GearSettings>) => void;
+  /** Size it by its own module or pitch diameter. Unlinking a meshed gear
+   *  keeps it exactly as it is: the module, pressure angle (and, placed
+   *  beside its partner, the spot and tooth phase) it has become its own. */
+  setSizeBy: (sizeBy: GearSettings["sizeBy"]) => void;
   updateParam: (name: keyof GearSettings["params"], value: string) => void;
 }
 
@@ -149,6 +153,24 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
         : d,
     );
 
+  const setSizeBy = (sizeBy: GearSettings["sizeBy"]) =>
+    setDialog((d) => {
+      if (!d) return d;
+      if (!d.settings.meshWith) return { ...d, settings: { ...d.settings, sizeBy } };
+      const id = d.editId ?? d.draftId;
+      const withIt = d.editId
+        ? updateGear(doc, d.editId, d.plane, d.settings)
+        : addGear(doc, d.plane, d.settings, d.draftId).doc;
+      const g = withIt.features.find((f): f is GearFeature => f.id === id && f.type === "gear");
+      const r = resolveDocument(withIt);
+      const patch = g && unlinkGear(withIt, g, r.scope, r.planeFrames, sizeBy);
+      if (!patch) {
+        // A link that no longer resolves: fill only what it has no value for.
+        const params = { ...DEFAULT_GEAR_PARAMS, ...d.settings.params };
+        return { ...d, settings: { ...d.settings, sizeBy, meshWith: undefined, placeBeside: undefined, params } };
+      }
+      return { ...d, defaultPlane: d.defaultPlane && !patch.center, settings: { ...d.settings, ...patch } };
+    });
   const update = (patch: Partial<GearSettings>) =>
     setDialog((d) => (d ? { ...d, settings: { ...d.settings, ...patch } } : d));
   const updateParam = (name: keyof GearSettings["params"], value: string) =>
@@ -249,6 +271,7 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
     armLocation,
     setLocation,
     update,
+    setSizeBy,
     updateParam,
   };
 }

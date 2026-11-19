@@ -8865,6 +8865,7 @@ export default function App() {
                     error={error?.replace(/^gear: /, "") ?? null}
                     onArmLocation={gear.armLocation}
                     onChange={gear.update}
+                    onSizeBy={gear.setSizeBy}
                     onParam={gear.updateParam}
                     onToggleAdvanced={() => gear.setDialog((g) => (g ? { ...g, advanced: !g.advanced } : g))}
                     onConfirm={confirmGear}

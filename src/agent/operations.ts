@@ -912,6 +912,19 @@ export interface SceneSummary {
   }[];
   planes: { id: string; name: string }[];
   variables: { name: string; expression: string; value?: number }[];
+  /** Gears, with the module / pitch diameter / pressure angle each is built
+   *  with. A meshed gear (`meshWith`) stores none of these — get_document
+   *  shows only the link; they're its partner's and follow it. Present only
+   *  when there are gears. */
+  gears?: {
+    id: string;
+    name: string;
+    teeth: number;
+    module: number;
+    pitchDiameter: number;
+    pressureAngle: number;
+    meshWith?: string;
+  }[];
   rollbackIndex: number;
   featureCount: number;
   selection: unknown[];

@@ -14,7 +14,7 @@ import { DEFAULT_THREAD_PARAMS, DEFAULT_THREAD_SETTINGS } from "../document/thre
 import { FOLDED_NAMES_NOTE, foldNames } from "./nameRanges";
 import { DEFAULT_HOLE_PARAMS, DEFAULT_HOLE_SETTINGS } from "../document/hole";
 import { DEFAULT_SCREW_PARAMS, DEFAULT_SCREW_SETTINGS } from "../document/screw";
-import { DEFAULT_GEAR_PARAMS, DEFAULT_GEAR_SETTINGS } from "../document/gear";
+import { DEFAULT_GEAR_PARAMS, DEFAULT_GEAR_SETTINGS, gearSizing } from "../document/gear";
 import { METRIC_SIZES, isMetricSize } from "../geom/metricFasteners";
 import {
   addBoolean,
@@ -1716,6 +1716,28 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
     value: resolved.scope[v.name],
   }));
 
+  // A gear's sizing as built — a meshed gear's comes from its partner.
+  const gears: NonNullable<SceneSummary["gears"]> = doc.features.flatMap((f) => {
+    if (f.type !== "gear") return [];
+    try {
+      const s = gearSizing(doc, f, resolved.scope);
+      const r6 = (n: number) => Number(n.toFixed(6));
+      return [
+        {
+          id: f.id,
+          name: f.name,
+          teeth: s.teeth,
+          module: r6(s.module),
+          pitchDiameter: r6(s.module * s.teeth),
+          pressureAngle: r6(s.pressureAngle),
+          ...(f.meshWith ? { meshWith: f.meshWith } : {}),
+        },
+      ];
+    } catch {
+      return []; // its error is in `errors`
+    }
+  });
+
   const docInfo = ctx.documents.info();
   return {
     documentId: docInfo.id,
@@ -1724,6 +1746,7 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
     sketches,
     planes,
     variables,
+    ...(gears.length ? { gears } : {}),
     rollbackIndex: doc.rollbackIndex,
     featureCount: doc.features.length,
     selection: ctx.getSelection(),

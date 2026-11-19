@@ -684,10 +684,13 @@ export type GearBore = "none" | "round" | "dflat";
  *  all of them — `params` is one of the records `renameInFeatures` rewrites. */
 export interface GearParams {
   teeth: string;
-  /** Module (mm) — read when `sizeBy` is "module" and the gear isn't meshed. */
-  module: string;
-  /** Pitch diameter (mm) — read when `sizeBy` is "pitchDiameter" instead. */
-  pitchDiameter: string;
+  /** Module (mm) — read when `sizeBy` is "module". A meshed gear has none:
+   *  it uses its partner's, and gets its own back when it's unlinked
+   *  (unlinkGear). */
+  module?: string;
+  /** Pitch diameter (mm) — read when `sizeBy` is "pitchDiameter" instead.
+   *  None on a meshed gear, as for `module`. */
+  pitchDiameter?: string;
   /** Face width along the plane normal. */
   thickness: string;
   boreDiameter: string;
@@ -695,8 +698,8 @@ export interface GearParams {
   boreFlat: string;
   /** Internal gear: radial thickness of the ring beyond the tooth roots. */
   rimWidth: string;
-  /** Degrees. Ignored when meshed (the partner's is used). */
-  pressureAngle: string;
+  /** Degrees. None on a meshed gear (the partner's is used). */
+  pressureAngle?: string;
   /** Total play (mm) — each tooth is thinned by half of it. */
   backlash: string;
   /** Profile shift coefficient x (× module). */

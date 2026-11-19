@@ -27,6 +27,8 @@ interface Props {
   error: string | null;
   onArmLocation: () => void;
   onChange: (patch: Partial<GearSettings>) => void;
+  /** Size by its own module / pitch diameter (unlinking a meshed gear in place). */
+  onSizeBy: (sizeBy: GearSettings["sizeBy"]) => void;
   onParam: (name: keyof GearParams, value: string) => void;
   onToggleAdvanced: () => void;
   onConfirm: () => void;
@@ -51,6 +53,7 @@ export function GearDialog({
   error,
   onArmLocation,
   onChange,
+  onSizeBy,
   onParam,
   onToggleAdvanced,
   onConfirm,
@@ -153,7 +156,7 @@ export function GearDialog({
             const v = e.target.value;
             // Meshing with a gear places it beside that gear unless asked not to.
             if (v.startsWith("mesh:")) onChange({ meshWith: v.slice(5), placeBeside: settings.placeBeside ?? true });
-            else onChange({ meshWith: undefined, placeBeside: undefined, sizeBy: v as GearSettings["sizeBy"] });
+            else onSizeBy(v as GearSettings["sizeBy"]);
           }}
         >
           <option value="module">Module</option>

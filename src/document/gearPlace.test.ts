@@ -8,6 +8,7 @@ import {
   createDocument,
   evaluateVariables,
   updateParam,
+  removeFeature,
   resolveDocument,
 } from "./document";
 import { bakeGear, DEFAULT_GEAR_SETTINGS, type GearSettings } from "./gear";
@@ -200,3 +201,68 @@ function mapSketchPoint(doc: Document, sketchId: string, p: [number, number]): D
     ),
   };
 }
+
+describe("a meshed gear's module, and losing its partner", () => {
+  /** A 54-tooth m1.5 gear, and an 18-tooth one meshed beside it. */
+  const pair = (placeBeside = true) => {
+    const one = addGear(createDocument(), TOP, settings({}, { teeth: "54", module: "1.5", pressureAngle: "25" }));
+    const two = addGear(one.doc, TOP, settings({ meshWith: one.id, placeBeside }, { teeth: "18", placeAngle: "30" }));
+    return { doc: two.doc, one: one.id, two: two.id };
+  };
+  const pts = (doc: Document, id: string) => baked(doc, id).outline.outline;
+
+  it("keeps no module, pitch diameter or pressure angle of its own", () => {
+    const { doc, two } = pair();
+    const p = gearOf(doc, two).params;
+    expect(p.module).toBeUndefined();
+    expect(p.pitchDiameter).toBeUndefined();
+    expect(p.pressureAngle).toBeUndefined();
+    expect(baked(doc, two).spec.module).toBe(1.5);
+  });
+
+  it("follows the partner's module when that changes", () => {
+    const { doc, one, two } = pair();
+    const next = updateParam(doc, one, "module", "2");
+    expect(baked(next, two).spec.module).toBe(2);
+  });
+
+  it("deleting the partner leaves it exactly where and what it was, on its own values", () => {
+    const { doc, one, two } = pair();
+    const before = pts(doc, two);
+    const after = removeFeature(doc, one);
+    const g = gearOf(after, two);
+    expect(g.meshWith).toBeUndefined();
+    expect(g.placeBeside).toBeUndefined();
+    expect(g.params.module).toBe("1.5");
+    expect(g.params.pitchDiameter).toBe("27");
+    expect(g.params.pressureAngle).toBe("25");
+    expect(g.center && "uv" in g.center).toBe(true);
+    expect(resolveDocument(after).errors[two]).toBeUndefined();
+    const now = pts(after, two);
+    expect(now.length).toBe(before.length);
+    now.forEach(([x, y], i) => {
+      expect(x).toBeCloseTo(before[i][0], 4);
+      expect(y).toBeCloseTo(before[i][1], 4);
+    });
+  });
+
+  it("not placed beside it, keeps its own location and rotation", () => {
+    const { doc, one, two } = pair(false);
+    const g = gearOf(removeFeature(doc, one), two);
+    expect(g.center).toBeUndefined();
+    expect(g.params.rotation).toBe(gearOf(doc, two).params.rotation);
+    expect(g.params.module).toBe("1.5");
+  });
+
+  it("down a chain, only the gear meshed with the deleted one is unlinked", () => {
+    const { doc, one, two } = pair();
+    const three = addGear(doc, TOP, settings({ meshWith: two, placeBeside: true }, { teeth: "30" }));
+    const before = pts(three.doc, three.id);
+    const after = removeFeature(three.doc, one);
+    expect(gearOf(after, three.id).meshWith).toBe(two);
+    pts(after, three.id).forEach(([x, y], i) => {
+      expect(x).toBeCloseTo(before[i][0], 4);
+      expect(y).toBeCloseTo(before[i][1], 4);
+    });
+  });
+});
