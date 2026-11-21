@@ -185,18 +185,28 @@ check(
   /^Hole 1 · hole 1$/.test((await rowTexts()).join("|")),
   (await rowTexts()).join("|"),
 );
-check("…and Add more locations below", /^Add more locations$/.test(((await locBtn.textContent()) ?? "").trim()));
+check(
+  "…listening from the start, as a new Hole's Targets",
+  ((await locBtn.textContent()) ?? "").includes("Select locations (Esc to stop)") &&
+    (await locBtn.getAttribute("class")).includes("active"),
+  (await locBtn.textContent()) ?? "",
+);
 check("no Center X / Y fields", (await dialog.locator(".ed-field", { hasText: "Center X" }).count()) === 0);
 check("no On a plane button", (await dialog.locator("button", { hasText: "On a plane" }).count()) === 0);
-// Its ✕: none left, so the default — whose ✕ starts listening.
+// Its ✕: none left — still listening, and the hint says it's on Top until a pick.
 await rows.first().locator(".bool-operand-x").click();
 await page.waitForTimeout(300);
+check("removing the last leaves no rows", (await rows.count()) === 0);
+check("…still listening", ((await locBtn.textContent()) ?? "").includes("Esc to stop"));
+check("…and on Top until a pick", /stays on Top/.test((await dialog.textContent()) ?? ""));
+// Stopped with nothing picked: the default row, whose ✕ listens again.
+await locBtn.click();
+await page.waitForTimeout(200);
 const defaultRow = dialog.locator(".bool-operand-row", { hasText: "Top plane (default)" });
-check("removing the last goes back to Top plane (default)", (await defaultRow.count()) === 1);
+check("stopped: a Top plane (default) row", (await defaultRow.count()) === 1);
 await defaultRow.locator(".bool-operand-x").click();
-await page.waitForTimeout(300);
-check("…whose ✕ starts listening", ((await locBtn.textContent()) ?? "").includes("Select locations (Esc to stop)"));
-check("…the button armed", (await locBtn.getAttribute("class")).includes("active"));
+await page.waitForTimeout(200);
+check("…whose ✕ listens again", (await locBtn.getAttribute("class")).includes("active"));
 // A spot: the plate top's back edge midpoint (a face click snaps to the
 // face's centre — here, the hole's — as a Hole's target does).
 await op.clickWorld([0, 19.9, 12]);

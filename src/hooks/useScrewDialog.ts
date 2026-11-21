@@ -49,8 +49,10 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
   const open = (holeId: string | null, plane: SketchPlaneRef | null) => {
     const holes = doc.features.filter((f) => f.type === "hole");
     const hole = holeId ?? (plane ? null : (holes.at(-1)?.id ?? null));
+    // Listening from the start, as a new Hole's Targets: the first pick adds
+    // to the Hole or plane it opened on. Editing opens with it off, as Hole's.
     setDialog({
-      locating: false,
+      locating: true,
       settings: {
         ...DEFAULT_SCREW_SETTINGS,
         ...(hole ? { holeId: hole } : {}),
