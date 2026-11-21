@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ResolvedFeature, ResolvedFrame, ShapeMeshPayload } from "../kernel/types";
-import { SCREW_TEMPLATE_FRAME, ghostPlacement, moveGhostMesh, screwCopies } from "./ghostMove";
+import { SCREW_TEMPLATE_FRAME, ghostPlacement, moveGhostMesh, ringMesh, screwCopies } from "./ghostMove";
 
 type V3 = [number, number, number];
 const TOP: ResolvedFrame = { origin: [0, 0, 0], uAxis: [1, 0, 0], vAxis: [0, 1, 0], normal: [0, 0, 1] };
@@ -115,5 +115,28 @@ describe("a screw ghost: one screw copied to each seat", () => {
     close(m.faces.vertices, [...kernelLaid(SIDE), ...kernelLaid(DOWN)]);
     close(m.edges.lines, [...kernelLaid(SIDE).slice(0, 6), ...kernelLaid(DOWN).slice(0, 6)]);
     expect(Array.from(m.faces.triangles)).toEqual([0, 1, 2, 1, 2, 3, 4, 5, 6, 5, 6, 7]);
+  });
+});
+
+describe("ringMesh", () => {
+  it("lies on its frame around the centre, between r and r + width", () => {
+    const FRONT = { origin: [0, -15, 0], uAxis: [1, 0, 0], vAxis: [0, 0, 1], normal: [0, -1, 0] } as const;
+    const m = ringMesh(
+      { origin: [...FRONT.origin], uAxis: [...FRONT.uAxis], vAxis: [...FRONT.vAxis], normal: [...FRONT.normal] },
+      [3, 4],
+      2.5,
+      0.5,
+      32,
+    );
+    const v = m.faces.vertices;
+    for (let i = 0; i < v.length; i += 3) {
+      const d = Math.hypot(v[i] - 3, v[i + 2] - 4);
+      expect(d).toBeGreaterThan(2.5 - 1e-4);
+      expect(d).toBeLessThan(3 + 1e-4);
+      expect(v[i + 1]).toBeCloseTo(-15.01, 3); // a hair out of the face
+    }
+    expect(m.faces.triangles.length).toBe(32 * 6);
+    expect(Math.max(...m.faces.triangles)).toBe(63);
+    expect(m.edges.lines.length).toBe(32 * 4 * 3);
   });
 });

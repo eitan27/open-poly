@@ -196,11 +196,13 @@ import { holeSketches, useHoleDialog } from "./hooks/useHoleDialog";
 import { useThreadDialog } from "./hooks/useThreadDialog";
 import { threadDims, type ThreadDims } from "./document/threadFeature";
 import { useScrewDialog } from "./hooks/useScrewDialog";
+import { ringMesh } from "./hooks/ghostMove";
 import {
   holeCenters,
   holeDims,
   holePlacement,
   holePointAt,
+  holeProfile,
   holeTarget,
   sameHolePoint,
   type HoleDims,
@@ -1663,6 +1665,12 @@ export default function App() {
   useEffect(() => {
     if (!screwOpen) setScrewRowHover(null);
   }, [screwOpen]);
+  /** The Hole dialog's Target row under the pointer: its hole's outline is lit. */
+  const [holeRowHover, setHoleRowHover] = useState<number | null>(null);
+  const holeOpen = !!hole.dialog;
+  useEffect(() => {
+    if (!holeOpen) setHoleRowHover(null);
+  }, [holeOpen]);
   // The last hole settings that resolved, so the dialog's diagram holds still
   // while a field is half-typed rather than blinking out.
   const lastHoleDims = useRef<HoleDims | null>(null);
@@ -2738,6 +2746,23 @@ export default function App() {
     return rawMeshes.find((m) => m.id === id)?.mesh ?? null;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ghostScrewAt reads refs the preview keeps current
   }, [screw.dialog, screw.preview, screwRowHover, rawMeshes]);
+  // The hovered Target row's hole: a ring round its rim (the counterbore's or
+  // countersink's, when it has one), on the face it's drilled from — the same
+  // whether the hole is a ghost (creating) or already cut (editing).
+  const holeRowRing = useMemo(() => {
+    const d = hole.dialog;
+    const ref = holeRowHover === null ? undefined : d?.settings.points?.[holeRowHover];
+    if (!d || !ref) return null;
+    try {
+      const sketchOf = (id: string) => doc.features.find((f): f is SketchFeature => f.id === id && f.type === "sketch");
+      const owner = { plane: d.settings.plane, sketchId: d.sketchId ?? undefined };
+      const t = holeTarget(owner, ref, sketchOf, resolved.planeFrames);
+      const rim = Math.max(...holeProfile(holeDims(d.settings, resolved.scope)).map((p) => p[0]));
+      return ringMesh(t.frame, t.center, rim, Math.max(1, rim * 0.6));
+    } catch {
+      return null; // a half-typed size: nothing to light
+    }
+  }, [hole.dialog, holeRowHover, doc, resolved]);
   const ghostMeshes = useMemo<GhostMesh[]>(
     () => [
       // An extrude previews the swept TOOL, and in Remove mode that tool is the
@@ -2757,6 +2782,7 @@ export default function App() {
       ...(hole.preview ? [{ mesh: hole.preview, variant: "cut" as const }] : []),
       ...(screw.preview ? [{ mesh: screw.preview }] : []),
       ...(screwRowMesh ? [{ mesh: screwRowMesh, variant: "fill" as const }] : []),
+      ...(holeRowRing ? [{ mesh: holeRowRing, variant: "fill" as const }] : []),
       // An internal thread's ghost is the cavity — material about to go.
       ...(thread.preview
         ? [
@@ -2782,6 +2808,7 @@ export default function App() {
       hole.preview,
       screw.preview,
       screwRowMesh,
+      holeRowRing,
       thread.preview,
       thread.dialog?.settings.side,
       patternGhosts,
@@ -8998,6 +9025,7 @@ export default function App() {
                     )}
                     onRemoveTarget={(i) => hole.setPoints((d.settings.points ?? []).filter((_, k) => k !== i))}
                     onRemovePart={hole.togglePart}
+                    onHoverTarget={setHoleRowHover}
                     onAllParts={hole.allParts}
                     onChange={hole.update}
                     onParam={hole.updateParam}

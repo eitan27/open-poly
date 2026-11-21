@@ -59,6 +59,26 @@ await page.screenshot({ path: path.join(SHOTS, "hole-points-ghost.png") });
 // Clicking the corner again removes it.
 await op.clickWorld([19.6, 14.6, Z]);
 check("clicking a point again removes it", (await count()) === "2 targets", await count());
+// Hovering a Target row lights its hole's outline (the one at the plate's
+// centre); leaving puts it back. The rows are spaced, as Screw's.
+{
+  const rowsEl = dialog.locator(".hole-targets .bool-operand-row");
+  const gap = await dialog.locator(".hole-targets").evaluate((el) => getComputedStyle(el).rowGap);
+  check("Target rows are spaced", gap === "4px", gap);
+  const p = await op.screenOf([10, 7.5, Z]);
+  const clip = { x: p.x - 60, y: p.y - 60, width: 120, height: 120 };
+  await page.mouse.move(5, 300);
+  await page.waitForTimeout(300);
+  const before = await page.screenshot({ clip });
+  await rowsEl.first().hover();
+  await page.waitForTimeout(300);
+  const lit = await page.screenshot({ clip });
+  await page.screenshot({ path: path.join(SHOTS, "hole-row-hover.png") });
+  check("hovering a Target row lights its hole", !before.equals(lit));
+  await page.mouse.move(5, 300);
+  await page.waitForTimeout(300);
+  check("…and leaving puts it back", before.equals(await page.screenshot({ clip })));
+}
 
 // Type dropdown and the table readouts.
 const typeSel = dialog.locator(".ed-field", { hasText: "Type" }).locator("select");

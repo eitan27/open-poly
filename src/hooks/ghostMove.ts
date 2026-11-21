@@ -147,3 +147,44 @@ export function screwCopies(template: ShapeMeshPayload, seats: ResolvedFrame[]):
     edges: { lines },
   };
 }
+
+/** A flat ring lying on `frame` around (u, v), from radius `r` out by
+ *  `width`, with its two circles as edges: a hole's outline, lit while its
+ *  row in the Hole dialog is hovered. Both sides face the camera (the ghost
+ *  materials draw double-sided), so it reads from above or below. */
+export function ringMesh(
+  frame: ResolvedFrame,
+  center: [number, number],
+  r: number,
+  width: number,
+  n = 64,
+): ShapeMeshPayload {
+  const { origin: o, uAxis: u, vAxis: v, normal: nz } = frame;
+  const c: V3 = [0, 1, 2].map((j) => o[j] + center[0] * u[j] + center[1] * v[j]) as V3;
+  // Lifted a hair off the face, so it isn't lost in it.
+  const lift = Math.max(0.01, r * 0.002);
+  const at = (rad: number, a: number, out: Float32Array, i: number) => {
+    const cu = Math.cos(a) * rad;
+    const sv = Math.sin(a) * rad;
+    for (let j = 0; j < 3; j++) out[i + j] = c[j] + cu * u[j] + sv * v[j] + lift * nz[j];
+  };
+  const vertices = new Float32Array(n * 2 * 3);
+  const normals = new Float32Array(n * 2 * 3);
+  const triangles = new Uint32Array(n * 6);
+  const lines = new Float32Array(n * 2 * 2 * 3);
+  for (let k = 0; k < n; k++) {
+    const a = (k / n) * Math.PI * 2;
+    const b = ((k + 1) / n) * Math.PI * 2;
+    at(r, a, vertices, k * 6);
+    at(r + width, a, vertices, k * 6 + 3);
+    for (let j = 0; j < 6; j++) normals[k * 6 + j] = nz[j % 3];
+    const i0 = 2 * k;
+    const i1 = (2 * (k + 1)) % (2 * n);
+    triangles.set([i0, i0 + 1, i1 + 1, i0, i1 + 1, i1], k * 6);
+    at(r, a, lines, k * 12);
+    at(r, b, lines, k * 12 + 3);
+    at(r + width, a, lines, k * 12 + 6);
+    at(r + width, b, lines, k * 12 + 9);
+  }
+  return { name: "ring", faces: { vertices, triangles, normals }, edges: { lines } };
+}

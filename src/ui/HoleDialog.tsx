@@ -37,6 +37,8 @@ interface Props {
   targetLabels: string[];
   onRemoveTarget: (index: number) => void;
   onRemovePart: (id: string) => void;
+  /** A Target row hovered (its hole lit in the viewport), or none. */
+  onHoverTarget: (index: number | null) => void;
   onAllParts: () => void;
   onChange: (patch: Partial<HoleSettings>) => void;
   onParam: (name: keyof HoleParams, value: string) => void;
@@ -79,6 +81,7 @@ export function HoleDialog({
   targetLabels,
   onRemoveTarget,
   onRemovePart,
+  onHoverTarget,
   onAllParts,
   onChange,
   onParam,
@@ -184,17 +187,24 @@ export function HoleDialog({
       <div className="bool-group-label" title="Where the holes go: points, faces (their centre) or sketch entities">
         Targets
       </div>
-      <div className="hole-targets">
-        {targetLabels.map((label, i) => (
-          <PickedRow
-            key={i}
-            label={targetLabels.length > 1 ? `${i + 1}. ${label}` : label}
-            title={label}
-            clearTitle="Remove"
-            onClear={() => onRemoveTarget(i)}
-          />
-        ))}
-      </div>
+      {targetLabels.length > 0 && (
+        <div className="hole-targets" onMouseLeave={() => onHoverTarget(null)}>
+          {targetLabels.map((label, i) => (
+            // Hovering a row lights its hole's outline in the viewport.
+            <div key={i} onMouseEnter={() => onHoverTarget(i)}>
+              <PickedRow
+                label={targetLabels.length > 1 ? `${i + 1}. ${label}` : label}
+                title={label}
+                clearTitle="Remove"
+                onClear={() => {
+                  onHoverTarget(null);
+                  onRemoveTarget(i);
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
       <PickButton
         noun="targets"
         armed={armed === "points"}
