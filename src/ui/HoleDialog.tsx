@@ -39,6 +39,8 @@ interface Props {
   onRemovePart: (id: string) => void;
   /** A Target row hovered (its hole lit in the viewport), or none. */
   onHoverTarget: (index: number | null) => void;
+  /** A Subset row hovered (that part lit in the viewport), or none. */
+  onHoverPart: (id: string | null) => void;
   onAllParts: () => void;
   onChange: (patch: Partial<HoleSettings>) => void;
   onParam: (name: keyof HoleParams, value: string) => void;
@@ -82,6 +84,7 @@ export function HoleDialog({
   onRemoveTarget,
   onRemovePart,
   onHoverTarget,
+  onHoverPart,
   onAllParts,
   onChange,
   onParam,
@@ -241,14 +244,19 @@ export function HoleDialog({
       </label>
       {/* The parts to cut: the same accumulating slot. */}
       {subset && (
-        <div className="hole-parts">
+        <div className="hole-parts" onMouseLeave={() => onHoverPart(null)}>
           {(settings.scope ?? []).map((id) => (
-            <PickedRow
-              key={id}
-              label={partOptions.find((o) => o.id === id)?.name ?? id}
-              clearTitle="Remove"
-              onClear={() => onRemovePart(id)}
-            />
+            // Hovering a row lights that part in the viewport.
+            <div key={id} onMouseEnter={() => onHoverPart(id)}>
+              <PickedRow
+                label={partOptions.find((o) => o.id === id)?.name ?? id}
+                clearTitle="Remove"
+                onClear={() => {
+                  onHoverPart(null);
+                  onRemovePart(id);
+                }}
+              />
+            </div>
           ))}
         </div>
       )}

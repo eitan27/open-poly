@@ -1667,9 +1667,13 @@ export default function App() {
   }, [screwOpen]);
   /** The Hole dialog's Target row under the pointer: its hole's outline is lit. */
   const [holeRowHover, setHoleRowHover] = useState<number | null>(null);
+  /** …and the Subset row under the pointer: that part is lit. */
+  const [holePartHover, setHolePartHover] = useState<string | null>(null);
   const holeOpen = !!hole.dialog;
   useEffect(() => {
-    if (!holeOpen) setHoleRowHover(null);
+    if (holeOpen) return;
+    setHoleRowHover(null);
+    setHolePartHover(null);
   }, [holeOpen]);
   // The last hole settings that resolved, so the dialog's diagram holds still
   // while a field is half-typed rather than blinking out.
@@ -2845,6 +2849,14 @@ export default function App() {
   // that produced several disjoint solids contributes several (see
   // document/parts.ts); most contribute one, whose id IS the feature's.
   const partIds = useMemo(() => rawMeshes.map((m) => m.id), [rawMeshes]);
+  /** What the viewport lights: the selection's bodies, plus — while its row
+   *  in the Hole dialog's Subset is hovered — every part of that feature. */
+  const litBodyIds = useMemo(() => {
+    if (!holePartHover) return highlightBodyIds;
+    const ids = new Set(highlightBodyIds);
+    for (const id of partIds) if (featureIdOfPart(id) === holePartHover) ids.add(id);
+    return ids;
+  }, [highlightBodyIds, holePartHover, partIds]);
 
   // Agent command layer: exposes window.__openpoly for console testing
   // and runs the WebSocket bridge to the local MCP hub. `agentStatus` drives the
@@ -7831,7 +7843,7 @@ export default function App() {
               ghostMeshes={isAssembly ? mates.glyphs : ghostMeshes}
               selection={isAssembly ? (mates.picks ?? asmFaces) : (dialogPicks ?? selection)}
               emphasize={constraintEmphasis}
-              highlightBodyIds={isAssembly ? asmSelectedSet : highlightBodyIds}
+              highlightBodyIds={isAssembly ? asmSelectedSet : litBodyIds}
               booleanHighlight={booleanHighlight}
               onSelect={isAssembly ? handleAssemblyPick : handlePick}
               onHoverPick={isAssembly ? mates.hoverPick : undefined}
@@ -9026,6 +9038,7 @@ export default function App() {
                     onRemoveTarget={(i) => hole.setPoints((d.settings.points ?? []).filter((_, k) => k !== i))}
                     onRemovePart={hole.togglePart}
                     onHoverTarget={setHoleRowHover}
+                    onHoverPart={setHolePartHover}
                     onAllParts={hole.allParts}
                     onChange={hole.update}
                     onParam={hole.updateParam}

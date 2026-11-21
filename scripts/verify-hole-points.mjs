@@ -217,6 +217,30 @@ await partsSel.selectOption("subset");
 await page.waitForTimeout(200);
 await op.clickWorld([10, 5, 15]);
 check("Subset: a click picks a part", (await dialog.locator(".hole-parts .bool-operand-row").count()) === 1);
+// Hovering its row lights the part; leaving puts it back.
+{
+  const p = await op.screenOf([10, 5, 15]);
+  const clip = { x: p.x - 60, y: p.y - 40, width: 120, height: 80 };
+  await page.mouse.move(5, 300);
+  await page.waitForTimeout(300);
+  const before = await page.screenshot({ clip });
+  await dialog.locator(".hole-parts .bool-operand-row").first().hover();
+  await page.waitForTimeout(300);
+  check("hovering a Subset row lights its part", !before.equals(await page.screenshot({ clip })));
+  await page.screenshot({ path: path.join(SHOTS, "hole-part-hover.png") });
+  await page.mouse.move(5, 300);
+  await page.waitForTimeout(300);
+  check("…and leaving puts it back", before.equals(await page.screenshot({ clip })));
+}
+// The rows grow with the list, as Extrude's profiles: no scrolling of their own.
+check(
+  "the row lists don't scroll on their own",
+  (
+    await dialog
+      .locator(".hole-targets, .hole-parts")
+      .evaluateAll((els) => els.map((e) => getComputedStyle(e).overflowY))
+  ).every((o) => o === "visible"),
+);
 await dialog.screenshot({ path: path.join(SHOTS, "hole-dialog-subset.png") });
 await dialog.locator(".ed-primary").click();
 await op.settle();

@@ -89,8 +89,9 @@
 }
 
 /* The Screw dialog: one removable row per screw it places. */
-/* A multi-pick slot's rows (Screw Locations, Hole Targets and parts), spaced
-   like Extrude's profiles. */
+/* A multi-pick slot's rows (Screw Locations, Hole Targets and parts): spaced,
+   and growing with the list as Extrude's profiles do — the dialog, not the
+   list, scrolls once it's taller than the window. */
 .screw-rows,
 .hole-targets,
 .hole-parts {
@@ -98,6 +99,4 @@
   flex-direction: column;
   gap: 4px;
   margin: 2px 0 6px;
-  max-height: 180px;
-  overflow-y: auto;
 }
