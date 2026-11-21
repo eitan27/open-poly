@@ -325,10 +325,10 @@ export function HoleDialog({
           title={
             metric
               ? "Cut the real ISO thread into the wall, to 3D print (grown by the clearance so a printed screw fits). Off: just the tap drill's plain bore, for a thread tapped afterwards."
-              : "Modelled threads need a metric size"
+              : "Only metric sizes can include a thread"
           }
         >
-          <span>Model the thread</span>
+          <span>Include thread</span>
           <input
             type="checkbox"
             disabled={!metric}

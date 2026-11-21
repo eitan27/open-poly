@@ -146,7 +146,7 @@ export function ScrewDiagram({ dims: d, clearance, active, onPick }: Props) {
         </text>
       )}
       <text className="dg-label" x={6} y={H - 5}>
-        {d.size}×{fmtDim(d.pitch)} · {modelled ? `thread modelled, −${fmtDim(clearance)}` : "thread cosmetic"}
+        {d.size}×{fmtDim(d.pitch)} · {modelled ? `thread included, −${fmtDim(clearance)}` : "no thread"}
       </text>
     </svg>
   );

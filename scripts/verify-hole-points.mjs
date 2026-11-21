@@ -100,7 +100,7 @@ check(
   await dialog.locator(".ed-derived", { hasText: "Hole Ø" }).textContent(),
 );
 await fitSel.selectOption("normal");
-const modelHole = dialog.locator(".ed-field", { hasText: "Model the thread" }).locator("input");
+const modelHole = dialog.locator(".ed-field", { hasText: "Include thread" }).locator("input");
 await typeSel.selectOption("tapped");
 await page.waitForTimeout(300);
 check(

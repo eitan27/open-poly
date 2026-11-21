@@ -162,7 +162,7 @@ for (const h of ["Button", "Countersunk", "Hex", "Set screw", "No head", "Socket
   await dialog.screenshot({ path: path.join(SHOTS, `screw-dialog-${h.toLowerCase()}.png`) });
 }
 await shot("ghost");
-const modelThread = dialog.locator(".ed-field", { hasText: "Model the thread" }).locator("input");
+const modelThread = dialog.locator(".ed-field", { hasText: "Include thread" }).locator("input");
 check("cosmetic by default: no clearance", (await dialog.locator(".ed-field", { hasText: "Clearance" }).count()) === 0);
 await modelThread.check();
 await page.waitForTimeout(300);

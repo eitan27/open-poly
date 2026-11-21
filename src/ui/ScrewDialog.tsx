@@ -195,7 +195,7 @@ export function ScrewDialog({
         className="ed-field ed-flip"
         title="Cut the real ISO thread, to 3D print (stand it on its head). Off: a plain shank, much faster to build."
       >
-        <span>Model the thread</span>
+        <span>Include thread</span>
         <input
           type="checkbox"
           checked={settings.thread === "modelled"}
