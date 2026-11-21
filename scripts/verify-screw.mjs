@@ -51,6 +51,39 @@ for (const thread of ["modelled", "cosmetic"])
   }
 check("every face meshed", unmeshed.length === 0, unmeshed.join("\n"));
 
+// Orientation: a spot on a side face stands upright (head up); one on an
+// opening goes into the face.
+{
+  const side = { bodyId: box, faceName: `${box}/-y` };
+  const up = await op.applySettled({
+    op: "addScrew",
+    at: [{ plane: side, x: 0, y: 0 }],
+    size: "M5",
+    params: { length: 16 },
+  });
+  const into = await op.applySettled({
+    op: "addScrew",
+    at: [{ plane: side, x: 10, y: 0, opening: true }],
+    size: "M5",
+    params: { length: 16 },
+  });
+  const bb = async (id) => (await op.scene()).bodies.find((x) => x.id === id)?.bbox;
+  const u = await bb(up.createdId);
+  const i = await bb(into.createdId);
+  check(
+    "on a side face, upright: 16 down and the head up",
+    u && Math.abs(u.max[2] - u.min[2] - 21) < 0.1,
+    JSON.stringify(u),
+  );
+  check(
+    "on an opening, into the face: along y",
+    i && Math.abs(i.max[1] - i.min[1] - 21) < 0.1 && i.max[1] > -20 + 15,
+    JSON.stringify(i),
+  );
+  await op.applySettled({ op: "delete", featureId: up.createdId });
+  await op.applySettled({ op: "delete", featureId: into.createdId });
+}
+
 const inHole = await op.applySettled({
   op: "addScrew",
   holeId: hole,
@@ -190,6 +223,40 @@ check(
 );
 await page.waitForTimeout(1200);
 await shot("locations");
+// The ghost follows a pick at once, even with a modelled thread: one screw is
+// built, then copied to every location without asking the kernel again.
+await locations.locator(".ed-pick-btn").click(); // stop listening
+await modelThread.check();
+await page.waitForTimeout(4000); // the one modelled screw, built once
+await locations.locator(".ed-pick-btn").click(); // listen again
+{
+  const spot = [-30, 0, 12]; // the plate top's left edge midpoint
+  const p = await op.screenOf(spot);
+  const clip = { x: p.x - 40, y: p.y - 70, width: 80, height: 90 };
+  await page.mouse.move(p.x, p.y, { steps: 4 });
+  await page.waitForTimeout(500);
+  const before = await page.screenshot({ clip });
+  await page.mouse.down();
+  await page.mouse.up();
+  // How long until it shows: poll the spot (a screenshot is ~50 ms itself).
+  const t0 = Date.now();
+  let ms = -1;
+  while (Date.now() - t0 < 4000) {
+    if (!before.equals(await page.screenshot({ clip }))) {
+      ms = Date.now() - t0;
+      break;
+    }
+  }
+  // Rebuilding it in the kernel took 1.4 s here; the copy is ~1 ms, the rest
+  // is drawing it and these screenshots.
+  check(`a modelled ghost appears at a new spot at once (${ms} ms)`, ms >= 0 && ms < 800);
+  await shot("modelled-ghost");
+  check("…three spots now", /Hole 1 \+ 2 spots/.test(await locText()), await locText());
+  await page.mouse.down(); // and off again
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+}
+await modelThread.uncheck();
 await locations.locator(".ed-pick-btn").click(); // stop listening
 const before = (await op.features()).filter((f) => f.type === "screw").length;
 await dialog.locator(".ed-primary").click();

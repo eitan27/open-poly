@@ -3443,7 +3443,13 @@ export function Viewport({
         const source: PlacementSource = placementFrameRef.current
           ? { kind: "fixed" }
           : (tentativeRef.current?.source ?? { kind: "fixed" });
-        onPlacementPickRef.current?.({ uv: sn.uv, world: uvToWorld(pf, sn.uv[0], sn.uv[1]), frame: pf, source });
+        onPlacementPickRef.current?.({
+          uv: sn.uv,
+          world: uvToWorld(pf, sn.uv[0], sn.uv[1]),
+          frame: pf,
+          source,
+          ...(sn.circle ? { rim: true } : {}),
+        });
         return;
       }
       const frame = activeFrameRef.current;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ResolvedFeature, ResolvedFrame, ShapeMeshPayload } from "../kernel/types";
-import { ghostPlacement, moveGhostMesh } from "./ghostMove";
+import { SCREW_TEMPLATE_FRAME, ghostPlacement, moveGhostMesh, screwCopies } from "./ghostMove";
 
 type V3 = [number, number, number];
 const TOP: ResolvedFrame = { origin: [0, 0, 0], uAxis: [1, 0, 0], vAxis: [0, 1, 0], normal: [0, 0, 1] };
@@ -79,5 +79,41 @@ describe("moving a gear's ghost to a new location", () => {
     const f = gear(TOP, [0, 0]) as Extract<ResolvedFeature, { type: "extrude" }>;
     expect(ghostPlacement({ ...f, extent: "upToNext" })).toBeNull();
     expect(ghostPlacement({ ...f, mode: "add" })).toBeNull();
+  });
+});
+
+describe("a screw ghost: one screw copied to each seat", () => {
+  // Local screw points (x, y across; z down the shank), laid out the way the
+  // kernel's meshSolid does: o + x·u + y·(down × u) + z·down.
+  const local: V3[] = [
+    [0, 0, 0],
+    [2, 0, 0],
+    [0, 1, 5],
+    [1, -1, 12],
+  ];
+  const cross3 = (a: V3, b: V3): V3 => [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+  const kernelLaid = (f: ResolvedFrame): number[] => {
+    const down: V3 = [-f.normal[0], -f.normal[1], -f.normal[2]];
+    const e2 = cross3(down, f.uAxis);
+    return local.flatMap(([x, y, z]) => [0, 1, 2].map((k) => f.origin[k] + x * f.uAxis[k] + y * e2[k] + z * down[k]));
+  };
+  const template: ShapeMeshPayload = {
+    name: "s",
+    faces: { vertices: kernelLaid(SCREW_TEMPLATE_FRAME), triangles: [0, 1, 2, 1, 2, 3] },
+    edges: { lines: kernelLaid(SCREW_TEMPLATE_FRAME).slice(0, 6) },
+  };
+  // Into a side face (shank along +y), and upright but flipped (head down).
+  const SIDE: ResolvedFrame = { origin: [5, -15, 7], uAxis: [1, 0, 0], vAxis: [0, 0, -1], normal: [0, -1, 0] };
+  const DOWN: ResolvedFrame = { origin: [10, 0, 3], uAxis: [1, 0, 0], vAxis: [0, -1, 0], normal: [0, 0, -1] };
+
+  it("puts each copy exactly where the kernel would build it", () => {
+    const m = screwCopies(template, [SIDE, DOWN]);
+    close(m.faces.vertices, [...kernelLaid(SIDE), ...kernelLaid(DOWN)]);
+    close(m.edges.lines, [...kernelLaid(SIDE).slice(0, 6), ...kernelLaid(DOWN).slice(0, 6)]);
+    expect(Array.from(m.faces.triangles)).toEqual([0, 1, 2, 1, 2, 3, 4, 5, 6, 5, 6, 7]);
   });
 });

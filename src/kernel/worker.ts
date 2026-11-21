@@ -4687,12 +4687,63 @@ function sharedNamed(src: NamedShape): NamedShape {
   return { shape, names: new Map(src.names) };
 }
 
-/** The screws of a feature, as one shape. The first is ONE mesh — head,
- *  socket and thread stitched together in JS (geom/screwMesh.ts) and made a
- *  solid in a single pass, no booleans; the rest are copies of it. */
+/** One screw of each shape, built once at the origin pointing down −Z (u
+ *  along +X), by its shape alone: wherever its copies go, they are moved
+ *  copies of it. A modelled thread is thousands of facets — building it is
+ *  the seconds; moving it is nothing — so a new location, in the dialog or
+ *  an edit, never rebuilds one. A few recent shapes are kept. */
+const screwTemplates = new Map<string, NamedShape>();
+const SCREW_TEMPLATE_ID = "@screw";
+
+function screwTemplate(feature: Extract<ResolvedFeature, { type: "screw" }>): NamedShape {
+  const { profile, hexHead, socket, thread } = feature;
+  const key = JSON.stringify({ profile, hexHead, socket, thread });
+  let t = screwTemplates.get(key);
+  if (t) {
+    // Most recent last.
+    screwTemplates.delete(key);
+  } else {
+    t = meshSolid(screwMesh({ profile, hexHead, socket, thread }), [0, 0, 0], [0, 0, -1], [1, 0, 0], SCREW_TEMPLATE_ID);
+    while (screwTemplates.size >= 6) screwTemplates.delete(screwTemplates.keys().next().value!);
+  }
+  screwTemplates.set(key, t);
+  return t;
+}
+
+/** `src` moved rigidly — sharing its topology, as translatedNamed — so the
+ *  origin goes to `o` and the template's axes (+X, −Z) to `u` and `down`;
+ *  its face names re-prefixed `from` → `to`. */
+function placedNamed(src: NamedShape, o: V3, down: V3, u: V3, from: string, to: string): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const byIndex = src.shape.faces.map((f) => src.names.get(f.hashCode));
+  // Template basis (as meshSolid lays it out): X, down×X = −Y, down = −Z.
+  // Each maps to u, down×u, down, so the rotation's columns are where +X,
+  // +Y, +Z go: u, −(down×u), −down. SetValues takes it row by row.
+  const e2 = vcross(down, u);
+  const row = (j: number): V3 => [u[j], -e2[j], -down[j]];
+  const [r0, r1, r2] = [row(0), row(1), row(2)];
+  const trsf = new oc.gp_Trsf_1();
+  trsf.SetValues(r0[0], r0[1], r0[2], o[0], r1[0], r1[1], r1[2], o[1], r2[0], r2[1], r2[2], o[2]);
+  const loc = new oc.TopLoc_Location_2(trsf);
+  const shape = cast(src.shape.wrapped.Moved(loc, false)) as Shape3D;
+  loc.delete();
+  trsf.delete();
+  const names = new Map<number, string>();
+  shape.faces.forEach((f, i) => {
+    const nm = byIndex[i];
+    if (nm) names.set(f.hashCode, nm.startsWith(from) ? to + nm.slice(from.length) : nm);
+  });
+  return { shape, names };
+}
+
+/** The screws of a feature, as one shape: each a moved copy of the one
+ *  screw of its shape (screwTemplate) — ONE mesh, head, socket and thread
+ *  stitched together in JS (geom/screwMesh.ts) and made a solid in a single
+ *  pass, no booleans. */
 function screwBody(feature: Extract<ResolvedFeature, { type: "screw" }>): NamedShape {
-  // Into the plane against its normal, like a hole; Flip reverses. In a
-  // hole whose targets span planes, each screw takes its own hole's frame.
+  // Into the plane against its normal, like a hole; Flip reverses. Screws in
+  // more than one place each take their own frame.
   const sg = feature.flip ? 1 : -1;
   const frameAt = (i: number) => feature.frames?.[i] ?? feature.frame;
   const downAt = (i: number): V3 => {
@@ -4700,23 +4751,10 @@ function screwBody(feature: Extract<ResolvedFeature, { type: "screw" }>): NamedS
     return [n[0] * sg, n[1] * sg, n[2] * sg];
   };
   const idOf = (i: number) => (feature.centers.length > 1 ? `${feature.id}/n${i}` : feature.id);
-  const o0 = framePoint(frameAt(0), ...feature.centers[0]);
-  const id0 = idOf(0);
-  const mesh = screwMesh({
-    profile: feature.profile,
-    hexHead: feature.hexHead,
-    socket: feature.socket,
-    thread: feature.thread,
-  });
-  const first = meshSolid(mesh, o0, downAt(0), frameAt(0).uAxis, id0);
-  const screws = feature.centers.map(([cu, cv], i) => {
-    if (i === 0) return first;
-    const o = framePoint(frameAt(i), cu, cv);
-    // Same orientation: a moved copy of the first (cheap); else placed anew.
-    if (sameAxes(frameAt(i), frameAt(0)))
-      return translatedNamed(first, [o[0] - o0[0], o[1] - o0[1], o[2] - o0[2]], id0, idOf(i));
-    return meshSolid(mesh, o, downAt(i), frameAt(i).uAxis, idOf(i));
-  });
+  const template = screwTemplate(feature);
+  const screws = feature.centers.map(([cu, cv], i) =>
+    placedNamed(template, framePoint(frameAt(i), cu, cv), downAt(i), frameAt(i).uAxis, SCREW_TEMPLATE_ID, idOf(i)),
+  );
   return screws.length === 1 ? screws[0] : compoundOf(screws);
 }
 

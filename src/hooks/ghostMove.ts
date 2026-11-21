@@ -98,3 +98,52 @@ export function moveGhostMesh(mesh: ShapeMeshPayload, from: GhostPlacement, to: 
     edges: { ...mesh.edges, lines: point(mesh.edges.lines) },
   };
 }
+
+/** Where a screw ghost's one screw is built: at the world origin, upright
+ *  (pointing down −Z, u along +X) — the same wherever its copies go, so the
+ *  kernel builds (and caches) it by its shape alone. */
+export const SCREW_TEMPLATE_FRAME: ResolvedFrame = {
+  origin: [0, 0, 0],
+  uAxis: [1, 0, 0],
+  vAxis: [0, 1, 0],
+  normal: [0, 0, 1],
+};
+
+/** One screw built at SCREW_TEMPLATE_FRAME, copied to each seat: the seat's
+ *  origin, its shank going against its normal, u along its u — exactly how
+ *  the kernel lays a screw out (a rotation, never a mirror: the thread keeps
+ *  its hand). The copies are one mesh, as the built feature's would be. */
+export function screwCopies(template: ShapeMeshPayload, seats: ResolvedFrame[]): ShapeMeshPayload {
+  const tv = template.faces.vertices;
+  const tn = template.faces.normals;
+  const tt = template.faces.triangles;
+  const tl = template.edges.lines;
+  const nv = tv.length / 3;
+  const vertices = new Float32Array(tv.length * seats.length);
+  const normals = tn ? new Float32Array(tn.length * seats.length) : undefined;
+  const triangles = new Uint32Array(tt.length * seats.length);
+  const lines = new Float32Array(tl.length * seats.length);
+  seats.forEach((s, k) => {
+    const down: V3 = [-s.normal[0], -s.normal[1], -s.normal[2]];
+    const u = s.uAxis;
+    const e2 = cross(down, u);
+    // Template world (x, −y, −z) is local (x, y, z): see the kernel's meshSolid.
+    const map = (src: ArrayLike<number>, out: Float32Array, at: number, o: V3 | null) => {
+      for (let i = 0; i < src.length; i += 3) {
+        const x = src[i];
+        const y = -src[i + 1];
+        const z = -src[i + 2];
+        for (let j = 0; j < 3; j++) out[at + i + j] = (o ? o[j] : 0) + x * u[j] + y * e2[j] + z * down[j];
+      }
+    };
+    map(tv, vertices, k * tv.length, s.origin);
+    if (tn && normals) map(tn, normals, k * tn.length, null);
+    map(tl, lines, k * tl.length, s.origin);
+    for (let i = 0; i < tt.length; i++) triangles[k * tt.length + i] = tt[i] + k * nv;
+  });
+  return {
+    name: template.name,
+    faces: { vertices, triangles, ...(normals ? { normals } : {}) },
+    edges: { lines },
+  };
+}

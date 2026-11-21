@@ -129,7 +129,7 @@ describe("resolve", () => {
     expect(doc.features.at(-1)).not.toHaveProperty("points");
   });
 
-  it("at picked spots: a fixed spot on a face, and a sketch point it follows", () => {
+  it("at picked spots: a fixed spot on a face, and a sketch point it follows — upright, head up", () => {
     const FACE: SketchPlaneRef = {
       kind: "face",
       featureId: "body",
@@ -149,8 +149,11 @@ describe("resolve", () => {
       [3, -15, 5],
       [20, 0, 0],
     ]);
-    // Head on the face, shank going in: the seat points out along the face's normal.
-    expect(rf.frames![0].normal).toEqual([0, -1, 0]);
+    // A side face's spot still stands upright, head up.
+    expect(rf.frames!.map((f) => f.normal)).toEqual([
+      [0, 0, 1],
+      [0, 0, 1],
+    ]);
     const moved = {
       ...doc,
       features: doc.features.map((f) =>
@@ -160,6 +163,23 @@ describe("resolve", () => {
       ),
     } as Document;
     expect(origins(resolveDocument(moved).features.find((x) => x.id === id) as Seated)[1]).toEqual([30, 5, 0]);
+  });
+
+  it("a spot picked on an opening goes into it, along its face's normal", () => {
+    const FACE: SketchPlaneRef = {
+      kind: "face",
+      featureId: "body",
+      frame: { origin: [0, -15, 7], uAxis: [1, 0, 0], vAxis: [0, 0, 1], normal: [0, -1, 0] },
+    };
+    const { doc, id } = addScrew(createDocument(), screw({ points: [{ uv: [3, -2], plane: FACE, opening: true }] }));
+    const rf = resolveDocument(doc).features.find((x) => x.id === id) as Seated;
+    expect(origins(rf)).toEqual([[3, -15, 5]]);
+    // Head outside, shank going in (+y): the seat points out, along −y.
+    expect(rf.frame.normal).toEqual([0, -1, 0]);
+    const flipped = resolveDocument(
+      updateScrew(doc, id, { ...screw({ points: [{ uv: [3, -2], plane: FACE, opening: true }] }), flip: true }),
+    );
+    expect((flipped.features.find((x) => x.id === id) as Seated).frame.normal.map((x) => x + 0)).toEqual([0, 1, 0]);
   });
 
   it("in a hole and at spots together; Flip turns the spots, a hole's own flip its screws", () => {

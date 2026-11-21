@@ -70,7 +70,7 @@ import type {
   ExtrudeProfile,
   FaceRef,
   Feature,
-  HolePointRef,
+  ScrewPointRef,
   PatternAxisRef,
   PatternDirRef,
   PointRef,
@@ -1326,7 +1326,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           const h = requireFeature(doc, op.holeId);
           if (h.type !== "hole") throw new OpError("invalid_op", "addScrew: holeId must name a Hole feature.");
         }
-        const points: HolePointRef[] = [];
+        const points: ScrewPointRef[] = [];
         if (op.sketchId) {
           const sk = requireSketch(doc, op.sketchId);
           const pts = defaultHolePoints(sk).map((p) => ({ ...p, sketchId: sk.id }));
@@ -1336,7 +1336,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         }
         for (const a of op.at ?? []) {
           const plane: SketchPlaneRef = a.plane ? resolvePlaneRef(ctx, a.plane) : { kind: "datum", id: "plane-top" };
-          points.push({ uv: [a.x, a.y], plane });
+          points.push({ uv: [a.x, a.y], plane, ...(a.opening ? { opening: true } : {}) });
         }
         if (op.size && !isMetricSize(op.size)) {
           throw new OpError("invalid_op", `addScrew: unknown size "${op.size}" — use ${METRIC_SIZES.join(", ")}.`);

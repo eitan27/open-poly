@@ -324,9 +324,11 @@ frame count that shows the motion you care about.
   hole, at the hole's metric size, seated on the counterbore floor (or flush
   in the countersink), following the hole; `sketchId` — one at every point
   and circle centre, following them; `at: [{plane, x, y}]` — fixed spots on a
-  datum, reference plane or planar face. The head sits on the face or plane
-  and the shank goes in against its normal (`flip` reverses). With none, one
-  screw at Top's origin. Deleting the Hole leaves its screws where they are.
+  datum, reference plane or planar face. A loose screw (sketch point or `at`
+  spot) stands upright, head up (+Z), seated at the spot; give
+  `opening: true` on an `at` spot that is a hole's centre to point it into
+  the face instead. Screws in a Hole go into their holes. `flip` reverses
+  them all. With no location, one screw at Top's origin. Deleting the Hole leaves its screws where they are.
   The thread is cosmetic by default (a plain shank — quick, and right for a
   bought screw in a CAD model). `thread: "modelled"` gives a real ISO helix
   with a lead-in chamfer, shrunk by `params.clearance` (default 0.1 mm); in a

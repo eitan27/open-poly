@@ -3,15 +3,18 @@
 // so the ghost shows at once; its Locations slot then takes viewport picks
 // (App's onScrewPlacementPick) the way a Hole's Targets do. A NEW screw is
 // ghosted by a debounced throwaway regenerate, an EDIT applies live.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { addScrew, resolveDocument, updateScrew } from "../document/document";
 import { DEFAULT_SCREW_SETTINGS, screwSize, type ScrewSettings } from "../document/screw";
 import type { SketchPlaneRef } from "../document/planes";
-import type { Document, Feature, HolePointRef, ScrewFeature } from "../document/types";
+import type { Document, Feature, ScrewFeature } from "../document/types";
 import type { KernelClient } from "../kernel/KernelClient";
 import type { ShapeMeshPayload } from "../kernel/types";
+import { SCREW_TEMPLATE_FRAME, screwCopies } from "./ghostMove";
 
 const PREVIEW_DEBOUNCE_MS = 120;
+/** The ghost's one screw, built under this id whatever the draft's is. */
+const GHOST_ID = "screw-ghost";
 
 export interface ScrewDialogState {
   settings: ScrewSettings;
@@ -113,7 +116,7 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
         settings: {
           ...settings,
           ...(loc.holeId ? { holeId: loc.holeId } : {}),
-          ...(loc.points?.length ? { points: loc.points as HolePointRef[] } : {}),
+          ...(loc.points?.length ? { points: loc.points } : {}),
         },
       };
     });
@@ -124,6 +127,15 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
 
   const settings = dialog?.settings;
   const creating = !!dialog && !dialog.editId;
+  // The ghost: ONE screw of this shape, built where it doesn't depend on the
+  // locations (SCREW_TEMPLATE_FRAME), copied to every seat here in JS. A new
+  // location — a pick, a removed spot, Flip — just copies it again, at once;
+  // only a change of shape (head, size, length, thread) asks the kernel, and
+  // the kernel keeps each shape it has built too.
+  const templateRef = useRef<{ sig: string; mesh: ShapeMeshPayload } | null>(null);
+  /** The shape being built, so a pick while it builds waits for it rather
+   *  than dropping it and asking again. */
+  const pendingRef = useRef<{ sig: string; mesh: Promise<ShapeMeshPayload> } | null>(null);
   useEffect(() => {
     if (!creating || !settings) {
       setPreview(null);
@@ -132,34 +144,69 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
     }
     const kernel = kernelRef.current;
     if (!ready || !kernel) return;
+    const { doc: previewDoc, id } = addScrew(doc, settings);
+    const resolved = resolveDocument(previewDoc);
+    const err = resolved.errors[id];
+    const rf = resolved.features.find((f) => f.id === id);
+    if (err || rf?.type !== "screw") {
+      setPreview(null);
+      setPreviewError(err ?? "Preview failed.");
+      return;
+    }
+    const seats = rf.frames ?? [rf.frame];
+    // Under a fixed id: the draft's is new every time, and would make every
+    // template look different.
+    const template = {
+      ...rf,
+      id: GHOST_ID,
+      frame: SCREW_TEMPLATE_FRAME,
+      centers: [[0, 0]] as [number, number][],
+      frames: undefined,
+    };
+    const sig = JSON.stringify(template);
+    const have = templateRef.current;
+    if (have?.sig === sig) {
+      setPreview(screwCopies(have.mesh, seats));
+      setPreviewError(null);
+      return;
+    }
     let cancelled = false;
-    const timer = setTimeout(() => {
-      const { doc: previewDoc, id } = addScrew(doc, settings);
-      const resolved = resolveDocument(previewDoc);
-      const err = resolved.errors[id];
-      if (err) {
-        setPreview(null);
-        setPreviewError(err);
-        return;
-      }
-      kernel
-        .regenerate(resolved.features)
-        .then(({ results }) => {
+    const show = (mesh: Promise<ShapeMeshPayload>) =>
+      mesh.then(
+        (m) => {
           if (cancelled) return;
-          const hit = results.find((r) => r.id === id);
-          if (hit?.ok) {
-            setPreview(hit.mesh);
-            setPreviewError(null);
-          } else {
-            setPreview(null);
-            setPreviewError(hit && !hit.ok ? hit.error : "Preview failed.");
-          }
-        })
-        .catch((e) => {
+          setPreview(screwCopies(m, seats));
+          setPreviewError(null);
+        },
+        (e) => {
           if (cancelled) return;
           setPreview(null);
           setPreviewError(String(e?.message ?? e));
-        });
+        },
+      );
+    const pending = pendingRef.current;
+    if (pending?.sig === sig) {
+      show(pending.mesh);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const timer = setTimeout(() => {
+      const mesh = kernel.regenerate(resolved.features.map((f) => (f.id === id ? template : f))).then(({ results }) => {
+        const hit = results.find((r) => r.id === GHOST_ID);
+        if (!hit?.ok) throw new Error(hit && !hit.ok ? hit.error : "Preview failed.");
+        // Kept even if the dialog has moved on: a later pick of the same
+        // shape copies it.
+        templateRef.current = { sig, mesh: hit.mesh };
+        return hit.mesh;
+      });
+      pendingRef.current = { sig, mesh };
+      mesh
+        .finally(() => {
+          if (pendingRef.current?.mesh === mesh) pendingRef.current = null;
+        })
+        .catch(() => {});
+      show(mesh);
     }, PREVIEW_DEBOUNCE_MS);
     return () => {
       cancelled = true;

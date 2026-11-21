@@ -565,10 +565,15 @@ export const operationSchema = z.discriminatedUnion("op", [
      *  plane, following the points as they move. */
     sketchId: z.string().optional(),
     /** A screw at each fixed spot: (x, y) on `plane` (a datum, reference
-     *  plane or planar face; default Top). The head sits on the plane, shank
-     *  going in against its normal (flip reverses). Combine freely with
-     *  holeId / sketchId; with none of them, one screw at Top's origin. */
-    at: z.array(z.object({ plane: planeRefSchema.optional(), x: z.number(), y: z.number() })).optional(),
+     *  plane or planar face; default Top). It stands upright, head up (+Z);
+     *  `opening: true` (the spot is a hole's centre on that face) points it
+     *  into the face along its normal instead. Combine freely with holeId /
+     *  sketchId; with none of them, one screw at Top's origin. Flip reverses. */
+    at: z
+      .array(
+        z.object({ plane: planeRefSchema.optional(), x: z.number(), y: z.number(), opening: z.boolean().optional() }),
+      )
+      .optional(),
     flip: z.boolean().optional(),
     /** length (under the head; overall for a countersunk head), clearance. */
     params: z.record(z.string(), expr).optional(),

@@ -114,6 +114,7 @@ import type {
   SketchConstraint,
   SketchEntity,
   ScrewFeature,
+  ScrewPointRef,
   SketchFeature,
   Vec2,
 } from "./document/types";
@@ -3737,8 +3738,8 @@ export default function App() {
   /** The Screw dialog's Locations, picked in the viewport, as a Hole's
    *  targets are: a click on one of a Hole's holes (its centre — the rim's
    *  snap) puts a screw in each of that Hole's holes, or takes them out again;
-   *  a click anywhere else adds a spot there, or removes the one already
-   *  there. */
+   *  a click anywhere else adds a spot there — into it, when it's an opening
+   *  (a rim), else upright — or removes the one already there. */
   const onScrewPlacementPick = (pick: PlacementPick) => {
     const d = screw.dialog;
     if (!d) return;
@@ -3768,13 +3769,17 @@ export default function App() {
     });
     if (at >= 0) return screw.setLocations({ holeId: d.settings.holeId, points: points.filter((_, i) => i !== at) });
     const t = placementTarget(pick);
-    if (t) screw.setLocations({ holeId: d.settings.holeId, points: [...points, t.ref] });
+    if (t)
+      screw.setLocations({
+        holeId: d.settings.holeId,
+        points: [...points, pick.rim ? { ...t.ref, opening: true } : t.ref],
+      });
   };
-  /** A plane picked for a screw: one on its origin (or off again). */
+  /** A plane picked for a screw: one upright on its origin (or off again). */
   const onScrewPlanePick = (plane: SketchPlaneRef) => {
     const d = screw.dialog;
     if (!d) return;
-    const ref: HolePointRef = { uv: [0, 0], plane };
+    const ref: ScrewPointRef = { uv: [0, 0], plane };
     const points = d.settings.points ?? [];
     const kept = points.filter((p) => !sameHolePoint(p, ref));
     screw.setLocations({ holeId: d.settings.holeId, points: kept.length < points.length ? kept : [...points, ref] });
