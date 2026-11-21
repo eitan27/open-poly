@@ -324,10 +324,9 @@ frame count that shows the motion you care about.
   hole, at the hole's metric size, seated on the counterbore floor (or flush
   in the countersink), following the hole; `sketchId` — one at every point
   and circle centre, following them; `at: [{plane, x, y}]` — fixed spots on a
-  datum, reference plane or planar face. A loose screw (sketch point or `at`
-  spot) stands upright, head up (+Z), seated at the spot; give
-  `opening: true` on an `at` spot that is a hole's centre to point it into
-  the face instead. Screws in a Hole go into their holes. `flip` reverses
+  datum, reference plane or planar face. Each screw's head sits on its face
+  (or plane, or the point's sketch plane) and its shank goes in against the
+  normal; screws in a Hole go into their holes. `flip` reverses
   them all. With no location, one screw at Top's origin.
   Each screw is its own part (`<id>`, `<id>#1`, … in that order); to remove
   one of them, `delete_part` it — that adds a Delete part step and leaves the

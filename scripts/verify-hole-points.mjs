@@ -29,8 +29,12 @@ await page.keyboard.press("d");
 const dialog = page.locator(".hole-dialog");
 await dialog.waitFor({ timeout: 5000 });
 await page.waitForTimeout(500);
-const loc = dialog.locator(".ed-field", { hasText: "Targets" }).locator(".ed-pick-btn");
-const count = async () => (await loc.textContent())?.trim();
+// The Targets slot (as Extrude's profiles): a row per target, then the button.
+const loc = dialog.locator(".ed-pick-btn", { hasText: /targets/ });
+const count = async () => {
+  const n = await dialog.locator(".hole-targets .bool-operand-row").count();
+  return `${n} ${n === 1 ? "target" : "targets"}`;
+};
 check("opens listening for points", (await loc.getAttribute("class"))?.includes("active"));
 check("no Body dropdown", (await dialog.locator(".ed-field", { hasText: "Body" }).count()) === 0);
 
@@ -192,7 +196,7 @@ await extentSel.selectOption("throughAll");
 await partsSel.selectOption("subset");
 await page.waitForTimeout(200);
 await op.clickWorld([10, 5, 15]);
-check("Subset: a click picks a part", (await dialog.locator(".ed-pick-btn", { hasText: "1 part" }).count()) === 1);
+check("Subset: a click picks a part", (await dialog.locator(".hole-parts .bool-operand-row").count()) === 1);
 await dialog.screenshot({ path: path.join(SHOTS, "hole-dialog-subset.png") });
 await dialog.locator(".ed-primary").click();
 await op.settle();

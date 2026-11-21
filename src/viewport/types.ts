@@ -226,7 +226,4 @@ export interface PlacementPick {
   world: [number, number, number];
   frame: PlaneFrameData;
   source: PlacementSource;
-  /** Snapped onto a circle — a hole's rim, a boss, a sketch circle — and so
-   *  placed at its centre: an opening a screw goes into. */
-  rim?: boolean;
 }

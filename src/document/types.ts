@@ -845,18 +845,12 @@ export interface ScrewParams {
   clearance?: string;
 }
 
-/** Where one loose screw goes: a Hole-style target, and which way it points. */
-export type ScrewPointRef = HolePointRef & {
-  /** Picked on an opening (a hole's rim, a circle): the screw goes in along
-   *  its axis, into it. Otherwise it stands upright, head up (+Z). */
-  opening?: boolean;
-};
-
 /** A metric screw (geom/metricFasteners sizes), built as a body — one per
  *  location: IN each hole of a Hole feature (seated on the counterbore floor /
  *  flush in the countersink, its size following a metric hole's), and at each
- *  picked spot — upright, head up, or into the opening it was picked on (Flip
- *  reverses either). With neither, one screw at the Top plane's origin. The thread is modelled (a real ISO
+ *  picked spot, head on the spot's face (or plane) and shank going in
+ *  against its normal (Flip reverses). With neither, one screw at the Top
+ *  plane's origin. The thread is modelled (a real ISO
  *  helix, see geom/thread.ts) or cosmetic (the shank drawn at the nominal
  *  diameter). */
 export interface ScrewFeature extends FeatureBase {
@@ -874,7 +868,7 @@ export interface ScrewFeature extends FeatureBase {
   skipHoles?: number[];
   /** Spots, a screw each, picked as a Hole's targets are: a sketch point
    *  (followed as it moves) or a fixed spot on a face or plane. */
-  points?: ScrewPointRef[];
+  points?: HolePointRef[];
   flip: boolean;
   params: ScrewParams;
   color: number;

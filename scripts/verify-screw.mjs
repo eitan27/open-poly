@@ -51,36 +51,21 @@ for (const thread of ["modelled", "cosmetic"])
   }
 check("every face meshed", unmeshed.length === 0, unmeshed.join("\n"));
 
-// Orientation: a spot on a side face stands upright (head up); one on an
-// opening goes into the face.
+// Orientation: a spot on a side face goes into that face, head outside.
 {
   const side = { bodyId: box, faceName: `${box}/-y` };
-  const up = await op.applySettled({
+  const into = await op.applySettled({
     op: "addScrew",
     at: [{ plane: side, x: 0, y: 0 }],
     size: "M5",
     params: { length: 16 },
   });
-  const into = await op.applySettled({
-    op: "addScrew",
-    at: [{ plane: side, x: 10, y: 0, opening: true }],
-    size: "M5",
-    params: { length: 16 },
-  });
-  const bb = async (id) => (await op.scene()).bodies.find((x) => x.id === id)?.bbox;
-  const u = await bb(up.createdId);
-  const i = await bb(into.createdId);
+  const i = (await op.scene()).bodies.find((x) => x.id === into.createdId)?.bbox;
   check(
-    "on a side face, upright: 16 down and the head up",
-    u && Math.abs(u.max[2] - u.min[2] - 21) < 0.1,
-    JSON.stringify(u),
-  );
-  check(
-    "on an opening, into the face: along y",
-    i && Math.abs(i.max[1] - i.min[1] - 21) < 0.1 && i.max[1] > -20 + 15,
+    "on a side face: into it, along y (16 in, the 5 mm head outside)",
+    i && Math.abs(i.max[1] - i.min[1] - 21) < 0.1 && Math.abs(i.min[1] + 25) < 0.1,
     JSON.stringify(i),
   );
-  await op.applySettled({ op: "delete", featureId: up.createdId });
   await op.applySettled({ op: "delete", featureId: into.createdId });
 }
 
@@ -189,46 +174,59 @@ await modelThread.uncheck();
 await page.waitForTimeout(300);
 check("cosmetic hides it", (await dialog.locator(".ed-field", { hasText: "Clearance" }).count()) === 0);
 
-// Locations: it opened in the Hole; no centre fields, no in-a-hole / on-a-plane toggle.
-const locations = dialog.locator(".ed-field", { hasText: "Locations" });
-const locText = async () => (await locations.textContent()) ?? "";
-check("Locations names the Hole it opened in", /Hole 1/.test(await locText()), await locText());
+// Locations, as Extrude's profiles: a row per screw with its ✕, and a button
+// below — "Select locations (Esc to stop)" while listening, "Add more
+// locations" after. It opened in the Hole (one hole: one row).
+const rows = dialog.locator(".screw-rows .bool-operand-row");
+const locBtn = dialog.locator(".ed-pick-btn", { hasText: /locations/ });
+const rowTexts = async () => (await rows.allTextContents()).map((t) => t.replace(/✕$/, "").trim());
+check(
+  "a row for the Hole's screw",
+  /^Hole 1 · hole 1$/.test((await rowTexts()).join("|")),
+  (await rowTexts()).join("|"),
+);
+check("…and Add more locations below", /^Add more locations$/.test(((await locBtn.textContent()) ?? "").trim()));
 check("no Center X / Y fields", (await dialog.locator(".ed-field", { hasText: "Center X" }).count()) === 0);
 check("no On a plane button", (await dialog.locator("button", { hasText: "On a plane" }).count()) === 0);
-// ✕: back to the default, listening.
-await locations.locator(".bool-operand-x").click();
+// Its ✕: none left, so the default — whose ✕ starts listening.
+await rows.first().locator(".bool-operand-x").click();
 await page.waitForTimeout(300);
-check("✕ goes back to Top plane (default)", /Top plane \(default\)/.test(await locText()), await locText());
-check("…listening", (await locations.locator(".ed-pick-btn").getAttribute("class")).includes("active"));
+const defaultRow = dialog.locator(".bool-operand-row", { hasText: "Top plane (default)" });
+check("removing the last goes back to Top plane (default)", (await defaultRow.count()) === 1);
+await defaultRow.locator(".bool-operand-x").click();
+await page.waitForTimeout(300);
+check("…whose ✕ starts listening", ((await locBtn.textContent()) ?? "").includes("Select locations (Esc to stop)"));
+check("…the button armed", (await locBtn.getAttribute("class")).includes("active"));
 // A spot: the plate top's back edge midpoint (a face click snaps to the
 // face's centre — here, the hole's — as a Hole's target does).
 await op.clickWorld([0, 19.9, 12]);
 await page.waitForTimeout(400);
-check("a face spot fills it", /face/.test(await locText()), await locText());
-// The hole's centre: the hole's screws join the spot.
+check("a face spot adds a row", /^Box 1 · face$/.test((await rowTexts()).join("|")), (await rowTexts()).join("|"));
+check("…still listening", ((await locBtn.textContent()) ?? "").includes("Esc to stop"));
+// The hole's centre: the hole's screw joins, numbered first.
 await op.clickWorld([0, 0, 12]);
 await page.waitForTimeout(400);
-check("a hole's centre adds the Hole", /Hole 1 \+ /.test(await locText()), await locText());
-// Another, at the front edge's midpoint: two spots now.
+check(
+  "a hole's centre adds its screw, first",
+  (await rowTexts()).join("|") === "1. Hole 1 · hole 1|2. Box 1 · face",
+  (await rowTexts()).join("|"),
+);
+// Another, at the front edge's midpoint.
 await op.clickWorld([0, -19.9, 12]);
 await page.waitForTimeout(400);
-check("…and another spot", /Hole 1 \+ 2 spots/.test(await locText()), await locText());
+check("…and another spot", (await rows.count()) === 3, (await rowTexts()).join("|"));
 // Picking a spot again removes it.
 await op.clickWorld([0, -19.9, 12]);
 await page.waitForTimeout(400);
-check(
-  "picking a spot again removes it",
-  /Hole 1 \+ Block|Hole 1 \+ Box|Hole 1 \+ .*face/.test(await locText()),
-  await locText(),
-);
+check("picking a spot again removes it", (await rows.count()) === 2, (await rowTexts()).join("|"));
 await page.waitForTimeout(1200);
 await shot("locations");
 // The ghost follows a pick at once, even with a modelled thread: one screw is
 // built, then copied to every location without asking the kernel again.
-await locations.locator(".ed-pick-btn").click(); // stop listening
+await locBtn.click(); // stop listening
 await modelThread.check();
 await page.waitForTimeout(4000); // the one modelled screw, built once
-await locations.locator(".ed-pick-btn").click(); // listen again
+await locBtn.click(); // listen again
 {
   const spot = [-30, 0, 12]; // the plate top's left edge midpoint
   const p = await op.screenOf(spot);
@@ -251,15 +249,13 @@ await locations.locator(".ed-pick-btn").click(); // listen again
   // is drawing it and these screenshots.
   check(`a modelled ghost appears at a new spot at once (${ms} ms)`, ms >= 0 && ms < 800);
   await shot("modelled-ghost");
-  check("…three spots now", /Hole 1 \+ 2 spots/.test(await locText()), await locText());
+  check("…three screws now", (await rows.count()) === 3, (await rowTexts()).join("|"));
   await page.mouse.down(); // and off again
   await page.mouse.up();
   await page.waitForTimeout(200);
 }
 await modelThread.uncheck();
-await locations.locator(".ed-pick-btn").click(); // stop listening
-// A row per screw, each with its own ✕.
-const rows = dialog.locator(".screw-rows .bool-operand-row");
+await locBtn.click(); // stop listening
 check("a row per screw", (await rows.count()) === 2, String(await rows.count()));
 check("…numbered, the Hole's first", /^1\. Hole 1 · hole 1/.test((await rows.first().textContent()) ?? ""));
 // Hovering a row lights its screw (the spot at the back edge's midpoint).

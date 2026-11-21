@@ -114,8 +114,6 @@ import type {
   RevolveProfile,
   SketchConstraint,
   SketchEntity,
-  ScrewFeature,
-  ScrewPointRef,
   SketchFeature,
   Vec2,
 } from "./document/types";
@@ -465,18 +463,6 @@ function gearLocationLabel(plane: SketchPlaneRef, center: HolePointRef | undefin
     return `${sk?.name ?? "Sketch"} · ${center.at === "point" ? "point" : center.at}`;
   }
   return mirrorPlaneLabel(center && "uv" in center && center.plane ? center.plane : plane, doc);
-}
-
-/** Where a screw's screws go, as its Locations slot names them: the Hole
- *  they're in, then the one spot (named as a gear's Location is) or how
- *  many; with neither, the Top plane. */
-function screwLocationLabel(s: Pick<ScrewFeature, "holeId" | "points">, doc: Document): string {
-  const parts: string[] = [];
-  if (s.holeId) parts.push(doc.features.find((f) => f.id === s.holeId)?.name ?? "Hole");
-  const pts = s.points ?? [];
-  if (pts.length === 1) parts.push(gearLocationLabel({ kind: "datum", id: "plane-top" }, pts[0], doc));
-  else if (pts.length > 1) parts.push(`${pts.length} spots`);
-  return parts.join(" + ") || "Top plane";
 }
 
 /** A `"datum:<id>"` / `"plane:<featureId>"` dropdown key as a plane reference.
@@ -3758,8 +3744,9 @@ export default function App() {
    *  targets are: a click on one of a Hole's holes (its centre — the rim's
    *  snap) puts a screw in each of that Hole's holes — or, in the Hole it's
    *  already in, takes that one hole's screw out or puts it back; a click
-   *  anywhere else adds a spot there — into it, when it's an opening (a rim),
-   *  else upright — or removes the one already there. */
+   *  anywhere else adds a spot there — going into the face (or plane) it was
+   *  picked on, the way the cursor shows it — or removes the one already
+   *  there. */
   const onScrewPlacementPick = (pick: PlacementPick) => {
     const d = screw.dialog;
     if (!d) return;
@@ -3797,14 +3784,14 @@ export default function App() {
       screw.setLocations({
         holeId,
         skipHoles,
-        points: [...points, pick.rim ? { ...t.ref, opening: true } : t.ref],
+        points: [...points, t.ref],
       });
   };
-  /** A plane picked for a screw: one upright on its origin (or off again). */
+  /** A plane picked for a screw: one on its origin (or off again). */
   const onScrewPlanePick = (plane: SketchPlaneRef) => {
     const d = screw.dialog;
     if (!d) return;
-    const ref: ScrewPointRef = { uv: [0, 0], plane };
+    const ref: HolePointRef = { uv: [0, 0], plane };
     const points = d.settings.points ?? [];
     const kept = points.filter((p) => !sameHolePoint(p, ref));
     screw.setLocations({ ...d.settings, points: kept.length < points.length ? kept : [...points, ref] });
@@ -9000,7 +8987,11 @@ export default function App() {
                     dims={dims ?? lastHoleDims.current}
                     error={error?.replace(/^hole: /, "") ?? null}
                     onArm={hole.setArmed}
-                    onClearPoints={hole.clearPoints}
+                    targetLabels={(d.settings.points ?? []).map((p) =>
+                      gearLocationLabel({ kind: "datum", id: "plane-top" }, p, doc),
+                    )}
+                    onRemoveTarget={(i) => hole.setPoints((d.settings.points ?? []).filter((_, k) => k !== i))}
+                    onRemovePart={hole.togglePart}
                     onAllParts={hole.allParts}
                     onChange={hole.update}
                     onParam={hole.updateParam}
@@ -9061,7 +9052,6 @@ export default function App() {
                     editing={!!d.editId}
                     settings={d.settings}
                     effectiveSize={size}
-                    locationLabel={screwLocationLabel(d.settings, doc)}
                     defaultLocation={!d.settings.holeId && !d.settings.points?.length}
                     locating={d.locating}
                     holeName={doc.features.find((f) => f.id === d.settings.holeId)?.name}

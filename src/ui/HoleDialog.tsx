@@ -10,7 +10,7 @@ import {
   type MetricSize,
 } from "../geom/metricFasteners";
 import { DraggableDialog } from "./DraggableDialog";
-import { PickButton } from "./PickSlot";
+import { PickButton, PickedRow } from "./PickSlot";
 import { ExprInput } from "./ExprInput";
 import { HoleDiagram } from "./diagram/HoleDiagram";
 import "./GearDialog.css";
@@ -33,7 +33,10 @@ interface Props {
   dims: HoleDims | null;
   error: string | null;
   onArm: (slot: "points" | "parts" | null) => void;
-  onClearPoints: () => void;
+  /** Each target's name, in order. */
+  targetLabels: string[];
+  onRemoveTarget: (index: number) => void;
+  onRemovePart: (id: string) => void;
   onAllParts: () => void;
   onChange: (patch: Partial<HoleSettings>) => void;
   onParam: (name: keyof HoleParams, value: string) => void;
@@ -73,7 +76,9 @@ export function HoleDialog({
   dims,
   error,
   onArm,
-  onClearPoints,
+  targetLabels,
+  onRemoveTarget,
+  onRemovePart,
   onAllParts,
   onChange,
   onParam,
@@ -172,23 +177,32 @@ export function HoleDialog({
 
       {dims && <HoleDiagram dims={dims} size={settings.size} active={focused ?? hovered} onPick={pick} />}
 
-      <div className="ed-field" title="Where the holes go: points, faces (their centre) or sketch entities">
-        <span>Targets</span>
-        <span className="hole-location">
-          <PickButton
-            noun="targets"
-            armed={armed === "points"}
-            onClick={() => onArm(armed === "points" ? null : "points")}
-          >
-            {nPoints ? `${nPoints} ${nPoints === 1 ? "target" : "targets"}` : "Select…"}
-          </PickButton>
-          {nPoints > 0 && (
-            <button type="button" className="bool-operand-x" title="Clear the targets" onClick={onClearPoints}>
-              ✕
-            </button>
-          )}
-        </span>
+      {/* Targets: an accumulating slot, as Extrude's profiles (see PickSlot.tsx)
+          — one row per target with its ✕, and a button that keeps the slot
+          listening for more. Clicking a listed target in the viewport removes
+          it. */}
+      <div className="bool-group-label" title="Where the holes go: points, faces (their centre) or sketch entities">
+        Targets
       </div>
+      <div className="hole-targets">
+        {targetLabels.map((label, i) => (
+          <PickedRow
+            key={i}
+            label={targetLabels.length > 1 ? `${i + 1}. ${label}` : label}
+            title={label}
+            clearTitle="Remove"
+            onClear={() => onRemoveTarget(i)}
+          />
+        ))}
+      </div>
+      <PickButton
+        noun="targets"
+        armed={armed === "points"}
+        wide
+        onClick={() => onArm(armed === "points" ? null : "points")}
+      >
+        {armed === "points" ? "Select targets (Esc to stop)" : nPoints ? "Add more targets" : undefined}
+      </PickButton>
       {armed === "points" && (
         <p className="ed-hint">
           {nPoints === 0
@@ -215,24 +229,28 @@ export function HoleDialog({
           <option value="subset">Subset</option>
         </select>
       </label>
+      {/* The parts to cut: the same accumulating slot. */}
       {subset && (
-        <div className="ed-field" title="Select the parts to cut; select one again to drop it">
-          <span />
-          <span className="hole-location">
-            <PickButton
-              noun="parts"
-              armed={armed === "parts"}
-              onClick={() => onArm(armed === "parts" ? null : "parts")}
-            >
-              {nParts ? `${nParts} ${nParts === 1 ? "part" : "parts"}` : "Select…"}
-            </PickButton>
-          </span>
+        <div className="hole-parts">
+          {(settings.scope ?? []).map((id) => (
+            <PickedRow
+              key={id}
+              label={partOptions.find((o) => o.id === id)?.name ?? id}
+              clearTitle="Remove"
+              onClear={() => onRemovePart(id)}
+            />
+          ))}
         </div>
       )}
-      {subset && nParts > 0 && (
-        <p className="ed-hint">
-          Cuts only {(settings.scope ?? []).map((id) => partOptions.find((o) => o.id === id)?.name ?? id).join(", ")}.
-        </p>
+      {subset && (
+        <PickButton
+          noun="parts"
+          armed={armed === "parts"}
+          wide
+          onClick={() => onArm(armed === "parts" ? null : "parts")}
+        >
+          {armed === "parts" ? "Select parts (Esc to stop)" : nParts ? "Add more parts" : undefined}
+        </PickButton>
       )}
 
       <label

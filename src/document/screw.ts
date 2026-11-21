@@ -11,10 +11,10 @@ import { holeDims, holePlacement, holeTarget } from "./hole";
 import type {
   Document,
   HoleFeature,
+  HolePointRef,
   ScrewFeature,
   ScrewHead,
   ScrewParams,
-  ScrewPointRef,
   SketchFeature,
 } from "./types";
 import { METRIC, isMetricSize, type MetricSize } from "../geom/metricFasteners";
@@ -266,13 +266,10 @@ function seatAt(frame: PlaneFrameData, [u, v]: [number, number], along: boolean,
   return offsetFrame({ ...f, origin: [w[0], w[1], w[2]] }, -depth);
 }
 
-/** Upright: the world's XY plane, head up (+Z). */
-const UPRIGHT: PlaneFrameData = { origin: [0, 0, 0], uAxis: [1, 0, 0], vAxis: [0, 1, 0], normal: [0, 0, 1] };
-
 /** Where each of a screw's screws sits: one per hole of its Hole (seated as
- *  that hole is, going in along it), then one per picked spot — upright,
- *  head up, or into the opening it was picked on — or, with neither, one
- *  upright at the Top plane's origin. Spots on top of each other count once. Throws a
+ *  that hole is, going in along it), then one per picked spot, going into
+ *  the face or plane it was picked on — or, with neither, one at the Top
+ *  plane's origin. Spots on top of each other count once. Throws a
  *  readable "screw: …" message when a location can't be found. */
 export function screwSeats(
   doc: Document,
@@ -313,11 +310,7 @@ export function screwSeats(
         `screw: ${(err as Error).message.replace(/^hole: /, "").replace(/pick its points/, "select it")}`,
       );
     }
-    if (ref.opening) add(seatAt(t.frame, t.center, f.flip, 0));
-    else {
-      const w = uvToWorld(t.frame, t.center[0], t.center[1]);
-      add({ ...(f.flip ? turned(UPRIGHT) : UPRIGHT), origin: [w[0], w[1], w[2]] });
-    }
+    add(seatAt(t.frame, t.center, f.flip, 0));
   }
   if (!f.holeId && !f.points?.length) add(seatAt(frameOf(TOP), [0, 0], f.flip, 0));
   if (!seats.length) throw new Error("screw: every screw is removed — select where they go");
@@ -359,10 +352,9 @@ export function unlinkScrew(
     holeId;
   // Each seat already points its screw the way it goes; a spot is turned
   // over again by the feature's own Flip, so a flipped one is stored turned.
-  const spots: ScrewPointRef[] = seats.map((s) => ({
+  const spots: HolePointRef[] = seats.map((s) => ({
     uv: [0, 0],
     plane: { kind: "face", featureId: host, frame: f.flip ? turned(s) : s },
-    opening: true,
   }));
   const { holeId: _h, skipHoles: _s, ...rest } = f;
   return { ...rest, size: screwSize(doc, f), points: [...spots, ...(f.points ?? [])] };

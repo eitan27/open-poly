@@ -13,8 +13,6 @@ interface Props {
   settings: ScrewSettings;
   /** The size the screw really is — a metric hole's, when it sits in one. */
   effectiveSize: string;
-  /** Where the screws go, as the Locations slot names it. */
-  locationLabel: string;
   /** No location picked: one screw at the Top plane's origin. */
   defaultLocation: boolean;
   /** The slot is listening: viewport picks add or remove locations. */
@@ -46,7 +44,6 @@ export function ScrewDialog({
   editing,
   settings,
   effectiveSize,
-  locationLabel,
   defaultLocation,
   locating,
   holeName,
@@ -127,38 +124,24 @@ export function ScrewDialog({
         />
       )}
 
-      {/* Where: picked like a Hole's targets. A click on a Hole's hole puts a
-          screw in each of its holes (following them); anywhere else on a face,
-          a sketch point or a plane, one screw. Until then: Top's origin. */}
-      <div
-        className="ed-field"
-        title="Where the screws go: a Hole's holes, points or spots on faces, or a plane's origin"
-      >
-        <span>Locations</span>
-        <span className="hole-location">
-          <PickButton noun="locations" armed={locating} onClick={() => onArmLocations(!locating)}>
-            {defaultLocation ? `${locationLabel} (default)` : locationLabel}
-          </PickButton>
-          {!(defaultLocation && locating) && (
-            <button
-              type="button"
-              className="bool-operand-x"
-              title={defaultLocation ? "Select locations" : "Clear the locations"}
-              onClick={onClearLocations}
-            >
-              ✕
-            </button>
-          )}
-        </span>
-      </div>
-      {rows.length > 1 && (
+      {/* Where: an accumulating slot, as Extrude's profiles (see PickSlot.tsx)
+          — one row per screw, each with its ✕, and a button that keeps the
+          slot listening for more. A click on a Hole's hole puts a screw in each
+          of its holes (following them); anywhere else on a face, a sketch
+          point or a plane, one screw, going into it the way the cursor shows.
+          With nothing picked: one on the Top plane's origin, a row whose ✕
+          starts picking. Clicking a placed one in the viewport removes it. */}
+      <div className="bool-group-label">Locations</div>
+      {defaultLocation ? (
+        !locating && <PickedRow label="Top plane (default)" clearTitle="Select locations" onClear={onClearLocations} />
+      ) : (
         <div className="screw-rows" onMouseLeave={() => onHoverRow(null)}>
           {rows.map((r, i) => (
             <div key={r.key} onMouseEnter={() => onHoverRow(i)}>
               <PickedRow
-                label={`${i + 1}. ${r.label}`}
+                label={rows.length > 1 ? `${i + 1}. ${r.label}` : r.label}
                 title={r.label}
-                clearTitle="Remove this screw"
+                clearTitle="Remove"
                 onClear={() => {
                   onHoverRow(null);
                   onRemoveRow(i);
@@ -168,11 +151,14 @@ export function ScrewDialog({
           ))}
         </div>
       )}
+      <PickButton noun="locations" armed={locating} wide onClick={() => onArmLocations(!locating)}>
+        {locating ? "Select locations (Esc to stop)" : defaultLocation ? undefined : "Add more locations"}
+      </PickButton>
       {locating && (
         <p className="ed-hint">
           {defaultLocation
-            ? "Select a hole to put a screw in each of its holes, or points, faces and planes for one screw each. Until then it stays on Top."
-            : `Select more — each sits on the face it's on${inHole ? ` (screws in ${holeName ?? "the hole"} follow it)` : ""}. Select one again to remove it.`}
+            ? "Select a hole for a screw in each of its holes, or points, faces and planes for one each. Until then it stays on Top."
+            : `Select more — each goes into the face it's on${inHole ? ` (screws in ${holeName ?? "the hole"} follow it)` : ""}. Select one again to remove it.`}
         </p>
       )}
 
