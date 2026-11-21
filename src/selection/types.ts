@@ -8,7 +8,11 @@ import type { SketchPlaneId } from "../document/planes";
  *  or a sub-element of a body — a face / edge (by stable OCCT id) or a vertex
  *  (by position, until a stable vertex id exists). */
 export type Selection =
-  | { kind: "feature"; id: string }
+  /** `whole`: picked as a FEATURE (its timeline row, a dialog selecting what
+   *  it made) rather than as one of its parts (the viewport, the Parts panel) —
+   *  the two read the same id for a feature's first part, and Delete removes
+   *  the feature for one, the part alone for the other. */
+  | { kind: "feature"; id: string; whole?: true }
   | { kind: "face"; featureId: string; faceId: number }
   | { kind: "edge"; featureId: string; edgeId: number }
   | { kind: "vertex"; featureId: string; point: [number, number, number] }

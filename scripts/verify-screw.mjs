@@ -340,6 +340,56 @@ check(
 );
 check("…without errors", (await op.featureErrors()).length === 0, JSON.stringify(await op.featureErrors()));
 
+// The timeline means the whole feature: one screw deleted (a Delete part
+// step), that step deleted, then the Screw's ✕ in the timeline — every screw
+// goes, not just the first (whose part id is the feature's own). Again with
+// the step left in: it goes with the Screw. And the Delete key on a selected
+// row does the same.
+{
+  const treeX = (name) =>
+    page.evaluate((n) => {
+      const row = [...document.querySelectorAll(".tree-row")].find((r) => r.textContent?.includes(n));
+      row?.querySelector('button[title="Delete"]')?.click();
+      return !!row;
+    }, name);
+  const partsOf = async () => (await op.scene()).bodies.filter((b) => b.id.split("#")[0] === made.id).length;
+  await op.applySettled({ op: "deletePart", partId: `${made.id}#1` });
+  const step = (await op.features()).at(-1);
+  check("timeline: a Delete part row", step.type === "deletePart" && (await treeX(step.name)));
+  await op.settle();
+  check("…whose ✕ brings the screw back", (await partsOf()) === 2, String(await partsOf()));
+  const snapshot = await op.features();
+  check("the Screw's ✕ in the timeline", await treeX(made.name));
+  await op.settle();
+  let feats = await op.features();
+  check("…deletes the feature", !feats.some((f) => f.id === made.id), JSON.stringify(feats.map((f) => f.type)));
+  check("…and every screw", (await partsOf()) === 0, String(await partsOf()));
+  // Undo, then with a Delete part step still there.
+  await page.keyboard.press("Meta+z");
+  await op.settle();
+  check("undo brings it back", (await op.features()).length === snapshot.length);
+  await op.applySettled({ op: "deletePart", partId: `${made.id}#1` });
+  await page.locator(".tree-row", { hasText: made.name }).first().click();
+  await page
+    .locator(".viewport canvas")
+    .first()
+    .hover({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("Delete");
+  await op.settle();
+  feats = await op.features();
+  check("Delete on its selected row deletes the feature", !feats.some((f) => f.id === made.id));
+  check(
+    "…and its Delete part step",
+    !feats.some((f) => f.type === "deletePart"),
+    JSON.stringify(feats.map((f) => f.type)),
+  );
+  check(
+    "…without errors or warnings",
+    (await op.featureErrors()).length === 0,
+    JSON.stringify(await op.featureErrors()),
+  );
+}
+
 // The modelled fit check's intersect is meant to come back empty.
 const real = errors.filter((e) => !/Failed to load resource/.test(e) && !/"Intersect \d+".*empty result/.test(e));
 check("no page errors", real.length === 0, real.join("\n"));

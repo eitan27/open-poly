@@ -18,7 +18,7 @@ import {
 import { extrudeUsesDistance } from "./extrudeValidation";
 import { detectSketchRegions, regionProfileSegments } from "./regions";
 import { missingJoints } from "./joints";
-import { isBodyFeature, isHideableFeature } from "./parts";
+import { featureIdOfPart, isBodyFeature, isHideableFeature } from "./parts";
 import { assertNever } from "../lib/assertNever";
 import { applyDerived, circularPatternAngles, resolvePatternCount } from "./derived";
 import { DEFAULT_GEAR_PARAMS, resolveGear, unlinkGear, withoutSharedParams, type GearSettings } from "./gear";
@@ -1144,8 +1144,17 @@ export function removeFeature(doc: Document, id: string): Document {
       );
     }
   }
-  const features = doc.features.filter((f) => f.id !== id).map((f) => unlinked.get(f.id) ?? f);
-  const rollbackIndex = idx < doc.rollbackIndex ? doc.rollbackIndex - 1 : Math.min(doc.rollbackIndex, features.length);
+  // Delete part steps forget its parts — a step left with none goes too.
+  const gone = new Set([id]);
+  for (const f of doc.features) {
+    if (f.type !== "deletePart" || !f.partIds.some((p) => featureIdOfPart(p) === id)) continue;
+    const partIds = f.partIds.filter((p) => featureIdOfPart(p) !== id);
+    if (partIds.length) unlinked.set(f.id, { ...f, partIds });
+    else gone.add(f.id);
+  }
+  const features = doc.features.filter((f) => !gone.has(f.id)).map((f) => unlinked.get(f.id) ?? f);
+  const before = doc.features.slice(0, doc.rollbackIndex).filter((f) => gone.has(f.id)).length;
+  const rollbackIndex = Math.min(doc.rollbackIndex - before, features.length);
   return { ...doc, features, rollbackIndex };
 }
 

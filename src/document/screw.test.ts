@@ -264,6 +264,23 @@ describe("resolve", () => {
     expect((back.features.at(-1) as { partIds: string[] }).partIds).toEqual([`${id}#2`]);
   });
 
+  it("deleting the Screw takes its Delete part steps' parts with it", () => {
+    const { doc, id } = addScrew(
+      createDocument(),
+      screw({ points: [0, 10].map((x) => ({ uv: [x, 0] as [number, number], plane: TOP })) }),
+    );
+    const { doc: withStep, id: stepId } = deletePart(doc, `${id}#1`);
+    const gone = removeFeature(withStep, id);
+    expect(gone.features.some((f) => f.id === id || f.id === stepId)).toBe(false);
+    expect(gone.rollbackIndex).toBe(doc.rollbackIndex - 1);
+    // A step that also deleted another feature's part keeps that one.
+    const other = addScrew(withStep, screw()).doc;
+    const otherId = other.features.at(-1)!.id;
+    const mixed = deletePart(other, otherId).doc;
+    const kept = removeFeature(mixed, id);
+    expect(kept.features.filter((f) => f.type === "deletePart")).toMatchObject([{ partIds: [otherId] }]);
+  });
+
   it("length is editable through updateParam", () => {
     const { doc, id } = addScrew(createDocument(), screw());
     expect((updateParam(doc, id, "length", "30").features.at(-1) as ScrewFeature).params.length).toBe("30");

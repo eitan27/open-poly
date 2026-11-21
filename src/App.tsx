@@ -866,7 +866,9 @@ export default function App() {
     return ids;
   }, [selection, doc]);
   const primaryFeatureId = selection.length ? featureIdOf(selection[selection.length - 1]) : null;
-  const selectFeature = (id: string | null) => setSelection(id === null ? [] : [{ kind: "feature", id }]);
+  const selectFeature = (id: string | null) => setSelection(id === null ? [] : [{ kind: "feature", id, whole: true }]);
+  /** The Parts panel's selection: one part, not the feature that made it. */
+  const selectPart = (id: string | null) => setSelection(id === null ? [] : [{ kind: "feature", id }]);
   // Regular clicks accumulate into the set; clicking a selected element removes
   // it; clicking empty space clears.
   const handlePick = (picked: Selection | null, sketchUv?: Vec2) => {
@@ -6551,9 +6553,11 @@ export default function App() {
       d.features.some((f) => f.type === "deletePart" && f.partIds.some((p) => featureIdOfPart(p) === fid));
     return several && d.features.some((f) => f.id === fid) ? deletePart(d, partOrFeatureId).doc : removeFeature(d, fid);
   };
-  const handleDelete = (partOrFeatureId: string) => {
+  /** `whole`: the timeline's ✕ — the feature and every part it made, whatever
+   *  Delete part steps followed it. The Parts panel's ✕ deletes the part. */
+  const handleDelete = (partOrFeatureId: string, whole = false) => {
     const id = featureIdOfPart(partOrFeatureId);
-    setDoc(deletePartOrFeature(doc, partOrFeatureId));
+    setDoc(whole ? removeFeature(doc, id) : deletePartOrFeature(doc, partOrFeatureId));
     setSelection((prev) => prev.filter((s) => featureIdOf(s) !== partOrFeatureId));
     if (editingSketchId === id) setEditingSketchId(null);
   };
@@ -6666,6 +6670,8 @@ export default function App() {
   // line/curve. Bare sketchPoint/sketchFace picks have no deletion target.
   const handleDeleteSelection = () => {
     const featureIds = new Set<string>();
+    /** Picked as features (a timeline row), not as one of their parts. */
+    const whole = new Set(selection.flatMap((s) => (s.kind === "feature" && s.whole ? [s.id] : [])));
     const entityRefs: { sketchId: string; entityId: string }[] = [];
     for (const s of selection) {
       if (s.kind === "feature" || s.kind === "face" || s.kind === "edge" || s.kind === "vertex") {
@@ -6687,7 +6693,7 @@ export default function App() {
     }
     for (const id of featureIds) {
       // A body picked in the viewport is one PART of its feature.
-      next = partIds.includes(id) ? deletePartOrFeature(next, id) : removeFeature(next, id);
+      next = partIds.includes(id) && !whole.has(id) ? deletePartOrFeature(next, id) : removeFeature(next, id);
     }
     if (next === doc) return;
     setDoc(next);
@@ -7687,7 +7693,7 @@ export default function App() {
                       warnings={warnings}
                       onSelect={selectFeature}
                       onDoubleClick={handleTreeDoubleClick}
-                      onDelete={handleDelete}
+                      onDelete={(id) => handleDelete(id, true)}
                       onToggleSuppress={(id) =>
                         setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
                       }
@@ -7771,7 +7777,7 @@ export default function App() {
                     doc={doc}
                     partIds={partIds}
                     selectedIds={selectedFeatureIds}
-                    onSelect={selectFeature}
+                    onSelect={selectPart}
                     onRename={handleSolidRename}
                     onDelete={handleDelete}
                     onColorChange={handleSolidColor}
