@@ -559,13 +559,18 @@ export const operationSchema = z.discriminatedUnion("op", [
     /** "M2" … "M12". Ignored when `holeId` names a metric hole (it follows the hole). */
     size: z.string().optional(),
     /** Put one screw in every hole of this Hole feature (seated on a
-     *  counterbore floor / flush in a countersink). Omit to place on `plane`. */
+     *  counterbore floor / flush in a countersink), following it. */
     holeId: z.string().optional(),
-    /** Placement without a hole: the head sits on this plane, shank going in
-     *  against its normal (flip reverses), at params.centerX/centerY. */
-    plane: planeRefSchema.optional(),
+    /** A screw at every POINT entity and CIRCLE centre of this sketch, on its
+     *  plane, following the points as they move. */
+    sketchId: z.string().optional(),
+    /** A screw at each fixed spot: (x, y) on `plane` (a datum, reference
+     *  plane or planar face; default Top). The head sits on the plane, shank
+     *  going in against its normal (flip reverses). Combine freely with
+     *  holeId / sketchId; with none of them, one screw at Top's origin. */
+    at: z.array(z.object({ plane: planeRefSchema.optional(), x: z.number(), y: z.number() })).optional(),
     flip: z.boolean().optional(),
-    /** length (under the head; overall for a countersunk head), centerX, centerY, clearance. */
+    /** length (under the head; overall for a countersunk head), clearance. */
     params: z.record(z.string(), expr).optional(),
     name: z.string().optional(),
   }),

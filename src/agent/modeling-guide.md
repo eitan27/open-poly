@@ -320,10 +320,13 @@ frame count that shows the motion you care about.
   button / flat (countersunk) / hex, or `set` — a headless set screw with a hex
   socket in its end — or `none` — just the threaded shank, a stud or threaded
   rod; `size` M2–M12, `params.length` under the head — overall for flat).
-  With `holeId` of a Hole feature it puts one screw in every hole, at the
-  hole's metric size, seated on the counterbore floor (or flush in the
-  countersink); otherwise give `plane` and `params.centerX/Y` — the head sits
-  on the plane and the shank goes in against its normal (`flip` reverses).
+  Say where with any mix of: `holeId` of a Hole feature — one screw in every
+  hole, at the hole's metric size, seated on the counterbore floor (or flush
+  in the countersink), following the hole; `sketchId` — one at every point
+  and circle centre, following them; `at: [{plane, x, y}]` — fixed spots on a
+  datum, reference plane or planar face. The head sits on the face or plane
+  and the shank goes in against its normal (`flip` reverses). With none, one
+  screw at Top's origin. Deleting the Hole leaves its screws where they are.
   The thread is cosmetic by default (a plain shank — quick, and right for a
   bought screw in a CAD model). `thread: "modelled"` gives a real ISO helix
   with a lead-in chamfer, shrunk by `params.clearance` (default 0.1 mm); in a

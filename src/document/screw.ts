@@ -6,9 +6,9 @@
 // so the dialog's side-view diagram and the kernel body agree and the shape is
 // unit-testable in Node.
 import { evaluateExpression, type Scope } from "./expression";
-import { frameOf, type PlaneFrameData } from "./planes";
-import { holeDims, holePlacement, resolvedHoleFrames } from "./hole";
-import type { Document, HoleFeature, ScrewFeature, ScrewHead, ScrewParams, SketchFeature } from "./types";
+import { frameOf, offsetFrame, uvToWorld, type PlaneFrameData, type SketchPlaneRef } from "./planes";
+import { holeDims, holePlacement, holeTarget } from "./hole";
+import type { Document, HoleFeature, HolePointRef, ScrewFeature, ScrewHead, ScrewParams, SketchFeature } from "./types";
 import { METRIC, isMetricSize, type MetricSize } from "../geom/metricFasteners";
 import { maxSocketInThread } from "../geom/screwMesh";
 import type { ResolvedFeature, ThreadResolved } from "../kernel/types";
@@ -22,9 +22,12 @@ export const SCREW_HEAD_LABELS: Record<ScrewHead, string> = {
   none: "No head",
 };
 
-export const DEFAULT_SCREW_PARAMS: ScrewParams = { length: "12", centerX: "0", centerY: "0", clearance: "0.1" };
+export const DEFAULT_SCREW_PARAMS: ScrewParams = { length: "12", clearance: "0.1" };
 
-export type ScrewSettings = Pick<ScrewFeature, "head" | "thread" | "size" | "holeId" | "flip"> & {
+/** What the dialog edits. `size` is always there (the Size control shows
+ *  one); it is saved only when it isn't following a metric hole's. */
+export type ScrewSettings = Pick<ScrewFeature, "head" | "thread" | "holeId" | "points" | "flip"> & {
+  size: string;
   params: ScrewParams;
 };
 
@@ -209,10 +212,139 @@ export function seatDepth(hole: HoleFeature, scope: Scope): number {
   return d.holeType === "counterbore" ? d.counterboreDepth : 0;
 }
 
+/** The metric hole a screw follows the size of, if any. */
+function metricHole(doc: Document, holeId: string | undefined): HoleFeature | undefined {
+  const hole = holeId ? doc.features.find((f) => f.id === holeId) : undefined;
+  return hole?.type === "hole" && isMetricSize(hole.size) ? hole : undefined;
+}
+
 /** The size a screw actually is: a metric hole's when it sits in one. */
 export function screwSize(doc: Document, s: Pick<ScrewFeature, "size" | "holeId">): string {
-  const hole = s.holeId ? doc.features.find((f) => f.id === s.holeId) : undefined;
-  return hole?.type === "hole" && isMetricSize(hole.size) ? hole.size : s.size;
+  return metricHole(doc, s.holeId)?.size ?? s.size ?? DEFAULT_SCREW_SETTINGS.size;
+}
+
+/** The settings as saved: no size while a metric hole decides it, no empty
+ *  point list. */
+export function screwToSave(doc: Document, s: ScrewSettings): Omit<ScrewSettings, "size"> & { size?: string } {
+  const { size, points, ...rest } = s;
+  return {
+    ...rest,
+    ...(metricHole(doc, s.holeId) ? {} : { size }),
+    ...(points?.length ? { points } : {}),
+  };
+}
+
+const TOP: SketchPlaneRef = { kind: "datum", id: "plane-top" };
+
+/** One screw's seat: a frame whose origin is where the head's underside
+ *  meets the axis and whose normal points out of the hole, away from the
+ *  shank — so every screw is built the same way (unflipped) whichever way
+ *  its own hole drills. */
+export type ScrewSeat = PlaneFrameData;
+
+/** A frame turned over: the normal reversed (and v, so it stays a rotation). */
+const turned = (f: PlaneFrameData): PlaneFrameData => ({
+  ...f,
+  vAxis: [-f.vAxis[0], -f.vAxis[1], -f.vAxis[2]],
+  normal: [-f.normal[0], -f.normal[1], -f.normal[2]],
+});
+
+/** A seat at (u, v) of `frame`, going in against its normal (or along it,
+ *  `along`), `depth` below the surface. */
+function seatAt(frame: PlaneFrameData, [u, v]: [number, number], along: boolean, depth: number): ScrewSeat {
+  const w = uvToWorld(frame, u, v);
+  const f = along ? turned(frame) : frame;
+  return offsetFrame({ ...f, origin: [w[0], w[1], w[2]] }, -depth);
+}
+
+/** Where each of a screw's screws sits: one per hole of its Hole (seated as
+ *  that hole is), then one per picked spot, or — with neither — one at the
+ *  Top plane's origin. Spots on top of each other count once. Throws a
+ *  readable "screw: …" message when a location can't be found. */
+export function screwSeats(
+  doc: Document,
+  f: Pick<ScrewFeature, "holeId" | "points" | "flip">,
+  scope: Scope,
+  planeFrames: Map<string, PlaneFrameData>,
+): ScrewSeat[] {
+  const sketchOf = (id: string) => doc.features.find((x): x is SketchFeature => x.id === id && x.type === "sketch");
+  const seats: ScrewSeat[] = [];
+  const add = (s: ScrewSeat) => {
+    const dup = seats.some(
+      (q) =>
+        Math.hypot(q.origin[0] - s.origin[0], q.origin[1] - s.origin[1], q.origin[2] - s.origin[2]) < 1e-6 &&
+        q.normal[0] * s.normal[0] + q.normal[1] * s.normal[1] + q.normal[2] * s.normal[2] > 1 - 1e-9,
+    );
+    if (!dup) seats.push(s);
+  };
+  if (f.holeId) {
+    const hole = doc.features.find((x) => x.id === f.holeId);
+    if (hole?.type !== "hole") throw new Error("screw: its hole no longer exists — select its locations again");
+    let holes;
+    try {
+      ({ holes } = holePlacement(hole, sketchOf, planeFrames));
+    } catch (err) {
+      throw new Error(`screw: its hole can't be placed — ${(err as Error).message.replace(/^hole: /, "")}`);
+    }
+    const depth = seatDepth(hole, scope);
+    for (const h of holes) add(seatAt(h.frame, h.center, hole.flip !== f.flip, depth));
+  }
+  for (const ref of f.points ?? []) {
+    let t;
+    try {
+      t = holeTarget({}, ref, sketchOf, planeFrames);
+    } catch (err) {
+      throw new Error(
+        `screw: ${(err as Error).message.replace(/^hole: /, "").replace(/pick its points/, "select it")}`,
+      );
+    }
+    add(seatAt(t.frame, t.center, f.flip, 0));
+  }
+  if (!f.holeId && !f.points?.length) add(seatAt(frameOf(TOP), [0, 0], f.flip, 0));
+  return seats;
+}
+
+/** A screw in `holeId`'s holes taken out of it, staying exactly where it is:
+ *  each screw becomes a fixed spot on its own seat,
+ *  and a size it followed is kept as its own. Null when it isn't in that
+ *  hole, or the hole can't be placed. */
+export function unlinkScrew(
+  doc: Document,
+  f: ScrewFeature,
+  holeId: string,
+  scope: Scope,
+  planeFrames: Map<string, PlaneFrameData>,
+): ScrewFeature | null {
+  if (f.holeId !== holeId) return null;
+  let seats: ScrewSeat[];
+  try {
+    seats = screwSeats(doc, { holeId, flip: f.flip }, scope, planeFrames);
+  } catch {
+    return null;
+  }
+  // The body the holes were drilled into names the spots' face: the first
+  // face a target (or the hole's sketch) was on, else a part it cut.
+  const hole = doc.features.find((x): x is HoleFeature => x.id === holeId && x.type === "hole");
+  const sketch = doc.features.find((x) => x.id === hole?.sketchId);
+  const host =
+    [
+      ...(hole?.points ?? []).map((p) => ("uv" in p ? p.plane : undefined)),
+      hole?.plane,
+      sketch?.type === "sketch" ? sketch.plane : undefined,
+    ]
+      .map((p) => (p?.kind === "face" ? p.featureId : undefined))
+      .find(Boolean) ??
+    hole?.scope?.[0] ??
+    hole?.targetId ??
+    holeId;
+  // Each seat already points its screw the way it goes; a spot is turned
+  // over again by the feature's own Flip, so a flipped one is stored turned.
+  const spots: HolePointRef[] = seats.map((s) => ({
+    uv: [0, 0],
+    plane: { kind: "face", featureId: host, frame: f.flip ? turned(s) : s },
+  }));
+  const { holeId: _h, ...rest } = f;
+  return { ...rest, size: screwSize(doc, f), points: [...spots, ...(f.points ?? [])] };
 }
 
 export function resolveScrew(
@@ -222,47 +354,23 @@ export function resolveScrew(
   planeFrames: Map<string, PlaneFrameData>,
 ): ResolvedFeature {
   const dims = screwDims(f.head, screwSize(doc, f), num("length", f.params.length, scope));
-  let frame: PlaneFrameData;
-  let centers: [number, number][];
-  let frames: PlaneFrameData[] | undefined;
-  let flip = f.flip;
-  let seat = 0;
-  if (f.holeId) {
-    const hole = doc.features.find((x) => x.id === f.holeId);
-    if (hole?.type !== "hole")
-      throw new Error("screw: its hole no longer exists — pick another, or place it on a plane");
-    try {
-      ({ frame, centers, frames } = resolvedHoleFrames(
-        holePlacement(
-          hole,
-          (id) => doc.features.find((x): x is SketchFeature => x.id === id && x.type === "sketch"),
-          planeFrames,
-        ),
-      ));
-    } catch (err) {
-      throw new Error(`screw: its hole can't be placed — ${(err as Error).message.replace(/^hole: /, "")}`);
-    }
-    flip = hole.flip !== f.flip;
-    seat = seatDepth(hole, scope);
-  } else {
-    frame = frameOf(f.plane, planeFrames);
-    centers = [[num("center X", f.params.centerX, scope), num("center Y", f.params.centerY, scope)]];
-  }
+  const seats = screwSeats(doc, f, scope, planeFrames);
   const thread =
     f.thread === "modelled" ? screwThread(dims, num("clearance", f.params.clearance ?? "0", scope)) : undefined;
-  const profile = screwProfile(dims, !!thread).map(([r, z]) => [r, z + seat] as [number, number]);
-  const top = (dims.head === "flat" ? 0 : -dims.headHeight) + seat;
+  const top = dims.head === "flat" ? 0 : -dims.headHeight;
   return {
     id: f.id,
     type: "screw",
-    frame,
-    centers,
-    ...(frames ? { frames } : {}),
-    flip,
-    profile,
-    ...(dims.head === "hex" ? { hexHead: { across: dims.headDiameter, z0: top, z1: seat } } : {}),
+    // Each screw at its seat's origin, built unflipped (the seats already
+    // point the way each goes).
+    frame: seats[0],
+    centers: seats.map(() => [0, 0] as [number, number]),
+    ...(seats.length > 1 ? { frames: seats } : {}),
+    flip: false,
+    profile: screwProfile(dims, !!thread),
+    ...(dims.head === "hex" ? { hexHead: { across: dims.headDiameter, z0: top, z1: 0 } } : {}),
     ...(dims.key > 0 ? { socket: { across: dims.key, z0: top, z1: top + socketDepth(dims) } } : {}),
-    ...(thread ? { thread: { ...thread, z0: thread.z0 + seat, z1: thread.z1 + seat } } : {}),
+    ...(thread ? { thread } : {}),
   };
 }
 

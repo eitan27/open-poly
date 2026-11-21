@@ -2,7 +2,8 @@
 // cosmetic (one mesh each, no booleans — geom/screwMesh.ts), a screw follows a metric hole's size and sits on its counterbore
 // floor (one per hole), a modelled screw fits a modelled tapped hole without
 // touching it (a cosmetic one doesn't), and the dialog opens with its diagram
-// and ghost. Screenshots go to $SHOTS.
+// and ghost; its Locations slot takes a Hole's holes and spots on faces, and
+// deleting the Hole leaves the screws where they were. Screenshots go to $SHOTS.
 //
 //   URL=http://localhost:5173/ node scripts/verify-screw.mjs
 import os from "node:os";
@@ -34,11 +35,11 @@ for (const thread of ["modelled", "cosmetic"])
     const t0 = Date.now();
     const r = await op.applySettled({
       op: "addScrew",
-      plane: { datum: "top" },
+      at: [{ plane: { datum: "top" }, x: -50 + i * 20, y: thread === "modelled" ? 40 : 60 }],
       head,
       thread,
       size: "M5",
-      params: { length: 16, centerX: -50 + i * 20, centerY: thread === "modelled" ? 40 : 60 },
+      params: { length: 16 },
     });
     const b = (await op.scene()).bodies.find((x) => x.id === r.createdId);
     check(`${head}, ${thread}: builds on a plane (${Date.now() - t0} ms)`, r.ok && !!b, JSON.stringify(r));
@@ -143,8 +144,6 @@ for (const h of ["Button", "Countersunk", "Hex", "Set screw", "No head", "Socket
   await dialog.screenshot({ path: path.join(SHOTS, `screw-dialog-${h.toLowerCase()}.png`) });
 }
 await shot("ghost");
-await dialog.locator("button", { hasText: "On a plane" }).click();
-await page.waitForTimeout(300);
 const modelThread = dialog.locator(".ed-field", { hasText: "Model the thread" }).locator("input");
 check("cosmetic by default: no clearance", (await dialog.locator(".ed-field", { hasText: "Clearance" }).count()) === 0);
 await modelThread.check();
@@ -156,12 +155,73 @@ check(
 await modelThread.uncheck();
 await page.waitForTimeout(300);
 check("cosmetic hides it", (await dialog.locator(".ed-field", { hasText: "Clearance" }).count()) === 0);
-await modelThread.check();
-check("on a plane offers centre fields", (await dialog.locator(".ed-field", { hasText: "Center X" }).count()) === 1);
+
+// Locations: it opened in the Hole; no centre fields, no in-a-hole / on-a-plane toggle.
+const locations = dialog.locator(".ed-field", { hasText: "Locations" });
+const locText = async () => (await locations.textContent()) ?? "";
+check("Locations names the Hole it opened in", /Hole 1/.test(await locText()), await locText());
+check("no Center X / Y fields", (await dialog.locator(".ed-field", { hasText: "Center X" }).count()) === 0);
+check("no On a plane button", (await dialog.locator("button", { hasText: "On a plane" }).count()) === 0);
+// ✕: back to the default, listening.
+await locations.locator(".bool-operand-x").click();
+await page.waitForTimeout(300);
+check("✕ goes back to Top plane (default)", /Top plane \(default\)/.test(await locText()), await locText());
+check("…listening", (await locations.locator(".ed-pick-btn").getAttribute("class")).includes("active"));
+// A spot: the plate top's back edge midpoint (a face click snaps to the
+// face's centre — here, the hole's — as a Hole's target does).
+await op.clickWorld([0, 19.9, 12]);
+await page.waitForTimeout(400);
+check("a face spot fills it", /face/.test(await locText()), await locText());
+// The hole's centre: the hole's screws join the spot.
+await op.clickWorld([0, 0, 12]);
+await page.waitForTimeout(400);
+check("a hole's centre adds the Hole", /Hole 1 \+ /.test(await locText()), await locText());
+// Another, at the front edge's midpoint: two spots now.
+await op.clickWorld([0, -19.9, 12]);
+await page.waitForTimeout(400);
+check("…and another spot", /Hole 1 \+ 2 spots/.test(await locText()), await locText());
+// Picking a spot again removes it.
+await op.clickWorld([0, -19.9, 12]);
+await page.waitForTimeout(400);
+check(
+  "picking a spot again removes it",
+  /Hole 1 \+ Block|Hole 1 \+ Box|Hole 1 \+ .*face/.test(await locText()),
+  await locText(),
+);
+await page.waitForTimeout(1200);
+await shot("locations");
+await locations.locator(".ed-pick-btn").click(); // stop listening
 const before = (await op.features()).filter((f) => f.type === "screw").length;
 await dialog.locator(".ed-primary").click();
 await op.settle();
-check("Create adds a screw", (await op.features()).filter((f) => f.type === "screw").length === before + 1);
+const screws = (await op.features()).filter((f) => f.type === "screw");
+check("Create adds a screw", screws.length === before + 1);
+const made = screws.at(-1);
+check(
+  "…in the Hole and at the spot, saving no size of its own",
+  made?.holeId && made.points?.length === 1 && made.size === undefined,
+  JSON.stringify(made),
+);
+const bodyOf = async () => (await op.scene()).bodies.filter((b) => b.id.split("#")[0] === made.id);
+const tops = (bs) => bs.map((b) => b.bbox.max[2].toFixed(2)).sort();
+const was = tops(await bodyOf());
+check("two screws: one seated in the counterbore, one on the face", was.length === 2, JSON.stringify(was));
+
+// Deleting the Hole leaves both where they are.
+const holeId = (await op.features()).find((f) => f.type === "hole").id;
+await op.applySettled({ op: "delete", featureId: holeId });
+const now = (await op.features()).find((f) => f.id === made.id);
+check(
+  "deleting the Hole unlinks its screws",
+  !now.holeId && now.points?.length === 2 && now.size === "M5",
+  JSON.stringify(now),
+);
+check(
+  "…which stay exactly where they were",
+  JSON.stringify(tops(await bodyOf())) === JSON.stringify(was),
+  JSON.stringify(tops(await bodyOf())),
+);
+check("…without errors", (await op.featureErrors()).length === 0, JSON.stringify(await op.featureErrors()));
 
 // The modelled fit check's intersect is meant to come back empty.
 const real = errors.filter((e) => !/Failed to load resource/.test(e) && !/"Intersect \d+".*empty result/.test(e));

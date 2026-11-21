@@ -33,7 +33,7 @@ function resolved(head: ScrewHead, size: string, thread: "modelled" | "cosmetic"
     size,
     params: { ...DEFAULT_SCREW_SETTINGS.params, length: String(length) },
   };
-  const { doc, id } = addScrew(createDocument(), { kind: "datum", id: "plane-top" }, settings);
+  const { doc, id } = addScrew(createDocument(), settings);
   const res = resolveDocument(doc);
   if (res.errors[id]) throw new Error(res.errors[id]);
   const r = res.features.find((f) => f.id === id);

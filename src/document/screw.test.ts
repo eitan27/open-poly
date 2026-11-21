@@ -1,7 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { addHole, addScrew, createDocument, resolveDocument, updateParam, updateScrew } from "./document";
+import {
+  addHole,
+  addScrew,
+  createDocument,
+  removeFeature,
+  resolveDocument,
+  updateParam,
+  updateScrew,
+} from "./document";
 import { DEFAULT_HOLE_SETTINGS, type HoleSettings } from "./hole";
 import { DEFAULT_SCREW_SETTINGS, screwDims, screwProfile, screwSize, type ScrewSettings } from "./screw";
+import type { SketchPlaneRef } from "./planes";
 import type { Document, ScrewFeature, SketchFeature } from "./types";
 
 const TOP = { kind: "datum", id: "plane-top" } as const;
@@ -10,6 +19,15 @@ const screw = (patch: Partial<ScrewSettings> = {}, params: Partial<ScrewSettings
   ...patch,
   params: { ...DEFAULT_SCREW_SETTINGS.params, ...params },
 });
+type V3 = [number, number, number];
+type Frame = { origin: V3; uAxis: V3; vAxis: V3; normal: V3 };
+type Seated = { frame: Frame; frames?: Frame[]; centers: [number, number][]; profile: [number, number][] };
+/** Where each screw of a resolved screw feature sits, rounded. */
+const origins = (rf: Seated) =>
+  (rf.frames ?? [rf.frame]).map((f, i) => {
+    expect(rf.centers[i]).toEqual([0, 0]);
+    return f.origin.map((x) => Math.round(x * 1e6) / 1e6 + 0);
+  });
 const hole = (patch: Partial<HoleSettings> = {}): HoleSettings => ({
   ...DEFAULT_HOLE_SETTINGS,
   ...patch,
@@ -66,20 +84,20 @@ describe("screwDims", () => {
 describe("resolve", () => {
   it("puts one screw at every hole, the hole's size, seated on a counterbore floor", () => {
     const h = addHole(withPoints(), "s", "body", hole({ holeType: "counterbore", size: "M5" }));
-    const { doc, id } = addScrew(h.doc, TOP, screw({ size: "M3", holeId: h.id }));
+    const { doc, id } = addScrew(h.doc, screw({ size: "M3", holeId: h.id }));
     const f = doc.features.find((x) => x.id === id) as ScrewFeature;
     expect(screwSize(doc, f)).toBe("M5");
-    const rf = resolveDocument(doc).features.find((x) => x.id === id);
-    expect(rf).toMatchObject({
-      type: "screw",
-      centers: [
-        [0, 0],
-        [20, 0],
-      ],
-    });
-    // M5 counterbore depth (DIN 974-1) is 5.4: the head top is that far less the head height (5).
-    const profile = (rf as { profile: [number, number][] }).profile;
-    expect(profile[0][1]).toBeCloseTo(5.4 - 5);
+    // A metric hole decides the size: the screw keeps none of its own.
+    expect(f.size).toBeUndefined();
+    const rf = resolveDocument(doc).features.find((x) => x.id === id) as Seated;
+    // Each screw at its own seat: the hole's centre, M5's counterbore depth
+    // (DIN 974-1: 5.4) down, pointing out of the hole.
+    expect(origins(rf)).toEqual([
+      [0, 0, -5.4],
+      [20, 0, -5.4],
+    ]);
+    expect(rf.frame.normal).toEqual([0, 0, 1]);
+    expect(rf.profile[0][1]).toBeCloseTo(-5); // the head's top, its height above the seat
   });
 
   it("in a hole whose targets span planes, each screw takes its hole's frame", () => {
@@ -95,38 +113,101 @@ describe("resolve", () => {
         ],
       }),
     );
-    const { doc, id } = addScrew(h.doc, TOP, screw({ holeId: h.id }));
-    const rf = resolveDocument(doc).features.find((x) => x.id === id) as {
-      centers: [number, number][];
-      frames?: { normal: number[] }[];
-    };
-    expect(rf.centers).toEqual([
-      [1, 2],
-      [3, 4],
+    const { doc, id } = addScrew(h.doc, screw({ holeId: h.id }));
+    const rf = resolveDocument(doc).features.find((x) => x.id === id) as Seated;
+    expect(origins(rf)).toEqual([
+      [1, 2, 0],
+      [3, 0, 4],
     ]);
-    expect(rf.frames).toHaveLength(2);
     expect(rf.frames![0].normal).not.toEqual(rf.frames![1].normal);
-    const rh = resolveDocument(doc).features.find((x) => x.id === h.id) as { frames?: unknown[] };
-    expect(rh.frames).toHaveLength(2);
   });
 
-  it("stands alone on a plane at its centre", () => {
-    const { doc, id } = addScrew(createDocument(), TOP, screw({}, { centerX: "3", centerY: "-2" }));
-    expect(resolveDocument(doc).features.find((x) => x.id === id)).toMatchObject({ centers: [[3, -2]] });
+  it("with no location, one screw at the Top plane's origin", () => {
+    const { doc, id } = addScrew(createDocument(), screw());
+    const rf = resolveDocument(doc).features.find((x) => x.id === id) as Seated;
+    expect(origins(rf)).toEqual([[0, 0, 0]]);
+    expect(doc.features.at(-1)).not.toHaveProperty("points");
   });
 
-  it("errors when its hole is gone, and can be moved back onto a plane", () => {
+  it("at picked spots: a fixed spot on a face, and a sketch point it follows", () => {
+    const FACE: SketchPlaneRef = {
+      kind: "face",
+      featureId: "body",
+      frame: { origin: [0, -15, 7], uAxis: [1, 0, 0], vAxis: [0, 0, 1], normal: [0, -1, 0] },
+    };
+    const { doc, id } = addScrew(
+      withPoints(),
+      screw({
+        points: [
+          { uv: [3, -2], plane: FACE },
+          { sketchId: "s", entityId: "b", at: "point" },
+        ],
+      }),
+    );
+    const rf = resolveDocument(doc).features.find((x) => x.id === id) as Seated;
+    expect(origins(rf)).toEqual([
+      [3, -15, 5],
+      [20, 0, 0],
+    ]);
+    // Head on the face, shank going in: the seat points out along the face's normal.
+    expect(rf.frames![0].normal).toEqual([0, -1, 0]);
+    const moved = {
+      ...doc,
+      features: doc.features.map((f) =>
+        f.id === "s" && f.type === "sketch"
+          ? { ...f, entities: f.entities.map((e) => (e.id === "b" && e.type === "point" ? { ...e, p: [30, 5] } : e)) }
+          : f,
+      ),
+    } as Document;
+    expect(origins(resolveDocument(moved).features.find((x) => x.id === id) as Seated)[1]).toEqual([30, 5, 0]);
+  });
+
+  it("in a hole and at spots together; Flip turns the spots, a hole's own flip its screws", () => {
+    const h = addHole(withPoints(), "s", "body", hole({ flip: true }));
+    const { doc, id } = addScrew(h.doc, screw({ holeId: h.id, points: [{ uv: [50, 0], plane: TOP }] }));
+    const rf = resolveDocument(doc).features.find((x) => x.id === id) as Seated;
+    expect(origins(rf)).toEqual([
+      [0, 0, 0],
+      [20, 0, 0],
+      [50, 0, 0],
+    ]);
+    // The hole drills up (flipped): its screws point up, out of it downward.
+    expect(rf.frames!.map((f) => f.normal[2])).toEqual([-1, -1, 1]);
+    const flipped = resolveDocument(
+      updateScrew(doc, id, { ...screw({ holeId: h.id, points: [{ uv: [50, 0], plane: TOP }] }), flip: true }),
+    );
+    expect((flipped.features.find((x) => x.id === id) as Seated).frames!.map((f) => f.normal[2])).toEqual([1, 1, -1]);
+  });
+
+  it("deleting its Hole leaves every screw where it was, with the size it had", () => {
+    const h = addHole(withPoints(), "s", "body", hole({ holeType: "counterbore", size: "M5", flip: true }));
+    const { doc, id } = addScrew(h.doc, screw({ holeId: h.id, points: [{ uv: [50, 0], plane: TOP }] }));
+    const before = resolveDocument(doc).features.find((x) => x.id === id) as Seated;
+    const gone = removeFeature(doc, h.id);
+    const f = gone.features.find((x) => x.id === id) as ScrewFeature;
+    expect(f.holeId).toBeUndefined();
+    expect(f.size).toBe("M5");
+    expect(f.points).toHaveLength(3);
+    const r = resolveDocument(gone);
+    expect(r.errors[id]).toBeUndefined();
+    const after = r.features.find((x) => x.id === id) as Seated;
+    expect(origins(after)).toEqual(origins(before));
+    expect(after.frames!.map((x) => x.normal)).toEqual(before.frames!.map((x) => x.normal));
+    expect(after.profile).toEqual(before.profile);
+  });
+
+  it("errors when its hole is gone without being deleted, and recovers when moved", () => {
     const h = addHole(withPoints(), "s", "body", hole());
-    const { doc, id } = addScrew(h.doc, TOP, screw({ holeId: h.id }));
+    const { doc, id } = addScrew(h.doc, screw({ holeId: h.id }));
     const gone: Document = { ...doc, features: doc.features.filter((x) => x.id !== h.id) };
     expect(resolveDocument(gone).errors[id]).toMatch(/hole no longer exists/);
-    const moved = updateScrew(gone, id, TOP, screw());
+    const moved = updateScrew(gone, id, screw());
     expect((moved.features.find((x) => x.id === id) as ScrewFeature).holeId).toBeUndefined();
     expect(resolveDocument(moved).errors[id]).toBeUndefined();
   });
 
   it("length is editable through updateParam", () => {
-    const { doc, id } = addScrew(createDocument(), TOP, screw());
+    const { doc, id } = addScrew(createDocument(), screw());
     expect((updateParam(doc, id, "length", "30").features.at(-1) as ScrewFeature).params.length).toBe("30");
   });
 });
@@ -137,7 +218,7 @@ describe("modelled thread", () => {
   });
 
   it("modelled: the profile stops at the head and a thread runs from the seat to the tip", () => {
-    const { doc, id } = addScrew(createDocument(), TOP, screw({ size: "M5", thread: "modelled" }, { length: "16" }));
+    const { doc, id } = addScrew(createDocument(), screw({ size: "M5", thread: "modelled" }, { length: "16" }));
     const rf = resolveDocument(doc).features.find((x) => x.id === id) as {
       profile: [number, number][];
       thread?: { d: number; pitch: number; offset: number; z0: number; z1: number; tipChamfer: boolean };
@@ -149,14 +230,14 @@ describe("modelled thread", () => {
   });
 
   it("a countersunk head's thread starts at the bottom of its cone", () => {
-    const { doc, id } = addScrew(createDocument(), TOP, screw({ head: "flat", size: "M4", thread: "modelled" }));
+    const { doc, id } = addScrew(createDocument(), screw({ head: "flat", size: "M4", thread: "modelled" }));
     const rf = resolveDocument(doc).features.find((x) => x.id === id) as { thread?: { z0: number } };
     const cone = screwDims("flat", "M4", 12).coneDepth;
     expect(rf.thread!.z0).toBe(cone);
   });
 
   it("a screw from before modelled threads (no `thread`) stays cosmetic", () => {
-    const { doc, id } = addScrew(createDocument(), TOP, screw());
+    const { doc, id } = addScrew(createDocument(), screw());
     const old: Document = {
       ...doc,
       features: doc.features.map((f) => (f.id === id ? { ...f, thread: undefined } : f)),
@@ -167,11 +248,7 @@ describe("modelled thread", () => {
   });
 
   it("refuses a clearance that would eat the thread", () => {
-    const { doc, id } = addScrew(
-      createDocument(),
-      TOP,
-      screw({ size: "M3", thread: "modelled" }, { clearance: "0.2" }),
-    );
+    const { doc, id } = addScrew(createDocument(), screw({ size: "M3", thread: "modelled" }, { clearance: "0.2" }));
     expect(resolveDocument(doc).errors[id]).toMatch(/clearance can be at most 0.125/);
   });
 });

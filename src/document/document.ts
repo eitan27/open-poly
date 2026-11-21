@@ -24,7 +24,7 @@ import { applyDerived, circularPatternAngles, resolvePatternCount } from "./deri
 import { DEFAULT_GEAR_PARAMS, resolveGear, unlinkGear, withoutSharedParams, type GearSettings } from "./gear";
 import { DEFAULT_HOLE_PARAMS, resolveHole, type HoleSettings } from "./hole";
 import { DEFAULT_THREAD_PARAMS, resolveThread, type ThreadSettings } from "./threadFeature";
-import { DEFAULT_SCREW_PARAMS, resolveScrew, type ScrewSettings } from "./screw";
+import { DEFAULT_SCREW_PARAMS, resolveScrew, screwSize, screwToSave, unlinkScrew, type ScrewSettings } from "./screw";
 import type {
   BooleanFeature,
   DerivedOp,
@@ -671,16 +671,16 @@ export function updateHole(
   );
 }
 
-/** A screw on `plane`, or in each hole of `settings.holeId` (see document/screw.ts). */
-export function addScrew(doc: Document, plane: SketchPlaneRef, settings: ScrewSettings): { doc: Document; id: string } {
+/** Screws in each hole of `settings.holeId` and at each of its `points` (see
+ *  document/screw.ts). */
+export function addScrew(doc: Document, settings: ScrewSettings): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "screw").length + 1;
   const feature: ScrewFeature = {
     id: uid(),
     type: "screw",
     name: `Screw ${ordinal}`,
     suppressed: false,
-    plane,
-    ...settings,
+    ...screwToSave(doc, settings),
     params: { ...settings.params },
     // Steel grey, rather than a random body colour: a fastener should read as one.
     color: 0x9aa3ad,
@@ -689,11 +689,11 @@ export function addScrew(doc: Document, plane: SketchPlaneRef, settings: ScrewSe
   return insertFeature(doc, feature);
 }
 
-export function updateScrew(doc: Document, id: string, plane: SketchPlaneRef, settings: ScrewSettings): Document {
+export function updateScrew(doc: Document, id: string, settings: ScrewSettings): Document {
   return mapFeature(doc, id, (f) => {
     if (f.type !== "screw") return f;
-    const { holeId: _h, ...rest } = f;
-    return { ...rest, plane, ...settings, params: { ...settings.params } };
+    const { holeId: _h, points: _p, size: _s, ...rest } = f;
+    return { ...rest, ...screwToSave(doc, settings), params: { ...settings.params } };
   });
 }
 
@@ -1104,6 +1104,20 @@ export function removeFeature(doc: Document, id: string): Document {
         return [g.id, patch ? { ...gear, ...patch } : fallback];
       }),
     );
+  }
+  // Screws in this Hole stay where they are, each hole's screw a fixed spot,
+  // keeping the size they had.
+  const inHole = doc.features.filter((f) => f.type === "screw" && f.holeId === id);
+  if (inHole.length) {
+    const r = resolveDocument(doc);
+    for (const f of inHole) {
+      const screw = f as ScrewFeature;
+      const { holeId: _h, ...rest } = screw;
+      unlinked.set(
+        f.id,
+        unlinkScrew(doc, screw, id, r.scope, r.planeFrames) ?? { ...rest, size: screwSize(doc, screw) },
+      );
+    }
   }
   const features = doc.features.filter((f) => f.id !== id).map((f) => unlinked.get(f.id) ?? f);
   const rollbackIndex = idx < doc.rollbackIndex ? doc.rollbackIndex - 1 : Math.min(doc.rollbackIndex, features.length);

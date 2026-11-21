@@ -4,27 +4,31 @@ import type { ScrewHead, ScrewParams } from "../document/types";
 import { METRIC_SIZES } from "../geom/metricFasteners";
 import { DraggableDialog } from "./DraggableDialog";
 import { ExprInput } from "./ExprInput";
-import { PickSlot } from "./PickSlot";
+import { PickButton } from "./PickSlot";
 import { ScrewDiagram } from "./diagram/ScrewDiagram";
 import "./GearDialog.css";
 
 interface Props {
   editing?: boolean;
   settings: ScrewSettings;
-  /** Hole features to put the screws in. */
-  holeOptions: { id: string; name: string; size: string }[];
   /** The size the screw really is — a metric hole's, when it sits in one. */
   effectiveSize: string;
-  planeLabel: string;
-  defaultPlane: boolean;
-  planeArmed: boolean;
+  /** Where the screws go, as the Locations slot names it. */
+  locationLabel: string;
+  /** No location picked: one screw at the Top plane's origin. */
+  defaultLocation: boolean;
+  /** The slot is listening: viewport picks add or remove locations. */
+  locating: boolean;
+  /** The Hole it's in, if any (for the hint and the size note). */
+  holeName?: string;
   /** The last settings that made a screw, so the diagram holds still while a
    *  field is half-typed. */
   dims: ScrewDims | null;
   /** A modelled thread's clearance, resolved (undefined when cosmetic or unreadable). */
   clearance?: number;
   error: string | null;
-  onArmPlane: () => void;
+  onArmLocations: (on: boolean) => void;
+  onClearLocations: () => void;
   onChange: (patch: Partial<ScrewSettings>) => void;
   onParam: (name: keyof ScrewParams, value: string) => void;
   onConfirm: () => void;
@@ -36,15 +40,16 @@ const HEADS = Object.keys(SCREW_HEAD_LABELS) as ScrewHead[];
 export function ScrewDialog({
   editing,
   settings,
-  holeOptions,
   effectiveSize,
-  planeLabel,
-  defaultPlane,
-  planeArmed,
+  locationLabel,
+  defaultLocation,
+  locating,
+  holeName,
   dims,
   clearance,
   error,
-  onArmPlane,
+  onArmLocations,
+  onClearLocations,
   onChange,
   onParam,
   onConfirm,
@@ -114,44 +119,36 @@ export function ScrewDialog({
         />
       )}
 
-      <div className="ed-modes">
-        <button
-          className={inHole ? "active" : ""}
-          disabled={holeOptions.length === 0}
-          title={holeOptions.length ? "One screw in every hole of a Hole feature" : "No Hole feature yet"}
-          onClick={() => onChange({ holeId: holeOptions.at(-1)?.id })}
-        >
-          In a hole
-        </button>
-        <button className={!inHole ? "active" : ""} onClick={() => onChange({ holeId: undefined })}>
-          On a plane
-        </button>
+      {/* Where: picked like a Hole's targets. A click on a Hole's hole puts a
+          screw in each of its holes (following them); anywhere else on a face,
+          a sketch point or a plane, one screw. Until then: Top's origin. */}
+      <div
+        className="ed-field"
+        title="Where the screws go: a Hole's holes, points or spots on faces, or a plane's origin"
+      >
+        <span>Locations</span>
+        <span className="hole-location">
+          <PickButton noun="locations" armed={locating} onClick={() => onArmLocations(!locating)}>
+            {defaultLocation ? `${locationLabel} (default)` : locationLabel}
+          </PickButton>
+          {!(defaultLocation && locating) && (
+            <button
+              type="button"
+              className="bool-operand-x"
+              title={defaultLocation ? "Select locations" : "Clear the locations"}
+              onClick={onClearLocations}
+            >
+              ✕
+            </button>
+          )}
+        </span>
       </div>
-      {inHole ? (
-        <label className="ed-field">
-          <span>Hole</span>
-          <select value={settings.holeId} onChange={(e) => onChange({ holeId: e.target.value })}>
-            {holeOptions.map((h) => (
-              <option key={h.id} value={h.id}>
-                {h.name} ({h.size})
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : (
-        <>
-          <PickSlot
-            noun="a plane or face"
-            armed={planeArmed}
-            value={defaultPlane ? `${planeLabel} (default)` : planeLabel}
-            wide
-            title="The head sits on this plane; the shank goes in against its normal"
-            clearTitle="Pick a different plane or face"
-            onArm={onArmPlane}
-          />
-          {field("centerX", "Center X")}
-          {field("centerY", "Center Y")}
-        </>
+      {locating && (
+        <p className="ed-hint">
+          {defaultLocation
+            ? "Select a hole to put a screw in each of its holes, or points, faces and planes for one screw each. Until then it stays on Top."
+            : `Select more — each sits on the face it's on${inHole ? ` (screws in ${holeName ?? "the hole"} follow it)` : ""}. Select one again to remove it.`}
+        </p>
       )}
 
       <label

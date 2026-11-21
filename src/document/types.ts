@@ -840,19 +840,16 @@ export interface ScrewParams {
   /** Nominal length, ISO-style: under the head, or overall for a flat
    *  (countersunk) head. */
   length: string;
-  /** Placed on a plane: centre within it (mm, along the plane's u / v). */
-  centerX: string;
-  centerY: string;
   /** Modelled thread: radial clearance (mm) the thread is shrunk by, so it
    *  fits a printed nut. Absent on screws made before it. */
   clearance?: string;
 }
 
-/** A metric screw (geom/metricFasteners sizes), built as a body. Placed either
- *  IN a Hole feature — one screw per hole centre, seated on the counterbore
- *  floor / flush in the countersink, its size following a metric hole's — or
- *  on a plane at (centerX, centerY), head above the plane and shank going in
- *  against its normal (Flip reverses). The thread is modelled (a real ISO
+/** A metric screw (geom/metricFasteners sizes), built as a body — one per
+ *  location: IN each hole of a Hole feature (seated on the counterbore floor /
+ *  flush in the countersink, its size following a metric hole's), and at each
+ *  picked spot, head on the spot's face and shank going in against its normal
+ *  (Flip reverses). With neither, one screw at the Top plane's origin. The thread is modelled (a real ISO
  *  helix, see geom/thread.ts) or cosmetic (the shank drawn at the nominal
  *  diameter). */
 export interface ScrewFeature extends FeatureBase {
@@ -860,11 +857,15 @@ export interface ScrewFeature extends FeatureBase {
   head: ScrewHead;
   /** Absent = cosmetic (screws made before modelled threads). */
   thread?: ThreadMode;
-  /** "M3" … "M12". Ignored (follows the hole) when `holeId` names a hole with
-   *  a metric size. */
-  size: string;
+  /** "M3" … "M12". Not saved when `holeId` names a hole with a metric size:
+   *  the screws follow the hole's (see `screwSize`). */
+  size?: string;
+  /** A Hole feature: a screw in each of its holes, following them. */
   holeId?: string;
-  plane: SketchPlaneRef;
+  /** Spots, a screw each, picked as a Hole's targets are: a sketch point
+   *  (followed as it moves, on its sketch's plane) or a fixed spot on a
+   *  face or plane. */
+  points?: HolePointRef[];
   flip: boolean;
   params: ScrewParams;
   color: number;

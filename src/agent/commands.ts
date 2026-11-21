@@ -12,7 +12,7 @@
 // synchronous resolve errors (bad expressions, missing refs).
 import { DEFAULT_THREAD_PARAMS, DEFAULT_THREAD_SETTINGS } from "../document/threadFeature";
 import { FOLDED_NAMES_NOTE, foldNames } from "./nameRanges";
-import { DEFAULT_HOLE_PARAMS, DEFAULT_HOLE_SETTINGS } from "../document/hole";
+import { DEFAULT_HOLE_PARAMS, DEFAULT_HOLE_SETTINGS, defaultHolePoints } from "../document/hole";
 import { DEFAULT_SCREW_PARAMS, DEFAULT_SCREW_SETTINGS } from "../document/screw";
 import { DEFAULT_GEAR_PARAMS, DEFAULT_GEAR_SETTINGS, gearSizing } from "../document/gear";
 import { METRIC_SIZES, isMetricSize } from "../geom/metricFasteners";
@@ -70,6 +70,7 @@ import type {
   ExtrudeProfile,
   FaceRef,
   Feature,
+  HolePointRef,
   PatternAxisRef,
   PatternDirRef,
   PointRef,
@@ -1324,20 +1325,30 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         if (op.holeId) {
           const h = requireFeature(doc, op.holeId);
           if (h.type !== "hole") throw new OpError("invalid_op", "addScrew: holeId must name a Hole feature.");
-        } else if (!op.plane) {
-          throw new OpError("invalid_op", "addScrew: give holeId (screws in a hole) or plane (one standalone).");
+        }
+        const points: HolePointRef[] = [];
+        if (op.sketchId) {
+          const sk = requireSketch(doc, op.sketchId);
+          const pts = defaultHolePoints(sk).map((p) => ({ ...p, sketchId: sk.id }));
+          if (!pts.length)
+            throw new OpError("invalid_op", "addScrew: the sketch has no point or circle to put a screw at.");
+          points.push(...pts);
+        }
+        for (const a of op.at ?? []) {
+          const plane: SketchPlaneRef = a.plane ? resolvePlaneRef(ctx, a.plane) : { kind: "datum", id: "plane-top" };
+          points.push({ uv: [a.x, a.y], plane });
         }
         if (op.size && !isMetricSize(op.size)) {
           throw new OpError("invalid_op", `addScrew: unknown size "${op.size}" — use ${METRIC_SIZES.join(", ")}.`);
         }
         const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_SCREW_PARAMS));
         if (unknown.length) throw new OpError("invalid_op", `addScrew: unknown params ${unknown.join(", ")}.`);
-        const plane: SketchPlaneRef = op.plane ? resolvePlaneRef(ctx, op.plane) : { kind: "datum", id: "plane-top" };
-        const r = addScrew(doc, plane, {
+        const r = addScrew(doc, {
           head: op.head ?? DEFAULT_SCREW_SETTINGS.head,
           thread: op.thread ?? DEFAULT_SCREW_SETTINGS.thread,
           size: op.size ?? DEFAULT_SCREW_SETTINGS.size,
           ...(op.holeId ? { holeId: op.holeId } : {}),
+          ...(points.length ? { points } : {}),
           flip: op.flip ?? false,
           params: { ...DEFAULT_SCREW_PARAMS, ...op.params },
         });

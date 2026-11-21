@@ -1,34 +1,33 @@
 // The Screw dialog's state machine, after useGearDialog: it opens with a
-// placement already (the newest Hole, else the Top datum) so the ghost shows
-// at once; a NEW screw is ghosted by a debounced throwaway regenerate, an EDIT
-// applies live.
+// placement already (the selected or newest Hole, else the Top plane's origin)
+// so the ghost shows at once; its Locations slot then takes viewport picks
+// (App's onScrewPlacementPick) the way a Hole's Targets do. A NEW screw is
+// ghosted by a debounced throwaway regenerate, an EDIT applies live.
 import { useEffect, useState } from "react";
 import { addScrew, resolveDocument, updateScrew } from "../document/document";
-import { DEFAULT_SCREW_SETTINGS, type ScrewSettings } from "../document/screw";
+import { DEFAULT_SCREW_SETTINGS, screwSize, type ScrewSettings } from "../document/screw";
 import type { SketchPlaneRef } from "../document/planes";
-import type { Document, Feature, ScrewFeature } from "../document/types";
+import type { Document, Feature, HolePointRef, ScrewFeature } from "../document/types";
 import type { KernelClient } from "../kernel/KernelClient";
 import type { ShapeMeshPayload } from "../kernel/types";
 
 const PREVIEW_DEBOUNCE_MS = 120;
-const TOP: SketchPlaneRef = { kind: "datum", id: "plane-top" };
 
 export interface ScrewDialogState {
-  plane: SketchPlaneRef;
-  defaultPlane: boolean;
   settings: ScrewSettings;
+  /** The Locations slot is listening: viewport picks add (or remove) spots. */
+  locating: boolean;
   editId?: string;
 }
+
+/** Where the screws go, as the slot edits it. */
+export type ScrewLocations = Pick<ScrewSettings, "holeId" | "points">;
 
 export interface ScrewDialogDeps {
   doc: Document;
   setDoc: (next: Document | ((prev: Document) => Document), coalesceKey?: string) => void;
   ready: boolean;
   kernelRef: React.RefObject<KernelClient | null>;
-  picking: boolean;
-  pickPurpose: string;
-  setPicking: (on: boolean) => void;
-  setPickPurpose: (purpose: "sketch" | "screwPlane") => void;
   beginEdit: (feature: Feature) => void;
   commitEdit: () => void;
   cancelEdit: () => void;
@@ -37,42 +36,22 @@ export interface ScrewDialogDeps {
 }
 
 export function useScrewDialog(deps: ScrewDialogDeps) {
-  const {
-    doc,
-    setDoc,
-    ready,
-    kernelRef,
-    picking,
-    pickPurpose,
-    setPicking,
-    setPickPurpose,
-    beginEdit,
-    commitEdit,
-    cancelEdit,
-    shouldLiveApply,
-    selectFeature,
-  } = deps;
+  const { doc, setDoc, ready, kernelRef, beginEdit, commitEdit, cancelEdit, shouldLiveApply, selectFeature } = deps;
   const [dialog, setDialog] = useState<ScrewDialogState | null>(null);
   const [preview, setPreview] = useState<ShapeMeshPayload | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  const cancelPlanePick = () => {
-    if (picking && pickPurpose === "screwPlane") {
-      setPicking(false);
-      setPickPurpose("sketch");
-    }
-  };
-
-  /** `holeId`: a hole to put the screws in (the selected one, else the newest). */
+  /** `holeId`: a hole to put the screws in (the selected one, else the
+   *  newest); `plane`: a selected plane, to put one on its origin. */
   const open = (holeId: string | null, plane: SketchPlaneRef | null) => {
     const holes = doc.features.filter((f) => f.type === "hole");
     const hole = holeId ?? (plane ? null : (holes.at(-1)?.id ?? null));
     setDialog({
-      plane: plane ?? TOP,
-      defaultPlane: !plane,
+      locating: false,
       settings: {
         ...DEFAULT_SCREW_SETTINGS,
         ...(hole ? { holeId: hole } : {}),
+        ...(plane ? { points: [{ uv: [0, 0], plane }] } : {}),
         params: { ...DEFAULT_SCREW_SETTINGS.params },
       },
     });
@@ -82,14 +61,14 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
     beginEdit(f);
     selectFeature(f.id);
     setDialog({
-      plane: f.plane,
-      defaultPlane: false,
+      locating: false,
       settings: {
         head: f.head,
         ...(f.thread ? { thread: f.thread } : {}),
-        size: f.size,
+        size: screwSize(doc, f),
         flip: f.flip,
         ...(f.holeId ? { holeId: f.holeId } : {}),
+        ...(f.points?.length ? { points: f.points } : {}),
         params: { ...DEFAULT_SCREW_SETTINGS.params, ...f.params },
       },
       editId: f.id,
@@ -98,49 +77,55 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
 
   const close = () => {
     setDialog(null);
-    cancelPlanePick();
     cancelEdit();
   };
 
   const confirm = () => {
     if (!dialog) return;
     if (dialog.editId) {
-      setDoc(updateScrew(doc, dialog.editId, dialog.plane, dialog.settings));
+      setDoc(updateScrew(doc, dialog.editId, dialog.settings));
       selectFeature(dialog.editId);
       commitEdit();
       close();
       return;
     }
-    setDoc(addScrew(doc, dialog.plane, dialog.settings).doc);
+    setDoc(addScrew(doc, dialog.settings).doc);
     selectFeature(null);
     close();
   };
 
-  const armPlane = () => {
-    setPickPurpose("screwPlane");
-    setPicking(true);
-  };
-  const pickPlane = (ref: SketchPlaneRef) => {
-    setDialog((d) => (d ? { ...d, plane: ref, defaultPlane: false } : d));
-    setPicking(false);
-    setPickPurpose("sketch");
-  };
-  const update = (patch: Partial<ScrewSettings>) =>
+  /** The slot's button: start (or stop) listening for locations. */
+  const armLocations = (on: boolean) => setDialog((d) => (d ? { ...d, locating: on } : d));
+  /** The slot's ✕: back to the default (Top's origin), listening. */
+  const clearLocations = () =>
     setDialog((d) => {
       if (!d) return d;
-      const settings = { ...d.settings, ...patch };
-      // `holeId: undefined` in a patch means "place on a plane": drop the key.
-      if ("holeId" in patch && !patch.holeId) delete settings.holeId;
-      return { ...d, settings };
+      const { holeId: _h, points: _p, ...settings } = d.settings;
+      return { ...d, settings, locating: true };
     });
+  /** A pick's result: the hole and spots the screws now go in. */
+  const setLocations = (loc: ScrewLocations) =>
+    setDialog((d) => {
+      if (!d) return d;
+      const { holeId: _h, points: _p, ...settings } = d.settings;
+      return {
+        ...d,
+        settings: {
+          ...settings,
+          ...(loc.holeId ? { holeId: loc.holeId } : {}),
+          ...(loc.points?.length ? { points: loc.points as HolePointRef[] } : {}),
+        },
+      };
+    });
+  const update = (patch: Partial<ScrewSettings>) =>
+    setDialog((d) => (d ? { ...d, settings: { ...d.settings, ...patch } } : d));
   const updateParam = (name: keyof ScrewSettings["params"], value: string) =>
     setDialog((d) => (d ? { ...d, settings: { ...d.settings, params: { ...d.settings.params, [name]: value } } } : d));
 
-  const plane = dialog?.plane;
   const settings = dialog?.settings;
   const creating = !!dialog && !dialog.editId;
   useEffect(() => {
-    if (!creating || !plane || !settings) {
+    if (!creating || !settings) {
       setPreview(null);
       setPreviewError(null);
       return;
@@ -149,7 +134,7 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
     if (!ready || !kernel) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      const { doc: previewDoc, id } = addScrew(doc, plane, settings);
+      const { doc: previewDoc, id } = addScrew(doc, settings);
       const resolved = resolveDocument(previewDoc);
       const err = resolved.errors[id];
       if (err) {
@@ -180,14 +165,27 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [creating, plane, settings, doc, ready, kernelRef]);
+  }, [creating, settings, doc, ready, kernelRef]);
 
   const editId = dialog?.editId;
   useEffect(() => {
-    if (!editId || !plane || !settings) return;
-    if (!shouldLiveApply(JSON.stringify({ e: editId, plane, settings }))) return;
-    setDoc((prev) => updateScrew(prev, editId, plane, settings), `edit:${editId}`);
-  }, [editId, plane, settings, setDoc, shouldLiveApply]);
+    if (!editId || !settings) return;
+    if (!shouldLiveApply(JSON.stringify({ e: editId, settings }))) return;
+    setDoc((prev) => updateScrew(prev, editId, settings), `edit:${editId}`);
+  }, [editId, settings, setDoc, shouldLiveApply]);
 
-  return { dialog, preview, previewError, open, edit, close, confirm, armPlane, pickPlane, update, updateParam };
+  return {
+    dialog,
+    preview,
+    previewError,
+    open,
+    edit,
+    close,
+    confirm,
+    armLocations,
+    clearLocations,
+    setLocations,
+    update,
+    updateParam,
+  };
 }
