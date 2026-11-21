@@ -8,15 +8,7 @@
 import { evaluateExpression, type Scope } from "./expression";
 import { frameOf, offsetFrame, uvToWorld, type PlaneFrameData, type SketchPlaneRef } from "./planes";
 import { holeDims, holePlacement, holeTarget } from "./hole";
-import type {
-  Document,
-  HoleFeature,
-  HolePointRef,
-  ScrewFeature,
-  ScrewHead,
-  ScrewParams,
-  SketchFeature,
-} from "./types";
+import type { Document, HoleFeature, HolePointRef, ScrewFeature, ScrewHead, ScrewParams, SketchFeature } from "./types";
 import { METRIC, isMetricSize, type MetricSize } from "../geom/metricFasteners";
 import { maxSocketInThread } from "../geom/screwMesh";
 import type { ResolvedFeature, ThreadResolved } from "../kernel/types";
