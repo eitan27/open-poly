@@ -526,3 +526,11 @@
   width: 100%;
   margin-top: 8px;
 }
+
+/* Extrude's dialog grows with its profile list; past the window's height the
+   whole dialog scrolls, as Hole's and Screw's do (DraggableDialog keeps it
+   inside the window). */
+.feature-dialog.extrude-dialog {
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+}

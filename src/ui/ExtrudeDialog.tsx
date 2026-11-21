@@ -97,7 +97,7 @@ export function ExtrudeDialog({
   const upTo = extent === "upToFace" || extent === "upToNext";
 
   return (
-    <DraggableDialog className="feature-dialog" style={{ left: x, top: y }}>
+    <DraggableDialog className="feature-dialog extrude-dialog" style={{ left: x, top: y }}>
       <div className="ed-title" data-drag-handle>
         {editing ? "Edit extrude" : "Extrude"}
         {!editing && profileCount > 1 ? ` (${profileCount} profiles)` : ""}
