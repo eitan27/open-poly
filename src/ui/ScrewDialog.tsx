@@ -4,7 +4,7 @@ import type { ScrewHead, ScrewParams } from "../document/types";
 import { METRIC_SIZES } from "../geom/metricFasteners";
 import { DraggableDialog } from "./DraggableDialog";
 import { ExprInput } from "./ExprInput";
-import { PickButton } from "./PickSlot";
+import { PickButton, PickedRow } from "./PickSlot";
 import { ScrewDiagram } from "./diagram/ScrewDiagram";
 import "./GearDialog.css";
 
@@ -21,6 +21,11 @@ interface Props {
   locating: boolean;
   /** The Hole it's in, if any (for the hint and the size note). */
   holeName?: string;
+  /** One row per screw, in the order its parts are numbered. */
+  rows: { key: string; label: string }[];
+  onRemoveRow: (index: number) => void;
+  /** A row hovered (its screw lit in the viewport), or none. */
+  onHoverRow: (index: number | null) => void;
   /** The last settings that made a screw, so the diagram holds still while a
    *  field is half-typed. */
   dims: ScrewDims | null;
@@ -45,6 +50,9 @@ export function ScrewDialog({
   defaultLocation,
   locating,
   holeName,
+  rows,
+  onRemoveRow,
+  onHoverRow,
   dims,
   clearance,
   error,
@@ -143,6 +151,23 @@ export function ScrewDialog({
           )}
         </span>
       </div>
+      {rows.length > 1 && (
+        <div className="screw-rows" onMouseLeave={() => onHoverRow(null)}>
+          {rows.map((r, i) => (
+            <div key={r.key} onMouseEnter={() => onHoverRow(i)}>
+              <PickedRow
+                label={`${i + 1}. ${r.label}`}
+                title={r.label}
+                clearTitle="Remove this screw"
+                onClear={() => {
+                  onHoverRow(null);
+                  onRemoveRow(i);
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
       {locating && (
         <p className="ed-hint">
           {defaultLocation

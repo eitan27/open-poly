@@ -692,8 +692,33 @@ export function addScrew(doc: Document, settings: ScrewSettings): { doc: Documen
 export function updateScrew(doc: Document, id: string, settings: ScrewSettings): Document {
   return mapFeature(doc, id, (f) => {
     if (f.type !== "screw") return f;
-    const { holeId: _h, points: _p, size: _s, ...rest } = f;
+    const { holeId: _h, skipHoles: _k, points: _p, size: _s, ...rest } = f;
     return { ...rest, ...screwToSave(doc, settings), params: { ...settings.params } };
+  });
+}
+
+/** Take one part out of the model from here on (DeletePartFeature), leaving
+ *  the feature that made it as it is. A Delete part just before the insertion
+ *  point takes it too, rather than a second one stacking up. */
+export function deletePart(doc: Document, partId: string): { doc: Document; id: string } {
+  const prev = doc.features[doc.rollbackIndex - 1];
+  if (prev?.type === "deletePart") {
+    if (prev.partIds.includes(partId)) return { doc, id: prev.id };
+    return {
+      doc: {
+        ...doc,
+        features: doc.features.map((f) => (f === prev ? { ...prev, partIds: [...prev.partIds, partId] } : f)),
+      },
+      id: prev.id,
+    };
+  }
+  const ordinal = doc.features.filter((f) => f.type === "deletePart").length + 1;
+  return insertFeature(doc, {
+    id: uid(),
+    type: "deletePart",
+    name: `Delete part ${ordinal}`,
+    suppressed: false,
+    partIds: [partId],
   });
 }
 
@@ -1112,7 +1137,7 @@ export function removeFeature(doc: Document, id: string): Document {
     const r = resolveDocument(doc);
     for (const f of inHole) {
       const screw = f as ScrewFeature;
-      const { holeId: _h, ...rest } = screw;
+      const { holeId: _h, skipHoles: _k, ...rest } = screw;
       unlinked.set(
         f.id,
         unlinkScrew(doc, screw, id, r.scope, r.planeFrames) ?? { ...rest, size: screwSize(doc, screw) },
@@ -1174,6 +1199,7 @@ export function updateParam(doc: Document, id: string, name: string, value: stri
     if (f.type === "gear" && name in DEFAULT_GEAR_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "hole" && name in DEFAULT_HOLE_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "screw" && name in DEFAULT_SCREW_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
+    if (f.type === "deletePart" && name === "restore") return { ...f, partIds: f.partIds.filter((p) => p !== value) };
     if (f.type === "thread" && name in DEFAULT_THREAD_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
     if (f.type === "plane" && name === "angle") return { ...f, angle: value };
@@ -1891,6 +1917,8 @@ export function resolveDocument(doc: Document): ResolveResult {
       } else if (f.type === "thread") {
         const sketch = dDoc.features.find((x) => x.id === f.sketchId);
         features.push(resolveThread(f, sketch?.type === "sketch" ? sketch : undefined, scope, planeFrames));
+      } else if (f.type === "deletePart") {
+        features.push({ id: f.id, type: "deletePart", partIds: f.partIds });
       } else if (f.type === "sketch" || f.type === "plane") {
         // No body of their own. A sketch is consumed by the features built on it
         // (and its derived geometry was applied into `dDoc` above); a plane is

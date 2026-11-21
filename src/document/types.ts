@@ -869,6 +869,9 @@ export interface ScrewFeature extends FeatureBase {
   size?: string;
   /** A Hole feature: a screw in each of its holes, following them. */
   holeId?: string;
+  /** Holes of `holeId` left without a screw, by their place in the Hole's
+   *  list of holes. */
+  skipHoles?: number[];
   /** Spots, a screw each, picked as a Hole's targets are: a sketch point
    *  (followed as it moves) or a fixed spot on a face or plane. */
   points?: ScrewPointRef[];
@@ -897,7 +900,8 @@ export type Feature =
   | GearFeature
   | HoleFeature
   | ScrewFeature
-  | ThreadFeature;
+  | ThreadFeature
+  | DeletePartFeature;
 
 export interface Variable {
   id: string;
@@ -946,6 +950,15 @@ export interface ThreadParams {
  *  body, standing out of the sketch plane. Internal: the matching thread cut
  *  into `targetId`, going in against the plane normal. `flip` reverses either.
  *  Built as a faceted helix (geom/thread.ts). */
+/** Parts taken out of the model from this point in the timeline on — one
+ *  screw of several, one copy of a pattern — by part id (`id`, `id#1`…, see
+ *  document/parts.ts). The feature that made them is left as it is, and so is
+ *  everything between it and here that used them. */
+export interface DeletePartFeature extends FeatureBase {
+  type: "deletePart";
+  partIds: string[];
+}
+
 export interface ThreadFeature extends FeatureBase {
   type: "thread";
   side: "external" | "internal";

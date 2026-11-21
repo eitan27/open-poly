@@ -75,6 +75,8 @@ const OP_DESCRIPTIONS: Record<string, string> = {
   rename: "Rename a feature/body so later steps and the human can read it.",
   delete:
     "Delete a feature (undoable). On an assembly: delete an instance (with the mates and relations that used it), a mate (with its relations) or a relation, by id — what's left stays where it is.",
+  deletePart:
+    "Delete ONE part — a single screw of a Screw feature, one copy of a pattern — by its body id from get_scene_summary (`<featureId>#<n>` for the 2nd, 3rd…), leaving the feature that made it as it is. Adds a Delete part step to the timeline; delete that step to bring the part back. Use `delete` for a whole feature.",
   setRollback: "Move the timeline rollback bar to an index (features at/after it are not regenerated).",
   select: "Set the viewport selection (so a screenshot highlights what you mean).",
   setSectionView:

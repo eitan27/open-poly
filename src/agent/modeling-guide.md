@@ -328,7 +328,11 @@ frame count that shows the motion you care about.
   spot) stands upright, head up (+Z), seated at the spot; give
   `opening: true` on an `at` spot that is a hole's centre to point it into
   the face instead. Screws in a Hole go into their holes. `flip` reverses
-  them all. With no location, one screw at Top's origin. Deleting the Hole leaves its screws where they are.
+  them all. With no location, one screw at Top's origin.
+  Each screw is its own part (`<id>`, `<id>#1`, … in that order); to remove
+  one of them, `delete_part` it — that adds a Delete part step and leaves the
+  Screw feature (and anything built on it before) as it is. The same works
+  for one copy of a pattern or mirror. Deleting the Hole leaves its screws where they are.
   The thread is cosmetic by default (a plain shank — quick, and right for a
   bought screw in a CAD model). `thread: "modelled"` gives a real ISO helix
   with a lead-in chamfer, shrunk by `params.clearance` (default 0.1 mm); in a

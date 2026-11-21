@@ -641,6 +641,12 @@ export const operationSchema = z.discriminatedUnion("op", [
   }),
   z.object({ op: z.literal("rename"), featureId: z.string(), name: z.string() }),
   z.object({ op: z.literal("delete"), featureId: z.string() }),
+  /** Take ONE part out of the model from here on — a screw of a Screw
+   *  feature's, a pattern's copy — by its part id from the scene summary
+   *  (`<featureId>` or `<featureId>#<n>`), leaving the feature that made it as
+   *  it is. Adds a Delete part step to the timeline (or extends the one just
+   *  before). */
+  z.object({ op: z.literal("deletePart"), partId: z.string() }),
   z.object({ op: z.literal("setRollback"), index: z.number().int().min(0) }),
   z.object({ op: z.literal("select"), refs: z.array(selectionSchema) }),
   // View-only cross-section —

@@ -258,6 +258,24 @@ await locations.locator(".ed-pick-btn").click(); // listen again
 }
 await modelThread.uncheck();
 await locations.locator(".ed-pick-btn").click(); // stop listening
+// A row per screw, each with its own ✕.
+const rows = dialog.locator(".screw-rows .bool-operand-row");
+check("a row per screw", (await rows.count()) === 2, String(await rows.count()));
+check("…numbered, the Hole's first", /^1\. Hole 1 · hole 1/.test((await rows.first().textContent()) ?? ""));
+// Hovering a row lights its screw (the spot at the back edge's midpoint).
+{
+  const p = await op.screenOf([0, 20, 14]);
+  const clip = { x: p.x - 50, y: p.y - 60, width: 100, height: 100 };
+  const before = await page.screenshot({ clip });
+  await rows.nth(1).hover();
+  await page.waitForTimeout(300);
+  const lit = await page.screenshot({ clip });
+  await shot("row-hover");
+  check("hovering a row lights its screw", !before.equals(lit));
+  await page.mouse.move(5, 300);
+  await page.waitForTimeout(300);
+  check("…and leaving it puts it back", before.equals(await page.screenshot({ clip })));
+}
 const before = (await op.features()).filter((f) => f.type === "screw").length;
 await dialog.locator(".ed-primary").click();
 await op.settle();
@@ -273,6 +291,42 @@ const bodyOf = async () => (await op.scene()).bodies.filter((b) => b.id.split("#
 const tops = (bs) => bs.map((b) => b.bbox.max[2].toFixed(2)).sort();
 const was = tops(await bodyOf());
 check("two screws: one seated in the counterbore, one on the face", was.length === 2, JSON.stringify(was));
+
+// Removing one screw in the Parts panel: a Delete part step in the timeline,
+// the Screw feature untouched; ✕ on Delete part's row brings it back.
+{
+  const partsOf = async () => (await op.scene()).bodies.filter((b) => b.id.split("#")[0] === made.id).length;
+  const clickPartX = (name) =>
+    page.evaluate((n) => {
+      const row = [...document.querySelectorAll(".solid-row")].find((r) => r.querySelector(".solid-name")?.value === n);
+      row?.querySelector('button[title="Delete"]')?.click();
+      return !!row;
+    }, name);
+  check("the Parts panel lists the second screw", await clickPartX(`${made.name} (2)`));
+  await op.settle();
+  const feats = await op.features();
+  const del = feats.at(-1);
+  check(
+    "…its ✕ adds a Delete part step",
+    del?.type === "deletePart" && del.partIds?.[0] === `${made.id}#1`,
+    JSON.stringify(del),
+  );
+  check(
+    "…leaving the Screw feature",
+    feats.some((f) => f.id === made.id),
+  );
+  check("…and one screw fewer", (await partsOf()) === 1, String(await partsOf()));
+  await shot("delete-part");
+  await op.apply({ op: "delete", featureId: del.id });
+  await op.settle();
+  check("deleting the Delete part brings it back", (await partsOf()) === 2);
+  // The agent's delete_part does the same.
+  const r = await op.applySettled({ op: "deletePart", partId: `${made.id}#1` });
+  check("the agent's deletePart adds the step", r.ok && (await partsOf()) === 1, JSON.stringify(r));
+  const bad = await op.apply({ op: "deletePart", partId: `${made.id}#7` }).catch((e) => ({ err: String(e) }));
+  check("…and refuses a part that isn't there", !bad.ok, JSON.stringify(bad).slice(0, 160));
+  await op.applySettled({ op: "delete", featureId: r.createdId });
+}
 
 // Deleting the Hole leaves both where they are.
 const holeId = (await op.features()).find((f) => f.type === "hole").id;

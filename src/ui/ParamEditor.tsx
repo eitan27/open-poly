@@ -15,6 +15,8 @@ interface Props {
   onEditSketch: (id: string) => void;
   onFinishSketch: () => void;
   onEditTransform: (id: string) => void;
+  /** A part's name as the Parts panel shows it (for Delete part's list). */
+  partName?: (partId: string) => string;
 }
 
 export function ParamEditor({
@@ -26,6 +28,7 @@ export function ParamEditor({
   onEditSketch,
   onFinishSketch,
   onEditTransform,
+  partName = (id) => id,
 }: Props) {
   if (!feature) {
     return (
@@ -525,6 +528,24 @@ export function ParamEditor({
                 onChange={(e) => onChangeParam(feature.id, name, e.target.value)}
               />
             </label>
+          ))}
+        </div>
+      ) : feature.type === "deletePart" ? (
+        <div className="sketch-params">
+          {feature.partIds.length === 0 && <p className="hint">Deletes nothing: every part is back.</p>}
+          {feature.partIds.map((id) => (
+            <div className="param-field" key={id}>
+              <span className="param-label">Deletes</span>
+              <span className="param-static">{partName(id)}</span>
+              <button
+                type="button"
+                className="row-icon"
+                title="Bring this part back"
+                onClick={() => onChangeParam(feature.id, "restore", id)}
+              >
+                ✕
+              </button>
+            </div>
           ))}
         </div>
       ) : feature.type === "loft" ? (

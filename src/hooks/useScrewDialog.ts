@@ -9,7 +9,7 @@ import { DEFAULT_SCREW_SETTINGS, screwSize, type ScrewSettings } from "../docume
 import type { SketchPlaneRef } from "../document/planes";
 import type { Document, Feature, ScrewFeature } from "../document/types";
 import type { KernelClient } from "../kernel/KernelClient";
-import type { ShapeMeshPayload } from "../kernel/types";
+import type { ResolvedFrame, ShapeMeshPayload } from "../kernel/types";
 import { SCREW_TEMPLATE_FRAME, screwCopies } from "./ghostMove";
 
 const PREVIEW_DEBOUNCE_MS = 120;
@@ -24,7 +24,7 @@ export interface ScrewDialogState {
 }
 
 /** Where the screws go, as the slot edits it. */
-export type ScrewLocations = Pick<ScrewSettings, "holeId" | "points">;
+export type ScrewLocations = Pick<ScrewSettings, "holeId" | "skipHoles" | "points">;
 
 export interface ScrewDialogDeps {
   doc: Document;
@@ -110,16 +110,28 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
   const setLocations = (loc: ScrewLocations) =>
     setDialog((d) => {
       if (!d) return d;
-      const { holeId: _h, points: _p, ...settings } = d.settings;
+      const { holeId: _h, skipHoles: _k, points: _p, ...settings } = d.settings;
       return {
         ...d,
         settings: {
           ...settings,
           ...(loc.holeId ? { holeId: loc.holeId } : {}),
+          ...(loc.holeId && loc.skipHoles?.length ? { skipHoles: loc.skipHoles } : {}),
           ...(loc.points?.length ? { points: loc.points } : {}),
         },
       };
     });
+  /** A row's ✕: the screw in hole `i` of its Hole (of `count`) — the Hole
+   *  itself once none of its holes has one — or picked spot `i`. */
+  const removeLocation = (row: { hole: number; count: number } | { point: number }) => {
+    const s = dialog?.settings;
+    if (!s) return;
+    if ("point" in row) return setLocations({ ...s, points: (s.points ?? []).filter((_, i) => i !== row.point) });
+    const skip = [...new Set([...(s.skipHoles ?? []), row.hole])].sort((a, b) => a - b);
+    setLocations(
+      skip.length >= row.count ? { points: s.points } : { holeId: s.holeId, skipHoles: skip, points: s.points },
+    );
+  };
   const update = (patch: Partial<ScrewSettings>) =>
     setDialog((d) => (d ? { ...d, settings: { ...d.settings, ...patch } } : d));
   const updateParam = (name: keyof ScrewSettings["params"], value: string) =>
@@ -136,6 +148,8 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
   /** The shape being built, so a pick while it builds waits for it rather
    *  than dropping it and asking again. */
   const pendingRef = useRef<{ sig: string; mesh: Promise<ShapeMeshPayload> } | null>(null);
+  /** Where the ghost's screws are now, in part order. */
+  const seatsRef = useRef<ResolvedFrame[]>([]);
   useEffect(() => {
     if (!creating || !settings) {
       setPreview(null);
@@ -154,6 +168,7 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
       return;
     }
     const seats = rf.frames ?? [rf.frame];
+    seatsRef.current = seats;
     // Under a fixed id: the draft's is new every time, and would make every
     // template look different.
     const template = {
@@ -232,6 +247,13 @@ export function useScrewDialog(deps: ScrewDialogDeps) {
     armLocations,
     clearLocations,
     setLocations,
+    removeLocation,
+    /** The ghost's screw `i` alone (a row hovered), once its shape is built. */
+    ghostScrewAt: (i: number): ShapeMeshPayload | null => {
+      const t = templateRef.current;
+      const seat = seatsRef.current[i];
+      return t && seat ? screwCopies(t.mesh, [seat]) : null;
+    },
     update,
     updateParam,
   };

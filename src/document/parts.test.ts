@@ -127,6 +127,7 @@ const ALL_FEATURE_TYPES: Record<Feature["type"], true> = {
   hole: true,
   screw: true,
   thread: true,
+  deletePart: true,
 };
 const FEATURE_TYPES = Object.keys(ALL_FEATURE_TYPES) as Feature["type"][];
 const asFeature = (type: Feature["type"]) => ({ type }) as Feature;

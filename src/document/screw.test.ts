@@ -3,6 +3,7 @@ import {
   addHole,
   addScrew,
   createDocument,
+  deletePart,
   removeFeature,
   resolveDocument,
   updateParam,
@@ -224,6 +225,42 @@ describe("resolve", () => {
     const moved = updateScrew(gone, id, screw());
     expect((moved.features.find((x) => x.id === id) as ScrewFeature).holeId).toBeUndefined();
     expect(resolveDocument(moved).errors[id]).toBeUndefined();
+  });
+
+  it("leaves out the holes it's told to skip, and refuses to place none", () => {
+    const h = addHole(withPoints(), "s", "body", hole());
+    const { doc, id } = addScrew(h.doc, screw({ holeId: h.id, skipHoles: [0], points: [{ uv: [50, 0], plane: TOP }] }));
+    expect(origins(resolveDocument(doc).features.find((x) => x.id === id) as Seated)).toEqual([
+      [20, 0, 0],
+      [50, 0, 0],
+    ]);
+    const none = updateScrew(doc, id, screw({ holeId: h.id, skipHoles: [0, 1] }));
+    expect(resolveDocument(none).errors[id]).toMatch(/every screw is removed/);
+    // Not in a hole: nothing to skip, nothing saved.
+    const loose = updateScrew(doc, id, screw({ skipHoles: [1] }));
+    expect(loose.features.find((x) => x.id === id)).not.toHaveProperty("skipHoles");
+  });
+
+  it("Delete part: a step of its own, gathering the parts deleted in a row", () => {
+    const { doc, id } = addScrew(
+      createDocument(),
+      screw({ points: [0, 10, 20].map((x) => ({ uv: [x, 0] as [number, number], plane: TOP })) }),
+    );
+    const one = deletePart(doc, `${id}#1`);
+    const two = deletePart(one.doc, `${id}#2`);
+    expect(two.id).toBe(one.id);
+    const del = two.doc.features.at(-1)!;
+    expect(del).toMatchObject({ type: "deletePart", name: "Delete part 1", partIds: [`${id}#1`, `${id}#2`] });
+    // The screw itself is untouched.
+    expect(two.doc.features.find((x) => x.id === id)).toEqual(doc.features.find((x) => x.id === id));
+    expect(resolveDocument(two.doc).features.at(-1)).toEqual({
+      id: del.id,
+      type: "deletePart",
+      partIds: [`${id}#1`, `${id}#2`],
+    });
+    // Bringing one back.
+    const back = updateParam(two.doc, del.id, "restore", `${id}#1`);
+    expect((back.features.at(-1) as { partIds: string[] }).partIds).toEqual([`${id}#2`]);
   });
 
   it("length is editable through updateParam", () => {

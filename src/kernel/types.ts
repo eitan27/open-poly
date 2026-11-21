@@ -188,6 +188,8 @@ export interface ThreadResolved {
 
 export type ResolvedFeature =
   | { id: string; type: "primitive"; kind: PrimitiveKind; params: Record<string, number> }
+  // Parts taken out of the running model (document DeletePartFeature).
+  | { id: string; type: "deletePart"; partIds: string[] }
   // `previewTool`: emit only the swept tool (the changing portion) as the body,
   // skipping the fuse/cut — used by the live extrude ghost preview so existing
   // bodies keep their own colour. Targets are still resolved so "throughAll"

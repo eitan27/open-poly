@@ -35,6 +35,7 @@ import {
   genId,
   moveFeature,
   removeFeature,
+  deletePart,
   removeSketchConstraint,
   removeSketchEntity,
   removeVariable,
@@ -1668,6 +1669,12 @@ export default function App() {
     selectFeature,
   });
   const lastScrewDims = useRef<ScrewDims | null>(null);
+  /** The Screw dialog's row under the pointer: its screw is lit. */
+  const [screwRowHover, setScrewRowHover] = useState<number | null>(null);
+  const screwOpen = !!screw.dialog;
+  useEffect(() => {
+    if (!screwOpen) setScrewRowHover(null);
+  }, [screwOpen]);
   // The last hole settings that resolved, so the dialog's diagram holds still
   // while a field is half-typed rather than blinking out.
   const lastHoleDims = useRef<HoleDims | null>(null);
@@ -2733,6 +2740,16 @@ export default function App() {
     return () => clearTimeout(t);
   }, [gearLanding, rawMeshes, errors]);
 
+  // The hovered row's screw, drawn on top in the warm "fill" colour: the
+  // ghost's copy at that spot while creating, the part itself while editing.
+  const screwRowMesh = useMemo(() => {
+    const d = screw.dialog;
+    if (!d || screwRowHover === null) return null;
+    if (!d.editId) return screw.ghostScrewAt(screwRowHover);
+    const id = screwRowHover === 0 ? d.editId : `${d.editId}#${screwRowHover}`;
+    return rawMeshes.find((m) => m.id === id)?.mesh ?? null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ghostScrewAt reads refs the preview keeps current
+  }, [screw.dialog, screw.preview, screwRowHover, rawMeshes]);
   const ghostMeshes = useMemo<GhostMesh[]>(
     () => [
       // An extrude previews the swept TOOL, and in Remove mode that tool is the
@@ -2751,6 +2768,7 @@ export default function App() {
       // The drill tools are material about to go, like a Remove extrude's.
       ...(hole.preview ? [{ mesh: hole.preview, variant: "cut" as const }] : []),
       ...(screw.preview ? [{ mesh: screw.preview }] : []),
+      ...(screwRowMesh ? [{ mesh: screwRowMesh, variant: "fill" as const }] : []),
       // An internal thread's ghost is the cavity — material about to go.
       ...(thread.preview
         ? [
@@ -2775,6 +2793,7 @@ export default function App() {
       gearLanding,
       hole.preview,
       screw.preview,
+      screwRowMesh,
       thread.preview,
       thread.dialog?.settings.side,
       patternGhosts,
@@ -3737,9 +3756,10 @@ export default function App() {
   })();
   /** The Screw dialog's Locations, picked in the viewport, as a Hole's
    *  targets are: a click on one of a Hole's holes (its centre — the rim's
-   *  snap) puts a screw in each of that Hole's holes, or takes them out again;
-   *  a click anywhere else adds a spot there — into it, when it's an opening
-   *  (a rim), else upright — or removes the one already there. */
+   *  snap) puts a screw in each of that Hole's holes — or, in the Hole it's
+   *  already in, takes that one hole's screw out or puts it back; a click
+   *  anywhere else adds a spot there — into it, when it's an opening (a rim),
+   *  else upright — or removes the one already there. */
   const onScrewPlacementPick = (pick: PlacementPick) => {
     const d = screw.dialog;
     if (!d) return;
@@ -3747,17 +3767,21 @@ export default function App() {
     const near = (q: number[]) => Math.hypot(q[0] - w[0], q[1] - w[1], q[2] - w[2]) < 1e-3;
     const sketchOf = (id: string) => doc.features.find((f): f is SketchFeature => f.id === id && f.type === "sketch");
     const points = d.settings.points ?? [];
+    const { holeId, skipHoles } = d.settings;
     for (const h of doc.features) {
       if (h.type !== "hole") continue;
-      let hit = false;
+      let holes: { frame: PlaneFrameData; center: [number, number] }[] = [];
       try {
-        hit = holePlacement(h, sketchOf, resolved.planeFrames).holes.some((t) =>
-          near(uvToWorld(t.frame, t.center[0], t.center[1])),
-        );
+        holes = holePlacement(h, sketchOf, resolved.planeFrames).holes;
       } catch {
         // a Hole that doesn't place has no holes to click
       }
-      if (hit) return screw.setLocations({ holeId: d.settings.holeId === h.id ? undefined : h.id, points });
+      const i = holes.findIndex((t) => near(uvToWorld(t.frame, t.center[0], t.center[1])));
+      if (i < 0) continue;
+      if (holeId !== h.id) return screw.setLocations({ holeId: h.id, points });
+      if (skipHoles?.includes(i))
+        return screw.setLocations({ holeId, skipHoles: skipHoles.filter((k) => k !== i), points });
+      return screw.removeLocation({ hole: i, count: holes.length });
     }
     const at = points.findIndex((p) => {
       try {
@@ -3767,11 +3791,12 @@ export default function App() {
         return false;
       }
     });
-    if (at >= 0) return screw.setLocations({ holeId: d.settings.holeId, points: points.filter((_, i) => i !== at) });
+    if (at >= 0) return screw.removeLocation({ point: at });
     const t = placementTarget(pick);
     if (t)
       screw.setLocations({
-        holeId: d.settings.holeId,
+        holeId,
+        skipHoles,
         points: [...points, pick.rim ? { ...t.ref, opening: true } : t.ref],
       });
   };
@@ -3782,7 +3807,7 @@ export default function App() {
     const ref: ScrewPointRef = { uv: [0, 0], plane };
     const points = d.settings.points ?? [];
     const kept = points.filter((p) => !sameHolePoint(p, ref));
-    screw.setLocations({ holeId: d.settings.holeId, points: kept.length < points.length ? kept : [...points, ref] });
+    screw.setLocations({ ...d.settings, points: kept.length < points.length ? kept : [...points, ref] });
   };
   const onHolePlacementPick = (pick: PlacementPick) => {
     const d = hole.dialog;
@@ -4936,6 +4961,7 @@ export default function App() {
       case "import":
       case "sweep":
       case "loft":
+      case "deletePart":
         selectFeature(id);
         setEditParamsId(id);
         break;
@@ -6526,12 +6552,22 @@ export default function App() {
     return { keep: new Set(d.operandIds), ghost: none(), cut: none() };
   }, [booleanDialog]);
 
+  /** Delete a part: the feature that made it, when that's all it made; one
+   *  part of several (a screw of a Screw feature's, a pattern's copy) with a
+   *  Delete part step in the timeline, which leaves the feature and anything
+   *  built on it in between as they are. */
+  const deletePartOrFeature = (d: Document, partOrFeatureId: string): Document => {
+    const fid = featureIdOfPart(partOrFeatureId);
+    const several =
+      partIds.filter((p) => featureIdOfPart(p) === fid).length > 1 ||
+      partOrFeatureId !== fid ||
+      d.features.some((f) => f.type === "deletePart" && f.partIds.some((p) => featureIdOfPart(p) === fid));
+    return several && d.features.some((f) => f.id === fid) ? deletePart(d, partOrFeatureId).doc : removeFeature(d, fid);
+  };
   const handleDelete = (partOrFeatureId: string) => {
-    // From the Parts panel this can be a sub-part id; a part isn't a thing the
-    // timeline can remove on its own, so it deletes the feature that made it.
     const id = featureIdOfPart(partOrFeatureId);
-    setDoc(removeFeature(doc, id));
-    setSelection((prev) => prev.filter((s) => featureIdOf(s) !== id));
+    setDoc(deletePartOrFeature(doc, partOrFeatureId));
+    setSelection((prev) => prev.filter((s) => featureIdOf(s) !== partOrFeatureId));
     if (editingSketchId === id) setEditingSketchId(null);
   };
 
@@ -6663,7 +6699,8 @@ export default function App() {
       next = removeSketchEntity(next, sketchId, entityId);
     }
     for (const id of featureIds) {
-      next = removeFeature(next, id);
+      // A body picked in the viewport is one PART of its feature.
+      next = partIds.includes(id) ? deletePartOrFeature(next, id) : removeFeature(next, id);
     }
     if (next === doc) return;
     setDoc(next);
@@ -7957,6 +7994,7 @@ export default function App() {
                       onEditSketch={editSketch}
                       onFinishSketch={finishSketch}
                       onEditTransform={editTransformFeature}
+                      partName={(id) => partAppearance(doc, id, DEFAULT_SOLID_COLOR).name}
                     />
                   </>
                 )}
@@ -8974,6 +9012,40 @@ export default function App() {
             {screw.dialog &&
               (() => {
                 const d = screw.dialog;
+                // One row per screw, in part order: the Hole's (less any
+                // left out), then each spot.
+                const screwRows: {
+                  key: string;
+                  label: string;
+                  remove: { hole: number; count: number } | { point: number };
+                }[] = [];
+                const inHole = doc.features.find((f) => f.id === d.settings.holeId);
+                if (inHole?.type === "hole") {
+                  let count = 0;
+                  try {
+                    count = holePlacement(
+                      inHole,
+                      (id) => doc.features.find((f): f is SketchFeature => f.id === id && f.type === "sketch"),
+                      resolved.planeFrames,
+                    ).holes.length;
+                  } catch {
+                    // a Hole that doesn't place lists no screws
+                  }
+                  for (let i = 0; i < count; i++)
+                    if (!d.settings.skipHoles?.includes(i))
+                      screwRows.push({
+                        key: `h${i}`,
+                        label: `${inHole.name} · hole ${i + 1}`,
+                        remove: { hole: i, count },
+                      });
+                }
+                (d.settings.points ?? []).forEach((p, i) =>
+                  screwRows.push({
+                    key: `p${i}`,
+                    label: gearLocationLabel({ kind: "datum", id: "plane-top" }, p, doc),
+                    remove: { point: i },
+                  }),
+                );
                 const size = screwSize(doc, d.settings);
                 let dims: ScrewDims | null = null;
                 let dimsError: string | null = null;
@@ -8993,6 +9065,9 @@ export default function App() {
                     defaultLocation={!d.settings.holeId && !d.settings.points?.length}
                     locating={d.locating}
                     holeName={doc.features.find((f) => f.id === d.settings.holeId)?.name}
+                    rows={screwRows.map(({ key, label }) => ({ key, label }))}
+                    onRemoveRow={(i) => screw.removeLocation(screwRows[i].remove)}
+                    onHoverRow={setScrewRowHover}
                     dims={dims ?? lastScrewDims.current}
                     clearance={(() => {
                       try {

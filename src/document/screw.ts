@@ -34,7 +34,7 @@ export const DEFAULT_SCREW_PARAMS: ScrewParams = { length: "12", clearance: "0.1
 
 /** What the dialog edits. `size` is always there (the Size control shows
  *  one); it is saved only when it isn't following a metric hole's. */
-export type ScrewSettings = Pick<ScrewFeature, "head" | "thread" | "holeId" | "points" | "flip"> & {
+export type ScrewSettings = Pick<ScrewFeature, "head" | "thread" | "holeId" | "skipHoles" | "points" | "flip"> & {
   size: string;
   params: ScrewParams;
 };
@@ -234,10 +234,11 @@ export function screwSize(doc: Document, s: Pick<ScrewFeature, "size" | "holeId"
 /** The settings as saved: no size while a metric hole decides it, no empty
  *  point list. */
 export function screwToSave(doc: Document, s: ScrewSettings): Omit<ScrewSettings, "size"> & { size?: string } {
-  const { size, points, ...rest } = s;
+  const { size, points, skipHoles, ...rest } = s;
   return {
     ...rest,
     ...(metricHole(doc, s.holeId) ? {} : { size }),
+    ...(s.holeId && skipHoles?.length ? { skipHoles } : {}),
     ...(points?.length ? { points } : {}),
   };
 }
@@ -275,7 +276,7 @@ const UPRIGHT: PlaneFrameData = { origin: [0, 0, 0], uAxis: [1, 0, 0], vAxis: [0
  *  readable "screw: …" message when a location can't be found. */
 export function screwSeats(
   doc: Document,
-  f: Pick<ScrewFeature, "holeId" | "points" | "flip">,
+  f: Pick<ScrewFeature, "holeId" | "skipHoles" | "points" | "flip">,
   scope: Scope,
   planeFrames: Map<string, PlaneFrameData>,
 ): ScrewSeat[] {
@@ -299,7 +300,9 @@ export function screwSeats(
       throw new Error(`screw: its hole can't be placed — ${(err as Error).message.replace(/^hole: /, "")}`);
     }
     const depth = seatDepth(hole, scope);
-    for (const h of holes) add(seatAt(h.frame, h.center, hole.flip !== f.flip, depth));
+    holes.forEach((h, i) => {
+      if (!f.skipHoles?.includes(i)) add(seatAt(h.frame, h.center, hole.flip !== f.flip, depth));
+    });
   }
   for (const ref of f.points ?? []) {
     let t;
@@ -317,6 +320,7 @@ export function screwSeats(
     }
   }
   if (!f.holeId && !f.points?.length) add(seatAt(frameOf(TOP), [0, 0], f.flip, 0));
+  if (!seats.length) throw new Error("screw: every screw is removed — select where they go");
   return seats;
 }
 
@@ -334,7 +338,7 @@ export function unlinkScrew(
   if (f.holeId !== holeId) return null;
   let seats: ScrewSeat[];
   try {
-    seats = screwSeats(doc, { holeId, flip: f.flip }, scope, planeFrames);
+    seats = screwSeats(doc, { holeId, skipHoles: f.skipHoles, flip: f.flip }, scope, planeFrames);
   } catch {
     return null;
   }
@@ -360,7 +364,7 @@ export function unlinkScrew(
     plane: { kind: "face", featureId: host, frame: f.flip ? turned(s) : s },
     opening: true,
   }));
-  const { holeId: _h, ...rest } = f;
+  const { holeId: _h, skipHoles: _s, ...rest } = f;
   return { ...rest, size: screwSize(doc, f), points: [...spots, ...(f.points ?? [])] };
 }
 

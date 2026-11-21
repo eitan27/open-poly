@@ -87,3 +87,13 @@
   display: grid;
   grid-template-columns: repeat(3, 1fr);
 }
+
+/* The Screw dialog: one removable row per screw it places. */
+.screw-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}

@@ -205,7 +205,16 @@ type Body = NamedShape & {
    *  only while the body's key is still `key`: a transform or anything else
    *  that changes the body changes its key, and the offsetter is used again. */
   regrow?: { key: string; build: (d: number) => NamedShape };
+  /** A moved copy of a cached screw (screwTemplate): mesh it by moving that
+   *  screw's mesh, the way the shape was moved, instead of tessellating it
+   *  again. Its faces and edges are the template's, in the same order. */
+  meshCopy?: { templateKey: string; o: V3; down: V3; u: V3; prefix: string };
 };
+
+/** A cached screw's mesh, and its faces' and edges' build-local ids in
+ *  explorer order — a moved copy lists its own in the same order, which is
+ *  how a copy's mesh gets its ids. */
+type TemplateMesh = { faces: MeshedFaces; edges: MeshedEdges; faceIds: number[]; edgeIds: number[] };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Topo = any; // a raw OCCT TopoDS_Shape (opencascade.js binding)
@@ -4638,21 +4647,48 @@ function threadBoolean(
   return null;
 }
 
+/** Take parts out of the running model. A part that isn't there (already
+ *  consumed by a boolean, or its feature changed so it no longer exists) is
+ *  noted, not an error: there's nothing left to delete. */
+function buildDeletePart(feature: Extract<ResolvedFeature, { type: "deletePart" }>, ctx: BuildContext): void {
+  const gone = feature.partIds.filter((id) => !ctx.bodies.some((b) => b.id === id));
+  for (let i = ctx.bodies.length - 1; i >= 0; i--) {
+    if (!feature.partIds.includes(ctx.bodies[i].id)) continue;
+    const [b] = ctx.bodies.splice(i, 1);
+    try {
+      b.shape.delete();
+    } catch {
+      /* already released */
+    }
+  }
+  if (gone.length) ctx.warn(`${gone.length === 1 ? "a part it deletes is" : "parts it deletes are"} no longer there`);
+}
+
 function buildScrewFeature(feature: Extract<ResolvedFeature, { type: "screw" }>, ctx: BuildContext): void {
   const { bodies, used } = ctx;
   const key = builderKey(feature);
   used.add(key);
-  let entry = builderCache.get(key);
-  if (!entry) {
-    entry = screwBody(feature);
-    builderCache.set(key, entry);
-  }
-  bodies.push({
-    id: feature.id,
-    key,
-    faceted: true,
-    regrow: { key, build: (d) => screwBody(grownScrew(feature, d)) },
-    ...sharedNamed(entry),
+  // One PART per location, in the order the document lists them — `id`,
+  // `id#1`, `id#2`… — so a part names its screw (Delete part relies on it),
+  // and each is meshed by moving the one screw's mesh (see meshCopy).
+  const { key: templateKey, shape: template } = screwTemplate(feature);
+  feature.centers.forEach((_, i) => {
+    const at = screwPlacement(feature, i);
+    bodies.push({
+      id: i === 0 ? feature.id : `${feature.id}#${i}`,
+      key: `${key}#${i}`,
+      faceted: true,
+      noSplit: true,
+      regrow: {
+        key: `${key}#${i}`,
+        build: (d) => {
+          const grown = grownScrew(feature, d);
+          return placedNamed(screwTemplate(grown).shape, at.o, at.down, at.u, SCREW_TEMPLATE_ID, at.prefix);
+        },
+      },
+      meshCopy: { templateKey, ...at },
+      ...placedNamed(template, at.o, at.down, at.u, SCREW_TEMPLATE_ID, at.prefix),
+    });
   });
 }
 
@@ -4689,13 +4725,16 @@ function sharedNamed(src: NamedShape): NamedShape {
 
 /** One screw of each shape, built once at the origin pointing down −Z (u
  *  along +X), by its shape alone: wherever its copies go, they are moved
- *  copies of it. A modelled thread is thousands of facets — building it is
- *  the seconds; moving it is nothing — so a new location, in the dialog or
- *  an edit, never rebuilds one. A few recent shapes are kept. */
+ *  copies of it — and their meshes moved copies of its mesh. A modelled
+ *  thread is thousands of facets — building and meshing it is the seconds;
+ *  moving it is nothing — so a new location, in the dialog or an edit, never
+ *  rebuilds one. A few recent shapes are kept (never deleted: a copy shares
+ *  their topology). */
 const screwTemplates = new Map<string, NamedShape>();
+const screwTemplateMeshes = new Map<string, TemplateMesh>();
 const SCREW_TEMPLATE_ID = "@screw";
 
-function screwTemplate(feature: Extract<ResolvedFeature, { type: "screw" }>): NamedShape {
+function screwTemplate(feature: Extract<ResolvedFeature, { type: "screw" }>): { key: string; shape: NamedShape } {
   const { profile, hexHead, socket, thread } = feature;
   const key = JSON.stringify({ profile, hexHead, socket, thread });
   let t = screwTemplates.get(key);
@@ -4704,10 +4743,31 @@ function screwTemplate(feature: Extract<ResolvedFeature, { type: "screw" }>): Na
     screwTemplates.delete(key);
   } else {
     t = meshSolid(screwMesh({ profile, hexHead, socket, thread }), [0, 0, 0], [0, 0, -1], [1, 0, 0], SCREW_TEMPLATE_ID);
-    while (screwTemplates.size >= 6) screwTemplates.delete(screwTemplates.keys().next().value!);
+    while (screwTemplates.size >= 6) {
+      const old = screwTemplates.keys().next().value!;
+      screwTemplates.delete(old);
+      screwTemplateMeshes.delete(old);
+    }
   }
   screwTemplates.set(key, t);
-  return t;
+  return { key, shape: t };
+}
+
+/** Where screw `i` of a feature goes: its seat, the way it points, and the
+ *  prefix of its face names. Into the plane against its normal, like a hole;
+ *  Flip reverses. */
+function screwPlacement(
+  feature: Extract<ResolvedFeature, { type: "screw" }>,
+  i: number,
+): { o: V3; down: V3; u: V3; prefix: string } {
+  const f = feature.frames?.[i] ?? feature.frame;
+  const sg = feature.flip ? 1 : -1;
+  return {
+    o: framePoint(f, ...feature.centers[i]),
+    down: [f.normal[0] * sg, f.normal[1] * sg, f.normal[2] * sg],
+    u: f.uAxis,
+    prefix: feature.centers.length > 1 ? `${feature.id}/n${i}` : feature.id,
+  };
 }
 
 /** `src` moved rigidly — sharing its topology, as translatedNamed — so the
@@ -4735,27 +4795,6 @@ function placedNamed(src: NamedShape, o: V3, down: V3, u: V3, from: string, to: 
     if (nm) names.set(f.hashCode, nm.startsWith(from) ? to + nm.slice(from.length) : nm);
   });
   return { shape, names };
-}
-
-/** The screws of a feature, as one shape: each a moved copy of the one
- *  screw of its shape (screwTemplate) — ONE mesh, head, socket and thread
- *  stitched together in JS (geom/screwMesh.ts) and made a solid in a single
- *  pass, no booleans. */
-function screwBody(feature: Extract<ResolvedFeature, { type: "screw" }>): NamedShape {
-  // Into the plane against its normal, like a hole; Flip reverses. Screws in
-  // more than one place each take their own frame.
-  const sg = feature.flip ? 1 : -1;
-  const frameAt = (i: number) => feature.frames?.[i] ?? feature.frame;
-  const downAt = (i: number): V3 => {
-    const n = frameAt(i).normal;
-    return [n[0] * sg, n[1] * sg, n[2] * sg];
-  };
-  const idOf = (i: number) => (feature.centers.length > 1 ? `${feature.id}/n${i}` : feature.id);
-  const template = screwTemplate(feature);
-  const screws = feature.centers.map(([cu, cv], i) =>
-    placedNamed(template, framePoint(frameAt(i), cu, cv), downAt(i), frameAt(i).uAxis, SCREW_TEMPLATE_ID, idOf(i)),
-  );
-  return screws.length === 1 ? screws[0] : compoundOf(screws);
 }
 
 /** The rods (external) or cavities (internal) of a Thread feature: one
@@ -5570,6 +5609,9 @@ function buildBodies(
         case "thread":
           buildThreadFeature(feature, ctx);
           break;
+        case "deletePart":
+          buildDeletePart(feature, ctx);
+          break;
         // Every member of ResolvedFeature is handled above, and the compiler
         // enforces that: this is the dispatch whose failure mode was invisible
         // (a missing case built no geometry and raised nothing), and the one
@@ -5607,6 +5649,184 @@ function packLargeMesh(m: { faces: MeshedFaces; edges: MeshedEdges }): { faces: 
       ...(faces.normals ? { normals: f32(faces.normals) } : {}),
     },
     edges: { ...edges, lines: f32(edges.lines) },
+  };
+}
+
+/** A body's tessellation, with its faces' and edges' names, surfaces and
+ *  clusters attached (skipped for a display-only preview body). */
+function meshBody(
+  b: Body,
+  onMeshProgress?: (featureId: string, done: number, total: number) => void,
+): { faces: MeshedFaces; edges: MeshedEdges } {
+  // Huge bodies (large imported assemblies) mesh per-face so peak memory
+  // stays bounded — replicad's whole-shape mesh holds every triangulation at
+  // once and exhausts the heap. Normal bodies use the faster one-shot path.
+  let faces: MeshedFaces, edges: MeshedEdges;
+  // The face/edge adjacency walk, shared by the crease test and the
+  // logical-surface clustering below so they can't disagree — and so the
+  // walk (an OCCT adaptor per face, another per curved face's edge) is
+  // paid for once per body rather than twice.
+  let walked: FaceEdgeAdjacency | undefined;
+  if (b.names.size > PER_FACE_MESH_THRESHOLD) {
+    // Large imported assembly: mesh per-face so peak memory stays bounded
+    // (replicad's whole-shape mesh holds every triangulation at once and
+    // exhausts the heap). Produce typed arrays — this mesh is millions of
+    // triangles and re-transfers to the main thread every regen, so the
+    // ArrayBuffer copy (vs per-number structured clone) is a big win here.
+    faces = meshFaceByFace(b.shape, referenceMeshOpts(b.shape), (done, total) => onMeshProgress?.(b.id, done, total));
+    edges = { lines: [], edgeGroups: [] }; // edges omitted for a reference body
+  } else {
+    // Normal body: replicad's one-shot mesh (number[]); a big one is
+    // repacked into typed arrays below.
+    faces = b.shape.mesh(MESH_OPTS);
+    edges = meshEdgesOf(b.shape, MESH_OPTS);
+    // Recover any face the one-shot mesh silently dropped, before anything
+    // downstream reads the buffers. Runs after meshEdges, which wants the
+    // triangulation the whole-shape pass left on the shape. Both outcomes
+    // are logged with stable prefixes: a hole in a solid is invisible in
+    // any other telemetry, and the verification harness asserts on these.
+    const { recovered, lost } = patchMissingFaces(b.shape, faces);
+    if (recovered) console.warn(`mesh: recovered ${recovered} dropped face(s) on ${b.id}`);
+    if (lost) console.warn(`mesh: UNMESHED ${lost} face(s) on ${b.id} — the body will render with holes`);
+    // Display-only smoothing: faceted curved bodies (cylinder/revolve/
+    // extruded circle) are genuinely polygonal, so shade their walls smooth
+    // and drop the facet seam edges — they READ as round while the kernel
+    // keeps booleaning the facets. Sharp features (creases above the
+    // threshold) are preserved. Geometry the kernel sees is untouched.
+    // Skipped for preview bodies: it walks each edge's adjacent faces with
+    // OCCT adaptors, which throws on the slivers a dress-up delta carries,
+    // and a translucent ghost gains nothing from smooth shading anyway.
+    if (!b.preview) {
+      smoothMeshNormals(faces);
+      // A face the crease test can't get a normal for drops out of the
+      // adjacency walk, and every seam around it is then drawn as a hard
+      // crease — a black line down an otherwise smooth wall. Reported for
+      // the same reason as a hole: otherwise it's silent.
+      const nstats: FaceNormalStats = { fallback: 0, unknown: 0 };
+      walked = faceEdgeAdjacency(b.shape, nstats);
+      edges = filterSmoothEdges(edges, smoothEdgeHashes(b.shape, nstats, walked));
+      if (nstats.fallback) console.warn(`mesh: ${nstats.fallback} face normal(s) via boundary fallback on ${b.id}`);
+      if (nstats.unknown)
+        console.warn(`mesh: NORMALLESS ${nstats.unknown} face(s) on ${b.id} — their seams draw as creases`);
+    }
+  }
+  // Attach each face's / edge's persistent name (matched by build-local hash)
+  // so the app carries stable references across rebuilds. All of it is
+  // skipped for a preview body: nothing can reference or pick one, and
+  // these passes walk every face with OCCT adaptors — which a dress-up
+  // delta, full of slivers where two nearly-identical solids were
+  // differenced, is very good at making throw.
+  if (faces.faceGroups && !b.preview) {
+    // Surface classification walks every face with an OCCT adaptor, so skip
+    // it for huge reference bodies (the per-face mesh path) — they're
+    // reference-only, and the pass would cost more than it's worth.
+    const surfaces = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceSurfacesFrom(b.shape);
+    // Logical-surface clustering (whole-cylinder selection). Skipped for huge
+    // reference bodies alongside surface classification — same O(faces) walk.
+    const clusters = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceClustersFrom(b.shape, walked);
+    faces.faceGroups = faces.faceGroups.map((g) => ({
+      ...g,
+      name: b.names.get(g.faceId),
+      surface: surfaces?.get(g.faceId),
+      clusterId: clusters?.get(g.faceId),
+    }));
+  }
+  if (edges.edgeGroups && !b.preview) {
+    const edgeNames = edgeNamesFrom(b.shape, b.names);
+    // Chain tangent-continuous chords (whole-circle edge selection); skipped
+    // for huge reference bodies alongside the surface/cluster passes.
+    const chains = b.names.size > PER_FACE_MESH_THRESHOLD ? null : edgeChainsFrom(b.shape);
+    edges.edgeGroups = edges.edgeGroups.map((g) => ({
+      ...g,
+      name: edgeNames.get(g.edgeId),
+      chainId: chains?.get(g.edgeId),
+    }));
+  }
+  return { faces, edges };
+}
+
+/** The ids of a shape's faces, and of its edges (first seen, face by face),
+ *  in explorer order. */
+function topoOrder(shape: Shape3D): { faceIds: number[]; edgeIds: number[] } {
+  const faceIds: number[] = [];
+  const edgeIds: number[] = [];
+  const seen = new Set<number>();
+  for (const f of shape.faces) {
+    faceIds.push(f.hashCode);
+    for (const e of f.edges) {
+      const h = e.hashCode;
+      if (!seen.has(h)) {
+        seen.add(h);
+        edgeIds.push(h);
+      }
+    }
+  }
+  return { faceIds, edgeIds };
+}
+
+/** A screw's mesh as its cached screw's, moved: points and normals carried
+ *  by the same rigid motion as the shape (see placedNamed), every face and
+ *  edge id swapped for the copy's own (same explorer order), and every name
+ *  re-prefixed from the template's to this screw's. */
+function copiedMesh(b: Body, at: NonNullable<Body["meshCopy"]>): { faces: MeshedFaces; edges: MeshedEdges } {
+  let t = screwTemplateMeshes.get(at.templateKey);
+  const template = screwTemplates.get(at.templateKey);
+  if (!t) {
+    if (!template) return meshBody(b);
+    const m = meshBody({ ...template, id: SCREW_TEMPLATE_ID, key: at.templateKey });
+    t = { ...m, ...topoOrder(template.shape) };
+    screwTemplateMeshes.set(at.templateKey, t);
+  }
+  const own = topoOrder(b.shape);
+  if (own.faceIds.length !== t.faceIds.length || own.edgeIds.length !== t.edgeIds.length) return meshBody(b);
+  const faceId = new Map(t.faceIds.map((h, i) => [h, own.faceIds[i]]));
+  const edgeId = new Map(t.edgeIds.map((h, i) => [h, own.edgeIds[i]]));
+  const rename = (n: string | undefined) => n?.split(`${SCREW_TEMPLATE_ID}/`).join(`${at.prefix}/`);
+  // Template (x, y, z) → o + x·u + (−y)·(down×u) + (−z)·down: meshSolid laid
+  // the template out with u = +X, down = −Z, so down×u = −Y.
+  const e2 = vcross(at.down, at.u);
+  const move = (src: ArrayLike<number>, o: V3 | null) => {
+    const out = new Float32Array(src.length);
+    for (let i = 0; i < src.length; i += 3) {
+      const x = src[i];
+      const y = -src[i + 1];
+      const z = -src[i + 2];
+      for (let k = 0; k < 3; k++) out[i + k] = (o ? o[k] : 0) + x * at.u[k] + y * e2[k] + z * at.down[k];
+    }
+    return out;
+  };
+  return {
+    faces: {
+      vertices: move(t.faces.vertices, at.o),
+      triangles: t.faces.triangles,
+      ...(t.faces.normals ? { normals: move(t.faces.normals, null) } : {}),
+      ...(t.faces.faceGroups
+        ? {
+            faceGroups: t.faces.faceGroups.map((g) => {
+              const id = faceId.get(g.faceId) ?? g.faceId;
+              return {
+                ...g,
+                faceId: id,
+                name: b.names.get(id) ?? rename(g.name),
+                ...(g.clusterId !== undefined ? { clusterId: faceId.get(g.clusterId) ?? g.clusterId } : {}),
+              };
+            }),
+          }
+        : {}),
+    },
+    edges: {
+      lines: move(t.edges.lines, at.o),
+      ...(t.edges.edgeGroups
+        ? {
+            edgeGroups: t.edges.edgeGroups.map((g) => ({
+              ...g,
+              edgeId: edgeId.get(g.edgeId) ?? g.edgeId,
+              name: rename(g.name),
+              ...(g.chainId !== undefined ? { chainId: edgeId.get(g.chainId) ?? g.chainId } : {}),
+            })),
+          }
+        : {}),
+    },
   };
 }
 
@@ -6504,94 +6724,7 @@ function regenerate(
       usedMeshes.add(b.key);
       let cached = meshCache.get(b.key);
       if (!cached) {
-        // Huge bodies (large imported assemblies) mesh per-face so peak memory
-        // stays bounded — replicad's whole-shape mesh holds every triangulation at
-        // once and exhausts the heap. Normal bodies use the faster one-shot path.
-        let faces: MeshedFaces, edges: MeshedEdges;
-        // The face/edge adjacency walk, shared by the crease test and the
-        // logical-surface clustering below so they can't disagree — and so the
-        // walk (an OCCT adaptor per face, another per curved face's edge) is
-        // paid for once per body rather than twice.
-        let walked: FaceEdgeAdjacency | undefined;
-        if (b.names.size > PER_FACE_MESH_THRESHOLD) {
-          // Large imported assembly: mesh per-face so peak memory stays bounded
-          // (replicad's whole-shape mesh holds every triangulation at once and
-          // exhausts the heap). Produce typed arrays — this mesh is millions of
-          // triangles and re-transfers to the main thread every regen, so the
-          // ArrayBuffer copy (vs per-number structured clone) is a big win here.
-          faces = meshFaceByFace(b.shape, referenceMeshOpts(b.shape), (done, total) =>
-            onMeshProgress?.(b.id, done, total),
-          );
-          edges = { lines: [], edgeGroups: [] }; // edges omitted for a reference body
-        } else {
-          // Normal body: replicad's one-shot mesh (number[]); a big one is
-          // repacked into typed arrays below.
-          faces = b.shape.mesh(MESH_OPTS);
-          edges = meshEdgesOf(b.shape, MESH_OPTS);
-          // Recover any face the one-shot mesh silently dropped, before anything
-          // downstream reads the buffers. Runs after meshEdges, which wants the
-          // triangulation the whole-shape pass left on the shape. Both outcomes
-          // are logged with stable prefixes: a hole in a solid is invisible in
-          // any other telemetry, and the verification harness asserts on these.
-          const { recovered, lost } = patchMissingFaces(b.shape, faces);
-          if (recovered) console.warn(`mesh: recovered ${recovered} dropped face(s) on ${b.id}`);
-          if (lost) console.warn(`mesh: UNMESHED ${lost} face(s) on ${b.id} — the body will render with holes`);
-          // Display-only smoothing: faceted curved bodies (cylinder/revolve/
-          // extruded circle) are genuinely polygonal, so shade their walls smooth
-          // and drop the facet seam edges — they READ as round while the kernel
-          // keeps booleaning the facets. Sharp features (creases above the
-          // threshold) are preserved. Geometry the kernel sees is untouched.
-          // Skipped for preview bodies: it walks each edge's adjacent faces with
-          // OCCT adaptors, which throws on the slivers a dress-up delta carries,
-          // and a translucent ghost gains nothing from smooth shading anyway.
-          if (!b.preview) {
-            smoothMeshNormals(faces);
-            // A face the crease test can't get a normal for drops out of the
-            // adjacency walk, and every seam around it is then drawn as a hard
-            // crease — a black line down an otherwise smooth wall. Reported for
-            // the same reason as a hole: otherwise it's silent.
-            const nstats: FaceNormalStats = { fallback: 0, unknown: 0 };
-            walked = faceEdgeAdjacency(b.shape, nstats);
-            edges = filterSmoothEdges(edges, smoothEdgeHashes(b.shape, nstats, walked));
-            if (nstats.fallback)
-              console.warn(`mesh: ${nstats.fallback} face normal(s) via boundary fallback on ${b.id}`);
-            if (nstats.unknown)
-              console.warn(`mesh: NORMALLESS ${nstats.unknown} face(s) on ${b.id} — their seams draw as creases`);
-          }
-        }
-        // Attach each face's / edge's persistent name (matched by build-local hash)
-        // so the app carries stable references across rebuilds. All of it is
-        // skipped for a preview body: nothing can reference or pick one, and
-        // these passes walk every face with OCCT adaptors — which a dress-up
-        // delta, full of slivers where two nearly-identical solids were
-        // differenced, is very good at making throw.
-        if (faces.faceGroups && !b.preview) {
-          // Surface classification walks every face with an OCCT adaptor, so skip
-          // it for huge reference bodies (the per-face mesh path) — they're
-          // reference-only, and the pass would cost more than it's worth.
-          const surfaces = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceSurfacesFrom(b.shape);
-          // Logical-surface clustering (whole-cylinder selection). Skipped for huge
-          // reference bodies alongside surface classification — same O(faces) walk.
-          const clusters = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceClustersFrom(b.shape, walked);
-          faces.faceGroups = faces.faceGroups.map((g) => ({
-            ...g,
-            name: b.names.get(g.faceId),
-            surface: surfaces?.get(g.faceId),
-            clusterId: clusters?.get(g.faceId),
-          }));
-        }
-        if (edges.edgeGroups && !b.preview) {
-          const edgeNames = edgeNamesFrom(b.shape, b.names);
-          // Chain tangent-continuous chords (whole-circle edge selection); skipped
-          // for huge reference bodies alongside the surface/cluster passes.
-          const chains = b.names.size > PER_FACE_MESH_THRESHOLD ? null : edgeChainsFrom(b.shape);
-          edges.edgeGroups = edges.edgeGroups.map((g) => ({
-            ...g,
-            name: edgeNames.get(g.edgeId),
-            chainId: chains?.get(g.edgeId),
-          }));
-        }
-        cached = packLargeMesh({ faces, edges });
+        cached = packLargeMesh(b.meshCopy ? copiedMesh(b, b.meshCopy) : meshBody(b, onMeshProgress));
         meshCache.set(b.key, cached);
       }
       result = { id: b.id, ok: true, mesh: { name: b.id, faces: cached.faces, edges: cached.edges } };

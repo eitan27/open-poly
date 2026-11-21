@@ -42,6 +42,7 @@ import {
   setSketchEntities,
   makeFeature,
   removeFeature,
+  deletePart,
   renameFeature,
   resolveDocument,
   setFeatureColor,
@@ -1454,6 +1455,19 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       case "delete": {
         requireFeature(doc, op.featureId);
         next = removeFeature(doc, op.featureId);
+        break;
+      }
+      case "deletePart": {
+        const fid = featureIdOfPart(op.partId);
+        requireFeature(doc, fid);
+        if (!ctx.getMeshes().some((m) => m.id === op.partId))
+          throw new OpError(
+            "not_found",
+            `deletePart: no part "${op.partId}" in the model — use a body id from get_scene_summary.`,
+          );
+        const r = deletePart(doc, op.partId);
+        next = r.doc;
+        createdId = r.id;
         break;
       }
       case "setRollback": {
