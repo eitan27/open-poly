@@ -26,3 +26,9 @@
 @import "./ui/BooleanDialog.css";
 @import "./ui/EditPanel.css";
 @import "./styles/sketch.css";
+
+/* A drawn tool icon beside a button's label: sit on the text's line, as the
+   glyph icons do, rather than on its baseline. */
+.tool-svg-icon {
+  vertical-align: -0.2em;
+}

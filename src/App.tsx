@@ -216,7 +216,16 @@ import type { AgentContext, AgentMesh, RegenSettle } from "./agent/commands";
 import { settleAssembly } from "./agent/assemblySummary";
 import { readSource } from "./assembly/useAssemblySources";
 import type { AssemblyAgentState } from "./agent/assemblySummary";
-import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
+import {
+  ConstructionIcon,
+  GearIcon,
+  HorizontalIcon,
+  OffsetIcon,
+  ParallelIcon,
+  ScrewIcon,
+  ThreadIcon,
+  VerticalIcon,
+} from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { PatternDialog } from "./ui/PatternDialog";
 import { ExtrudeDialog } from "./ui/ExtrudeDialog";
@@ -7228,7 +7237,7 @@ export default function App() {
     },
     {
       id: "gear",
-      icon: "⚙",
+      icon: <GearIcon />,
       label: "Gear",
       shortcut: shortcutHint("model.gear"),
       title: `Gear (${shortcutName("model.gear")}): a parametric involute spur or ring gear on a plane — set teeth, size and bore in the dialog`,
@@ -7248,7 +7257,7 @@ export default function App() {
     },
     {
       id: "screw",
-      icon: "🔩",
+      icon: <ScrewIcon />,
       label: "Screw",
       shortcut: shortcutHint("model.screw"),
       title: `Screw (${shortcutName("model.screw")}): metric socket, button, countersunk or hex screws — one in every hole of a Hole feature, or on a plane`,
@@ -7258,7 +7267,7 @@ export default function App() {
     },
     {
       id: "thread",
-      icon: "🌀",
+      icon: <ThreadIcon />,
       label: "Thread",
       shortcut: shortcutHint("model.thread"),
       title: `Thread (${shortcutName("model.thread")}): cut a custom thread on a cylindrical face or a hole's wall — any diameter and pitch, printable 45°, ISO or trapezoid`,
