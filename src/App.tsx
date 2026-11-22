@@ -2605,17 +2605,7 @@ export default function App() {
   // portion), keyed by fresh ids that aren't among the real bodies — so every
   // existing body stays rendered in its own colour and only the new material
   // reads as cyan. Hence the viewport just shows all real meshes as usual.
-  // A new Thread's ghost is its part as it will be, threads and all — so the
-  // part itself steps aside while it shows (but not while a slot listens:
-  // then it's what you'd click).
-  const threadGhostOf =
-    thread.preview && thread.dialog && !thread.dialog.editId && !thread.dialog.slot
-      ? thread.dialog.face?.featureId
-      : undefined;
-  const viewportMeshes = useMemo(
-    () => (threadGhostOf ? meshes.filter((m) => m.id !== threadGhostOf) : meshes),
-    [meshes, threadGhostOf],
-  );
+  const viewportMeshes = meshes;
 
   // The Pattern dialog's live validation: null = fields are commit-ready. Used
   // both to gate Create and as the dialog's warning line.
@@ -2799,9 +2789,9 @@ export default function App() {
       ...(screw.preview ? [{ mesh: screw.preview }] : []),
       ...(screwRowMesh ? [{ mesh: screwRowMesh, variant: "fill" as const }] : []),
       ...(holeRowRing ? [{ mesh: holeRowRing, variant: "fill" as const }] : []),
-      // A thread's ghost is the part with the thread cut (the part steps
-      // aside for it: see viewportMeshes).
-      ...(thread.preview ? [{ mesh: thread.preview }] : []),
+      // A thread's ghost is what it cuts away: the teeth in a hole's wall,
+      // the grooves in a rod — red, as a Remove extrude's.
+      ...(thread.preview ? [{ mesh: thread.preview, variant: "cut" as const }] : []),
       ...patternGhosts,
       ...mirrorGhost,
       // The chamfer/fillet delta: what the operation fills in and what it carves
@@ -3898,7 +3888,7 @@ export default function App() {
     if (pick.kind !== "bodyFace") {
       flashMsg(
         d.slot === "face"
-          ? "Pick a round face: a rod's side or a hole's wall."
+          ? "Pick a round face: a cylindrical face or a hole's wall."
           : "Pick a face of a Thread, a tapped Hole or a Screw, or a plain rod or hole.",
       );
       return;
@@ -3906,7 +3896,7 @@ export default function App() {
     const face = threadFaceOf(pick.featureId, pick.faceId);
     if (d.slot === "face") {
       if (!face) {
-        flashMsg("That face isn't round. Pick a rod's side or a hole's wall.");
+        flashMsg("That face isn't round. Pick a cylindrical face or a hole's wall.");
         return;
       }
       thread.setFace(face.ref, face.wall);
@@ -7263,7 +7253,7 @@ export default function App() {
       icon: "🌀",
       label: "Thread",
       shortcut: shortcutHint("model.thread"),
-      title: `Thread (${shortcutName("model.thread")}): cut a custom thread on a round face — a rod's side or a hole's wall — any diameter and pitch, printable 45°, ISO or trapezoid`,
+      title: `Thread (${shortcutName("model.thread")}): cut a custom thread on a cylindrical face or a hole's wall — any diameter and pitch, printable 45°, ISO or trapezoid`,
       keywords: [
         "helix",
         "printable",
@@ -9191,8 +9181,8 @@ export default function App() {
                 const faceLabel =
                   d.face &&
                   (d.faceDiameter !== null
-                    ? `${d.side === "internal" ? "Hole" : "Rod"} Ø${Math.round(d.faceDiameter * 100) / 100} · ${part}`
-                    : `${d.side === "internal" ? "Hole" : "Rod"} · ${part}`);
+                    ? `${d.side === "internal" ? "Hole" : "Cylinder"} Ø${Math.round(d.faceDiameter * 100) / 100} · ${part}`
+                    : `${d.side === "internal" ? "Hole" : "Cylinder"} · ${part}`);
                 return (
                   <ThreadDialog
                     editing={!!d.editId}

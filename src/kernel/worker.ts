@@ -4627,7 +4627,7 @@ const THREAD_FUZZIES = [THREAD_FUZZY, 0] as const;
  *  fails `ok` is retried finer. `base` is left untouched; null when every
  *  density fails. */
 function threadBoolean(
-  op: "fuse" | "cut",
+  op: "fuse" | "cut" | "common",
   base: NamedShape,
   tool: (segments?: number) => NamedShape,
   ok: (result: NamedShape) => boolean,
@@ -4839,7 +4839,7 @@ function threadWall(body: Body, face: Face): RoundWall {
     }
   }
   const wall = fitRoundWall(samples, points);
-  if (!wall) throw new Error("thread: the face isn't a round wall — pick a rod's side or a hole's bore");
+  if (!wall) throw new Error("thread: the face isn't a round wall — pick a cylindrical face or a hole's wall");
   return wall;
 }
 
@@ -5093,9 +5093,41 @@ function buildThreadFeature(feature: Extract<ResolvedFeature, { type: "thread" }
     next = sharedNamed(next);
   }
   if (feature.previewTool) {
-    // The ghost is the part as it will be, thread and all (the dialog hides
-    // the part itself meanwhile); the part is left as is.
-    bodies.push({ id: feature.id, key: contentKey(feature, [target.key]), noSplit: true, faceted: true, ...next });
+    // The cut above is run only to fail here rather than at Create, and to be
+    // cached for it. The ghost is what the thread takes out: the part ∩ the
+    // tool — the teeth cut into a hole's wall, the grooves (and any turning
+    // down) on a rod — drawn red over the part, as a Remove extrude's is. (Not
+    // the part − its threaded self: two solids sharing faces everywhere the
+    // thread didn't reach leave zero-thickness flaps there; see the dress-up
+    // previews.) The countersink is left out of it.
+    const ghostKey = contentKey({ ...feature, previewTool: undefined }, ["threadGhost", target.key]);
+    ctx.usedDressUps.add(ghostKey);
+    const cached = dressUpCache.get(ghostKey);
+    let ghost: NamedShape | null = cached ? sharedNamed(cached.result) : null;
+    if (!ghost) {
+      const N = threadSegments(t.d / 2, 0.02, t.profile, t.starts);
+      const made = threadBoolean(
+        "common",
+        target,
+        (seg) => threadTool(feature, wall, at, seg),
+        (r) => measureVolume(r.shape) > 1e-6,
+        [undefined, N + segmentsStep(t.profile, t.starts)],
+      );
+      if (made) {
+        dressUpCache.set(ghostKey, { result: made });
+        ghost = sharedNamed(made);
+      }
+    }
+    // Should even that fail, the part as it will be stands in: the cut
+    // itself worked, so Create will too.
+    if (ghost) next.shape.delete();
+    bodies.push({
+      id: feature.id,
+      key: ghost ? ghostKey : contentKey(feature, [target.key]),
+      noSplit: true,
+      faceted: true,
+      ...(ghost ?? next),
+    });
     return;
   }
   target.shape.delete();

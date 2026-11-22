@@ -351,7 +351,8 @@ frame count that shows the motion you care about.
   Screw works too): size, pitch, profile, starts and hand are copied, and
   each half keeps its own `params.clearance` (0.15 mm per part) for the gap.
   `profile: "printable"` (default, 45°, prints upright without supports),
-  `"iso"`, `"trapezoid"`. Pitch 1.5 mm and up for FDM; `starts` 2–4 for a lid
+  `"iso"`, `"trapezoid"`. Left out, the pitch is sized with the diameter (1 mm
+  below Ø5, 1.5 below Ø8, else 2) — 1 mm and up prints on FDM; `starts` 2–4 for a lid
   that closes in a fraction of a turn. The thread starts at the face's open
   end (a rod's tip, a hole's mouth; `flip` for the other) and runs the whole
   face unless `params.length` is given. Too little material (a rod thinner

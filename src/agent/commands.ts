@@ -1373,7 +1373,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         if (!wall)
           throw new OpError(
             "invalid_op",
-            `addThread: "${op.face.faceName}" isn't round — pick a rod's side or a hole's wall.`,
+            `addThread: "${op.face.faceName}" isn't round — pick a cylindrical face or a hole's wall.`,
           );
         const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_THREAD_PARAMS));
         if (unknown.length) throw new OpError("invalid_op", `addThread: unknown params ${unknown.join(", ")}.`);
@@ -1397,7 +1397,7 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
             );
           settings = { ...settings, ...m.patch, params: { ...settings.params, ...m.patch.params, ...given } };
         } else if (given.diameter === undefined) {
-          const sug = suggestThread(wall, settings, scope);
+          const sug = suggestThread(wall, settings, scope, given.pitch !== undefined);
           settings = {
             ...settings,
             params: { ...settings.params, diameter: sug.diameter, pitch: given.pitch ?? sug.pitch },

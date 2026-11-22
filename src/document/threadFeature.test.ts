@@ -65,6 +65,16 @@ describe("suggestThread", () => {
     expect(suggestThread({ radius: 4, internal: true }, settings(), {}).diameter).toBe("9.2");
   });
 
+  it("a pitch in proportion: a Ø3 rod gets 1 mm, not 2 (which would take half its core)", () => {
+    expect(suggestThread({ radius: 1.5, internal: false }, settings(), {})).toEqual({ diameter: "3", pitch: "1" });
+    expect(suggestThread({ radius: 3, internal: false }, settings(), {}).pitch).toBe("1.5");
+    // A hole keeps a pitch it's told to, and sizes for it: Ø8 + 2 × 0.3.
+    expect(suggestThread({ radius: 4, internal: true }, settings({}, { pitch: "1" }), {}, true)).toEqual({
+      diameter: "8.6",
+      pitch: "1",
+    });
+  });
+
   it("ISO: a metric size with its coarse pitch — an M6 rod, an M6 tap drill", () => {
     const iso = settings({ profile: "iso" });
     expect(suggestThread({ radius: 3, internal: false }, iso, {})).toEqual({ diameter: "6", pitch: "1" });

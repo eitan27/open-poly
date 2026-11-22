@@ -93,12 +93,13 @@ export function useThreadDialog(deps: ThreadDialogDeps): ThreadDialogApi {
     return d.matched ? fresh : suggested(fresh, true);
   };
 
-  /** `d` with the size its face is ready for (see suggestThread) — the pitch
-   *  too when `pitch`, which only the ISO profile changes. */
+  /** `d` with the size its face is ready for (see suggestThread) — and the
+   *  pitch too when `pitch`, else the size follows the pitch typed. */
   const suggested = (d: ThreadDialogState, pitch: boolean): ThreadDialogState => {
     if (d.faceDiameter === null) return d;
-    const s = suggestThread({ radius: d.faceDiameter / 2, internal: d.side === "internal" }, d.settings, scope);
-    const params = { ...d.settings.params, diameter: s.diameter, ...(pitch ? { pitch: s.pitch } : {}) };
+    const wall = { radius: d.faceDiameter / 2, internal: d.side === "internal" };
+    const s = suggestThread(wall, d.settings, scope, !pitch);
+    const params = { ...d.settings.params, diameter: s.diameter, pitch: s.pitch };
     return { ...d, suggested: s.diameter, settings: { ...d.settings, params } };
   };
 

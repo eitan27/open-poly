@@ -190,7 +190,7 @@ const dialog = page.locator(".hole-dialog");
 await dialog.waitFor({ timeout: 5000 });
 check(
   "opens listening for the face",
-  (await dialog.locator(".ed-pick-btn.active", { hasText: "rod's side" }).count()) === 1,
+  (await dialog.locator(".ed-pick-btn.active", { hasText: "cylindrical face" }).count()) === 1,
 );
 check("Create waits for a face", await dialog.locator(".ed-primary").isDisabled());
 // The rod's middle, in the front view: the canvas centre.
@@ -198,7 +198,7 @@ const bb = await canvas.boundingBox();
 await page.mouse.click(bb.x + bb.width / 2, bb.y + bb.height / 2);
 await page.waitForTimeout(2500);
 const row = dialog.locator(".bool-operand-row").first();
-check("the face row names the rod", /Rod Ø12/.test((await row.textContent()) ?? ""), await row.textContent());
+check("the face row names the cylinder", /Cylinder Ø12/.test((await row.textContent()) ?? ""), await row.textContent());
 check(
   "the diameter is suggested from it",
   (await dialog.locator(".ed-field", { hasText: "Diameter" }).locator("input").inputValue()) === "12",
@@ -227,6 +227,58 @@ check(
   (await op.featureErrors()).length === 0,
   JSON.stringify(await op.featureErrors()),
 );
+
+// The dialog on an M3 screw's shank: a pitch for its size (1, not 2 — which
+// would take half the shank), and a red ghost of only the grooves.
+// The view centres on the origin, whose marker would take a click there: `dy`
+// pixels below it (above, < 0) instead.
+const pickCentre = async (dy) => {
+  const b = await canvas.boundingBox();
+  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2 + dy);
+  await page.waitForTimeout(4000);
+};
+// The Front view (2), framed on the model.
+const frontView = async () => {
+  await op.settle();
+  await page.evaluate(() => document.activeElement?.blur());
+  await canvas.hover({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("2");
+  await page.waitForTimeout(800);
+};
+const field = (name) => dialog.locator(".ed-field", { hasText: name }).locator("input").inputValue();
+await page.keyboard.press("Escape");
+await op.newDocument();
+await op.applySettled({ op: "addScrew", size: "M3", params: { length: 12 } });
+await frontView();
+await canvas.hover({ position: { x: 5, y: 5 } });
+await page.keyboard.press("j");
+await dialog.waitFor({ timeout: 5000 });
+await pickCentre(32);
+check("M3 shank: Ø3", (await field("Diameter")) === "3", await field("Diameter"));
+check("M3 shank: pitch 1", (await field("Pitch")) === "1", await field("Pitch"));
+check("M3 shank: Create enabled", !(await dialog.locator(".ed-primary").isDisabled()));
+await shot("ghost-screw");
+await page.keyboard.press("Escape");
+await page.keyboard.press("Escape");
+
+// …and in a hole, seen in section: the ghost is the teeth, the plate stays.
+await op.newDocument();
+{
+  const plate = await box(30, 10);
+  const bore = await cyl(5.4, 10);
+  await op.applySettled({ op: "boolean", kind: "subtract", operands: [plate, bore] });
+  await op.apply({ op: "setSectionView", enabled: true, plane: { datum: "front" } }).catch(() => {});
+  await frontView();
+  await canvas.hover({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("j");
+  await dialog.waitFor({ timeout: 5000 });
+  await pickCentre(-28);
+  const row = await dialog.locator(".bool-operand-row").first().textContent();
+  check("hole: the face row names the hole", /Hole Ø10\.8/.test(row ?? ""), row);
+  await shot("ghost-hole");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+}
 
 // The fit check's intersect is meant to come back empty.
 const real = errors.filter(

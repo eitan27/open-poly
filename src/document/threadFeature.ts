@@ -135,33 +135,52 @@ export function threadReadout(t: ThreadDims): string {
   return parts.join(" · ");
 }
 
+/** A pitch in proportion to a diameter, for the profiles the tables don't
+ *  cover: fine enough that the teeth leave a small rod most of its core (a
+ *  2 mm pitch takes half an M3's shank), coarse enough to print. */
+export function suggestedPitch(d: number, profile: ThreadProfile): number {
+  if (profile === "trapezoid") return d < 6 ? 1 : d < 10 ? 1.5 : d < 16 ? 2 : 3;
+  return d < 5 ? 1 : d < 8 ? 1.5 : 2;
+}
+
 /** The thread a round face is ready for, so the cut is exact: on a rod, its
  *  own diameter (rounded down, so the crests are whole); in a hole, the size
  *  whose minor diameter is the bore (rounded up, so they're whole there too).
- *  For the ISO profile, a metric size close enough wins, with its coarse pitch
- *  — a Ø6 rod is an M6, a Ø5 hole is an M6's tap drill. */
+ *  The pitch is in proportion to the size (see suggestedPitch) unless
+ *  `keepPitch`, when the current one stays and a hole's size follows it. For
+ *  the ISO profile, a metric size close enough wins, with its coarse pitch — a
+ *  Ø6 rod is an M6, a Ø5 hole is an M6's tap drill. */
 export function suggestThread(
   wall: Pick<RoundWall, "radius" | "internal">,
   s: ThreadSettings,
   scope: Scope,
+  keepPitch = false,
 ): Pick<ThreadParams, "diameter" | "pitch"> {
-  let pitch = 2;
-  try {
-    pitch = evaluateExpression(s.params.pitch, scope);
-  } catch {
-    /* half-typed: suggest for the default */
-  }
-  if (!(pitch > 0)) pitch = 2;
   const across = 2 * wall.radius;
-  if (s.profile === "iso") {
+  if (s.profile === "iso" && !keepPitch) {
     const m = METRIC_SIZES.map((k) => METRIC[k]).find((m) =>
       wall.internal ? Math.abs(m.tapDrill - across) <= 0.25 : Math.abs(m.d - across) <= 0.2,
     );
     if (m) return { diameter: fmt(m.d), pitch: fmt(m.pitch) };
   }
-  if (!wall.internal) return { diameter: fmt(Math.floor(across * 10 + 1e-3) / 10), pitch: s.params.pitch };
+  let pitch = NaN;
+  if (keepPitch) {
+    try {
+      pitch = evaluateExpression(s.params.pitch, scope);
+    } catch {
+      /* half-typed: suggest one */
+    }
+  }
+  const keep = pitch > 0;
+  if (!wall.internal) {
+    const d = Math.floor(across * 10 + 1e-3) / 10;
+    return { diameter: fmt(d), pitch: keep ? s.params.pitch : fmt(suggestedPitch(d, s.profile)) };
+  }
+  // A hole's size depends on the pitch and the pitch on the size: size it for
+  // the pitch the bore itself suggests.
+  if (!keep) pitch = suggestedPitch(across, s.profile);
   const d = across + 2 * threadDepth(pitch, s.profile);
-  return { diameter: fmt(Math.ceil(d * 10 - 1e-3) / 10), pitch: s.params.pitch };
+  return { diameter: fmt(Math.ceil(d * 10 - 1e-3) / 10), pitch: keep ? s.params.pitch : fmt(pitch) };
 }
 
 /** What a thread to match copies: everything that has to agree for two

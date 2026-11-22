@@ -100,7 +100,7 @@ export function ThreadDialog({
       </div>
       <div className="bool-group-label">Face</div>
       <PickSlot
-        noun="a rod's side or a hole's wall"
+        noun="a cylindrical face or a hole's wall"
         wide
         armed={slot === "face"}
         value={faceLabel}
