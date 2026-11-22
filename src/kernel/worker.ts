@@ -3833,7 +3833,15 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[], tool
       const eps = VOLUME_EPS_REL * Math.max(accVol, toolVol, 1);
       bad =
         op === "subtract"
-          ? nextVol >= accVol - eps && "Solids don't overlap — nothing to subtract."
+          ? nextVol >= accVol - eps &&
+            // A screw (the only tool that regrows) in a clearance hole: the
+            // hole is wider than its thread, so there's nothing to cut — say
+            // what makes a threaded hole instead.
+            (ops[i].regrow
+              ? "The screw doesn't touch the part — a clearance hole is wider than its thread, so nothing is cut. " +
+                "For a threaded hole, make the Hole tapped (its tap drill is narrower than the screw) and subtract " +
+                "the screw from that, or just turn on the tapped Hole's Include thread."
+              : "Solids don't overlap — nothing to subtract.")
           : nextVol <= eps && "Solids don't overlap — no common volume.";
       accVol = nextVol;
     }

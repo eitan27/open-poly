@@ -400,8 +400,50 @@ check("…without errors", (await op.featureErrors()).length === 0, JSON.stringi
   );
 }
 
+// Subtracting a modelled screw from the part its hole is in: from a tapped
+// hole (tap drill Ø2.5) it cuts the thread — plain and grown by an offset;
+// from a clearance hole (Ø3.4) there's nothing to cut, and the error says why.
+for (const [holeType, offset, cuts] of [
+  ["tapped", undefined, true],
+  ["tapped", "0.1", true],
+  ["simple", undefined, false],
+]) {
+  await op.newDocument();
+  const blk = (await op.applySettled({ op: "addPrimitive", kind: "box", params: { width: 20, depth: 20, height: 10 } }))
+    .createdId;
+  const s = (
+    await op.applySettled({
+      op: "addSketch",
+      plane: { bodyId: blk, faceName: `${blk}/+z` },
+      entities: [{ shape: "point", p: [0, 0] }],
+    })
+  ).createdId;
+  const h = await op.applySettled({ op: "addHole", sketchId: s, holeType, size: "M3" });
+  const sc = await op.applySettled({ op: "addScrew", holeId: h.createdId, thread: "modelled", params: { length: 12 } });
+  const r = await op.applySettled({
+    op: "boolean",
+    kind: "subtract",
+    operands: [blk, sc.createdId],
+    keepTools: true,
+    ...(offset ? { offset } : {}),
+  });
+  const label = `M3 screw subtracted from a ${holeType} hole${offset ? ` (offset ${offset})` : ""}`;
+  if (cuts) check(`${label}: cuts the thread`, r.ok, JSON.stringify(r).slice(0, 300));
+  else
+    check(
+      `${label}: nothing to cut, and says why`,
+      !r.ok && /clearance hole is wider than its thread/.test(r.error ?? ""),
+      JSON.stringify(r).slice(0, 300),
+    );
+}
+
 // The modelled fit check's intersect is meant to come back empty.
-const real = errors.filter((e) => !/Failed to load resource/.test(e) && !/"Intersect \d+".*empty result/.test(e));
+const real = errors.filter(
+  (e) =>
+    !/Failed to load resource/.test(e) &&
+    !/"Intersect \d+".*empty result/.test(e) &&
+    !/clearance hole is wider/.test(e),
+);
 check("no page errors", real.length === 0, real.join("\n"));
 await close();
 done();
