@@ -2605,7 +2605,17 @@ export default function App() {
   // portion), keyed by fresh ids that aren't among the real bodies — so every
   // existing body stays rendered in its own colour and only the new material
   // reads as cyan. Hence the viewport just shows all real meshes as usual.
-  const viewportMeshes = meshes;
+  // A new Thread's ghost is its part as it will be, threads and all — so the
+  // part itself steps aside while it shows (but not while a slot listens:
+  // then it's what you'd click).
+  const threadGhostOf =
+    thread.preview && thread.dialog && !thread.dialog.editId && !thread.dialog.slot
+      ? thread.dialog.face?.featureId
+      : undefined;
+  const viewportMeshes = useMemo(
+    () => (threadGhostOf ? meshes.filter((m) => m.id !== threadGhostOf) : meshes),
+    [meshes, threadGhostOf],
+  );
 
   // The Pattern dialog's live validation: null = fields are commit-ready. Used
   // both to gate Create and as the dialog's warning line.
@@ -2789,8 +2799,9 @@ export default function App() {
       ...(screw.preview ? [{ mesh: screw.preview }] : []),
       ...(screwRowMesh ? [{ mesh: screwRowMesh, variant: "fill" as const }] : []),
       ...(holeRowRing ? [{ mesh: holeRowRing, variant: "fill" as const }] : []),
-      // A thread's ghost is what it cuts away — material about to go.
-      ...(thread.preview ? [{ mesh: thread.preview, variant: "cut" as const }] : []),
+      // A thread's ghost is the part with the thread cut (the part steps
+      // aside for it: see viewportMeshes).
+      ...(thread.preview ? [{ mesh: thread.preview }] : []),
       ...patternGhosts,
       ...mirrorGhost,
       // The chamfer/fillet delta: what the operation fills in and what it carves

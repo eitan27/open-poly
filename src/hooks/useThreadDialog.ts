@@ -1,6 +1,7 @@
 // The Thread dialog's state machine, after useHoleDialog: a debounced
-// throwaway regenerate ghosts a NEW thread (the material it takes out, drawn
-// as a cut), and an EDIT applies live to the real document.
+// throwaway regenerate ghosts a NEW thread (its part as it will be, the real
+// cut run in the kernel — so a failing one shows before Create, and Create
+// reuses it), and an EDIT applies live to the real document.
 //
 // Two pick slots feed it: the round FACE to cut the thread on (a new dialog
 // opens listening for it), and MATCH, a face whose thread to copy — a Thread,
@@ -190,7 +191,7 @@ export function useThreadDialog(deps: ThreadDialogDeps): ThreadDialogApi {
         : next;
     });
 
-  // Ghost of a NEW thread: the material it takes out, drawn as a cut.
+  // Ghost of a NEW thread: its part with the thread cut.
   const face = dialog?.face;
   const side = dialog?.side;
   const settings = dialog?.settings;

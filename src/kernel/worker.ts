@@ -4875,21 +4875,30 @@ function insideSolid(shape: Shape3D, p: V3): boolean | null {
 
 /** Where a Thread feature's thread goes on its wall: the end it starts from
  *  (`s`, where the lead-in is), the way into the wall from there, and how far.
- *  It starts at the OPEN end — a rod's free tip, a hole's mouth — found by
- *  looking just past each end, on the axis, for material; with both ends open
- *  (a through hole, a loose rod) or neither, at the upper one. Flip swaps. */
+ *  It starts at the FREE end — a rod's tip, a hole's mouth, a screw's point —
+ *  found by looking past each end, on the axis, for air; with both ends alike
+ *  (a through hole, a loose rod), at the upper one. Flip swaps. */
 function threadPlacement(
   feature: Extract<ResolvedFeature, { type: "thread" }>,
   body: Body,
   wall: RoundWall,
   warn: Warn,
-): { s: V3; inward: V3; length: number } {
+): ThreadAt {
   const { origin: o, dir, length: wallLength } = wall;
   const end = (t: number): V3 => [o[0] + dir[0] * t, o[1] + dir[1] * t, o[2] + dir[2] * t];
+  // How far past each end, along the axis, until air: right away at an open
+  // end; a little way past a screw's pointed tip; far, or never, past the
+  // head the shank grows out of. The nearer-to-air end is the free one.
   const probe = Math.min(0.05, wallLength / 4);
-  const openLow = insideSolid(body.shape, end(-probe)) === false;
-  const openHigh = insideSolid(body.shape, end(wallLength + probe)) === false;
-  let fromHigh = openHigh || !openLow;
+  const r = wall.radius;
+  const steps = [probe, 0.5 * r, r, 2 * r, 4 * r, 8 * r];
+  const airPast = (t0: number, sign: number) =>
+    steps.find((d) => insideSolid(body.shape, end(t0 + sign * d)) === false) ?? Infinity;
+  const lowAir = airPast(0, -1);
+  const highAir = airPast(wallLength, 1);
+  const openLow = lowAir === probe;
+  const openHigh = highAir === probe;
+  let fromHigh = highAir <= lowAir;
   if (feature.flip) fromHigh = !fromHigh;
   let length = wallLength;
   if (feature.length !== undefined) {
@@ -4898,8 +4907,19 @@ function threadPlacement(
     } else length = feature.length;
   }
   return fromHigh
-    ? { s: end(wallLength), inward: [-dir[0], -dir[1], -dir[2]], length }
-    : { s: end(0), inward: dir, length };
+    ? { s: end(wallLength), inward: [-dir[0], -dir[1], -dir[2]], length, open: openHigh }
+    : { s: end(0), inward: dir, length, open: openLow };
+}
+
+/** Where a thread goes (threadPlacement). `open`: there's air past the start
+ *  end, so the cut may run out past it, and the lead-in has somewhere to go.
+ *  Past a closed one — the head above a screw's shank — there's material the
+ *  cut must not touch: a sleeve running into the head would sever the shank. */
+interface ThreadAt {
+  s: V3;
+  inward: V3;
+  length: number;
+  open: boolean;
 }
 
 const round2 = (x: number) => Math.round(x * 100) / 100;
@@ -4917,17 +4937,17 @@ const round2 = (x: number) => Math.round(x * 100) / 100;
 function threadTool(
   feature: Extract<ResolvedFeature, { type: "thread" }>,
   wall: RoundWall,
-  at: { s: V3; inward: V3; length: number },
+  at: ThreadAt,
   segments?: number,
 ): NamedShape {
-  const { s, inward, length } = at;
+  const { s, inward, length, open } = at;
   const out: V3 = [-inward[0], -inward[1], -inward[2]];
   const u = vunit(Math.abs(out[0]) < 0.9 ? vcross(out, [1, 0, 0]) : vcross(out, [0, 1, 0]));
   const t = feature.thread;
   if (wall.internal) {
-    // Runs a little past the mouth so the cut opens cleanly.
+    // Runs a little past an open mouth so the cut opens cleanly.
     return threadSolid(
-      { ...t, offset: feature.clearance, z0: -length, z1: Math.min(0.5, t.pitch), tipChamfer: false },
+      { ...t, offset: feature.clearance, z0: -length, z1: open ? Math.min(0.5, t.pitch) : 0, tipChamfer: false },
       s,
       out,
       u,
@@ -4935,10 +4955,17 @@ function threadTool(
       segments,
     );
   }
-  // The rod, its tip (the lead-in) at `s`, starting a hair past the far end
-  // so no face of it lies on the sleeve's.
+  // The rod, its tip (the lead-in, at an open end) at `s`, a hair past the
+  // sleeve's far end — and, at a closed start, past its near end too — so no
+  // face of it lies on the sleeve's.
   const rod = threadSolid(
-    { ...t, offset: -feature.clearance, z0: -length - 0.01, z1: 0, tipChamfer: feature.leadIn },
+    {
+      ...t,
+      offset: -feature.clearance,
+      z0: -length - 0.01,
+      z1: open ? 0 : 0.01,
+      tipChamfer: open && feature.leadIn,
+    },
     s,
     out,
     u,
@@ -4946,7 +4973,8 @@ function threadTool(
     segments,
   );
   // The sleeve to take the rod out of: past the wall's corners everywhere
-  // (its own flats included — it's a polygon too), and a little past the tip.
+  // (its own flats included — it's a polygon too), and a little past an open
+  // tip; flush with a closed end.
   const r = (Math.max(wall.radius, t.d / 2) + 0.05) / Math.cos(Math.PI / CIRCLE_FACETS);
   const sleeve = revolvedPolyhedron(
     s,
@@ -4956,8 +4984,8 @@ function threadTool(
     [
       [0, -length],
       [r, -length],
-      [r, 0.5],
-      [0, 0.5],
+      [r, open ? 0.5 : 0],
+      [0, open ? 0.5 : 0],
     ],
     `${feature.id}/sleeve`,
   );
@@ -5005,16 +5033,10 @@ function buildThreadFeature(feature: Extract<ResolvedFeature, { type: "thread" }
       );
   }
 
-  if (feature.previewTool) {
-    bodies.push({
-      id: feature.id,
-      key: contentKey(feature, [target.key]),
-      noSplit: true,
-      ...threadTool(feature, wall, at),
-    });
-    return;
-  }
-  const cacheKey = contentKey(feature, ["thread", target.key]);
+  // The dialog's ghost runs the real cut too, under the key the real build
+  // will look up: a cut that fails shows in the dialog before Create, and one
+  // that works makes Create instant.
+  const cacheKey = contentKey({ ...feature, previewTool: undefined }, ["thread", target.key]);
   ctx.usedDressUps.add(cacheKey);
   const hit = dressUpCache.get(cacheKey);
   let next: NamedShape;
@@ -5035,7 +5057,7 @@ function buildThreadFeature(feature: Extract<ResolvedFeature, { type: "thread" }
     );
     if (!cut) throw new Error("thread: the cut failed on this face — try a different pitch or length");
     next = cut;
-    if (wall.internal && feature.leadIn) {
+    if (wall.internal && feature.leadIn && at.open) {
       // The lead-in: a 45° countersink at the mouth, from the cavity's crest
       // down to its root — so a printed bolt finds the thread, and the first
       // layer's squish doesn't close the opening.
@@ -5069,6 +5091,12 @@ function buildThreadFeature(feature: Extract<ResolvedFeature, { type: "thread" }
     }
     dressUpCache.set(cacheKey, { result: next });
     next = sharedNamed(next);
+  }
+  if (feature.previewTool) {
+    // The ghost is the part as it will be, thread and all (the dialog hides
+    // the part itself meanwhile); the part is left as is.
+    bodies.push({ id: feature.id, key: contentKey(feature, [target.key]), noSplit: true, faceted: true, ...next });
+    return;
   }
   target.shape.delete();
   target.shape = next.shape;

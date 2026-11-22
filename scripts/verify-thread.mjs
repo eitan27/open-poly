@@ -90,6 +90,29 @@ for (const [z, expectOverlap, where] of [
   }
 }
 
+// A screw's shank: material past both ends (the head, the pointed tip). The
+// cut must not run into the head — it used to sever the shank there — and it
+// starts at the tip, the end nearer to air. Threaded 4 of an M3 × 12's shank
+// from the tip, a tube around the shank just under the head still meets it.
+await op.newDocument();
+{
+  const sc = (await op.applySettled({ op: "addScrew", size: "M3", params: { length: 12 } })).createdId;
+  const r = await op.applySettled({
+    op: "addThread",
+    face: { bodyId: sc, faceName: `${sc}/s4/0` },
+    params: { pitch: 1, length: 4 },
+  });
+  check("M3 screw shank: the cut builds", r.ok, JSON.stringify(r));
+  const b = (await op.scene()).bodies.filter((x) => x.id.startsWith(sc));
+  check("…in one piece", b.length === 1, JSON.stringify(b.map((x) => x.id)));
+  // The screw hangs down from Top: head above z = 0, tip at z = −12.
+  const outer = await cyl(2, 1, -2);
+  const inner = await cyl(1.45, 1, -2);
+  const tube = await op.applySettled({ op: "boolean", kind: "subtract", operands: [outer, inner] });
+  const x = await op.applySettled({ op: "boolean", kind: "intersect", operands: [sc, tube.createdId] });
+  check("…threaded from the tip: plain under the head", x.ok, JSON.stringify(x).slice(0, 160));
+}
+
 // Fit: a plate with a Ø10.8 hole (a Ø12 × 2 printable thread's minor), the
 // hole threaded to match a Ø12 rod standing flush with the plate's top — the
 // two threads start at the same spot, so they're in phase.
