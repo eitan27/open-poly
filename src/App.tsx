@@ -3885,6 +3885,14 @@ export default function App() {
   const handleThreadPick = (pick: RevolveAxisPick) => {
     const d = thread.dialog;
     if (!d?.slot) return;
+    // A thread is thousands of facets, so a click on one mostly lands on an
+    // edge: for Match, the part is what counts.
+    if (d.slot === "match" && pick.kind === "bodyEdge") {
+      const match = matchThread(doc, { partId: pick.featureId }, null, d.settings, resolved.scope, d.editId);
+      if (match) thread.applyMatch(match);
+      else flashMsg("No thread there to match. Pick a Thread, a tapped Hole, a Screw, or a plain rod or hole.");
+      return;
+    }
     if (pick.kind !== "bodyFace") {
       flashMsg(
         d.slot === "face"

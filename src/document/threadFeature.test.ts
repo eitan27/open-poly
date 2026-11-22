@@ -8,7 +8,7 @@ import {
   type ThreadSettings,
 } from "./threadFeature";
 import { createDocument } from "./document";
-import type { Document, ThreadFeature } from "./types";
+import type { Document, Feature, ThreadFeature } from "./types";
 
 const settings = (patch: Partial<ThreadSettings> = {}, params: Partial<ThreadSettings["params"]> = {}) => ({
   ...DEFAULT_THREAD_SETTINGS,
@@ -110,9 +110,31 @@ describe("matchThread", () => {
     expect(m?.patch.params.clearance).toBeUndefined();
   });
 
+  it("finds a Thread by the part it was cut on — a click on its facets names only the part", () => {
+    const { doc } = withThread();
+    expect(matchThread(doc, { partId: "rod" }, null, settings(), {})?.label).toBe("Thread 1");
+    expect(matchThread(doc, { partId: "other" }, null, settings(), {})).toBeNull();
+  });
+
+  it("finds a tapped Hole by a part it cuts", () => {
+    const doc = createDocument();
+    const hole = {
+      id: "h1",
+      type: "hole",
+      name: "Hole 1",
+      suppressed: false,
+      holeType: "tapped",
+      size: "M4",
+      scope: ["plate"],
+    } as unknown as Feature;
+    const m = matchThread({ ...doc, features: [...doc.features, hole] }, { partId: "plate" }, null, settings(), {});
+    expect(m?.label).toBe("Hole 1 (M4 × 0.7)");
+  });
+
   it("never matches the thread being edited", () => {
     const { doc } = withThread();
     expect(matchThread(doc, { partId: "plate", faceName: "t1/thread12" }, null, settings(), {}, "t1")).toBeNull();
+    expect(matchThread(doc, { partId: "rod" }, null, settings(), {}, "t1")).toBeNull();
   });
 
   it("a plain face gets the thread it's ready for", () => {

@@ -199,10 +199,11 @@ const metricMatch = (name: string, size: string): ThreadMatch => {
 };
 
 /** The thread on a picked face, to match: a Thread feature's, a tapped Hole's
- *  or a Screw's — found by the part the face is on, or the feature its name
- *  starts with (a cut's faces carry the cutting feature's id). A plain round
- *  face with no thread on it gets the thread it's ready for (`suggestThread`).
- *  Null when the face is neither. */
+ *  or a Screw's — found by the feature the face's name starts with (a cut's
+ *  faces carry the cutting feature's id), the part the face is on, or a Thread
+ *  cut on that part (the newest — its faces are the part's, and mostly
+ *  unnamed). A plain round face with no thread on it gets the thread it's
+ *  ready for (`suggestThread`). Null when the face is neither. */
 export function matchThread(
   doc: Document,
   pick: { partId: string; faceName?: string },
@@ -211,7 +212,22 @@ export function matchThread(
   scope: Scope,
   self?: string,
 ): ThreadMatch | null {
-  const ids = [pick.faceName?.split("/")[0], featureIdOfPart(pick.partId)].filter((x): x is string => !!x);
+  const partFeature = featureIdOfPart(pick.partId);
+  // Threads cut on the part: Thread features, and tapped Holes that cut it
+  // (or every part they reach), newest first.
+  const onPart = (id: string | undefined) => id === pick.partId || id === partFeature;
+  const cutOnPart = doc.features
+    .filter(
+      (f) =>
+        !f.suppressed &&
+        ((f.type === "thread" && onPart(f.face?.featureId)) ||
+          (f.type === "hole" &&
+            f.holeType === "tapped" &&
+            (f.scope ? f.scope.some(onPart) : f.targetId ? onPart(f.targetId) : true))),
+    )
+    .map((f) => f.id)
+    .reverse();
+  const ids = [pick.faceName?.split("/")[0], partFeature, ...cutOnPart].filter((x): x is string => !!x);
   for (const id of ids) {
     if (id === self) continue;
     const f: Feature | undefined = doc.features.find((x) => x.id === id);

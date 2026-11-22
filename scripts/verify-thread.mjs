@@ -280,6 +280,72 @@ await op.newDocument();
   await page.keyboard.press("Escape");
 }
 
+// Match by clicking a threaded part: a Thread on a rod, a Thread in a hole,
+// a Screw. A thread is all facets, so the click mostly lands on an edge — it
+// must still find the thread (by the part). An M3's 0.5 pitch takes the
+// clearance down to what it allows rather than erroring.
+const clickWorld = async (w) => {
+  const c = await canvas.boundingBox();
+  const s = await page.evaluate((p) => window.__openpoly.worldToScreen(p), w);
+  await page.mouse.click(c.x + s.x, c.y + s.y);
+  await page.waitForTimeout(1500);
+};
+for (const [label, setup, at, expect] of [
+  [
+    "a Thread on a rod",
+    async () => {
+      const a = await cyl(6, 20, 0, 30);
+      await op.applySettled({ op: "addThread", face: { bodyId: a, faceName: `${a}/f3` }, params: { pitch: 2 } });
+    },
+    [30, 0, 10],
+    /Matches Thread 1/,
+  ],
+  [
+    "a Thread in a hole",
+    async () => {
+      const plate = (
+        await op.applySettled({
+          op: "addPrimitive",
+          kind: "box",
+          params: { width: 20, depth: 20, height: 10, x: 30 },
+        })
+      ).createdId;
+      const bore = await cyl(5.4, 10, 0, 30);
+      const p = (await op.applySettled({ op: "boolean", kind: "subtract", operands: [plate, bore] })).createdId;
+      await op.applySettled({ op: "addThread", face: { bodyId: p, faceName: `${bore}/f3` }, params: { pitch: 2 } });
+    },
+    [26.1, -3.9, 8],
+    /Matches Thread 1/,
+  ],
+  [
+    "a Screw",
+    async () => {
+      await op.applySettled({ op: "addScrew", size: "M3", params: { length: 12 } });
+    },
+    [0, 1.5, -6],
+    /Matches Screw 1 \(M3 × 0\.5\)/,
+  ],
+]) {
+  await op.newDocument();
+  await cyl(6, 20);
+  await setup();
+  await op.settle();
+  await page.evaluate(() => document.activeElement?.blur());
+  await canvas.hover({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("7");
+  await page.waitForTimeout(800);
+  await page.keyboard.press("j");
+  await dialog.waitFor({ timeout: 5000 });
+  await clickWorld([0, 6, 10]);
+  await dialog.locator(".ed-pick-btn", { hasText: "match" }).click();
+  await clickWorld(at);
+  const text = (await dialog.textContent()) ?? "";
+  check(`Match: clicking ${label} matches it`, expect.test(text), text.slice(0, 120));
+  check(`…and Create stays enabled`, !(await dialog.locator(".ed-primary").isDisabled()));
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+}
+
 // The fit check's intersect is meant to come back empty.
 const real = errors.filter(
   (e) => !/Failed to load resource/.test(e) && !/"Intersect \d+".*empty result/.test(e) && !/502/.test(e),

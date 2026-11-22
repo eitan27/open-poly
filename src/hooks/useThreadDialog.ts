@@ -8,6 +8,7 @@
 // a tapped Hole, a Screw, or a plain rod or hole's size.
 import { useEffect, useState } from "react";
 import { addThread, resolveDocument, updateThread } from "../document/document";
+import { evaluateExpression } from "../document/expression";
 import {
   DEFAULT_THREAD_SETTINGS,
   suggestThread,
@@ -165,16 +166,19 @@ export function useThreadDialog(deps: ThreadDialogDeps): ThreadDialogApi {
   const arm = (slot: ThreadSlot | null) => setDialog((d) => (d ? { ...d, slot } : d));
   const setFace = (ref: ThreadFaceRef, wall: RoundWall) => setDialog((d) => (d ? withFace(d, ref, wall) : d));
   const applyMatch = (match: ThreadMatch) =>
-    setDialog((d) =>
-      d
-        ? {
-            ...d,
-            slot: null,
-            matched: match.label,
-            settings: { ...d.settings, ...match.patch, params: { ...d.settings.params, ...match.patch.params } },
-          }
-        : d,
-    );
+    setDialog((d) => {
+      if (!d) return d;
+      const params = { ...d.settings.params, ...match.patch.params };
+      // A finer pitch than this part's clearance allows (an M3's 0.5 takes at
+      // most 0.125): the most it does.
+      try {
+        const max = evaluateExpression(params.pitch, scope) / 4;
+        if (evaluateExpression(params.clearance, scope) > max) params.clearance = String(Math.floor(max * 100) / 100);
+      } catch {
+        /* a field that doesn't evaluate shows its own error */
+      }
+      return { ...d, slot: null, matched: match.label, settings: { ...d.settings, ...match.patch, params } };
+    });
   const clearMatch = () => setDialog((d) => (d ? { ...d, matched: null, slot: "match" } : d));
   const update = (patch: Partial<ThreadSettings>) =>
     setDialog((d) => {
