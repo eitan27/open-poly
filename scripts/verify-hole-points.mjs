@@ -104,8 +104,9 @@ const modelHole = dialog.locator(".ed-field", { hasText: "Include thread" }).loc
 await typeSel.selectOption("tapped");
 await page.waitForTimeout(300);
 check(
-  "tapped: the size reads as a thread",
-  (await dialog.locator(".ed-field", { hasText: "Thread" }).locator("option:checked").textContent()) === "M3 × 0.5",
+  "tapped: the size reads as diameter × pitch",
+  (await dialog.locator(".ed-field", { hasText: "Diameter × pitch" }).locator("option:checked").textContent()) ===
+    "M3 × 0.5",
 );
 const extentSel = dialog.locator(".ed-field", { hasText: "Extent" }).locator("select");
 check("blind by default", (await extentSel.inputValue()) === "blind");

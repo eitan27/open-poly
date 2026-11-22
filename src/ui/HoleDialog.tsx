@@ -281,7 +281,7 @@ export function HoleDialog({
         onMouseEnter={() => setHovered("size")}
         onMouseLeave={() => setHovered(null)}
       >
-        <span>{t === "tapped" ? "Thread" : "Screw size"}</span>
+        <span>{t === "tapped" ? "Diameter × pitch" : "Screw size"}</span>
         <select
           ref={(el) => {
             if (el) inputs.current.set("size", el);
