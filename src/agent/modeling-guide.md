@@ -340,21 +340,24 @@ frame count that shows the motion you care about.
   on: ISO pitches below about M8 print poorly on FDM, so prefer a larger
   size; print screws standing on their head (or a headless one upright);
   raise the clearance to 0.15–0.2 for a tight printer.
-- **Threads for 3D printing:** `add_thread` puts a custom thread at every
-  point / circle centre of a sketch — use it (not a modelled ISO screw) for
-  printed fasteners, lids and lead screws. `side: "external"` (default) is a
-  threaded rod as a new body standing out of the sketch plane; `"internal"`
-  cuts the matching thread into `targetId`. Give the SAME `params.diameter` and
-  `pitch` to both halves — `params.clearance` (0.15 mm per part) opens the gap.
+- **Threads for 3D printing:** `add_thread` cuts a custom thread on a round
+  face — use it (not a modelled ISO screw) for printed fasteners, lids and
+  lead screws. Model the plain part first, then thread it: a rod (extrude a
+  circle) at the thread's major diameter gets its grooves cut in; a hole at the
+  minor diameter gets them cut outward. `face` is `{bodyId, faceName}` of the
+  rod's side or the hole's wall — any strip of a faceted round wall will do.
+  Leave `params.diameter` out and it's sized from the face. For the other
+  half of a pair, pass `match: <the first thread's id>` (a tapped Hole or a
+  Screw works too): size, pitch, profile, starts and hand are copied, and
+  each half keeps its own `params.clearance` (0.15 mm per part) for the gap.
   `profile: "printable"` (default, 45°, prints upright without supports),
   `"iso"`, `"trapezoid"`. Pitch 1.5 mm and up for FDM; `starts` 2–4 for a lid
-  that closes in a fraction of a turn (both halves need the same starts and
-  hand). To put a printed thread on a part, make the rod and `boolean` union
-  it; for a nut, sketch on the part's face and cut an internal thread. A rod
-  (or a screw) can also be `boolean` subtracted with an `offset`: it's
-  rebuilt grown by the offset, so offset 2 × the rod's clearance leaves the
-  cavity an internal thread would. Subtract before moving or patterning it —
-  a moved thread can't be offset.
+  that closes in a fraction of a turn. The thread starts at the face's open
+  end (a rod's tip, a hole's mouth; `flip` for the other) and runs the whole
+  face unless `params.length` is given. Too little material (a rod thinner
+  than the thread, a hole wider than its minor diameter) builds with a
+  warning about short crests. A screw can still be `boolean` subtracted with
+  an `offset`, grown by the offset, before it's moved or patterned.
 - **Two-sided / centered feature:** `add_extrude` with `extent: "symmetric"` —
   the profile extrudes `distance` equally both ways (centered on the sketch).
 - **Extrude up to a face:** `add_extrude` with `extent: "upToFace"` and

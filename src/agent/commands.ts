@@ -10,7 +10,14 @@
 // mutating op resolves — so the agent knows it actually succeeded — belongs to
 // the host's regen coordinator, a layer up; what this layer reports is the
 // synchronous resolve errors (bad expressions, missing refs).
-import { DEFAULT_THREAD_PARAMS, DEFAULT_THREAD_SETTINGS } from "../document/threadFeature";
+import {
+  DEFAULT_THREAD_PARAMS,
+  DEFAULT_THREAD_SETTINGS,
+  matchThread,
+  suggestThread,
+  type ThreadSettings,
+} from "../document/threadFeature";
+import { roundWallOfMesh } from "../geom/roundWall";
 import { FOLDED_NAMES_NOTE, foldNames } from "./nameRanges";
 import { DEFAULT_HOLE_PARAMS, DEFAULT_HOLE_SETTINGS, defaultHolePoints } from "../document/hole";
 import { DEFAULT_SCREW_PARAMS, DEFAULT_SCREW_SETTINGS } from "../document/screw";
@@ -1358,28 +1365,56 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         break;
       }
       case "addThread": {
-        const sk = requireSketch(doc, op.sketchId);
-        const side = op.side ?? DEFAULT_THREAD_SETTINGS.side;
-        let targetId: string | undefined;
-        if (side === "internal") {
-          targetId = op.targetId ?? (sk.plane.kind === "face" ? sk.plane.featureId : undefined);
-          if (!targetId)
-            throw new OpError(
-              "invalid_op",
-              "addThread: an internal thread needs targetId (the sketch isn't on a body face).",
-            );
-          requireFeature(doc, targetId);
-        }
+        const mesh = ctx.getMeshes().find((m) => m.id === op.face.bodyId);
+        if (!mesh) throw new OpError("not_found", `No body "${op.face.bodyId}" (it may not be regenerated yet).`);
+        const fg = faceGeomByName(mesh.mesh.faces, op.face.faceName);
+        if (!fg) throw new OpError("not_found", `Face "${op.face.faceName}" not found on body "${op.face.bodyId}".`);
+        const wall = roundWallOfMesh(mesh.mesh.faces, fg.faceId);
+        if (!wall)
+          throw new OpError(
+            "invalid_op",
+            `addThread: "${op.face.faceName}" isn't round — pick a rod's side or a hole's wall.`,
+          );
         const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_THREAD_PARAMS));
         if (unknown.length) throw new OpError("invalid_op", `addThread: unknown params ${unknown.join(", ")}.`);
-        const r = addThread(doc, op.sketchId, targetId, {
-          side,
+        const given = Object.fromEntries(Object.entries(op.params ?? {}).map(([k, v]) => [k, String(v)]));
+        let settings: ThreadSettings = {
           profile: op.profile ?? DEFAULT_THREAD_SETTINGS.profile,
           leftHand: op.leftHand ?? false,
           leadIn: op.leadIn ?? DEFAULT_THREAD_SETTINGS.leadIn,
           flip: op.flip ?? false,
-          params: { ...DEFAULT_THREAD_PARAMS, ...op.params },
-        });
+          fullLength: op.params?.length === undefined,
+          params: { ...DEFAULT_THREAD_PARAMS, ...given },
+        };
+        const scope = resolveDocument(doc).scope;
+        if (op.match) {
+          requireFeature(doc, op.match);
+          const m = matchThread(doc, { partId: op.match }, null, settings, scope);
+          if (!m)
+            throw new OpError(
+              "invalid_op",
+              `addThread: "${op.match}" has no thread to match (a Thread, tapped Hole or Screw).`,
+            );
+          settings = { ...settings, ...m.patch, params: { ...settings.params, ...m.patch.params, ...given } };
+        } else if (given.diameter === undefined) {
+          const sug = suggestThread(wall, settings, scope);
+          settings = {
+            ...settings,
+            params: { ...settings.params, diameter: sug.diameter, pitch: given.pitch ?? sug.pitch },
+          };
+        }
+        const r = addThread(
+          doc,
+          {
+            featureId: op.face.bodyId,
+            faceId: fg.faceId,
+            faceName: op.face.faceName,
+            center: fg.center,
+            normal: fg.normal,
+          },
+          wall.internal ? "internal" : "external",
+          settings,
+        );
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;
         break;

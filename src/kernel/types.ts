@@ -290,19 +290,25 @@ export type ResolvedFeature =
        *  for a hex head, which is the prism). */
       thread?: ThreadResolved;
     }
-  // A custom thread at each centre (document/threadFeature.ts): external, a
-  // threaded rod as a new body; internal, cut into `targetId`. Local depth z
-  // runs along `down` — out of the plane for external, in for internal (both
-  // already flipped as asked).
+  // A thread cut on a round face (document/threadFeature.ts): into a rod's
+  // side, or a hole's wall, of the body the face is on — which side is read
+  // off the face. It starts at the face's open end (Flip: the other), and runs
+  // `length`, or the whole face when that's absent. `clearance` is radial and
+  // unsigned: the kernel shrinks a rod's thread by it and grows a hole's.
   | {
       id: string;
       type: "thread";
-      frame: ResolvedFrame;
-      centers: [number, number][];
-      down: [number, number, number];
-      internal: boolean;
-      targetId?: string;
-      thread: ThreadResolved;
+      face: {
+        sourceId: string;
+        faceName?: string;
+        center: [number, number, number];
+        normal?: [number, number, number];
+      };
+      flip: boolean;
+      length?: number;
+      clearance: number;
+      leadIn: boolean;
+      thread: { d: number; pitch: number; profile: ThreadProfile; starts: number; leftHand: boolean };
       previewTool?: boolean;
     }
   // A boolean combines existing bodies (by id) from the running set.

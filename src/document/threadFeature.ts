@@ -1,17 +1,27 @@
 // The Thread feature's document side: defaults, validation, the numbers the
-// dialog's diagram draws, and how it resolves for the kernel.
+// dialog's diagram draws, the size it suggests for a face, matching another
+// thread, and how it resolves for the kernel.
 //
 // Where the Screw and Hole features follow the ISO metric tables, this is the
 // free-form one — any diameter, any pitch, three tooth shapes, several starts,
 // either hand — because a printed thread wants a pitch the tables don't have:
 // an FDM nozzle can't resolve an M5's 0.8 mm teeth, but prints a 2 mm pitch,
 // 45° thread cleanly and without supports.
+//
+// It's always a cut on a round face: a rod's side has the grooves cut in, a
+// hole's wall has them cut outward. Which side the face is, the kernel reads
+// off the geometry; the dialog and the agent read it off the tessellation
+// (geom/roundWall.ts) to show and suggest the right numbers.
 import { evaluateExpression, type Scope } from "./expression";
-import { frameOf, type PlaneFrameData } from "./planes";
-import { holeCenters } from "./hole";
-import type { SketchFeature, ThreadFeature, ThreadParams } from "./types";
+import { featureIdOfPart } from "./parts";
+import { screwSize } from "./screw";
+import type { Document, Feature, ThreadFeature, ThreadParams } from "./types";
 import { threadDepth, type ThreadProfile } from "../geom/thread";
+import { METRIC, METRIC_SIZES, isMetricSize } from "../geom/metricFasteners";
+import type { RoundWall } from "../geom/roundWall";
 import type { ResolvedFeature } from "../kernel/types";
+
+export type ThreadSide = "external" | "internal";
 
 export const THREAD_PROFILE_LABELS: Record<ThreadProfile, string> = {
   printable: "Printable",
@@ -35,27 +45,28 @@ export const DEFAULT_THREAD_PARAMS: ThreadParams = {
   starts: "1",
 };
 
-export type ThreadSettings = Pick<ThreadFeature, "side" | "profile" | "leftHand" | "leadIn" | "flip"> & {
+export type ThreadSettings = Pick<ThreadFeature, "profile" | "leftHand" | "leadIn" | "flip" | "fullLength"> & {
   params: ThreadParams;
 };
 
 export const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
-  side: "external",
   profile: "printable",
   leftHand: false,
   leadIn: true,
   flip: false,
+  fullLength: true,
   params: DEFAULT_THREAD_PARAMS,
 };
 
 /** The thread's numbers, resolved and checked. Radii are AS BUILT (the
- *  clearance applied: an external thread's shrunk, an internal one's grown). */
+ *  clearance applied: a rod's shrunk, a hole's grown). */
 export interface ThreadDims {
-  side: ThreadFeature["side"];
+  side: ThreadSide;
   profile: ThreadProfile;
   d: number;
   pitch: number;
-  length: number;
+  /** Null for the whole face (its length is the kernel's to measure). */
+  length: number | null;
   clearance: number;
   starts: number;
   leftHand: boolean;
@@ -74,26 +85,28 @@ const num = (label: string, expr: string, scope: Scope): number => {
   }
 };
 
-export function threadDims(s: ThreadSettings, scope: Scope): ThreadDims {
+/** `side` is the face's, when it's known (the dialog has read it); the checks
+ *  hold for either. */
+export function threadDims(s: ThreadSettings, scope: Scope, side: ThreadSide = "external"): ThreadDims {
   const d = num("diameter", s.params.diameter, scope);
   const pitch = num("pitch", s.params.pitch, scope);
-  const length = num("length", s.params.length, scope);
+  const length = s.fullLength ? null : num("length", s.params.length, scope);
   const clearance = num("clearance", s.params.clearance, scope);
   const starts = num("starts", s.params.starts, scope);
   if (!(d > 0)) throw new Error("thread: diameter must be greater than 0");
   if (!(pitch > 0)) throw new Error("thread: pitch must be greater than 0");
   if (!Number.isInteger(starts) || starts < 1 || starts > 8) throw new Error("thread: starts must be 1 to 8");
-  if (!(length > pitch)) throw new Error("thread: length must be more than one pitch");
+  if (length !== null && !(length > pitch)) throw new Error("thread: length must be more than one pitch");
   if (!(clearance >= 0)) throw new Error("thread: clearance can't be negative");
   if (!(clearance <= 0.25 * pitch)) throw new Error(`thread: clearance can be at most a quarter pitch (${pitch / 4})`);
   const depth = threadDepth(pitch, s.profile);
-  const sign = s.side === "external" ? -1 : 1;
-  const crestRadius = d / 2 + sign * clearance;
-  const rootRadius = crestRadius - depth;
-  if (!(rootRadius > 0.2 * crestRadius))
+  // The rod's root is the thinnest the core gets, whichever side this is.
+  if (!(d / 2 - clearance - depth > 0.2 * (d / 2 - clearance)))
     throw new Error("thread: the pitch is too coarse for this diameter — the teeth would eat the core");
+  const sign = side === "external" ? -1 : 1;
+  const crestRadius = d / 2 + sign * clearance;
   return {
-    side: s.side,
+    side,
     profile: s.profile,
     d,
     pitch,
@@ -104,7 +117,7 @@ export function threadDims(s: ThreadSettings, scope: Scope): ThreadDims {
     leadIn: s.leadIn,
     depth,
     crestRadius,
-    rootRadius,
+    rootRadius: crestRadius - depth,
   };
 }
 
@@ -116,56 +129,108 @@ export function threadReadout(t: ThreadDims): string {
   const parts = [
     `Ø${fmt(t.d)} × ${fmt(t.pitch)}${t.starts > 1 ? ` (${t.starts} starts, lead ${fmt(lead)})` : ""}`,
     `${fmt(t.depth)} deep`,
-    `≈${fmt(t.length / lead)} turns`,
   ];
+  if (t.length !== null) parts.push(`≈${fmt(t.length / lead)} turns`);
   if (t.leftHand) parts.push("left-hand");
   return parts.join(" · ");
 }
 
-export function resolveThread(
-  f: ThreadFeature,
-  sketch: SketchFeature | undefined,
+/** The thread a round face is ready for, so the cut is exact: on a rod, its
+ *  own diameter (rounded down, so the crests are whole); in a hole, the size
+ *  whose minor diameter is the bore (rounded up, so they're whole there too).
+ *  For the ISO profile, a metric size close enough wins, with its coarse pitch
+ *  — a Ø6 rod is an M6, a Ø5 hole is an M6's tap drill. */
+export function suggestThread(
+  wall: Pick<RoundWall, "radius" | "internal">,
+  s: ThreadSettings,
   scope: Scope,
-  planeFrames: Map<string, PlaneFrameData>,
-): ResolvedFeature {
-  const dims = threadDims(f, scope);
-  if (!sketch) throw new Error("thread: its sketch no longer exists");
-  const centers = holeCenters(sketch);
-  if (!centers.length) throw new Error("thread: the sketch has no point or circle to put a thread on");
-  const internal = f.side === "internal";
-  if (internal && !f.targetId) throw new Error("thread: pick the body to cut the internal thread into");
-  const frame = frameOf(sketch.plane, planeFrames);
-  // External: out of the plane, along its normal. Internal: into the body,
-  // against it — like a hole. Flip reverses either.
-  const out = internal === f.flip ? 1 : -1;
-  const down: [number, number, number] = [frame.normal[0] * out, frame.normal[1] * out, frame.normal[2] * out];
-  const common = {
-    d: dims.d,
-    pitch: dims.pitch,
-    profile: dims.profile,
-    starts: dims.starts,
-    leftHand: dims.leftHand,
+): Pick<ThreadParams, "diameter" | "pitch"> {
+  let pitch = 2;
+  try {
+    pitch = evaluateExpression(s.params.pitch, scope);
+  } catch {
+    /* half-typed: suggest for the default */
+  }
+  if (!(pitch > 0)) pitch = 2;
+  const across = 2 * wall.radius;
+  if (s.profile === "iso") {
+    const m = METRIC_SIZES.map((k) => METRIC[k]).find((m) =>
+      wall.internal ? Math.abs(m.tapDrill - across) <= 0.25 : Math.abs(m.d - across) <= 0.2,
+    );
+    if (m) return { diameter: fmt(m.d), pitch: fmt(m.pitch) };
+  }
+  if (!wall.internal) return { diameter: fmt(Math.floor(across * 10 + 1e-3) / 10), pitch: s.params.pitch };
+  const d = across + 2 * threadDepth(pitch, s.profile);
+  return { diameter: fmt(Math.ceil(d * 10 - 1e-3) / 10), pitch: s.params.pitch };
+}
+
+/** What a thread to match copies: everything that has to agree for two
+ *  threads to screw together. The clearance stays each part's own. */
+export type ThreadMatch = {
+  label: string;
+  patch: Partial<Omit<ThreadSettings, "params">> & { params: Partial<ThreadParams> };
+};
+
+const metricMatch = (name: string, size: string): ThreadMatch => {
+  const m = METRIC[size as keyof typeof METRIC];
+  return {
+    label: `${name} (${size} × ${fmt(m.pitch)})`,
+    patch: { profile: "iso", leftHand: false, params: { diameter: fmt(m.d), pitch: fmt(m.pitch), starts: "1" } },
   };
+};
+
+/** The thread on a picked face, to match: a Thread feature's, a tapped Hole's
+ *  or a Screw's — found by the part the face is on, or the feature its name
+ *  starts with (a cut's faces carry the cutting feature's id). A plain round
+ *  face with no thread on it gets the thread it's ready for (`suggestThread`).
+ *  Null when the face is neither. */
+export function matchThread(
+  doc: Document,
+  pick: { partId: string; faceName?: string },
+  wall: Pick<RoundWall, "radius" | "internal"> | null,
+  current: ThreadSettings,
+  scope: Scope,
+  self?: string,
+): ThreadMatch | null {
+  const ids = [pick.faceName?.split("/")[0], featureIdOfPart(pick.partId)].filter((x): x is string => !!x);
+  for (const id of ids) {
+    if (id === self) continue;
+    const f: Feature | undefined = doc.features.find((x) => x.id === id);
+    if (f?.type === "thread") {
+      return {
+        label: f.name,
+        patch: {
+          profile: f.profile,
+          leftHand: f.leftHand,
+          params: { diameter: f.params.diameter, pitch: f.params.pitch, starts: f.params.starts },
+        },
+      };
+    }
+    if (f?.type === "hole" && f.holeType === "tapped" && isMetricSize(f.size)) return metricMatch(f.name, f.size);
+    if (f?.type === "screw") {
+      const size = screwSize(doc, f);
+      if (isMetricSize(size)) return metricMatch(f.name, size);
+    }
+  }
+  if (!wall) return null;
+  const s = suggestThread(wall, current, scope);
+  return {
+    label: `a Ø${fmt(2 * wall.radius)} ${wall.internal ? "hole" : "rod"}`,
+    patch: { params: s },
+  };
+}
+
+export function resolveThread(f: ThreadFeature, scope: Scope): ResolvedFeature {
+  if (!f.face) throw new Error("thread: pick the round face to cut it on");
+  const dims = threadDims(f, scope, f.side);
   return {
     id: f.id,
     type: "thread",
-    frame,
-    centers,
-    down,
-    internal,
-    ...(internal ? { targetId: f.targetId } : {}),
-    thread: internal
-      ? // Starts a little outside the body so the cut opens cleanly. The
-        // lead-in here is a 45° countersink at the mouth (the kernel cuts it
-        // after the thread), so `startChamfer` means that, not a clamp.
-        {
-          ...common,
-          offset: dims.clearance,
-          z0: -Math.min(0.5, dims.pitch),
-          z1: dims.length,
-          tipChamfer: false,
-          startChamfer: dims.leadIn,
-        }
-      : { ...common, offset: -dims.clearance, z0: 0, z1: dims.length, tipChamfer: dims.leadIn },
+    face: { sourceId: f.face.featureId, faceName: f.face.faceName, center: f.face.center, normal: f.face.normal },
+    flip: f.flip,
+    ...(dims.length !== null ? { length: dims.length } : {}),
+    clearance: dims.clearance,
+    leadIn: dims.leadIn,
+    thread: { d: dims.d, pitch: dims.pitch, profile: dims.profile, starts: dims.starts, leftHand: dims.leftHand },
   };
 }

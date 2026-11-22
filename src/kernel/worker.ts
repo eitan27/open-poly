@@ -57,6 +57,7 @@ import { newell, type PolyMesh } from "../geom/polyMesh";
 import { screwMesh } from "../geom/screwMesh";
 import { expandToChains, expansionCount } from "../geom/edgeChains";
 import { fitRing } from "../geom/ringFit";
+import { fitRoundWall, type RoundWall, type WallSample } from "../geom/roundWall";
 import {
   chamferLegs,
   chamferTriangle,
@@ -3699,9 +3700,9 @@ const BOOLEAN_OFFSET_FAILED =
   "build the tool slightly larger instead.";
 
 const BOOLEAN_OFFSET_FACETED =
-  "Couldn't offset this tool for the clearance: a thread or screw can only be grown as it was " +
-  "built, before it's moved, patterned or cut. Put the offset on a boolean with the thread itself, " +
-  "or set its clearance in the Thread feature instead.";
+  "Couldn't offset this tool for the clearance: a screw can only be grown as it was built, before " +
+  "it's moved, patterned or cut, and a part with a thread cut on it can't be grown at all. For a " +
+  "threaded rod, cut a Thread in the hole instead and match it to the rod's.";
 
 /** A subtract tool grown (or, negative `d`, shrunk) by `d` all round — the
  *  boolean's clearance offset. Uses the same OCCT offsetter Shell does
@@ -4797,94 +4798,263 @@ function placedNamed(src: NamedShape, o: V3, down: V3, u: V3, from: string, to: 
   return { shape, names };
 }
 
-/** The rods (external) or cavities (internal) of a Thread feature: one
- *  built, the rest copies. An internal thread's lead-in is a countersink cut
- *  separately, not a clamp on the cavity, so it is left off here. */
-function threadRods(feature: Extract<ResolvedFeature, { type: "thread" }>, segments?: number): NamedShape {
-  const { frame, down, centers } = feature;
-  const idOf = (i: number) => (centers.length > 1 ? `${feature.id}/t${i}` : feature.id);
-  const t = feature.internal ? { ...feature.thread, startChamfer: false } : feature.thread;
-  const o0 = framePoint(frame, ...centers[0]);
-  const first = threadSolid(t, o0, down, frame.uAxis, idOf(0), segments);
-  const rods = centers.map(([cu, cv], i) => {
-    if (i === 0) return first;
-    const o = framePoint(frame, cu, cv);
-    return translatedNamed(first, [o[0] - o0[0], o[1] - o0[1], o[2] - o0[2]], idOf(0), idOf(i));
-  });
-  return rods.length === 1 ? rods[0] : compoundOf(rods);
+/** The round wall a thread is cut on: the picked face's whole smooth surface
+ *  (its cluster, as the viewport picks it — every strip of a faceted
+ *  cylinder), fitted by the same code the dialog uses on the tessellation
+ *  (geom/roundWall.ts), so the two agree on the axis, radius and side. */
+function threadWall(body: Body, face: Face): RoundWall {
+  const faces: Face[] = [face];
+  if (face.geomType !== "CYLINDRE" && body.shape.faces.length <= PER_FACE_MESH_THRESHOLD) {
+    const clusterOf = faceClustersFrom(body.shape);
+    const rep = clusterOf.get(face.hashCode);
+    if (rep !== undefined) {
+      faces.length = 0;
+      for (const f of body.shape.faces) if (clusterOf.get(f.hashCode) === rep) faces.push(f);
+    }
+  }
+  const samples: WallSample[] = [];
+  const points: V3[] = [];
+  for (const f of faces) {
+    if (f.geomType === "PLANE") {
+      const n = faceOutwardNormal(f);
+      if (n) samples.push({ p: f.center.toTuple() as V3, n, w: 1 });
+      for (const e of f.edges) points.push(e.startPoint.toTuple() as V3, e.endPoint.toTuple() as V3);
+    } else {
+      // A real (analytic) surface: sample it — around for the normals, at both
+      // ends of its height for the extent.
+      for (const u of [0, 0.25, 0.5, 0.75, 1]) {
+        for (const v of [0, 0.5, 1]) {
+          const p = f.pointOnSurface(u, v).toTuple() as V3;
+          points.push(p);
+          if (v === 0.5) {
+            try {
+              const n = vunit(f.normalAt(p).toTuple() as V3);
+              samples.push({ p, n, w: 1 });
+            } catch {
+              /* a singular point: skip it */
+            }
+          }
+        }
+      }
+    }
+  }
+  const wall = fitRoundWall(samples, points);
+  if (!wall) throw new Error("thread: the face isn't a round wall — pick a rod's side or a hole's bore");
+  return wall;
 }
 
+/** Is `p` inside the solid material of `shape`? For telling a rod's free end
+ *  (air beyond it) from the end it grows out of, and a hole's mouth from its
+ *  floor. Null when the kernel can't say. */
+function insideSolid(shape: Shape3D, p: V3): boolean | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const pnt = new oc.gp_Pnt_3(p[0], p[1], p[2]);
+  const mv = new oc.BRepBuilderAPI_MakeVertex(pnt);
+  const range = new oc.Message_ProgressRange_1();
+  let dist: { IsDone(): boolean; InnerSolution(): boolean; Value(): number; delete(): void } | null = null;
+  try {
+    // The no-argument constructor: the bindings carry no Extrema_ExtFlag enum
+    // to pass the full one.
+    dist = new oc.BRepExtrema_DistShapeShape_1();
+    const d = dist as unknown as { LoadS1(s: unknown): void; LoadS2(s: unknown): void; Perform(r: unknown): boolean };
+    d.LoadS1(shape.wrapped);
+    d.LoadS2(mv.Vertex());
+    d.Perform(range);
+    if (!dist!.IsDone()) return null;
+    return dist!.InnerSolution() || dist!.Value() < 1e-9;
+  } catch {
+    return null;
+  } finally {
+    dist?.delete();
+    range.delete();
+    mv.delete();
+    pnt.delete();
+  }
+}
+
+/** Where a Thread feature's thread goes on its wall: the end it starts from
+ *  (`s`, where the lead-in is), the way into the wall from there, and how far.
+ *  It starts at the OPEN end — a rod's free tip, a hole's mouth — found by
+ *  looking just past each end, on the axis, for material; with both ends open
+ *  (a through hole, a loose rod) or neither, at the upper one. Flip swaps. */
+function threadPlacement(
+  feature: Extract<ResolvedFeature, { type: "thread" }>,
+  body: Body,
+  wall: RoundWall,
+  warn: Warn,
+): { s: V3; inward: V3; length: number } {
+  const { origin: o, dir, length: wallLength } = wall;
+  const end = (t: number): V3 => [o[0] + dir[0] * t, o[1] + dir[1] * t, o[2] + dir[2] * t];
+  const probe = Math.min(0.05, wallLength / 4);
+  const openLow = insideSolid(body.shape, end(-probe)) === false;
+  const openHigh = insideSolid(body.shape, end(wallLength + probe)) === false;
+  let fromHigh = openHigh || !openLow;
+  if (feature.flip) fromHigh = !fromHigh;
+  let length = wallLength;
+  if (feature.length !== undefined) {
+    if (feature.length > wallLength + 1e-6) {
+      warn(`the face is only ${round2(wallLength)} mm long, so the thread is cut along all of it`);
+    } else length = feature.length;
+  }
+  return fromHigh
+    ? { s: end(wallLength), inward: [-dir[0], -dir[1], -dir[2]], length }
+    : { s: end(0), inward: dir, length };
+}
+
+const round2 = (x: number) => Math.round(x * 100) / 100;
+
+/** What a Thread feature takes out of its body, built at a given facet
+ *  density: on a rod, everything between the rod's wall and the threaded rod
+ *  (so a rod a little too thick is turned down to the thread, and a faceted
+ *  one loses its corners); in a hole, the thread's cavity, core and all (so a
+ *  bore a little too small is drilled out).
+ *
+ *  Either way the helix is laid out from the START end, pointing out of the
+ *  wall there: depth 0 at `s`, θ = 0 along a `u` fixed by that direction. So a
+ *  rod and a hole whose threads start at the same spot on the same axis — a
+ *  stud flush with the plate it screws into — are in phase, and nest. */
+function threadTool(
+  feature: Extract<ResolvedFeature, { type: "thread" }>,
+  wall: RoundWall,
+  at: { s: V3; inward: V3; length: number },
+  segments?: number,
+): NamedShape {
+  const { s, inward, length } = at;
+  const out: V3 = [-inward[0], -inward[1], -inward[2]];
+  const u = vunit(Math.abs(out[0]) < 0.9 ? vcross(out, [1, 0, 0]) : vcross(out, [0, 1, 0]));
+  const t = feature.thread;
+  if (wall.internal) {
+    // Runs a little past the mouth so the cut opens cleanly.
+    return threadSolid(
+      { ...t, offset: feature.clearance, z0: -length, z1: Math.min(0.5, t.pitch), tipChamfer: false },
+      s,
+      out,
+      u,
+      feature.id,
+      segments,
+    );
+  }
+  // The rod, its tip (the lead-in) at `s`, starting a hair past the far end
+  // so no face of it lies on the sleeve's.
+  const rod = threadSolid(
+    { ...t, offset: -feature.clearance, z0: -length - 0.01, z1: 0, tipChamfer: feature.leadIn },
+    s,
+    out,
+    u,
+    feature.id,
+    segments,
+  );
+  // The sleeve to take the rod out of: past the wall's corners everywhere
+  // (its own flats included — it's a polygon too), and a little past the tip.
+  const r = (Math.max(wall.radius, t.d / 2) + 0.05) / Math.cos(Math.PI / CIRCLE_FACETS);
+  const sleeve = revolvedPolyhedron(
+    s,
+    out,
+    u,
+    vcross(out, u),
+    [
+      [0, -length],
+      [r, -length],
+      [r, 0.5],
+      [0, 0.5],
+    ],
+    `${feature.id}/sleeve`,
+  );
+  const cut = booleanNamed("cut", sleeve, rod, THREAD_FUZZY);
+  sleeve.shape.delete();
+  rod.shape.delete();
+  return cut;
+}
+
+/** A Thread feature: a thread cut on a round face — into a rod's side, or a
+ *  hole's wall — of the body that face is on. Always a cut. */
 function buildThreadFeature(feature: Extract<ResolvedFeature, { type: "thread" }>, ctx: BuildContext): void {
-  const { bodies, used } = ctx;
-  if (!feature.internal) {
-    // A threaded rod: one mesh, no booleans, cached like a screw.
-    const key = builderKey(feature);
-    used.add(key);
-    let entry = builderCache.get(key);
-    if (!entry) {
-      entry = threadRods(feature);
-      builderCache.set(key, entry);
-    }
-    // Grown, the whole profile moves out radially — what an internal thread
-    // does with its clearance, so a rod cut into a bore with offset 2 × its
-    // clearance leaves the same cavity an Internal thread would.
-    const regrow = (d: number) =>
-      threadRods({ ...feature, thread: { ...feature.thread, offset: feature.thread.offset + d } });
-    bodies.push({ id: feature.id, key, faceted: true, regrow: { key, build: regrow }, ...sharedNamed(entry) });
-    return;
+  const { bodies } = ctx;
+  const target = feature.previewTool
+    ? bodies.find((b) => b.id === feature.face.sourceId)
+    : requireBody(bodies, feature.face.sourceId);
+  if (!target) throw new Error("thread: the face's part is gone");
+  const { face } = bodyProfileFace(
+    target,
+    feature.face.faceName,
+    feature.face.center,
+    feature.face.normal,
+    ctx.warn,
+    "thread face",
+  );
+  const wall = threadWall(target, face);
+  const at = threadPlacement(feature, target, wall, ctx.warn);
+  const t = feature.thread;
+  const depth = threadDepth(t.pitch, t.profile);
+
+  // Too little material for a whole thread: a rod thinner than its crests, a
+  // bore wider than the cavity's root. Built anyway, with the crests short.
+  const tol = Math.max(0.02, 0.05 * depth);
+  if (!wall.internal) {
+    const crest = t.d / 2 - feature.clearance;
+    if (wall.radius < crest - tol)
+      ctx.warn(
+        `the rod is Ø${round2(2 * wall.radius)}, thinner than the thread's Ø${round2(2 * crest)}, so its crests are ${round2(crest - wall.radius)} mm short`,
+      );
+  } else {
+    const root = t.d / 2 + feature.clearance - depth;
+    if (wall.radius > root + tol)
+      ctx.warn(
+        `the hole is Ø${round2(2 * wall.radius)}, wider than the thread's minor Ø${round2(2 * root)}, so its crests are ${round2(wall.radius - root)} mm short`,
+      );
   }
+
   if (feature.previewTool) {
-    bodies.push({ id: feature.id, key: contentKey(feature, []), noSplit: true, ...threadRods(feature) });
+    bodies.push({
+      id: feature.id,
+      key: contentKey(feature, [target.key]),
+      noSplit: true,
+      ...threadTool(feature, wall, at),
+    });
     return;
   }
-  const target = requireBody(bodies, feature.targetId!);
   const cacheKey = contentKey(feature, ["thread", target.key]);
   ctx.usedDressUps.add(cacheKey);
   const hit = dressUpCache.get(cacheKey);
   let next: NamedShape;
   if (hit) next = sharedNamed(hit.result);
   else {
-    const t = feature.thread;
     const before = measureVolume(target.shape);
-    // Finer facet counts to retry with, on this profile's step.
-    const N = threadSegments(t.d / 2 + t.offset, 0.02, t.profile, t.starts);
+    const N = threadSegments(t.d / 2, 0.02, t.profile, t.starts);
     const step = segmentsStep(t.profile, t.starts);
     const cut = threadBoolean(
       "cut",
       target,
-      (seg) => threadRods(feature, seg),
+      (seg) => threadTool(feature, wall, at, seg),
       (r) => {
-        const v = measureVolume(r.shape);
-        return v < before - 1e-3 && v > 0 && countSolids(r.shape) <= countSolids(target.shape);
+        const vol = measureVolume(r.shape);
+        return vol < before - 1e-3 && vol > 0 && countSolids(r.shape) <= countSolids(target.shape);
       },
       [undefined, N + step, N + 2 * step],
     );
-    if (!cut) throw new Error("thread: the cut missed the body — check the sketch is on it, and try Flip");
+    if (!cut) throw new Error("thread: the cut failed on this face — try a different pitch or length");
     next = cut;
-    if (t.startChamfer) {
-      // The lead-in: a 45° countersink at each mouth, from the cavity's crest
+    if (wall.internal && feature.leadIn) {
+      // The lead-in: a 45° countersink at the mouth, from the cavity's crest
       // down to its root — so a printed bolt finds the thread, and the first
       // layer's squish doesn't close the opening.
-      const crest = t.d / 2 + t.offset;
-      const root = crest - threadDepth(t.pitch, t.profile);
-      const depth = crest - root;
-      const profile: [number, number][] = [
-        [0, -1],
-        [crest + 1, -1],
-        [root, depth],
-        [0, depth],
-      ];
-      const cones = feature.centers.map(([cu, cv], i) =>
-        revolvedPolyhedron(
-          framePoint(feature.frame, cu, cv),
-          feature.down,
-          feature.frame.uAxis,
-          feature.frame.vAxis,
-          profile,
-          `${feature.id}/leadIn${i}`,
-        ),
+      const crest = t.d / 2 + feature.clearance;
+      const root = crest - depth;
+      const u = vunit(Math.abs(at.inward[0]) < 0.9 ? vcross(at.inward, [1, 0, 0]) : vcross(at.inward, [0, 1, 0]));
+      const tool = revolvedPolyhedron(
+        at.s,
+        at.inward,
+        u,
+        vcross(at.inward, u),
+        [
+          [0, -1],
+          [crest + 1, -1],
+          [root, depth],
+          [0, depth],
+        ],
+        `${feature.id}/leadIn`,
       );
-      const tool = cones.length === 1 ? cones[0] : compoundOf(cones);
       const v0 = measureVolume(next.shape);
       const sunk = booleanNamed("cut", next, tool, THREAD_FUZZY);
       tool.shape.delete();

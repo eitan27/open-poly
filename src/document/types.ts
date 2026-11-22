@@ -927,23 +927,19 @@ export interface Document {
 
 /** A custom thread's parameters (expressions). */
 export interface ThreadParams {
-  /** Major diameter of the external thread — the one a nut's thread mates. */
+  /** Major diameter of the external thread — the one a nut's thread mates.
+   *  An internal thread is cut to mate with that size. */
   diameter: string;
   pitch: string;
+  /** From the start end; used when `fullLength` is off. */
   length: string;
-  /** Radial gap per part (mm): an external thread shrinks by it, an internal
-   *  one grows, so two printed halves fit. */
+  /** Radial gap per part (mm): a rod's thread shrinks by it, a hole's grows,
+   *  so two printed halves fit. */
   clearance: string;
   /** Interleaved helices (a faster-closing jar lid has 2–4). */
   starts: string;
 }
 
-/** A thread of any diameter and pitch, at every point (and circle centre) of
- *  a sketch — the route for 3D-printed fasteners, lids and lead screws, where
- *  ISO metric pitches are too fine to print. External: a threaded rod as a new
- *  body, standing out of the sketch plane. Internal: the matching thread cut
- *  into `targetId`, going in against the plane normal. `flip` reverses either.
- *  Built as a faceted helix (geom/thread.ts). */
 /** Parts taken out of the model from this point in the timeline on — one
  *  screw of several, one copy of a pattern — by part id (`id`, `id#1`…, see
  *  document/parts.ts). The feature that made them is left as it is, and so is
@@ -953,19 +949,38 @@ export interface DeletePartFeature extends FeatureBase {
   partIds: string[];
 }
 
+/** A round face a thread is cut on — a rod's side or a hole's bore — by the
+ *  part it's on, its persistent name, and the geometric fingerprint the kernel
+ *  re-matches it by if an upstream edit renames it (as `RevolveAxisFace`). */
+export interface ThreadFaceRef {
+  featureId: string;
+  faceName?: string;
+  faceId: number;
+  center: [number, number, number];
+  normal?: [number, number, number];
+}
+
+/** A thread of any diameter and pitch, cut on a round face — the route for
+ *  3D-printed fasteners, lids and lead screws, where ISO metric pitches are
+ *  too fine to print. Always a cut, on the face's own body: a rod's side has
+ *  the grooves cut in (it should start at the thread's major diameter), a
+ *  hole's wall has them cut outward (it should start at the minor). Which it
+ *  is, the kernel reads off the face. It starts at the face's open end — a
+ *  rod's tip, a hole's mouth; `flip` starts it from the other — and runs the
+ *  whole face, or `params.length` when `fullLength` is off. Built as a faceted
+ *  helix (geom/thread.ts). */
 export interface ThreadFeature extends FeatureBase {
   type: "thread";
+  face: ThreadFaceRef;
+  /** The face's side as read when it was picked — for the dialog's diagram
+   *  and readout only; the kernel reads the face itself. */
   side: "external" | "internal";
   profile: ThreadProfile;
-  sketchId: string;
-  targetId?: string;
   leftHand: boolean;
-  /** 45° chamfer where the thread starts to engage: the rod's tip, the
-   *  internal thread's mouth. */
+  /** 45° lead-in where the thread starts to engage: a chamfer at a rod's tip,
+   *  a countersink at a hole's mouth. */
   leadIn: boolean;
   flip: boolean;
+  fullLength: boolean;
   params: ThreadParams;
-  color: number;
-  opacity: number;
-  hidden?: boolean;
 }

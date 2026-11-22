@@ -507,15 +507,16 @@ export function ParamEditor({
           <div className="param-field">
             <span className="param-label">Thread</span>
             <span className="param-static">
-              {THREAD_PROFILE_LABELS[feature.profile]}, {feature.side}
+              {THREAD_PROFILE_LABELS[feature.profile]}, {feature.side === "internal" ? "in a hole" : "on a rod"}
               {feature.leftHand ? ", left-hand" : ""}
+              {feature.fullLength ? ", full length" : ""}
             </span>
           </div>
           {(
             [
               ["diameter", "Diameter"],
               ["pitch", "Pitch"],
-              ["length", "Length"],
+              ...(feature.fullLength ? [] : [["length", "Length"] as const]),
               ["starts", "Starts"],
               ["clearance", "Clearance"],
             ] as const

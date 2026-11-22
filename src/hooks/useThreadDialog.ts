@@ -1,19 +1,42 @@
 // The Thread dialog's state machine, after useHoleDialog: a debounced
-// throwaway regenerate ghosts a NEW thread (the rod, or the cavity drawn as a
-// cut), and an EDIT applies live to the real document.
+// throwaway regenerate ghosts a NEW thread (the material it takes out, drawn
+// as a cut), and an EDIT applies live to the real document.
+//
+// Two pick slots feed it: the round FACE to cut the thread on (a new dialog
+// opens listening for it), and MATCH, a face whose thread to copy — a Thread,
+// a tapped Hole, a Screw, or a plain rod or hole's size.
 import { useEffect, useState } from "react";
 import { addThread, resolveDocument, updateThread } from "../document/document";
-import { DEFAULT_THREAD_SETTINGS, type ThreadSettings } from "../document/threadFeature";
-import { holeSketches } from "./useHoleDialog";
-import type { Document, Feature, ThreadFeature } from "../document/types";
+import {
+  DEFAULT_THREAD_SETTINGS,
+  suggestThread,
+  type ThreadMatch,
+  type ThreadSettings,
+  type ThreadSide,
+} from "../document/threadFeature";
+import type { Document, Feature, ThreadFaceRef, ThreadFeature } from "../document/types";
+import type { RoundWall } from "../geom/roundWall";
 import type { KernelClient } from "../kernel/KernelClient";
 import type { ShapeMeshPayload } from "../kernel/types";
 
 const PREVIEW_DEBOUNCE_MS = 120;
 
+export type ThreadSlot = "face" | "match";
+
 export interface ThreadDialogState {
-  sketchId: string | null;
-  targetId: string | null;
+  face: ThreadFaceRef | null;
+  /** What the face is, as read off its tessellation when it was picked. */
+  side: ThreadSide;
+  /** The face's diameter, when it was read (not on an edit, whose face the
+   *  thread has already been cut into). */
+  faceDiameter: number | null;
+  /** The slot the next viewport click fills. */
+  slot: ThreadSlot | null;
+  /** What the settings were last matched to, for the dialog to say. */
+  matched: string | null;
+  /** The diameter last suggested for the face — while the field still holds
+   *  it, a change of profile (or, in a hole, of pitch) suggests again. */
+  suggested: string | null;
   settings: ThreadSettings;
   editId?: string;
 }
@@ -23,6 +46,7 @@ export interface ThreadDialogDeps {
   setDoc: (next: Document | ((prev: Document) => Document), coalesceKey?: string) => void;
   ready: boolean;
   kernelRef: React.RefObject<KernelClient | null>;
+  scope: Record<string, number>;
   beginEdit: (feature: Feature) => void;
   commitEdit: () => void;
   cancelEdit: () => void;
@@ -34,55 +58,82 @@ export interface ThreadDialogApi {
   dialog: ThreadDialogState | null;
   preview: ShapeMeshPayload | null;
   previewError: string | null;
-  /** Open on a sketch (the selected one, else the newest with points) and a
-   *  body (the one the sketch sits on, else `fallbackTarget`). */
-  open: (sketchId: string | null, fallbackTarget: string | null) => void;
+  /** Open listening for the face — or on `face` when one was preselected. */
+  open: (face?: { ref: ThreadFaceRef; wall: RoundWall }) => void;
   edit: (feature: ThreadFeature) => void;
   close: () => void;
   confirm: () => void;
-  setSketch: (id: string) => void;
-  setTarget: (id: string) => void;
+  arm: (slot: ThreadSlot | null) => void;
+  /** The face slot filled: a round face, read by its tessellation. */
+  setFace: (ref: ThreadFaceRef, wall: RoundWall) => void;
+  applyMatch: (match: ThreadMatch) => void;
+  clearMatch: () => void;
   update: (patch: Partial<ThreadSettings>) => void;
   updateParam: (name: keyof ThreadSettings["params"], value: string) => void;
 }
 
-/** The sketch every thread needs: any with a point or a circle, like a hole's. */
-export { holeSketches as threadSketches };
-
-/** The body a sketch sits on, when it was drawn on a body face. */
-function sketchBody(doc: Document, sketchId: string | null): string | null {
-  const s = doc.features.find((f) => f.id === sketchId);
-  return s?.type === "sketch" && s.plane.kind === "face" ? s.plane.featureId : null;
-}
+const freshSettings = (): ThreadSettings => ({
+  ...DEFAULT_THREAD_SETTINGS,
+  params: { ...DEFAULT_THREAD_SETTINGS.params },
+});
 
 export function useThreadDialog(deps: ThreadDialogDeps): ThreadDialogApi {
-  const { doc, setDoc, ready, kernelRef, beginEdit, commitEdit, cancelEdit, shouldLiveApply, selectFeature } = deps;
+  const { doc, setDoc, ready, kernelRef, scope, beginEdit, commitEdit, cancelEdit, shouldLiveApply, selectFeature } =
+    deps;
   const [dialog, setDialog] = useState<ThreadDialogState | null>(null);
   const [preview, setPreview] = useState<ShapeMeshPayload | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  const open = (sketchId: string | null, fallbackTarget: string | null) => {
-    const sketches = holeSketches(doc);
-    const sk = sketchId && sketches.some((s) => s.id === sketchId) ? sketchId : (sketches.at(-1)?.id ?? null);
-    setDialog({
-      sketchId: sk,
-      targetId: sketchBody(doc, sk) ?? fallbackTarget,
-      settings: { ...DEFAULT_THREAD_SETTINGS, params: { ...DEFAULT_THREAD_SETTINGS.params } },
-    });
+  /** The face filled, and — unless the size was matched to something — the
+   *  thread it's ready for. */
+  const withFace = (d: ThreadDialogState, ref: ThreadFaceRef, wall: RoundWall): ThreadDialogState => {
+    const side: ThreadSide = wall.internal ? "internal" : "external";
+    const fresh = { ...d, face: ref, side, faceDiameter: 2 * wall.radius, slot: null };
+    return d.matched ? fresh : suggested(fresh, true);
+  };
+
+  /** `d` with the size its face is ready for (see suggestThread) — the pitch
+   *  too when `pitch`, which only the ISO profile changes. */
+  const suggested = (d: ThreadDialogState, pitch: boolean): ThreadDialogState => {
+    if (d.faceDiameter === null) return d;
+    const s = suggestThread({ radius: d.faceDiameter / 2, internal: d.side === "internal" }, d.settings, scope);
+    const params = { ...d.settings.params, diameter: s.diameter, ...(pitch ? { pitch: s.pitch } : {}) };
+    return { ...d, suggested: s.diameter, settings: { ...d.settings, params } };
+  };
+
+  /** Still showing the suggestion, so a change it depends on may redo it. */
+  const following = (d: ThreadDialogState) =>
+    !d.matched && d.faceDiameter !== null && d.settings.params.diameter === d.suggested;
+
+  const open = (face?: { ref: ThreadFaceRef; wall: RoundWall }) => {
+    const blank: ThreadDialogState = {
+      face: null,
+      side: "external",
+      faceDiameter: null,
+      slot: "face",
+      matched: null,
+      suggested: null,
+      settings: freshSettings(),
+    };
+    setDialog(face ? withFace(blank, face.ref, face.wall) : blank);
   };
 
   const edit = (feature: ThreadFeature) => {
     beginEdit(feature);
     selectFeature(feature.id);
     setDialog({
-      sketchId: feature.sketchId,
-      targetId: feature.targetId ?? null,
+      face: feature.face,
+      side: feature.side,
+      faceDiameter: null,
+      slot: null,
+      matched: null,
+      suggested: null,
       settings: {
-        side: feature.side,
         profile: feature.profile,
         leftHand: feature.leftHand,
         leadIn: feature.leadIn,
         flip: feature.flip,
+        fullLength: feature.fullLength,
         params: { ...DEFAULT_THREAD_SETTINGS.params, ...feature.params },
       },
       editId: feature.id,
@@ -95,35 +146,57 @@ export function useThreadDialog(deps: ThreadDialogDeps): ThreadDialogApi {
   };
 
   const confirm = () => {
-    if (!dialog?.sketchId || (dialog.settings.side === "internal" && !dialog.targetId)) return;
+    if (!dialog?.face) return;
     if (dialog.editId) {
-      setDoc(updateThread(doc, dialog.editId, dialog.sketchId, dialog.targetId ?? undefined, dialog.settings));
+      setDoc(updateThread(doc, dialog.editId, dialog.face, dialog.side, dialog.settings));
       selectFeature(dialog.editId);
       commitEdit();
       close();
       return;
     }
-    const { doc: created } = addThread(doc, dialog.sketchId, dialog.targetId ?? undefined, dialog.settings);
+    const { doc: created } = addThread(doc, dialog.face, dialog.side, dialog.settings);
     setDoc(created);
     selectFeature(null);
     close();
   };
 
-  const setSketch = (id: string) =>
-    setDialog((d) => (d ? { ...d, sketchId: id, targetId: sketchBody(doc, id) ?? d.targetId } : d));
-  const setTarget = (id: string) => setDialog((d) => (d ? { ...d, targetId: id } : d));
+  const arm = (slot: ThreadSlot | null) => setDialog((d) => (d ? { ...d, slot } : d));
+  const setFace = (ref: ThreadFaceRef, wall: RoundWall) => setDialog((d) => (d ? withFace(d, ref, wall) : d));
+  const applyMatch = (match: ThreadMatch) =>
+    setDialog((d) =>
+      d
+        ? {
+            ...d,
+            slot: null,
+            matched: match.label,
+            settings: { ...d.settings, ...match.patch, params: { ...d.settings.params, ...match.patch.params } },
+          }
+        : d,
+    );
+  const clearMatch = () => setDialog((d) => (d ? { ...d, matched: null, slot: "match" } : d));
   const update = (patch: Partial<ThreadSettings>) =>
-    setDialog((d) => (d ? { ...d, settings: { ...d.settings, ...patch } } : d));
+    setDialog((d) => {
+      if (!d) return d;
+      const next = { ...d, settings: { ...d.settings, ...patch } };
+      return patch.profile && patch.profile !== d.settings.profile && following(d) ? suggested(next, true) : next;
+    });
   const updateParam = (name: keyof ThreadSettings["params"], value: string) =>
-    setDialog((d) => (d ? { ...d, settings: { ...d.settings, params: { ...d.settings.params, [name]: value } } } : d));
+    setDialog((d) => {
+      if (!d) return d;
+      const next = { ...d, settings: { ...d.settings, params: { ...d.settings.params, [name]: value } } };
+      // In a hole the size follows the pitch: its minor diameter is the bore.
+      return name === "pitch" && d.side === "internal" && d.settings.profile !== "iso" && following(d)
+        ? suggested(next, false)
+        : next;
+    });
 
-  // Ghost of a NEW thread: the rod, or (internal) the cavity alone, drawn as a cut.
-  const sketchId = dialog?.sketchId;
-  const targetId = dialog?.targetId;
+  // Ghost of a NEW thread: the material it takes out, drawn as a cut.
+  const face = dialog?.face;
+  const side = dialog?.side;
   const settings = dialog?.settings;
   const creating = !!dialog && !dialog.editId;
   useEffect(() => {
-    if (!creating || !sketchId || !settings || (settings.side === "internal" && !targetId)) {
+    if (!creating || !face || !side || !settings) {
       setPreview(null);
       setPreviewError(null);
       return;
@@ -132,7 +205,7 @@ export function useThreadDialog(deps: ThreadDialogDeps): ThreadDialogApi {
     if (!ready || !kernel) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      const { doc: previewDoc, id } = addThread(doc, sketchId, targetId ?? undefined, settings);
+      const { doc: previewDoc, id } = addThread(doc, face, side, settings);
       const resolved = resolveDocument(previewDoc);
       const err = resolved.errors[id];
       if (err) {
@@ -166,15 +239,29 @@ export function useThreadDialog(deps: ThreadDialogDeps): ThreadDialogApi {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [creating, sketchId, targetId, settings, doc, ready, kernelRef]);
+  }, [creating, face, side, settings, doc, ready, kernelRef]);
 
   // An EDIT applies live to the real document.
   const editId = dialog?.editId;
   useEffect(() => {
-    if (!editId || !sketchId || !settings) return;
-    if (!shouldLiveApply(JSON.stringify({ e: editId, sketchId, targetId, settings }))) return;
-    setDoc((prev) => updateThread(prev, editId, sketchId, targetId ?? undefined, settings), `edit:${editId}`);
-  }, [editId, sketchId, targetId, settings, setDoc, shouldLiveApply]);
+    if (!editId || !face || !side || !settings) return;
+    if (!shouldLiveApply(JSON.stringify({ e: editId, face, side, settings }))) return;
+    setDoc((prev) => updateThread(prev, editId, face, side, settings), `edit:${editId}`);
+  }, [editId, face, side, settings, setDoc, shouldLiveApply]);
 
-  return { dialog, preview, previewError, open, edit, close, confirm, setSketch, setTarget, update, updateParam };
+  return {
+    dialog,
+    preview,
+    previewError,
+    open,
+    edit,
+    close,
+    confirm,
+    arm,
+    setFace,
+    applyMatch,
+    clearMatch,
+    update,
+    updateParam,
+  };
 }

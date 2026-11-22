@@ -500,24 +500,28 @@ export const operationSchema = z.discriminatedUnion("op", [
   }),
   z.object({
     op: z.literal("addThread"),
-    /** The sketch whose POINT entities and CIRCLE centres place the threads. */
-    sketchId: z.string(),
-    /** "external" (default): a threaded rod as a new body, standing out of
-     *  the sketch plane along its normal. "internal": the matching thread cut
-     *  into targetId, going in against the normal. */
-    side: z.enum(["external", "internal"]).optional(),
-    /** Internal only: the body to cut. Defaults to the body the sketch is on. */
-    targetId: z.string().optional(),
+    /** The round face to cut the thread on: a rod's side (the grooves are cut
+     *  in — make the rod at the thread's major diameter) or a hole's wall
+     *  (cut outward — make the hole at the minor diameter). Which it is, is
+     *  read off the face. Any strip of a faceted round wall names the wall. */
+    face: z.object({ bodyId: z.string(), faceName: z.string() }),
+    /** A Thread, tapped Hole or Screw feature id whose thread to copy (size,
+     *  pitch, profile, starts, hand), so the two screw together. */
+    match: z.string().optional(),
     /** "printable" (default): 45° flanks, wide flats — prints upright with no
      *  supports. "iso": the 60° metric form. "trapezoid": ≈15°, lead screws. */
     profile: z.enum(["printable", "iso", "trapezoid"]).optional(),
     leftHand: z.boolean().optional(),
-    /** 45° lead-in: a chamfer at the rod's tip / a countersink at the
-     *  internal thread's mouth. Default true. */
+    /** 45° lead-in: a chamfer at the rod's tip / a countersink at the hole's
+     *  mouth. Default true. */
     leadIn: z.boolean().optional(),
+    /** Start at the face's other end. It starts at the open end — a rod's
+     *  free tip, a hole's mouth. */
     flip: z.boolean().optional(),
-    /** diameter (major, default 10), pitch (default 2), length (default 12),
-     *  starts (default 1), clearance (mm per part, default 0.15). */
+    /** diameter (major; default suggested from the face — a rod's own Ø, or
+     *  the size whose minor Ø is the hole), pitch (default 2), length (from
+     *  the start end; default the whole face), starts (default 1), clearance
+     *  (mm per part, default 0.15). */
     params: z.record(z.string(), expr).optional(),
     name: z.string().optional(),
   }),

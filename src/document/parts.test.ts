@@ -147,11 +147,10 @@ describe("isBodyFeature / isHideableFeature", () => {
     "revolve",
     "screw",
     "sweep",
-    "thread",
     "transform",
   ];
 
-  it("admits exactly the thirteen body-producing feature types", () => {
+  it("admits exactly the twelve body-producing feature types", () => {
     expect(typesWhere(isBodyFeature)).toEqual(BODY);
   });
 

@@ -35,6 +35,7 @@ import type {
   ExtrudeFeature,
   GearFeature,
   HoleFeature,
+  ThreadFaceRef,
   ThreadFeature,
   ScrewFeature,
   ExtrudeProfile,
@@ -722,12 +723,12 @@ export function deletePart(doc: Document, partId: string): { doc: Document; id: 
   });
 }
 
-/** A thread at every point of `sketchId`: a threaded rod (external), or cut
- *  into `targetId` (internal) — see document/threadFeature.ts. */
+/** A thread cut on a round face — a rod's side or a hole's bore — see
+ *  document/threadFeature.ts. */
 export function addThread(
   doc: Document,
-  sketchId: string,
-  targetId: string | undefined,
+  face: ThreadFaceRef,
+  side: ThreadFeature["side"],
   settings: ThreadSettings,
 ): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "thread").length + 1;
@@ -736,12 +737,10 @@ export function addThread(
     type: "thread",
     name: `Thread ${ordinal}`,
     suppressed: false,
-    sketchId,
-    ...(settings.side === "internal" && targetId ? { targetId } : {}),
+    face,
+    side,
     ...settings,
     params: { ...settings.params },
-    color: newBodyColor(),
-    opacity: 1,
   };
   return insertFeature(doc, feature);
 }
@@ -749,21 +748,13 @@ export function addThread(
 export function updateThread(
   doc: Document,
   id: string,
-  sketchId: string,
-  targetId: string | undefined,
+  face: ThreadFaceRef,
+  side: ThreadFeature["side"],
   settings: ThreadSettings,
 ): Document {
-  return mapFeature(doc, id, (f) => {
-    if (f.type !== "thread") return f;
-    const { targetId: _t, ...rest } = f;
-    return {
-      ...rest,
-      sketchId,
-      ...(settings.side === "internal" && targetId ? { targetId } : {}),
-      ...settings,
-      params: { ...settings.params },
-    };
-  });
+  return mapFeature(doc, id, (f) =>
+    f.type === "thread" ? { ...f, face, side, ...settings, params: { ...settings.params } } : f,
+  );
 }
 
 export function addImport(doc: Document, source: string, name?: string): { doc: Document; id: string } {
@@ -1924,8 +1915,7 @@ export function resolveDocument(doc: Document): ResolveResult {
       } else if (f.type === "hole") {
         features.push(resolveHole(f, sketchIn(dDoc), scope, planeFrames));
       } else if (f.type === "thread") {
-        const sketch = dDoc.features.find((x) => x.id === f.sketchId);
-        features.push(resolveThread(f, sketch?.type === "sketch" ? sketch : undefined, scope, planeFrames));
+        features.push(resolveThread(f, scope));
       } else if (f.type === "deletePart") {
         features.push({ id: f.id, type: "deletePart", partIds: f.partIds });
       } else if (f.type === "sketch" || f.type === "plane") {

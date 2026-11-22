@@ -115,6 +115,7 @@ import type {
   SketchConstraint,
   SketchEntity,
   SketchFeature,
+  ThreadFaceRef,
   Vec2,
 } from "./document/types";
 import { measureBetween, resolveSide } from "./sketch/distanceDim";
@@ -192,13 +193,13 @@ import { useShellDialog } from "./hooks/useShellDialog";
 import { usePatternDialog } from "./hooks/usePatternDialog";
 import { useRevolveDialog } from "./hooks/useRevolveDialog";
 import { useGearDialog } from "./hooks/useGearDialog";
-import { holeSketches, useHoleDialog } from "./hooks/useHoleDialog";
+import { useHoleDialog } from "./hooks/useHoleDialog";
 import { useThreadDialog } from "./hooks/useThreadDialog";
-import { threadDims, type ThreadDims } from "./document/threadFeature";
+import { matchThread, threadDims, type ThreadDims } from "./document/threadFeature";
+import { roundWallOfMesh, type RoundWall } from "./geom/roundWall";
 import { useScrewDialog } from "./hooks/useScrewDialog";
 import { ringMesh } from "./hooks/ghostMove";
 import {
-  holeCenters,
   holeDims,
   holePlacement,
   holePointAt,
@@ -1633,12 +1634,13 @@ export default function App() {
     shouldLiveApply,
     selectFeature,
   });
-  // The Thread dialog: custom threads at a sketch's points — a rod, or cut.
+  // The Thread dialog: a custom thread cut on a round face — a rod or a hole.
   const thread = useThreadDialog({
     doc,
     setDoc,
     ready,
     kernelRef,
+    scope: resolved.scope,
     beginEdit,
     commitEdit,
     cancelEdit,
@@ -2787,15 +2789,8 @@ export default function App() {
       ...(screw.preview ? [{ mesh: screw.preview }] : []),
       ...(screwRowMesh ? [{ mesh: screwRowMesh, variant: "fill" as const }] : []),
       ...(holeRowRing ? [{ mesh: holeRowRing, variant: "fill" as const }] : []),
-      // An internal thread's ghost is the cavity — material about to go.
-      ...(thread.preview
-        ? [
-            {
-              mesh: thread.preview,
-              ...(thread.dialog?.settings.side === "internal" ? { variant: "cut" as const } : {}),
-            },
-          ]
-        : []),
+      // A thread's ghost is what it cuts away — material about to go.
+      ...(thread.preview ? [{ mesh: thread.preview, variant: "cut" as const }] : []),
       ...patternGhosts,
       ...mirrorGhost,
       // The chamfer/fillet delta: what the operation fills in and what it carves
@@ -2814,7 +2809,6 @@ export default function App() {
       screwRowMesh,
       holeRowRing,
       thread.preview,
-      thread.dialog?.settings.side,
       patternGhosts,
       mirrorGhost,
       dressUp.preview,
@@ -3864,20 +3858,64 @@ export default function App() {
     const sameFace = dot(targetOf(pts[at])!.frame.normal, frame.normal) > 1 - 1e-6;
     hole.setPoints(sameFace ? pts.filter((_, i) => i !== at) : pts.map((p, i) => (i === at ? ref : p)));
   };
-  /** Open the Thread dialog like the Hole one: the selected sketch (or the
-   *  newest with points) and body. */
+  /** The round face a viewport face pick is, for the Thread dialog: its
+   *  reference and what its tessellation says it is. Null when it isn't round. */
+  const threadFaceOf = (partId: string, faceId: number): { ref: ThreadFaceRef; wall: RoundWall } | null => {
+    const m = meshes.find((x) => x.id === partId);
+    if (!m) return null;
+    const wall = roundWallOfMesh(m.mesh.faces, faceId);
+    const center = faceCentroid(m.mesh.faces, faceId);
+    if (!wall || !center) return null;
+    const faceName = faceNameOf(m.mesh.faces, faceId);
+    const normal = faceNormal(m.mesh.faces, faceId) || undefined;
+    return { ref: { featureId: partId, faceId, faceName, center, normal }, wall };
+  };
+  /** Open the Thread dialog: on a selected round face, else listening for one. */
   const openThread = () => {
     if (thread.dialog) return;
-    let sketchId: string | null = null;
-    let bodyId: string | null = null;
     for (const sel of selection) {
-      if ("sketchId" in sel && typeof sel.sketchId === "string") sketchId ??= sel.sketchId;
-      const fid = featureIdOf(sel);
-      const f = doc.features.find((x) => x.id === fid);
-      if (f?.type === "sketch") sketchId ??= f.id;
-      else if (fid && booleanCandidates.some((c) => c.id === fid)) bodyId ??= fid;
+      if (sel.kind !== "face") continue;
+      const face = threadFaceOf(sel.featureId, sel.faceId);
+      if (face) return thread.open(face);
     }
-    thread.open(sketchId, bodyId ?? booleanCandidates[0]?.id ?? null);
+    thread.open();
+  };
+  /** A viewport click while one of the Thread dialog's slots listens. */
+  const handleThreadPick = (pick: RevolveAxisPick) => {
+    const d = thread.dialog;
+    if (!d?.slot) return;
+    if (pick.kind !== "bodyFace") {
+      flashMsg(
+        d.slot === "face"
+          ? "Pick a round face: a rod's side or a hole's wall."
+          : "Pick a face of a Thread, a tapped Hole or a Screw, or a plain rod or hole.",
+      );
+      return;
+    }
+    const face = threadFaceOf(pick.featureId, pick.faceId);
+    if (d.slot === "face") {
+      if (!face) {
+        flashMsg("That face isn't round. Pick a rod's side or a hole's wall.");
+        return;
+      }
+      thread.setFace(face.ref, face.wall);
+      return;
+    }
+    const m = meshes.find((x) => x.id === pick.featureId);
+    const faceName = m ? faceNameOf(m.mesh.faces, pick.faceId) : undefined;
+    const match = matchThread(
+      doc,
+      { partId: pick.featureId, faceName },
+      face?.wall ?? null,
+      d.settings,
+      resolved.scope,
+      d.editId,
+    );
+    if (!match) {
+      flashMsg("No thread there to match. Pick a Thread, a tapped Hole, a Screw, or a plain rod or hole.");
+      return;
+    }
+    thread.applyMatch(match);
   };
   /** Open the Screw dialog: in the selected Hole feature (else the newest),
    *  or on a selected reference plane. */
@@ -4023,6 +4061,7 @@ export default function App() {
       else if (gear.dialog) gear.close();
       else if (hole.dialog) hole.close();
       else if (screw.dialog) screw.close();
+      else if (thread.dialog?.slot) thread.arm(null);
       else if (thread.dialog) thread.close();
       else if (mirrorDialog) closeMirror();
       else if (pattern.dialog) pattern.close();
@@ -4688,6 +4727,7 @@ export default function App() {
   // only; "patternAxis" a sketch line or a body face (planes are rejected — a
   // pattern has no profile plane to intersect one with).
   const handleAxisPick = (pick: RevolveAxisPick) => {
+    if (thread.dialog?.slot) return handleThreadPick(pick);
     if (pickPurpose === "transformAxis") {
       // A transform turns about a LINE, so only the two references that are one
       // count: a sketch line, or a straight body edge. A plane or a face would
@@ -7212,7 +7252,7 @@ export default function App() {
       icon: "🌀",
       label: "Thread",
       shortcut: shortcutHint("model.thread"),
-      title: `Thread (${shortcutName("model.thread")}): a custom thread at a sketch's points — any diameter and pitch, printable 45°, ISO or trapezoid — as a threaded rod, or cut into a body`,
+      title: `Thread (${shortcutName("model.thread")}): cut a custom thread on a round face — a rod's side or a hole's wall — any diameter and pitch, printable 45°, ISO or trapezoid`,
       keywords: [
         "helix",
         "printable",
@@ -7858,14 +7898,15 @@ export default function App() {
               transformDragPoses={isAssembly ? asmDragPoses : undefined}
               extrudeGizmo={extrudeGizmo}
               onExtrudeDistanceChange={handleExtrudeGizmoDistance}
-              picking={picking}
+              picking={picking || !!thread.dialog?.slot}
               onPick={handlePickRef}
               axisPick={
-                picking &&
-                (pickPurpose === "revolveAxis" ||
-                  pickPurpose === "patternAxis" ||
-                  pickPurpose === "patternDir" ||
-                  pickPurpose === "transformAxis")
+                !!thread.dialog?.slot ||
+                (picking &&
+                  (pickPurpose === "revolveAxis" ||
+                    pickPurpose === "patternAxis" ||
+                    pickPurpose === "patternDir" ||
+                    pickPurpose === "transformAxis"))
               }
               onAxisPick={handleAxisPick}
               activeSketch={
@@ -9129,28 +9170,30 @@ export default function App() {
                 let dims: ThreadDims | null = null;
                 let dimsError: string | null = null;
                 try {
-                  dims = threadDims(d.settings, resolved.scope);
+                  dims = threadDims(d.settings, resolved.scope, d.side);
                   lastThreadDims.current = dims;
                 } catch (err) {
                   dimsError = String((err as Error).message ?? err);
                 }
                 const error = dimsError ?? (d.editId ? (resolved.errors[d.editId] ?? null) : thread.previewError);
+                const part = d.face ? partAppearance(doc, d.face.featureId, DEFAULT_SOLID_COLOR).name : null;
+                const faceLabel =
+                  d.face &&
+                  (d.faceDiameter !== null
+                    ? `${d.side === "internal" ? "Hole" : "Rod"} Ø${Math.round(d.faceDiameter * 100) / 100} · ${part}`
+                    : `${d.side === "internal" ? "Hole" : "Rod"} · ${part}`);
                 return (
                   <ThreadDialog
                     editing={!!d.editId}
                     settings={d.settings}
-                    sketchId={d.sketchId}
-                    sketchOptions={holeSketches(doc).map((sk) => ({
-                      id: sk.id,
-                      name: sk.name,
-                      points: holeCenters(sk).length,
-                    }))}
-                    targetId={d.targetId}
-                    targetOptions={booleanCandidates}
+                    side={d.side}
+                    faceLabel={faceLabel}
+                    matched={d.matched}
+                    slot={d.slot}
                     dims={dims ?? lastThreadDims.current}
                     error={error?.replace(/^thread: /, "") ?? null}
-                    onSketchChange={thread.setSketch}
-                    onTargetChange={thread.setTarget}
+                    onArm={thread.arm}
+                    onClearMatch={thread.clearMatch}
                     onChange={thread.update}
                     onParam={thread.updateParam}
                     onConfirm={thread.confirm}

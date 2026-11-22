@@ -82,7 +82,6 @@ const BODY_FEATURE_TYPES: Record<SolidFeature["type"], true> = {
   import: true,
   gear: true,
   screw: true,
-  thread: true,
 };
 
 /** Does this feature produce a body of its own — and so own its appearance? A
