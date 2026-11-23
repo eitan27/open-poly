@@ -14,6 +14,9 @@ interface Props {
   /** Editing an existing boolean (re-titles the dialog + primary button). */
   editing?: boolean;
   candidates: BooleanCandidate[];
+  /** The name of an operand that isn't a candidate: editing a boolean, its
+   *  own operands are consumed by it, so they're no longer parts. */
+  nameOf: (id: string) => string;
   /** Operands for union / intersect (a flat list). */
   operandIds: string[];
   /** Subtract: the single base part and the accumulating tool parts. */
@@ -42,6 +45,7 @@ export function BooleanDialog({
   op,
   editing,
   candidates,
+  nameOf: nameOfOther,
   operandIds,
   base,
   tools,
@@ -59,7 +63,7 @@ export function BooleanDialog({
   onConfirm,
   onCancel,
 }: Props) {
-  const nameOf = (id: string) => candidates.find((c) => c.id === id)?.name ?? id;
+  const nameOf = (id: string) => candidates.find((c) => c.id === id)?.name ?? nameOfOther(id);
   const canConfirm = op === "subtract" ? !!base && tools.length >= 1 && !offsetError : operandIds.length >= 2;
   // The tool opens whatever the document holds (every modeling button does), so
   // it has to say why there is nothing to pick rather than arriving inert.

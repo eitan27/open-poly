@@ -9363,6 +9363,7 @@ export default function App() {
             op={booleanDialog.op}
             editing={!!booleanDialog.editId}
             candidates={booleanCandidates}
+            nameOf={(id) => partAppearance(doc, id, DEFAULT_SOLID_COLOR).name}
             operandIds={booleanDialog.operandIds}
             base={booleanDialog.base}
             tools={booleanDialog.tools}
