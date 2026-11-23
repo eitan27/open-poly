@@ -201,7 +201,7 @@ const GEAR_PATH = (() => {
   return parts.join(" ") + "Z";
 })();
 
-export function GearIcon({ size = 15 }: { size?: number }) {
+export function GearIcon({ size = 14 }: { size?: number }) {
   return (
     <svg
       width={size}
@@ -222,7 +222,7 @@ export function GearIcon({ size = 15 }: { size?: number }) {
 
 /** A screw side-on: its head, and a threaded shank to a point — the Screw
  *  tool. */
-export function ScrewIcon({ size = 15 }: { size?: number }) {
+export function ScrewIcon({ size = 14 }: { size?: number }) {
   return (
     <svg
       width={size}
@@ -245,7 +245,7 @@ export function ScrewIcon({ size = 15 }: { size?: number }) {
 
 /** A threaded rod side-on: saw-tooth flanks, the crests running across it on
  *  the slant of the helix — the Thread tool (a thread cut on a round face). */
-export function ThreadIcon({ size = 15 }: { size?: number }) {
+export function ThreadIcon({ size = 14 }: { size?: number }) {
   return (
     <svg
       width={size}
