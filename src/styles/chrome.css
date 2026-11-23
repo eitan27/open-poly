@@ -53,13 +53,8 @@
 
 /* One item per line: run together with " · " they wrapped mid-item and read
    as one long sentence. */
-.update-banner .whats-new-item,
-.update-banner .whats-new-more {
+.update-banner .whats-new-item {
   display: block;
-}
-
-.update-banner .whats-new-more {
-  opacity: 0.75;
 }
 
 .update-banner .banner-link {

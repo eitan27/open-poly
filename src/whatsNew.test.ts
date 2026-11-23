@@ -40,8 +40,8 @@ describe("whatsNew", () => {
   });
 
   it("keeps the banner to a few items", () => {
-    expect(bannerItems(["a", "b"])).toEqual({ shown: ["a", "b"], more: 0 });
-    expect(bannerItems(["a", "b", "c", "d", "e"])).toEqual({ shown: ["a", "b", "c"], more: 2 });
+    expect(bannerItems(["a", "b"])).toEqual(["a", "b"]);
+    expect(bannerItems(["a", "b", "c", "d", "e"])).toEqual(["a", "b", "c"]);
   });
 
   it("takes bold phrases that appear in the entry's items, and nothing else", () => {
