@@ -3879,14 +3879,14 @@ export default function App() {
     return { radius: dia / 2, stub: Math.max(dia, 3) * (d.settings.flip ? 1 : -1) };
   })();
   // …and a gear's is its pitch circle, the stub its thickness the way it
-  // extrudes (none when symmetric about the face).
+  // extrudes.
   const gearCursor = (() => {
     const d = gear.dialog;
     if (!d?.locating) return null;
     try {
       const { module, teeth } = gearSizing(doc, { id: d.editId ?? d.draftId, ...d.settings }, resolved.scope);
       const t = evaluateExpression(d.settings.params.thickness, resolved.scope);
-      const stub = d.settings.extent === "symmetric" ? 0 : t * (d.settings.flip ? -1 : 1);
+      const stub = t * (d.settings.flip ? -1 : 1);
       return { radius: (module * teeth) / 2, stub };
     } catch {
       return null;

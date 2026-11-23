@@ -1323,9 +1323,15 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           ...(op.meshWith ? { meshWith: op.meshWith } : {}),
           ...(op.meshWith && op.placeBeside ? { placeBeside: true } : {}),
           bore: op.bore ?? DEFAULT_GEAR_SETTINGS.bore,
-          extent: op.extent ?? DEFAULT_GEAR_SETTINGS.extent,
           flip: op.flip ?? false,
-          params: { ...DEFAULT_GEAR_PARAMS, ...op.params },
+          params: {
+            ...DEFAULT_GEAR_PARAMS,
+            // The old extent "symmetric": centred on the plane.
+            ...(op.extent === "symmetric" && op.params?.normalOffset === undefined
+              ? { normalOffset: `${op.flip ? "" : "-"}(${op.params?.thickness ?? DEFAULT_GEAR_PARAMS.thickness})/2` }
+              : {}),
+            ...op.params,
+          },
         });
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;

@@ -104,7 +104,6 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
         placeBeside: feature.placeBeside,
         center: feature.center,
         bore: feature.bore,
-        extent: feature.extent,
         flip: feature.flip,
         // Defaults first: a gear made before a param existed lacks it.
         params: { ...DEFAULT_GEAR_SETTINGS.params, ...feature.params },

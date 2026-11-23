@@ -48,6 +48,7 @@ export const DEFAULT_GEAR_PARAMS: GearParams = {
   centerX: "0",
   centerY: "0",
   placeAngle: "0",
+  normalOffset: "0",
   rackHeight: "12",
   endMargin: "0",
   slide: "0",
@@ -55,7 +56,7 @@ export const DEFAULT_GEAR_PARAMS: GearParams = {
 
 export type GearSettings = Pick<
   GearFeature,
-  "gearType" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "extent" | "flip" | "center"
+  "gearType" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "flip" | "center"
 > & {
   params: GearParams;
 };
@@ -64,7 +65,6 @@ export const DEFAULT_GEAR_SETTINGS: GearSettings = {
   gearType: "spur",
   sizeBy: "module",
   bore: "round",
-  extent: "blind",
   flip: false,
   params: DEFAULT_GEAR_PARAMS,
 };
@@ -160,6 +160,36 @@ export interface BakedGear {
 /** Evaluate every setting and build the outline (in the plane's u, v). Throws
  *  with a readable message — the same path the dialog's live readout uses. */
 export function bakeGear(
+  doc: Document,
+  g: Pick<
+    GearFeature,
+    "id" | "gearType" | "plane" | "center" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "params"
+  > &
+    Partial<Pick<GearFeature, "flip">>,
+  scope: Scope,
+  planeFrames?: Map<string, PlaneFrameData>,
+  seen: ReadonlySet<string> = new Set(),
+): BakedGear {
+  const baked = bakeGearOnPlane(doc, g, scope, planeFrames, seen);
+  const offset = normalOffsetOf(g, baked.thickness, scope);
+  if (offset === 0) return baked;
+  const { origin, normal } = baked.frame;
+  return {
+    ...baked,
+    frame: { ...baked.frame, origin: [0, 1, 2].map((i) => origin[i] + normal[i] * offset) as Vec3 },
+  };
+}
+
+/** How far a gear starts from its plane along the normal: `params.normalOffset`,
+ *  or — for a gear saved with the old `extent: "symmetric"` and not yet
+ *  migrated — the offset that centres it. */
+function normalOffsetOf(g: Pick<GearFeature, "params"> & { flip?: boolean }, thickness: number, scope: Scope): number {
+  if (g.params.normalOffset !== undefined) return num("normal offset", g.params.normalOffset, scope);
+  if ((g as { extent?: string }).extent === "symmetric") return g.flip ? thickness / 2 : -thickness / 2;
+  return 0;
+}
+
+function bakeGearOnPlane(
   doc: Document,
   g: Pick<
     GearFeature,
@@ -442,7 +472,7 @@ export function resolveGear(
     ],
     distance: baked.thickness,
     flip: g.flip,
-    extent: g.extent,
+    extent: "blind",
     mode: "new",
   };
 }

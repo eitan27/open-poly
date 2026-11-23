@@ -1380,6 +1380,16 @@ describe("applyOperation — addGear", () => {
     expect(bad.error).toMatch(/unknown params tooth/);
   });
 
+  it("centres a gear on its plane by normalOffset, and maps the old extent symmetric to it", async () => {
+    const { ctx, doc } = makeCtx();
+    const a = await apply(ctx, { op: "addGear", params: { normalOffset: -4 } });
+    expect(doc().features.find((x) => x.id === a.createdId)).toMatchObject({ params: { normalOffset: "-4" } });
+    const b = await apply(ctx, { op: "addGear", extent: "symmetric", params: { thickness: 6 } });
+    const g = doc().features.find((x) => x.id === b.createdId);
+    expect(g && g.type === "gear" && g.params.normalOffset).toBe("-(6)/2");
+    expect(g && "extent" in g).toBe(false);
+  });
+
   it("adds a rack in mesh beside a pinion, and refuses a rack sized by pitch diameter", async () => {
     const { ctx, doc } = makeCtx();
     const pin = await apply(ctx, { op: "addGear", params: { teeth: 12 } });

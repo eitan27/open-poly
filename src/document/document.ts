@@ -131,6 +131,17 @@ export function migrateDocument(doc: Document): Document {
         scale: f.scale ?? "1",
       };
     }
+    // Gears had One side / Symmetric; now a normal offset says where they
+    // start. A symmetric one keeps its place: offset back by half its
+    // thickness (forward, flipped), following the thickness if it's an expression.
+    if (feat.type === "gear" && "extent" in f) {
+      changed = true;
+      const { extent, ...rest } = f;
+      if (extent !== "symmetric" || rest.params?.normalOffset !== undefined) return rest;
+      const t = String(rest.params?.thickness ?? "8").trim();
+      const half = /^\d+(\.\d+)?$/.test(t) ? String(Number(t) / 2) : `(${t})/2`;
+      return { ...rest, params: { ...rest.params, normalOffset: rest.flip ? half : `-${half}` } };
+    }
     // Reference planes gained a color after they first shipped.
     if (feat.type === "plane" && f.color === undefined) {
       changed = true;

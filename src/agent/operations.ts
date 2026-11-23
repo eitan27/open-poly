@@ -547,12 +547,15 @@ export const operationSchema = z.discriminatedUnion("op", [
     placeBeside: z.boolean().optional(),
     /** External gear's centre hole. Default round. */
     bore: z.enum(["none", "round", "dflat"]).optional(),
-    /** blind (default): one side of the plane (flip = the other); symmetric: centred on it. */
-    extent: z.enum(["blind", "symmetric"]).optional(),
+    /** Grow against the plane's normal instead of along it. */
     flip: z.boolean().optional(),
+    /** Deprecated: "symmetric" sets params.normalOffset to centre it on the
+     *  plane (use params.normalOffset). */
+    extent: z.enum(["blind", "symmetric"]).optional(),
     /** teeth, module, pitchDiameter, thickness, boreDiameter, boreFlat,
      *  rimWidth, pressureAngle, backlash, profileShift, rootFillet, rotation,
-     *  centerX, centerY, placeAngle; a rack's rackHeight (back face to pitch
+     *  centerX, centerY, placeAngle, normalOffset (mm along the plane's
+     *  normal; −thickness/2 centres it on the plane); a rack's rackHeight (back face to pitch
      *  line), endMargin (plain bar past the teeth at each end) and slide
      *  (placed beside its pinion: tooth pitches along). */
     params: z.record(z.string(), expr).optional(),

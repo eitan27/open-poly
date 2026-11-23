@@ -70,7 +70,14 @@ export function GearDialog({
   const [hovered, setHovered] = useState<string | null>(null);
   const inputs = useRef(new Map<string, HTMLInputElement>());
   // A rack's rotation is its Direction, a main field.
-  const ADVANCED = new Set(["pressureAngle", "backlash", "profileShift", "rootFillet", ...(rack ? [] : ["rotation"])]);
+  const ADVANCED = new Set([
+    "pressureAngle",
+    "backlash",
+    "profileShift",
+    "rootFillet",
+    "normalOffset",
+    ...(rack ? [] : ["rotation"]),
+  ]);
   const pickDim = (name: string) => {
     const focus = () => inputs.current.get(name)?.focus();
     if (ADVANCED.has(name) && !advanced) {
@@ -252,23 +259,10 @@ export function GearDialog({
       )}
 
       {field("thickness", "Thickness")}
-      <div className="ed-modes">
-        <button className={settings.extent === "blind" ? "active" : ""} onClick={() => onChange({ extent: "blind" })}>
-          One side
-        </button>
-        <button
-          className={settings.extent === "symmetric" ? "active" : ""}
-          onClick={() => onChange({ extent: "symmetric" })}
-        >
-          Symmetric
-        </button>
-      </div>
-      {settings.extent === "blind" && (
-        <label className="ed-field ed-flip">
-          <span>Flip direction</span>
-          <input type="checkbox" checked={settings.flip} onChange={(e) => onChange({ flip: e.target.checked })} />
-        </label>
-      )}
+      <label className="ed-field ed-flip">
+        <span>Flip direction</span>
+        <input type="checkbox" checked={settings.flip} onChange={(e) => onChange({ flip: e.target.checked })} />
+      </label>
 
       {rack &&
         !placed &&
@@ -350,6 +344,11 @@ export function GearDialog({
             : placed
               ? field("rotation", "Extra rotation°", { title: "Added to the angle that meshes its teeth" })
               : field("rotation", "Rotation°", { title: "Turn the teeth to line up with a partner" })}
+          {field("normalOffset", "Normal offset", {
+            title: `Move it along its plane's normal. −(thickness)/2${
+              /^\d+(\.\d+)?$/.test(p.thickness.trim()) ? ` (−${Number(p.thickness) / 2} here)` : ""
+            } centers it on the plane${settings.flip ? "; flipped, +(thickness)/2" : ""}.`,
+          })}
         </div>
       )}
 

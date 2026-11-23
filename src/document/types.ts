@@ -718,6 +718,9 @@ export interface GearParams {
   /** With placeBeside: the direction from the partner's centre to this
    *  gear's, degrees from the plane's +u. Absent on gears made before it. */
   placeAngle?: string;
+  /** How far the gear starts from its plane, along the plane's normal (mm).
+   *  −thickness/2 centres it on the plane. Absent on gears made before it: 0. */
+  normalOffset?: string;
   /** Rack: from its back face to its pitch line (mm). */
   rackHeight?: string;
   /** Rack: plain bar past the teeth at each end (mm). */
@@ -753,9 +756,9 @@ export interface GearFeature extends FeatureBase {
    *  partner's. */
   placeBeside?: boolean;
   bore: GearBore;
-  /** One side of the plane (along its normal, or against it when flipped), or
-   *  centred on it. */
-  extent: "blind" | "symmetric";
+  /** It grows from its plane (moved `params.normalOffset` along the normal)
+   *  along the normal, or against it when flipped. (Gears saved with
+   *  `extent: "symmetric"` are migrated to the matching offset.) */
   flip: boolean;
   params: GearParams;
   color: number;
