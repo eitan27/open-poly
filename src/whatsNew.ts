@@ -110,10 +110,3 @@ export function boldRuns(text: string, bold: string[]): { text: string; bold: bo
   }
   return runs;
 }
-
-/** The banner's items: the newest `max`, one line each. Older ones are left
- *  out rather than summed up as "+N more", which read as a promise of more to
- *  see and led nowhere. */
-export function bannerItems<T>(items: T[], max = 3): T[] {
-  return items.slice(0, max);
-}
