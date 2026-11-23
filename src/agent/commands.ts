@@ -21,7 +21,7 @@ import { roundWallOfMesh } from "../geom/roundWall";
 import { FOLDED_NAMES_NOTE, foldNames } from "./nameRanges";
 import { DEFAULT_HOLE_PARAMS, DEFAULT_HOLE_SETTINGS, defaultHolePoints } from "../document/hole";
 import { DEFAULT_SCREW_PARAMS, DEFAULT_SCREW_SETTINGS } from "../document/screw";
-import { DEFAULT_GEAR_PARAMS, DEFAULT_GEAR_SETTINGS, gearSizing } from "../document/gear";
+import { bakeGear, DEFAULT_GEAR_PARAMS, DEFAULT_GEAR_SETTINGS, gearSizing } from "../document/gear";
 import { METRIC_SIZES, isMetricSize } from "../geom/metricFasteners";
 import {
   addBoolean,
@@ -1307,6 +1307,8 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         } else if (op.placeBeside) {
           throw new OpError("invalid_op", "addGear: placeBeside needs meshWith (the gear to sit beside).");
         }
+        if (op.gearType === "rack" && (op.sizeBy === "pitchDiameter" || op.params?.pitchDiameter !== undefined))
+          throw new OpError("invalid_op", "addGear: a rack has no pitch diameter — size it by params.module.");
         const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_GEAR_PARAMS));
         if (unknown.length) throw new OpError("invalid_op", `addGear: unknown params ${unknown.join(", ")}.`);
         // Giving only a pitch diameter means "size it by that".
@@ -1782,13 +1784,19 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
     try {
       const s = gearSizing(doc, f, resolved.scope);
       const r6 = (n: number) => Number(n.toFixed(6));
+      let size: { pitchDiameter: number } | { length: number } = { pitchDiameter: r6(s.module * s.teeth) };
+      if (f.gearType === "rack") {
+        const b = bakeGear(doc, f, resolved.scope, resolved.planeFrames).outline;
+        size = { length: r6("rack" in b ? b.rack.length : 0) };
+      }
       return [
         {
           id: f.id,
           name: f.name,
+          ...(f.gearType !== "spur" ? { gearType: f.gearType } : {}),
           teeth: s.teeth,
           module: r6(s.module),
-          pitchDiameter: r6(s.module * s.teeth),
+          ...size,
           pressureAngle: r6(s.pressureAngle),
           ...(f.meshWith ? { meshWith: f.meshWith } : {}),
         },

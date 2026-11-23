@@ -593,11 +593,13 @@ export function addGear(
   settings: GearSettings,
   id: string = uid(),
 ): { doc: Document; id: string } {
-  const ordinal = doc.features.filter((f) => f.type === "gear").length + 1;
+  // Racks count apart from gears: "Rack 1" beside "Gear 1".
+  const rack = settings.gearType === "rack";
+  const ordinal = doc.features.filter((f) => f.type === "gear" && (f.gearType === "rack") === rack).length + 1;
   const feature: GearFeature = {
     id,
     type: "gear",
-    name: `Gear ${ordinal}`,
+    name: `${rack ? "Rack" : "Gear"} ${ordinal}`,
     suppressed: false,
     plane,
     ...settings,

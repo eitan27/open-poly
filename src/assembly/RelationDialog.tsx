@@ -128,10 +128,16 @@ export function RelationDialog({
       )}
       {gears?.label && (
         <>
-          <p className="ed-hint asm-relation-gears">{gears.label}: ratio and direction from their teeth.</p>
+          <p className="ed-hint asm-relation-gears">
+            {gears.label}: {draft.type === "rack" ? "radius" : "ratio"} and direction from their teeth.
+          </p>
           <label
             className="ed-field ed-flip"
-            title="Turn the driven gear the least way that puts its teeth in the driver's spaces"
+            title={
+              draft.type === "rack"
+                ? "Move the driven part (the rack sliding, or the gear turning) the least way that puts the teeth in mesh"
+                : "Turn the driven gear the least way that puts its teeth in the driver's spaces"
+            }
           >
             <span>Align teeth</span>
             <input

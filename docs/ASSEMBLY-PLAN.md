@@ -483,6 +483,14 @@ A translation driving a rotation uses 1/k; Reverse negates k.
   turns in the world, since a flipped axle turns the other way for the same
   angle. It refuses, with why, gears not at meshing distance, with different
   modules, non-parallel or concentric. Not on the agent's ops yet.
+- **Rack parts:** a rack's `GearGeom` has `rack.run`, its `center` a point on
+  its pitch line mid-space. A Rack relation whose turning end moves a spur
+  gear's part and whose sliding end moves a rack's fills the radius (the
+  pinion's pitch radius) and Reverse (nudged, as for gears: the pinion a
+  degree, the rack a millimetre along the way its pitch point moves), and
+  Align teeth moves the driven end — the rack sliding, or the pinion turning
+  — the least way into mesh (`rackMesh`). Phases write at the DOF's own
+  precision (0.01°, 0.001 mm).
 - **A relation starts from the pose on screen** (`phaseToCurrentPose`): adding
   one, or switching it back on, sets the driven DOF's phase to where it is
   minus k times the driver, so nothing moves. Without it a relation switched

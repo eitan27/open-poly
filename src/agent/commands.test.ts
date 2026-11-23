@@ -1379,6 +1379,24 @@ describe("applyOperation — addGear", () => {
     expect(bad.ok).toBe(false);
     expect(bad.error).toMatch(/unknown params tooth/);
   });
+
+  it("adds a rack in mesh beside a pinion, and refuses a rack sized by pitch diameter", async () => {
+    const { ctx, doc } = makeCtx();
+    const pin = await apply(ctx, { op: "addGear", params: { teeth: 12 } });
+    const rack = await apply(ctx, {
+      op: "addGear",
+      gearType: "rack",
+      meshWith: pin.createdId!,
+      placeBeside: true,
+      params: { teeth: 15, endMargin: 4, placeAngle: -90 },
+    });
+    expect(rack.ok).toBe(true);
+    expect(doc().features.find((x) => x.id === rack.createdId)).toMatchObject({ gearType: "rack", placeBeside: true });
+    expect(resolveDocument(doc()).errors[rack.createdId!]).toBeUndefined();
+    const bad = await apply(ctx, { op: "addGear", gearType: "rack", params: { pitchDiameter: 40 } });
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toMatch(/no pitch diameter/);
+  });
 });
 
 describe("applyOperation — addThread", () => {

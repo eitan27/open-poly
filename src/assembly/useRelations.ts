@@ -14,7 +14,17 @@ import {
   updateRelation,
   type RelationDraft,
 } from "./relations";
-import { alignRelation, alignTurn, gearRelationValue, placeGear, relationGears, type GearGeom } from "./gearMesh";
+import {
+  alignRelation,
+  alignTurn,
+  gearRelationValue,
+  placeGear,
+  rackMesh,
+  rackRelationValue,
+  relationGears,
+  relationRack,
+  type GearGeom,
+} from "./gearMesh";
 import { MATE_DOFS, solve } from "./solve";
 import type { SourceState } from "./useAssemblySources";
 import type { AssemblyDoc, Mat4, MateConnector, Relation } from "./types";
@@ -63,15 +73,39 @@ export function useRelations({
    *  on, when its ends are two gears and just changed (or it's new). A typed
    *  ratio is left alone while the ends stay the same. */
   const suggest = (d: RelationDraft, prev?: RelationDraft): RelationDraft => {
-    if (!assembly || d.type !== "gear") return { ...d, align: undefined };
+    if (!assembly || d.type === "screw") return { ...d, align: undefined };
     if (prev && prev.type === d.type && sameEnd(prev.driver, d.driver) && sameEnd(prev.driven, d.driven)) return d;
-    const g = gearRelationValue(assembly, d, gearOf, solveAt);
+    const g =
+      d.type === "gear"
+        ? gearRelationValue(assembly, d, gearOf, solveAt)
+        : rackRelationValue(assembly, d, gearOf, solveAt);
     return g ? { ...d, value: g.value, reverse: g.reverse, align: true } : { ...d, align: undefined };
   };
   /** The gears the draft's ends turn, named, and why their teeth can't be
    *  lined up (if they can't) — for the dialog. */
   const gears = useMemo(() => {
-    if (!session || !assembly || session.draft.type !== "gear") return null;
+    if (!session || !assembly || session.draft.type === "screw") return null;
+    const instName = (id: string) => assembly.instances.find((i) => i.id === id)?.name ?? "?";
+    if (session.draft.type === "rack") {
+      const rp = relationRack(assembly, session.draft, gearOf);
+      if (!rp) return null;
+      let problem: string | null = null;
+      if (session.draft.align) {
+        const s = solveAt(assembly);
+        const at = (g: { instanceId: string; geom: GearGeom }) => {
+          const m = s.placements.get(g.instanceId);
+          return m ? placeGear(g.geom, m) : null;
+        };
+        const p = at(rp.pinion);
+        const r = at(rp.rack);
+        const mesh = p && r ? rackMesh(p, r) : "The gear and the rack aren't placed yet.";
+        problem = typeof mesh === "string" ? mesh : null;
+      }
+      return {
+        label: `${instName(rp.pinion.instanceId)} (${rp.pinion.geom.teeth} teeth) and ${instName(rp.rack.instanceId)} (rack)`,
+        problem,
+      };
+    }
     const pair = relationGears(assembly, session.draft, gearOf);
     if (!pair) {
       // A gear part whose teeth can't be read: say why, rather than leave
@@ -84,7 +118,7 @@ export function useRelations({
       return why ? { label: null, problem: why } : null;
     }
     const name = (g: { instanceId: string; geom: GearGeom }) =>
-      `${assembly.instances.find((i) => i.id === g.instanceId)?.name ?? "?"} (${g.geom.teeth} teeth${g.geom.internal ? ", ring" : ""})`;
+      `${instName(g.instanceId)} (${g.geom.teeth} teeth${g.geom.internal ? ", ring" : ""})`;
     let problem: string | null = null;
     if (session.draft.align) {
       const s = solveAt(assembly);
@@ -164,8 +198,9 @@ export function useRelations({
         evaluateVariables(assembly.variables).scope,
       );
     }
-    // …then, for two gears, turned the least way that meshes their teeth.
-    if (session.draft.align && rel.type === "gear") {
+    // …then, for two gears (or a pinion and a rack), moved the least way
+    // that meshes their teeth.
+    if (session.draft.align && rel.type !== "screw") {
       const aligned = alignRelation(next, rel.id, gearOf, solveAt);
       if (typeof aligned !== "string") next = aligned;
     }

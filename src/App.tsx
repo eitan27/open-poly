@@ -9227,10 +9227,10 @@ export default function App() {
                     defaultLocation={d.defaultPlane}
                     locating={d.locating}
                     advanced={d.advanced}
-                    meshOptions={meshCandidates(doc, d.editId)}
+                    meshOptions={meshCandidates(doc, d.editId, d.settings.gearType)}
                     meshName={doc.features.find((f) => f.id === d.settings.meshWith)?.name}
                     readout={readout}
-                    error={error?.replace(/^gear: /, "") ?? null}
+                    error={error?.replace(/^(gear|rack): /, "") ?? null}
                     onArmLocation={gear.armLocation}
                     onChange={gear.update}
                     onSizeBy={gear.setSizeBy}

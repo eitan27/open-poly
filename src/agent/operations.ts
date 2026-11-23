@@ -527,8 +527,11 @@ export const operationSchema = z.discriminatedUnion("op", [
   }),
   z.object({
     op: z.literal("addGear"),
-    /** spur (external, default) or internal (a ring gear: teeth inside a rim). */
-    gearType: z.enum(["spur", "internal"]).optional(),
+    /** spur (external, default), internal (a ring gear: teeth inside a rim),
+     *  or rack (a straight toothed bar teeth × π × module long, centred on its
+     *  pitch line's middle, running along params.rotation degrees; meshWith a
+     *  spur gear + placeBeside puts it in mesh under/beside it). */
+    gearType: z.enum(["spur", "internal", "rack"]).optional(),
     /** The plane (or planar face) the gear lies on, centred on its origin (or
      *  at params.centerX/centerY). Default the Top datum. */
     plane: planeRefSchema.optional(),
@@ -549,7 +552,9 @@ export const operationSchema = z.discriminatedUnion("op", [
     flip: z.boolean().optional(),
     /** teeth, module, pitchDiameter, thickness, boreDiameter, boreFlat,
      *  rimWidth, pressureAngle, backlash, profileShift, rootFillet, rotation,
-     *  centerX, centerY, placeAngle. */
+     *  centerX, centerY, placeAngle; a rack's rackHeight (back face to pitch
+     *  line), endMargin (plain bar past the teeth at each end) and slide
+     *  (placed beside its pinion: tooth pitches along). */
     params: z.record(z.string(), expr).optional(),
     name: z.string().optional(),
   }),
@@ -934,9 +939,14 @@ export interface SceneSummary {
   gears?: {
     id: string;
     name: string;
+    /** Absent for a spur gear. */
+    gearType?: "internal" | "rack";
     teeth: number;
     module: number;
-    pitchDiameter: number;
+    /** A gear's (not a rack's). */
+    pitchDiameter?: number;
+    /** A rack's end-to-end length (mm), margins included. */
+    length?: number;
     pressureAngle: number;
     meshWith?: string;
   }[];

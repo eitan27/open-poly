@@ -314,8 +314,15 @@ frame count that shows the motion you care about.
   scene summary's `gears` shows the ones it uses), so changing the first
   gear's module resizes both. Deleting the first gear leaves the second where
   it is, with those values as its own. A pinion
-  inside a ring gear works the same way. To animate them, use an assembly and a
-  gear relation (value = driver teeth / driven teeth).
+  inside a ring gear works the same way. A RACK (`gearType: "rack"`) is a
+  straight toothed bar whose length is `params.teeth` tooth pitches (teeth × π
+  × module; `params.endMargin` adds plain bar at each end, `params.rackHeight`
+  is back face to pitch line): make the pinion (a spur), then the rack with
+  `meshWith: <pinion id>` and `placeBeside: true` — `params.placeAngle` picks
+  the side, `params.slide` slides it whole teeth along. To animate them, use
+  an assembly and a gear relation (value = driver teeth / driven teeth), or
+  for a rack a rack relation (value = the pinion's pitch radius, module ×
+  teeth / 2) between the pinion's revolute and the rack's slider.
 - **Screws:** `add_screw` makes metric screws as a new body (`head`: socket /
   button / flat (countersunk) / hex, or `set` — a headless set screw with a hex
   socket in its end — or `none` — just the threaded shank, a stud or threaded

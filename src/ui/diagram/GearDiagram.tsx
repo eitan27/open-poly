@@ -36,7 +36,8 @@ const pathOf = (rings: P[][]) =>
 
 export function GearDiagram({ readout, bore, active, onPick }: Props) {
   const clipId = useId();
-  const { dims, spec, internal, shape } = readout;
+  const { spec, internal, shape } = readout;
+  const dims = readout.dims!; // a gear's (a rack draws RackDiagram)
   const rp = dims.pitchDiameter / 2;
   const rt = dims.tipDiameter / 2;
   const rr = dims.rootDiameter / 2;

@@ -2,6 +2,14 @@
   {
     "date": "2026-11-23",
     "items": [
+      "Rack and pinion: a straight toothed rack that meshes with a spur gear, placed in mesh for you and driven by the gear in assemblies",
+      "Press G and pick Rack as the type"
+    ],
+    "bold": ["Rack and pinion", " G "]
+  },
+  {
+    "date": "2026-11-23",
+    "items": [
       "Holes and screws: counterbored, countersunk and tapped holes in metric sizes",
       "Threads you can 3D print: cut a thread into any cylinder or hole, at any diameter and pitch, with a printable 45° profile",
       "Press D (hole), U (screw) or J (thread) to try them out"
