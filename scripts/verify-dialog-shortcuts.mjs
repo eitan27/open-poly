@@ -122,6 +122,33 @@ await escape();
 await clearHint();
 check("no fastener feature was left behind", (await op.doc()).features.length === 1);
 
+// --- N, the Body menu, follows the same guard ----------------------------------
+const bodyMenu = page.locator(".mt-menu");
+await press("e");
+await press("n");
+check(
+  "N over an untouched Extrude swaps it for the Body menu",
+  (await dialogs.count()) === 0 && (await bodyMenu.count()) === 1,
+  JSON.stringify(await titles()),
+);
+await escape();
+await page.mouse.click(5, 5);
+await page.waitForTimeout(200);
+await press("e");
+const dist0 = dialogs.locator(".ed-field", { hasText: "Distance" }).locator("input");
+await dist0.fill("17");
+await dist0.blur();
+await page.waitForTimeout(200);
+await press("n");
+check(
+  "N over a changed Extrude is refused: no Body menu, the dialog stays",
+  (await bodyMenu.count()) === 0 && JSON.stringify(await titles()) === '["Extrude"]',
+);
+check("…with the hint", /Finish or cancel the Extrude dialog/.test((await hint.textContent().catch(() => "")) ?? ""));
+await escape();
+await escape();
+await clearHint();
+
 // --- A changed field blocks ---------------------------------------------------
 await press("e");
 const dist = dialogs.locator(".ed-field", { hasText: "Distance" }).locator("input");

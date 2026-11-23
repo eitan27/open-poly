@@ -92,6 +92,14 @@ const sinceBanner = (page) => page.locator(".whats-new-banner");
     lb && first && first.y >= lb.y + lb.height - 1,
     JSON.stringify({ lb, first }),
   );
+  const lines = await banner
+    .locator(".whats-new-item")
+    .evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top));
+  check(
+    "…each item on a line of its own",
+    lines.length === Math.min(3, list[0].items.length) && lines.every((y, i) => i === 0 || y > lines[i - 1] + 4),
+    JSON.stringify(lines),
+  );
   const bold = await banner.locator("strong").allInnerTexts();
   check(
     "…and the entry's phrases bold",
