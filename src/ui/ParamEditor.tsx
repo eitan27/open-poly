@@ -1,6 +1,9 @@
 import { BOOLEAN_OP_LABELS, FEATURE_DEFS } from "../document/featureDefs";
 import { planeRefLabel } from "../document/planes";
 import type { Feature } from "../document/types";
+import { HOLE_TYPE_LABELS } from "../document/hole";
+import { SCREW_HEAD_LABELS } from "../document/screw";
+import { THREAD_PROFILE_LABELS } from "../document/threadFeature";
 import { ExprInput } from "./ExprInput";
 
 interface Props {
@@ -12,6 +15,8 @@ interface Props {
   onEditSketch: (id: string) => void;
   onFinishSketch: () => void;
   onEditTransform: (id: string) => void;
+  /** A part's name as the Parts panel shows it (for Delete part's list). */
+  partName?: (partId: string) => string;
 }
 
 export function ParamEditor({
@@ -23,6 +28,7 @@ export function ParamEditor({
   onEditSketch,
   onFinishSketch,
   onEditTransform,
+  partName = (id) => id,
 }: Props) {
   if (!feature) {
     return (
@@ -428,6 +434,119 @@ export function ParamEditor({
                 onChange={(e) => onChangeParam(feature.id, name, e.target.value)}
               />
             </label>
+          ))}
+        </div>
+      ) : feature.type === "hole" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Hole</span>
+            <span className="param-static">
+              {HOLE_TYPE_LABELS[feature.holeType]} {feature.size === "custom" ? "" : feature.size}
+            </span>
+          </div>
+          {feature.size === "custom" && (
+            <label className="param-field">
+              <span className="param-label">Diameter</span>
+              <ExprInput
+                className="param-input"
+                value={feature.params.diameter}
+                onChange={(e) => onChangeParam(feature.id, "diameter", e.target.value)}
+              />
+            </label>
+          )}
+          {feature.extent === "blind" && (
+            <label className="param-field">
+              <span className="param-label">Depth</span>
+              <ExprInput
+                className="param-input"
+                value={feature.params.depth}
+                onChange={(e) => onChangeParam(feature.id, "depth", e.target.value)}
+              />
+            </label>
+          )}
+          {feature.holeType === "tapped" && feature.thread === "modelled" && feature.size !== "custom" && (
+            <label className="param-field" title="Radial clearance the thread is grown by, so a printed screw fits">
+              <span className="param-label">Clearance</span>
+              <ExprInput
+                className="param-input"
+                value={feature.params.clearance ?? "0"}
+                onChange={(e) => onChangeParam(feature.id, "clearance", e.target.value)}
+              />
+            </label>
+          )}
+        </div>
+      ) : feature.type === "screw" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Screw</span>
+            <span className="param-static">
+              {SCREW_HEAD_LABELS[feature.head]} {feature.holeId ? "(in hole)" : feature.size}
+            </span>
+          </div>
+          <label className="param-field">
+            <span className="param-label">Length</span>
+            <ExprInput
+              className="param-input"
+              value={feature.params.length}
+              onChange={(e) => onChangeParam(feature.id, "length", e.target.value)}
+            />
+          </label>
+          {feature.thread === "modelled" && (
+            <label className="param-field" title="Radial clearance the thread is shrunk by, so it fits a printed nut">
+              <span className="param-label">Clearance</span>
+              <ExprInput
+                className="param-input"
+                value={feature.params.clearance ?? "0"}
+                onChange={(e) => onChangeParam(feature.id, "clearance", e.target.value)}
+              />
+            </label>
+          )}
+        </div>
+      ) : feature.type === "thread" ? (
+        <div className="sketch-params">
+          <div className="param-field">
+            <span className="param-label">Thread</span>
+            <span className="param-static">
+              {THREAD_PROFILE_LABELS[feature.profile]}, {feature.side === "internal" ? "in a hole" : "on a rod"}
+              {feature.leftHand ? ", left-hand" : ""}
+              {feature.fullLength ? ", full length" : ""}
+            </span>
+          </div>
+          {(
+            [
+              ["diameter", "Diameter"],
+              ["pitch", "Pitch"],
+              ...(feature.fullLength ? [] : [["length", "Length"] as const]),
+              ["starts", "Starts"],
+              ["clearance", "Clearance"],
+            ] as const
+          ).map(([name, label]) => (
+            <label className="param-field" key={name}>
+              <span className="param-label">{label}</span>
+              <ExprInput
+                className="param-input"
+                value={feature.params[name]}
+                onChange={(e) => onChangeParam(feature.id, name, e.target.value)}
+              />
+            </label>
+          ))}
+        </div>
+      ) : feature.type === "deletePart" ? (
+        <div className="sketch-params">
+          {feature.partIds.length === 0 && <p className="hint">Deletes nothing: every part is back.</p>}
+          {feature.partIds.map((id) => (
+            <div className="param-field" key={id}>
+              <span className="param-label">Deletes</span>
+              <span className="param-static">{partName(id)}</span>
+              <button
+                type="button"
+                className="row-icon"
+                title="Bring this part back"
+                onClick={() => onChangeParam(feature.id, "restore", id)}
+              >
+                ✕
+              </button>
+            </div>
           ))}
         </div>
       ) : feature.type === "loft" ? (

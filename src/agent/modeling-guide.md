@@ -293,6 +293,72 @@ frame count that shows the motion you care about.
   A cut also takes `offset`: a clearance the profile is grown by sideways (the
   depth stays exact) — sketch the part's true outline and set `offset: 0.2` for
   a pocket it slides into, rather than drawing the pocket oversize by hand.
+- **Bolt holes:** `add_hole` instead of circles + a cut. Sketch POINTS (or
+  circles — their centres count) where the holes go, on the face to drill, then
+  `add_hole` with that `sketchId`: `size: "M3"` (M2–M12) picks the ISO clearance
+  diameter by `fit` (close/normal/loose), and `holeType` `counterbore` /
+  `countersink` take the matching ISO head pocket; `tapped` drills the tap
+  drill — cosmetic by default; `thread: "modelled"` cuts a real ISO thread (`params.clearance`, default 0.1 mm per part, keeps a printed screw from binding). Default is through all; `extent: "blind"`
+  with `params.depth` (and `tipAngle`, 0 = flat bottom) for a blind hole. `extent: "upToNext"` drills through the first stretch of material
+  each hole meets and stops at the gap after it (no drill point). `fit: "exact"`
+  makes the hole the screw's own diameter. Holes cut every part they reach; pass `targetId` to
+  cut only that one.
+- **Gears:** `add_gear` makes an involute spur gear (or `gearType: "internal"`,
+  a ring gear) as a body on a plane: `params.teeth`, `params.module` (or
+  `params.pitchDiameter`), `params.thickness`, a `bore`. For a PAIR, make the
+  first gear, then the second with `meshWith: <first id>` and
+  `placeBeside: true` — it takes the module and pressure angle and is placed at
+  the meshing distance with its teeth in mesh, so never compute the centre
+  distance yourself; `params.placeAngle` (degrees) picks which side. A meshed
+  gear keeps no module or pressure angle of its own (don't pass them; the
+  scene summary's `gears` shows the ones it uses), so changing the first
+  gear's module resizes both. Deleting the first gear leaves the second where
+  it is, with those values as its own. A pinion
+  inside a ring gear works the same way. To animate them, use an assembly and a
+  gear relation (value = driver teeth / driven teeth).
+- **Screws:** `add_screw` makes metric screws as a new body (`head`: socket /
+  button / flat (countersunk) / hex, or `set` — a headless set screw with a hex
+  socket in its end — or `none` — just the threaded shank, a stud or threaded
+  rod; `size` M2–M12, `params.length` under the head — overall for flat).
+  Say where with any mix of: `holeId` of a Hole feature — one screw in every
+  hole, at the hole's metric size, seated on the counterbore floor (or flush
+  in the countersink), following the hole; `sketchId` — one at every point
+  and circle centre, following them; `at: [{plane, x, y}]` — fixed spots on a
+  datum, reference plane or planar face. Each screw's head sits on its face
+  (or plane, or the point's sketch plane) and its shank goes in against the
+  normal; screws in a Hole go into their holes. `flip` reverses
+  them all. With no location, one screw at Top's origin.
+  Each screw is its own part (`<id>`, `<id>#1`, … in that order); to remove
+  one of them, `delete_part` it — that adds a Delete part step and leaves the
+  Screw feature (and anything built on it before) as it is. The same works
+  for one copy of a pattern or mirror. Deleting the Hole leaves its screws where they are.
+  The thread is cosmetic by default (a plain shank — quick, and right for a
+  bought screw in a CAD model). `thread: "modelled"` gives a real ISO helix
+  with a lead-in chamfer, shrunk by `params.clearance` (default 0.1 mm); in a
+  modelled tapped hole (`add_hole` with `thread: "modelled"`) it nests with a
+  0.2 mm radial gap, so both can be 3D printed. Printing tips worth passing
+  on: ISO pitches below about M8 print poorly on FDM, so prefer a larger
+  size; print screws standing on their head (or a headless one upright);
+  raise the clearance to 0.15–0.2 for a tight printer.
+- **Threads for 3D printing:** `add_thread` cuts a custom thread on a round
+  face — use it (not a modelled ISO screw) for printed fasteners, lids and
+  lead screws. Model the plain part first, then thread it: a rod (extrude a
+  circle) at the thread's major diameter gets its grooves cut in; a hole at the
+  minor diameter gets them cut outward. `face` is `{bodyId, faceName}` of the
+  rod's side or the hole's wall — any strip of a faceted round wall will do.
+  Leave `params.diameter` out and it's sized from the face. For the other
+  half of a pair, pass `match: <the first thread's id>` (a tapped Hole or a
+  Screw works too): size, pitch, profile, starts and hand are copied, and
+  each half keeps its own `params.clearance` (0.15 mm per part) for the gap.
+  `profile: "printable"` (default, 45°, prints upright without supports),
+  `"iso"`, `"trapezoid"`. Left out, the pitch is sized with the diameter (1 mm
+  below Ø5, 1.5 below Ø8, else 2) — 1 mm and up prints on FDM; `starts` 2–4 for a lid
+  that closes in a fraction of a turn. The thread starts at the face's open
+  end (a rod's tip, a hole's mouth; `flip` for the other) and runs the whole
+  face unless `params.length` is given. Too little material (a rod thinner
+  than the thread, a hole wider than its minor diameter) builds with a
+  warning about short crests. A screw can still be `boolean` subtracted with
+  an `offset`, grown by the offset, before it's moved or patterned.
 - **Two-sided / centered feature:** `add_extrude` with `extent: "symmetric"` —
   the profile extrudes `distance` equally both ways (centered on the sketch).
 - **Extrude up to a face:** `add_extrude` with `extent: "upToFace"` and

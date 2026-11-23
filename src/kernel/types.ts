@@ -2,6 +2,7 @@
 // types — replicad / OpenCascade never leak past this boundary. This is the
 // swap-point that lets us replace the implementation with direct opencascade.js
 // calls later without touching the rest of the app.
+import type { ThreadProfile } from "../geom/thread";
 
 // Mesh buffers are typed arrays (Float32Array positions/normals, Uint32Array
 // indices) so the worker→main postMessage copies raw ArrayBuffers (a fast memcpy)
@@ -167,8 +168,28 @@ export interface ResolvedFaceRef {
 
 /** Features with all parameters already resolved to numbers/geometry
  *  (expressions are evaluated in the app layer before reaching the kernel). */
+/** A modelled metric thread along a resolved frame's axis (geom/thread.ts):
+ *  local depth z0..z1, the profile shifted radially by `offset` (negative for
+ *  a screw, positive for a hole's cavity). */
+export interface ThreadResolved {
+  d: number;
+  pitch: number;
+  offset: number;
+  z0: number;
+  z1: number;
+  tipChamfer: boolean;
+  /** The Thread feature's extras (geom/thread.ts ThreadSpec); ISO, one
+   *  right-hand start, when absent. */
+  startChamfer?: boolean;
+  profile?: ThreadProfile;
+  starts?: number;
+  leftHand?: boolean;
+}
+
 export type ResolvedFeature =
   | { id: string; type: "primitive"; kind: PrimitiveKind; params: Record<string, number> }
+  // Parts taken out of the running model (document DeletePartFeature).
+  | { id: string; type: "deletePart"; partIds: string[] }
   // `previewTool`: emit only the swept tool (the changing portion) as the body,
   // skipping the fuse/cut — used by the live extrude ghost preview so existing
   // bodies keep their own colour. Targets are still resolved so "throughAll"
@@ -224,6 +245,72 @@ export type ResolvedFeature =
   // parallel geometric fingerprint) and leave a wall of `thickness` around
   // what remains. Zero faces = a fully sealed hollow shell.
   | { id: string; type: "shell"; targetId: string; faces: string[]; faceRefs?: ResolvedFaceRef[]; thickness: number }
+  // Holes: one faceted solid of revolution per centre, cut from the target.
+  // `profile` is the hole's half cross-section as (radius, depth) points from
+  // the start plane down to the axis; with `throughAll` the deepest points are
+  // pushed far enough to clear the target. `previewTool` emits only the tools.
+  | {
+      id: string;
+      type: "hole";
+      /** The parts to cut; undefined: every part the holes reach. */
+      targets?: string[];
+      frame: ResolvedFrame;
+      centers: [number, number][];
+      /** Targets on more than one plane: each centre's own frame (its (u, v)
+       *  is in that frame). Absent: all in `frame`. */
+      frames?: ResolvedFrame[];
+      profile: [number, number][];
+      throughAll: boolean;
+      /** With throughAll: each hole stops where it leaves the first stretch
+       *  of material along its axis, not past every part. */
+      upToNext?: boolean;
+      flip: boolean;
+      previewTool?: boolean;
+      /** A modelled internal thread: the cavity cut after the drill. Through
+       *  all ⇒ the kernel runs it to the drill's reach. */
+      thread?: ThreadResolved;
+    }
+  // Screws: per centre, a solid of revolution (`profile`, same (radius, depth)
+  // convention as a hole, negative depth = above the plane) plus an optional
+  // hex prism head fused on and an optional hex socket cut into the top. Lands
+  // as one new body (a part per screw).
+  | {
+      id: string;
+      type: "screw";
+      frame: ResolvedFrame;
+      centers: [number, number][];
+      /** In a hole whose targets span planes: each centre's own frame. */
+      frames?: ResolvedFrame[];
+      /** +1: into the plane against its normal (the default); −1: flipped. */
+      flip: boolean;
+      profile: [number, number][];
+      hexHead?: { across: number; z0: number; z1: number };
+      socket?: { across: number; z0: number; z1: number };
+      /** A modelled thread fused on: then `profile` is the head alone (empty
+       *  for a hex head, which is the prism). */
+      thread?: ThreadResolved;
+    }
+  // A thread cut on a round face (document/threadFeature.ts): into a rod's
+  // side, or a hole's wall, of the body the face is on — which side is read
+  // off the face. It starts at the face's open end (Flip: the other), and runs
+  // `length`, or the whole face when that's absent. `clearance` is radial and
+  // unsigned: the kernel shrinks a rod's thread by it and grows a hole's.
+  | {
+      id: string;
+      type: "thread";
+      face: {
+        sourceId: string;
+        faceName?: string;
+        center: [number, number, number];
+        normal?: [number, number, number];
+      };
+      flip: boolean;
+      length?: number;
+      clearance: number;
+      leadIn: boolean;
+      thread: { d: number; pitch: number; profile: ThreadProfile; starts: number; leftHand: boolean };
+      previewTool?: boolean;
+    }
   // A boolean combines existing bodies (by id) from the running set.
   | {
       id: string;

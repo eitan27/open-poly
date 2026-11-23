@@ -15,6 +15,8 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { getEdgeId, getFaceId } from "replicad-threejs-helper";
+import { faceCentroid, faceNormal } from "../geom/meshQuery";
+import type { MeshedFaces } from "../kernel/types";
 import type { MouseDragAction, ResolvedTheme } from "../settings/settings";
 import { VIEWPORT_THEMES } from "../settings/viewportTheme";
 
@@ -26,6 +28,7 @@ import type { SketchEntity, Vec2 } from "../document/types";
 import { buildGuides, snapToGuides, type Guide } from "../sketch/inference";
 import {
   deriveFaceFrame,
+  frameOf,
   uvToWorld,
   type PlaneFrameData,
   type SketchPlaneId,
@@ -44,11 +47,15 @@ import {
   sampleSpline,
 } from "../document/sketchTools";
 import { getSketchFont, loadSketchFont, textToContours } from "../document/text";
+import { hiddenDashColor } from "./ghostContrast";
+import { meshBounds } from "./meshBounds";
 import { sameSelection, type DatumId, type Selection, type SelectionFilter } from "../selection/types";
 import type {
   ExtrudeGizmo,
   FeatureMesh,
   GhostMesh,
+  PlacementPick,
+  PlacementSource,
   RenderPlane,
   RenderSketch,
   RevolveAxisPick,
@@ -228,6 +235,9 @@ interface SceneState {
   // Lights up the WHOLE edge being snapped to (not just the marker dot), so you
   // can see it's a real in-plane edge and its extent. Fat line (screen-px width).
   snapEdgeLine: LineSegments2;
+  // While placing a hole: the hole's rim on the hovered face + a stub along
+  // its drill direction, in place of the snap dot.
+  placeRing: LineSegments2;
   // Dotted inference/alignment guides shown while an inference snap is active
   // (fat dashed line), plus small square markers on each anchor point (fat solid).
   guideOverlay: LineSegments2;
@@ -303,6 +313,17 @@ const EDGE_HOV_COLOR = new THREE.Color(0x36d6c3);
 // sketch, so the grabbable key points are discoverable. Colour matches the sketch
 // line (recoloured live with its constrained state — see applyHighlights); the
 // hover/selection marker is larger and translucent so this dot shows through it.
+// Point entities of the sketches NOT being edited (they draw no line, so
+// without a dot they'd be invisible and unclickable), and every snap point
+// while a dialog asks for one.
+const sketchPointMaterial = new THREE.PointsMaterial({
+  color: 0x8fb4ff,
+  size: 6,
+  sizeAttenuation: false,
+  depthTest: false,
+  transparent: true,
+  opacity: 0.95,
+});
 const sketchDotMaterial = new THREE.PointsMaterial({
   color: 0x4d8dff,
   size: 5,
@@ -425,6 +446,11 @@ export function Viewport({
   activeSketchFace,
   sketchTool,
   sketches,
+  placing = false,
+  placementFrame = null,
+  placementCursor = null,
+  onPlacementPick,
+  onPlacementPlanePick,
   activeSketchId,
   sketchFullyConstrained,
   draft,
@@ -524,6 +550,24 @@ export function Viewport({
   activeSketchFace: { bodyId: string; frame: PlaneFrameData } | null;
   sketchTool: SketchTool;
   sketches: RenderSketch[];
+  /** A dialog is placing points (the Hole dialog's Location): the sketch
+   *  Point tool's snapping — key points, edges, rim centres, inference
+   *  guides — on `placementFrame`, or while that's null on whichever flat
+   *  face or sketch plane is under the pointer. A click that snaps to nothing
+   *  lands on the centre of the face under it. */
+  placing?: boolean;
+  placementFrame?: PlaneFrameData | null;
+  /** While placing: the cursor is the thing being placed instead of a dot — a
+   *  ring of this radius (a hole's rim, a gear's pitch circle) lying on the
+   *  face under the pointer, with a stub `stub` long along the face's normal
+   *  (negative: into it; 0: none) the way it drills or extrudes, so it's plain
+   *  which face of an edge it will go on. */
+  placementCursor?: { radius: number; stub: number } | null;
+  onPlacementPick?: (pick: PlacementPick) => void;
+  /** While placing: a click on a datum or reference plane where nothing on a
+   *  face snaps (a gear centres on the plane's origin). Unset: planes aren't
+   *  placement targets. */
+  onPlacementPlanePick?: (plane: SketchPlaneRef) => void;
   activeSketchId: string | null;
   sketchFullyConstrained: boolean;
   draft: Vec2[];
@@ -668,6 +712,23 @@ export function Viewport({
   sketchesRef.current = sketches;
   const onSketchClickRef = useRef(onSketchClick);
   onSketchClickRef.current = onSketchClick;
+  const placingRef = useRef(placing);
+  placingRef.current = placing;
+  const placementFrameRef = useRef(placementFrame);
+  placementFrameRef.current = placementFrame;
+  const placementCursorRef = useRef(placementCursor);
+  placementCursorRef.current = placementCursor;
+  const onPlacementPlanePickRef = useRef(onPlacementPlanePick);
+  onPlacementPlanePickRef.current = onPlacementPlanePick;
+  const onPlacementPickRef = useRef(onPlacementPick);
+  onPlacementPickRef.current = onPlacementPick;
+  /** While placing with no fixed plane: the face or sketch plane last under
+   *  the pointer, which the snapping runs on. Kept when the pointer leaves
+   *  it, so moving off a face onto one of its edge hints still snaps. */
+  const tentativeRef = useRef<{ key: string; frame: PlaneFrameData; source: PlacementSource } | null>(null);
+  /** Rebuilds the snap candidates for the current frame (set by the sketch
+   *  render effect, called again when the tentative plane changes). */
+  const rebuildSnapsRef = useRef<() => void>(() => {});
   const onSketchDragMoveRef = useRef(onSketchDragMove);
   onSketchDragMoveRef.current = onSketchDragMove;
   const onSketchToolHoverRef = useRef(onSketchToolHover);
@@ -1368,6 +1429,15 @@ export function Viewport({
     snapEdgeLine.renderOrder = 11;
     snapEdgeLine.frustumCulled = false;
     snapEdgeLine.visible = false;
+    const placeRing = new LineSegments2(
+      new LineSegmentsGeometry(),
+      buttCaps(
+        new LineMaterial({ color: 0xffe14a, linewidth: 3, worldUnits: false, depthTest: false, transparent: true }),
+      ),
+    );
+    placeRing.renderOrder = 12;
+    placeRing.frustumCulled = false;
+    placeRing.visible = false;
     // Dotted inference/alignment guides — a fat dashed line so its width reads,
     // and small square markers on each anchor point in the same colour + width.
     const guideMaterial = new LineMaterial({
@@ -1397,7 +1467,7 @@ export function Viewport({
     anchorOverlay.renderOrder = 10;
     anchorOverlay.frustumCulled = false;
     anchorOverlay.visible = false;
-    scene.add(trimLine, previewLine, snapMarker, snapEdgeLine, guideOverlay, anchorOverlay);
+    scene.add(trimLine, previewLine, snapMarker, snapEdgeLine, placeRing, guideOverlay, anchorOverlay);
     // Appended to <body> (not the canvas container) so it can't be clipped, and
     // styled from App.css rather than inline so it picks up the colour theme
     // like every other chip — only `display` and the cursor-following position
@@ -1444,6 +1514,7 @@ export function Viewport({
       trimLine,
       snapMarker,
       snapEdgeLine,
+      placeRing,
       guideOverlay,
       anchorOverlay,
       guideBadge,
@@ -2358,6 +2429,12 @@ export function Viewport({
           return { uv: gs.uv, kind: "guide", hv, guideLines: gs.guides, meanings: gs.meanings };
         }
       }
+      // Placing points for a dialog: snapping to nothing means the centre of
+      // the flat face under the pointer, if it lies on the plane.
+      if (placingRef.current && !activeSketchIdRef.current) {
+        const c = faceCentreAt(clientX, clientY, frame);
+        if (c) return { uv: c, kind: "point" };
+      }
       return { uv: raw, kind: "free" };
     };
 
@@ -2435,6 +2512,70 @@ export function Viewport({
       const featureId = mesh.userData.featureId as string | undefined;
       const faceId = hit.faceIndex != null ? getFaceId(hit.faceIndex, mesh.geometry) : undefined;
       return { kind: "face" as const, mesh, point: hit.point.clone(), normal, featureId, faceId };
+    };
+    /** While placing, for a dialog that takes planes (see onPlacementPlanePick):
+     *  the datum or reference plane under the pointer, with its frame. */
+    const placementPlaneAt = (clientX: number, clientY: number) => {
+      if (!onPlacementPlanePickRef.current) return null;
+      const p = pick(clientX, clientY);
+      if (p?.kind === "datum" && p.id !== "origin") {
+        const ref: SketchPlaneRef = { kind: "datum", id: p.id };
+        return { ref, frame: frameOf(ref) };
+      }
+      if (p?.kind === "userplane") {
+        const up = userPlanesRef.current.find((u) => u.id === p.planeId);
+        if (up) return { ref: { kind: "plane", planeId: p.planeId } as SketchPlaneRef, frame: up.frame };
+      }
+      return null;
+    };
+    // The flat body face under the pointer: its feature, face id and mesh.
+    const flatFaceAt = (clientX: number, clientY: number) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const faceMeshes = group.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh && c.visible);
+      const hit = raycaster.intersectObjects(faceMeshes, false).find((h) => sectionAllows(h.point));
+      if (!hit || hit.faceIndex == null) return null;
+      const featureId = hit.object.userData.featureId as string | undefined;
+      const faceId = getFaceId(hit.faceIndex, (hit.object as THREE.Mesh).geometry);
+      const entry = featureId ? meshesRef.current.find((m) => m.id === featureId) : undefined;
+      if (!featureId || faceId === undefined || !entry) return null;
+      return { featureId, faceId, faces: entry.mesh.faces };
+    };
+    /** The centre of the flat face under the pointer, in `frame`'s (u, v),
+     *  when that face lies on the frame's plane. */
+    const faceCentreAt = (clientX: number, clientY: number, frame: PlaneFrameData): Vec2 | null => {
+      const f = flatFaceAt(clientX, clientY);
+      return f ? planarFaceCentre(f.faces, f.faceId, frame) : null;
+    };
+    /** Placing points with no plane fixed yet: run the snapping on the sketch
+     *  plane or flat face under the pointer. The last one sticks when the
+     *  pointer leaves it, so an edge hint just off the face still snaps. */
+    const adoptPlaneAt = (clientX: number, clientY: number) => {
+      if (placementFrameRef.current) return;
+      let next: { key: string; frame: PlaneFrameData; source: PlacementSource } | null = null;
+      const sel = pickSelection(clientX, clientY);
+      if (sel && (sel.kind === "sketchPoint" || sel.kind === "sketchEntity")) {
+        const sk = sketchesRef.current.find((x) => x.id === sel.sketchId);
+        if (sk) next = { key: `s:${sk.id}`, frame: sk.frame, source: { kind: "sketch", sketchId: sk.id } };
+      }
+      if (!next) {
+        const f = flatFaceAt(clientX, clientY);
+        const n = f && faceNormal(f.faces, f.faceId);
+        const c = f && n && faceCentroid(f.faces, f.faceId);
+        if (f && n && c)
+          next = {
+            key: `f:${f.featureId}:${f.faceId}`,
+            frame: deriveFaceFrame(c, n),
+            source: { kind: "face", featureId: f.featureId },
+          };
+      }
+      if (!next || next.key === tentativeRef.current?.key) return;
+      tentativeRef.current = next;
+      activeFrameRef.current = next.frame;
+      armedRef.current = { points: [], lines: [] };
+      rebuildSnapsRef.current();
     };
     // Idle-mode selection with CAD priority: vertex > edge > face > sketch.
     const pickSelection = (clientX: number, clientY: number): Selection | null => {
@@ -2549,6 +2690,28 @@ export function Viewport({
       const edgeOk = !!edgeInfo && edgeInfo.edgePx <= EDGE_PICK_PX && edgeInfo.edgeId !== undefined;
       if (flt.edge && edgeOk && (!sketchOk || edgeHit!.distance <= sketchHit!.distance)) {
         return { kind: "edge", featureId: edgeInfo!.fid, edgeId: edgeInfo!.edgeId! };
+      }
+      // A sketch's standalone POINT has no line for the ray to hit, so it is
+      // found by pixel distance instead — a vertex's gate, and not when a
+      // face stands in front of it.
+      {
+        let best: Selection | null = null;
+        let bestPx = VERTEX_PICK_PX;
+        for (const sk of sketchesRef.current) {
+          if (sk.id === activeSid) continue;
+          for (const e of sk.entities) {
+            if (e.type !== "point") continue;
+            const w = new THREE.Vector3(...uvToWorld(sk.frame, e.p[0], e.p[1]));
+            if (camera.position.distanceTo(w) > faceDist + PICK_DEPTH_TOL) continue;
+            const q = projectToPx(w);
+            const d = Math.hypot(q.x - clientX, q.y - clientY);
+            if (d < bestPx) {
+              bestPx = d;
+              best = { kind: "sketchPoint", sketchId: sk.id, point: [e.p[0], e.p[1]] };
+            }
+          }
+        }
+        if (best) return best;
       }
       if (sketchOk) {
         const obj = sketchHit!.object as THREE.LineSegments;
@@ -2704,6 +2867,54 @@ export function Viewport({
       return null;
     };
 
+    /** The placement cursor (see `placementCursor`): its ring centred at `c` on
+     *  `frame`, and its stub along the normal. */
+    const showPlaceRing = (frame: PlaneFrameData, c: Vec2, color: number) => {
+      const cursor = placementCursorRef.current;
+      if (!cursor) {
+        state.placeRing.visible = false;
+        return;
+      }
+      const o = uvToWorld(frame, c[0], c[1]);
+      const r = cursor.radius;
+      const pos: number[] = [];
+      const N = 48;
+      const at = (a: number) => uvToWorld(frame, c[0] + r * Math.cos(a), c[1] + r * Math.sin(a));
+      for (let i = 0; i < N; i++) pos.push(...at((2 * Math.PI * i) / N), ...at((2 * Math.PI * (i + 1)) / N));
+      const n = frame.normal;
+      const len = cursor.stub;
+      if (len) pos.push(...o, o[0] + n[0] * len, o[1] + n[1] * len, o[2] + n[2] * len);
+      const g = new LineSegmentsGeometry();
+      g.setPositions(pos);
+      state.placeRing.geometry.dispose();
+      state.placeRing.geometry = g;
+      (state.placeRing.material as LineMaterial).color.set(color);
+      state.placeRing.visible = true;
+    };
+    /** Light up a placement plane (a datum or reference plane), or none. */
+    const setPlacementPlaneHover = (ref: SketchPlaneRef | null) => {
+      const datum = ref?.kind === "datum" ? (ref.id as DatumId) : null;
+      const user = ref?.kind === "plane" ? ref.planeId : null;
+      if (hoverPlaneRef.current !== datum) {
+        hoverPlaneRef.current = datum;
+        applyDatumAppearance(state, datum);
+      }
+      if (hoverUserPlaneRef.current !== user) {
+        hoverUserPlaneRef.current = user;
+        applyHighlights();
+      }
+      renderer.domElement.style.cursor = ref ? "pointer" : "";
+    };
+    /** While placing, the plane under the pointer lit, with the ring at its
+     *  origin — where a click there puts the thing being placed. */
+    const hoverPlacementPlane = (clientX: number, clientY: number) => {
+      const hit = placementPlaneAt(clientX, clientY);
+      setPlacementPlaneHover(hit?.ref ?? null);
+      if (hit) {
+        showPlaceRing(hit.frame, [0, 0], 0xffe14a);
+        state.snapMarker.visible = false;
+      }
+    };
     const clearHover = () => {
       if (hoverBodyRef.current) {
         hoverBodyRef.current.mesh.material = hoverBodyRef.current.prev;
@@ -2888,34 +3099,63 @@ export function Viewport({
         }
         return;
       }
+      const placingNow = placingRef.current && !activeSketchIdRef.current;
+      if (placingNow) adoptPlaneAt(e.clientX, e.clientY);
       const frame = activeFrameRef.current;
-      if (frame && !isPickTool(sketchToolRef.current)) {
+      if (placingNow && !frame) {
+        // No face picked up yet: only a plane can be the target.
+        state.placeRing.visible = false;
+        hoverPlacementPlane(e.clientX, e.clientY);
+        return;
+      }
+      if (frame && (placingNow || !isPickTool(sketchToolRef.current))) {
         const raw = planeHitUv(e.clientX, e.clientY);
         if (!raw) {
           state.previewLine.visible = false;
           state.snapMarker.visible = false;
+          state.placeRing.visible = false;
           state.snapEdgeLine.visible = false;
           state.guideOverlay.visible = false;
           state.anchorOverlay.visible = false;
           state.guideBadge.style.display = "none";
+          if (placingNow) hoverPlacementPlane(e.clientX, e.clientY);
           return;
         }
         const { uv, kind, seg, on, guideLines, meanings, construction, circle } = snap(raw, e.clientX, e.clientY);
         armFromSnap(kind, uv, seg, on?.id);
-        drawPreview(uv);
-        if (onDraftCursorRef.current) {
+        // Placing a point has no tool shape to preview — just the snap.
+        if (!placingNow) drawPreview(uv);
+        if (onDraftCursorRef.current && !placingNow) {
           const rect = renderer.domElement.getBoundingClientRect();
           onDraftCursorRef.current({ uv, x: e.clientX - rect.left, y: e.clientY - rect.top });
         }
-        if (kind === "point" || kind === "edge" || kind === "guide") {
+        const cursor = placingNow ? placementCursorRef.current : null;
+        if ((kind === "point" || kind === "edge" || kind === "guide") && cursor) {
+          // The thing itself: where a click puts it (a rim snap goes to the
+          // centre, as the click does), flat on this face.
+          showPlaceRing(
+            frame,
+            circle ? circle.c : uv,
+            kind === "edge" ? 0x36d6c3 : kind === "guide" ? GUIDE_COLOR : 0xffe14a,
+          );
+          state.snapMarker.visible = false;
+        } else if (kind === "point" || kind === "edge" || kind === "guide") {
           const w = uvToWorld(frame, uv[0], uv[1]);
           state.snapMarker.position.set(w[0], w[1], w[2]);
           (state.snapMarker.material as THREE.MeshBasicMaterial).color.set(
             kind === "edge" ? 0x36d6c3 : kind === "guide" ? GUIDE_COLOR : 0xffe14a,
           );
           state.snapMarker.visible = true;
+          state.placeRing.visible = false;
         } else {
           state.snapMarker.visible = false;
+          state.placeRing.visible = false;
+        }
+        // Nothing on a face to snap to: a plane under the pointer, if this
+        // dialog takes planes, lights up — with the ring at its origin.
+        if (placingNow) {
+          if (kind === "free") hoverPlacementPlane(e.clientX, e.clientY);
+          else setPlacementPlaneHover(null);
         }
         // Light up the whole edge when snapping to one — dashed if it's a
         // construction line, so the highlight matches the line's own style. A
@@ -3014,6 +3254,7 @@ export function Viewport({
       if (frame) {
         state.previewLine.visible = false;
         state.snapMarker.visible = false;
+        state.placeRing.visible = false;
         state.snapEdgeLine.visible = false;
         state.guideOverlay.visible = false;
         state.anchorOverlay.visible = false;
@@ -3180,6 +3421,29 @@ export function Viewport({
           // only a tangent at wherever the pointer happened to land.
           onPickRef.current({ kind: "face", featureId, frame }, [p.point.x, p.point.y, p.point.z], p.faceId);
         }
+        return;
+      }
+      // Placing a dialog's point: the snapped spot (or a face centre), never
+      // a bare spot on the plane with nothing under it.
+      if (placingRef.current && !activeSketchIdRef.current) {
+        const pf = activeFrameRef.current;
+        const raw = pf && planeHitUv(e.clientX, e.clientY);
+        const sn = pf && raw ? snap(raw, e.clientX, e.clientY) : null;
+        // Nothing to snap to on a face: a plane, for a dialog that takes them.
+        if (!pf || !sn || sn.kind === "free") {
+          const plane = placementPlaneAt(e.clientX, e.clientY);
+          if (plane) {
+            setPlacementPlaneHover(null);
+            onPlacementPlanePickRef.current?.(plane.ref);
+          }
+          return;
+        }
+        // On a circle or arc's rim: a hole goes at its centre, not on the rim.
+        if (sn.circle) sn.uv = sn.circle.c;
+        const source: PlacementSource = placementFrameRef.current
+          ? { kind: "fixed" }
+          : (tentativeRef.current?.source ?? { kind: "fixed" });
+        onPlacementPickRef.current?.({ uv: sn.uv, world: uvToWorld(pf, sn.uv[0], sn.uv[1]), frame: pf, source });
         return;
       }
       const frame = activeFrameRef.current;
@@ -3637,6 +3901,8 @@ export function Viewport({
       snapMarker.geometry.dispose();
       snapEdgeLine.geometry.dispose();
       (snapEdgeLine.material as THREE.Material).dispose();
+      placeRing.geometry.dispose();
+      (placeRing.material as THREE.Material).dispose();
       guideOverlay.geometry.dispose();
       (guideOverlay.material as THREE.Material).dispose();
       anchorOverlay.geometry.dispose();
@@ -3815,8 +4081,15 @@ export function Viewport({
     if (!state) return;
     for (const c of state.ghostGroup.children) {
       if (c instanceof THREE.Mesh || c instanceof THREE.LineSegments) c.geometry.dispose();
+      // A per-ghost recolour of the hidden dashes (see below) is its own copy.
+      if (c.userData.ownMaterial) ((c as THREE.LineSegments).material as THREE.Material).dispose();
     }
     state.ghostGroup.clear();
+    // The bodies around each ghost, for the hidden dashes' colour.
+    const bodyBoxes = meshes
+      .filter((m) => m.opacity > 0)
+      .map((m) => ({ color: m.color, box: meshBounds(m.mesh) }))
+      .filter((b): b is { color: number; box: NonNullable<ReturnType<typeof meshBounds>> } => !!b.box);
     ghostMeshes.forEach((ghost, i) => {
       const geometry = syncBodyGeometry(`ghost${i}`, ghost.mesh.faces, ghost.mesh.edges);
       // Depth-testless delta ghosts also need an explicit renderOrder — with the
@@ -3842,13 +4115,29 @@ export function Viewport({
       if (faceMat === state.ghostMaterial) {
         // …and the add ghost's hidden edges (ghostHiddenLineMaterial). The
         // line distances live on the shared geometry; only this material reads them.
-        const hidden = new THREE.LineSegments(geometry.lines, state.ghostHiddenLineMaterial);
+        // Behind a body nearly the ghost's own colour, the dashes would vanish:
+        // there (only) they take a colour that stands out against it.
+        const gb = meshBounds(ghost.mesh);
+        const around = gb
+          ? bodyBoxes
+              .filter(({ box }) => [0, 1, 2].every((k) => box.min[k] <= gb.max[k] && box.max[k] >= gb.min[k]))
+              .map((b) => b.color)
+          : [];
+        const dash = hiddenDashColor(GHOST_COLOR, around);
+        let hiddenMat = state.ghostHiddenLineMaterial;
+        if (dash !== GHOST_COLOR) {
+          hiddenMat = state.ghostHiddenLineMaterial.clone();
+          hiddenMat.color.set(dash);
+          hiddenMat.opacity = 0.85;
+        }
+        const hidden = new THREE.LineSegments(geometry.lines, hiddenMat);
+        if (hiddenMat !== state.ghostHiddenLineMaterial) hidden.userData.ownMaterial = true;
         hidden.computeLineDistances();
         hidden.renderOrder = order;
         state.ghostGroup.add(hidden);
       }
     });
-  }, [ghostMeshes]);
+  }, [ghostMeshes, meshes]);
 
   // Re-apply highlighting when the external selection (or resolved body set)
   // changes.
@@ -4213,6 +4502,19 @@ export function Viewport({
           dots.userData.isSketchDots = true;
           state.sketchGroup.add(dots);
         }
+      } else {
+        const uvs = s.entities.flatMap((e) => (e.type === "point" && !e.construction ? [e.p] : []));
+        if (uvs.length > 0) {
+          const pos = new Float32Array(uvs.length * 3);
+          uvs.forEach((uv, i) => pos.set(uvToWorld(s.frame, uv[0], uv[1]), i * 3));
+          const g = new THREE.BufferGeometry();
+          g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+          const dots = new THREE.Points(g, sketchPointMaterial);
+          dots.frustumCulled = false;
+          dots.renderOrder = 12;
+          dots.userData.isSketchDots = true;
+          state.sketchGroup.add(dots);
+        }
       }
 
       // Enclosed regions ("sketch faces"): a transparent, pickable fill that
@@ -4270,11 +4572,15 @@ export function Viewport({
     }
     applyHighlightsRef.current(); // re-apply selection/hover colors
     const active = sketches.find((s) => s.id === activeSketchId) ?? null;
-    activeFrameRef.current = active?.frame ?? null;
+    if (!placing) tentativeRef.current = null;
+    const placeFrame = !active && placing ? (placementFrame ?? tentativeRef.current?.frame ?? null) : null;
+    activeFrameRef.current = active?.frame ?? placeFrame;
     activeEntitiesRef.current = active?.entities ?? [];
-    if (!active) {
+    rebuildSnapsRef.current = () => buildSnaps(activeFrameRef.current, !!active);
+    if (!active && !placeFrame) {
       state.previewLine.visible = false;
       state.snapMarker.visible = false;
+      state.placeRing.visible = false;
       state.snapEdgeLine.visible = false;
       state.guideOverlay.visible = false;
       state.anchorOverlay.visible = false;
@@ -4286,9 +4592,22 @@ export function Viewport({
       return;
     }
 
-    // Gather snap candidates that lie ON the active plane, from every sketch and
-    // every body edge — points (endpoints + midpoints) and coplanar edges.
-    const frame = active.frame;
+    buildSnaps(active?.frame ?? placeFrame!, !!active);
+  }, [sketches, placing, placementFrame, activeSketchId, meshes, sketchFullyConstrained, fontTick]);
+
+  // Gather snap candidates that lie ON `frame`, from every sketch and every
+  // body edge — points (endpoints + midpoints) and coplanar edges. With no
+  // active sketch (placing points for a dialog), coplanar sketches' points,
+  // circles and arcs count too, and so do the centres of coplanar faces.
+  const buildSnaps = (frame: PlaneFrameData | null, sketching: boolean) => {
+    const state = stateRef.current;
+    if (!state || !frame) {
+      snapPointsRef.current = [];
+      snapLinesRef.current = [];
+      snapCirclesRef.current = [];
+      return;
+    }
+    const placingNow = !sketching;
     const O = new THREE.Vector3(...frame.origin);
     const N = new THREE.Vector3(...frame.normal).normalize();
     const U = new THREE.Vector3(...frame.uAxis);
@@ -4326,14 +4645,16 @@ export function Viewport({
         lines.push({ a, b, id, construction, external });
       }
     };
-    const addPoint = (uv: Vec2, midpointOf?: string, vertex?: boolean) => {
-      const w = new THREE.Vector3(...uvToWorld(active.frame, uv[0], uv[1]));
-      if (onPlane(w)) points.push({ uv: toUv(w), midpointOf, vertex });
-    };
-    for (const s of sketches) {
-      const sameFrame = s.frame === active.frame;
+    const coplanar = (f: PlaneFrameData) =>
+      Math.abs(new THREE.Vector3(...f.normal).normalize().dot(N)) > 0.9999 && onPlane(new THREE.Vector3(...f.origin));
+    for (const s of sketchesRef.current) {
+      const sameFrame = s.frame === frame || (placingNow && coplanar(s.frame));
+      const addPoint = (uv: Vec2, midpointOf?: string, vertex?: boolean) => {
+        const w = new THREE.Vector3(...uvToWorld(s.frame, uv[0], uv[1]));
+        if (onPlane(w)) points.push({ uv: toUv(w), midpointOf, vertex });
+      };
       // Only the active sketch's own lines/arcs are constrainable from this sketch.
-      const activeId = s.id === activeSketchId;
+      const activeId = s.id === activeSketchIdRef.current;
       for (const e of s.entities) {
         if (e.type === "line") {
           addSeg(
@@ -4358,9 +4679,16 @@ export function Viewport({
           // Mid-arc point (snapping here locks to the arc's midpoint).
           const m = (e.start + e.end) / 2;
           addPoint([e.c[0] + e.r * Math.cos(m), e.c[1] + e.r * Math.sin(m)], activeId ? e.id : undefined);
-        }
+        } else if (sameFrame && placingNow && e.type === "point") addPoint(e.p, undefined, true);
       }
     }
+    if (placingNow)
+      for (const m of meshesRef.current) {
+        for (const g of m.mesh.faces.faceGroups ?? []) {
+          const c = planarFaceCentre(m.mesh.faces, g.faceId, frame);
+          if (c) points.push({ uv: c, vertex: true, external: true });
+        }
+      }
     for (const [aw, bw] of collectBodyEdges(state.group)) addSeg(aw, bw, undefined, undefined, true);
     // Circular body edges coplanar with the sketch (a hole rim, a cylinder cap):
     // offer the centre + the four quadrant points as snaps, and the true ring for
@@ -4383,7 +4711,7 @@ export function Viewport({
     snapPointsRef.current = points;
     snapLinesRef.current = lines;
     snapCirclesRef.current = [...circles, ...sketchRings];
-  }, [sketches, activeSketchId, meshes, sketchFullyConstrained, fontTick]);
+  };
 
   // Resolve which faces of the sketched body lie on the sketch plane, so the
   // face-material loop can tint them. A planar face is classified from one
@@ -4530,6 +4858,35 @@ function previewPolyline(
     default:
       return null;
   }
+}
+
+/** The centre of a FLAT body face lying on `frame` — the middle of its extent
+ *  along the frame's u and v, which for a plate is its middle even with holes
+ *  in it — in the frame's (u, v); null for a curved face or one off the plane. */
+function planarFaceCentre(faces: MeshedFaces, faceId: number, frame: PlaneFrameData): Vec2 | null {
+  const n = faceNormal(faces, faceId);
+  const N = frame.normal;
+  if (!n || Math.abs(n[0] * N[0] + n[1] * N[1] + n[2] * N[2]) < 0.9999) return null;
+  const g = faces.faceGroups?.find((fg) => fg.faceId === faceId);
+  if (!g) return null;
+  const { triangles, vertices } = faces;
+  const O = frame.origin;
+  let u0 = Infinity,
+    u1 = -Infinity,
+    v0 = Infinity,
+    v1 = -Infinity;
+  for (let k = g.start; k < g.start + g.count; k++) {
+    const vi = triangles[k] * 3;
+    const d = [vertices[vi] - O[0], vertices[vi + 1] - O[1], vertices[vi + 2] - O[2]];
+    if (Math.abs(d[0] * N[0] + d[1] * N[1] + d[2] * N[2]) > 0.05) return null; // off the plane
+    const u = d[0] * frame.uAxis[0] + d[1] * frame.uAxis[1] + d[2] * frame.uAxis[2];
+    const v = d[0] * frame.vAxis[0] + d[1] * frame.vAxis[1] + d[2] * frame.vAxis[2];
+    u0 = Math.min(u0, u);
+    u1 = Math.max(u1, u);
+    v0 = Math.min(v0, v);
+    v1 = Math.max(v1, v);
+  }
+  return u0 <= u1 ? [(u0 + u1) / 2, (v0 + v1) / 2] : null;
 }
 
 /** Selectable points of a sketch: line endpoints, circle centres, arc ends. */

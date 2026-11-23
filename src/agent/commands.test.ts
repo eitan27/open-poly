@@ -1334,3 +1334,155 @@ describe("while an assembly is open", () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe("applyOperation — addGear", () => {
+  it("adds a spur gear on Top with overridden params, inferring sizeBy from a pitch diameter", async () => {
+    const { ctx, doc } = makeCtx();
+    const r = await apply(ctx, { op: "addGear", params: { teeth: 30, pitchDiameter: 60 }, name: "Drive" });
+    expect(r.ok).toBe(true);
+    const f = doc().features.find((x) => x.id === r.createdId);
+    expect(f).toMatchObject({
+      type: "gear",
+      name: "Drive",
+      gearType: "spur",
+      sizeBy: "pitchDiameter",
+      plane: { kind: "datum", id: "plane-top" },
+    });
+    expect(f && f.type === "gear" && f.params.teeth).toBe("30");
+    expect(f && f.type === "gear" && f.params.thickness).toBe("8");
+  });
+
+  it("meshes a second gear beside the first", async () => {
+    const { ctx, doc } = makeCtx();
+    const a = await apply(ctx, { op: "addGear", params: { teeth: 20, module: 1.5 } });
+    const b = await apply(ctx, {
+      op: "addGear",
+      meshWith: a.createdId!,
+      placeBeside: true,
+      params: { teeth: 12, placeAngle: 90 },
+    });
+    expect(b.ok).toBe(true);
+    expect(doc().features.find((x) => x.id === b.createdId)).toMatchObject({
+      meshWith: a.createdId,
+      placeBeside: true,
+      sizeBy: "module",
+    });
+    expect(resolveDocument(doc()).errors[b.createdId!]).toBeUndefined();
+  });
+
+  it("refuses a bad partner, placeBeside alone, and unknown params", async () => {
+    const { ctx } = makeCtx();
+    const box = await apply(ctx, { op: "addPrimitive", kind: "box" });
+    expect((await apply(ctx, { op: "addGear", meshWith: box.createdId! })).ok).toBe(false);
+    expect((await apply(ctx, { op: "addGear", placeBeside: true })).ok).toBe(false);
+    const bad = await apply(ctx, { op: "addGear", params: { tooth: 9 } });
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toMatch(/unknown params tooth/);
+  });
+});
+
+describe("applyOperation — addThread", () => {
+  /** A body whose faces are a faceted round wall (rod or bore) of radius r,
+   *  each strip a named face, as the tessellation would give it. */
+  const roundBody = (id: string, r: number, inward = false) => {
+    const vertices: number[] = [];
+    const normals: number[] = [];
+    const triangles: number[] = [];
+    const faceGroups: { start: number; count: number; faceId: number; name: string; clusterId: number }[] = [];
+    const n = 24;
+    for (let i = 0; i < n; i++) {
+      const [a0, a1] = [(2 * Math.PI * i) / n, (2 * Math.PI * (i + 1)) / n];
+      const s = inward ? -1 : 1;
+      const base = vertices.length / 3;
+      for (const [a, z] of [
+        [a0, 0],
+        [a1, 0],
+        [a1, 12],
+        [a0, 12],
+      ]) {
+        vertices.push(r * Math.cos(a), r * Math.sin(a), z);
+        normals.push(s * Math.cos((a0 + a1) / 2), s * Math.sin((a0 + a1) / 2), 0);
+      }
+      faceGroups.push({ start: triangles.length, count: 6, faceId: 50 + i, name: `${id}/side${i}`, clusterId: 9 });
+      triangles.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+    return { id, mesh: { name: id, faces: { vertices, normals, triangles, faceGroups }, edges: { lines: [] } } };
+  };
+  const withBodies = (bodies: ReturnType<typeof roundBody>[]) => {
+    const made = makeCtx();
+    made.ctx.getMeshes = () => bodies as unknown as ReturnType<AgentContext["getMeshes"]>;
+    return made;
+  };
+
+  it("cuts a printable thread on a rod's side, sized from the rod", async () => {
+    const { ctx, doc } = withBodies([roundBody("rod", 6)]);
+    const r = await apply(ctx, { op: "addThread", face: { bodyId: "rod", faceName: "rod/side3" } });
+    expect(r.ok).toBe(true);
+    const f = doc().features.find((x) => x.id === r.createdId);
+    expect(f).toMatchObject({ type: "thread", side: "external", profile: "printable", leadIn: true, fullLength: true });
+    expect(f && f.type === "thread" && f.face).toMatchObject({ featureId: "rod", faceName: "rod/side3", faceId: 53 });
+    expect(f && f.type === "thread" && f.params).toMatchObject({ diameter: "12", pitch: "2", clearance: "0.15" });
+  });
+
+  it("in a hole, suggests the size whose minor diameter is the bore; a length makes it partial", async () => {
+    const { ctx, doc } = withBodies([roundBody("plate", 4, true)]);
+    const r = await apply(ctx, {
+      op: "addThread",
+      face: { bodyId: "plate", faceName: "plate/side0" },
+      params: { pitch: 1.5, length: 6 },
+    });
+    expect(r.ok).toBe(true);
+    const f = doc().features.find((x) => x.id === r.createdId);
+    // Ø8 bore + 2 × 0.3 × 1.5 deep = Ø8.9.
+    expect(f).toMatchObject({ side: "internal", fullLength: false });
+    expect(f && f.type === "thread" && f.params).toMatchObject({ diameter: "8.9", pitch: "1.5", length: "6" });
+  });
+
+  it("matches another thread's size, pitch, profile, starts and hand", async () => {
+    const { ctx, doc } = withBodies([roundBody("rod", 6), roundBody("plate", 4, true)]);
+    const a = await apply(ctx, {
+      op: "addThread",
+      face: { bodyId: "rod", faceName: "rod/side0" },
+      profile: "trapezoid",
+      leftHand: true,
+      params: { diameter: 11, pitch: 3, starts: 2 },
+    });
+    const b = await apply(ctx, {
+      op: "addThread",
+      face: { bodyId: "plate", faceName: "plate/side0" },
+      match: a.createdId,
+    });
+    expect(b.ok).toBe(true);
+    const f = doc().features.find((x) => x.id === b.createdId);
+    expect(f).toMatchObject({ profile: "trapezoid", leftHand: true });
+    expect(f && f.type === "thread" && f.params).toMatchObject({ diameter: "11", pitch: "3", starts: "2" });
+  });
+
+  it("refuses a face that isn't round, and unknown params", async () => {
+    const { ctx } = withBodies([roundBody("rod", 6)]);
+    const flat = makeCtx();
+    flat.ctx.getMeshes = () =>
+      [
+        {
+          id: "box",
+          mesh: {
+            name: "box",
+            faces: {
+              vertices: [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0],
+              triangles: [0, 1, 2, 0, 2, 3],
+              faceGroups: [{ start: 0, count: 6, faceId: 1, name: "box/top" }],
+            },
+            edges: { lines: [] },
+          },
+        },
+      ] as unknown as ReturnType<AgentContext["getMeshes"]>;
+    const notRound = await apply(flat.ctx, { op: "addThread", face: { bodyId: "box", faceName: "box/top" } });
+    expect(notRound.error).toMatch(/isn't round/);
+    const bad = await apply(ctx, {
+      op: "addThread",
+      face: { bodyId: "rod", faceName: "rod/side0" },
+      params: { lead: 4 },
+    });
+    expect(bad.error).toMatch(/unknown params lead/);
+  });
+});

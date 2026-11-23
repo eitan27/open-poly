@@ -8,7 +8,8 @@
 // no gear code at all.
 import { evaluateExpression, type Scope } from "./expression";
 import { frameOf, type PlaneFrameData } from "./planes";
-import type { Document, Feature, GearFeature, GearParams, GearType } from "./types";
+import type { Document, Feature, GearFeature, GearParams, GearType, HolePointRef } from "./types";
+import { snapPoint } from "./hole";
 import {
   centerDistance,
   gearOutline,
@@ -47,7 +48,7 @@ export const DEFAULT_GEAR_PARAMS: GearParams = {
 
 export type GearSettings = Pick<
   GearFeature,
-  "gearType" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "extent" | "flip"
+  "gearType" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "extent" | "flip" | "center"
 > & {
   params: GearParams;
 };
@@ -82,7 +83,9 @@ function leadsTo(doc: Document, from: GearFeature, target: string): boolean {
   return false;
 }
 
-const num = (label: string, expr: string, scope: Scope): number => {
+const num = (label: string, expr: string | undefined, scope: Scope): number => {
+  // A field cleared to type a new value: say so plainly, not as a parse error.
+  if (!expr?.trim()) throw new Error(`gear: ${label}: enter a value`);
   let v: number;
   try {
     v = evaluateExpression(expr, scope);
@@ -138,7 +141,10 @@ export interface BakedGear {
  *  with a readable message — the same path the dialog's live readout uses. */
 export function bakeGear(
   doc: Document,
-  g: Pick<GearFeature, "id" | "gearType" | "plane" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "params">,
+  g: Pick<
+    GearFeature,
+    "id" | "gearType" | "plane" | "center" | "sizeBy" | "meshWith" | "placeBeside" | "bore" | "params"
+  >,
   scope: Scope,
   planeFrames?: Map<string, PlaneFrameData>,
   /** Gears already being baked down a chain of placed partners (a guard). */
@@ -167,7 +173,8 @@ export function bakeGear(
             diameter: num("bore", p.boreDiameter, scope),
             acrossFlat: num("D-flat", p.boreFlat, scope),
           };
-  const frame = frameOf(g.plane, planeFrames);
+  const located = g.center ? gearLocation(doc, g.center, g.plane, planeFrames) : null;
+  const frame = located?.frame ?? frameOf(g.plane, planeFrames);
   let rotation = (num("rotation", p.rotation, scope) * Math.PI) / 180;
   let cx: number;
   let cy: number;
@@ -175,6 +182,8 @@ export function bakeGear(
     const at = placeBesidePartner(doc, g, from, frame, spec, internal, scope, planeFrames, seen);
     [cx, cy] = at.center;
     rotation += at.rotation; // Rotation° is added to the meshing angle
+  } else if (located) {
+    [cx, cy] = located.center;
   } else {
     cx = num("center X", p.centerX, scope);
     cy = num("center Y", p.centerY, scope);
@@ -192,6 +201,24 @@ export function bakeGear(
     outline.holes = outline.holes.map(shift);
   }
   return { outline, spec, frame, thickness, from, center: [cx, cy], rotation };
+}
+
+/** A picked location: the plane it puts the gear on, and its centre there. A
+ *  sketch point is read live, on its sketch's own plane, so the gear follows
+ *  the sketch; a spot on a face is fixed in the plane it was picked from. */
+function gearLocation(
+  doc: Document,
+  ref: HolePointRef,
+  plane: GearFeature["plane"],
+  planeFrames: Map<string, PlaneFrameData> | undefined,
+): { frame: PlaneFrameData; center: [number, number] } {
+  if ("uv" in ref) return { frame: frameOf(ref.plane ?? plane, planeFrames), center: [ref.uv[0], ref.uv[1]] };
+  const sk = doc.features.find((f) => f.id === ref.sketchId && f.type === "sketch");
+  const e = sk?.type === "sketch" ? sk.entities.find((x) => x.id === ref.entityId) : undefined;
+  const p = e && snapPoint(e, ref.at);
+  if (sk?.type !== "sketch" || !p)
+    throw new Error("gear: the sketch point it was placed on is gone — select its location again");
+  return { frame: frameOf(sk.plane, planeFrames), center: p };
 }
 
 /** Where a gear placed beside its partner goes on its own plane, and the turn
@@ -218,7 +245,7 @@ function placeBesidePartner(
   );
   if (moved)
     throw new Error(
-      `gear: ${moved.name} moves ${partner.name} after it's made, so it can't be placed beside it — place ${partner.name} with its Center X/Y instead, or untick Place beside`,
+      `gear: ${moved.name} moves ${partner.name} after it's made, so it can't be placed beside it — give ${partner.name} a location in its dialog instead, or untick Place beside`,
     );
   const pb = bakeGear(doc, partner, scope, planeFrames, new Set([...seen, g.id]));
   const pf = pb.frame;
@@ -290,6 +317,63 @@ export function resolveGear(
   };
 }
 
+/** The params a meshed gear takes from its partner, so it keeps none of its
+ *  own: a stored module would be a stale default that only comes into play,
+ *  wrongly, once the link is gone. */
+export const MESH_SHARED_PARAMS = ["module", "pitchDiameter", "pressureAngle"] as const;
+
+/** A meshed gear's params without the ones its partner supplies. */
+export function withoutSharedParams(params: GearParams): GearParams {
+  const out = { ...params };
+  for (const k of MESH_SHARED_PARAMS) delete out[k];
+  return out;
+}
+
+/** A number as a param expression: short, but exact to the micron. */
+const asParam = (v: number) => String(Number(v.toFixed(6)));
+
+/** What a meshed gear becomes when its link to its partner ends — the user
+ *  picks Module or Pitch diameter in its dialog, or the partner is deleted:
+ *  the same gear, standing on its own. Its module, pitch diameter and
+ *  pressure angle become its own values; placed beside the partner, its
+ *  centre becomes a fixed spot and its tooth phase its own rotation, so
+ *  nothing about it moves. Returns null for a gear that isn't meshed, or one
+ *  that no longer resolves (nothing to keep — it keeps what it has). */
+export function unlinkGear(
+  doc: Document,
+  g: GearFeature,
+  scope: Scope,
+  planeFrames: Map<string, PlaneFrameData> | undefined,
+  sizeBy: GearFeature["sizeBy"] = g.sizeBy,
+): Pick<GearFeature, "sizeBy" | "meshWith" | "placeBeside" | "center" | "params"> | null {
+  if (!g.meshWith) return null;
+  let baked: BakedGear;
+  try {
+    baked = bakeGear(doc, g, scope, planeFrames);
+  } catch {
+    return null;
+  }
+  const { module, pressureAngle, teeth } = baked.spec;
+  const params: GearParams = {
+    ...g.params,
+    module: asParam(module),
+    pitchDiameter: asParam(module * teeth),
+    pressureAngle: asParam(pressureAngle),
+  };
+  let center = g.center;
+  if (g.placeBeside) {
+    // The plane its centre was worked out on: a picked sketch point's sketch,
+    // a picked spot's plane, or its own.
+    const ref = g.center;
+    const sketch =
+      ref && !("uv" in ref) ? doc.features.find((f) => f.id === ref.sketchId && f.type === "sketch") : undefined;
+    const plane = sketch?.type === "sketch" ? sketch.plane : ref && "uv" in ref ? (ref.plane ?? g.plane) : g.plane;
+    center = { uv: [Number(baked.center[0].toFixed(6)), Number(baked.center[1].toFixed(6))], plane };
+    params.rotation = asParam((baked.rotation * 180) / Math.PI);
+  }
+  return { sizeBy, meshWith: undefined, placeBeside: undefined, center, params };
+}
+
 /** What the dialog shows under the fields: the circles, and the notes worth a
  *  line — undercut, and how far apart a meshing pair's centres go. */
 export interface GearReadout {
@@ -298,11 +382,16 @@ export interface GearReadout {
   notes: string[];
   /** With a partner: how far apart the two centres go to mesh (mm). */
   centerDistance?: number;
+  /** For the dialog's diagram: the outline (and bore) as built, recentred on
+   *  the gear's own centre, plus the tooth numbers it annotates. */
+  shape: { outline: [number, number][]; holes: [number, number][][] };
+  spec: GearToothSpec;
+  internal: boolean;
 }
 
 export function gearReadout(
   doc: Document,
-  g: Pick<GearFeature, "id" | "gearType" | "plane" | "sizeBy" | "meshWith" | "bore" | "params">,
+  g: Pick<GearFeature, "id" | "gearType" | "plane" | "center" | "sizeBy" | "meshWith" | "bore" | "params">,
   scope: Scope,
   planeFrames?: Map<string, PlaneFrameData>,
 ): GearReadout {
@@ -328,9 +417,14 @@ export function gearReadout(
       centerDist = centerDistance(spec.module, spec.teeth, partnerTeeth, oneInternal);
     }
   }
+  const [cx, cy] = baked.center;
+  const recentre = (pts: [number, number][]) => pts.map(([x, y]) => [x - cx, y - cy] as [number, number]);
   return {
     module: spec.module,
     dims: baked.outline.dims,
+    shape: { outline: recentre(baked.outline.outline), holes: baked.outline.holes.map(recentre) },
+    spec,
+    internal: g.gearType === "internal",
     notes,
     ...(centerDist !== undefined ? { centerDistance: centerDist } : {}),
   };

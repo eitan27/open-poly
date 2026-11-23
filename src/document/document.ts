@@ -18,10 +18,13 @@ import {
 import { extrudeUsesDistance } from "./extrudeValidation";
 import { detectSketchRegions, regionProfileSegments } from "./regions";
 import { missingJoints } from "./joints";
-import { isBodyFeature, isHideableFeature } from "./parts";
+import { featureIdOfPart, isBodyFeature, isHideableFeature } from "./parts";
 import { assertNever } from "../lib/assertNever";
 import { applyDerived, circularPatternAngles, resolvePatternCount } from "./derived";
-import { DEFAULT_GEAR_PARAMS, resolveGear, type GearSettings } from "./gear";
+import { DEFAULT_GEAR_PARAMS, resolveGear, unlinkGear, withoutSharedParams, type GearSettings } from "./gear";
+import { DEFAULT_HOLE_PARAMS, resolveHole, type HoleSettings } from "./hole";
+import { DEFAULT_THREAD_PARAMS, resolveThread, type ThreadSettings } from "./threadFeature";
+import { DEFAULT_SCREW_PARAMS, resolveScrew, screwSize, screwToSave, unlinkScrew, type ScrewSettings } from "./screw";
 import type {
   BooleanFeature,
   DerivedOp,
@@ -31,6 +34,10 @@ import type {
   FaceRef,
   ExtrudeFeature,
   GearFeature,
+  HoleFeature,
+  ThreadFaceRef,
+  ThreadFeature,
+  ScrewFeature,
   ExtrudeProfile,
   Feature,
   FeatureKind,
@@ -577,16 +584,24 @@ export function addLoft(
 }
 
 /** A parametric gear on a plane (see document/gear.ts). */
-export function addGear(doc: Document, plane: SketchPlaneRef, settings: GearSettings): { doc: Document; id: string } {
+/** `id`: the dialog's draft id, so the gear Create adds is the very one its
+ *  ghost built — the kernel's cache keys on the feature, id included, so the
+ *  body is already built and meshed when it lands. */
+export function addGear(
+  doc: Document,
+  plane: SketchPlaneRef,
+  settings: GearSettings,
+  id: string = uid(),
+): { doc: Document; id: string } {
   const ordinal = doc.features.filter((f) => f.type === "gear").length + 1;
   const feature: GearFeature = {
-    id: uid(),
+    id,
     type: "gear",
     name: `Gear ${ordinal}`,
     suppressed: false,
     plane,
     ...settings,
-    params: { ...settings.params },
+    params: gearParamsToSave(settings),
     color: newBodyColor(),
     opacity: 1,
   };
@@ -595,7 +610,150 @@ export function addGear(doc: Document, plane: SketchPlaneRef, settings: GearSett
 
 export function updateGear(doc: Document, id: string, plane: SketchPlaneRef, settings: GearSettings): Document {
   return mapFeature(doc, id, (f) =>
-    f.type === "gear" ? { ...f, plane, ...settings, params: { ...settings.params } } : f,
+    f.type === "gear" ? { ...f, plane, ...settings, params: gearParamsToSave(settings) } : f,
+  );
+}
+
+/** A meshed gear keeps no module, pitch diameter or pressure angle of its own
+ *  (its partner's are used; see unlinkGear for when it gets them back). */
+const gearParamsToSave = (s: GearSettings) => (s.meshWith ? withoutSharedParams(s.params) : { ...s.params });
+
+/** Holes at every point of `sketchId`, cut from `targetId` (see document/hole.ts). */
+/** A sketch of `doc` by id, or undefined. */
+const sketchIn =
+  (doc: Document) =>
+  (id: string): SketchFeature | undefined => {
+    const f = doc.features.find((x) => x.id === id);
+    return f?.type === "sketch" ? f : undefined;
+  };
+
+export function addHole(
+  doc: Document,
+  sketchId: string | undefined,
+  targetId: string | undefined,
+  settings: HoleSettings,
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "hole").length + 1;
+  const feature: HoleFeature = {
+    id: uid(),
+    type: "hole",
+    name: `Hole ${ordinal}`,
+    suppressed: false,
+    sketchId,
+    targetId,
+    ...settings,
+    params: { ...settings.params },
+  };
+  return insertFeature(doc, feature);
+}
+
+export function updateHole(
+  doc: Document,
+  id: string,
+  sketchId: string | undefined,
+  targetId: string | undefined,
+  settings: HoleSettings,
+): Document {
+  // Plane, points and scope are written outright: absent means "none"/"all",
+  // not "leave as it was".
+  return mapFeature(doc, id, (f) =>
+    f.type === "hole"
+      ? {
+          ...f,
+          sketchId,
+          targetId,
+          ...settings,
+          plane: settings.plane,
+          points: settings.points,
+          scope: settings.scope,
+          params: { ...settings.params },
+        }
+      : f,
+  );
+}
+
+/** Screws in each hole of `settings.holeId` and at each of its `points` (see
+ *  document/screw.ts). */
+export function addScrew(doc: Document, settings: ScrewSettings): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "screw").length + 1;
+  const feature: ScrewFeature = {
+    id: uid(),
+    type: "screw",
+    name: `Screw ${ordinal}`,
+    suppressed: false,
+    ...screwToSave(doc, settings),
+    params: { ...settings.params },
+    // Steel grey, rather than a random body colour: a fastener should read as one.
+    color: 0x9aa3ad,
+    opacity: 1,
+  };
+  return insertFeature(doc, feature);
+}
+
+export function updateScrew(doc: Document, id: string, settings: ScrewSettings): Document {
+  return mapFeature(doc, id, (f) => {
+    if (f.type !== "screw") return f;
+    const { holeId: _h, skipHoles: _k, points: _p, size: _s, ...rest } = f;
+    return { ...rest, ...screwToSave(doc, settings), params: { ...settings.params } };
+  });
+}
+
+/** Take one part out of the model from here on (DeletePartFeature), leaving
+ *  the feature that made it as it is. A Delete part just before the insertion
+ *  point takes it too, rather than a second one stacking up. */
+export function deletePart(doc: Document, partId: string): { doc: Document; id: string } {
+  const prev = doc.features[doc.rollbackIndex - 1];
+  if (prev?.type === "deletePart") {
+    if (prev.partIds.includes(partId)) return { doc, id: prev.id };
+    return {
+      doc: {
+        ...doc,
+        features: doc.features.map((f) => (f === prev ? { ...prev, partIds: [...prev.partIds, partId] } : f)),
+      },
+      id: prev.id,
+    };
+  }
+  const ordinal = doc.features.filter((f) => f.type === "deletePart").length + 1;
+  return insertFeature(doc, {
+    id: uid(),
+    type: "deletePart",
+    name: `Delete part ${ordinal}`,
+    suppressed: false,
+    partIds: [partId],
+  });
+}
+
+/** A thread cut on a round face — a rod's side or a hole's bore — see
+ *  document/threadFeature.ts. */
+export function addThread(
+  doc: Document,
+  face: ThreadFaceRef,
+  side: ThreadFeature["side"],
+  settings: ThreadSettings,
+): { doc: Document; id: string } {
+  const ordinal = doc.features.filter((f) => f.type === "thread").length + 1;
+  const feature: ThreadFeature = {
+    id: uid(),
+    type: "thread",
+    name: `Thread ${ordinal}`,
+    suppressed: false,
+    face,
+    side,
+    ...settings,
+    params: { ...settings.params },
+  };
+  return insertFeature(doc, feature);
+}
+
+export function updateThread(
+  doc: Document,
+  id: string,
+  face: ThreadFaceRef,
+  side: ThreadFeature["side"],
+  settings: ThreadSettings,
+): Document {
+  return mapFeature(doc, id, (f) =>
+    f.type === "thread" ? { ...f, face, side, ...settings, params: { ...settings.params } } : f,
   );
 }
 
@@ -940,8 +1098,54 @@ export function removeSketchEntity(doc: Document, sketchId: string, entityId: st
 export function removeFeature(doc: Document, id: string): Document {
   const idx = doc.features.findIndex((f) => f.id === id);
   if (idx === -1) return doc;
-  const features = doc.features.filter((f) => f.id !== id);
-  const rollbackIndex = idx < doc.rollbackIndex ? doc.rollbackIndex - 1 : Math.min(doc.rollbackIndex, features.length);
+  // Gears meshed with this one carry on without it: each keeps the module,
+  // pressure angle — and, placed beside it, the spot and tooth phase — it has
+  // now, as values of its own (worked out before the partner goes).
+  const followers = doc.features.filter((f) => f.type === "gear" && f.meshWith === id);
+  let unlinked = new Map<string, Feature>();
+  if (followers.length) {
+    const r = resolveDocument(doc);
+    unlinked = new Map(
+      followers.map((g) => {
+        const gear = g as GearFeature;
+        const patch = unlinkGear(doc, gear, r.scope, r.planeFrames);
+        // One that no longer resolves anyway still drops the dangling link,
+        // with the defaults for what it has no value of its own for.
+        const fallback = {
+          ...gear,
+          meshWith: undefined,
+          placeBeside: undefined,
+          params: { ...DEFAULT_GEAR_PARAMS, ...gear.params },
+        };
+        return [g.id, patch ? { ...gear, ...patch } : fallback];
+      }),
+    );
+  }
+  // Screws in this Hole stay where they are, each hole's screw a fixed spot,
+  // keeping the size they had.
+  const inHole = doc.features.filter((f) => f.type === "screw" && f.holeId === id);
+  if (inHole.length) {
+    const r = resolveDocument(doc);
+    for (const f of inHole) {
+      const screw = f as ScrewFeature;
+      const { holeId: _h, skipHoles: _k, ...rest } = screw;
+      unlinked.set(
+        f.id,
+        unlinkScrew(doc, screw, id, r.scope, r.planeFrames) ?? { ...rest, size: screwSize(doc, screw) },
+      );
+    }
+  }
+  // Delete part steps forget its parts — a step left with none goes too.
+  const gone = new Set([id]);
+  for (const f of doc.features) {
+    if (f.type !== "deletePart" || !f.partIds.some((p) => featureIdOfPart(p) === id)) continue;
+    const partIds = f.partIds.filter((p) => featureIdOfPart(p) !== id);
+    if (partIds.length) unlinked.set(f.id, { ...f, partIds });
+    else gone.add(f.id);
+  }
+  const features = doc.features.filter((f) => !gone.has(f.id)).map((f) => unlinked.get(f.id) ?? f);
+  const before = doc.features.slice(0, doc.rollbackIndex).filter((f) => gone.has(f.id)).length;
+  const rollbackIndex = Math.min(doc.rollbackIndex - before, features.length);
   return { ...doc, features, rollbackIndex };
 }
 
@@ -993,6 +1197,10 @@ export function updateParam(doc: Document, id: string, name: string, value: stri
     if (f.type === "boolean" && name === "keepTools") return { ...f, keepTools: value === "true" };
     if (f.type === "revolve" && name === "angle") return { ...f, angle: value };
     if (f.type === "gear" && name in DEFAULT_GEAR_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
+    if (f.type === "hole" && name in DEFAULT_HOLE_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
+    if (f.type === "screw" && name in DEFAULT_SCREW_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
+    if (f.type === "deletePart" && name === "restore") return { ...f, partIds: f.partIds.filter((p) => p !== value) };
+    if (f.type === "thread" && name in DEFAULT_THREAD_PARAMS) return { ...f, params: { ...f.params, [name]: value } };
     if (f.type === "plane" && name === "offset") return { ...f, offset: value };
     if (f.type === "plane" && name === "angle") return { ...f, angle: value };
     if (f.type === "transform") {
@@ -1701,7 +1909,15 @@ export function resolveDocument(doc: Document): ResolveResult {
       } else if (f.type === "import") {
         features.push({ id: f.id, type: "import", source: f.source });
       } else if (f.type === "gear") {
-        features.push(resolveGear(doc, f, scope, planeFrames));
+        features.push(resolveGear(dDoc, f, scope, planeFrames));
+      } else if (f.type === "screw") {
+        features.push(resolveScrew(dDoc, f, scope, planeFrames));
+      } else if (f.type === "hole") {
+        features.push(resolveHole(f, sketchIn(dDoc), scope, planeFrames));
+      } else if (f.type === "thread") {
+        features.push(resolveThread(f, scope));
+      } else if (f.type === "deletePart") {
+        features.push({ id: f.id, type: "deletePart", partIds: f.partIds });
       } else if (f.type === "sketch" || f.type === "plane") {
         // No body of their own. A sketch is consumed by the features built on it
         // (and its derived geometry was applied into `dDoc` above); a plane is

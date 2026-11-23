@@ -9,6 +9,7 @@ import {
   makeBaseBox,
   makeSphere,
   makeSolid,
+  makePolygon,
   draw,
   drawPointsInterpolation,
   Plane,
@@ -26,7 +27,7 @@ import {
   DistanceQuery,
   makeVertex,
 } from "replicad";
-import type { Shape3D, Face, Edge, Sketch } from "replicad";
+import type { Shape3D, Face, Edge, Sketch, Point } from "replicad";
 import type { Font as OpentypeFont } from "opentype.js";
 import { glyphFillPolygons } from "./glyphFill";
 
@@ -36,6 +37,7 @@ import type {
   ExportFormat,
   ExtrudeExtent,
   FaceSurface,
+  FloatBuffer,
   MeshedEdges,
   MeshedFaces,
   RegenFeatureResult,
@@ -43,14 +45,19 @@ import type {
   ResolvedEdgeRef,
   ResolvedFaceRef,
   ResolvedFeature,
+  ThreadResolved,
   ResolvedFrame,
   ResolvedProfile,
 } from "./types";
 import { DRESSUP_DELTA_IDS, dressUpDeltaBase } from "./types";
 import { builderKey, contentKey } from "./cache";
 import { CIRCLE_FACETS, circleStations } from "../geom/circleFacets";
+import { segmentsStep, threadDepth, threadMesh, threadSegments } from "../geom/thread";
+import { newell, type PolyMesh } from "../geom/polyMesh";
+import { screwMesh } from "../geom/screwMesh";
 import { expandToChains, expansionCount } from "../geom/edgeChains";
 import { fitRing } from "../geom/ringFit";
+import { fitRoundWall, type RoundWall, type WallSample } from "../geom/roundWall";
 import {
   chamferLegs,
   chamferTriangle,
@@ -190,7 +197,25 @@ type Body = NamedShape & {
    *  the things whose lumps aren't parts in any useful sense: extruded text
    *  (one solid per glyph) and the live preview tool. */
   noSplit?: boolean;
+  /** Built facet by facet (a thread, a screw, or a body one was booleaned
+   *  into): booleans on it use the tight THREAD_FUZZY, and skip the
+   *  coplanar-face merge. */
+  faceted?: boolean;
+  /** Rebuild this body grown by `d` all round — the boolean clearance offset
+   *  for a generated body, whose facets OCCT's offsetter can't follow. Valid
+   *  only while the body's key is still `key`: a transform or anything else
+   *  that changes the body changes its key, and the offsetter is used again. */
+  regrow?: { key: string; build: (d: number) => NamedShape };
+  /** A moved copy of a cached screw (screwTemplate): mesh it by moving that
+   *  screw's mesh, the way the shape was moved, instead of tessellating it
+   *  again. Its faces and edges are the template's, in the same order. */
+  meshCopy?: { templateKey: string; o: V3; down: V3; u: V3; prefix: string };
 };
+
+/** A cached screw's mesh, and its faces' and edges' build-local ids in
+ *  explorer order — a moved copy lists its own in the same order, which is
+ *  how a copy's mesh gets its ids. */
+type TemplateMesh = { faces: MeshedFaces; edges: MeshedEdges; faceIds: number[]; edgeIds: number[] };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Topo = any; // a raw OCCT TopoDS_Shape (opencascade.js binding)
@@ -378,6 +403,10 @@ function solidsOnly(named: NamedShape, minVolume: number): NamedShape | null {
 function splitLumps(named: NamedShape): NamedShape[] | null {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const oc = getOC() as any;
+  // Count first: almost every body is one solid, and copying it only to
+  // throw the copy away cost a full geometric copy per body per regen (50 ms
+  // for a modelled screw).
+  if (countSolids(named.shape) < 2) return null;
   const out: NamedShape[] = [];
   // Each lump is copied inside the loop: TopExp_Explorer.Current() is a
   // reference into the explorer, invalid the moment Next() is called.
@@ -1425,9 +1454,14 @@ function booleanNamed(
  *  the correct solid at the next, so one attempt isn't enough. Returns the first
  *  result with a solid in it; if every tolerance degenerates, returns the last
  *  one and lets the caller report the failure. */
-function booleanRetrying(op: "fuse" | "cut" | "common", base: NamedShape, tool: NamedShape): NamedShape {
+function booleanRetrying(
+  op: "fuse" | "cut" | "common",
+  base: NamedShape,
+  tool: NamedShape,
+  fuzzies: readonly number[] = BOOL_FUZZY_FALLBACKS,
+): NamedShape {
   let last: NamedShape | null = null;
-  for (const fuzzy of BOOL_FUZZY_FALLBACKS) {
+  for (const fuzzy of fuzzies) {
     const next = booleanNamed(op, base, tool, fuzzy);
     if (countSolids(next.shape) > 0) {
       if (last) last.shape.delete();
@@ -3665,6 +3699,11 @@ const BOOLEAN_OFFSET_FAILED =
   "extrudes; freeform (lofted/swept) tools usually can't be offset. Set the offset to 0, or " +
   "build the tool slightly larger instead.";
 
+const BOOLEAN_OFFSET_FACETED =
+  "Couldn't offset this tool for the clearance: a screw can only be grown as it was built, before " +
+  "it's moved, patterned or cut, and a part with a thread cut on it can't be grown at all. For a " +
+  "threaded rod, cut a Thread in the hole instead and match it to the rod's.";
+
 /** A subtract tool grown (or, negative `d`, shrunk) by `d` all round — the
  *  boolean's clearance offset. Uses the same OCCT offsetter Shell does
  *  (`MakeOffsetShape.PerformByJoin`), but with an INTERSECTION join: sharp
@@ -3736,6 +3775,7 @@ function offsetToolShape(tool: NamedShape, d: number): NamedShape {
 function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[], toolOffset = 0): NamedShape {
   const ops = operandIds.map((id) => requireBody(bodies, id));
   if (ops.length < 2) throw new Error("A boolean needs at least two operands.");
+  const faceted = ops.some((b) => b.faceted);
   let acc: NamedShape = { shape: ops[0].shape, names: ops[0].names };
   // Volume integration (BRepGProp) is expensive on complex solids; a UNION's
   // validity uses countSolids, not volume, so compute volumes lazily and only
@@ -3749,8 +3789,16 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[], tool
     let offsetTool: NamedShape | null = null;
     let next: NamedShape;
     try {
-      if (op === "subtract" && toolOffset !== 0) offsetTool = offsetToolShape(ops[i], toolOffset);
-      next = booleanRetrying(BOOL_OCC[op], acc, offsetTool ?? ops[i]);
+      if (op === "subtract" && toolOffset !== 0) {
+        const re = ops[i].regrow;
+        if (re && re.key === ops[i].key) offsetTool = re.build(toolOffset);
+        else if (ops[i].faceted) throw new Error(BOOLEAN_OFFSET_FACETED);
+        else offsetTool = offsetToolShape(ops[i], toolOffset);
+      }
+      // A thread's facets sit a few hundredths apart along its axis, right at
+      // BOOL_FUZZY — which snaps them together (see threadBoolean).
+      const fuzzies = faceted ? THREAD_FUZZIES : BOOL_FUZZY_FALLBACKS;
+      next = booleanRetrying(BOOL_OCC[op], acc, offsetTool ?? ops[i], fuzzies);
     } catch (e) {
       offsetTool?.shape.delete();
       if (accIsIntermediate) acc.shape.delete();
@@ -3785,7 +3833,15 @@ function combineBodies(op: BooleanOp, operandIds: string[], bodies: Body[], tool
       const eps = VOLUME_EPS_REL * Math.max(accVol, toolVol, 1);
       bad =
         op === "subtract"
-          ? nextVol >= accVol - eps && "Solids don't overlap — nothing to subtract."
+          ? nextVol >= accVol - eps &&
+            // A screw (the only tool that regrows) in a clearance hole: the
+            // hole is wider than its thread, so there's nothing to cut — say
+            // what makes a threaded hole instead.
+            (ops[i].regrow
+              ? "The screw doesn't touch the part — a clearance hole is wider than its thread, so nothing is cut. " +
+                "For a threaded hole, make the Hole tapped (its tap drill is narrower than the screw) and subtract " +
+                "the screw from that, or just turn on the tapped Hole's Include thread."
+              : "Solids don't overlap — nothing to subtract.")
           : nextVol <= eps && "Solids don't overlap — no common volume.";
       accVol = nextVol;
     }
@@ -4264,6 +4320,1102 @@ function buildExtrudeFeature(feature: Extract<ResolvedFeature, { type: "extrude"
   }
 }
 
+/** A FACETED solid of revolution — one hole's drill tool, or one screw: rings of `circleStations()` at
+ *  each (radius, depth) point of `profile`, joined by planar quads (two rings
+ *  of the same polygon on parallel planes always make planar trapezoids),
+ *  triangles where the profile meets the axis in a cone (a drill point), and a
+ *  flat polygon cap where it meets the axis square (a flat bottom). Faceted for
+ *  the reason every round wall here is — an analytic cylinder or cone can't be
+ *  booleaned in this OCCT build — and on the SAME stations as a sketch circle,
+ *  so a hole drilled at a circle's centre lands on that circle's vertices.
+ *  `o` is the centre on the start plane, `down` the unit drilling direction,
+ *  `u`/`v` the start plane's axes. Faces are named `${id}/top`, `${id}/s{i}/{k}`
+ *  (segment i, facet k) and `${id}/floor`. */
+function revolvedPolyhedron(o: V3, down: V3, u: V3, v: V3, profile: [number, number][], id: string): NamedShape {
+  const stations = circleStations();
+  const ring = (r: number, z: number): Point[] =>
+    stations.map((a) => {
+      const c = Math.cos(a) * r;
+      const sn = Math.sin(a) * r;
+      return [
+        o[0] + down[0] * z + u[0] * c + v[0] * sn,
+        o[1] + down[1] * z + u[1] * c + v[1] * sn,
+        o[2] + down[2] * z + u[2] * c + v[2] * sn,
+      ] as Point;
+    });
+  const at = (z: number): Point => [o[0] + down[0] * z, o[1] + down[1] * z, o[2] + down[2] * z] as Point;
+  const faces: { face: Face; name: string }[] = [];
+  const n = stations.length;
+  // A profile that starts off the axis is closed by a flat cap there (a hole's
+  // mouth); one that starts ON the axis closes itself (a screw's head top).
+  if (profile[0][0] > 0) faces.push({ face: makePolygon(ring(profile[0][0], profile[0][1])), name: `${id}/top` });
+  for (let i = 0; i + 1 < profile.length; i++) {
+    const [ra, za] = profile[i];
+    const [rb, zb] = profile[i + 1];
+    if (ra === 0 && rb > 0) {
+      // Leaving the axis: a flat disc, or a cone from an apex.
+      if (Math.abs(zb - za) < 1e-9) {
+        faces.push({ face: makePolygon(ring(rb, zb)), name: `${id}/s${i}` });
+      } else {
+        const B = ring(rb, zb);
+        const apex = at(za);
+        for (let k = 0; k < n; k++)
+          faces.push({ face: makePolygon([apex, B[(k + 1) % n], B[k]]), name: `${id}/s${i}/${k}` });
+      }
+      continue;
+    }
+    if (rb === 0) {
+      if (Math.abs(zb - za) < 1e-9) {
+        faces.push({ face: makePolygon(ring(ra, za)), name: `${id}/floor` });
+      } else {
+        const A = ring(ra, za);
+        const apex = at(zb);
+        for (let k = 0; k < n; k++)
+          faces.push({ face: makePolygon([A[k], A[(k + 1) % n], apex]), name: `${id}/s${i}/${k}` });
+      }
+      continue;
+    }
+    if (Math.abs(ra - rb) < 1e-9 && Math.abs(za - zb) < 1e-9) continue;
+    const A = ring(ra, za);
+    const B = ring(rb, zb);
+    for (let k = 0; k < n; k++) {
+      const k1 = (k + 1) % n;
+      faces.push({ face: makePolygon([A[k], A[k1], B[k1], B[k]]), name: `${id}/s${i}/${k}` });
+    }
+  }
+  const last = profile[profile.length - 1];
+  if (last[0] > 0) faces.push({ face: makePolygon(ring(last[0], last[1])), name: `${id}/bottom` });
+  return weldNamed(faces);
+}
+
+/** Weld planar faces into a solid, carrying each face's name across the weld
+ *  (which rebuilds the faces) by matching centroids. */
+function weldNamed(faces: { face: Face; name: string }[]): NamedShape {
+  const solid = makeSolid(faces.map((f) => f.face)) as unknown as Shape3D;
+  // The weld rebuilds faces, so names are matched back by centroid.
+  const names = new Map<number, string>();
+  const key = (p: number[]) => p.map((x) => Math.round(x * 1e4)).join(",");
+  const byCenter = new Map(faces.map((f) => [key(f.face.center.toTuple()), f.name]));
+  for (const f of solid.faces) {
+    const nm = byCenter.get(key(f.center.toTuple()));
+    if (nm) names.set(f.hashCode, nm);
+  }
+  for (const f of faces) f.face.delete();
+  return { shape: solid, names };
+}
+
+/** A closed polygon mesh (geom/polyMesh.ts) as a solid, built the way an STL
+ *  becomes a BRep: one vertex per mesh vertex and one edge per mesh edge, SHARED
+ *  by the two faces either side, so the shell is closed by construction and
+ *  needs no sewing (sewing thousands of thread facets is what makes the naive
+ *  makePolygon + makeSolid route slow) and no booleans. Each face is made on a
+ *  plane carrying the mesh's own outward normal, its wires running the mesh's
+ *  loops in order — so a hole, wound the other way, comes out a hole.
+ *  Local (x, y, z) maps to (u, down × u, down) — right-handed, so a right-hand
+ *  thread stays one. Faces are named `${prefix}/${face.name}`. */
+function meshSolid(mesh: PolyMesh, o: V3, down: V3, u: V3, prefix: string): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const e2 = vcross(down, u);
+  const world = mesh.vertices.map(([x, y, z]): V3 => [
+    o[0] + u[0] * x + e2[0] * y + down[0] * z,
+    o[1] + u[1] * x + e2[1] * y + down[1] * z,
+    o[2] + u[2] * x + e2[2] * y + down[2] * z,
+  ]);
+  const verts = world.map((p) => {
+    const pnt = new oc.gp_Pnt_3(p[0], p[1], p[2]);
+    const mv = new oc.BRepBuilderAPI_MakeVertex(pnt);
+    const v = mv.Vertex();
+    mv.delete();
+    pnt.delete();
+    return v;
+  });
+  // Each edge is made once, low vertex → high; a loop running it the other
+  // way takes it reversed, so every wire follows its loop exactly.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const edges = new Map<number, { fwd: any; rev: any }>();
+  const nv = verts.length;
+  const edgeOf = (a: number, b: number) => {
+    const k = a < b ? a * nv + b : b * nv + a;
+    let e = edges.get(k);
+    if (!e) {
+      const me = new oc.BRepBuilderAPI_MakeEdge_2(verts[Math.min(a, b)], verts[Math.max(a, b)]);
+      const fwd = me.Edge();
+      me.delete();
+      e = { fwd, rev: oc.TopoDS.Edge_1(fwd.Reversed()) };
+      edges.set(k, e);
+    }
+    return a < b ? e.fwd : e.rev;
+  };
+  const wireOf = (loop: number[]) => {
+    const mw = new oc.BRepBuilderAPI_MakeWire_1();
+    for (let i = 0; i < loop.length; i++) mw.Add_1(edgeOf(loop[i], loop[(i + 1) % loop.length]));
+    const wire = mw.Wire();
+    mw.delete();
+    return wire;
+  };
+  const shell = new oc.TopoDS_Shell();
+  const builder = new oc.TopoDS_Builder();
+  builder.MakeShell(shell);
+  for (const face of mesh.faces) {
+    const [nx, ny, nz] = newell(world, face.loop);
+    const p0 = world[face.loop[0]];
+    const pnt = new oc.gp_Pnt_3(p0[0], p0[1], p0[2]);
+    const dir = new oc.gp_Dir_4(nx, ny, nz);
+    const pln = new oc.gp_Pln_3(pnt, dir);
+    const mf = new oc.BRepBuilderAPI_MakeFace_16(pln, wireOf(face.loop), true);
+    for (const h of face.holes ?? []) mf.Add(wireOf(h));
+    if (!mf.IsDone()) throw new Error(`${prefix}: a facet could not be built`);
+    builder.Add(shell, mf.Face());
+    mf.delete();
+    pln.delete();
+    dir.delete();
+    pnt.delete();
+  }
+  const ms = new oc.BRepBuilderAPI_MakeSolid_3(shell);
+  const solid = cast(ms.Solid()) as Shape3D;
+  ms.delete();
+  builder.delete();
+  for (const v of verts) v.delete();
+  for (const e of edges.values()) {
+    e.fwd.delete();
+    e.rev.delete();
+  }
+  // Faces come back in the order they were added.
+  const names = new Map<number, string>();
+  solid.faces.forEach((f, i) => names.set(f.hashCode, `${prefix}/${mesh.faces[i].name}`));
+  if (measureVolume(solid) <= 0) throw new Error(`${prefix}: the solid came out inside-out`);
+  return { shape: solid, names };
+}
+
+/** A copy of a named solid moved by `d`, its names re-prefixed `from` → `to`
+ *  (faces keep their order through a transform, so names follow by index). */
+function translatedNamed(src: NamedShape, d: V3, from: string, to: string): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const byIndex = src.shape.faces.map((f) => src.names.get(f.hashCode));
+  // Moved by a location, sharing the topology: a copy of a thousand-facet
+  // screw costs nothing, where a geometric copy cost as much as building it.
+  const vec = new oc.gp_Vec_4(d[0], d[1], d[2]);
+  const trsf = new oc.gp_Trsf_1();
+  trsf.SetTranslation_1(vec);
+  const loc = new oc.TopLoc_Location_2(trsf);
+  const shape = cast(src.shape.wrapped.Moved(loc, false)) as Shape3D;
+  loc.delete();
+  trsf.delete();
+  vec.delete();
+  const names = new Map<number, string>();
+  shape.faces.forEach((f, i) => {
+    const nm = byIndex[i];
+    if (nm) names.set(f.hashCode, nm.startsWith(from) ? to + nm.slice(from.length) : nm);
+  });
+  return { shape, names };
+}
+
+/** The frame point at sketch (u, v). */
+/** replicad's `meshEdges`, less a bug: an edge with no polygon on its
+ *  face's triangulation (every edge of a copy moved by a location — the
+ *  screws after the first, see translatedNamed) is sampled from its curve,
+ *  which already carries the location — and replicad then moved it again by
+ *  the last face's location, drawing the copy's edges at twice its offset. */
+function meshEdgesOf(
+  shape: Shape3D,
+  { tolerance = 1e-3, angularTolerance = 0.1 }: { tolerance?: number; angularTolerance?: number } = {},
+): MeshedEdges {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const lines: number[] = [];
+  const edgeGroups: MeshedEdges["edgeGroups"] = [];
+  const recorded = new Set<number>();
+  const record = (hash: number, pts: number[][]) => {
+    const start = lines.length / 3;
+    for (let i = 1; i < pts.length; i++) lines.push(...pts[i - 1], ...pts[i]);
+    edgeGroups.push({ start, count: lines.length / 3 - start, edgeId: hash });
+    recorded.add(hash);
+  };
+  const faceLoc = new oc.TopLoc_Location_1();
+  try {
+    for (const face of shape.faces) {
+      const triangulation = oc.BRep_Tool.Triangulation(face.wrapped, faceLoc, 0);
+      if (triangulation.IsNull()) {
+        triangulation.delete();
+        face.delete();
+        continue;
+      }
+      const tri = triangulation.get();
+      for (const edge of face.edges) {
+        const hash = edge.hashCode;
+        if (recorded.has(hash)) {
+          edge.delete();
+          continue;
+        }
+        const edgeLoc = new oc.TopLoc_Location_1();
+        const polygon = oc.BRep_Tool.PolygonOnTriangulation_1(edge.wrapped, triangulation, edgeLoc);
+        const nodes = polygon.IsNull() ? null : polygon.get().Nodes();
+        if (nodes) {
+          const tr = edgeLoc.Transformation();
+          const pts: number[][] = [];
+          for (let i = nodes.Lower(); i <= nodes.Upper(); i++) {
+            const n = tri.Node(nodes.Value(i));
+            const p = n.Transformed(tr);
+            pts.push([p.X(), p.Y(), p.Z()]);
+            p.delete();
+            n.delete();
+          }
+          nodes.delete();
+          record(hash, pts);
+        }
+        polygon.delete();
+        edgeLoc.delete();
+        edge.delete();
+      }
+      triangulation.delete();
+      face.delete();
+    }
+  } finally {
+    faceLoc.delete();
+  }
+  for (const edge of shape.edges) {
+    const hash = edge.hashCode;
+    if (!recorded.has(hash)) {
+      // The curve as the edge sees it: its location is already applied.
+      const curve = new oc.BRepAdaptor_Curve_2(edge.wrapped);
+      const tang = new oc.GCPnts_TangentialDeflection_2(curve, tolerance, angularTolerance, 2, 1e-9, 1e-7);
+      const pts: number[][] = [];
+      for (let j = 1; j <= tang.NbPoints(); j++) {
+        const p = tang.Value(j);
+        pts.push([p.X(), p.Y(), p.Z()]);
+        p.delete();
+      }
+      tang.delete();
+      curve.delete();
+      record(hash, pts);
+    }
+    edge.delete();
+  }
+  return { lines, edgeGroups };
+}
+
+/** Two frames turned the same way (their origins may differ). */
+function sameAxes(a: { uAxis: V3; normal: V3 }, b: { uAxis: V3; normal: V3 }): boolean {
+  return a === b || (vdot(a.uAxis, b.uAxis) > 1 - 1e-12 && vdot(a.normal, b.normal) > 1 - 1e-12);
+}
+
+function framePoint(frame: { origin: V3; uAxis: V3; vAxis: V3 }, cu: number, cv: number): V3 {
+  return [
+    frame.origin[0] + frame.uAxis[0] * cu + frame.vAxis[0] * cv,
+    frame.origin[1] + frame.uAxis[1] * cu + frame.vAxis[1] * cv,
+    frame.origin[2] + frame.uAxis[2] * cu + frame.vAxis[2] * cv,
+  ];
+}
+
+/** A modelled thread as a solid about the axis through `o` along `down`, its
+ *  phase set by `u` (θ = 0) and depth 0 at `o` — the same for a screw and the
+ *  tapped hole it sits in, so the two nest. */
+function threadSolid(t: ThreadResolved, o: V3, down: V3, u: V3, id: string, segments?: number): NamedShape {
+  const m = threadMesh({ ...t, segments });
+  let i = 0;
+  const mesh: PolyMesh = {
+    vertices: m.vertices,
+    faces: m.faces.map((f) => ({
+      loop: f.loop,
+      name: f.kind === "thread" ? `thread${i++}` : f.kind === "start" ? "threadStart" : "threadEnd",
+    })),
+  };
+  return meshSolid(mesh, o, down, u, id);
+}
+
+const THREAD_FUZZY = 1e-5;
+const THREAD_FUZZIES = [THREAD_FUZZY, 0] as const;
+
+/** Fuse or cut a thread into `base`, checking the result. OCCT's boolean
+ *  between a faceted helix and a solid occasionally misses the intersection
+ *  outright for one facet density and not another (M4 at 32 facets a turn
+ *  fused into two separate lumps; at 48 or 64 it joins), so a result that
+ *  fails `ok` is retried finer. `base` is left untouched; null when every
+ *  density fails. */
+function threadBoolean(
+  op: "fuse" | "cut" | "common",
+  base: NamedShape,
+  tool: (segments?: number) => NamedShape,
+  ok: (result: NamedShape) => boolean,
+  densities: (number | undefined)[] = [undefined, 48, 64],
+): NamedShape | null {
+  for (const segments of densities) {
+    const t = tool(segments);
+    // Tight tolerance, not BOOL_FUZZY: thread facets are a few hundredths of
+    // a mm apart along the axis (P/64 between a vertex row and the head's
+    // floor), right at the 0.01 fuzz — which snapped rows together, left
+    // two-edged sliver faces the mesher drops, and for M4/M5 missed the fuse.
+    // All-planar facets need no fuzz to intersect cleanly.
+    const r = booleanNamed(op, base, t, THREAD_FUZZY);
+    t.shape.delete();
+    if (ok(r)) return r;
+    r.shape.delete();
+  }
+  return null;
+}
+
+/** Take parts out of the running model. A part that isn't there (already
+ *  consumed by a boolean, or its feature changed so it no longer exists) is
+ *  noted, not an error: there's nothing left to delete. */
+function buildDeletePart(feature: Extract<ResolvedFeature, { type: "deletePart" }>, ctx: BuildContext): void {
+  const gone = feature.partIds.filter((id) => !ctx.bodies.some((b) => b.id === id));
+  for (let i = ctx.bodies.length - 1; i >= 0; i--) {
+    if (!feature.partIds.includes(ctx.bodies[i].id)) continue;
+    const [b] = ctx.bodies.splice(i, 1);
+    try {
+      b.shape.delete();
+    } catch {
+      /* already released */
+    }
+  }
+  if (gone.length) ctx.warn(`${gone.length === 1 ? "a part it deletes is" : "parts it deletes are"} no longer there`);
+}
+
+function buildScrewFeature(feature: Extract<ResolvedFeature, { type: "screw" }>, ctx: BuildContext): void {
+  const { bodies, used } = ctx;
+  const key = builderKey(feature);
+  used.add(key);
+  // One PART per location, in the order the document lists them — `id`,
+  // `id#1`, `id#2`… — so a part names its screw (Delete part relies on it),
+  // and each is meshed by moving the one screw's mesh (see meshCopy).
+  const { key: templateKey, shape: template } = screwTemplate(feature);
+  feature.centers.forEach((_, i) => {
+    const at = screwPlacement(feature, i);
+    bodies.push({
+      id: i === 0 ? feature.id : `${feature.id}#${i}`,
+      key: `${key}#${i}`,
+      faceted: true,
+      noSplit: true,
+      regrow: {
+        key: `${key}#${i}`,
+        build: (d) => {
+          const grown = grownScrew(feature, d);
+          return placedNamed(screwTemplate(grown).shape, at.o, at.down, at.u, SCREW_TEMPLATE_ID, at.prefix);
+        },
+      },
+      meshCopy: { templateKey, ...at },
+      ...placedNamed(template, at.o, at.down, at.u, SCREW_TEMPLATE_ID, at.prefix),
+    });
+  });
+}
+
+/** A screw grown by `d` all round, as a clearance tool: every radius out by
+ *  `d` (the hex head's flats too, the thread's whole profile), and no socket
+ *  — subtracted, a socket would leave a hex post standing in the pocket.
+ *  The ends stay put: the head still seats where the screw's does. */
+function grownScrew(
+  feature: Extract<ResolvedFeature, { type: "screw" }>,
+  d: number,
+): Extract<ResolvedFeature, { type: "screw" }> {
+  return {
+    ...feature,
+    profile: feature.profile.map(([r, z]) => [r > 1e-9 ? Math.max(1e-3, r + d) : r, z]),
+    hexHead: feature.hexHead && { ...feature.hexHead, across: feature.hexHead.across + 2 * d },
+    socket: undefined,
+    thread: feature.thread && { ...feature.thread, offset: feature.thread.offset + d },
+  };
+}
+
+/** A second handle on a cached shape, sharing its topology — not the deep
+ *  copy buildCached makes. For a modelled screw (thousands of faces) the deep
+ *  copy was ~100 ms on EVERY regen, for every screw in the document, though
+ *  nothing about them had changed. Safe for a body nothing edits in place:
+ *  booleans and transforms build new shapes from it, and a mesh written onto
+ *  the shared faces is the same mesh either way. The faces keep their hash
+ *  codes, so the names carry straight over. */
+function sharedNamed(src: NamedShape): NamedShape {
+  const loc = src.shape.wrapped.Location_1();
+  const shape = cast(src.shape.wrapped.Located(loc, false)) as Shape3D;
+  loc.delete();
+  return { shape, names: new Map(src.names) };
+}
+
+/** One screw of each shape, built once at the origin pointing down −Z (u
+ *  along +X), by its shape alone: wherever its copies go, they are moved
+ *  copies of it — and their meshes moved copies of its mesh. A modelled
+ *  thread is thousands of facets — building and meshing it is the seconds;
+ *  moving it is nothing — so a new location, in the dialog or an edit, never
+ *  rebuilds one. A few recent shapes are kept (never deleted: a copy shares
+ *  their topology). */
+const screwTemplates = new Map<string, NamedShape>();
+const screwTemplateMeshes = new Map<string, TemplateMesh>();
+const SCREW_TEMPLATE_ID = "@screw";
+
+function screwTemplate(feature: Extract<ResolvedFeature, { type: "screw" }>): { key: string; shape: NamedShape } {
+  const { profile, hexHead, socket, thread } = feature;
+  const key = JSON.stringify({ profile, hexHead, socket, thread });
+  let t = screwTemplates.get(key);
+  if (t) {
+    // Most recent last.
+    screwTemplates.delete(key);
+  } else {
+    t = meshSolid(screwMesh({ profile, hexHead, socket, thread }), [0, 0, 0], [0, 0, -1], [1, 0, 0], SCREW_TEMPLATE_ID);
+    while (screwTemplates.size >= 6) {
+      const old = screwTemplates.keys().next().value!;
+      screwTemplates.delete(old);
+      screwTemplateMeshes.delete(old);
+    }
+  }
+  screwTemplates.set(key, t);
+  return { key, shape: t };
+}
+
+/** Where screw `i` of a feature goes: its seat, the way it points, and the
+ *  prefix of its face names. Into the plane against its normal, like a hole;
+ *  Flip reverses. */
+function screwPlacement(
+  feature: Extract<ResolvedFeature, { type: "screw" }>,
+  i: number,
+): { o: V3; down: V3; u: V3; prefix: string } {
+  const f = feature.frames?.[i] ?? feature.frame;
+  const sg = feature.flip ? 1 : -1;
+  return {
+    o: framePoint(f, ...feature.centers[i]),
+    down: [f.normal[0] * sg, f.normal[1] * sg, f.normal[2] * sg],
+    u: f.uAxis,
+    prefix: feature.centers.length > 1 ? `${feature.id}/n${i}` : feature.id,
+  };
+}
+
+/** `src` moved rigidly — sharing its topology, as translatedNamed — so the
+ *  origin goes to `o` and the template's axes (+X, −Z) to `u` and `down`;
+ *  its face names re-prefixed `from` → `to`. */
+function placedNamed(src: NamedShape, o: V3, down: V3, u: V3, from: string, to: string): NamedShape {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const byIndex = src.shape.faces.map((f) => src.names.get(f.hashCode));
+  // Template basis (as meshSolid lays it out): X, down×X = −Y, down = −Z.
+  // Each maps to u, down×u, down, so the rotation's columns are where +X,
+  // +Y, +Z go: u, −(down×u), −down. SetValues takes it row by row.
+  const e2 = vcross(down, u);
+  const row = (j: number): V3 => [u[j], -e2[j], -down[j]];
+  const [r0, r1, r2] = [row(0), row(1), row(2)];
+  const trsf = new oc.gp_Trsf_1();
+  trsf.SetValues(r0[0], r0[1], r0[2], o[0], r1[0], r1[1], r1[2], o[1], r2[0], r2[1], r2[2], o[2]);
+  const loc = new oc.TopLoc_Location_2(trsf);
+  const shape = cast(src.shape.wrapped.Moved(loc, false)) as Shape3D;
+  loc.delete();
+  trsf.delete();
+  const names = new Map<number, string>();
+  shape.faces.forEach((f, i) => {
+    const nm = byIndex[i];
+    if (nm) names.set(f.hashCode, nm.startsWith(from) ? to + nm.slice(from.length) : nm);
+  });
+  return { shape, names };
+}
+
+/** The round wall a thread is cut on: the picked face's whole smooth surface
+ *  (its cluster, as the viewport picks it — every strip of a faceted
+ *  cylinder), fitted by the same code the dialog uses on the tessellation
+ *  (geom/roundWall.ts), so the two agree on the axis, radius and side. */
+function threadWall(body: Body, face: Face): RoundWall {
+  const faces: Face[] = [face];
+  if (face.geomType !== "CYLINDRE" && body.shape.faces.length <= PER_FACE_MESH_THRESHOLD) {
+    const clusterOf = faceClustersFrom(body.shape);
+    const rep = clusterOf.get(face.hashCode);
+    if (rep !== undefined) {
+      faces.length = 0;
+      for (const f of body.shape.faces) if (clusterOf.get(f.hashCode) === rep) faces.push(f);
+    }
+  }
+  const samples: WallSample[] = [];
+  const points: V3[] = [];
+  for (const f of faces) {
+    if (f.geomType === "PLANE") {
+      const n = faceOutwardNormal(f);
+      if (n) samples.push({ p: f.center.toTuple() as V3, n, w: 1 });
+      for (const e of f.edges) points.push(e.startPoint.toTuple() as V3, e.endPoint.toTuple() as V3);
+    } else {
+      // A real (analytic) surface: sample it — around for the normals, at both
+      // ends of its height for the extent.
+      for (const u of [0, 0.25, 0.5, 0.75, 1]) {
+        for (const v of [0, 0.5, 1]) {
+          const p = f.pointOnSurface(u, v).toTuple() as V3;
+          points.push(p);
+          if (v === 0.5) {
+            try {
+              const n = vunit(f.normalAt(p).toTuple() as V3);
+              samples.push({ p, n, w: 1 });
+            } catch {
+              /* a singular point: skip it */
+            }
+          }
+        }
+      }
+    }
+  }
+  const wall = fitRoundWall(samples, points);
+  if (!wall) throw new Error("thread: the face isn't a round wall — pick a cylindrical face or a hole's wall");
+  return wall;
+}
+
+/** Is `p` inside the solid material of `shape`? For telling a rod's free end
+ *  (air beyond it) from the end it grows out of, and a hole's mouth from its
+ *  floor. Null when the kernel can't say. */
+function insideSolid(shape: Shape3D, p: V3): boolean | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const pnt = new oc.gp_Pnt_3(p[0], p[1], p[2]);
+  const mv = new oc.BRepBuilderAPI_MakeVertex(pnt);
+  const range = new oc.Message_ProgressRange_1();
+  let dist: { IsDone(): boolean; InnerSolution(): boolean; Value(): number; delete(): void } | null = null;
+  try {
+    // The no-argument constructor: the bindings carry no Extrema_ExtFlag enum
+    // to pass the full one.
+    dist = new oc.BRepExtrema_DistShapeShape_1();
+    const d = dist as unknown as { LoadS1(s: unknown): void; LoadS2(s: unknown): void; Perform(r: unknown): boolean };
+    d.LoadS1(shape.wrapped);
+    d.LoadS2(mv.Vertex());
+    d.Perform(range);
+    if (!dist!.IsDone()) return null;
+    return dist!.InnerSolution() || dist!.Value() < 1e-9;
+  } catch {
+    return null;
+  } finally {
+    dist?.delete();
+    range.delete();
+    mv.delete();
+    pnt.delete();
+  }
+}
+
+/** Where a Thread feature's thread goes on its wall: the end it starts from
+ *  (`s`, where the lead-in is), the way into the wall from there, and how far.
+ *  It starts at the FREE end — a rod's tip, a hole's mouth, a screw's point —
+ *  found by looking past each end, on the axis, for air; with both ends alike
+ *  (a through hole, a loose rod), at the upper one. Flip swaps. */
+function threadPlacement(
+  feature: Extract<ResolvedFeature, { type: "thread" }>,
+  body: Body,
+  wall: RoundWall,
+  warn: Warn,
+): ThreadAt {
+  const { origin: o, dir, length: wallLength } = wall;
+  const end = (t: number): V3 => [o[0] + dir[0] * t, o[1] + dir[1] * t, o[2] + dir[2] * t];
+  // How far past each end, along the axis, until air: right away at an open
+  // end; a little way past a screw's pointed tip; far, or never, past the
+  // head the shank grows out of. The nearer-to-air end is the free one.
+  const probe = Math.min(0.05, wallLength / 4);
+  const r = wall.radius;
+  const steps = [probe, 0.5 * r, r, 2 * r, 4 * r, 8 * r];
+  const airPast = (t0: number, sign: number) =>
+    steps.find((d) => insideSolid(body.shape, end(t0 + sign * d)) === false) ?? Infinity;
+  const lowAir = airPast(0, -1);
+  const highAir = airPast(wallLength, 1);
+  const openLow = lowAir === probe;
+  const openHigh = highAir === probe;
+  let fromHigh = highAir <= lowAir;
+  if (feature.flip) fromHigh = !fromHigh;
+  let length = wallLength;
+  if (feature.length !== undefined) {
+    if (feature.length > wallLength + 1e-6) {
+      warn(`the face is only ${round2(wallLength)} mm long, so the thread is cut along all of it`);
+    } else length = feature.length;
+  }
+  return fromHigh
+    ? { s: end(wallLength), inward: [-dir[0], -dir[1], -dir[2]], length, open: openHigh }
+    : { s: end(0), inward: dir, length, open: openLow };
+}
+
+/** Where a thread goes (threadPlacement). `open`: there's air past the start
+ *  end, so the cut may run out past it, and the lead-in has somewhere to go.
+ *  Past a closed one — the head above a screw's shank — there's material the
+ *  cut must not touch: a sleeve running into the head would sever the shank. */
+interface ThreadAt {
+  s: V3;
+  inward: V3;
+  length: number;
+  open: boolean;
+}
+
+const round2 = (x: number) => Math.round(x * 100) / 100;
+
+/** What a Thread feature takes out of its body, built at a given facet
+ *  density: on a rod, everything between the rod's wall and the threaded rod
+ *  (so a rod a little too thick is turned down to the thread, and a faceted
+ *  one loses its corners); in a hole, the thread's cavity, core and all (so a
+ *  bore a little too small is drilled out).
+ *
+ *  Either way the helix is laid out from the START end, pointing out of the
+ *  wall there: depth 0 at `s`, θ = 0 along a `u` fixed by that direction. So a
+ *  rod and a hole whose threads start at the same spot on the same axis — a
+ *  stud flush with the plate it screws into — are in phase, and nest. */
+function threadTool(
+  feature: Extract<ResolvedFeature, { type: "thread" }>,
+  wall: RoundWall,
+  at: ThreadAt,
+  segments?: number,
+): NamedShape {
+  const { s, inward, length, open } = at;
+  const out: V3 = [-inward[0], -inward[1], -inward[2]];
+  const u = vunit(Math.abs(out[0]) < 0.9 ? vcross(out, [1, 0, 0]) : vcross(out, [0, 1, 0]));
+  const t = feature.thread;
+  if (wall.internal) {
+    // Runs a little past an open mouth so the cut opens cleanly.
+    return threadSolid(
+      { ...t, offset: feature.clearance, z0: -length, z1: open ? Math.min(0.5, t.pitch) : 0, tipChamfer: false },
+      s,
+      out,
+      u,
+      feature.id,
+      segments,
+    );
+  }
+  // The rod, its tip (the lead-in, at an open end) at `s`, a hair past the
+  // sleeve's far end — and, at a closed start, past its near end too — so no
+  // face of it lies on the sleeve's.
+  const rod = threadSolid(
+    {
+      ...t,
+      offset: -feature.clearance,
+      z0: -length - 0.01,
+      z1: open ? 0 : 0.01,
+      tipChamfer: open && feature.leadIn,
+    },
+    s,
+    out,
+    u,
+    feature.id,
+    segments,
+  );
+  // The sleeve to take the rod out of: past the wall's corners everywhere
+  // (its own flats included — it's a polygon too), and a little past an open
+  // tip; flush with a closed end.
+  const r = (Math.max(wall.radius, t.d / 2) + 0.05) / Math.cos(Math.PI / CIRCLE_FACETS);
+  const sleeve = revolvedPolyhedron(
+    s,
+    out,
+    u,
+    vcross(out, u),
+    [
+      [0, -length],
+      [r, -length],
+      [r, open ? 0.5 : 0],
+      [0, open ? 0.5 : 0],
+    ],
+    `${feature.id}/sleeve`,
+  );
+  const cut = booleanNamed("cut", sleeve, rod, THREAD_FUZZY);
+  sleeve.shape.delete();
+  rod.shape.delete();
+  return cut;
+}
+
+/** A Thread feature: a thread cut on a round face — into a rod's side, or a
+ *  hole's wall — of the body that face is on. Always a cut. */
+function buildThreadFeature(feature: Extract<ResolvedFeature, { type: "thread" }>, ctx: BuildContext): void {
+  const { bodies } = ctx;
+  const target = feature.previewTool
+    ? bodies.find((b) => b.id === feature.face.sourceId)
+    : requireBody(bodies, feature.face.sourceId);
+  if (!target) throw new Error("thread: the face's part is gone");
+  const { face } = bodyProfileFace(
+    target,
+    feature.face.faceName,
+    feature.face.center,
+    feature.face.normal,
+    ctx.warn,
+    "thread face",
+  );
+  const wall = threadWall(target, face);
+  const at = threadPlacement(feature, target, wall, ctx.warn);
+  const t = feature.thread;
+  const depth = threadDepth(t.pitch, t.profile);
+
+  // Too little material for a whole thread: a rod thinner than its crests, a
+  // bore wider than the cavity's root. Built anyway, with the crests short.
+  const tol = Math.max(0.02, 0.05 * depth);
+  if (!wall.internal) {
+    const crest = t.d / 2 - feature.clearance;
+    if (wall.radius < crest - tol)
+      ctx.warn(
+        `the rod is Ø${round2(2 * wall.radius)}, thinner than the thread's Ø${round2(2 * crest)}, so its crests are ${round2(crest - wall.radius)} mm short`,
+      );
+  } else {
+    const root = t.d / 2 + feature.clearance - depth;
+    if (wall.radius > root + tol)
+      ctx.warn(
+        `the hole is Ø${round2(2 * wall.radius)}, wider than the thread's minor Ø${round2(2 * root)}, so its crests are ${round2(wall.radius - root)} mm short`,
+      );
+  }
+
+  // The dialog's ghost runs the real cut too, under the key the real build
+  // will look up: a cut that fails shows in the dialog before Create, and one
+  // that works makes Create instant.
+  const cacheKey = contentKey({ ...feature, previewTool: undefined }, ["thread", target.key]);
+  ctx.usedDressUps.add(cacheKey);
+  const hit = dressUpCache.get(cacheKey);
+  let next: NamedShape;
+  if (hit) next = sharedNamed(hit.result);
+  else {
+    const before = measureVolume(target.shape);
+    const N = threadSegments(t.d / 2, 0.02, t.profile, t.starts);
+    const step = segmentsStep(t.profile, t.starts);
+    const cut = threadBoolean(
+      "cut",
+      target,
+      (seg) => threadTool(feature, wall, at, seg),
+      (r) => {
+        const vol = measureVolume(r.shape);
+        return vol < before - 1e-3 && vol > 0 && countSolids(r.shape) <= countSolids(target.shape);
+      },
+      [undefined, N + step, N + 2 * step],
+    );
+    if (!cut) throw new Error("thread: the cut failed on this face — try a different pitch or length");
+    next = cut;
+    if (wall.internal && feature.leadIn && at.open) {
+      // The lead-in: a 45° countersink at the mouth, from the cavity's crest
+      // down to its root — so a printed bolt finds the thread, and the first
+      // layer's squish doesn't close the opening.
+      const crest = t.d / 2 + feature.clearance;
+      const root = crest - depth;
+      const u = vunit(Math.abs(at.inward[0]) < 0.9 ? vcross(at.inward, [1, 0, 0]) : vcross(at.inward, [0, 1, 0]));
+      const tool = revolvedPolyhedron(
+        at.s,
+        at.inward,
+        u,
+        vcross(at.inward, u),
+        [
+          [0, -1],
+          [crest + 1, -1],
+          [root, depth],
+          [0, depth],
+        ],
+        `${feature.id}/leadIn`,
+      );
+      const v0 = measureVolume(next.shape);
+      const sunk = booleanNamed("cut", next, tool, THREAD_FUZZY);
+      tool.shape.delete();
+      const v1 = measureVolume(sunk.shape);
+      if (v1 < v0 && v1 > 0 && countSolids(sunk.shape) <= countSolids(next.shape)) {
+        next.shape.delete();
+        next = sunk;
+      } else {
+        sunk.shape.delete();
+        ctx.warn("the lead-in countersink couldn't be cut; the thread is there without it");
+      }
+    }
+    dressUpCache.set(cacheKey, { result: next });
+    next = sharedNamed(next);
+  }
+  if (feature.previewTool) {
+    // The cut above is run only to fail here rather than at Create, and to be
+    // cached for it. The ghost is what the thread takes out: the part ∩ the
+    // tool — the teeth cut into a hole's wall, the grooves (and any turning
+    // down) on a rod — drawn red over the part, as a Remove extrude's is. (Not
+    // the part − its threaded self: two solids sharing faces everywhere the
+    // thread didn't reach leave zero-thickness flaps there; see the dress-up
+    // previews.) The countersink is left out of it.
+    const ghostKey = contentKey({ ...feature, previewTool: undefined }, ["threadGhost", target.key]);
+    ctx.usedDressUps.add(ghostKey);
+    const cached = dressUpCache.get(ghostKey);
+    let ghost: NamedShape | null = cached ? sharedNamed(cached.result) : null;
+    if (!ghost) {
+      const N = threadSegments(t.d / 2, 0.02, t.profile, t.starts);
+      const made = threadBoolean(
+        "common",
+        target,
+        (seg) => threadTool(feature, wall, at, seg),
+        (r) => measureVolume(r.shape) > 1e-6,
+        [undefined, N + segmentsStep(t.profile, t.starts)],
+      );
+      if (made) {
+        dressUpCache.set(ghostKey, { result: made });
+        ghost = sharedNamed(made);
+      }
+    }
+    // Should even that fail, the part as it will be stands in: the cut
+    // itself worked, so Create will too.
+    if (ghost) next.shape.delete();
+    bodies.push({
+      id: feature.id,
+      key: ghost ? ghostKey : contentKey(feature, [target.key]),
+      noSplit: true,
+      faceted: true,
+      ...(ghost ?? next),
+    });
+    return;
+  }
+  target.shape.delete();
+  target.shape = next.shape;
+  target.names = next.names;
+  target.key = contentKey(feature, [target.key]);
+  target.faceted = true;
+}
+
+function buildHoleFeature(feature: Extract<ResolvedFeature, { type: "hole" }>, ctx: BuildContext): void {
+  const { bodies } = ctx;
+  // The parts to cut: the picked ones, or every real body (narrowed below to
+  // the ones the holes reach).
+  const picked = !!feature.targets;
+  const candidates = picked
+    ? feature
+        .targets!.map((id) => (feature.previewTool ? bodies.find((b) => b.id === id) : requireBody(bodies, id)))
+        .filter((b): b is Body => !!b)
+    : bodies.filter((b) => !b.preview && b.id !== feature.id);
+  // Like a Remove extrude: into the body is AGAINST the plane normal; Flip
+  // reverses it. Each hole starts on its own target's plane.
+  const holes = holeAxes(feature);
+  let profile = feature.profile;
+  if (feature.throughAll) {
+    // Push the bore's bottom far enough to clear every candidate from any hole.
+    let reach = 10;
+    for (const target of candidates) {
+      const [mn, mx] = target.shape.boundingBox.bounds;
+      const c: V3 = [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2];
+      const far = Math.max(...holes.map(({ o }) => Math.hypot(c[0] - o[0], c[1] - o[1], c[2] - o[2])));
+      reach = Math.max(reach, 10 + bboxDiagonal(target.shape) + far);
+    }
+    profile = profile.map(([r, z], i) => [r, i >= profile.length - 2 ? z + reach : z] as [number, number]);
+  }
+  // Up to next: each hole's own depth, where it leaves the first stretch of
+  // material in its way. Each bore ends there (never above the counterbore or
+  // countersink over it), so a hole through a plate over a gap stops in the
+  // gap instead of carrying on into what's beyond.
+  const depths = feature.upToNext ? upToNextDepths(feature, candidates, holes, profile) : null;
+  const profileAt = (i: number): [number, number][] => {
+    if (!depths) return profile;
+    const base = feature.profile;
+    return base.map(([r, z], k) => [r, k >= base.length - 2 ? Math.max(z, depths[i]) : z] as [number, number]);
+  };
+  const tools = holes.map(({ o, down, u, v }, i) => {
+    const id = holes.length > 1 ? `${feature.id}/h${i}` : feature.id;
+    return revolvedPolyhedron(o, down, u, v, profileAt(i), id);
+  });
+  // A modelled thread: one cavity per hole, cut after the drill. Built once
+  // and copied, like the screws that go in them.
+  const threadTool = (segments?: number): NamedShape | null => {
+    if (!feature.thread) return null;
+    const thread = feature.thread;
+    const reach = (i: number) =>
+      depths ? profileAt(i).at(-1)![1] : feature.throughAll ? profile[profile.length - 1][1] : thread.z1;
+    const ids = (i: number) => (holes.length > 1 ? `${feature.id}/h${i}` : feature.id);
+    const h0 = holes[0];
+    const first = threadSolid({ ...thread, z1: reach(0) }, h0.o, h0.down, h0.u, ids(0), segments);
+    const rods = holes.map((h, i) => {
+      if (i === 0) return first;
+      // Same length and way: a moved copy of the first (cheap); up to next,
+      // or a target on another plane, builds its own.
+      if (Math.abs(reach(i) - reach(0)) < 1e-9 && sameAxes(h.frame, h0.frame))
+        return translatedNamed(first, [h.o[0] - h0.o[0], h.o[1] - h0.o[1], h.o[2] - h0.o[2]], ids(0), ids(i));
+      return threadSolid({ ...thread, z1: reach(i) }, h.o, h.down, h.u, ids(i), segments);
+    });
+    return rods.length === 1 ? rods[0] : compoundOf(rods);
+  };
+  // The cut through one part, or null when the holes miss it. The tool is
+  // left for the caller (it is reused across parts).
+  const cutHoles = (t: Body, tool: NamedShape): NamedShape | null => {
+    const before = measureVolume(t.shape);
+    let next = unifyBody(booleanNamed("cut", t, tool));
+    if (measureVolume(next.shape) >= before - VOLUME_EPS_REL * Math.max(before, 1)) {
+      next.shape.delete();
+      return null;
+    }
+    if (feature.thread) {
+      // The cut must take material (the thread's flanks out past the drill);
+      // a boolean that missed the helix leaves the volume as it was.
+      const drilled = measureVolume(next.shape);
+      const threaded = threadBoolean(
+        "cut",
+        next,
+        (seg) => threadTool(seg)!,
+        (r) => {
+          const v = measureVolume(r.shape);
+          return v < drilled - 1e-3 && v > 0 && countSolids(r.shape) <= countSolids(next.shape);
+        },
+      );
+      next.shape.delete();
+      if (!threaded) throw new Error("hole: the thread couldn't be cut — try a cosmetic thread");
+      next = threaded;
+    }
+    return next;
+  };
+  const tool = tools.length === 1 ? tools[0] : compoundOf(tools);
+  if (feature.previewTool) {
+    // The ghost shows the drills; the thread cavities add nothing to read
+    // at ghost scale and cost a lot to mesh.
+    bodies.push({ id: feature.id, key: contentKey(feature, []), noSplit: true, ...tool });
+    return;
+  }
+  // A part whose box the holes' box misses can't be cut: skip the boolean.
+  const [tmn, tmx] = tool.shape.boundingBox.bounds;
+  const boxesMeet = (b: Body) => {
+    const [mn, mx] = b.shape.boundingBox.bounds;
+    return [0, 1, 2].every((k) => mn[k] <= tmx[k] + 1e-6 && mx[k] >= tmn[k] - 1e-6);
+  };
+  let cut = 0;
+  try {
+    for (const t of candidates) {
+      if (!picked && !boxesMeet(t)) continue;
+      // The cut over this exact input is cached like a dress-up's (same cache
+      // and sweep): a modelled thread makes it seconds, and without the cache
+      // every later edit anywhere in the document re-cut every hole. A miss
+      // is remembered too, so "every part it reaches" doesn't re-test the
+      // parts beside the holes on every regen.
+      // Up to next depends on every part in the way, not just this one.
+      const cacheKey = contentKey(feature, ["hole", t.key, ...(depths ? [depths.join(",")] : [])]);
+      ctx.usedDressUps.add(cacheKey);
+      if (holeMisses.has(cacheKey)) continue;
+      const hit = dressUpCache.get(cacheKey);
+      let next: NamedShape;
+      if (hit) next = sharedNamed(hit.result);
+      else {
+        const done = cutHoles(t, tool);
+        if (!done) {
+          if (picked)
+            throw new Error("hole: the holes don't reach a part it should cut — check where they start, and try Flip.");
+          if (holeMisses.size > 2000) holeMisses.clear();
+          holeMisses.add(cacheKey);
+          continue;
+        }
+        // The cache keeps this one; the fold gets a second handle on it (see
+        // sharedNamed) — a deep copy of a threaded body was ~100 ms a regen.
+        dressUpCache.set(cacheKey, { result: done });
+        next = sharedNamed(done);
+      }
+      t.shape.delete();
+      t.shape = next.shape;
+      t.names = next.names;
+      t.key = contentKey(feature, [t.key]);
+      if (feature.thread) t.faceted = true;
+      cut++;
+    }
+  } finally {
+    tool.shape.delete();
+  }
+  if (cut === 0) throw new Error("hole: the holes don't reach any part — check where they start, and try Flip.");
+}
+
+/** Up to next: for each hole, how deep (along `down`, from its start) it must
+ *  go to leave the first stretch of material in its way — touching parts
+ *  count as one stretch — plus a hair, so the bore breaks out cleanly rather
+ *  than ending on the exit face. Found by intersecting a through-all bore with
+ *  each part and measuring the pieces along the axis. Cached by the hole and
+ *  the parts' content. */
+function upToNextDepths(
+  feature: Extract<ResolvedFeature, { type: "hole" }>,
+  candidates: Body[],
+  holes: HoleAxis[],
+  reachProfile: [number, number][],
+): number[] {
+  const key = contentKey(feature, ["upToNext", ...candidates.map((c) => c.key)]);
+  const hit = upToNextCache.get(key);
+  if (hit) return hit;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const r = reachProfile[reachProfile.length - 2][0];
+  const far = reachProfile[reachProfile.length - 1][1];
+  const depths: number[] = [];
+  holes.forEach(({ o, down, u, v }, i) => {
+    // A rotation taking this hole's `down` onto +z, so a piece's bounding box
+    // in z is its extent along the hole (exact for any tilt, unlike a world box).
+    const trsf = new oc.gp_Trsf_1();
+    const cz = clamp(down[2], -1, 1);
+    if (cz < 1 - 1e-12) {
+      let ax = vcross(down, [0, 0, 1]);
+      if (Math.hypot(...ax) < 1e-9) ax = [1, 0, 0];
+      const pnt = new oc.gp_Pnt_3(0, 0, 0);
+      const dir = new oc.gp_Dir_4(...vunit(ax));
+      const ax1 = new oc.gp_Ax1_2(pnt, dir);
+      trsf.SetRotation_1(ax1, Math.acos(cz));
+      ax1.delete();
+      dir.delete();
+      pnt.delete();
+    }
+    const loc = new oc.TopLoc_Location_2(trsf);
+    try {
+      const o0 = vdot(o, down);
+      const probe = revolvedPolyhedron(
+        o,
+        down,
+        u,
+        v,
+        [
+          [0, -1e-3],
+          [r, -1e-3],
+          [r, far],
+          [0, far],
+        ],
+        "probe",
+      );
+      const [pmn, pmx] = probe.shape.boundingBox.bounds;
+      const spans: [number, number][] = [];
+      try {
+        for (const b of candidates) {
+          const [mn, mx] = b.shape.boundingBox.bounds;
+          if (![0, 1, 2].every((k) => mn[k] <= pmx[k] + 1e-6 && mx[k] >= pmn[k] - 1e-6)) continue;
+          const common = booleanNamed("common", b, probe);
+          const ex = new oc.TopExp_Explorer_2(
+            common.shape.wrapped,
+            oc.TopAbs_ShapeEnum.TopAbs_SOLID,
+            oc.TopAbs_ShapeEnum.TopAbs_SHAPE,
+          );
+          for (; ex.More(); ex.Next()) {
+            const moved = cast(ex.Current().Moved(loc, false)) as Shape3D;
+            const [lo, hi] = [moved.boundingBox.bounds[0][2], moved.boundingBox.bounds[1][2]];
+            moved.delete();
+            if (hi - lo > 1e-6) spans.push([lo - o0, hi - o0]);
+          }
+          ex.delete();
+          common.shape.delete();
+        }
+      } finally {
+        probe.shape.delete();
+      }
+      spans.sort((a, b) => a[0] - b[0]);
+      if (!spans.length)
+        throw new Error(
+          `hole: up to next — nothing lies ahead of target ${i + 1} to drill through. Try Flip, or another extent.`,
+        );
+      // The first stretch, carried on through parts that touch it.
+      let exit = spans[0][1];
+      let k = 1;
+      while (k < spans.length && spans[k][0] <= exit + 1e-3) exit = Math.max(exit, spans[k++][1]);
+      const gap = k < spans.length ? spans[k][0] - exit : Infinity;
+      depths.push(exit + Math.min(0.05, gap / 2));
+    } finally {
+      loc.delete();
+      trsf.delete();
+    }
+  });
+  if (upToNextCache.size > 500) upToNextCache.clear();
+  upToNextCache.set(key, depths);
+  return depths;
+}
+const upToNextCache = new Map<string, number[]>();
+
+/** One hole's start and axes, in the world: where it starts, the way it
+ *  drills (into its plane, or out with Flip), and its plane's u / v. */
+interface HoleAxis {
+  frame: ResolvedFrame;
+  o: V3;
+  down: V3;
+  u: V3;
+  v: V3;
+}
+
+function holeAxes(feature: Extract<ResolvedFeature, { type: "hole" }>): HoleAxis[] {
+  const s = feature.flip ? 1 : -1;
+  return feature.centers.map(([cu, cv], i) => {
+    const frame = feature.frames?.[i] ?? feature.frame;
+    const n = frame.normal;
+    return {
+      frame,
+      o: framePoint(frame, cu, cv),
+      down: [n[0] * s, n[1] * s, n[2] * s],
+      u: frame.uAxis,
+      v: frame.vAxis,
+    };
+  });
+}
+
+/** Hole cuts that took nothing, by cache key — so "every part it reaches"
+ *  tests a part beside the holes once, not on every regen. Keys are content
+ *  hashes, so a stale one is merely unused; the set is dropped when large. */
+const holeMisses = new Set<string>();
+
 function buildDressUpFeature(feature: Extract<ResolvedFeature, { type: "dressup" }>, ctx: BuildContext): void {
   const { bodies, previews, usedDressUps, warn } = ctx;
   // Chamfer/fillet modifies each target body in place, keeping its id. One
@@ -4406,9 +5558,15 @@ function buildBooleanFeature(feature: Extract<ResolvedFeature, { type: "boolean"
   const key = contentKey(feature, operandKeys);
   // Unify inside the cached builder (so it runs only on a cache miss and the
   // merged result is what's stored) — no black seam where operands met.
-  const result = buildCached(key, used, () =>
-    unifyBody(combineBodies(feature.op, feature.operands, bodies, feature.offset ?? 0)),
-  );
+  // ...except where a faceted body (a thread, a screw) took part: its
+  // thousands of facets have no coplanar neighbours to merge, and the pass
+  // over them was 1.4 s of a 2 s thread cut.
+  const operandBodies = feature.operands.map((id) => requireBody(bodies, id));
+  const faceted = operandBodies.some((b) => b.faceted);
+  const result = buildCached(key, used, () => {
+    const c = combineBodies(feature.op, feature.operands, bodies, feature.offset ?? 0);
+    return faceted ? c : unifyBody(c);
+  });
   // "Keep tools" consumes only the base: the tools stay in the running set,
   // under their own ids and at their modelled (un-offset) size.
   const operandSet = new Set(feature.keepTools ? feature.operands.slice(0, 1) : feature.operands);
@@ -4419,7 +5577,7 @@ function buildBooleanFeature(feature: Extract<ResolvedFeature, { type: "boolean"
     else remaining.push(b);
   }
   bodies.length = 0;
-  bodies.push(...remaining, { id: feature.id, key, ...result });
+  bodies.push(...remaining, { id: feature.id, key, faceted, ...result });
 }
 
 function buildTransformFeature(feature: Extract<ResolvedFeature, { type: "transform" }>, ctx: BuildContext): void {
@@ -4450,7 +5608,7 @@ function buildTransformFeature(feature: Extract<ResolvedFeature, { type: "transf
     // Keep the original; add the transformed copy as a NEW body keyed by
     // this feature (transformNamed builds a fresh shape, never consuming
     // the target).
-    bodies.push({ id: feature.id, key, ...res });
+    bodies.push({ id: feature.id, key, faceted: target.faceted, ...res });
   } else {
     // Move the target in place, keeping its id and names.
     target.shape.delete();
@@ -4466,7 +5624,7 @@ function buildMirrorFeature(feature: Extract<ResolvedFeature, { type: "mirror" }
   // mirrored body as a NEW body keyed by this feature.
   const src = requireBody(bodies, feature.targetId);
   const res = mirrorNamed(src, feature.origin, feature.normal, feature.id);
-  bodies.push({ id: feature.id, key: contentKey(feature, [src.key]), ...res });
+  bodies.push({ id: feature.id, key: contentKey(feature, [src.key]), faceted: src.faceted, ...res });
 }
 
 function buildPatternFeature(feature: Extract<ResolvedFeature, { type: "pattern" }>, ctx: BuildContext): void {
@@ -4493,7 +5651,7 @@ function buildPatternFeature(feature: Extract<ResolvedFeature, { type: "pattern"
   }
   const key = contentKey(feature, depKeys);
   const res = buildCached(key, used, () => patternNamed(src, feature, axisOrigin, axisDir));
-  bodies.push({ id: feature.id, key, ...res });
+  bodies.push({ id: feature.id, key, faceted: src.faceted, ...res });
 }
 
 function buildRevolveFeature(feature: Extract<ResolvedFeature, { type: "revolve" }>, ctx: BuildContext): void {
@@ -4680,6 +5838,18 @@ function buildBodies(
         case "loft":
           buildLoftFeature(feature, ctx);
           break;
+        case "hole":
+          buildHoleFeature(feature, ctx);
+          break;
+        case "screw":
+          buildScrewFeature(feature, ctx);
+          break;
+        case "thread":
+          buildThreadFeature(feature, ctx);
+          break;
+        case "deletePart":
+          buildDeletePart(feature, ctx);
+          break;
         // Every member of ResolvedFeature is handled above, and the compiler
         // enforces that: this is the dispatch whose failure mode was invisible
         // (a missing case built no geometry and raised nothing), and the one
@@ -4694,6 +5864,208 @@ function buildBodies(
     timings.push({ id: feature.id, type: feature.type, ms: performance.now() - t0 });
   }
   return { bodies, previews, failures, timings, warnings };
+}
+
+/** Numbers in a mesh above which it travels as typed arrays. A small mesh's
+ *  number[] clones across the worker boundary instantly; a big one — a
+ *  modelled thread is a few hundred thousand numbers — was cloned element by
+ *  element twice per regen and then AGAIN by every autosave's IndexedDB write,
+ *  which for a handful of threaded screws froze the page for over a second
+ *  after each edit. Typed arrays clone as a memcpy. */
+const PACK_MESH_ABOVE = 30_000;
+
+function packLargeMesh(m: { faces: MeshedFaces; edges: MeshedEdges }): { faces: MeshedFaces; edges: MeshedEdges } {
+  const { faces, edges } = m;
+  const size = faces.vertices.length + faces.triangles.length + (faces.normals?.length ?? 0) + edges.lines.length;
+  if (size <= PACK_MESH_ABOVE) return m;
+  const f32 = (a: FloatBuffer) => (a instanceof Float32Array ? a : new Float32Array(a));
+  return {
+    faces: {
+      ...faces,
+      vertices: f32(faces.vertices),
+      triangles: faces.triangles instanceof Uint32Array ? faces.triangles : new Uint32Array(faces.triangles),
+      ...(faces.normals ? { normals: f32(faces.normals) } : {}),
+    },
+    edges: { ...edges, lines: f32(edges.lines) },
+  };
+}
+
+/** A body's tessellation, with its faces' and edges' names, surfaces and
+ *  clusters attached (skipped for a display-only preview body). */
+function meshBody(
+  b: Body,
+  onMeshProgress?: (featureId: string, done: number, total: number) => void,
+): { faces: MeshedFaces; edges: MeshedEdges } {
+  // Huge bodies (large imported assemblies) mesh per-face so peak memory
+  // stays bounded — replicad's whole-shape mesh holds every triangulation at
+  // once and exhausts the heap. Normal bodies use the faster one-shot path.
+  let faces: MeshedFaces, edges: MeshedEdges;
+  // The face/edge adjacency walk, shared by the crease test and the
+  // logical-surface clustering below so they can't disagree — and so the
+  // walk (an OCCT adaptor per face, another per curved face's edge) is
+  // paid for once per body rather than twice.
+  let walked: FaceEdgeAdjacency | undefined;
+  if (b.names.size > PER_FACE_MESH_THRESHOLD) {
+    // Large imported assembly: mesh per-face so peak memory stays bounded
+    // (replicad's whole-shape mesh holds every triangulation at once and
+    // exhausts the heap). Produce typed arrays — this mesh is millions of
+    // triangles and re-transfers to the main thread every regen, so the
+    // ArrayBuffer copy (vs per-number structured clone) is a big win here.
+    faces = meshFaceByFace(b.shape, referenceMeshOpts(b.shape), (done, total) => onMeshProgress?.(b.id, done, total));
+    edges = { lines: [], edgeGroups: [] }; // edges omitted for a reference body
+  } else {
+    // Normal body: replicad's one-shot mesh (number[]); a big one is
+    // repacked into typed arrays below.
+    faces = b.shape.mesh(MESH_OPTS);
+    edges = meshEdgesOf(b.shape, MESH_OPTS);
+    // Recover any face the one-shot mesh silently dropped, before anything
+    // downstream reads the buffers. Runs after meshEdges, which wants the
+    // triangulation the whole-shape pass left on the shape. Both outcomes
+    // are logged with stable prefixes: a hole in a solid is invisible in
+    // any other telemetry, and the verification harness asserts on these.
+    const { recovered, lost } = patchMissingFaces(b.shape, faces);
+    if (recovered) console.warn(`mesh: recovered ${recovered} dropped face(s) on ${b.id}`);
+    if (lost) console.warn(`mesh: UNMESHED ${lost} face(s) on ${b.id} — the body will render with holes`);
+    // Display-only smoothing: faceted curved bodies (cylinder/revolve/
+    // extruded circle) are genuinely polygonal, so shade their walls smooth
+    // and drop the facet seam edges — they READ as round while the kernel
+    // keeps booleaning the facets. Sharp features (creases above the
+    // threshold) are preserved. Geometry the kernel sees is untouched.
+    // Skipped for preview bodies: it walks each edge's adjacent faces with
+    // OCCT adaptors, which throws on the slivers a dress-up delta carries,
+    // and a translucent ghost gains nothing from smooth shading anyway.
+    if (!b.preview) {
+      smoothMeshNormals(faces);
+      // A face the crease test can't get a normal for drops out of the
+      // adjacency walk, and every seam around it is then drawn as a hard
+      // crease — a black line down an otherwise smooth wall. Reported for
+      // the same reason as a hole: otherwise it's silent.
+      const nstats: FaceNormalStats = { fallback: 0, unknown: 0 };
+      walked = faceEdgeAdjacency(b.shape, nstats);
+      edges = filterSmoothEdges(edges, smoothEdgeHashes(b.shape, nstats, walked));
+      if (nstats.fallback) console.warn(`mesh: ${nstats.fallback} face normal(s) via boundary fallback on ${b.id}`);
+      if (nstats.unknown)
+        console.warn(`mesh: NORMALLESS ${nstats.unknown} face(s) on ${b.id} — their seams draw as creases`);
+    }
+  }
+  // Attach each face's / edge's persistent name (matched by build-local hash)
+  // so the app carries stable references across rebuilds. All of it is
+  // skipped for a preview body: nothing can reference or pick one, and
+  // these passes walk every face with OCCT adaptors — which a dress-up
+  // delta, full of slivers where two nearly-identical solids were
+  // differenced, is very good at making throw.
+  if (faces.faceGroups && !b.preview) {
+    // Surface classification walks every face with an OCCT adaptor, so skip
+    // it for huge reference bodies (the per-face mesh path) — they're
+    // reference-only, and the pass would cost more than it's worth.
+    const surfaces = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceSurfacesFrom(b.shape);
+    // Logical-surface clustering (whole-cylinder selection). Skipped for huge
+    // reference bodies alongside surface classification — same O(faces) walk.
+    const clusters = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceClustersFrom(b.shape, walked);
+    faces.faceGroups = faces.faceGroups.map((g) => ({
+      ...g,
+      name: b.names.get(g.faceId),
+      surface: surfaces?.get(g.faceId),
+      clusterId: clusters?.get(g.faceId),
+    }));
+  }
+  if (edges.edgeGroups && !b.preview) {
+    const edgeNames = edgeNamesFrom(b.shape, b.names);
+    // Chain tangent-continuous chords (whole-circle edge selection); skipped
+    // for huge reference bodies alongside the surface/cluster passes.
+    const chains = b.names.size > PER_FACE_MESH_THRESHOLD ? null : edgeChainsFrom(b.shape);
+    edges.edgeGroups = edges.edgeGroups.map((g) => ({
+      ...g,
+      name: edgeNames.get(g.edgeId),
+      chainId: chains?.get(g.edgeId),
+    }));
+  }
+  return { faces, edges };
+}
+
+/** The ids of a shape's faces, and of its edges (first seen, face by face),
+ *  in explorer order. */
+function topoOrder(shape: Shape3D): { faceIds: number[]; edgeIds: number[] } {
+  const faceIds: number[] = [];
+  const edgeIds: number[] = [];
+  const seen = new Set<number>();
+  for (const f of shape.faces) {
+    faceIds.push(f.hashCode);
+    for (const e of f.edges) {
+      const h = e.hashCode;
+      if (!seen.has(h)) {
+        seen.add(h);
+        edgeIds.push(h);
+      }
+    }
+  }
+  return { faceIds, edgeIds };
+}
+
+/** A screw's mesh as its cached screw's, moved: points and normals carried
+ *  by the same rigid motion as the shape (see placedNamed), every face and
+ *  edge id swapped for the copy's own (same explorer order), and every name
+ *  re-prefixed from the template's to this screw's. */
+function copiedMesh(b: Body, at: NonNullable<Body["meshCopy"]>): { faces: MeshedFaces; edges: MeshedEdges } {
+  let t = screwTemplateMeshes.get(at.templateKey);
+  const template = screwTemplates.get(at.templateKey);
+  if (!t) {
+    if (!template) return meshBody(b);
+    const m = meshBody({ ...template, id: SCREW_TEMPLATE_ID, key: at.templateKey });
+    t = { ...m, ...topoOrder(template.shape) };
+    screwTemplateMeshes.set(at.templateKey, t);
+  }
+  const own = topoOrder(b.shape);
+  if (own.faceIds.length !== t.faceIds.length || own.edgeIds.length !== t.edgeIds.length) return meshBody(b);
+  const faceId = new Map(t.faceIds.map((h, i) => [h, own.faceIds[i]]));
+  const edgeId = new Map(t.edgeIds.map((h, i) => [h, own.edgeIds[i]]));
+  const rename = (n: string | undefined) => n?.split(`${SCREW_TEMPLATE_ID}/`).join(`${at.prefix}/`);
+  // Template (x, y, z) → o + x·u + (−y)·(down×u) + (−z)·down: meshSolid laid
+  // the template out with u = +X, down = −Z, so down×u = −Y.
+  const e2 = vcross(at.down, at.u);
+  const move = (src: ArrayLike<number>, o: V3 | null) => {
+    const out = new Float32Array(src.length);
+    for (let i = 0; i < src.length; i += 3) {
+      const x = src[i];
+      const y = -src[i + 1];
+      const z = -src[i + 2];
+      for (let k = 0; k < 3; k++) out[i + k] = (o ? o[k] : 0) + x * at.u[k] + y * e2[k] + z * at.down[k];
+    }
+    return out;
+  };
+  return {
+    faces: {
+      vertices: move(t.faces.vertices, at.o),
+      triangles: t.faces.triangles,
+      ...(t.faces.normals ? { normals: move(t.faces.normals, null) } : {}),
+      ...(t.faces.faceGroups
+        ? {
+            faceGroups: t.faces.faceGroups.map((g) => {
+              const id = faceId.get(g.faceId) ?? g.faceId;
+              return {
+                ...g,
+                faceId: id,
+                name: b.names.get(id) ?? rename(g.name),
+                ...(g.clusterId !== undefined ? { clusterId: faceId.get(g.clusterId) ?? g.clusterId } : {}),
+              };
+            }),
+          }
+        : {}),
+    },
+    edges: {
+      lines: move(t.edges.lines, at.o),
+      ...(t.edges.edgeGroups
+        ? {
+            edgeGroups: t.edges.edgeGroups.map((g) => ({
+              ...g,
+              edgeId: edgeId.get(g.edgeId) ?? g.edgeId,
+              name: rename(g.name),
+              ...(g.chainId !== undefined ? { chainId: edgeId.get(g.chainId) ?? g.chainId } : {}),
+            })),
+          }
+        : {}),
+    },
+  };
 }
 
 /** Bodies with more faces than this mesh per-face (see `meshFaceByFace`); below it,
@@ -4811,6 +6183,12 @@ type FaceNormalStats = { fallback: number; unknown: number };
  *  normal over the boundary ring, which needs only the 3D edges. Null when even
  *  that is degenerate. */
 function faceOutwardNormal(f: Face, stats?: FaceNormalStats): V3 | null {
+  // A plane's normal is just its axis — no centre of mass to integrate and no
+  // point to project, which is most of what the general route costs. Faceted
+  // walls make planes the overwhelming majority (a modelled screw is
+  // thousands of them).
+  const planar = planeFaceNormal(f);
+  if (planar) return planar;
   try {
     return vunit(f.normalAt(f.center).normalized().toTuple() as V3);
   } catch {
@@ -4860,6 +6238,32 @@ function faceOutwardNormal(f: Face, stats?: FaceNormalStats): V3 | null {
       stats.unknown++;
     }
     return null;
+  }
+}
+
+/** A planar face's outward normal from its plane's axis (the adaptor applies
+ *  the face's location), reversed with the face; null for any other surface. */
+function planeFaceNormal(f: Face): V3 | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let ad: any = null;
+  try {
+    ad = new oc.BRepAdaptor_Surface_2(f.wrapped, false);
+    if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) return null;
+    const pln = ad.Plane();
+    const ax = pln.Axis();
+    const d = ax.Direction();
+    const s = f.wrapped.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED ? -1 : 1;
+    const n: V3 = [d.X() * s, d.Y() * s, d.Z() * s];
+    d.delete();
+    ax.delete();
+    pln.delete();
+    return n;
+  } catch {
+    return null;
+  } finally {
+    ad?.delete();
   }
 }
 
@@ -5558,95 +6962,7 @@ function regenerate(
       usedMeshes.add(b.key);
       let cached = meshCache.get(b.key);
       if (!cached) {
-        // Huge bodies (large imported assemblies) mesh per-face so peak memory
-        // stays bounded — replicad's whole-shape mesh holds every triangulation at
-        // once and exhausts the heap. Normal bodies use the faster one-shot path.
-        let faces: MeshedFaces, edges: MeshedEdges;
-        // The face/edge adjacency walk, shared by the crease test and the
-        // logical-surface clustering below so they can't disagree — and so the
-        // walk (an OCCT adaptor per face, another per curved face's edge) is
-        // paid for once per body rather than twice.
-        let walked: FaceEdgeAdjacency | undefined;
-        if (b.names.size > PER_FACE_MESH_THRESHOLD) {
-          // Large imported assembly: mesh per-face so peak memory stays bounded
-          // (replicad's whole-shape mesh holds every triangulation at once and
-          // exhausts the heap). Produce typed arrays — this mesh is millions of
-          // triangles and re-transfers to the main thread every regen, so the
-          // ArrayBuffer copy (vs per-number structured clone) is a big win here.
-          faces = meshFaceByFace(b.shape, referenceMeshOpts(b.shape), (done, total) =>
-            onMeshProgress?.(b.id, done, total),
-          );
-          edges = { lines: [], edgeGroups: [] }; // edges omitted for a reference body
-        } else {
-          // Normal body: replicad's one-shot mesh (number[]). Small meshes clone
-          // across the worker boundary instantly, so typed-array repacking would
-          // only add overhead with no transfer benefit.
-          faces = b.shape.mesh(MESH_OPTS);
-          edges = b.shape.meshEdges(MESH_OPTS);
-          // Recover any face the one-shot mesh silently dropped, before anything
-          // downstream reads the buffers. Runs after meshEdges, which wants the
-          // triangulation the whole-shape pass left on the shape. Both outcomes
-          // are logged with stable prefixes: a hole in a solid is invisible in
-          // any other telemetry, and the verification harness asserts on these.
-          const { recovered, lost } = patchMissingFaces(b.shape, faces);
-          if (recovered) console.warn(`mesh: recovered ${recovered} dropped face(s) on ${b.id}`);
-          if (lost) console.warn(`mesh: UNMESHED ${lost} face(s) on ${b.id} — the body will render with holes`);
-          // Display-only smoothing: faceted curved bodies (cylinder/revolve/
-          // extruded circle) are genuinely polygonal, so shade their walls smooth
-          // and drop the facet seam edges — they READ as round while the kernel
-          // keeps booleaning the facets. Sharp features (creases above the
-          // threshold) are preserved. Geometry the kernel sees is untouched.
-          // Skipped for preview bodies: it walks each edge's adjacent faces with
-          // OCCT adaptors, which throws on the slivers a dress-up delta carries,
-          // and a translucent ghost gains nothing from smooth shading anyway.
-          if (!b.preview) {
-            smoothMeshNormals(faces);
-            // A face the crease test can't get a normal for drops out of the
-            // adjacency walk, and every seam around it is then drawn as a hard
-            // crease — a black line down an otherwise smooth wall. Reported for
-            // the same reason as a hole: otherwise it's silent.
-            const nstats: FaceNormalStats = { fallback: 0, unknown: 0 };
-            walked = faceEdgeAdjacency(b.shape, nstats);
-            edges = filterSmoothEdges(edges, smoothEdgeHashes(b.shape, nstats, walked));
-            if (nstats.fallback)
-              console.warn(`mesh: ${nstats.fallback} face normal(s) via boundary fallback on ${b.id}`);
-            if (nstats.unknown)
-              console.warn(`mesh: NORMALLESS ${nstats.unknown} face(s) on ${b.id} — their seams draw as creases`);
-          }
-        }
-        // Attach each face's / edge's persistent name (matched by build-local hash)
-        // so the app carries stable references across rebuilds. All of it is
-        // skipped for a preview body: nothing can reference or pick one, and
-        // these passes walk every face with OCCT adaptors — which a dress-up
-        // delta, full of slivers where two nearly-identical solids were
-        // differenced, is very good at making throw.
-        if (faces.faceGroups && !b.preview) {
-          // Surface classification walks every face with an OCCT adaptor, so skip
-          // it for huge reference bodies (the per-face mesh path) — they're
-          // reference-only, and the pass would cost more than it's worth.
-          const surfaces = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceSurfacesFrom(b.shape);
-          // Logical-surface clustering (whole-cylinder selection). Skipped for huge
-          // reference bodies alongside surface classification — same O(faces) walk.
-          const clusters = b.names.size > PER_FACE_MESH_THRESHOLD ? null : faceClustersFrom(b.shape, walked);
-          faces.faceGroups = faces.faceGroups.map((g) => ({
-            ...g,
-            name: b.names.get(g.faceId),
-            surface: surfaces?.get(g.faceId),
-            clusterId: clusters?.get(g.faceId),
-          }));
-        }
-        if (edges.edgeGroups && !b.preview) {
-          const edgeNames = edgeNamesFrom(b.shape, b.names);
-          // Chain tangent-continuous chords (whole-circle edge selection); skipped
-          // for huge reference bodies alongside the surface/cluster passes.
-          const chains = b.names.size > PER_FACE_MESH_THRESHOLD ? null : edgeChainsFrom(b.shape);
-          edges.edgeGroups = edges.edgeGroups.map((g) => ({
-            ...g,
-            name: edgeNames.get(g.edgeId),
-            chainId: chains?.get(g.edgeId),
-          }));
-        }
-        cached = { faces, edges };
+        cached = packLargeMesh(b.meshCopy ? copiedMesh(b, b.meshCopy) : meshBody(b, onMeshProgress));
         meshCache.set(b.key, cached);
       }
       result = { id: b.id, ok: true, mesh: { name: b.id, faces: cached.faces, edges: cached.edges } };

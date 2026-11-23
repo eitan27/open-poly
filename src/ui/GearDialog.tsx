@@ -4,15 +4,19 @@ import type { GearFeature, GearParams, GearType } from "../document/types";
 import { DraggableDialog } from "./DraggableDialog";
 import { ExprInput } from "./ExprInput";
 import { PickSlot } from "./PickSlot";
+import { GearDiagram } from "./diagram/GearDiagram";
+import { useRef, useState } from "react";
 import "./GearDialog.css";
 
 interface Props {
   editing?: boolean;
   settings: GearSettings;
-  /** The plane slot's label; `defaultPlane` marks it as the untouched default. */
-  planeLabel: string;
-  defaultPlane: boolean;
-  planeArmed: boolean;
+  /** Where it is, as the Location slot names it; `defaultLocation` marks the
+   *  untouched default (the Top plane's origin). */
+  locationLabel: string;
+  defaultLocation: boolean;
+  /** The slot is listening: the next viewport pick places the gear. */
+  locating: boolean;
   advanced: boolean;
   /** Other gears this one can take its module + pressure angle from. */
   meshOptions: Pick<GearFeature, "id" | "name">[];
@@ -21,8 +25,10 @@ interface Props {
   /** Live dimensions (null when the settings don't make a gear) + its error. */
   readout: GearReadout | null;
   error: string | null;
-  onArmPlane: () => void;
+  onArmLocation: () => void;
   onChange: (patch: Partial<GearSettings>) => void;
+  /** Size by its own module / pitch diameter (unlinking a meshed gear in place). */
+  onSizeBy: (sizeBy: GearSettings["sizeBy"]) => void;
   onParam: (name: keyof GearParams, value: string) => void;
   onToggleAdvanced: () => void;
   onConfirm: () => void;
@@ -37,16 +43,17 @@ const sizeKey = (s: GearSettings) => (s.meshWith ? `mesh:${s.meshWith}` : s.size
 export function GearDialog({
   editing,
   settings,
-  planeLabel,
-  defaultPlane,
-  planeArmed,
+  locationLabel,
+  defaultLocation,
+  locating,
   advanced,
   meshOptions,
   meshName,
   readout,
   error,
-  onArmPlane,
+  onArmLocation,
   onChange,
+  onSizeBy,
   onParam,
   onToggleAdvanced,
   onConfirm,
@@ -54,16 +61,41 @@ export function GearDialog({
 }: Props) {
   const p = settings.params;
   const internal = settings.gearType === "internal";
+  // The diagram lights the dimension of whichever field has focus (or is
+  // hovered); a click on a dimension focuses its field, opening Advanced
+  // first when that's where the field lives.
+  const [focused, setFocused] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const inputs = useRef(new Map<string, HTMLInputElement>());
+  const ADVANCED = new Set(["pressureAngle", "backlash", "profileShift", "rootFillet", "rotation"]);
+  const pickDim = (name: string) => {
+    const focus = () => inputs.current.get(name)?.focus();
+    if (ADVANCED.has(name) && !advanced) {
+      onToggleAdvanced();
+      setTimeout(focus, 0);
+    } else focus();
+  };
   const meshed = !!settings.meshWith;
   const placed = meshed && !!settings.placeBeside;
 
   /** An expression field bound to one of the gear's params. Enter confirms,
    *  Escape cancels, as in every other feature dialog. */
   const field = (name: keyof GearParams, label: string, opts: { autoFocus?: boolean; title?: string } = {}) => (
-    <label className="ed-field" title={opts.title}>
+    <label
+      className="ed-field"
+      title={opts.title}
+      onMouseEnter={() => setHovered(name)}
+      onMouseLeave={() => setHovered(null)}
+    >
       <span>{label}</span>
       <ExprInput
+        ref={(el: HTMLInputElement | null) => {
+          if (el) inputs.current.set(name, el);
+          else inputs.current.delete(name);
+        }}
         autoFocus={opts.autoFocus}
+        onFocus={() => setFocused(name)}
+        onBlur={() => setFocused(null)}
         value={p[name] ?? ""}
         onChange={(e) => onParam(name, e.target.value)}
         onKeyDown={(e) => {
@@ -90,16 +122,25 @@ export function GearDialog({
         </select>
       </label>
 
-      <div className="bool-group-label">Plane or face</div>
+      {readout && <GearDiagram readout={readout} bore={settings.bore} active={focused ?? hovered} onPick={pickDim} />}
+
+      <div className="bool-group-label">Location</div>
       <PickSlot
-        noun="a plane or face"
-        armed={planeArmed}
-        value={defaultPlane ? `${planeLabel} (default)` : planeLabel}
+        noun="a location"
+        armed={locating}
+        value={defaultLocation ? `${locationLabel} (default)` : locationLabel}
         wide
-        title="The gear is centered on the plane's origin (offset it under Advanced)"
-        clearTitle="Pick a different plane or face"
-        onArm={onArmPlane}
+        title="Where the gear's center goes: a plane's origin, a point, or a spot on a face"
+        clearTitle="Select a different location"
+        onArm={onArmLocation}
       />
+      {locating && (
+        <p className="ed-hint">
+          {placed
+            ? `It goes beside ${meshName ?? "its partner"}; a pick sets only the plane it's on.`
+            : `Click a plane, a face, or a point to center it on. Until then it stays on ${locationLabel}.`}
+        </p>
+      )}
 
       {field("teeth", "Teeth", { autoFocus: !editing })}
 
@@ -115,7 +156,7 @@ export function GearDialog({
             const v = e.target.value;
             // Meshing with a gear places it beside that gear unless asked not to.
             if (v.startsWith("mesh:")) onChange({ meshWith: v.slice(5), placeBeside: settings.placeBeside ?? true });
-            else onChange({ meshWith: undefined, placeBeside: undefined, sizeBy: v as GearSettings["sizeBy"] });
+            else onSizeBy(v as GearSettings["sizeBy"]);
           }}
         >
           <option value="module">Module</option>
@@ -242,8 +283,6 @@ export function GearDialog({
           {placed
             ? field("rotation", "Extra rotation°", { title: "Added to the angle that meshes its teeth" })
             : field("rotation", "Rotation°", { title: "Turn the teeth to line up with a partner" })}
-          {!placed && field("centerX", "Center X")}
-          {!placed && field("centerY", "Center Y")}
         </div>
       )}
 

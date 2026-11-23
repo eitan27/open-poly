@@ -97,6 +97,14 @@ export function featureTypeLabel(feature: Feature): string {
       return "Loft";
     case "gear":
       return "Gear";
+    case "hole":
+      return "Hole";
+    case "screw":
+      return "Screw";
+    case "thread":
+      return "Thread";
+    case "deletePart":
+      return "Delete part";
     // Primitives are the one type whose label comes from its own table (one
     // label per box/cylinder/sphere, not one for "primitive"), which is why it
     // reads as a case rather than the fallthrough it used to be.

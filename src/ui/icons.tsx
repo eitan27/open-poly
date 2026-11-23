@@ -179,3 +179,90 @@ export function GroundIcon({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
+
+/** A spur gear's outline (8 teeth) around its bore — the Gear tool. Drawn
+ *  because the ⚙ glyph is too small at toolbar size for its teeth to read. */
+const GEAR_PATH = (() => {
+  const n = 8;
+  const [tip, root] = [7.3, 5.2];
+  const pt = (r: number, a: number) => `${(8 + r * Math.cos(a)).toFixed(2)} ${(8 + r * Math.sin(a)).toFixed(2)}`;
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const c = (i * 2 * Math.PI) / n - Math.PI / 2;
+    const [ht, hr] = [(Math.PI / n) * 0.38, (Math.PI / n) * 0.62];
+    parts.push(
+      `${i ? "L" : "M"}${pt(root, c - hr)}`,
+      `L${pt(tip, c - ht)}`,
+      `L${pt(tip, c + ht)}`,
+      `L${pt(root, c + hr)}`,
+    );
+    parts.push(`A${root} ${root} 0 0 1 ${pt(root, c + (2 * Math.PI) / n - hr)}`);
+  }
+  return parts.join(" ") + "Z";
+})();
+
+export function GearIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.3}
+      strokeLinejoin="round"
+      className="tool-svg-icon"
+      aria-hidden="true"
+    >
+      <path d={GEAR_PATH} />
+      <circle cx="8" cy="8" r="2.1" />
+    </svg>
+  );
+}
+
+/** A screw side-on: its head, and a threaded shank to a point — the Screw
+ *  tool. */
+export function ScrewIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.3}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="tool-svg-icon"
+      aria-hidden="true"
+    >
+      <path d="M4 4.6V2.9Q4 1.5 5.4 1.5H10.6Q12 1.5 12 2.9V4.6Z" />
+      <path d="M6.2 4.6V12.4L8 14.6 9.8 12.4V4.6" />
+      <path d="M6.2 7 9.8 5.9M6.2 9.4 9.8 8.3M6.2 11.8 9.8 10.7" />
+    </svg>
+  );
+}
+
+/** A threaded rod side-on: saw-tooth flanks, the crests running across it on
+ *  the slant of the helix — the Thread tool (a thread cut on a round face). */
+export function ThreadIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.3}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="tool-svg-icon"
+      aria-hidden="true"
+    >
+      <path d="M5.2 1.8V2.6L3.4 4.4 5.2 6.2 3.4 8 5.2 9.8 3.4 11.6 5.2 13.4V14.2" />
+      <path d="M10.8 1.8V4.4L12.6 6.2 10.8 8 12.6 9.8 10.8 11.6 12.6 13.4 10.8 14.2" />
+      <path d="M5.2 1.8H10.8M5.2 14.2H10.8" />
+      <path d="M3.4 4.4 12.6 6.2M3.4 8 12.6 9.8M3.4 11.6 12.6 13.4" />
+    </svg>
+  );
+}

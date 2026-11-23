@@ -471,6 +471,114 @@ export const operationSchema = z.discriminatedUnion("op", [
     flip: z.boolean().optional(),
   }),
   z.object({
+    op: z.literal("addHole"),
+    /** The sketch whose POINT entities and CIRCLE centres place the holes. */
+    sketchId: z.string(),
+    /** The body to drill. Defaults to the body the sketch was drawn on. */
+    targetId: z.string().optional(),
+    holeType: z.enum(["simple", "counterbore", "countersink", "tapped"]).optional(),
+    /** Tapped, metric: "cosmetic" (default) drills the tap drill only;
+     *  "modelled" cuts a real ISO thread, grown by params.clearance (default
+     *  0.1 mm) so a printed screw fits. */
+    thread: z.enum(["modelled", "cosmetic"]).optional(),
+    /** "M2" | "M2.5" | "M3" | "M4" | "M5" | "M6" | "M8" | "M10" | "M12" (ISO
+     *  table: clearance / tap drill / counterbore / countersink sizes), or
+     *  "custom" to give the diameters yourself. Default M3. */
+    size: z.string().optional(),
+    /** Clearance fit for a metric non-tapped hole (ISO 273), or exact = the
+     *  screw's own diameter. Default normal. */
+    fit: z.enum(["close", "normal", "loose", "exact"]).optional(),
+    /** Default throughAll. upToNext: through the first stretch of material
+     *  each hole meets, stopping at the gap after it. */
+    extent: z.enum(["blind", "throughAll", "upToNext"]).optional(),
+    flip: z.boolean().optional(),
+    /** Custom sizes / blind depth: diameter, depth, counterboreDiameter,
+     *  counterboreDepth, countersinkDiameter, countersinkAngle, tipAngle (0 =
+     *  flat bottom; default 118), threadDepth, clearance (modelled thread). */
+    params: z.record(z.string(), expr).optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
+    op: z.literal("addThread"),
+    /** The round face to cut the thread on: a rod's side (the grooves are cut
+     *  in — make the rod at the thread's major diameter) or a hole's wall
+     *  (cut outward — make the hole at the minor diameter). Which it is, is
+     *  read off the face. Any strip of a faceted round wall names the wall. */
+    face: z.object({ bodyId: z.string(), faceName: z.string() }),
+    /** A Thread, tapped Hole or Screw feature id whose thread to copy (size,
+     *  pitch, profile, starts, hand), so the two screw together. */
+    match: z.string().optional(),
+    /** "printable" (default): 45° flanks, wide flats — prints upright with no
+     *  supports. "iso": the 60° metric form. "trapezoid": ≈15°, lead screws. */
+    profile: z.enum(["printable", "iso", "trapezoid"]).optional(),
+    leftHand: z.boolean().optional(),
+    /** 45° lead-in: a chamfer at the rod's tip / a countersink at the hole's
+     *  mouth. Default true. */
+    leadIn: z.boolean().optional(),
+    /** Start at the face's other end. It starts at the open end — a rod's
+     *  free tip, a hole's mouth. */
+    flip: z.boolean().optional(),
+    /** diameter (major; default suggested from the face — a rod's own Ø, or
+     *  the size whose minor Ø is the hole), pitch (default 2), length (from
+     *  the start end; default the whole face), starts (default 1), clearance
+     *  (mm per part, default 0.15). */
+    params: z.record(z.string(), expr).optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
+    op: z.literal("addGear"),
+    /** spur (external, default) or internal (a ring gear: teeth inside a rim). */
+    gearType: z.enum(["spur", "internal"]).optional(),
+    /** The plane (or planar face) the gear lies on, centred on its origin (or
+     *  at params.centerX/centerY). Default the Top datum. */
+    plane: planeRefSchema.optional(),
+    /** Size the teeth by params.module (default) or params.pitchDiameter.
+     *  Inferred as pitchDiameter when only that one is given. */
+    sizeBy: z.enum(["module", "pitchDiameter"]).optional(),
+    /** Another gear's feature id to mesh with: its module and pressure angle
+     *  are taken, so the pair always fits. */
+    meshWith: z.string().optional(),
+    /** With meshWith: sit beside the partner at the meshing centre distance,
+     *  toward params.placeAngle (degrees), teeth already in mesh. Needs a plane
+     *  parallel to the partner's. */
+    placeBeside: z.boolean().optional(),
+    /** External gear's centre hole. Default round. */
+    bore: z.enum(["none", "round", "dflat"]).optional(),
+    /** blind (default): one side of the plane (flip = the other); symmetric: centred on it. */
+    extent: z.enum(["blind", "symmetric"]).optional(),
+    flip: z.boolean().optional(),
+    /** teeth, module, pitchDiameter, thickness, boreDiameter, boreFlat,
+     *  rimWidth, pressureAngle, backlash, profileShift, rootFillet, rotation,
+     *  centerX, centerY, placeAngle. */
+    params: z.record(z.string(), expr).optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
+    op: z.literal("addScrew"),
+    head: z.enum(["socket", "button", "flat", "hex", "set", "none"]).optional(),
+    /** "cosmetic" (default): a plain shank at the nominal diameter;
+     *  "modelled": a real ISO thread, shrunk by params.clearance (default
+     *  0.1 mm) so it fits a printed nut/tapped hole. */
+    thread: z.enum(["modelled", "cosmetic"]).optional(),
+    /** "M2" … "M12". Ignored when `holeId` names a metric hole (it follows the hole). */
+    size: z.string().optional(),
+    /** Put one screw in every hole of this Hole feature (seated on a
+     *  counterbore floor / flush in a countersink), following it. */
+    holeId: z.string().optional(),
+    /** A screw at every POINT entity and CIRCLE centre of this sketch, on its
+     *  plane, following the points as they move. */
+    sketchId: z.string().optional(),
+    /** A screw at each fixed spot: (x, y) on `plane` (a datum, reference
+     *  plane or planar face; default Top): the head on it, the shank going in
+     *  against its normal (flip reverses). Combine freely with holeId /
+     *  sketchId; with none of them, one screw at Top's origin. */
+    at: z.array(z.object({ plane: planeRefSchema.optional(), x: z.number(), y: z.number() })).optional(),
+    flip: z.boolean().optional(),
+    /** length (under the head; overall for a countersunk head), clearance. */
+    params: z.record(z.string(), expr).optional(),
+    name: z.string().optional(),
+  }),
+  z.object({
     op: z.literal("shell"),
     targetId: z.string(),
     /** Persistent face names from the scene summary — the faces to remove
@@ -532,6 +640,12 @@ export const operationSchema = z.discriminatedUnion("op", [
   }),
   z.object({ op: z.literal("rename"), featureId: z.string(), name: z.string() }),
   z.object({ op: z.literal("delete"), featureId: z.string() }),
+  /** Take ONE part out of the model from here on — a screw of a Screw
+   *  feature's, a pattern's copy — by its part id from the scene summary
+   *  (`<featureId>` or `<featureId>#<n>`), leaving the feature that made it as
+   *  it is. Adds a Delete part step to the timeline (or extends the one just
+   *  before). */
+  z.object({ op: z.literal("deletePart"), partId: z.string() }),
   z.object({ op: z.literal("setRollback"), index: z.number().int().min(0) }),
   z.object({ op: z.literal("select"), refs: z.array(selectionSchema) }),
   // View-only cross-section —
@@ -813,6 +927,19 @@ export interface SceneSummary {
   }[];
   planes: { id: string; name: string }[];
   variables: { name: string; expression: string; value?: number }[];
+  /** Gears, with the module / pitch diameter / pressure angle each is built
+   *  with. A meshed gear (`meshWith`) stores none of these — get_document
+   *  shows only the link; they're its partner's and follow it. Present only
+   *  when there are gears. */
+  gears?: {
+    id: string;
+    name: string;
+    teeth: number;
+    module: number;
+    pitchDiameter: number;
+    pressureAngle: number;
+    meshWith?: string;
+  }[];
   rollbackIndex: number;
   featureCount: number;
   selection: unknown[];

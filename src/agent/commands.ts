@@ -10,7 +10,19 @@
 // mutating op resolves — so the agent knows it actually succeeded — belongs to
 // the host's regen coordinator, a layer up; what this layer reports is the
 // synchronous resolve errors (bad expressions, missing refs).
+import {
+  DEFAULT_THREAD_PARAMS,
+  DEFAULT_THREAD_SETTINGS,
+  matchThread,
+  suggestThread,
+  type ThreadSettings,
+} from "../document/threadFeature";
+import { roundWallOfMesh } from "../geom/roundWall";
 import { FOLDED_NAMES_NOTE, foldNames } from "./nameRanges";
+import { DEFAULT_HOLE_PARAMS, DEFAULT_HOLE_SETTINGS, defaultHolePoints } from "../document/hole";
+import { DEFAULT_SCREW_PARAMS, DEFAULT_SCREW_SETTINGS } from "../document/screw";
+import { DEFAULT_GEAR_PARAMS, DEFAULT_GEAR_SETTINGS, gearSizing } from "../document/gear";
+import { METRIC_SIZES, isMetricSize } from "../geom/metricFasteners";
 import {
   addBoolean,
   addDerivedOp,
@@ -23,6 +35,10 @@ import {
   addPlane,
   addRevolve,
   addShell,
+  addHole,
+  addScrew,
+  addThread,
+  addGear,
   addSketch,
   addSketchConstraints,
   addSweep,
@@ -33,6 +49,7 @@ import {
   setSketchEntities,
   makeFeature,
   removeFeature,
+  deletePart,
   renameFeature,
   resolveDocument,
   setFeatureColor,
@@ -61,6 +78,7 @@ import type {
   ExtrudeProfile,
   FaceRef,
   Feature,
+  HolePointRef,
   PatternAxisRef,
   PatternDirRef,
   PointRef,
@@ -1282,6 +1300,153 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         createdId = r.id;
         break;
       }
+      case "addGear": {
+        if (op.meshWith) {
+          const partner = requireFeature(doc, op.meshWith);
+          if (partner.type !== "gear") throw new OpError("invalid_op", "addGear: meshWith must name a Gear feature.");
+        } else if (op.placeBeside) {
+          throw new OpError("invalid_op", "addGear: placeBeside needs meshWith (the gear to sit beside).");
+        }
+        const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_GEAR_PARAMS));
+        if (unknown.length) throw new OpError("invalid_op", `addGear: unknown params ${unknown.join(", ")}.`);
+        // Giving only a pitch diameter means "size it by that".
+        const sizeBy =
+          op.sizeBy ??
+          (op.params?.pitchDiameter !== undefined && op.params?.module === undefined ? "pitchDiameter" : "module");
+        const plane: SketchPlaneRef = op.plane ? resolvePlaneRef(ctx, op.plane) : { kind: "datum", id: "plane-top" };
+        const r = addGear(doc, plane, {
+          ...DEFAULT_GEAR_SETTINGS,
+          gearType: op.gearType ?? DEFAULT_GEAR_SETTINGS.gearType,
+          sizeBy,
+          ...(op.meshWith ? { meshWith: op.meshWith } : {}),
+          ...(op.meshWith && op.placeBeside ? { placeBeside: true } : {}),
+          bore: op.bore ?? DEFAULT_GEAR_SETTINGS.bore,
+          extent: op.extent ?? DEFAULT_GEAR_SETTINGS.extent,
+          flip: op.flip ?? false,
+          params: { ...DEFAULT_GEAR_PARAMS, ...op.params },
+        });
+        next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
+        createdId = r.id;
+        break;
+      }
+      case "addScrew": {
+        if (op.holeId) {
+          const h = requireFeature(doc, op.holeId);
+          if (h.type !== "hole") throw new OpError("invalid_op", "addScrew: holeId must name a Hole feature.");
+        }
+        const points: HolePointRef[] = [];
+        if (op.sketchId) {
+          const sk = requireSketch(doc, op.sketchId);
+          const pts = defaultHolePoints(sk).map((p) => ({ ...p, sketchId: sk.id }));
+          if (!pts.length)
+            throw new OpError("invalid_op", "addScrew: the sketch has no point or circle to put a screw at.");
+          points.push(...pts);
+        }
+        for (const a of op.at ?? []) {
+          const plane: SketchPlaneRef = a.plane ? resolvePlaneRef(ctx, a.plane) : { kind: "datum", id: "plane-top" };
+          points.push({ uv: [a.x, a.y], plane });
+        }
+        if (op.size && !isMetricSize(op.size)) {
+          throw new OpError("invalid_op", `addScrew: unknown size "${op.size}" — use ${METRIC_SIZES.join(", ")}.`);
+        }
+        const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_SCREW_PARAMS));
+        if (unknown.length) throw new OpError("invalid_op", `addScrew: unknown params ${unknown.join(", ")}.`);
+        const r = addScrew(doc, {
+          head: op.head ?? DEFAULT_SCREW_SETTINGS.head,
+          thread: op.thread ?? DEFAULT_SCREW_SETTINGS.thread,
+          size: op.size ?? DEFAULT_SCREW_SETTINGS.size,
+          ...(op.holeId ? { holeId: op.holeId } : {}),
+          ...(points.length ? { points } : {}),
+          flip: op.flip ?? false,
+          params: { ...DEFAULT_SCREW_PARAMS, ...op.params },
+        });
+        next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
+        createdId = r.id;
+        break;
+      }
+      case "addThread": {
+        const mesh = ctx.getMeshes().find((m) => m.id === op.face.bodyId);
+        if (!mesh) throw new OpError("not_found", `No body "${op.face.bodyId}" (it may not be regenerated yet).`);
+        const fg = faceGeomByName(mesh.mesh.faces, op.face.faceName);
+        if (!fg) throw new OpError("not_found", `Face "${op.face.faceName}" not found on body "${op.face.bodyId}".`);
+        const wall = roundWallOfMesh(mesh.mesh.faces, fg.faceId);
+        if (!wall)
+          throw new OpError(
+            "invalid_op",
+            `addThread: "${op.face.faceName}" isn't round — pick a cylindrical face or a hole's wall.`,
+          );
+        const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_THREAD_PARAMS));
+        if (unknown.length) throw new OpError("invalid_op", `addThread: unknown params ${unknown.join(", ")}.`);
+        const given = Object.fromEntries(Object.entries(op.params ?? {}).map(([k, v]) => [k, String(v)]));
+        let settings: ThreadSettings = {
+          profile: op.profile ?? DEFAULT_THREAD_SETTINGS.profile,
+          leftHand: op.leftHand ?? false,
+          leadIn: op.leadIn ?? DEFAULT_THREAD_SETTINGS.leadIn,
+          flip: op.flip ?? false,
+          fullLength: op.params?.length === undefined,
+          params: { ...DEFAULT_THREAD_PARAMS, ...given },
+        };
+        const scope = resolveDocument(doc).scope;
+        if (op.match) {
+          requireFeature(doc, op.match);
+          const m = matchThread(doc, { partId: op.match }, null, settings, scope);
+          if (!m)
+            throw new OpError(
+              "invalid_op",
+              `addThread: "${op.match}" has no thread to match (a Thread, tapped Hole or Screw).`,
+            );
+          settings = { ...settings, ...m.patch, params: { ...settings.params, ...m.patch.params, ...given } };
+        } else if (given.diameter === undefined) {
+          const sug = suggestThread(wall, settings, scope, given.pitch !== undefined);
+          settings = {
+            ...settings,
+            params: { ...settings.params, diameter: sug.diameter, pitch: given.pitch ?? sug.pitch },
+          };
+        }
+        const r = addThread(
+          doc,
+          {
+            featureId: op.face.bodyId,
+            faceId: fg.faceId,
+            faceName: op.face.faceName,
+            center: fg.center,
+            normal: fg.normal,
+          },
+          wall.internal ? "internal" : "external",
+          settings,
+        );
+        next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
+        createdId = r.id;
+        break;
+      }
+      case "addHole": {
+        requireSketch(doc, op.sketchId);
+        // A target narrows the cut to that part; without one the holes cut
+        // every part they reach.
+        if (op.targetId) requireFeature(doc, op.targetId);
+        const targetId = op.targetId;
+        if (op.size && op.size !== "custom" && !isMetricSize(op.size)) {
+          throw new OpError(
+            "invalid_op",
+            `addHole: unknown size "${op.size}" — use ${METRIC_SIZES.join(", ")} or "custom".`,
+          );
+        }
+        const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_HOLE_PARAMS));
+        if (unknown.length) throw new OpError("invalid_op", `addHole: unknown params ${unknown.join(", ")}.`);
+        const r = addHole(doc, op.sketchId, targetId, {
+          holeType: op.holeType ?? DEFAULT_HOLE_SETTINGS.holeType,
+          thread: op.thread ?? DEFAULT_HOLE_SETTINGS.thread,
+          size: op.size ?? DEFAULT_HOLE_SETTINGS.size,
+          fit: op.fit ?? DEFAULT_HOLE_SETTINGS.fit,
+          // The agent's documented default: a bolt hole goes through.
+          extent: op.extent ?? "throughAll",
+          flip: op.flip ?? false,
+          params: { ...DEFAULT_HOLE_PARAMS, ...op.params },
+        });
+        next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
+        createdId = r.id;
+        break;
+      }
       case "shell": {
         requireFeature(doc, op.targetId);
         // Bake geometric fingerprints for the named faces (from the target's
@@ -1325,6 +1490,19 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
       case "delete": {
         requireFeature(doc, op.featureId);
         next = removeFeature(doc, op.featureId);
+        break;
+      }
+      case "deletePart": {
+        const fid = featureIdOfPart(op.partId);
+        requireFeature(doc, fid);
+        if (!ctx.getMeshes().some((m) => m.id === op.partId))
+          throw new OpError(
+            "not_found",
+            `deletePart: no part "${op.partId}" in the model — use a body id from get_scene_summary.`,
+          );
+        const r = deletePart(doc, op.partId);
+        next = r.doc;
+        createdId = r.id;
         break;
       }
       case "setRollback": {
@@ -1598,6 +1776,28 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
     value: resolved.scope[v.name],
   }));
 
+  // A gear's sizing as built — a meshed gear's comes from its partner.
+  const gears: NonNullable<SceneSummary["gears"]> = doc.features.flatMap((f) => {
+    if (f.type !== "gear") return [];
+    try {
+      const s = gearSizing(doc, f, resolved.scope);
+      const r6 = (n: number) => Number(n.toFixed(6));
+      return [
+        {
+          id: f.id,
+          name: f.name,
+          teeth: s.teeth,
+          module: r6(s.module),
+          pitchDiameter: r6(s.module * s.teeth),
+          pressureAngle: r6(s.pressureAngle),
+          ...(f.meshWith ? { meshWith: f.meshWith } : {}),
+        },
+      ];
+    } catch {
+      return []; // its error is in `errors`
+    }
+  });
+
   const docInfo = ctx.documents.info();
   return {
     documentId: docInfo.id,
@@ -1606,6 +1806,7 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
     sketches,
     planes,
     variables,
+    ...(gears.length ? { gears } : {}),
     rollbackIndex: doc.rollbackIndex,
     featureCount: doc.features.length,
     selection: ctx.getSelection(),

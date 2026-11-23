@@ -35,6 +35,7 @@ import {
   genId,
   moveFeature,
   removeFeature,
+  deletePart,
   removeSketchConstraint,
   removeSketchEntity,
   removeVariable,
@@ -109,10 +110,12 @@ import type {
   PlaneFeature,
   PlaneMethod,
   PointRef,
+  HolePointRef,
   RevolveProfile,
   SketchConstraint,
   SketchEntity,
   SketchFeature,
+  ThreadFaceRef,
   Vec2,
 } from "./document/types";
 import { measureBetween, resolveSide } from "./sketch/distanceDim";
@@ -190,14 +193,39 @@ import { useShellDialog } from "./hooks/useShellDialog";
 import { usePatternDialog } from "./hooks/usePatternDialog";
 import { useRevolveDialog } from "./hooks/useRevolveDialog";
 import { useGearDialog } from "./hooks/useGearDialog";
-import { gearReadout, meshCandidates } from "./document/gear";
+import { useHoleDialog } from "./hooks/useHoleDialog";
+import { useThreadDialog } from "./hooks/useThreadDialog";
+import { matchThread, threadDims, type ThreadDims } from "./document/threadFeature";
+import { roundWallOfMesh, type RoundWall } from "./geom/roundWall";
+import { useScrewDialog } from "./hooks/useScrewDialog";
+import { ringMesh } from "./hooks/ghostMove";
+import {
+  holeDims,
+  holePlacement,
+  holePointAt,
+  holeProfile,
+  holeTarget,
+  sameHolePoint,
+  type HoleDims,
+} from "./document/hole";
+import { screwDims, screwSize, type ScrewDims } from "./document/screw";
+import { gearReadout, gearSizing, meshCandidates } from "./document/gear";
 import { usePersistedDocuments } from "./hooks/usePersistedDocuments";
 import { useAgentBridge } from "./agent/useAgentBridge";
 import type { AgentContext, AgentMesh, RegenSettle } from "./agent/commands";
 import { settleAssembly } from "./agent/assemblySummary";
 import { readSource } from "./assembly/useAssemblySources";
 import type { AssemblyAgentState } from "./agent/assemblySummary";
-import { ConstructionIcon, HorizontalIcon, OffsetIcon, ParallelIcon, VerticalIcon } from "./ui/icons";
+import {
+  ConstructionIcon,
+  GearIcon,
+  HorizontalIcon,
+  OffsetIcon,
+  ParallelIcon,
+  ScrewIcon,
+  ThreadIcon,
+  VerticalIcon,
+} from "./ui/icons";
 import { BooleanDialog } from "./ui/BooleanDialog";
 import { PatternDialog } from "./ui/PatternDialog";
 import { ExtrudeDialog } from "./ui/ExtrudeDialog";
@@ -208,6 +236,9 @@ import { PlaneDialog } from "./ui/PlaneDialog";
 import { TransformArmingDialog, TransformDialog } from "./ui/TransformDialog";
 import { RevolveDialog } from "./ui/RevolveDialog";
 import { GearDialog } from "./ui/GearDialog";
+import { HoleDialog } from "./ui/HoleDialog";
+import { ThreadDialog } from "./ui/ThreadDialog";
+import { ScrewDialog } from "./ui/ScrewDialog";
 import { MirrorDialog } from "./ui/MirrorDialog";
 import { DxfImportDialog } from "./ui/DxfImportDialog";
 import { LoftDialog } from "./ui/LoftDialog";
@@ -258,6 +289,7 @@ import type {
   TransformMode,
   ViewName,
   ViewportApi,
+  PlacementPick,
 } from "./viewport/types";
 import "./App.css";
 
@@ -433,6 +465,16 @@ function mirrorPlaneLabel(ref: SketchPlaneRef, doc: Document): string {
   if (ref.kind === "face") return `${doc.features.find((f) => f.id === ref.featureId)?.name ?? "Body"} · face`;
   if (ref.kind === "plane") return doc.features.find((f) => f.id === ref.planeId)?.name ?? "Reference plane";
   return planeRefLabel(ref);
+}
+
+/** Where a gear is, as its Location slot names it: the sketch point it's
+ *  centred on, the face it's on, or the plane (centred on its origin). */
+function gearLocationLabel(plane: SketchPlaneRef, center: HolePointRef | undefined, doc: Document): string {
+  if (center && !("uv" in center)) {
+    const sk = doc.features.find((f) => f.id === center.sketchId);
+    return `${sk?.name ?? "Sketch"} · ${center.at === "point" ? "point" : center.at}`;
+  }
+  return mirrorPlaneLabel(center && "uv" in center && center.plane ? center.plane : plane, doc);
 }
 
 /** A `"datum:<id>"` / `"plane:<featureId>"` dropdown key as a plane reference.
@@ -836,7 +878,9 @@ export default function App() {
     return ids;
   }, [selection, doc]);
   const primaryFeatureId = selection.length ? featureIdOf(selection[selection.length - 1]) : null;
-  const selectFeature = (id: string | null) => setSelection(id === null ? [] : [{ kind: "feature", id }]);
+  const selectFeature = (id: string | null) => setSelection(id === null ? [] : [{ kind: "feature", id, whole: true }]);
+  /** The Parts panel's selection: one part, not the feature that made it. */
+  const selectPart = (id: string | null) => setSelection(id === null ? [] : [{ kind: "feature", id }]);
   // Regular clicks accumulate into the set; clicking a selected element removes
   // it; clicking empty space clears.
   const handlePick = (picked: Selection | null, sketchUv?: Vec2) => {
@@ -882,6 +926,15 @@ export default function App() {
           setPickingUpFace(false);
         }
       }
+      return;
+    }
+    // Hole dialog's Parts slot listening: a clicked part joins (or leaves)
+    // the parts it cuts. (Its Location slot takes clicks as placement picks
+    // instead — see onHolePlacementPick.)
+    if (hole.dialog?.armed === "parts") {
+      const fid = picked ? featureIdOfPart(featureIdOf(picked)) : null;
+      if (fid && booleanCandidates.some((c) => featureIdOfPart(c.id) === fid)) hole.togglePart(fid);
+      else if (picked) flashMsg("Select the parts the holes should cut.");
       return;
     }
     // Through-3-points plane pick armed: read a world point from the clicked
@@ -1257,15 +1310,7 @@ export default function App() {
   // What the plane/face pick flow is for: starting a sketch, or the base of a
   // new reference plane.
   const [pickPurpose, setPickPurpose] = useState<
-    | "sketch"
-    | "plane"
-    | "revolveAxis"
-    | "patternAxis"
-    | "patternDir"
-    | "transformAxis"
-    | "mirrorPlane"
-    | "sectionPlane"
-    | "gearPlane"
+    "sketch" | "plane" | "revolveAxis" | "patternAxis" | "patternDir" | "transformAxis" | "mirrorPlane" | "sectionPlane"
   >("sketch");
   // The reference-plane dialog. `method` chooses the placement; the relevant
   // fields are filled by picks (base/refB planes-or-faces; points) or text inputs.
@@ -1580,16 +1625,70 @@ export default function App() {
     setDoc,
     ready,
     kernelRef,
-    picking,
-    pickPurpose,
-    setPicking,
-    setPickPurpose,
     beginEdit,
     commitEdit,
     cancelEdit,
     shouldLiveApply,
     selectFeature,
   });
+  // The Hole dialog: holes at a sketch's points, ghosted as the drill tools.
+  const hole = useHoleDialog({
+    doc,
+    setDoc,
+    ready,
+    kernelRef,
+    beginEdit,
+    commitEdit,
+    cancelEdit,
+    shouldLiveApply,
+    selectFeature,
+  });
+  // The Thread dialog: a custom thread cut on a round face — a rod or a hole.
+  const thread = useThreadDialog({
+    doc,
+    setDoc,
+    ready,
+    kernelRef,
+    scope: resolved.scope,
+    beginEdit,
+    commitEdit,
+    cancelEdit,
+    shouldLiveApply,
+    selectFeature,
+  });
+  const lastThreadDims = useRef<ThreadDims | null>(null);
+  // The Screw dialog: screws in a Hole feature's holes, and at picked spots.
+  const screw = useScrewDialog({
+    doc,
+    setDoc,
+    ready,
+    kernelRef,
+    beginEdit,
+    commitEdit,
+    cancelEdit,
+    shouldLiveApply,
+    selectFeature,
+  });
+  const lastScrewDims = useRef<ScrewDims | null>(null);
+  /** The Screw dialog's row under the pointer: its screw is lit. */
+  const [screwRowHover, setScrewRowHover] = useState<number | null>(null);
+  const screwOpen = !!screw.dialog;
+  useEffect(() => {
+    if (!screwOpen) setScrewRowHover(null);
+  }, [screwOpen]);
+  /** The Hole dialog's Target row under the pointer: its hole's outline is lit. */
+  const [holeRowHover, setHoleRowHover] = useState<number | null>(null);
+  /** …and the Subset row under the pointer: that part is lit. */
+  const [holePartHover, setHolePartHover] = useState<string | null>(null);
+  const holeOpen = !!hole.dialog;
+  useEffect(() => {
+    if (holeOpen) return;
+    setHoleRowHover(null);
+    setHolePartHover(null);
+  }, [holeOpen]);
+  // The last hole settings that resolved, so the dialog's diagram holds still
+  // while a field is half-typed rather than blinking out.
+  const lastHoleDims = useRef<HoleDims | null>(null);
   // The extrude dialog (anchored at the profile) while choosing parameters.
   // `editId` set ⇒ editing an existing extrude in place (Confirm updates it);
   // else creating from the current profile selection.
@@ -1920,6 +2019,8 @@ export default function App() {
   // with the other document state further up because its inputs — the viewport
   // ref, rawMeshes, regenSettledSeq — are declared above this line and nothing
   // between reads what it returns.
+  // Every feature dialog's close, set further down once they're all declared.
+  const closeDialogsRef = useRef<() => void>(() => {});
   const {
     docIdRef,
     docName,
@@ -1953,7 +2054,12 @@ export default function App() {
     // The Variables panel defaults open/collapsed by the incoming document's
     // variable count — a panel concern, so the hook takes it as a callback
     // rather than knowing about VARS_OPEN_THRESHOLD.
-    onDocumentAdopted: (next) => setVariablesOpen(next.variables.length < VARS_OPEN_THRESHOLD),
+    // A dialog belongs to the document it was opened on: switching documents
+    // (New, Open, Duplicate) closes it and its ghost.
+    onDocumentAdopted: (next) => {
+      setVariablesOpen(next.variables.length < VARS_OPEN_THRESHOLD);
+      closeDialogsRef.current();
+    },
     downloadBlob,
     safeFilename,
   });
@@ -2480,11 +2586,20 @@ export default function App() {
    *
    *  `transform.arming` and `transform.editId` count: the transform gizmo is a
    *  dialog by any other name. */
+  // The Hole dialog's Location slot: the viewport places points (the sketch
+  // Point tool's snapping) on the hole's plane, or the face under the pointer
+  // until the first pick fixes it.
+  const holePlacing = hole.dialog?.armed === "points";
+  const gearPlacing = !!gear.dialog?.locating;
+  const screwPlacing = !!screw.dialog?.locating;
   const anyDialogOpen =
     !!planeDialog ||
     !!extrudeDialog ||
     !!revolve.dialog ||
     !!gear.dialog ||
+    !!hole.dialog ||
+    !!screw.dialog ||
+    !!thread.dialog ||
     !!sweepDialog ||
     !!loftDialog ||
     !!dressUp.dialog ||
@@ -2616,6 +2731,53 @@ export default function App() {
     return [{ mesh: transformMeshPayload(m.mesh, mapPt, mapVec, true) }];
   }, [mirrorDialog, meshes, resolved.planeFrames]);
 
+  // A gear just created: its ghost stays until the gear itself is drawn, so
+  // Create goes straight from one to the other instead of a blank gap while
+  // the document regenerates. Cleared once a regen has its body (or its
+  // error), or after a few seconds whatever happens.
+  const [gearLanding, setGearLanding] = useState<{ id: string; mesh: ShapeMeshPayload } | null>(null);
+  const confirmGear = () => {
+    const d = gear.dialog;
+    if (d && !d.editId && gear.preview) setGearLanding({ id: d.draftId, mesh: gear.preview });
+    gear.confirm();
+  };
+  useEffect(() => {
+    if (!gearLanding) return;
+    if (rawMeshes.some((m) => m.id === gearLanding.id) || errors[gearLanding.id]) {
+      setGearLanding(null);
+      return;
+    }
+    const t = setTimeout(() => setGearLanding(null), 4000);
+    return () => clearTimeout(t);
+  }, [gearLanding, rawMeshes, errors]);
+
+  // The hovered row's screw, drawn on top in the warm "fill" colour: the
+  // ghost's copy at that spot while creating, the part itself while editing.
+  const screwRowMesh = useMemo(() => {
+    const d = screw.dialog;
+    if (!d || screwRowHover === null) return null;
+    if (!d.editId) return screw.ghostScrewAt(screwRowHover);
+    const id = screwRowHover === 0 ? d.editId : `${d.editId}#${screwRowHover}`;
+    return rawMeshes.find((m) => m.id === id)?.mesh ?? null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ghostScrewAt reads refs the preview keeps current
+  }, [screw.dialog, screw.preview, screwRowHover, rawMeshes]);
+  // The hovered Target row's hole: a ring round its rim (the counterbore's or
+  // countersink's, when it has one), on the face it's drilled from — the same
+  // whether the hole is a ghost (creating) or already cut (editing).
+  const holeRowRing = useMemo(() => {
+    const d = hole.dialog;
+    const ref = holeRowHover === null ? undefined : d?.settings.points?.[holeRowHover];
+    if (!d || !ref) return null;
+    try {
+      const sketchOf = (id: string) => doc.features.find((f): f is SketchFeature => f.id === id && f.type === "sketch");
+      const owner = { plane: d.settings.plane, sketchId: d.sketchId ?? undefined };
+      const t = holeTarget(owner, ref, sketchOf, resolved.planeFrames);
+      const rim = Math.max(...holeProfile(holeDims(d.settings, resolved.scope)).map((p) => p[0]));
+      return ringMesh(t.frame, t.center, rim, Math.max(1, rim * 0.6));
+    } catch {
+      return null; // a half-typed size: nothing to light
+    }
+  }, [hole.dialog, holeRowHover, doc, resolved]);
   const ghostMeshes = useMemo<GhostMesh[]>(
     () => [
       // An extrude previews the swept TOOL, and in Remove mode that tool is the
@@ -2630,6 +2792,15 @@ export default function App() {
         : []),
       ...(revolve.preview ? [{ mesh: revolve.preview }] : []),
       ...(gear.preview ? [{ mesh: gear.preview }] : []),
+      ...(gearLanding && !gear.preview ? [{ mesh: gearLanding.mesh }] : []),
+      // The drill tools are material about to go, like a Remove extrude's.
+      ...(hole.preview ? [{ mesh: hole.preview, variant: "cut" as const }] : []),
+      ...(screw.preview ? [{ mesh: screw.preview }] : []),
+      ...(screwRowMesh ? [{ mesh: screwRowMesh, variant: "fill" as const }] : []),
+      ...(holeRowRing ? [{ mesh: holeRowRing, variant: "fill" as const }] : []),
+      // A thread's ghost is what it cuts away: the teeth in a hole's wall,
+      // the grooves in a rod — red, as a Remove extrude's.
+      ...(thread.preview ? [{ mesh: thread.preview, variant: "cut" as const }] : []),
       ...patternGhosts,
       ...mirrorGhost,
       // The chamfer/fillet delta: what the operation fills in and what it carves
@@ -2637,7 +2808,21 @@ export default function App() {
       ...(dressUp.preview?.added ?? []).map((mesh) => ({ mesh, variant: "fill" as const })),
       ...(dressUp.preview?.removed ?? []).map((mesh) => ({ mesh, variant: "cut" as const })),
     ],
-    [extrudePreview, extrudeCutting, revolve.preview, gear.preview, patternGhosts, mirrorGhost, dressUp.preview],
+    [
+      extrudePreview,
+      extrudeCutting,
+      revolve.preview,
+      gear.preview,
+      gearLanding,
+      hole.preview,
+      screw.preview,
+      screwRowMesh,
+      holeRowRing,
+      thread.preview,
+      patternGhosts,
+      mirrorGhost,
+      dressUp.preview,
+    ],
   );
 
   // Keep the gear in view while its dialog is open. Place beside, a new size or
@@ -2668,6 +2853,14 @@ export default function App() {
   // that produced several disjoint solids contributes several (see
   // document/parts.ts); most contribute one, whose id IS the feature's.
   const partIds = useMemo(() => rawMeshes.map((m) => m.id), [rawMeshes]);
+  /** What the viewport lights: the selection's bodies, plus — while its row
+   *  in the Hole dialog's Subset is hovered — every part of that feature. */
+  const litBodyIds = useMemo(() => {
+    if (!holePartHover) return highlightBodyIds;
+    const ids = new Set(highlightBodyIds);
+    for (const id of partIds) if (featureIdOfPart(id) === holePartHover) ids.add(id);
+    return ids;
+  }, [highlightBodyIds, holePartHover, partIds]);
 
   // Agent command layer: exposes window.__openpoly for console testing
   // and runs the WebSocket bridge to the local MCP hub. `agentStatus` drives the
@@ -3487,6 +3680,270 @@ export default function App() {
     const picked = sel?.kind === "feature" ? doc.features.find((f) => f.id === sel.id) : undefined;
     gear.open(picked?.type === "plane" ? { kind: "plane", planeId: picked.id } : null);
   };
+  /** Open the Hole dialog on the selected sketch (or the newest one with
+   *  points) and the selected body (or the sketch's own, or the first). */
+  const openHole = () => {
+    if (hole.dialog) return;
+    let sketchId: string | null = null;
+    let bodyId: string | null = null;
+    for (const sel of selection) {
+      if ("sketchId" in sel && typeof sel.sketchId === "string") sketchId ??= sel.sketchId;
+      const fid = featureIdOf(sel);
+      const f = doc.features.find((x) => x.id === fid);
+      if (f?.type === "sketch") sketchId ??= f.id;
+      else if (fid && booleanCandidates.some((c) => c.id === fid)) bodyId ??= fid;
+    }
+    void bodyId;
+    hole.open(sketchId);
+  };
+  /** A point placed in the viewport for the Hole dialog. It drills from the
+   *  face it was placed on (or its sketch's plane), along that face's normal
+   *  — each target its own. A snap onto a sketch's own point, centre, end or
+   *  midpoint keeps a live link to that entity; anything else is a fixed spot
+   *  on the face. A pick on a target already there removes it — or, from the
+   *  other face of an edge, re-aims it to drill from this one. */
+  // The placement cursor is the hole's own rim: its bore (a tapped hole's
+  // thread), at the size the dialog shows now.
+  const holeCursor = (() => {
+    const d = hole.dialog;
+    if (!d) return null;
+    let dims: HoleDims | null = lastHoleDims.current;
+    try {
+      dims = holeDims(d.settings, resolved.scope);
+    } catch {
+      // keep the last good size
+    }
+    if (!dims) return null;
+    const dia = dims.holeType === "tapped" && dims.threadDiameter ? dims.threadDiameter : dims.diameter;
+    // The stub runs the way it drills: into the face, or out when flipped.
+    return { radius: dia / 2, stub: Math.max(dia, 3) * (d.settings.flip ? 1 : -1) };
+  })();
+  // …and a gear's is its pitch circle, the stub its thickness the way it
+  // extrudes (none when symmetric about the face).
+  const gearCursor = (() => {
+    const d = gear.dialog;
+    if (!d?.locating) return null;
+    try {
+      const { module, teeth } = gearSizing(doc, { id: d.editId ?? d.draftId, ...d.settings }, resolved.scope);
+      const t = evaluateExpression(d.settings.params.thickness, resolved.scope);
+      const stub = d.settings.extent === "symmetric" ? 0 : t * (d.settings.flip ? -1 : 1);
+      return { radius: (module * teeth) / 2, stub };
+    } catch {
+      return null;
+    }
+  })();
+  /** What a placement pick points at: the plane it was made on (the face's,
+   *  or the sketch's), and the target there — a snap onto a sketch's point,
+   *  centre, end or midpoint as a live link to that entity (when the sketch
+   *  lies on this face facing the same way), else a fixed spot on the face. */
+  const placementTarget = (
+    pick: PlacementPick,
+  ): { plane: SketchPlaneRef; ref: HolePointRef; frame: PlaneFrameData } | null => {
+    let plane: SketchPlaneRef;
+    if (pick.source.kind === "face") plane = { kind: "face", featureId: pick.source.featureId, frame: pick.frame };
+    else if (pick.source.kind === "sketch") {
+      const sid = pick.source.sketchId;
+      const sk = doc.features.find((f) => f.id === sid);
+      if (sk?.type !== "sketch") return null;
+      plane = sk.plane;
+    } else return null;
+    const frame = frameOf(plane, resolved.planeFrames);
+    const w = pick.world;
+    const along = (f: PlaneFrameData, a: number[]) =>
+      (w[0] - f.origin[0]) * a[0] + (w[1] - f.origin[1]) * a[1] + (w[2] - f.origin[2]) * a[2];
+    const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    for (const sk of doc.features) {
+      if (sk.type !== "sketch" || !planeResolves(sk.plane, resolved.planeFrames)) continue;
+      const f = frameOf(sk.plane, resolved.planeFrames);
+      // A sketch on this face, facing the same way (one on a datum under a
+      // downward face would drill the other way).
+      if (Math.abs(along(f, f.normal)) > 1e-3 || dot(f.normal, frame.normal) < 1 - 1e-6) continue;
+      const ref = holePointAt(sk, [along(f, f.uAxis), along(f, f.vAxis)], 1e-3);
+      if (ref) return { plane: sk.plane, ref, frame };
+    }
+    return { plane, ref: { uv: [along(frame, frame.uAxis), along(frame, frame.vAxis)], plane }, frame };
+  };
+  /** The gear's Location, picked in the viewport: a point or face spot to
+   *  centre it on (that face's or sketch's plane), or a plane — its origin. */
+  const onGearPlacementPick = (pick: PlacementPick) => {
+    const t = placementTarget(pick);
+    if (t) gear.setLocation(t.plane, t.ref);
+  };
+  const onGearPlanePick = (plane: SketchPlaneRef) => gear.setLocation(plane);
+  // …and a screw's is its head, the stub its shank going in (out, flipped).
+  const screwCursor = (() => {
+    const d = screw.dialog;
+    if (!d?.locating) return null;
+    try {
+      const dims = screwDims(
+        d.settings.head,
+        screwSize(doc, d.settings),
+        evaluateExpression(d.settings.params.length, resolved.scope),
+      );
+      return { radius: Math.max(dims.headDiameter, dims.d) / 2, stub: dims.length * (d.settings.flip ? 1 : -1) };
+    } catch {
+      return null;
+    }
+  })();
+  /** The Screw dialog's Locations, picked in the viewport, as a Hole's
+   *  targets are: a click on one of a Hole's holes (its centre — the rim's
+   *  snap) puts a screw in each of that Hole's holes — or, in the Hole it's
+   *  already in, takes that one hole's screw out or puts it back; a click
+   *  anywhere else adds a spot there — going into the face (or plane) it was
+   *  picked on, the way the cursor shows it — or removes the one already
+   *  there. */
+  const onScrewPlacementPick = (pick: PlacementPick) => {
+    const d = screw.dialog;
+    if (!d) return;
+    const w = pick.world;
+    const near = (q: number[]) => Math.hypot(q[0] - w[0], q[1] - w[1], q[2] - w[2]) < 1e-3;
+    const sketchOf = (id: string) => doc.features.find((f): f is SketchFeature => f.id === id && f.type === "sketch");
+    const points = d.settings.points ?? [];
+    const { holeId, skipHoles } = d.settings;
+    for (const h of doc.features) {
+      if (h.type !== "hole") continue;
+      let holes: { frame: PlaneFrameData; center: [number, number] }[] = [];
+      try {
+        holes = holePlacement(h, sketchOf, resolved.planeFrames).holes;
+      } catch {
+        // a Hole that doesn't place has no holes to click
+      }
+      const i = holes.findIndex((t) => near(uvToWorld(t.frame, t.center[0], t.center[1])));
+      if (i < 0) continue;
+      if (holeId !== h.id) return screw.setLocations({ holeId: h.id, points });
+      if (skipHoles?.includes(i))
+        return screw.setLocations({ holeId, skipHoles: skipHoles.filter((k) => k !== i), points });
+      return screw.removeLocation({ hole: i, count: holes.length });
+    }
+    const at = points.findIndex((p) => {
+      try {
+        const t = holeTarget({}, p, sketchOf, resolved.planeFrames);
+        return near(uvToWorld(t.frame, t.center[0], t.center[1]));
+      } catch {
+        return false;
+      }
+    });
+    if (at >= 0) return screw.removeLocation({ point: at });
+    const t = placementTarget(pick);
+    if (t)
+      screw.setLocations({
+        holeId,
+        skipHoles,
+        points: [...points, t.ref],
+      });
+  };
+  /** A plane picked for a screw: one on its origin (or off again). */
+  const onScrewPlanePick = (plane: SketchPlaneRef) => {
+    const d = screw.dialog;
+    if (!d) return;
+    const ref: HolePointRef = { uv: [0, 0], plane };
+    const points = d.settings.points ?? [];
+    const kept = points.filter((p) => !sameHolePoint(p, ref));
+    screw.setLocations({ ...d.settings, points: kept.length < points.length ? kept : [...points, ref] });
+  };
+  const onHolePlacementPick = (pick: PlacementPick) => {
+    const d = hole.dialog;
+    if (!d) return;
+    const t = placementTarget(pick);
+    if (!t) return;
+    const { ref, frame } = t;
+    const w = pick.world;
+    const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const sketchOf = (id: string) => doc.features.find((f): f is SketchFeature => f.id === id && f.type === "sketch");
+    const owner = { plane: d.settings.plane, sketchId: d.sketchId ?? undefined };
+    const targetOf = (p: HolePointRef) => {
+      try {
+        return holeTarget(owner, p, sketchOf, resolved.planeFrames);
+      } catch {
+        return null;
+      }
+    };
+    const pts = d.settings.points ?? [];
+    const at = pts.findIndex((p) => {
+      const t = targetOf(p);
+      const q = t && uvToWorld(t.frame, t.center[0], t.center[1]);
+      return !!q && Math.hypot(q[0] - w[0], q[1] - w[1], q[2] - w[2]) < 1e-3;
+    });
+    if (at < 0) return hole.setPoints([...pts, ref]);
+    const sameFace = dot(targetOf(pts[at])!.frame.normal, frame.normal) > 1 - 1e-6;
+    hole.setPoints(sameFace ? pts.filter((_, i) => i !== at) : pts.map((p, i) => (i === at ? ref : p)));
+  };
+  /** The round face a viewport face pick is, for the Thread dialog: its
+   *  reference and what its tessellation says it is. Null when it isn't round. */
+  const threadFaceOf = (partId: string, faceId: number): { ref: ThreadFaceRef; wall: RoundWall } | null => {
+    const m = meshes.find((x) => x.id === partId);
+    if (!m) return null;
+    const wall = roundWallOfMesh(m.mesh.faces, faceId);
+    const center = faceCentroid(m.mesh.faces, faceId);
+    if (!wall || !center) return null;
+    const faceName = faceNameOf(m.mesh.faces, faceId);
+    const normal = faceNormal(m.mesh.faces, faceId) || undefined;
+    return { ref: { featureId: partId, faceId, faceName, center, normal }, wall };
+  };
+  /** Open the Thread dialog: on a selected round face, else listening for one. */
+  const openThread = () => {
+    if (thread.dialog) return;
+    for (const sel of selection) {
+      if (sel.kind !== "face") continue;
+      const face = threadFaceOf(sel.featureId, sel.faceId);
+      if (face) return thread.open(face);
+    }
+    thread.open();
+  };
+  /** A viewport click while one of the Thread dialog's slots listens. */
+  const handleThreadPick = (pick: RevolveAxisPick) => {
+    const d = thread.dialog;
+    if (!d?.slot) return;
+    // A thread is thousands of facets, so a click on one mostly lands on an
+    // edge: for Match, the part is what counts.
+    if (d.slot === "match" && pick.kind === "bodyEdge") {
+      const match = matchThread(doc, { partId: pick.featureId }, null, d.settings, resolved.scope, d.editId);
+      if (match) thread.applyMatch(match);
+      else flashMsg("No thread there to match. Pick a Thread, a tapped Hole, a Screw, or a plain rod or hole.");
+      return;
+    }
+    if (pick.kind !== "bodyFace") {
+      flashMsg(
+        d.slot === "face"
+          ? "Pick a round face: a cylindrical face or a hole's wall."
+          : "Pick a face of a Thread, a tapped Hole or a Screw, or a plain rod or hole.",
+      );
+      return;
+    }
+    const face = threadFaceOf(pick.featureId, pick.faceId);
+    if (d.slot === "face") {
+      if (!face) {
+        flashMsg("That face isn't round. Pick a cylindrical face or a hole's wall.");
+        return;
+      }
+      thread.setFace(face.ref, face.wall);
+      return;
+    }
+    const m = meshes.find((x) => x.id === pick.featureId);
+    const faceName = m ? faceNameOf(m.mesh.faces, pick.faceId) : undefined;
+    const match = matchThread(
+      doc,
+      { partId: pick.featureId, faceName },
+      face?.wall ?? null,
+      d.settings,
+      resolved.scope,
+      d.editId,
+    );
+    if (!match) {
+      flashMsg("No thread there to match. Pick a Thread, a tapped Hole, a Screw, or a plain rod or hole.");
+      return;
+    }
+    thread.applyMatch(match);
+  };
+  /** Open the Screw dialog: in the selected Hole feature (else the newest),
+   *  or on a selected reference plane. */
+  const openScrew = () => {
+    if (screw.dialog) return;
+    const sel = selection.length === 1 ? selection[0] : null;
+    const picked = sel ? doc.features.find((f) => f.id === featureIdOf(sel)) : undefined;
+    if (picked?.type === "hole") screw.open(picked.id, null);
+    else screw.open(null, picked?.type === "plane" ? { kind: "plane", planeId: picked.id } : null);
+  };
   /** Re-open the revolve dialog to edit in place, seeded from the feature. */
   const editRevolve = (id: string) => {
     const f = doc.features.find((x) => x.id === id);
@@ -3620,6 +4077,10 @@ export default function App() {
       else if (planeDialog) closePlaneDialog();
       else if (revolve.dialog) revolve.close();
       else if (gear.dialog) gear.close();
+      else if (hole.dialog) hole.close();
+      else if (screw.dialog) screw.close();
+      else if (thread.dialog?.slot) thread.arm(null);
+      else if (thread.dialog) thread.close();
       else if (mirrorDialog) closeMirror();
       else if (pattern.dialog) pattern.close();
       else if (shell.dialog) shell.close();
@@ -3767,6 +4228,9 @@ export default function App() {
         if (!pattern.dialog) openPattern();
       },
       "model.gear": () => openGear(),
+      "model.hole": () => openHole(),
+      "model.screw": () => openScrew(),
+      "model.thread": () => openThread(),
     },
   });
 
@@ -4266,17 +4730,6 @@ export default function App() {
       setMirrorDialog((d) => (d ? { ...d, plane: ref } : d));
       setPicking(false);
       setPickPurpose("sketch");
-    } else if (pickPurpose === "gearPlane") {
-      // Same guard as the mirror plane: a curved face only offers the tangent
-      // where the pointer landed, which isn't a plane anyone chose.
-      if (ref.kind === "face" && faceId !== undefined) {
-        const m = meshes.find((x) => x.id === ref.featureId);
-        if (!m || !faceNormal(m.mesh.faces, faceId)) {
-          flashMsg("That face isn't flat — a gear needs a planar face, a datum, or a reference plane.");
-          return;
-        }
-      }
-      gear.pickPlane(ref);
     } else if (pickPurpose === "sectionPlane") {
       setPicking(false);
       setPickPurpose("sketch");
@@ -4292,6 +4745,7 @@ export default function App() {
   // only; "patternAxis" a sketch line or a body face (planes are rejected — a
   // pattern has no profile plane to intersect one with).
   const handleAxisPick = (pick: RevolveAxisPick) => {
+    if (thread.dialog?.slot) return handleThreadPick(pick);
     if (pickPurpose === "transformAxis") {
       // A transform turns about a LINE, so only the two references that are one
       // count: a sketch line, or a straight body edge. A plane or a face would
@@ -4580,10 +5034,20 @@ export default function App() {
       // No creation dialog to re-open: the floating parameter panel IS their
       // editor. Listed rather than left to a `default` so that adding a feature
       // kind forces an answer to "does this one have a dialog?" at compile time.
+      case "hole":
+        hole.edit(f);
+        break;
+      case "screw":
+        screw.edit(f);
+        break;
+      case "thread":
+        thread.edit(f);
+        break;
       case "primitive":
       case "import":
       case "sweep":
       case "loft":
+      case "deletePart":
         selectFeature(id);
         setEditParamsId(id);
         break;
@@ -6060,6 +6524,28 @@ export default function App() {
     setBooleanDialog(null);
     cancelEdit();
   };
+  closeDialogsRef.current = () => {
+    // An in-place edit's snapshot is the OLD document's feature: drop it, not
+    // restore it, so closing doesn't write into the new document.
+    editSnapshotRef.current = null;
+    if (planeDialog) closePlaneDialog();
+    if (revolve.dialog) revolve.close();
+    if (gear.dialog) gear.close();
+    if (hole.dialog) hole.close();
+    if (screw.dialog) screw.close();
+    if (thread.dialog) thread.close();
+    if (mirrorDialog) closeMirror();
+    if (pattern.dialog) pattern.close();
+    if (shell.dialog) shell.close();
+    if (sweepDialog) closeSweep();
+    if (loftDialog) closeLoft();
+    if (extrudeDialog) closeExtrudeDialog();
+    if (dressUp.dialog) dressUp.close();
+    if (booleanDialog) closeBooleanDialog();
+    if (transform.editId) transform.cancel();
+    if (transform.arming) transform.cancelArming();
+    setEditParamsId(null);
+  };
   // Live-preview a boolean edit as operands/op change.
   useEffect(() => {
     const d = booleanDialog;
@@ -6152,12 +6638,24 @@ export default function App() {
     return { keep: new Set(d.operandIds), ghost: none(), cut: none() };
   }, [booleanDialog]);
 
-  const handleDelete = (partOrFeatureId: string) => {
-    // From the Parts panel this can be a sub-part id; a part isn't a thing the
-    // timeline can remove on its own, so it deletes the feature that made it.
+  /** Delete a part: the feature that made it, when that's all it made; one
+   *  part of several (a screw of a Screw feature's, a pattern's copy) with a
+   *  Delete part step in the timeline, which leaves the feature and anything
+   *  built on it in between as they are. */
+  const deletePartOrFeature = (d: Document, partOrFeatureId: string): Document => {
+    const fid = featureIdOfPart(partOrFeatureId);
+    const several =
+      partIds.filter((p) => featureIdOfPart(p) === fid).length > 1 ||
+      partOrFeatureId !== fid ||
+      d.features.some((f) => f.type === "deletePart" && f.partIds.some((p) => featureIdOfPart(p) === fid));
+    return several && d.features.some((f) => f.id === fid) ? deletePart(d, partOrFeatureId).doc : removeFeature(d, fid);
+  };
+  /** `whole`: the timeline's ✕ — the feature and every part it made, whatever
+   *  Delete part steps followed it. The Parts panel's ✕ deletes the part. */
+  const handleDelete = (partOrFeatureId: string, whole = false) => {
     const id = featureIdOfPart(partOrFeatureId);
-    setDoc(removeFeature(doc, id));
-    setSelection((prev) => prev.filter((s) => featureIdOf(s) !== id));
+    setDoc(whole ? removeFeature(doc, id) : deletePartOrFeature(doc, partOrFeatureId));
+    setSelection((prev) => prev.filter((s) => featureIdOf(s) !== partOrFeatureId));
     if (editingSketchId === id) setEditingSketchId(null);
   };
 
@@ -6269,6 +6767,8 @@ export default function App() {
   // line/curve. Bare sketchPoint/sketchFace picks have no deletion target.
   const handleDeleteSelection = () => {
     const featureIds = new Set<string>();
+    /** Picked as features (a timeline row), not as one of their parts. */
+    const whole = new Set(selection.flatMap((s) => (s.kind === "feature" && s.whole ? [s.id] : [])));
     const entityRefs: { sketchId: string; entityId: string }[] = [];
     for (const s of selection) {
       if (s.kind === "feature" || s.kind === "face" || s.kind === "edge" || s.kind === "vertex") {
@@ -6289,7 +6789,8 @@ export default function App() {
       next = removeSketchEntity(next, sketchId, entityId);
     }
     for (const id of featureIds) {
-      next = removeFeature(next, id);
+      // A body picked in the viewport is one PART of its feature.
+      next = partIds.includes(id) && !whole.has(id) ? deletePartOrFeature(next, id) : removeFeature(next, id);
     }
     if (next === doc) return;
     setDoc(next);
@@ -6736,13 +7237,55 @@ export default function App() {
     },
     {
       id: "gear",
-      icon: "⚙",
+      icon: <GearIcon />,
       label: "Gear",
       shortcut: shortcutHint("model.gear"),
       title: `Gear (${shortcutName("model.gear")}): a parametric involute spur or ring gear on a plane — set teeth, size and bore in the dialog`,
       keywords: ["spur", "involute", "teeth", "cog", "ring", "internal", "module"],
       disabled: toolsLocked,
       onSelect: openGear,
+    },
+    {
+      id: "hole",
+      icon: "◎",
+      label: "Hole",
+      shortcut: shortcutHint("model.hole"),
+      title: `Hole (${shortcutName("model.hole")}): drill simple, counterbored, countersunk or tapped holes at a sketch's points — metric sizes and fits built in`,
+      keywords: ["drill", "counterbore", "countersink", "tapped", "thread", "bolt", "screw", "clearance", "tap"],
+      disabled: toolsLocked,
+      onSelect: openHole,
+    },
+    {
+      id: "screw",
+      icon: <ScrewIcon />,
+      label: "Screw",
+      shortcut: shortcutHint("model.screw"),
+      title: `Screw (${shortcutName("model.screw")}): metric socket, button, countersunk or hex screws — one in every hole of a Hole feature, or on a plane`,
+      keywords: ["bolt", "fastener", "socket", "cap", "hex", "countersunk", "button", "metric", "iso"],
+      disabled: toolsLocked,
+      onSelect: openScrew,
+    },
+    {
+      id: "thread",
+      icon: <ThreadIcon />,
+      label: "Thread",
+      shortcut: shortcutHint("model.thread"),
+      title: `Thread (${shortcutName("model.thread")}): cut a custom thread on a cylindrical face or a hole's wall — any diameter and pitch, printable 45°, ISO or trapezoid`,
+      keywords: [
+        "helix",
+        "printable",
+        "3d print",
+        "lid",
+        "jar",
+        "nut",
+        "rod",
+        "stud",
+        "lead screw",
+        "trapezoid",
+        "acme",
+      ],
+      disabled: toolsLocked,
+      onSelect: openThread,
     },
   ];
 
@@ -7247,7 +7790,7 @@ export default function App() {
                       warnings={warnings}
                       onSelect={selectFeature}
                       onDoubleClick={handleTreeDoubleClick}
-                      onDelete={handleDelete}
+                      onDelete={(id) => handleDelete(id, true)}
                       onToggleSuppress={(id) =>
                         setDoc(setSuppressed(doc, id, !doc.features.find((f) => f.id === id)?.suppressed))
                       }
@@ -7331,7 +7874,7 @@ export default function App() {
                     doc={doc}
                     partIds={partIds}
                     selectedIds={selectedFeatureIds}
-                    onSelect={selectFeature}
+                    onSelect={selectPart}
                     onRename={handleSolidRename}
                     onDelete={handleDelete}
                     onColorChange={handleSolidColor}
@@ -7358,7 +7901,7 @@ export default function App() {
               ghostMeshes={isAssembly ? mates.glyphs : ghostMeshes}
               selection={isAssembly ? (mates.picks ?? asmFaces) : (dialogPicks ?? selection)}
               emphasize={constraintEmphasis}
-              highlightBodyIds={isAssembly ? asmSelectedSet : highlightBodyIds}
+              highlightBodyIds={isAssembly ? asmSelectedSet : litBodyIds}
               booleanHighlight={booleanHighlight}
               onSelect={isAssembly ? handleAssemblyPick : handlePick}
               onHoverPick={isAssembly ? mates.hoverPick : undefined}
@@ -7373,14 +7916,15 @@ export default function App() {
               transformDragPoses={isAssembly ? asmDragPoses : undefined}
               extrudeGizmo={extrudeGizmo}
               onExtrudeDistanceChange={handleExtrudeGizmoDistance}
-              picking={picking}
+              picking={picking || !!thread.dialog?.slot}
               onPick={handlePickRef}
               axisPick={
-                picking &&
-                (pickPurpose === "revolveAxis" ||
-                  pickPurpose === "patternAxis" ||
-                  pickPurpose === "patternDir" ||
-                  pickPurpose === "transformAxis")
+                !!thread.dialog?.slot ||
+                (picking &&
+                  (pickPurpose === "revolveAxis" ||
+                    pickPurpose === "patternAxis" ||
+                    pickPurpose === "patternDir" ||
+                    pickPurpose === "transformAxis"))
               }
               onAxisPick={handleAxisPick}
               activeSketch={
@@ -7392,6 +7936,12 @@ export default function App() {
                   : null
               }
               sketchTool={sketchTool}
+              placing={(holePlacing || gearPlacing || screwPlacing) && !editingSketchId}
+              placementCursor={gearPlacing ? gearCursor : screwPlacing ? screwCursor : holeCursor}
+              onPlacementPick={
+                gearPlacing ? onGearPlacementPick : screwPlacing ? onScrewPlacementPick : onHolePlacementPick
+              }
+              onPlacementPlanePick={gearPlacing ? onGearPlanePick : screwPlacing ? onScrewPlanePick : undefined}
               sketches={renderSketchesWithPreview}
               activeSketchId={editingSketchId}
               sketchFullyConstrained={fullyConstrained}
@@ -7535,6 +8085,7 @@ export default function App() {
                       onEditSketch={editSketch}
                       onFinishSketch={finishSketch}
                       onEditTransform={editTransformFeature}
+                      partName={(id) => partAppearance(doc, id, DEFAULT_SOLID_COLOR).name}
                     />
                   </>
                 )}
@@ -8501,20 +9052,170 @@ export default function App() {
                   <GearDialog
                     editing={!!d.editId}
                     settings={d.settings}
-                    planeLabel={mirrorPlaneLabel(d.plane, doc)}
-                    defaultPlane={d.defaultPlane}
-                    planeArmed={picking && pickPurpose === "gearPlane"}
+                    locationLabel={gearLocationLabel(d.plane, d.settings.center, doc)}
+                    defaultLocation={d.defaultPlane}
+                    locating={d.locating}
                     advanced={d.advanced}
                     meshOptions={meshCandidates(doc, d.editId)}
                     meshName={doc.features.find((f) => f.id === d.settings.meshWith)?.name}
                     readout={readout}
                     error={error?.replace(/^gear: /, "") ?? null}
-                    onArmPlane={gear.armPlane}
+                    onArmLocation={gear.armLocation}
                     onChange={gear.update}
+                    onSizeBy={gear.setSizeBy}
                     onParam={gear.updateParam}
                     onToggleAdvanced={() => gear.setDialog((g) => (g ? { ...g, advanced: !g.advanced } : g))}
-                    onConfirm={gear.confirm}
+                    onConfirm={confirmGear}
                     onCancel={gear.close}
+                  />
+                );
+              })()}
+            {hole.dialog &&
+              (() => {
+                const d = hole.dialog;
+                let dims: HoleDims | null = null;
+                let dimsError: string | null = null;
+                try {
+                  dims = holeDims(d.settings, resolved.scope);
+                  lastHoleDims.current = dims;
+                } catch (err) {
+                  dimsError = String((err as Error).message ?? err);
+                }
+                const error = dimsError ?? (d.editId ? (resolved.errors[d.editId] ?? null) : hole.previewError);
+                return (
+                  <HoleDialog
+                    editing={!!d.editId}
+                    settings={d.settings}
+                    armed={d.armed}
+                    partOptions={booleanCandidates}
+                    dims={dims ?? lastHoleDims.current}
+                    error={error?.replace(/^hole: /, "") ?? null}
+                    onArm={hole.setArmed}
+                    targetLabels={(d.settings.points ?? []).map((p) =>
+                      gearLocationLabel({ kind: "datum", id: "plane-top" }, p, doc),
+                    )}
+                    onRemoveTarget={(i) => hole.setPoints((d.settings.points ?? []).filter((_, k) => k !== i))}
+                    onRemovePart={hole.togglePart}
+                    onHoverTarget={setHoleRowHover}
+                    onHoverPart={setHolePartHover}
+                    onAllParts={hole.allParts}
+                    onChange={hole.update}
+                    onParam={hole.updateParam}
+                    onConfirm={hole.confirm}
+                    onCancel={hole.close}
+                  />
+                );
+              })()}
+            {screw.dialog &&
+              (() => {
+                const d = screw.dialog;
+                // One row per screw, in part order: the Hole's (less any
+                // left out), then each spot.
+                const screwRows: {
+                  key: string;
+                  label: string;
+                  remove: { hole: number; count: number } | { point: number };
+                }[] = [];
+                const inHole = doc.features.find((f) => f.id === d.settings.holeId);
+                if (inHole?.type === "hole") {
+                  let count = 0;
+                  try {
+                    count = holePlacement(
+                      inHole,
+                      (id) => doc.features.find((f): f is SketchFeature => f.id === id && f.type === "sketch"),
+                      resolved.planeFrames,
+                    ).holes.length;
+                  } catch {
+                    // a Hole that doesn't place lists no screws
+                  }
+                  for (let i = 0; i < count; i++)
+                    if (!d.settings.skipHoles?.includes(i))
+                      screwRows.push({
+                        key: `h${i}`,
+                        label: `${inHole.name} · hole ${i + 1}`,
+                        remove: { hole: i, count },
+                      });
+                }
+                (d.settings.points ?? []).forEach((p, i) =>
+                  screwRows.push({
+                    key: `p${i}`,
+                    label: gearLocationLabel({ kind: "datum", id: "plane-top" }, p, doc),
+                    remove: { point: i },
+                  }),
+                );
+                const size = screwSize(doc, d.settings);
+                let dims: ScrewDims | null = null;
+                let dimsError: string | null = null;
+                try {
+                  dims = screwDims(d.settings.head, size, evaluateExpression(d.settings.params.length, resolved.scope));
+                  lastScrewDims.current = dims;
+                } catch (err) {
+                  dimsError = String((err as Error).message ?? err);
+                }
+                const error = dimsError ?? (d.editId ? (resolved.errors[d.editId] ?? null) : screw.previewError);
+                return (
+                  <ScrewDialog
+                    editing={!!d.editId}
+                    settings={d.settings}
+                    effectiveSize={size}
+                    defaultLocation={!d.settings.holeId && !d.settings.points?.length}
+                    locating={d.locating}
+                    holeName={doc.features.find((f) => f.id === d.settings.holeId)?.name}
+                    rows={screwRows.map(({ key, label }) => ({ key, label }))}
+                    onRemoveRow={(i) => screw.removeLocation(screwRows[i].remove)}
+                    onHoverRow={setScrewRowHover}
+                    dims={dims ?? lastScrewDims.current}
+                    clearance={(() => {
+                      try {
+                        return evaluateExpression(d.settings.params.clearance ?? "0", resolved.scope);
+                      } catch {
+                        return undefined;
+                      }
+                    })()}
+                    error={error?.replace(/^screw: /, "") ?? null}
+                    onArmLocations={screw.armLocations}
+                    onClearLocations={screw.clearLocations}
+                    onChange={screw.update}
+                    onParam={screw.updateParam}
+                    onConfirm={screw.confirm}
+                    onCancel={screw.close}
+                  />
+                );
+              })()}
+            {thread.dialog &&
+              (() => {
+                const d = thread.dialog;
+                let dims: ThreadDims | null = null;
+                let dimsError: string | null = null;
+                try {
+                  dims = threadDims(d.settings, resolved.scope, d.side);
+                  lastThreadDims.current = dims;
+                } catch (err) {
+                  dimsError = String((err as Error).message ?? err);
+                }
+                const error = dimsError ?? (d.editId ? (resolved.errors[d.editId] ?? null) : thread.previewError);
+                const part = d.face ? partAppearance(doc, d.face.featureId, DEFAULT_SOLID_COLOR).name : null;
+                const faceLabel =
+                  d.face &&
+                  (d.faceDiameter !== null
+                    ? `${d.side === "internal" ? "Hole" : "Cylinder"} Ø${Math.round(d.faceDiameter * 100) / 100} · ${part}`
+                    : `${d.side === "internal" ? "Hole" : "Cylinder"} · ${part}`);
+                return (
+                  <ThreadDialog
+                    editing={!!d.editId}
+                    settings={d.settings}
+                    side={d.side}
+                    faceLabel={faceLabel}
+                    matched={d.matched}
+                    slot={d.slot}
+                    dims={dims ?? lastThreadDims.current}
+                    error={error?.replace(/^thread: /, "") ?? null}
+                    onArm={thread.arm}
+                    onClearMatch={thread.clearMatch}
+                    onChange={thread.update}
+                    onParam={thread.updateParam}
+                    onConfirm={thread.confirm}
+                    onCancel={thread.close}
                   />
                 );
               })()}
@@ -8662,6 +9363,7 @@ export default function App() {
             op={booleanDialog.op}
             editing={!!booleanDialog.editId}
             candidates={booleanCandidates}
+            nameOf={(id) => partAppearance(doc, id, DEFAULT_SOLID_COLOR).name}
             operandIds={booleanDialog.operandIds}
             base={booleanDialog.base}
             tools={booleanDialog.tools}

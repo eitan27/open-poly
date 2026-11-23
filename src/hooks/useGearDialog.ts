@@ -3,18 +3,22 @@
 // A gear needs only a plane, and the dialog opens WITH one — the pre-selected
 // plane/face if there is one, else the Top datum — so the ghost is on screen
 // the moment the tool is clicked and every field edit after that is visible.
-// The plane slot can be re-armed to move it.
+// The Location slot shows that default as a choice; its ✕ starts listening,
+// and the next click in the viewport — a plane (centred on its origin), a
+// face, or a point to centre on, picked as a Hole's targets are (see App's
+// onGearPlacementPick) — moves it there.
 //
 // Two effects, as in Revolve: a debounced throwaway regenerate for the ghost of
 // a NEW gear, and a live apply of an EDIT to the real document (so the edited
 // gear itself changes in place, no ghost on top of it).
-import { useEffect, useState } from "react";
-import { addGear, resolveDocument, updateGear } from "../document/document";
-import { DEFAULT_GEAR_SETTINGS, type GearSettings } from "../document/gear";
+import { useEffect, useRef, useState } from "react";
+import { addGear, genId, resolveDocument, updateGear } from "../document/document";
+import { DEFAULT_GEAR_PARAMS, DEFAULT_GEAR_SETTINGS, unlinkGear, type GearSettings } from "../document/gear";
 import type { SketchPlaneRef } from "../document/planes";
-import type { Document, Feature, GearFeature } from "../document/types";
+import type { Document, Feature, GearFeature, HolePointRef } from "../document/types";
 import type { KernelClient } from "../kernel/KernelClient";
 import type { ShapeMeshPayload } from "../kernel/types";
+import { ghostPlacement, moveGhostMesh, type GhostPlacement } from "./ghostMove";
 
 const PREVIEW_DEBOUNCE_MS = 120;
 
@@ -25,7 +29,12 @@ export interface GearDialogState {
   defaultPlane: boolean;
   settings: GearSettings;
   advanced: boolean;
+  /** The Location slot is listening: the next viewport pick places the gear. */
+  locating: boolean;
   editId?: string;
+  /** A new gear's id, fixed for the dialog's life: the ghost and the gear
+   *  Create adds share it, so Create reuses the ghost's build. */
+  draftId: string;
 }
 
 export interface GearDialogDeps {
@@ -33,10 +42,6 @@ export interface GearDialogDeps {
   setDoc: (next: Document | ((prev: Document) => Document), coalesceKey?: string) => void;
   ready: boolean;
   kernelRef: React.RefObject<KernelClient | null>;
-  picking: boolean;
-  pickPurpose: string;
-  setPicking: (on: boolean) => void;
-  setPickPurpose: (purpose: "sketch" | "gearPlane") => void;
   beginEdit: (feature: Feature) => void;
   commitEdit: () => void;
   cancelEdit: () => void;
@@ -53,42 +58,27 @@ export interface GearDialogApi {
   edit: (feature: GearFeature) => void;
   close: () => void;
   confirm: () => void;
-  armPlane: () => void;
-  /** A plane/face pick landed while the plane slot was armed. */
-  pickPlane: (ref: SketchPlaneRef) => void;
+  /** Listen for a location (the slot's button, or its ✕). */
+  armLocation: () => void;
+  /** A location picked in the viewport: the plane the gear goes on, and the
+   *  point to centre it on there (none: the plane's origin). */
+  setLocation: (plane: SketchPlaneRef, center?: HolePointRef) => void;
   update: (patch: Partial<GearSettings>) => void;
+  /** Size it by its own module or pitch diameter. Unlinking a meshed gear
+   *  keeps it exactly as it is: the module, pressure angle (and, placed
+   *  beside its partner, the spot and tooth phase) it has become its own. */
+  setSizeBy: (sizeBy: GearSettings["sizeBy"]) => void;
   updateParam: (name: keyof GearSettings["params"], value: string) => void;
 }
 
 const TOP: SketchPlaneRef = { kind: "datum", id: "plane-top" };
 
 export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
-  const {
-    doc,
-    setDoc,
-    ready,
-    kernelRef,
-    picking,
-    pickPurpose,
-    setPicking,
-    setPickPurpose,
-    beginEdit,
-    commitEdit,
-    cancelEdit,
-    shouldLiveApply,
-    selectFeature,
-  } = deps;
+  const { doc, setDoc, ready, kernelRef, beginEdit, commitEdit, cancelEdit, shouldLiveApply, selectFeature } = deps;
 
   const [dialog, setDialog] = useState<GearDialogState | null>(null);
   const [preview, setPreview] = useState<ShapeMeshPayload | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
-
-  const cancelPlanePick = () => {
-    if (picking && pickPurpose === "gearPlane") {
-      setPicking(false);
-      setPickPurpose("sketch");
-    }
-  };
 
   const open = (plane: SketchPlaneRef | null) => {
     setDialog({
@@ -96,6 +86,8 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
       defaultPlane: !plane,
       settings: { ...DEFAULT_GEAR_SETTINGS, params: { ...DEFAULT_GEAR_SETTINGS.params } },
       advanced: false,
+      locating: false,
+      draftId: genId(),
     });
   };
 
@@ -110,6 +102,7 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
         sizeBy: feature.sizeBy,
         meshWith: feature.meshWith,
         placeBeside: feature.placeBeside,
+        center: feature.center,
         bore: feature.bore,
         extent: feature.extent,
         flip: feature.flip,
@@ -117,13 +110,14 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
         params: { ...DEFAULT_GEAR_SETTINGS.params, ...feature.params },
       },
       advanced: false,
+      locating: false,
       editId: feature.id,
+      draftId: feature.id,
     });
   };
 
   const close = () => {
     setDialog(null);
-    cancelPlanePick();
     cancelEdit();
   };
 
@@ -136,23 +130,47 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
       close();
       return;
     }
-    const { doc: created } = addGear(doc, dialog.plane, dialog.settings);
+    const { doc: created } = addGear(doc, dialog.plane, dialog.settings, dialog.draftId);
     setDoc(created);
     selectFeature(null);
     close();
   };
 
-  const armPlane = () => {
-    setPickPurpose("gearPlane");
-    setPicking(true);
-  };
+  const armLocation = () => setDialog((d) => (d ? { ...d, locating: true } : d));
 
-  const pickPlane = (ref: SketchPlaneRef) => {
-    setDialog((d) => (d ? { ...d, plane: ref, defaultPlane: false } : d));
-    setPicking(false);
-    setPickPurpose("sketch");
-  };
+  // A picked location replaces any older Center X / Y offset (no longer in
+  // the dialog), so the gear lands where it was put.
+  const setLocation = (plane: SketchPlaneRef, center?: HolePointRef) =>
+    setDialog((d) =>
+      d
+        ? {
+            ...d,
+            plane,
+            defaultPlane: false,
+            locating: false,
+            settings: { ...d.settings, center, params: { ...d.settings.params, centerX: "0", centerY: "0" } },
+          }
+        : d,
+    );
 
+  const setSizeBy = (sizeBy: GearSettings["sizeBy"]) =>
+    setDialog((d) => {
+      if (!d) return d;
+      if (!d.settings.meshWith) return { ...d, settings: { ...d.settings, sizeBy } };
+      const id = d.editId ?? d.draftId;
+      const withIt = d.editId
+        ? updateGear(doc, d.editId, d.plane, d.settings)
+        : addGear(doc, d.plane, d.settings, d.draftId).doc;
+      const g = withIt.features.find((f): f is GearFeature => f.id === id && f.type === "gear");
+      const r = resolveDocument(withIt);
+      const patch = g && unlinkGear(withIt, g, r.scope, r.planeFrames, sizeBy);
+      if (!patch) {
+        // A link that no longer resolves: fill only what it has no value for.
+        const params = { ...DEFAULT_GEAR_PARAMS, ...d.settings.params };
+        return { ...d, settings: { ...d.settings, sizeBy, meshWith: undefined, placeBeside: undefined, params } };
+      }
+      return { ...d, defaultPlane: d.defaultPlane && !patch.center, settings: { ...d.settings, ...patch } };
+    });
   const update = (patch: Partial<GearSettings>) =>
     setDialog((d) => (d ? { ...d, settings: { ...d.settings, ...patch } } : d));
   const updateParam = (name: keyof GearSettings["params"], value: string) =>
@@ -164,48 +182,73 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
   const plane = dialog?.plane;
   const settings = dialog?.settings;
   const creating = !!dialog && !dialog.editId;
+  const draftId = dialog?.draftId;
+  // The last ghost the kernel built, and where: a new location with the same
+  // gear moves it there at once (see ghostMove) rather than waiting on a
+  // rebuild that, gear-sized, takes a few hundred ms.
+  const builtRef = useRef<{ at: GhostPlacement; mesh: ShapeMeshPayload } | null>(null);
+  const lastShapeRef = useRef<string | null>(null);
   useEffect(() => {
     if (!creating || !plane || !settings) {
       setPreview(null);
       setPreviewError(null);
+      builtRef.current = null;
+      lastShapeRef.current = null;
       return;
     }
     const kernel = kernelRef.current;
     if (!ready || !kernel) return;
+    // Only the location changed (a pick): no typing to wait out, so no debounce.
+    const { center: _c, ...shape } = settings;
+    const shapeKey = JSON.stringify(shape);
+    const moved = lastShapeRef.current === shapeKey;
+    lastShapeRef.current = shapeKey;
     let cancelled = false;
-    const timer = setTimeout(() => {
-      const { doc: previewDoc, id } = addGear(doc, plane, settings);
-      const resolved = resolveDocument(previewDoc);
-      const err = resolved.errors[id];
-      if (err) {
-        setPreview(null);
-        setPreviewError(err);
-        return;
-      }
-      kernel
-        .regenerate(resolved.features)
-        .then(({ results }) => {
-          if (cancelled) return;
-          const hit = results.find((r) => r.id === id);
-          if (hit?.ok) {
-            setPreview(hit.mesh);
-            setPreviewError(null);
-          } else {
-            setPreview(null);
-            setPreviewError(hit && !hit.ok ? hit.error : "Preview failed.");
-          }
-        })
-        .catch((e) => {
-          if (cancelled) return;
+    const timer = setTimeout(
+      () => {
+        const { doc: previewDoc, id } = addGear(doc, plane, settings, draftId);
+        const resolved = resolveDocument(previewDoc);
+        const err = resolved.errors[id];
+        if (err) {
           setPreview(null);
-          setPreviewError(String(e?.message ?? e));
-        });
-    }, PREVIEW_DEBOUNCE_MS);
+          setPreviewError(err);
+          return;
+        }
+        // The settings make a gear again: drop the last one's error now, not
+        // once the kernel is done (which, in a heavy part, is a while).
+        setPreviewError(null);
+        const at = ghostPlacement(resolved.features.find((f) => f.id === id));
+        const built = builtRef.current;
+        if (at && built && built.at.sig === at.sig) setPreview(moveGhostMesh(built.mesh, built.at, at));
+        // The kernel still builds the gear where it now is: its mesh replaces
+        // the moved one, and Create reuses the build (same draftId).
+        kernel
+          .regenerate(resolved.features)
+          .then(({ results }) => {
+            if (cancelled) return;
+            const hit = results.find((r) => r.id === id);
+            if (hit?.ok) {
+              builtRef.current = at ? { at, mesh: hit.mesh } : null;
+              setPreview(hit.mesh);
+              setPreviewError(null);
+            } else {
+              setPreview(null);
+              setPreviewError(hit && !hit.ok ? hit.error : "Preview failed.");
+            }
+          })
+          .catch((e) => {
+            if (cancelled) return;
+            setPreview(null);
+            setPreviewError(String(e?.message ?? e));
+          });
+      },
+      moved ? 0 : PREVIEW_DEBOUNCE_MS,
+    );
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [creating, plane, settings, doc, ready, kernelRef]);
+  }, [creating, draftId, plane, settings, doc, ready, kernelRef]);
 
   // An EDIT applies live to the real document; the feature's own error (if
   // any) shows in the dialog via the document's resolve, not a ghost.
@@ -225,9 +268,10 @@ export function useGearDialog(deps: GearDialogDeps): GearDialogApi {
     edit,
     close,
     confirm,
-    armPlane,
-    pickPlane,
+    armLocation,
+    setLocation,
     update,
+    setSizeBy,
     updateParam,
   };
 }

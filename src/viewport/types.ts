@@ -213,3 +213,17 @@ export interface ViewportApi {
   /** The view's width / height, for sizing an export's frames. */
   frameAspect(): number;
 }
+
+/** What a placement plane came from: a body's flat face, a sketch's plane, or
+ *  the plane the dialog already fixed. */
+export type PlacementSource =
+  { kind: "face"; featureId: string } | { kind: "sketch"; sketchId: string } | { kind: "fixed" };
+
+/** A point placed by a dialog (see Viewport `placing`): where on the plane,
+ *  in its frame's (u, v) and in the world, and what the plane came from. */
+export interface PlacementPick {
+  uv: [number, number];
+  world: [number, number, number];
+  frame: PlaneFrameData;
+  source: PlacementSource;
+}

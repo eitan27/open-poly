@@ -41,8 +41,13 @@ await page.keyboard.press("g");
 await dialog.waitFor({ timeout: 3000 });
 await page.waitForTimeout(1500);
 await shot("1-open");
-check("dialog opens on the default plane", (await dialog.textContent()).includes("(default)"));
+check("dialog opens on the default plane", (await dialog.textContent()).includes("Top plane (default)"));
 check("readout shows the default circles", (await dialog.textContent()).includes("Pitch Ø 40"));
+// The diagram: drawn with its circles, and focusing a field lights the part it
+// moves (Teeth → the outline and the pitch circle).
+check("the dialog draws a gear diagram", (await dialog.locator("svg.dg").count()) === 1);
+await fieldInput("Teeth").focus();
+check("focusing Teeth lights the pitch circle", (await dialog.locator('.dg-active[data-dim^="module"]').count()) >= 1);
 
 // 2. Edit: teeth 12 → undercut note; profile shift clears it.
 await fieldInput("Teeth").fill("12");
@@ -58,6 +63,24 @@ await fieldInput("Teeth").fill("20");
 await fieldSelect("Bore").selectOption("dflat");
 await page.waitForTimeout(1200);
 await shot("2-dflat");
+
+// Clearing a field to retype it says what's missing, not a parse error — and
+// the message goes as soon as the value is back (not when the kernel's done).
+const mod = fieldInput("Module");
+await mod.fill("");
+await page.waitForTimeout(400);
+check("an empty module asks for a value", /module: enter a value/.test(await dialog.textContent()));
+await mod.fill("2");
+await page.waitForTimeout(250);
+check(
+  "retyping it clears the message at once",
+  (await dialog.locator(".ed-warning").count()) === 0,
+  await dialog.textContent(),
+);
+// Its centre isn't a field: it sits on the plane's origin, moved with Transform.
+await dialog.locator(".gear-advanced-toggle").click();
+check("Advanced has no Center X / Y", !/Center X|Center Y/.test(await dialog.textContent()));
+await dialog.locator(".gear-advanced-toggle").click();
 
 // A bad value: error, Create disabled.
 await fieldInput("Bore Ø").fill("50");
@@ -144,6 +167,30 @@ if (b2) {
   const gap = centre(b2) - centre(b1);
   check("…and moves to stay beside it", Math.abs(gap - 38.25) < 0.6, `centres ${gap.toFixed(2)} apart`);
 } else check("gear 2 has a bbox in the scene summary", false, JSON.stringify(scene.bodies?.[1] ?? {}).slice(0, 200));
+
+// 4b. A meshed gear saves no module of its own; the agent's summary shows the
+// one it uses. Unlinking it in its dialog (Size by → Module) keeps it as is.
+{
+  const saved = (await op.features()).find((f) => f.id === gear2.id);
+  check("a meshed gear saves no module", saved.params.module === undefined, JSON.stringify(saved.params));
+  const g2 = scene.gears?.find((g) => g.id === gear2.id);
+  check("the summary shows the module it uses", g2?.module === 1.5 && g2?.meshWith === gear1.id, JSON.stringify(g2));
+  const before = bb(gear2.id);
+  await page.locator(".tree-row", { hasText: gear2.name }).first().dblclick();
+  await dialog.waitFor();
+  await fieldSelect("Size by").selectOption("module");
+  await page.waitForTimeout(300);
+  check("unlinking fills in the module it had", (await fieldInput("Module").inputValue()) === "1.5");
+  await dialog.locator(".ed-primary").click();
+  await op.settle();
+  const after = (await op.scene()).bodies.find((b) => b.id === gear2.id)?.bbox;
+  const same = [0, 1, 2].every(
+    (k) => Math.abs(after.min[k] - before.min[k]) < 0.01 && Math.abs(after.max[k] - before.max[k]) < 0.01,
+  );
+  check("…and the gear stays exactly where it was", same, JSON.stringify({ before, after }));
+  const unlinked = (await op.features()).find((f) => f.id === gear2.id);
+  check("…now on its own", !unlinked.meshWith && unlinked.center?.uv, JSON.stringify(unlinked).slice(0, 300));
+}
 
 // 5. An internal gear.
 await op.newDocument();

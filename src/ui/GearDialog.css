@@ -1,7 +1,7 @@
 /* The gear dialog carries more fields than the other mini-dialogs, and labels
    like "Profile shift (×m)", so it's a little wider. */
 .feature-dialog.gear-dialog {
-  width: 236px;
+  width: 272px;
   max-height: calc(100% - 80px);
   overflow-y: auto;
 }
@@ -49,4 +49,54 @@
   gap: 8px;
   padding-left: 8px;
   border-left: 1px solid var(--border);
+}
+
+/* The Hole dialog borrows the gear dialog's layout, a little wider for its
+   cross-section diagram. */
+.feature-dialog.hole-dialog {
+  width: 272px;
+}
+
+.hole-dialog .ed-modes button {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+/* Location: the pick button with its ✕ beside it. */
+.hole-location {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* A value read from the ISO table: plain text where a field would be. */
+.hole-dialog .ed-derived-value {
+  color: var(--text-4);
+  font-variant-numeric: tabular-nums;
+  padding-right: 8px;
+}
+
+.hole-dialog .ed-modes.ed-inline {
+  flex: 0 1 auto;
+  width: 184px;
+  white-space: nowrap;
+}
+
+/* Six screw heads: two rows of three rather than one row too narrow to read. */
+.hole-dialog .ed-modes.screw-heads {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* The Screw dialog: one removable row per screw it places. */
+/* A multi-pick slot's rows (Screw Locations, Hole Targets and parts): spaced,
+   and growing with the list as Extrude's profiles do — the dialog, not the
+   list, scrolls once it's taller than the window. */
+.screw-rows,
+.hole-targets,
+.hole-parts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 6px;
 }

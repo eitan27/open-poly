@@ -2,6 +2,7 @@
 // plus a set of variables. Regeneration replays the features up to the rollback
 // point. This is the backbone every later feature (sketches, extrude, …) plugs
 // into.
+import type { ThreadProfile } from "../geom/thread";
 import type { BooleanOp, PrimitiveKind } from "../kernel/types";
 import type { SketchPlaneRef } from "./planes";
 
@@ -683,10 +684,13 @@ export type GearBore = "none" | "round" | "dflat";
  *  all of them — `params` is one of the records `renameInFeatures` rewrites. */
 export interface GearParams {
   teeth: string;
-  /** Module (mm) — read when `sizeBy` is "module" and the gear isn't meshed. */
-  module: string;
-  /** Pitch diameter (mm) — read when `sizeBy` is "pitchDiameter" instead. */
-  pitchDiameter: string;
+  /** Module (mm) — read when `sizeBy` is "module". A meshed gear has none:
+   *  it uses its partner's, and gets its own back when it's unlinked
+   *  (unlinkGear). */
+  module?: string;
+  /** Pitch diameter (mm) — read when `sizeBy` is "pitchDiameter" instead.
+   *  None on a meshed gear, as for `module`. */
+  pitchDiameter?: string;
   /** Face width along the plane normal. */
   thickness: string;
   boreDiameter: string;
@@ -694,8 +698,8 @@ export interface GearParams {
   boreFlat: string;
   /** Internal gear: radial thickness of the ring beyond the tooth roots. */
   rimWidth: string;
-  /** Degrees. Ignored when meshed (the partner's is used). */
-  pressureAngle: string;
+  /** Degrees. None on a meshed gear (the partner's is used). */
+  pressureAngle?: string;
   /** Total play (mm) — each tooth is thinned by half of it. */
   backlash: string;
   /** Profile shift coefficient x (× module). */
@@ -717,8 +721,14 @@ export interface GearParams {
 export interface GearFeature extends FeatureBase {
   type: "gear";
   gearType: GearType;
-  /** The plane (or planar face) the gear lies on, centred on its origin. */
+  /** The plane (or planar face) the gear lies on — centred on its origin
+   *  unless `center` says where. With a `center`, this is its plane as picked
+   *  (a sketch point's own sketch plane wins, so the gear follows the sketch). */
   plane: SketchPlaneRef;
+  /** Where its centre is: a sketch point (followed as it moves — the gear lies
+   *  on that sketch's plane) or a fixed spot on a face, both as a Hole target
+   *  is. Absent: the plane's origin, offset by the older `centerX`/`centerY`. */
+  center?: HolePointRef;
   /** Size the teeth by module, or by the pitch diameter (module = PD / teeth). */
   sizeBy: "module" | "pitchDiameter";
   /** Another gear (by feature id) this one meshes with: its module and
@@ -727,7 +737,7 @@ export interface GearFeature extends FeatureBase {
   meshWith?: string;
   /** With `meshWith`: put this gear beside its partner — at the meshing centre
    *  distance, in the direction `params.placeAngle`, its teeth turned into the
-   *  partner's spaces — instead of at `centerX`/`centerY`. Follows the partner
+   *  partner's spaces — instead of at its `center`. Follows the partner
    *  when it moves, turns or changes size. Needs a plane parallel to the
    *  partner's. */
   placeBeside?: boolean;
@@ -737,6 +747,130 @@ export interface GearFeature extends FeatureBase {
   extent: "blind" | "symmetric";
   flip: boolean;
   params: GearParams;
+  color: number;
+  opacity: number;
+  hidden?: boolean;
+}
+
+export type HoleType = "simple" | "counterbore" | "countersink" | "tapped";
+
+/** A hole's sizes, as expression strings (mm, degrees). Which ones are read
+ *  depends on the hole type, and — when `size` names a standard metric size —
+ *  the diameters come from the table instead (document/hole.ts). */
+export interface HoleParams {
+  /** Drilled diameter (custom size only; a metric size uses its clearance /
+   *  tap-drill diameter). */
+  diameter: string;
+  /** Depth of the full-diameter bore, from the start plane (blind only). */
+  depth: string;
+  counterboreDiameter: string;
+  counterboreDepth: string;
+  countersinkDiameter: string;
+  /** Included angle of the countersink cone, degrees. */
+  countersinkAngle: string;
+  /** Included angle of the drill point at the bottom of a blind hole, degrees;
+   *  0 = flat bottom. */
+  tipAngle: string;
+  /** Tapped only: how deep the thread runs. */
+  threadDepth: string;
+  /** Tapped + modelled thread: radial clearance (mm) the thread cavity is
+   *  grown by, so a printed screw fits. Absent on holes made before it. */
+  clearance?: string;
+}
+
+/** Holes drilled into a body at every point (and circle centre) of a sketch,
+ *  along the sketch normal — INTO the body, like a Remove extrude, with `flip`
+ *  reversing it. The kernel builds each hole as a faceted solid of revolution
+ *  and cuts it from `targetId`. */
+/** A thread drawn as a plain cylinder at the nominal size (cosmetic, and what
+ *  documents made before modelled threads have), or built as a real helix. */
+export type ThreadMode = "cosmetic" | "modelled";
+
+/** Which snap point of a sketch entity a hole sits on: a point entity
+ *  itself, a circle's or arc's centre, a line's or arc's ends, or a line's
+ *  midpoint. By entity, not position, so the hole follows the sketch. */
+export type HolePointAt = "point" | "center" | "start" | "end" | "mid";
+/** Where one hole goes, and so which way it drills. Either a snap point of
+ *  a sketch entity — by entity, not position, so the hole follows the sketch
+ *  (`sketchId` absent: the hole's own `sketchId`, as older holes stored it),
+ *  drilled along that sketch's normal — or a fixed spot on the face it was
+ *  placed from (`plane`): a body edge's midpoint, a rim's centre, a face's
+ *  centre. Each target has its own plane, so one hole feature can drill a
+ *  stepped part's levels, or a top and a side. An older hole with a feature
+ *  `plane` keeps every target on that one plane. */
+export type HolePointRef =
+  { sketchId?: string; entityId: string; at: HolePointAt } | { uv: Vec2; plane?: SketchPlaneRef };
+
+export interface HoleFeature extends FeatureBase {
+  type: "hole";
+  holeType: HoleType;
+  /** Tapped holes: absent = cosmetic. */
+  thread?: ThreadMode;
+  /** A metric size from geom/metricFasteners ("M3"), or "custom" to use the
+   *  params' own diameters. */
+  size: string;
+  /** Clearance fit for a metric simple/counterbore/countersink hole. */
+  fit: "close" | "normal" | "loose" | "exact";
+  /** Older holes: the sketch they're placed in — its plane is where they
+   *  start, and with no `points`, every point and circle centre in it. */
+  sketchId?: string;
+  /** Older holes (one plane for every target): where they start. New holes
+   *  leave it unset — each target carries its own plane. Absent on both: an
+   *  older sketch-based hole, on its sketch's plane. */
+  plane?: SketchPlaneRef;
+  /** Where in that sketch, each a snap point of one of its entities. Absent
+   *  (older documents, and the agent's default): every point entity and
+   *  circle centre in the sketch. */
+  points?: HolePointRef[];
+  /** Older holes: the one body they cut. */
+  targetId?: string;
+  /** The parts to cut. Absent: every part the holes reach (or `targetId`). */
+  scope?: string[];
+  /** Up to next: through the first stretch of material each hole meets. */
+  extent: "blind" | "throughAll" | "upToNext";
+  flip: boolean;
+  params: HoleParams;
+}
+
+/** `set`: a headless set screw (ISO 4026) with a hex socket in its end;
+ *  `none`: just the threaded shank — a stud or threaded rod. */
+export type ScrewHead = "socket" | "button" | "flat" | "hex" | "set" | "none";
+
+export interface ScrewParams {
+  /** Nominal length, ISO-style: under the head, or overall for a flat
+   *  (countersunk) head. */
+  length: string;
+  /** Modelled thread: radial clearance (mm) the thread is shrunk by, so it
+   *  fits a printed nut. Absent on screws made before it. */
+  clearance?: string;
+}
+
+/** A metric screw (geom/metricFasteners sizes), built as a body — one per
+ *  location: IN each hole of a Hole feature (seated on the counterbore floor /
+ *  flush in the countersink, its size following a metric hole's), and at each
+ *  picked spot, head on the spot's face (or plane) and shank going in
+ *  against its normal (Flip reverses). With neither, one screw at the Top
+ *  plane's origin. The thread is modelled (a real ISO
+ *  helix, see geom/thread.ts) or cosmetic (the shank drawn at the nominal
+ *  diameter). */
+export interface ScrewFeature extends FeatureBase {
+  type: "screw";
+  head: ScrewHead;
+  /** Absent = cosmetic (screws made before modelled threads). */
+  thread?: ThreadMode;
+  /** "M3" … "M12". Not saved when `holeId` names a hole with a metric size:
+   *  the screws follow the hole's (see `screwSize`). */
+  size?: string;
+  /** A Hole feature: a screw in each of its holes, following them. */
+  holeId?: string;
+  /** Holes of `holeId` left without a screw, by their place in the Hole's
+   *  list of holes. */
+  skipHoles?: number[];
+  /** Spots, a screw each, picked as a Hole's targets are: a sketch point
+   *  (followed as it moves) or a fixed spot on a face or plane. */
+  points?: HolePointRef[];
+  flip: boolean;
+  params: ScrewParams;
   color: number;
   opacity: number;
   hidden?: boolean;
@@ -757,7 +891,11 @@ export type Feature =
   | SweepFeature
   | LoftFeature
   | ImportFeature
-  | GearFeature;
+  | GearFeature
+  | HoleFeature
+  | ScrewFeature
+  | ThreadFeature
+  | DeletePartFeature;
 
 export interface Variable {
   id: string;
@@ -785,4 +923,64 @@ export interface Document {
   /** Number of features evaluated, 0..features.length. Features at index >=
    *  rollbackIndex are "rolled back" (not regenerated). */
   rollbackIndex: number;
+}
+
+/** A custom thread's parameters (expressions). */
+export interface ThreadParams {
+  /** Major diameter of the external thread — the one a nut's thread mates.
+   *  An internal thread is cut to mate with that size. */
+  diameter: string;
+  pitch: string;
+  /** From the start end; used when `fullLength` is off. */
+  length: string;
+  /** Radial gap per part (mm): a rod's thread shrinks by it, a hole's grows,
+   *  so two printed halves fit. */
+  clearance: string;
+  /** Interleaved helices (a faster-closing jar lid has 2–4). */
+  starts: string;
+}
+
+/** Parts taken out of the model from this point in the timeline on — one
+ *  screw of several, one copy of a pattern — by part id (`id`, `id#1`…, see
+ *  document/parts.ts). The feature that made them is left as it is, and so is
+ *  everything between it and here that used them. */
+export interface DeletePartFeature extends FeatureBase {
+  type: "deletePart";
+  partIds: string[];
+}
+
+/** A round face a thread is cut on — a rod's side or a hole's bore — by the
+ *  part it's on, its persistent name, and the geometric fingerprint the kernel
+ *  re-matches it by if an upstream edit renames it (as `RevolveAxisFace`). */
+export interface ThreadFaceRef {
+  featureId: string;
+  faceName?: string;
+  faceId: number;
+  center: [number, number, number];
+  normal?: [number, number, number];
+}
+
+/** A thread of any diameter and pitch, cut on a round face — the route for
+ *  3D-printed fasteners, lids and lead screws, where ISO metric pitches are
+ *  too fine to print. Always a cut, on the face's own body: a rod's side has
+ *  the grooves cut in (it should start at the thread's major diameter), a
+ *  hole's wall has them cut outward (it should start at the minor). Which it
+ *  is, the kernel reads off the face. It starts at the face's open end — a
+ *  rod's tip, a hole's mouth; `flip` starts it from the other — and runs the
+ *  whole face, or `params.length` when `fullLength` is off. Built as a faceted
+ *  helix (geom/thread.ts). */
+export interface ThreadFeature extends FeatureBase {
+  type: "thread";
+  face: ThreadFaceRef;
+  /** The face's side as read when it was picked — for the dialog's diagram
+   *  and readout only; the kernel reads the face itself. */
+  side: "external" | "internal";
+  profile: ThreadProfile;
+  leftHand: boolean;
+  /** 45° lead-in where the thread starts to engage: a chamfer at a rod's tip,
+   *  a countersink at a hole's mouth. */
+  leadIn: boolean;
+  flip: boolean;
+  fullLength: boolean;
+  params: ThreadParams;
 }
