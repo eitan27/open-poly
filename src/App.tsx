@@ -2945,11 +2945,8 @@ export default function App() {
   // An assembly's ghosts: the Mate dialog's connector glyphs, and the
   // Interference panel's overlaps.
   const asmGhosts = useMemo<GhostMesh[]>(
-    () =>
-      interference.ghosts.length || mateAnimation.ghosts.length
-        ? [...mates.glyphs, ...interference.ghosts, ...mateAnimation.ghosts]
-        : mates.glyphs,
-    [mates.glyphs, interference.ghosts, mateAnimation.ghosts],
+    () => (interference.ghosts.length ? [...mates.glyphs, ...interference.ghosts] : mates.glyphs),
+    [mates.glyphs, interference.ghosts],
   );
   const ghostMeshes = useMemo<GhostMesh[]>(
     () => [

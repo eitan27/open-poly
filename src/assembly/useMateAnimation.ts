@@ -21,25 +21,6 @@ import { saveBlob } from "../lib/download";
 import { multiply } from "./placement";
 import { formatValue, invertRigid, isRotation, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, MateConnector } from "./types";
-import type { Kernel } from "../kernel/types";
-import type { GhostMesh } from "../viewport/types";
-import { checkInterference, motionSamples, sweepClashes, type ClashRange } from "./interference";
-import type { SourceState } from "./useAssemblySources";
-
-/** Frames per round trip to the kernel while checking a motion for clashes. */
-const CLASH_BATCH = 12;
-
-/** A motion's clash check: under way, or what it found. */
-export type MotionClashes =
-  | { kind: "running"; done: number; total: number }
-  | {
-      kind: "done";
-      ranges: (ClashRange & { aName: string; bName: string })[];
-      samples: number;
-      /** The motion jammed here, so the check stopped short of To. */
-      jammedAt?: number;
-    }
-  | { kind: "error"; message: string };
 
 /** How often the dialog's live value is refreshed while playing. */
 const READOUT_MS = 100;
@@ -69,16 +50,6 @@ export interface MateAnimation {
   /** Render one cycle of the animation to a file and download it. */
   exportAs(format: ExportFormat): void;
   cancelExport(): void;
-  /** Checking the sweep for parts that overlap along the way. */
-  clashes: MotionClashes | null;
-  checkClashes(): void;
-  cancelClashes(): void;
-  /** Pose the parts where a clash is worst and show its overlap; null puts
-   *  them back. Which range (by index) is shown. */
-  showClash(i: number | null): void;
-  shownClash: number | null;
-  /** The shown clash's overlap, for the viewport. */
-  ghosts: GhostMesh[];
 }
 
 export function useMateAnimation({
@@ -86,15 +57,11 @@ export function useMateAnimation({
   solution,
   frameFor,
   viewApi,
-  kernel,
-  sources,
 }: {
   assembly: AssemblyDoc | null;
   solution: Solution | null;
   frameFor: (a: AssemblyDoc) => (c: MateConnector) => Mat4 | string;
   viewApi: { current: ViewportApi | null };
-  kernel: { current: Pick<Kernel, "interfere"> | null };
-  sources: ReadonlyMap<string, SourceState>;
 }): MateAnimation {
   const [mateId, setMateId] = useState<string | null>(null);
   const [spec, setSpecState] = useState<AnimateSpec | null>(null);
@@ -108,10 +75,6 @@ export function useMateAnimation({
   // Whether parts are posed away from their meshes (playing, or a finished
   // "once" holding its last frame).
   const posed = useRef(false);
-  const [clashes, setClashes] = useState<MotionClashes | null>(null);
-  const clashRun = useRef(0);
-  const [shownClash, setShownClash] = useState<number | null>(null);
-  const [ghosts, setGhosts] = useState<GhostMesh[]>([]);
 
   const release = () => {
     if (raf.current !== null) cancelAnimationFrame(raf.current);
@@ -120,8 +83,6 @@ export function useMateAnimation({
     posed.current = false;
     setPlaying(false);
     setLive(null);
-    setShownClash(null);
-    setGhosts([]);
   };
 
   // Any edit to the assembly (or switching document) ends the animation: its
@@ -151,8 +112,6 @@ export function useMateAnimation({
     setSpecState(specFor(id));
   };
   const close = () => {
-    clashRun.current++;
-    setClashes(null);
     exportAbort.current?.abort();
     release();
     setMateId(null);
@@ -259,72 +218,6 @@ export function useMateAnimation({
   };
   const cancelExport = () => exportAbort.current?.abort();
 
-  // ---- Clashes along the sweep ----
-  const checkClashes = async () => {
-    release();
-    const k = kernel.current;
-    if (!assembly || !solution || !spec || !k) return;
-    const id = ++clashRun.current;
-    const run = animator(assembly, frameFor(assembly), spec);
-    const values = motionSamples(spec.from, spec.to, isRotation(spec.dof));
-    setClashes({ kind: "running", done: 0, total: values.length });
-    let r: Awaited<ReturnType<typeof sweepClashes>>;
-    try {
-      r = await sweepClashes(k, assembly, sources, (v) => run.at(v), values, solution.problems, {
-        batch: CLASH_BATCH,
-        onProgress: (done) => setClashes({ kind: "running", done, total: values.length }),
-        cancelled: () => id !== clashRun.current,
-      });
-    } catch (e) {
-      if (id === clashRun.current) setClashes({ kind: "error", message: String((e as Error)?.message ?? e) });
-      return;
-    }
-    if (r === null || id !== clashRun.current) return;
-    if (typeof r === "string") {
-      setClashes({ kind: "error", message: r });
-      return;
-    }
-    const name = (iid: string) => assembly.instances.find((x) => x.id === iid)?.name ?? "?";
-    setClashes({
-      kind: "done",
-      ranges: r.ranges.map((x) => ({ ...x, aName: name(x.a), bName: name(x.b) })),
-      samples: r.samples,
-      ...(r.jammedAt !== undefined ? { jammedAt: r.jammedAt } : {}),
-    });
-  };
-  const cancelClashes = () => {
-    clashRun.current++;
-    setClashes(null);
-  };
-  const showClash = async (i: number | null) => {
-    release();
-    if (i === null || clashes?.kind !== "done" || !assembly || !solution || !spec) return;
-    const r = clashes.ranges[i];
-    const k = kernel.current;
-    if (!r || !k) return;
-    const s = animator(assembly, frameFor(assembly), spec).at(r.worst.value);
-    const baked = solution.placements;
-    const poses = new Map<string, Mat4>();
-    for (const [id, p] of s.placements) {
-      const was = baked.get(id);
-      if (was) poses.set(id, multiply(p, invertRigid(was)));
-    }
-    viewApi.current?.poseBodies(poses);
-    posed.current = true;
-    setShownClash(i);
-    setLive(r.worst.value);
-    const id = clashRun.current;
-    const rep = await checkInterference(k, assembly, sources, s.placements, new Set([r.a]));
-    if (id !== clashRun.current || typeof rep === "string") return;
-    const c = rep.clashes.find((x) => (x.a === r.a && x.b === r.b) || (x.a === r.b && x.b === r.a));
-    setGhosts(c?.mesh ? [{ mesh: c.mesh, variant: "cut" }] : []);
-  };
-  // A different sweep or assembly: the check no longer applies.
-  useEffect(() => {
-    clashRun.current++;
-    setClashes(null);
-  }, [assembly, spec?.mateId, spec?.dof, spec?.from, spec?.to]);
-
   // Try the sweep whenever it, or the assembly, changes: off the event that
   // changed it, so typing in From/To stays responsive.
   useEffect(() => {
@@ -380,12 +273,6 @@ export function useMateAnimation({
     exporting,
     exportAs: (f) => void exportAs(f),
     cancelExport,
-    clashes,
-    checkClashes: () => void checkClashes(),
-    cancelClashes,
-    showClash: (i) => void showClash(i),
-    shownClash,
-    ghosts,
   };
 }
 

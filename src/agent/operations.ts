@@ -861,17 +861,11 @@ export const readQuerySchema = z.discriminatedUnion("read", [
    *  motion, as stills. Nothing is written to the document. from/to default
    *  as the dialog's: between the DOF's limits, else a full turn (a rotation)
    *  or 20 mm (a translation) from where it is. */
-  /** ASSEMBLY only: which parts overlap. Without mateId: where they are now,
-   *  `instanceIds` against the rest (default: every pair). With mateId: while
-   *  sweeping its DOF from `from` to `to` (defaults as animateMate's), every
-   *  ~2° / 0.5 mm, only the parts that move against everything else. */
+  /** ASSEMBLY only: which parts overlap where they are now, `instanceIds`
+   *  against the rest (default: every pair). */
   z.object({
     read: z.literal("checkInterference"),
     instanceIds: z.array(z.string()).optional(),
-    mateId: z.string().optional(),
-    dof: dofSchema.optional(),
-    from: z.number().optional(),
-    to: z.number().optional(),
   }),
   z.object({
     read: z.literal("animateMate"),
@@ -885,21 +879,11 @@ export const readQuerySchema = z.discriminatedUnion("read", [
 ]);
 export type ReadQuery = z.infer<typeof readQuerySchema>;
 
-/** What checkInterference returns. Static: each overlapping pair and its
- *  volume (mm³). With a mate: each pair's runs of clashing values (from–to,
- *  in the DOF's unit) and where in the run it's worst, with that volume. */
+/** What checkInterference returns: each overlapping pair and its volume
+ *  (mm³), and how many pairs were close enough to intersect. */
 export interface InterferenceFindings {
-  clashes: {
-    a: { id: string; name: string };
-    b: { id: string; name: string };
-    volume: number;
-    from?: number;
-    to?: number;
-    worstAt?: number;
-  }[];
-  /** Static only: pairs close enough to intersect (boxes overlapping). */
-  pairsChecked?: number;
-  motion?: { mateId: string; dof: string; from: number; to: number; samples: number; jammedAt?: number };
+  clashes: { a: { id: string; name: string }; b: { id: string; name: string }; volume: number }[];
+  pairsChecked: number;
   errors?: { a: { id: string; name: string }; b: { id: string; name: string }; error: string }[];
 }
 

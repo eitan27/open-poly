@@ -271,16 +271,13 @@ frame count that shows the motion you care about.
 
 ### Checking for clashes
 
-`check_interference` (a read) intersects the solids exactly. Without a mate it
-checks where the parts are now: `instanceIds` against the rest, or every pair;
-each overlap comes with its volume (mm³). Parts that only touch (a face on a
-face, gear teeth flank to flank) don't count. With `mateId` it sweeps that DOF
-(the same from/to defaults as `animate_mate`) every ~2° / 0.5 mm and reports
-each clashing pair's runs of values and where each is worst. Run it once a
-mechanism moves: a clash usually means a part is a little too big, mated a
-little off, or a gear needs a profile shift (a pinion under 17 teeth on a
-rack). The user can see the same in the Interference panel (toolbar) and the
-Animate dialog's Check the motion.
+`check_interference` (a read) intersects the solids exactly, where the parts
+are now: `instanceIds` against the rest, or every pair; each overlap comes with
+its volume (mm³). Parts that only touch (a face on a face, gear teeth flank to
+flank) don't count. For a mechanism, `set_mate_value` its driver to a few
+positions and check at each. A clash usually means a part is a little too big,
+mated a little off, or a gear needs a profile shift (a pinion under 17 teeth on
+a rack). The user sees the same in the Interference panel (toolbar).
 
 ### Worked example (pattern, not literal API)
 

@@ -111,7 +111,7 @@ import {
 } from "./assemblyOps";
 import type { AssemblyDoc, Dof, Mat4, MateConnector } from "../assembly/types";
 import { animatableDofs, animator, defaultSpec } from "../assembly/animate";
-import { checkInterference, motionSamples, sweepClashes } from "../assembly/interference";
+import { checkInterference } from "../assembly/interference";
 import type { Kernel } from "../kernel/types";
 import { multiply } from "../assembly/placement";
 import { evaluateVariables } from "../document/document";
@@ -1865,14 +1865,12 @@ export function screenshot(ctx: AgentContext, opts?: { view?: ViewName }): strin
   return vp.capturePNG();
 }
 
-/** Which parts overlap (the checkInterference read): where they are now —
- *  `instanceIds` against the rest, or every pair — or, given a mate, at every
- *  step (about 2° / 0.5 mm) of sweeping its DOF from `from` to `to`, as runs
- *  of values per pair. Volumes in mm³; parts that only touch don't count.
- *  Throws with a reason. */
+/** Which parts overlap (the checkInterference read), where they are now:
+ *  `instanceIds` against the rest, or every pair. Volumes in mm³; parts that
+ *  only touch don't count. Throws with a reason. */
 export async function checkInterferenceRead(
   ctx: AgentContext,
-  q: { instanceIds?: string[]; mateId?: string; dof?: Dof; from?: number; to?: number },
+  q: { instanceIds?: string[] },
 ): Promise<InterferenceFindings> {
   const state = ctx.getAssembly();
   if (!state) throw new Error("check_interference works on an assembly; the open document is a part.");
@@ -1885,63 +1883,19 @@ export async function checkInterferenceRead(
   for (const id of q.instanceIds ?? [])
     if (!assembly.instances.some((i) => i.id === id))
       throw new Error(`No instance "${id}" — ids are in get_scene_summary's instances.`);
-  const round = (v: number) => Math.round(v * 1000) / 1000;
-
-  if (!q.mateId) {
-    const r = await checkInterference(
-      kernel,
-      assembly,
-      sources,
-      solution.placements,
-      new Set(q.instanceIds ?? []),
-      false,
-    );
-    if (typeof r === "string") throw new Error(r);
-    return {
-      clashes: r.clashes.map((c) => ({ a: part(c.a), b: part(c.b), volume: round(c.volume) })),
-      pairsChecked: r.checked,
-      ...(r.errors.length ? { errors: r.errors.map((e) => ({ a: part(e.a), b: part(e.b), error: e.error })) } : {}),
-    };
-  }
-  const mate = assembly.mates.find((m) => m.id === q.mateId);
-  if (!mate) throw new Error(`No mate "${q.mateId}" — ids are in get_scene_summary's mates.`);
-  const dofs = animatableDofs(assembly, mate);
-  const dof = q.dof ?? dofs[0];
-  if (!dof || !dofs.includes(dof))
-    throw new Error(
-      dof
-        ? `${mate.name} can't be swept in ${dof}: it leaves ${dofs.join(", ") || "nothing"} free to sweep (a relation's driven DOF moves with its driver).`
-        : `${mate.name} has no DOF to sweep.`,
-    );
-  const spec = defaultSpec(
-    mate,
-    dof,
-    solution.values.get(mate.id)?.[dof] ?? 0,
-    evaluateVariables(assembly.variables).scope,
+  const r = await checkInterference(
+    kernel,
+    assembly,
+    sources,
+    solution.placements,
+    new Set(q.instanceIds ?? []),
+    false,
   );
-  const from = q.from ?? spec.from;
-  const to = q.to ?? spec.to;
-  const run = animator(assembly, ctx.assemblyEdit.frameOf, { mateId: mate.id, dof });
-  const values = motionSamples(from, to, isRotation(dof));
-  const r = await sweepClashes(kernel, assembly, sources, (v) => run.at(v), values, solution.problems);
-  if (r === null || typeof r === "string") throw new Error(r ?? "Cancelled.");
+  if (typeof r === "string") throw new Error(r);
   return {
-    motion: {
-      mateId: mate.id,
-      dof,
-      from,
-      to,
-      samples: r.samples,
-      ...(r.jammedAt !== undefined ? { jammedAt: round(r.jammedAt) } : {}),
-    },
-    clashes: r.ranges.map((c) => ({
-      a: part(c.a),
-      b: part(c.b),
-      from: round(c.from),
-      to: round(c.to),
-      worstAt: round(c.worst.value),
-      volume: round(c.worst.volume),
-    })),
+    clashes: r.clashes.map((c) => ({ a: part(c.a), b: part(c.b), volume: Math.round(c.volume * 1000) / 1000 })),
+    pairsChecked: r.checked,
+    ...(r.errors.length ? { errors: r.errors.map((e) => ({ a: part(e.a), b: part(e.b), error: e.error })) } : {}),
   };
 }
 

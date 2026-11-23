@@ -501,10 +501,10 @@ A translation driving a rotation uses 1/k; Reverse negates k.
   world boxes overlap go to the kernel, which intersects the two solids
   exactly (fuzzy 0.01) and measures the common volume; under 0.001 mm³ is
   touching. The worker keeps each part document's solids per save, so a
-  motion check (Animate → Check the motion: ~2° / 0.5 mm steps, only the
-  instances that move against the rest, 12 frames a round trip) rebuilds
-  nothing. Overlaps draw as "cut" ghosts (removal red, on top). Agent:
-  `check_interference`, static or swept.
+  repeat check rebuilds nothing. Overlaps draw as "cut" ghosts (removal red,
+  on top). Agent: `check_interference`. A check over a motion (Animate,
+  sampled every ~2°) was built and removed: gear-on-rack booleans cost
+  ~0.5 s a position, far too slow for a sweep.
 - **A relation starts from the pose on screen** (`phaseToCurrentPose`): adding
   one, or switching it back on, sets the driven DOF's phase to where it is
   minus k times the driver, so nothing moves. Without it a relation switched

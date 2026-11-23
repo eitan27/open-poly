@@ -72,8 +72,6 @@ export function useAssemblyWorkspace({
     solution: mates.solution,
     frameFor: mates.frameFor,
     viewApi,
-    kernel,
-    sources: asmSources,
   });
   const relations = useRelations({
     assembly,

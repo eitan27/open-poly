@@ -3,8 +3,7 @@
 // don't count; the overlap is drawn red; a selection scopes the check. Then
 // gears: a 12-tooth pinion in mesh with a rack clashes (undercut) unshifted,
 // and doesn't with a 0.3 profile shift — teeth touching flank to flank don't
-// count. And over a motion: the Animate dialog's Check the motion finds
-// where a turning cube runs into a grounded one, to the sampled degree.
+// count. Then the agent's check_interference read, at two poses of a mate.
 //
 //   URL=http://localhost:5180/ SHOTS=<dir> node scripts/verify-interference.mjs
 import os from "node:os";
@@ -149,10 +148,10 @@ for (const [shift, clashes] of [
   await panel.locator("button", { hasText: "Close" }).click();
 }
 
-// --- Over a motion (Animate → Check the motion): cube A turns about its
-// centre on a revolute; grounded cube B's near face is 12 mm from the axis.
-// A's corner reaches 10·(cos θ + sin θ) from the axis, so they overlap for
-// 13.05° < θ < 76.95°: sampled every 2° over 0–90°, 14°–76°, worst at 44°.
+// --- The agent's read: cube A turns about its centre on a revolute; grounded
+// cube B's near face is 12 mm from the axis. A's corner reaches
+// 10·(cos θ + sin θ) from the axis, so at 0° they're clear and at 45° they
+// overlap.
 await op.apply({ op: "newDocument", name: "Plate" });
 await op.apply({ op: "addPrimitive", kind: "box", params: { width: "100", depth: "100", height: "6" } });
 await op.settle();
@@ -186,54 +185,7 @@ check(
   Math.abs(inst("B").bbox.min[0] - inst("A").bbox.max[0] - 2) < 1e-6,
   JSON.stringify([inst("A").bbox, inst("B").bbox, plateR.ok]),
 );
-await page.locator(".asm-mate-animate").first().click();
-const anim = page.locator(".asm-animate");
-await anim.waitFor();
-const field = (label) => anim.locator(".ed-field", { hasText: label }).locator("input");
-await field("To").fill("90");
-await field("To").press("Enter");
-await page.waitForTimeout(400);
-await anim.locator(".asm-clash-check").click();
-await page.waitForFunction(() => !!document.querySelector(".asm-clash-status, .asm-animate .ed-warning"), null, {
-  timeout: 120000,
-});
-const rows = await anim.locator(".asm-clash-list li").allTextContents();
-const statusM = (await anim.locator(".asm-clash-status").textContent()) ?? "";
-check("one clash, A ↔ B", rows.length === 1 && /A ↔ B|B ↔ A/.test(rows[0]), JSON.stringify({ statusM, rows }));
-check("…from 14° to 76° (the sampled run inside 13.05°–76.95°)", /14°\s*–\s*76°/.test(rows[0] ?? ""), rows[0]);
-const tip = (await anim.locator(".asm-clash-list button").first().getAttribute("title")) ?? "";
-check("…worst at 44°", /Worst at 44°/.test(tip), tip);
-await anim.locator(".asm-clash-list button").first().click();
-await page.waitForTimeout(1500);
-const live = (await anim.locator(".asm-animate-live").textContent()) ?? "";
-check("Show poses the parts at the worst value", /44/.test(live), live);
-await page
-  .locator(".viewport canvas")
-  .first()
-  .hover({ position: { x: 5, y: 5 } });
-await page.keyboard.press("0");
-await page.waitForTimeout(800);
-await shot("3-motion-worst");
-// Short of the clash: none.
-await field("To").fill("12");
-await field("To").press("Enter");
-await page.waitForTimeout(400);
-await anim.locator(".asm-clash-check").click();
-await page.waitForFunction(() => !!document.querySelector(".asm-clash-status"), null, { timeout: 60000 });
-const none = (await anim.locator(".asm-clash-status").textContent()) ?? "";
-check("0°–12°: no clashes over the motion", /No clashes over the motion/.test(none), none);
-
-// --- The agent's check_interference read, on the same assembly.
-await anim.locator(".asm-animate-close").click();
 const hinge = s.mates[0];
-const motion = await read({ read: "checkInterference", mateId: hinge.id, to: 90 });
-const mc = motion.clashes?.[0];
-check(
-  "agent, motion: A ↔ B from 14 to 76, worst at 44",
-  motion.clashes?.length === 1 && mc.from === 14 && mc.to === 76 && mc.worstAt === 44 && mc.volume > 0,
-  JSON.stringify(motion),
-);
-check("agent, motion: 46 positions sampled", motion.motion?.samples === 46, JSON.stringify(motion.motion));
 const now = await read({ read: "checkInterference" });
 check("agent, static at 0°: nothing overlaps", now.clashes?.length === 0, JSON.stringify(now));
 await op.apply({ op: "setMateValue", mateId: hinge.id, dof: "rz", value: 45 });
