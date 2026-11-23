@@ -1,7 +1,16 @@
 // Main-thread implementation of the Kernel facade. Spawns the worker and
 // correlates request/response pairs by id, exposing a clean Promise API.
 
-import type { ExportFormat, Kernel, RegenFeatureResult, RegenOutcome, ResolvedFeature } from "./types";
+import type {
+  ExportFormat,
+  InterferenceDoc,
+  InterferencePair,
+  InterferenceResult,
+  Kernel,
+  RegenFeatureResult,
+  RegenOutcome,
+  ResolvedFeature,
+} from "./types";
 import type { KernelRequest, KernelResponse } from "./protocol";
 
 type Pending =
@@ -12,7 +21,8 @@ type Pending =
       onProgress?: (result: RegenFeatureResult) => void;
       onMeshProgress?: (featureId: string, done: number, total: number) => void;
     }
-  | { op: "export"; resolve: (value: Blob) => void; reject: (reason: Error) => void };
+  | { op: "export"; resolve: (value: Blob) => void; reject: (reason: Error) => void }
+  | { op: "interfere"; resolve: (value: InterferenceResult[][]) => void; reject: (reason: Error) => void };
 
 export class KernelClient implements Kernel {
   private worker: Worker;
@@ -44,6 +54,8 @@ export class KernelClient implements Kernel {
         p.resolve({ results: res.results, warnings: res.warnings });
       } else if (p.op === "export" && res.op === "export") {
         p.resolve(res.blob);
+      } else if (p.op === "interfere" && res.op === "interfere") {
+        p.resolve(res.results);
       }
     };
     // A failure while loading/evaluating the worker module (e.g. the WASM glue)
@@ -76,6 +88,15 @@ export class KernelClient implements Kernel {
     const req: KernelRequest = { id, op: "export", features, bodyId, format };
     return new Promise<Blob>((resolve, reject) => {
       this.pending.set(id, { op: "export", resolve, reject });
+      this.worker.postMessage(req);
+    });
+  }
+
+  interfere(docs: InterferenceDoc[], frames: InterferencePair[][], withMesh: boolean): Promise<InterferenceResult[][]> {
+    const id = this.nextId++;
+    const req: KernelRequest = { id, op: "interfere", docs, frames, withMesh };
+    return new Promise<InterferenceResult[][]>((resolve, reject) => {
+      this.pending.set(id, { op: "interfere", resolve, reject });
       this.worker.postMessage(req);
     });
   }

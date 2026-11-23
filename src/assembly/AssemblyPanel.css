@@ -297,3 +297,48 @@
 .asm-relation .ed-field select {
   width: 134px;
 }
+
+/* The Interference panel: each overlap a row, its two parts and its volume. */
+.feature-dialog.asm-interference {
+  width: 280px;
+}
+.asm-interference-all {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent, #4fa3ff);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+.asm-interference-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.asm-interference-list button {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  text-align: left;
+  padding: 5px 8px;
+}
+.asm-interference-list button.active {
+  outline: 1px solid #ff6b5a;
+}
+.asm-interference-pair {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asm-interference-volume {
+  flex: 0 0 auto;
+  color: #ff8a7d;
+  font-variant-numeric: tabular-nums;
+}

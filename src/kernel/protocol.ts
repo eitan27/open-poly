@@ -1,9 +1,17 @@
 // Wire protocol between the main thread and the kernel Web Worker.
-import type { ExportFormat, RegenFeatureResult, ResolvedFeature } from "./types";
+import type {
+  ExportFormat,
+  InterferenceDoc,
+  InterferencePair,
+  InterferenceResult,
+  RegenFeatureResult,
+  ResolvedFeature,
+} from "./types";
 
 export type KernelRequest =
   | { id: number; op: "regenerate"; features: ResolvedFeature[] }
-  | { id: number; op: "export"; features: ResolvedFeature[]; bodyId: string; format: ExportFormat };
+  | { id: number; op: "export"; features: ResolvedFeature[]; bodyId: string; format: ExportFormat }
+  | { id: number; op: "interfere"; docs: InterferenceDoc[]; frames: InterferencePair[][]; withMesh: boolean };
 
 export type KernelResponse =
   // `warnings` are non-fatal, keyed by FEATURE id: references that had to be
@@ -18,4 +26,5 @@ export type KernelResponse =
   // UI can show "processing N/M faces". `featureId` is the body being meshed.
   | { id: number; ok: true; op: "mesh-progress"; featureId: string; done: number; total: number }
   | { id: number; ok: true; op: "export"; blob: Blob }
+  | { id: number; ok: true; op: "interfere"; results: InterferenceResult[][] }
   | { id: number; ok: false; error: string };
