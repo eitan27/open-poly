@@ -19,7 +19,10 @@
 //     work while a viewport pick is armed; every other modeling binding stands down,
 //     and the ones that do run are `preventDefault`ed first, because several mount a
 //     dialog with an autofocusing input and the same keystroke would otherwise leak
-//     into it ("e" turning an Extrude distance of "10" into "10e").
+//     into it ("e" turning an Extrude distance of "10" into "10e"). One thing comes
+//     before the pick guard: `featureGuard`, which decides what a feature key means
+//     while a feature dialog is open. It has to, because most dialogs arm a pick as
+//     they open, and the pick guard would otherwise swallow the key without a word.
 //
 // The listener registers ONCE and reads its config through a ref. The effect this
 // replaced listed 36 dependencies behind an `exhaustive-deps` disable — a
@@ -59,6 +62,13 @@ export interface ShortcutHandlerConfig {
   whilePicking: ActionMap;
   /** Modeling feature bindings: suppressed during a pick, `preventDefault`ed. */
   modelingActions: ActionMap;
+  /** Consulted for every `modelingActions` key before the pick guard. `pass` lets
+   *  the key carry on as usual; `handled` means the guard has dealt with it (a
+   *  feature dialog is open, so the key was refused or was already satisfied);
+   *  `run` means the guard closed an untouched dialog to make way, so the action
+   *  runs now — past the pick guard, whose pick belonged to that dialog and is
+   *  only still set in this render's snapshot. See src/ui/dialogShortcutGuard.ts. */
+  featureGuard?: (id: ShortcutId) => "pass" | "run" | "handled";
   /** An open assembly's bindings (its mode admits only those and the shared
    *  ones it opts into — see shortcuts.ts). `preventDefault`ed like the
    *  modeling ones, since they open dialogs too. */
@@ -124,7 +134,12 @@ export function useShortcutHandler(config: ShortcutHandlerConfig): void {
 
       // 4. Modeling: the pick-surviving bindings, the guard, then the rest.
       if (handled(c.whilePicking, id, e)) return;
-      if (c.picking) return;
+      const guard = id && c.modelingActions[id] ? (c.featureGuard?.(id) ?? "pass") : "pass";
+      if (guard === "handled") {
+        e.preventDefault();
+        return;
+      }
+      if (guard === "pass" && c.picking) return;
       e.preventDefault();
       if (id) c.modelingActions[id]?.(e);
     };
