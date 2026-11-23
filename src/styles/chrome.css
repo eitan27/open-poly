@@ -51,6 +51,12 @@
   color: var(--accent-bright-2);
 }
 
+/* One item per line: run together with " · " they wrapped mid-item and read
+   as one long sentence. */
+.update-banner .whats-new-item {
+  display: block;
+}
+
 .update-banner .banner-link {
   color: var(--accent-bright-2);
 }

@@ -49,8 +49,8 @@ const sinceBanner = (page) => page.locator(".whats-new-banner");
 
   // Someone who used the app before the seen record existed: no record, but
   // an open document from a past visit. They get every entry from the day the
-  // record shipped on (RECORD_SINCE), and nothing older. The banner fits three
-  // items, so check its first line and the "+N more" for the rest.
+  // record shipped on (RECORD_SINCE), and nothing older. The banner lists every
+  // one of their items, a line each.
   await page.evaluate((k) => localStorage.removeItem(k), KEY);
   check(
     "…a first visit leaves an open document id behind",
@@ -62,11 +62,11 @@ const sinceBanner = (page) => page.locator(".whats-new-banner");
   const pre = await sinceBanner(page).innerText();
   const since = list.filter((e, i) => i === 0 || e.date >= RECORD_SINCE);
   const older = list.filter((e) => !since.includes(e));
-  const count = since.reduce((n, e) => n + e.items.length, 0);
+  const newest = since.flatMap((e) => e.items);
   check(
-    "a visitor from before the record gets every entry since it shipped, and nothing older",
-    pre.includes(list[0].items[0]) &&
-      (count <= 3 || pre.includes(`+${count - 3} more`)) &&
+    "a visitor from before the record gets every item since it shipped, a line each, and nothing older",
+    newest.every((t) => pre.includes(t)) &&
+      !/\+\d+ more/.test(pre) &&
       !older.some((e) => e.items.some((t) => pre.includes(t))),
     pre.replace(/\n/g, " ⏎ "),
   );
@@ -91,6 +91,14 @@ const sinceBanner = (page) => page.locator(".whats-new-banner");
     "…the label on its own line, above the items",
     lb && first && first.y >= lb.y + lb.height - 1,
     JSON.stringify({ lb, first }),
+  );
+  const lines = await banner
+    .locator(".whats-new-item")
+    .evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top));
+  check(
+    "…each item on a line of its own",
+    lines.length === list[0].items.length && lines.every((y, i) => i === 0 || y > lines[i - 1] + 4),
+    JSON.stringify(lines),
   );
   const bold = await banner.locator("strong").allInnerTexts();
   check(

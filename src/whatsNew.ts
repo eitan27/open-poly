@@ -110,8 +110,3 @@ export function boldRuns(text: string, bold: string[]): { text: string; bold: bo
   }
   return runs;
 }
-
-/** At most `max` items for the one-line banner; the rest become "+N more". */
-export function bannerItems<T>(items: T[], max = 3): { shown: T[]; more: number } {
-  return { shown: items.slice(0, max), more: Math.max(0, items.length - max) };
-}

@@ -1,14 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import {
-  bannerItems,
-  boldRuns,
-  entryKey,
-  newSince,
-  parseWhatsNew,
-  sinceLastVisit,
-  type WhatsNewEntry,
-} from "./whatsNew";
+import { boldRuns, entryKey, newSince, parseWhatsNew, sinceLastVisit, type WhatsNewEntry } from "./whatsNew";
 
 const nov: WhatsNewEntry = {
   date: "2026-11-05",
@@ -37,11 +29,6 @@ describe("whatsNew", () => {
   it("a deploy with no new entry has nothing to show (the plain banner)", () => {
     expect(newSince([nov, oct], [nov, oct])).toEqual([]);
     expect(newSince([], [])).toEqual([]);
-  });
-
-  it("keeps the banner to a few items", () => {
-    expect(bannerItems(["a", "b"])).toEqual({ shown: ["a", "b"], more: 0 });
-    expect(bannerItems(["a", "b", "c", "d", "e"])).toEqual({ shown: ["a", "b", "c"], more: 2 });
   });
 
   it("takes bold phrases that appear in the entry's items, and nothing else", () => {

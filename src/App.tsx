@@ -4185,6 +4185,21 @@ export default function App() {
   // of the two mutually exclusive toolbars it belongs to — lives in the table in
   // src/settings/shortcuts.ts; the ORDER the groups below are tried in lives in
   // useShortcutHandler. This only says what each id *does*. No key letter is here.
+  /** What a feature key (or N, the Body menu) means while a feature dialog may
+   *  be open: "run" its action — no dialog, or an untouched one just swapped out
+   *  — or "handled" (its own dialog's key, or refused with a hint). */
+  const guardFeatureKey = (id: ShortcutId): "run" | "handled" => {
+    const verdict = featureShortcutVerdict(openFeatureDialog, id);
+    if (verdict === "pass") return "run";
+    if (verdict === "swap" && openFeatureDialog) {
+      openFeatureDialog.close();
+      dialogBaselines.forget();
+      return "run";
+    }
+    if (verdict === "block" && openFeatureDialog) flashMsg(dialogBusyHint(openFeatureDialog));
+    return "handled";
+  };
+
   useShortcutHandler({
     mode: isAssembly ? "assembly" : editingSketchId ? "sketch" : "modeling",
     picking,
@@ -4337,8 +4352,13 @@ export default function App() {
       },
       "feature.moveUp": (e) => moveFeatureIfAny(e, -1),
       "feature.moveDown": (e) => moveFeatureIfAny(e, 1),
-      // New Body ignores `picking`, matching the toolbar button itself.
-      "model.newBody": () => setNewSolidOpen((o) => !o),
+      // New Body works while a pick is armed, but not past an open feature
+      // dialog: the toolbar's Body button is disabled then, and the key follows
+      // the same guard as the feature keys (swap an untouched dialog, refuse
+      // one holding work).
+      "model.newBody": () => {
+        if (guardFeatureKey("model.newBody") === "run") setNewSolidOpen((o) => !o);
+      },
     },
     assemblyActions: {
       "view.home": () => viewApiRef.current?.homeView(),
@@ -4380,15 +4400,8 @@ export default function App() {
     // make way for the one asked for; any other feature key is refused with a
     // hint, so the work in the open dialog is never dropped.
     featureGuard: (id) => {
-      const verdict = featureShortcutVerdict(openFeatureDialog, id);
-      if (verdict === "pass") return "pass";
-      if (verdict === "swap" && openFeatureDialog) {
-        openFeatureDialog.close();
-        dialogBaselines.forget();
-        return "run";
-      }
-      if (verdict === "block" && openFeatureDialog) flashMsg(dialogBusyHint(openFeatureDialog));
-      return "handled";
+      const r = guardFeatureKey(id);
+      return r === "run" && !openFeatureDialog ? "pass" : r;
     },
   });
 
