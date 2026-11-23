@@ -3,7 +3,8 @@
 // don't count; the overlap is drawn red; a selection scopes the check. Then
 // gears: a 12-tooth pinion in mesh with a rack clashes (undercut) unshifted,
 // and doesn't with a 0.3 profile shift — teeth touching flank to flank don't
-// count.
+// count. And over a motion: the Animate dialog's Check the motion finds
+// where a turning cube runs into a grounded one, to the sampled degree.
 //
 //   URL=http://localhost:5180/ SHOTS=<dir> node scripts/verify-interference.mjs
 import os from "node:os";
@@ -147,6 +148,80 @@ for (const [shift, clashes] of [
   await shot(`2-gears-shift${shift}`);
   await panel.locator("button", { hasText: "Close" }).click();
 }
+
+// --- Over a motion (Animate → Check the motion): cube A turns about its
+// centre on a revolute; grounded cube B's near face is 12 mm from the axis.
+// A's corner reaches 10·(cos θ + sin θ) from the axis, so they overlap for
+// 13.05° < θ < 76.95°: sampled every 2° over 0–90°, 14°–76°, worst at 44°.
+await op.apply({ op: "newDocument", name: "Plate" });
+await op.apply({ op: "addPrimitive", kind: "box", params: { width: "100", depth: "100", height: "6" } });
+await op.settle();
+await op.apply({ op: "newDocument", name: "Turn", kind: "assembly" });
+await op.settle();
+const plateR = await op.apply({
+  op: "insertInstance",
+  documentId: await docId("Plate"),
+  position: [0, 0, 0],
+  name: "Plate",
+});
+await op.apply({ op: "insertInstance", documentId: cube, position: [0, 0, 6], name: "A" });
+await op.apply({ op: "insertInstance", documentId: cube, position: [22, 0, 6], name: "B" });
+await page.waitForTimeout(1000);
+s = await summary();
+const inst = (n) => s.instances.find((i) => i.name === n);
+await op.apply({ op: "groundInstance", instanceId: inst("Plate").id });
+await op.apply({ op: "groundInstance", instanceId: inst("B").id });
+const facesOfI = (i) => s.parts.find((p) => p.key === i.part).faces;
+r = await op.apply({
+  op: "addMate",
+  type: "revolute",
+  a: { instanceId: inst("Plate").id, face: facesOfI(inst("Plate")).find((f) => f.endsWith("/+z")) },
+  b: { instanceId: inst("A").id, face: facesOfI(inst("A")).find((f) => f.endsWith("/-z")) },
+});
+check("set-up: A turns on the plate", r.ok, JSON.stringify(r));
+await page.waitForTimeout(800);
+s = await summary();
+check(
+  "set-up: A and B clear at 0°, 2 mm apart",
+  Math.abs(inst("B").bbox.min[0] - inst("A").bbox.max[0] - 2) < 1e-6,
+  JSON.stringify([inst("A").bbox, inst("B").bbox, plateR.ok]),
+);
+await page.locator(".asm-mate-animate").first().click();
+const anim = page.locator(".asm-animate");
+await anim.waitFor();
+const field = (label) => anim.locator(".ed-field", { hasText: label }).locator("input");
+await field("To").fill("90");
+await field("To").press("Enter");
+await page.waitForTimeout(400);
+await anim.locator(".asm-clash-check").click();
+await page.waitForFunction(() => !!document.querySelector(".asm-clash-status, .asm-animate .ed-warning"), null, {
+  timeout: 120000,
+});
+const rows = await anim.locator(".asm-clash-list li").allTextContents();
+const statusM = (await anim.locator(".asm-clash-status").textContent()) ?? "";
+check("one clash, A ↔ B", rows.length === 1 && /A ↔ B|B ↔ A/.test(rows[0]), JSON.stringify({ statusM, rows }));
+check("…from 14° to 76° (the sampled run inside 13.05°–76.95°)", /14°\s*–\s*76°/.test(rows[0] ?? ""), rows[0]);
+const tip = (await anim.locator(".asm-clash-list button").first().getAttribute("title")) ?? "";
+check("…worst at 44°", /Worst at 44°/.test(tip), tip);
+await anim.locator(".asm-clash-list button").first().click();
+await page.waitForTimeout(1500);
+const live = (await anim.locator(".asm-animate-live").textContent()) ?? "";
+check("Show poses the parts at the worst value", /44/.test(live), live);
+await page
+  .locator(".viewport canvas")
+  .first()
+  .hover({ position: { x: 5, y: 5 } });
+await page.keyboard.press("0");
+await page.waitForTimeout(800);
+await shot("3-motion-worst");
+// Short of the clash: none.
+await field("To").fill("12");
+await field("To").press("Enter");
+await page.waitForTimeout(400);
+await anim.locator(".asm-clash-check").click();
+await page.waitForFunction(() => !!document.querySelector(".asm-clash-status"), null, { timeout: 60000 });
+const none = (await anim.locator(".asm-clash-status").textContent()) ?? "";
+check("0°–12°: no clashes over the motion", /No clashes over the motion/.test(none), none);
 
 const real = errors.filter((e) => !/502|Bad Gateway/.test(e));
 check("no page errors", real.length === 0, real.slice(0, 3).join(" | "));

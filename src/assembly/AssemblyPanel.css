@@ -306,7 +306,7 @@
   background: none;
   border: none;
   padding: 0;
-  color: var(--accent, #4fa3ff);
+  color: var(--accent);
   cursor: pointer;
   font: inherit;
   text-decoration: underline;
@@ -328,7 +328,7 @@
   padding: 5px 8px;
 }
 .asm-interference-list button.active {
-  outline: 1px solid #ff6b5a;
+  outline: 1px solid var(--danger);
 }
 .asm-interference-pair {
   flex: 1;
@@ -339,6 +339,6 @@
 }
 .asm-interference-volume {
   flex: 0 0 auto;
-  color: #ff8a7d;
+  color: var(--danger-text);
   font-variant-numeric: tabular-nums;
 }

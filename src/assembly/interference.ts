@@ -218,3 +218,63 @@ export function fmtVolume(v: number): string {
   const n = v >= 100 ? Math.round(v) : v >= 1 ? Math.round(v * 10) / 10 : Math.round(v * 1000) / 1000;
   return `${n.toLocaleString("en-US")} mm³`;
 }
+
+/** A pair's clashes over a motion, as runs of consecutive sampled values. */
+export interface ClashRange {
+  a: string;
+  b: string;
+  from: number;
+  to: number;
+  /** Where in the run they overlap most. */
+  worst: { value: number; volume: number };
+}
+
+/** `checkMotion`'s frames as ranges per pair, in sweep order. */
+export function clashRanges(frames: { value: number; clashes: Clash[] }[]): ClashRange[] {
+  const out: ClashRange[] = [];
+  const open = new Map<string, ClashRange>();
+  frames.forEach((f) => {
+    const here = new Set<string>();
+    for (const c of f.clashes) {
+      const key = [c.a, c.b].sort().join("|");
+      here.add(key);
+      const r = open.get(key);
+      if (r) {
+        r.to = f.value;
+        if (c.volume > r.worst.volume) r.worst = { value: f.value, volume: c.volume };
+      } else {
+        const n: ClashRange = {
+          a: c.a,
+          b: c.b,
+          from: f.value,
+          to: f.value,
+          worst: { value: f.value, volume: c.volume },
+        };
+        open.set(key, n);
+        out.push(n);
+      }
+    }
+    for (const key of [...open.keys()]) if (!here.has(key)) open.delete(key);
+  });
+  return out;
+}
+
+/** The values a motion check samples from `from` to `to`, both included:
+ *  about every 2° (or 0.5 mm), 24–240 of them. */
+export function motionSamples(from: number, to: number, rotation: boolean): number[] {
+  const n = Math.min(240, Math.max(24, Math.ceil(Math.abs(to - from) / (rotation ? 2 : 0.5))));
+  return Array.from({ length: n + 1 }, (_, i) => from + ((to - from) * i) / n);
+}
+
+/** The instances a motion moves: placed differently in some frame. */
+export function movingInstances(frames: MotionFrame[]): Set<string> {
+  const out = new Set<string>();
+  const first = frames[0]?.placements;
+  if (!first) return out;
+  for (const f of frames.slice(1))
+    for (const [id, m] of f.placements) {
+      const m0 = first.get(id);
+      if (!m0 || m.some((v, i) => Math.abs(v - m0[i]) > 1e-6)) out.add(id);
+    }
+  return out;
+}

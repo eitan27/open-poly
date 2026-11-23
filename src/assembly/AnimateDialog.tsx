@@ -10,6 +10,7 @@ import { dofLabel } from "./mateTypes";
 import { formatValue, isRotation } from "./solve";
 import type { MateAnimation } from "./useMateAnimation";
 import type { Dof, Mate } from "./types";
+import { fmtVolume } from "./interference";
 
 const MODES: { mode: AnimateMode; label: string; title: string }[] = [
   { mode: "once", label: "Once", title: "From → to, then stop" },
@@ -103,6 +104,8 @@ export function AnimateDialog({ mate, anim, dofs }: { mate: Mate; anim: MateAnim
           </button>
         </div>
       )}
+      <div className="bool-group-label">Clashes</div>
+      <Clashes anim={anim} rot={rot} />
       <div className="ed-actions">
         {anim.playing ? (
           <button className="ed-primary asm-animate-stop" onClick={anim.stop}>
@@ -122,6 +125,78 @@ export function AnimateDialog({ mate, anim, dofs }: { mate: Mate; anim: MateAnim
         </button>
       </div>
     </DraggableDialog>
+  );
+}
+
+/** Checking the motion for parts that overlap, and what it found: each pair's
+ *  runs of clashing values, a click posing the parts where it's worst. */
+function Clashes({ anim, rot }: { anim: MateAnimation; rot: boolean }) {
+  const c = anim.clashes;
+  const fmt = (v: number) => `${formatValue(v, rot)}${rot ? "°" : " mm"}`;
+  if (!c || c.kind === "error")
+    return (
+      <>
+        {c?.kind === "error" && <p className="ed-warning">{c.message}</p>}
+        <p className="ed-hint">Find parts that overlap anywhere from From to To.</p>
+        <div className="ed-modes">
+          <button
+            className="asm-clash-check"
+            disabled={!!anim.exporting || anim.blocked?.play === false || anim.check === null}
+            title="Step through the motion and intersect the moving parts with everything else"
+            onClick={anim.checkClashes}
+          >
+            Check the motion
+          </button>
+        </div>
+      </>
+    );
+  if (c.kind === "running")
+    return (
+      <div className="asm-export-progress asm-clash-progress">
+        <span>
+          Checking… {c.done}/{c.total}
+        </span>
+        <button className="asm-export-cancel" onClick={anim.cancelClashes}>
+          Cancel
+        </button>
+      </div>
+    );
+  return (
+    <>
+      <p className="ed-hint asm-clash-status">
+        {c.ranges.length === 0
+          ? `No clashes over the motion (${c.samples} positions checked).`
+          : `${c.ranges.length === 1 ? "A clash" : `${c.ranges.length} clashes`} — click to see where it's worst:`}
+      </p>
+      {c.ranges.length > 0 && (
+        <ul className="asm-interference-list asm-clash-list">
+          {c.ranges.map((r, i) => (
+            <li key={i}>
+              <button
+                className={anim.shownClash === i ? "active" : ""}
+                title={`Worst at ${fmt(r.worst.value)}: ${fmtVolume(r.worst.volume)} (click again to put the parts back)`}
+                onClick={() => anim.showClash(anim.shownClash === i ? null : i)}
+              >
+                <span className="asm-interference-pair">
+                  {r.aName} ↔ {r.bName}
+                </span>
+                <span className="asm-interference-volume">
+                  {r.from === r.to ? fmt(r.from) : `${fmt(r.from)} – ${fmt(r.to)}`}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {c.jammedAt !== undefined && (
+        <p className="ed-hint">The motion jams at {fmt(c.jammedAt)}: checked up to there.</p>
+      )}
+      <div className="ed-modes">
+        <button className="asm-clash-check" onClick={anim.checkClashes}>
+          Check again
+        </button>
+      </div>
+    </>
   );
 }
 
