@@ -230,6 +230,7 @@ import { BooleanDialog } from "./ui/BooleanDialog";
 import { PatternDialog } from "./ui/PatternDialog";
 import { ExtrudeDialog } from "./ui/ExtrudeDialog";
 import { ShellDialog } from "./ui/ShellDialog";
+import { dialogBusyHint, featureShortcutVerdict, type OpenFeatureDialog } from "./ui/dialogShortcutGuard";
 import { DressUpDialog } from "./ui/DressUpDialog";
 import { buildDressUpGroups, dressUpCountLabel, groupPickRows, type PickRowSpec } from "./ui/pickRows";
 import { PlaneDialog } from "./ui/PlaneDialog";
@@ -2609,6 +2610,33 @@ export default function App() {
     !!pattern.dialog ||
     !!transform.editId ||
     !!transform.arming;
+  /** The feature dialog that is open, described for the feature-shortcut guard
+   *  (see src/ui/dialogShortcutGuard.ts): which shortcut opens it and what to call
+   *  it in the "finish or cancel it first" hint. The same set as `anyDialogOpen`,
+   *  in the Escape cascade's order; only one is ever open, since neither the
+   *  toolbar nor the keyboard will start a second. */
+  const openFeatureDialog: OpenFeatureDialog | null =
+    (
+      [
+        [!!planeDialog, { shortcut: "model.plane", label: "Plane" }],
+        [!!revolve.dialog, { shortcut: "model.revolve", label: "Revolve" }],
+        [!!gear.dialog, { shortcut: "model.gear", label: "Gear" }],
+        [!!mirrorDialog, { shortcut: "model.mirror", label: "Mirror" }],
+        [!!pattern.dialog, { shortcut: "model.pattern", label: "Pattern" }],
+        [!!shell.dialog, { shortcut: "model.shell", label: "Shell" }],
+        [!!sweepDialog, { shortcut: "model.sweep", label: "Sweep" }],
+        [!!loftDialog, { shortcut: "model.loft", label: "Loft" }],
+        [!!extrudeDialog, { shortcut: "model.extrude", label: "Extrude" }],
+        [
+          !!dressUp.dialog,
+          dressUp.dialog?.op === "fillet"
+            ? { shortcut: "model.fillet", label: "Fillet" }
+            : { shortcut: "model.chamfer", label: "Chamfer" },
+        ],
+        [!!booleanDialog, { shortcut: "model.boolean", label: "Boolean" }],
+        [!!transform.editId || !!transform.arming, { shortcut: "model.transform", label: "Transform" }],
+      ] satisfies [boolean, OpenFeatureDialog][]
+    ).find(([isOpen]) => isOpen)?.[1] ?? null;
 
   // The extrude live preview ghosts only the swept *tool* (the changing
   // portion), keyed by fresh ids that aren't among the real bodies — so every
@@ -4188,49 +4216,40 @@ export default function App() {
       "asm.mate": () => openMateDialog(),
       ...Object.fromEntries(MATE_TYPES.map((t) => [t.key, () => openMateDialog(t.type)])),
     },
+    // Each of these opens a dialog (or, for Sketch, arms a pick) unconditionally:
+    // what happens when a feature dialog is already open is decided once, by
+    // `featureGuard` below, rather than by each binding checking its own dialog
+    // only — which is what let three feature keys in a row stack three dialogs.
     modelingActions: {
       "model.sketch": () => {
         setPickPurpose("sketch");
         setPicking(true);
       },
       "model.plane": () => openPlaneDialog(),
-      "model.extrude": () => {
-        if (!extrudeDialog) openExtrudeDialog();
-      },
-      "model.revolve": () => {
-        if (!revolve.dialog) openRevolve();
-      },
-      "model.sweep": () => {
-        if (!sweepDialog) openSweep();
-      },
-      "model.loft": () => {
-        if (!loftDialog) openLoft();
-      },
-      "model.chamfer": () => {
-        if (!dressUp.dialog) openDressUp("chamfer");
-      },
-      "model.fillet": () => {
-        if (!dressUp.dialog) openDressUp("fillet");
-      },
-      "model.shell": () => {
-        if (!shell.dialog) openShell();
-      },
-      "model.boolean": () => {
-        if (!booleanDialog) openBooleanDialog();
-      },
-      "model.transform": () => {
-        if (!transform.editId && !transform.arming) openTransform();
-      },
-      "model.mirror": () => {
-        if (!mirrorDialog) openMirror();
-      },
-      "model.pattern": () => {
-        if (!pattern.dialog) openPattern();
-      },
+      "model.extrude": () => openExtrudeDialog(),
+      "model.revolve": () => openRevolve(),
+      "model.sweep": () => openSweep(),
+      "model.loft": () => openLoft(),
+      "model.chamfer": () => openDressUp("chamfer"),
+      "model.fillet": () => openDressUp("fillet"),
+      "model.shell": () => openShell(),
+      "model.boolean": () => openBooleanDialog(),
+      "model.transform": () => openTransform(),
+      "model.mirror": () => openMirror(),
+      "model.pattern": () => openPattern(),
       "model.gear": () => openGear(),
       "model.hole": () => openHole(),
       "model.screw": () => openScrew(),
       "model.thread": () => openThread(),
+    },
+    // The keyboard's version of the toolbar going inert while a dialog is up. The
+    // open dialog's own key is already satisfied; any other feature key is
+    // refused with a hint, so the work in the open dialog is never dropped.
+    featureGuard: (id) => {
+      const verdict = featureShortcutVerdict(openFeatureDialog, id);
+      if (verdict === "pass") return "pass";
+      if (verdict === "block" && openFeatureDialog) flashMsg(dialogBusyHint(openFeatureDialog));
+      return "handled";
     },
   });
 
