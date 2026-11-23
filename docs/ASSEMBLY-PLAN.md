@@ -490,7 +490,21 @@ A translation driving a rotation uses 1/k; Reverse negates k.
   degree, the rack a millimetre along the way its pitch point moves), and
   Align teeth moves the driven end — the rack sliding, or the pinion turning
   — the least way into mesh (`rackMesh`). Phases write at the DOF's own
-  precision (0.01°, 0.001 mm).
+  precision (0.01°, 0.001 mm). Before aligning, "Move the rack to the gear"
+  (`placeRack`, rackPlace.ts) shifts a connector offset of the mate holding
+  the rack — measured per offset axis by nudging and solving, so any mate
+  and either side works — until its pitch line is at the pinion's pitch
+  distance; "Limit travel to the rack" (`rackTravelLimits`) sets the
+  driver's limits so the pinion stays a tooth pitch in from either end. The
+  agent's add_relation does all of it by default between gear parts.
+- **Interference** (interference.ts, the worker's `interfere` op): pairs whose
+  world boxes overlap go to the kernel, which intersects the two solids
+  exactly (fuzzy 0.01) and measures the common volume; under 0.001 mm³ is
+  touching. The worker keeps each part document's solids per save, so a
+  motion check (Animate → Check the motion: ~2° / 0.5 mm steps, only the
+  instances that move against the rest, 12 frames a round trip) rebuilds
+  nothing. Overlaps draw as "cut" ghosts (removal red, on top). Agent:
+  `check_interference`, static or swept.
 - **A relation starts from the pose on screen** (`phaseToCurrentPose`): adding
   one, or switching it back on, sets the driven DOF's phase to where it is
   minus k times the driver, so nothing moves. Without it a relation switched
@@ -642,8 +656,7 @@ The agent reads an open assembly through the same tools as a part
   `appProperties` would fix it.
 
 **Later, roughly in order:** sub-assemblies (need a cycle check at insert) ·
-exploded views · BOM · interference/collision check (mesh BVH, per frame
-during animation) · STEP assembly export/import (needs the XCAF rebuild that
+exploded views · BOM · STEP assembly export/import (needs the XCAF rebuild that
 also unblocks `feat/step-assembly-split`) · in-context part editing · version
 pinning (parts have no versions yet).
 

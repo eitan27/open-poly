@@ -3068,6 +3068,7 @@ export default function App() {
     readSource: (id) => readSource(id, buildDocument),
     settle: (before) => settleAssembly(agentAssemblyRef, before),
     frameOf: (c) => (assembly ? mates.frameFor(assembly)(c) : "No assembly is open."),
+    kernel: () => kernelRef.current,
   };
   agentDocApiRef.current = {
     info: () => ({ id: docIdRef.current!, name: docName, ...(isAssembly ? { kind: "assembly" as const } : {}) }),

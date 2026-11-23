@@ -223,6 +223,35 @@ await page.waitForFunction(() => !!document.querySelector(".asm-clash-status"), 
 const none = (await anim.locator(".asm-clash-status").textContent()) ?? "";
 check("0°–12°: no clashes over the motion", /No clashes over the motion/.test(none), none);
 
+// --- The agent's check_interference read, on the same assembly.
+await anim.locator(".asm-animate-close").click();
+const hinge = s.mates[0];
+const motion = await read({ read: "checkInterference", mateId: hinge.id, to: 90 });
+const mc = motion.clashes?.[0];
+check(
+  "agent, motion: A ↔ B from 14 to 76, worst at 44",
+  motion.clashes?.length === 1 && mc.from === 14 && mc.to === 76 && mc.worstAt === 44 && mc.volume > 0,
+  JSON.stringify(motion),
+);
+check("agent, motion: 46 positions sampled", motion.motion?.samples === 46, JSON.stringify(motion.motion));
+const now = await read({ read: "checkInterference" });
+check("agent, static at 0°: nothing overlaps", now.clashes?.length === 0, JSON.stringify(now));
+await op.apply({ op: "setMateValue", mateId: hinge.id, dof: "rz", value: 45 });
+await page.waitForTimeout(500);
+const at45 = await read({ read: "checkInterference", instanceIds: [inst("A").id] });
+check(
+  "agent, static at 45°, A against the rest: A ↔ B",
+  at45.clashes?.length === 1 && [at45.clashes[0].a.name, at45.clashes[0].b.name].sort().join() === "A,B",
+  JSON.stringify(at45),
+);
+const bad = await page.evaluate(() =>
+  window.__openpoly.read({ read: "checkInterference", instanceIds: ["nope"] }).then(
+    () => "no error",
+    (e) => String(e.message ?? e),
+  ),
+);
+check("agent: an unknown instance id says so", /No instance "nope"/.test(bad), bad);
+
 const real = errors.filter((e) => !/502|Bad Gateway/.test(e));
 check("no page errors", real.length === 0, real.slice(0, 3).join(" | "));
 await close();

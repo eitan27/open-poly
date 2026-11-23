@@ -1,5 +1,13 @@
 [
   {
+    "date": "2026-11-24",
+    "items": [
+      "Interference checking: find the parts of an assembly that overlap, and by how much, shown in red",
+      "Check a motion for clashes: the Animate dialog steps through it and shows where parts run into each other"
+    ],
+    "bold": ["Interference checking", "Check a motion for clashes"]
+  },
+  {
     "date": "2026-11-23",
     "items": [
       "Rack and pinion: a straight toothed rack that meshes with a spur gear, placed in mesh for you and driven by the gear in assemblies",

@@ -58,8 +58,7 @@ export function useRelations({
   // Gears: a part a Gear feature made knows its teeth, so a gear relation
   // between two of them can take its ratio and direction from them and line
   // their teeth up (gearMesh.ts).
-  const gearOf = (instanceId: string): GearGeom | null =>
-    assembly ? gearOfIn(assembly, sources)(instanceId) : null;
+  const gearOf = (instanceId: string): GearGeom | null => (assembly ? gearOfIn(assembly, sources)(instanceId) : null);
   const gearProblemOf = (instanceId: string): string | undefined => {
     const inst = assembly?.instances.find((i) => i.id === instanceId);
     const src = inst ? sources.get(inst.source.docId) : undefined;

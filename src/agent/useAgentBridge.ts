@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   animateMate,
   applyOperation,
+  checkInterferenceRead,
   getDocument,
   readSceneSummary,
   getSelection,
@@ -157,6 +158,7 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
         readSource: (id) => deps.assemblyEditRef.current.readSource(id),
         settle: (before) => deps.assemblyEditRef.current.settle(before),
         frameOf: (c) => deps.assemblyEditRef.current.frameOf(c),
+        kernel: () => deps.assemblyEditRef.current.kernel?.() ?? null,
       },
       getViewport: () => viewApiRef.current,
       // Delegate through the ref so the ctx stays stable while App's switch
@@ -196,6 +198,8 @@ export function useAgentBridge(deps: BridgeDeps): AgentBridge {
           return screenshot(ctx, q.view ? { view: q.view } : undefined);
         case "animateMate":
           return animateMate(ctx, q);
+        case "checkInterference":
+          return checkInterferenceRead(ctx, q); // async — the bridge awaits handler results
       }
     },
     [ctx],

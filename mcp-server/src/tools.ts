@@ -133,6 +133,11 @@ const READ_TOOLS: Record<string, { tool: string; description: string }> = {
     description:
       "ASSEMBLY only. See a mechanism move: sweep one free DOF of a mate (dof defaults to its first; one a relation drives can't be swept — sweep its driver, and everything it drives moves too) from `from` to `to` and return a screenshot at each of `frames` (2-8, default 4) evenly spaced values, captioned with the value. from/to default to the DOF's limits, else a full turn (rotation) or 20 mm (translation) from where it is. Nothing is saved. A frame where the motion jams (a mate that can't hold there) is captioned with why.",
   },
+  checkInterference: {
+    tool: "check_interference",
+    description:
+      "ASSEMBLY only. Which parts overlap, by exact solid intersection (volumes in mm³; parts that only touch — a face on a face, gear teeth flank to flank — don't count). Without mateId: where the parts are now — `instanceIds` against the rest, else every pair. With mateId (and optionally dof, from, to — defaults as animate_mate's): sweeps that DOF every ~2° / 0.5 mm and reports each pair's runs of clashing values (from–to) and where each is worst, checking only the parts that move against everything else; `motion.jammedAt` when the motion jams before `to`. Use it after building a mechanism, and before exporting one to print.",
+  },
   documents: {
     tool: "list_documents",
     description:

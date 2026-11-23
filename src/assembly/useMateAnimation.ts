@@ -23,15 +23,7 @@ import { formatValue, invertRigid, isRotation, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4, MateConnector } from "./types";
 import type { Kernel } from "../kernel/types";
 import type { GhostMesh } from "../viewport/types";
-import {
-  checkInterference,
-  checkMotion,
-  clashRanges,
-  motionSamples,
-  movingInstances,
-  type ClashRange,
-  type MotionFrame,
-} from "./interference";
+import { checkInterference, motionSamples, sweepClashes, type ClashRange } from "./interference";
 import type { SourceState } from "./useAssemblySources";
 
 /** Frames per round trip to the kernel while checking a motion for clashes. */
@@ -276,41 +268,28 @@ export function useMateAnimation({
     const run = animator(assembly, frameFor(assembly), spec);
     const values = motionSamples(spec.from, spec.to, isRotation(spec.dof));
     setClashes({ kind: "running", done: 0, total: values.length });
-    // Solve every frame first (fast), stopping where the motion jams.
-    const frames: MotionFrame[] = [];
-    let jammedAt: number | undefined;
-    for (const value of values) {
-      const s = run.at(value);
-      if ([...s.problems.keys()].some((p) => !solution.problems.has(p))) {
-        jammedAt = value;
-        break;
-      }
-      frames.push({ value, placements: s.placements });
-    }
-    const moving = movingInstances(frames);
-    const found: { value: number; clashes: { a: string; b: string; volume: number }[] }[] = [];
+    let r: Awaited<ReturnType<typeof sweepClashes>>;
     try {
-      for (let i = 0; i < frames.length && moving.size; i += CLASH_BATCH) {
-        const r = await checkMotion(k, assembly, sources, frames.slice(i, i + CLASH_BATCH), moving);
-        if (id !== clashRun.current) return;
-        if (typeof r === "string") {
-          setClashes({ kind: "error", message: r });
-          return;
-        }
-        found.push(...r);
-        setClashes({ kind: "running", done: Math.min(frames.length, i + CLASH_BATCH), total: values.length });
-      }
+      r = await sweepClashes(k, assembly, sources, (v) => run.at(v), values, solution.problems, {
+        batch: CLASH_BATCH,
+        onProgress: (done) => setClashes({ kind: "running", done, total: values.length }),
+        cancelled: () => id !== clashRun.current,
+      });
     } catch (e) {
       if (id === clashRun.current) setClashes({ kind: "error", message: String((e as Error)?.message ?? e) });
       return;
     }
-    if (id !== clashRun.current) return;
+    if (r === null || id !== clashRun.current) return;
+    if (typeof r === "string") {
+      setClashes({ kind: "error", message: r });
+      return;
+    }
     const name = (iid: string) => assembly.instances.find((x) => x.id === iid)?.name ?? "?";
     setClashes({
       kind: "done",
-      ranges: clashRanges(found).map((r) => ({ ...r, aName: name(r.a), bName: name(r.b) })),
-      samples: frames.length,
-      ...(jammedAt !== undefined ? { jammedAt } : {}),
+      ranges: r.ranges.map((x) => ({ ...x, aName: name(x.a), bName: name(x.b) })),
+      samples: r.samples,
+      ...(r.jammedAt !== undefined ? { jammedAt: r.jammedAt } : {}),
     });
   };
   const cancelClashes = () => {

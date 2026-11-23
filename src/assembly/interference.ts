@@ -278,3 +278,40 @@ export function movingInstances(frames: MotionFrame[]): Set<string> {
     }
   return out;
 }
+
+/** Check a motion for clashes: solve each value (`at`), stopping where a
+ *  mate fails that didn't before (`baseProblems`), then intersect the parts
+ *  that move with everything else, `batch` frames per round trip.
+ *  `onProgress` after each batch; `cancelled` checked between them (then
+ *  null). A string when it can't: why. */
+export async function sweepClashes(
+  kernel: Pick<Kernel, "interfere">,
+  assembly: AssemblyDoc,
+  sources: ReadonlyMap<string, SourceState>,
+  at: (value: number) => { placements: ReadonlyMap<string, Mat4>; problems: ReadonlyMap<string, string> },
+  values: number[],
+  baseProblems: ReadonlyMap<string, string>,
+  opts: { batch?: number; onProgress?: (done: number) => void; cancelled?: () => boolean } = {},
+): Promise<{ ranges: ClashRange[]; samples: number; jammedAt?: number } | string | null> {
+  const frames: MotionFrame[] = [];
+  let jammedAt: number | undefined;
+  for (const value of values) {
+    const s = at(value);
+    if ([...s.problems.keys()].some((p) => !baseProblems.has(p))) {
+      jammedAt = value;
+      break;
+    }
+    frames.push({ value, placements: s.placements });
+  }
+  const moving = movingInstances(frames);
+  const batch = opts.batch ?? 12;
+  const found: { value: number; clashes: Clash[] }[] = [];
+  for (let i = 0; i < frames.length && moving.size; i += batch) {
+    const r = await checkMotion(kernel, assembly, sources, frames.slice(i, i + batch), moving);
+    if (opts.cancelled?.()) return null;
+    if (typeof r === "string") return r;
+    found.push(...r);
+    opts.onProgress?.(Math.min(frames.length, i + batch));
+  }
+  return { ranges: clashRanges(found), samples: frames.length, ...(jammedAt !== undefined ? { jammedAt } : {}) };
+}

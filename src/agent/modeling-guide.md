@@ -87,7 +87,8 @@ quoted in the warning).
   `insert_instance` (`count` for several), `duplicate_instance`,
   `ground_instance`, `add_mate`, `edit_mate`,
   `set_mate_value`, `add_relation`, `edit_relation`, `set_suppressed`,
-  `set_variable`, `delete`, and the read `animate_mate`.
+  `set_variable`, `delete`, and the reads `animate_mate` and
+  `check_interference`.
 
 All mutations route through undo, so the human can revert anything you do.
 
@@ -267,6 +268,19 @@ its limits, else a full turn or 20 mm. Sweep a relation's **driver** and
 everything it drives moves too. Frames captioned with a problem show where the
 motion jams. A symmetric part can look the same half a turn apart, so pick a
 frame count that shows the motion you care about.
+
+### Checking for clashes
+
+`check_interference` (a read) intersects the solids exactly. Without a mate it
+checks where the parts are now: `instanceIds` against the rest, or every pair;
+each overlap comes with its volume (mm³). Parts that only touch (a face on a
+face, gear teeth flank to flank) don't count. With `mateId` it sweeps that DOF
+(the same from/to defaults as `animate_mate`) every ~2° / 0.5 mm and reports
+each clashing pair's runs of values and where each is worst. Run it once a
+mechanism moves: a clash usually means a part is a little too big, mated a
+little off, or a gear needs a profile shift (a pinion under 17 teeth on a
+rack). The user can see the same in the Interference panel (toolbar) and the
+Animate dialog's Check the motion.
 
 ### Worked example (pattern, not literal API)
 
