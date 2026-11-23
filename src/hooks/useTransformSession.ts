@@ -56,6 +56,9 @@ export interface TransformSessionDeps {
 export interface TransformSessionApi {
   /** The Transform feature being edited, if any. */
   editId: string | null;
+  /** True when this session created its Transform (Cancel deletes it) rather than
+   *  re-opening an existing one (Cancel reverts it). */
+  created: boolean;
   /** The feature itself — the panel's fields read from this. */
   editing: TransformFeature | undefined;
   mode: TransformMode;
@@ -227,6 +230,7 @@ export function useTransformSession(deps: TransformSessionDeps): TransformSessio
 
   return {
     editId,
+    created: origin?.created === true,
     editing,
     mode,
     setMode,
