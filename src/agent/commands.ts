@@ -725,10 +725,11 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
       break;
     }
     case "addRelation": {
-      const r = planAddRelation(state, op, genId);
+      const r = planAddRelation(state, op, genId, ctx.assemblyEdit.frameOf);
       if ("error" in r) throw new OpError("invalid_op", r.error);
       next = r.assembly;
       createdIds = [r.id];
+      if (r.note) note = r.note;
       break;
     }
     case "editMate": {
@@ -746,9 +747,10 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
       break;
     }
     case "editRelation": {
-      const r = planEditRelation(state, op);
+      const r = planEditRelation(state, op, ctx.assemblyEdit.frameOf);
       if ("error" in r) throw new OpError(/^No relation/.test(r.error) ? "not_found" : "invalid_op", r.error);
-      next = r;
+      next = r.assembly;
+      if (r.note) note = r.note;
       break;
     }
     case "setVariable": {

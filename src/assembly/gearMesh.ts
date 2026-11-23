@@ -26,6 +26,17 @@ import {
 import { applyPoint } from "./placement";
 import { formatValue, isDriven, isRotation, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4 } from "./types";
+import type { SourceState } from "./useAssemblySources";
+
+/** The gear (or rack) an instance of `a` is, read from its part document's
+ *  loaded source: null when its part isn't a Gear feature's, or isn't loaded. */
+export const gearOfIn =
+  (a: AssemblyDoc, sources: ReadonlyMap<string, SourceState>) =>
+  (instanceId: string): GearGeom | null => {
+    const inst = a.instances.find((i) => i.id === instanceId);
+    const src = inst ? sources.get(inst.source.docId) : undefined;
+    return src?.status === "ready" ? (src.parts.find((p) => p.partId === inst!.source.partId)?.gear ?? null) : null;
+  };
 
 /** The gear geometry of `partId` in `doc`, when a Gear feature made it:
  *  followed through any in-place Transforms after it, as the kernel applies

@@ -301,6 +301,11 @@ export interface RelationDraft {
   /** Gear relations between two gear parts: turn the driven gear on Add /
    *  Done so its teeth sit in the driver's spaces. */
   align?: boolean;
+  /** Rack relations between a gear part and a rack part: first move the rack
+   *  (by its mate's connector offset) to the gear's pitch distance. */
+  place?: boolean;
+  /** Rack relations: limit the driver so the gear stays on the rack's teeth. */
+  limit?: boolean;
 }
 
 /** Why no relation can be made among `mates` (the movable, unsuppressed ones),

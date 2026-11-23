@@ -4,7 +4,9 @@
 // turns. The pinion turns on a revolute to a plate; the rack lies on the
 // plate on a planar mate, its slide along the rack a translation DOF. The
 // rack is made 1.3 mm out of phase on purpose, so Align has work to do.
-// "In mesh" is checked in the world: the rack moves r·θ per turn θ.
+// "In mesh" is checked in the world: the rack moves r·θ per turn θ. Then the
+// rack is knocked 3 mm off and the relation re-made: the dialog moves it back
+// to the pitch distance and limits the pinion's turn to the rack's teeth.
 //
 //   URL=http://localhost:5180/ node scripts/verify-rack-relation.mjs
 //
@@ -128,6 +130,14 @@ const line =
 check("the radius comes from the pinion's teeth", value === "12", value);
 check("the dialog names the pinion and the rack", /12 teeth.*rack.*radius and direction/.test(line), line);
 check("Align teeth is on", await dlg.locator(".asm-relation-align").isChecked());
+check(
+  "Limit travel to the rack is on (the pinion has no limits yet)",
+  await dlg.locator(".asm-relation-limit").isChecked(),
+);
+check(
+  "no Move offered: the rack is already at the pitch distance",
+  (await dlg.locator(".asm-relation-place").count()) === 0,
+);
 await shot("2-dialog");
 await dlg.locator(".ed-primary").click();
 await page.waitForTimeout(800);
@@ -153,6 +163,66 @@ check("turning the pinion 30° moves the rack 2π mm (r·θ)", Math.abs(Math.abs
 // (Which way it moves — Reverse — is measured, and checked by the mesh after
 // turning in src/assembly/rackMesh.test.ts.)
 await shot("4-turned");
+
+// --- Placing and limits: knock the rack 3 mm out across, re-make the
+// relation, and the dialog offers to move it back (by the planar mate's
+// connector offset — its own values are left alone) and to limit the
+// pinion's turn to the rack's teeth.
+await op.apply({ op: "delete", featureId: rel.id });
+await setVal(hinge.id, "rz", 0);
+const acrossNow = s.mates.find((m) => m.id === plane.id).free.find((f) => f.dof === across).value;
+await setVal(plane.id, across, acrossNow + 3);
+check("the rack is knocked out of mesh", Math.abs(box(rackI.id).max[1] - want) > 2.9, `${box(rackI.id).max[1]}`);
+await page.locator(".asm-new-relation").click();
+await dlg.waitFor();
+await dlg.locator(".ed-modes button", { hasText: "Rack" }).click();
+await dlg.locator(".asm-relation-driver").selectOption(`${hinge.id}:rz`);
+await dlg.locator(".asm-relation-driven").selectOption(`${plane.id}:${along}`);
+await page.waitForTimeout(500);
+const place = dlg.locator(".asm-relation-place");
+const placeText = (await place.locator("xpath=..").textContent()) ?? "";
+check(
+  "the dialog offers to move the rack, 3 mm",
+  (await place.isChecked()) && /3 mm too (far|close)/.test(placeText),
+  placeText,
+);
+check(
+  "Limit is off now: the first relation already limited the pinion",
+  !(await dlg.locator(".asm-relation-limit").isChecked()),
+);
+await shot("5-place-dialog");
+await dlg.locator(".ed-primary").click();
+await page.waitForTimeout(900);
+s = await summary();
+check(
+  "placed: the rack's tips are back at the pitch distance",
+  Math.abs(box(rackI.id).max[1] - want) < 0.02,
+  `${box(rackI.id).max[1]} vs ${want}`,
+);
+check(
+  "…by an offset, the planar's value untouched",
+  Math.abs(s.mates.find((m) => m.id === plane.id).free.find((f) => f.dof === across).value - (acrossNow + 3)) < 1e-6,
+);
+check("aligned again", Math.abs(wrap(rackMid()[0] - pinMid()[0])) < 0.01, `${wrap(rackMid()[0] - pinMid()[0])}`);
+const rz = s.mates.find((m) => m.id === hinge.id).free.find((f) => f.dof === "rz");
+// 20 teeth, a tooth kept at each end: 18 pitches = 18 × 360 / 12 = 540°.
+const span = Number(rz.max) - Number(rz.min);
+check(
+  "the pinion is limited to the rack's teeth (540° of travel; set in the first round)",
+  span > 539 && span <= 540,
+  JSON.stringify(rz),
+);
+await setVal(hinge.id, "rz", Number(rz.max) + 200);
+const at = s.mates.find((m) => m.id === hinge.id).free.find((f) => f.dof === "rz").value;
+check("past its limit, it stops at it", Math.abs(at - Number(rz.max)) < 0.01, `${at}`);
+const rb = box(rackI.id);
+const pinX = pinMid()[0];
+check(
+  "…with the pinion still over the rack's teeth",
+  pinX > rb.min[0] + pitch - 0.5 && pinX < rb.max[0] - pitch + 0.5,
+  JSON.stringify({ pinX, rb }),
+);
+await shot("6-at-limit");
 
 const real = errors.filter((e) => !/502|Bad Gateway/.test(e));
 check("no page errors", real.length === 0, real.slice(0, 3).join(" | "));

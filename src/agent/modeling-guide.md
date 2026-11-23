@@ -223,6 +223,17 @@ number. A value the linkage can't reach at all is refused with why.
 - **screw** — rotation ↔ translation, `value` = pitch (mm per turn). A
   cylindrical mate's own `rz` → `tz` is a lead screw or a bolt.
 
+**Between Gear feature parts** (two gears; a spur on the turning mate and a
+rack on the sliding one) leave `value` and `reverse` out: they come from the
+teeth, as the dialog's do. Then by default, as the dialog does, `alignTeeth`
+moves the driven end the least way that meshes the teeth, and for a rack
+`placeRack` first moves the rack to the pinion's pitch distance (by shifting
+its mate's connector offset — so mate the rack with a plain `slider` along it,
+anywhere beside the pinion) and `limitToRack` limits the driver so the pinion
+stays a tooth in from the rack's ends (skipped when the driver already has
+limits). Pass any of them `false` to skip it. The result's note says what each
+did, or why it couldn't. `edit_relation` takes the same three, off unless given.
+
 They chain (a gear train). The driven DOF's own value becomes a **phase** added
 on top (to line teeth up); its `free` entry shows `drivenBy`. `edit_relation`
 changes a relation's value, direction or ends in place. Setting a driven
@@ -320,9 +331,10 @@ frame count that shows the motion you care about.
   is back face to pitch line): make the pinion (a spur), then the rack with
   `meshWith: <pinion id>` and `placeBeside: true` — `params.placeAngle` picks
   the side, `params.slide` slides it whole teeth along. To animate them, use
-  an assembly and a gear relation (value = driver teeth / driven teeth), or
-  for a rack a rack relation (value = the pinion's pitch radius, module ×
-  teeth / 2) between the pinion's revolute and the rack's slider.
+  an assembly and a gear relation, or for a rack a rack relation between the
+  pinion's revolute and the rack's slider — with no value, so it reads the
+  teeth, aligns them, puts the rack at the pitch distance and limits travel
+  to the rack (see Relations).
 - **Screws:** `add_screw` makes metric screws as a new body (`head`: socket /
   button / flat (countersunk) / hex, or `set` — a headless set screw with a hex
   socket in its end — or `none` — just the threaded shank, a stud or threaded

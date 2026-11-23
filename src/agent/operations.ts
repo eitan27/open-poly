@@ -804,14 +804,36 @@ export const operationSchema = z.discriminatedUnion("op", [
     value: expr.optional(),
     reverse: z.boolean().optional(),
     name: z.string().min(1).optional(),
+    /** Gear parts on both ends: move the driven end the least way that
+     *  meshes the teeth (turn the driven gear, or slide/turn a rack pair). */
+    alignTeeth: z.boolean().optional(),
+    /** Rack: move the rack (by its mate's connector offset) to the gear's
+     *  pitch distance first. */
+    placeRack: z.boolean().optional(),
+    /** Rack: limit the driver so the gear stays on the rack's teeth. */
+    limitToRack: z.boolean().optional(),
   }),
   z.object({
     op: z.literal("addRelation"),
     type: z.enum(["gear", "rack", "screw"]),
     driver: z.object({ mateId: z.string(), dof: dofSchema }),
     driven: z.object({ mateId: z.string(), dof: dofSchema }),
-    value: expr,
+    /** Ratio / pinion radius / pitch. Optional when both ends move Gear
+     *  feature parts (two gears; a gear and a rack): then it, and reverse,
+     *  come from their teeth. */
+    value: expr.optional(),
+    /** Given: as given. Omitted with gear parts: measured from them. */
     reverse: z.boolean().optional(),
+    /** Gear parts on both ends (default true then): move the driven end the
+     *  least way that meshes the teeth. */
+    alignTeeth: z.boolean().optional(),
+    /** A gear and a rack (default true then, when it's off): first move the
+     *  rack, by its mate's connector offset, to the gear's pitch distance —
+     *  so any mate holding the rack works, a slider included. */
+    placeRack: z.boolean().optional(),
+    /** A gear and a rack (default true then, unless the driver has limits):
+     *  limit the driver so the gear stays a tooth in from the rack's ends. */
+    limitToRack: z.boolean().optional(),
     name: z.string().optional(),
   }),
 ]);

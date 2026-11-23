@@ -36,7 +36,9 @@ import {
 } from "../assembly/frames";
 import { multiply, translation } from "../assembly/placement";
 import { duplicateInstances, insertLayout } from "../assembly/copies";
-import { MATE_DOFS } from "../assembly/solve";
+import { MATE_DOFS, solve, type Solution } from "../assembly/solve";
+import { alignRelation, gearOfIn, gearRelationValue, rackRelationValue, type GearGeom } from "../assembly/gearMesh";
+import { placeRack, RACK_PLACED_TOL, rackOffBy, rackTravelLimits, withTravelLimits } from "../assembly/rackPlace";
 import { planLoopInput } from "../assembly/loopInput";
 import type { AssemblyDoc, Dof, Mat4, Mate, MateConnector, Relation } from "../assembly/types";
 import type { SourcePart, SourceState } from "../assembly/useAssemblySources";
@@ -222,9 +224,37 @@ export function planAddRelation(
   state: AssemblyAgentState,
   op: Extract<Operation, { op: "addRelation" }>,
   genId: () => string,
-): Planned<{ assembly: AssemblyDoc; id: string }> {
+  frameOf: (c: MateConnector) => Mat4 | string,
+): Planned<{ assembly: AssemblyDoc; id: string; note?: string }> {
   const bad = relationEndsProblem(state.assembly, op.type, op.driver, op.driven);
   if (bad) return fail(bad);
+  const base = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
+  const gearOf = gearOfIn(base, state.sources);
+  const solveAt = (a: AssemblyDoc) => solve(a, frameOf);
+  const ends = { driver: op.driver, driven: op.driven };
+  const notes: string[] = [];
+
+  // The value and direction from gear parts, when there are some.
+  let value = op.value === undefined ? undefined : String(op.value);
+  let reverse = op.reverse;
+  const fromTeeth =
+    op.type === "gear"
+      ? gearRelationValue(base, ends, gearOf, solveAt)
+      : op.type === "rack"
+        ? rackRelationValue(base, ends, gearOf, solveAt)
+        : null;
+  if (fromTeeth) {
+    if (value === undefined) {
+      value = fromTeeth.value;
+      notes.push(`${op.type === "gear" ? "Ratio" : "Pinion radius"} ${value} from the teeth.`);
+    }
+    if (reverse === undefined) reverse = fromTeeth.reverse;
+  }
+  if (value === undefined || !value.trim())
+    return fail(
+      `Give a value: the ${op.type === "gear" ? "ratio" : op.type === "rack" ? "pinion radius" : "pitch"} — it comes from the teeth only when both ends move Gear feature parts${op.type === "rack" ? " (a spur gear on the turning mate, a rack on the sliding one)" : ""}.`,
+    );
+
   const id = genId();
   const rel: Relation = {
     id,
@@ -232,18 +262,69 @@ export function planAddRelation(
     type: op.type,
     driver: op.driver,
     driven: op.driven,
-    value: op.value,
-    ...(op.reverse ? { reverse: true } : {}),
+    value,
+    ...(reverse ? { reverse: true } : {}),
   };
-  const base = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
-  const added = addRelation(base, rel);
-  // It starts from the pose the parts are in (as the dialog's does).
-  return {
-    assembly: state.solution
-      ? phaseToCurrentPose(added, id, state.solution.values, evaluateVariables(base.variables).scope)
-      : added,
-    id,
-  };
+  const r = meshRelation(base, rel, "add", op, !!fromTeeth, gearOf, solveAt, state.solution !== null);
+  if ("error" in r) return r;
+  notes.push(...r.notes);
+  return { assembly: r.assembly, id, ...(notes.length ? { note: notes.join(" ") } : {}) };
+}
+
+/** Add (or put back, edited) `rel`, with what a gear pair's dialog does:
+ *  for a rack, move it to the pinion first; start from the pose on screen;
+ *  align the teeth; for a rack, limit the driver to its teeth. Each step
+ *  defaults on for a new relation between gear parts (`gearParts`), and only
+ *  when asked for an edited one. Steps that can't happen say why in `notes`. */
+function meshRelation(
+  base: AssemblyDoc,
+  rel: Relation,
+  how: "add" | "edit",
+  op: { alignTeeth?: boolean; placeRack?: boolean; limitToRack?: boolean },
+  gearParts: boolean,
+  gearOf: (instanceId: string) => GearGeom | null,
+  solveAt: (a: AssemblyDoc) => Solution,
+  solved: boolean,
+): Planned<{ assembly: AssemblyDoc; notes: string[] }> {
+  const notes: string[] = [];
+  const dflt = how === "add" && gearParts;
+  const rack = rel.type === "rack";
+  let a = base;
+  if (rack && (op.placeRack ?? dflt)) {
+    const off = rackOffBy(a, rel, gearOf, solveAt);
+    if (typeof off === "number" && Math.abs(off) >= RACK_PLACED_TOL) {
+      const placed = placeRack(a, rel, gearOf, solveAt);
+      if (typeof placed === "string") notes.push(`Not placed: ${placed}`);
+      else {
+        a = placed;
+        notes.push(
+          `Moved the rack ${Math.abs(off).toFixed(2)} mm to the gear's pitch distance (its mate's connector offset).`,
+        );
+      }
+    } else if (typeof off === "string") notes.push(`Not placed: ${off}`);
+  }
+  if (how === "add") {
+    const added = addRelation(a, rel);
+    // It starts from the pose the parts are in (as the dialog's does).
+    a = solved ? phaseToCurrentPose(added, rel.id, solveAt(a).values, evaluateVariables(a.variables).scope) : added;
+  } else a = updateRelation(a, rel);
+  if (rel.type !== "screw" && (op.alignTeeth ?? dflt)) {
+    const aligned = alignRelation(a, rel.id, gearOf, solveAt);
+    if (typeof aligned === "string") notes.push(`Teeth not aligned: ${aligned}`);
+    else a = aligned;
+  }
+  if (rack) {
+    const driverLimited = !!a.mates.find((m) => m.id === rel.driver.mateId)?.limits?.[rel.driver.dof];
+    if (op.limitToRack ?? (dflt && !driverLimited)) {
+      const lim = rackTravelLimits(a, rel.id, gearOf, solveAt);
+      if (typeof lim === "string") notes.push(`No travel limits: ${lim}`);
+      else {
+        a = withTravelLimits(a, lim);
+        notes.push(`Limited the driver to ${lim.min}…${lim.max} so the gear stays on the rack.`);
+      }
+    }
+  }
+  return { assembly: a, notes };
 }
 
 export function planSetVariable(
@@ -360,7 +441,8 @@ export function planEditMate(
 export function planEditRelation(
   state: AssemblyAgentState,
   op: Extract<Operation, { op: "editRelation" }>,
-): Planned<AssemblyDoc> {
+  frameOf: (c: MateConnector) => Mat4 | string,
+): Planned<{ assembly: AssemblyDoc; note?: string }> {
   const base = state.solution ? keepSolved(state.assembly, state.solution) : state.assembly;
   const old = base.relations?.find((r) => r.id === op.relationId);
   if (!old) return fail(`No relation "${op.relationId}" — ids are in get_scene_summary's relations.`);
@@ -369,11 +451,11 @@ export function planEditRelation(
   const driven = op.driven ?? old.driven;
   const bad = relationEndsProblem(base, type, driver, driven);
   if (bad) return fail(bad);
-  const value = op.value ?? old.value;
+  const value = op.value === undefined ? old.value : String(op.value);
   if (!value.trim()) return fail("A relation needs a value: its ratio, radius or pitch.");
   const reverse = op.reverse ?? !!old.reverse;
   const { reverse: _r, ...rest } = old;
-  return updateRelation(base, {
+  const rel: Relation = {
     ...rest,
     type,
     name: op.name ?? old.name,
@@ -381,7 +463,11 @@ export function planEditRelation(
     driven,
     value,
     ...(reverse ? { reverse: true } : {}),
-  });
+  };
+  const gearOf = gearOfIn(base, state.sources);
+  const r = meshRelation(base, rel, "edit", op, false, gearOf, (a) => solve(a, frameOf), state.solution !== null);
+  if ("error" in r) return r;
+  return { assembly: r.assembly, ...(r.notes.length ? { note: r.notes.join(" ") } : {}) };
 }
 
 export function planSuppress(
