@@ -89,6 +89,39 @@ check(
   doc0.features.map((f) => f.type).join(","),
 );
 
+// --- Hole, Screw and Thread ---------------------------------------------------
+// Each opens listening for its first pick (a hole's points, a screw's spots, a
+// thread's face); arming isn't work, so they swap like the rest.
+await press("d");
+t = await titles();
+check("D opens Hole", t.length === 1 && /Hole/.test(t[0]), JSON.stringify(t));
+await press("u");
+t = await titles();
+check("U over an untouched Hole swaps to Screw", t.length === 1 && /Screw/.test(t[0]), JSON.stringify(t));
+await press("j");
+t = await titles();
+check("J over an untouched Screw swaps to Thread", t.length === 1 && /Thread/.test(t[0]), JSON.stringify(t));
+await press("g");
+t = await titles();
+check("G over an untouched Thread swaps to Gear", t.length === 1 && /Gear/.test(t[0]), JSON.stringify(t));
+await escape();
+await escape();
+check("Escape closes it", (await dialogs.count()) === 0);
+// A Thread with its pitch changed holds work: D is refused.
+await press("j");
+const pitch = dialogs.locator(".ed-field", { hasText: "Pitch" }).locator("input");
+await pitch.fill("1.5");
+await pitch.blur();
+await page.waitForTimeout(200);
+await press("d");
+t = await titles();
+check("D over a changed Thread is refused", t.length === 1 && /Thread/.test(t[0]), JSON.stringify(t));
+check("…with the hint", /Finish or cancel the Thread dialog/.test((await hint.textContent().catch(() => "")) ?? ""));
+await escape();
+await escape();
+await clearHint();
+check("no fastener feature was left behind", (await op.doc()).features.length === 1);
+
 // --- A changed field blocks ---------------------------------------------------
 await press("e");
 const dist = dialogs.locator(".ed-field", { hasText: "Distance" }).locator("input");

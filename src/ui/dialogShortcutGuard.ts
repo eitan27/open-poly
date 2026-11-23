@@ -55,9 +55,10 @@ export function dialogBusyHint(open: Pick<OpenFeatureDialog, "label">): string {
 /** Top-level dialog-state fields that describe how the dialog LOOKS rather than
  *  what it will build, so changing them does not count as touching it: where it
  *  sits on screen (`x`, `y`), which slot is waiting for the next click (`arming`,
- *  `armed`), and whether a disclosure is expanded (`advanced`). Arming a slot is
- *  not work; filling it is, and that shows up in the slot's own field. */
-export const DIALOG_VIEW_FIELDS: readonly string[] = ["x", "y", "arming", "armed", "advanced"];
+ *  `armed`, and the Gear, Screw and Thread dialogs' own names for it, `locating`
+ *  and `slot`), and whether a disclosure is expanded (`advanced`). Arming a slot
+ *  is not work; filling it is, and that shows up in the slot's own field. */
+export const DIALOG_VIEW_FIELDS: readonly string[] = ["x", "y", "arming", "armed", "locating", "slot", "advanced"];
 
 /** A comparable summary of a dialog's state: its JSON with the view-only fields
  *  left out. Only the top level is filtered, since nested values (picked
