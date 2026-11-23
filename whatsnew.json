@@ -1,14 +1,12 @@
 [
   {
-    "date": "2026-11-15",
+    "date": "2026-11-23",
     "items": [
-      "Holes and screws: counterbored, countersunk and tapped holes in metric sizes, and screws that drop straight into them",
-      "Threads you can 3D print: any diameter and pitch, a printable 45° profile, as a threaded rod or cut into a part, with a clearance so they fit",
-      "Screws and tapped holes can have real ISO threads too, and screws come as set screws or plain studs",
-      "Boolean subtract and Extrude Remove take a clearance offset, for parts that need to fit",
-      "Use the keyboard shortcuts D (hole), U (screw) and J (thread) to try them out"
+      "Holes and screws: counterbored, countersunk and tapped holes in metric sizes",
+      "Threads you can 3D print: cut a thread into any cylinder or hole, at any diameter and pitch, with a printable 45° profile",
+      "Press D (hole), U (screw) or J (thread) to try them out"
     ],
-    "bold": ["Holes and screws", "Threads you can 3D print", "clearance offset", " D ", " U ", " J "]
+    "bold": ["Holes and screws", "Threads you can 3D print", " D ", " U ", " J "]
   },
   {
     "date": "2026-11-13",
