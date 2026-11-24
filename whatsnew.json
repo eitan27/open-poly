@@ -1,7 +1,7 @@
 [
   {
     "date": "2026-11-24",
-    "items": ["Interference checking: find the parts of an assembly that overlap, and by how much, shown in red"],
+    "items": ["Interference checking: find the parts of an assembly that overlap"],
     "bold": ["Interference checking"]
   },
   {
