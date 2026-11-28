@@ -6,7 +6,9 @@
 //   Poly" label sits on its own line, apart from the bold phrases.
 // - Dismiss hides it; the next load doesn't show it again.
 // - A tab open during a deploy shows the update banner (with Refresh) and
-//   records what it showed, so the page Refresh loads doesn't repeat it.
+//   records what it showed, so the page Refresh loads doesn't repeat it. An
+//   entry's try line reads "Refresh the page and press …" there, the refresh
+//   an inline link that reloads.
 import { chromium } from "playwright";
 import { readFileSync } from "node:fs";
 
@@ -118,7 +120,12 @@ const sinceBanner = (page) => page.locator(".whats-new-banner");
 
 {
   // A tab open during a deploy: the served list has an entry this build lacks.
-  const extra = { date: "2099-01-01", items: ["Something from a later deploy"] };
+  const extra = {
+    date: "2099-01-01",
+    items: ["Something from a later deploy"],
+    try: "Press G and pick it",
+    bold: [" G "],
+  };
   const served = { version: "newer", whatsNew: [extra, ...list] };
   const { context, page } = await fresh();
   await page.route("**/version.json*", (r) =>
@@ -130,11 +137,21 @@ const sinceBanner = (page) => page.locator(".whats-new-banner");
   await update.waitFor({ timeout: 30000 });
   check(
     "an open tab gets the update banner, with Refresh",
-    (await update.innerText()).includes(extra.items[0]) && (await update.getByText("Refresh").count()) === 1,
+    (await update.innerText()).includes(extra.items[0]) &&
+      (await update.getByText("Refresh", { exact: true }).count()) === 1,
+  );
+  const tryLine = update.locator(".whats-new-item").last();
+  check(
+    "…its try line reads 'Refresh the page and press G …', G bold",
+    (await tryLine.innerText()) === "Refresh the page and press G and pick it" &&
+      JSON.stringify((await tryLine.locator("strong").allInnerTexts()).map((t) => t.trim())) === JSON.stringify(["G"]),
+    await tryLine.innerText(),
   );
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/whats-new-update.png`, clip: await update.boundingBox() });
   check("…and records what it showed as seen", (await seen(page)).includes(entryKey(extra)));
   check("…with no second, since-last-visit banner beside it", (await sinceBanner(page).count()) === 0);
+  await Promise.all([page.waitForEvent("load"), tryLine.getByText("Refresh the page").click()]);
+  check("…and 'Refresh the page' reloads it", true);
   await context.close();
 }
 

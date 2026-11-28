@@ -57,6 +57,44 @@ describe("whatsNew", () => {
     expect(newSince([e], [{ date: e.date, items: e.items }])).toEqual([]);
   });
 
+  describe("a try line", () => {
+    const rack: WhatsNewEntry = {
+      date: "2026-12-01",
+      items: ["Rack and pinion: a straight toothed rack"],
+      try: "Press G and pick Rack as the type",
+      bold: ["Rack and pinion", " G "],
+    };
+
+    it("in a tab still on the old build, follows a Refresh link, lower-cased", () => {
+      expect(newSince([rack], [])).toEqual([
+        { text: "Rack and pinion: a straight toothed rack", bold: ["Rack and pinion"] },
+        { text: "press G and pick Rack as the type", bold: [" G "], refresh: true },
+      ]);
+    });
+
+    it("on a page already running the new build, reads as written", () => {
+      expect(sinceLastVisit([rack], [], true).items).toEqual([
+        { text: "Rack and pinion: a straight toothed rack", bold: ["Rack and pinion"] },
+        { text: "Press G and pick Rack as the type", bold: [" G "] },
+      ]);
+    });
+
+    it("a bold phrase that starts it is lowered with it", () => {
+      const e: WhatsNewEntry = { date: "2026-12-01", items: ["Threads"], try: "Press J to cut one", bold: ["Press J"] };
+      expect(newSince([e], [])[1]).toEqual({ text: "press J to cut one", bold: ["press J"], refresh: true });
+    });
+
+    it("isn't part of the entry's key, and bold may sit in it", () => {
+      expect(entryKey(rack)).toBe(entryKey({ date: rack.date, items: rack.items }));
+      expect(parseWhatsNew([rack])[0]).toEqual(rack);
+    });
+
+    it("must be a line of text", () => {
+      expect(() => parseWhatsNew([{ date: "2026-12-01", items: ["x"], try: "  " }])).toThrow(/try/);
+      expect(() => parseWhatsNew([{ date: "2026-12-01", items: ["x"], try: 3 }])).toThrow(/try/);
+    });
+  });
+
   it("cuts text into bold and plain runs", () => {
     expect(boldRuns("Assemblies: join parts", ["Assemblies"])).toEqual([
       { text: "Assemblies", bold: true },

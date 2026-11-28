@@ -47,7 +47,10 @@ a single line. Keep the blank line.
   to [`whatsnew.json`](../whatsnew.json): a new entry at the top, dated today,
   phrased as a user would say it ("Sync documents with Google Drive"). Tabs
   left open when it deploys show it in their update banner; a deploy with no
-  new entry keeps the plain "A new version is available" banner.
+  new entry keeps the plain "A new version is available" banner. Put how to
+  try it in the entry's `try` line, not in `items` ("Press G and pick Rack as
+  the type"): a tab still on the old build shows it as "Refresh the page and
+  press G …", and a page already on the new one shows it as written.
 - Keep PRs focused. Unrelated cleanup, formatting-only changes, or drive-by
   refactors belong in a separate PR unless they're in files you're already
   touching for the main change.
