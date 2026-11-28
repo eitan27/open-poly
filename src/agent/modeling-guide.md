@@ -183,7 +183,7 @@ DOFs with their current values.
 - **fastened** — nothing moves (glue two parts; with `turns` to orient).
 - **revolute** `rz` — turns about Z: a hinge, a wheel on an axle (round wall
   to round wall, or face to face for a turntable).
-- **slider** `tz` — slides along Z: a drawer, a piston.
+- **slider** `tz` — slides along Z: a drawer, a piston, a rack driven by a pinion (with a rack relation).
 - **cylindrical** `tz`, `rz` — slides and turns: a pin in a hole, a shaft in a
   bushing. Use the two round walls.
 - **planar** `tx`, `ty`, `rz` — slides and turns on the plane: a part on a

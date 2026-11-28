@@ -16,7 +16,7 @@ export const MATE_TYPES: { type: MateType; label: string; title: string; key: Sh
   {
     type: "slider",
     label: "Slider",
-    title: "Slides along the axis: a drawer, a piston",
+    title: "Slides along the axis: a drawer, a piston, a rack driven by a pinion",
     key: "asm.mateSlider",
   },
   {
