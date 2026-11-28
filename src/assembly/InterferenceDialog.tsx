@@ -46,7 +46,7 @@ export function InterferenceDialog(p: InterferenceDialogProps) {
           ) : (
             <>
               <p className="ed-hint asm-interference-status">
-                {r.clashes.length} {r.clashes.length === 1 ? "overlap" : "overlaps"}, in red:
+                {r.clashes.length} {r.clashes.length === 1 ? "overlap" : "overlaps"}:
               </p>
               <ul className="asm-interference-list">
                 {r.clashes.map((c, i) => (
