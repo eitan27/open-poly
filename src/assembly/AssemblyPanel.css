@@ -302,6 +302,25 @@
 .feature-dialog.asm-interference {
   width: 280px;
 }
+/* The dialog's column gap spaces the lines; a <p>'s default 1em margins doubled it. */
+.asm-interference p {
+  margin: 0;
+}
+.asm-interference-clear {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.asm-interference-clear strong {
+  color: var(--ok);
+  font-weight: 600;
+}
+.asm-interference-check-mark {
+  flex: none;
+  color: var(--ok);
+  font-weight: 700;
+  font-size: 13px;
+}
 .asm-interference-all {
   background: none;
   border: none;

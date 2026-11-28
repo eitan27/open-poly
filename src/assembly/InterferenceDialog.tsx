@@ -32,11 +32,16 @@ export function InterferenceDialog(p: InterferenceDialogProps) {
         <>
           {p.stale && <p className="ed-warning">The assembly has changed since: check again.</p>}
           {r.clashes.length === 0 ? (
-            <p className="ed-hint asm-interference-status">
-              No interference.{" "}
+            <p className="ed-hint asm-interference-status asm-interference-clear">
+              <span className="asm-interference-check-mark" aria-hidden>
+                ✓
+              </span>
+              <span>
+                <strong>No interference.</strong>{" "}
               {r.checked === 0
                 ? "No parts are close enough to touch."
                 : `${r.checked} ${r.checked === 1 ? "pair is" : "pairs are"} close, but only touch.`}
+              </span>
             </p>
           ) : (
             <>
