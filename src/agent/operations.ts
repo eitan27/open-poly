@@ -527,8 +527,11 @@ export const operationSchema = z.discriminatedUnion("op", [
   }),
   z.object({
     op: z.literal("addGear"),
-    /** spur (external, default) or internal (a ring gear: teeth inside a rim). */
-    gearType: z.enum(["spur", "internal"]).optional(),
+    /** spur (external, default), internal (a ring gear: teeth inside a rim),
+     *  or rack (a straight toothed bar teeth × π × module long, centred on its
+     *  pitch line's middle, running along params.rotation degrees; meshWith a
+     *  spur gear + placeBeside puts it in mesh under/beside it). */
+    gearType: z.enum(["spur", "internal", "rack"]).optional(),
     /** The plane (or planar face) the gear lies on, centred on its origin (or
      *  at params.centerX/centerY). Default the Top datum. */
     plane: planeRefSchema.optional(),
@@ -544,12 +547,17 @@ export const operationSchema = z.discriminatedUnion("op", [
     placeBeside: z.boolean().optional(),
     /** External gear's centre hole. Default round. */
     bore: z.enum(["none", "round", "dflat"]).optional(),
-    /** blind (default): one side of the plane (flip = the other); symmetric: centred on it. */
-    extent: z.enum(["blind", "symmetric"]).optional(),
+    /** Grow against the plane's normal instead of along it. */
     flip: z.boolean().optional(),
+    /** Deprecated: "symmetric" sets params.normalOffset to centre it on the
+     *  plane (use params.normalOffset). */
+    extent: z.enum(["blind", "symmetric"]).optional(),
     /** teeth, module, pitchDiameter, thickness, boreDiameter, boreFlat,
      *  rimWidth, pressureAngle, backlash, profileShift, rootFillet, rotation,
-     *  centerX, centerY, placeAngle. */
+     *  centerX, centerY, placeAngle, normalOffset (mm along the plane's
+     *  normal; −thickness/2 centres it on the plane); a rack's rackHeight (back face to pitch
+     *  line), endMargin (plain bar past the teeth at each end) and slide
+     *  (placed beside its pinion: tooth pitches along). */
     params: z.record(z.string(), expr).optional(),
     name: z.string().optional(),
   }),
@@ -796,14 +804,36 @@ export const operationSchema = z.discriminatedUnion("op", [
     value: expr.optional(),
     reverse: z.boolean().optional(),
     name: z.string().min(1).optional(),
+    /** Gear parts on both ends: move the driven end the least way that
+     *  meshes the teeth (turn the driven gear, or slide/turn a rack pair). */
+    alignTeeth: z.boolean().optional(),
+    /** Rack: move the rack (by its mate's connector offset) to the gear's
+     *  pitch distance first. */
+    placeRack: z.boolean().optional(),
+    /** Rack: limit the driver so the gear stays on the rack's teeth. */
+    limitToRack: z.boolean().optional(),
   }),
   z.object({
     op: z.literal("addRelation"),
     type: z.enum(["gear", "rack", "screw"]),
     driver: z.object({ mateId: z.string(), dof: dofSchema }),
     driven: z.object({ mateId: z.string(), dof: dofSchema }),
-    value: expr,
+    /** Ratio / pinion radius / pitch. Optional when both ends move Gear
+     *  feature parts (two gears; a gear and a rack): then it, and reverse,
+     *  come from their teeth. */
+    value: expr.optional(),
+    /** Given: as given. Omitted with gear parts: measured from them. */
     reverse: z.boolean().optional(),
+    /** Gear parts on both ends (default true then): move the driven end the
+     *  least way that meshes the teeth. */
+    alignTeeth: z.boolean().optional(),
+    /** A gear and a rack (default true then, when it's off): first move the
+     *  rack, by its mate's connector offset, to the gear's pitch distance —
+     *  so any mate holding the rack works, a slider included. */
+    placeRack: z.boolean().optional(),
+    /** A gear and a rack (default true then, unless the driver has limits):
+     *  limit the driver so the gear stays a tooth in from the rack's ends. */
+    limitToRack: z.boolean().optional(),
     name: z.string().optional(),
   }),
 ]);
@@ -831,6 +861,12 @@ export const readQuerySchema = z.discriminatedUnion("read", [
    *  motion, as stills. Nothing is written to the document. from/to default
    *  as the dialog's: between the DOF's limits, else a full turn (a rotation)
    *  or 20 mm (a translation) from where it is. */
+  /** ASSEMBLY only: which parts overlap where they are now, `instanceIds`
+   *  against the rest (default: every pair). */
+  z.object({
+    read: z.literal("checkInterference"),
+    instanceIds: z.array(z.string()).optional(),
+  }),
   z.object({
     read: z.literal("animateMate"),
     mateId: z.string(),
@@ -842,6 +878,14 @@ export const readQuerySchema = z.discriminatedUnion("read", [
   }),
 ]);
 export type ReadQuery = z.infer<typeof readQuerySchema>;
+
+/** What checkInterference returns: each overlapping pair and its volume
+ *  (mm³), and how many pairs were close enough to intersect. */
+export interface InterferenceFindings {
+  clashes: { a: { id: string; name: string }; b: { id: string; name: string }; volume: number }[];
+  pairsChecked: number;
+  errors?: { a: { id: string; name: string }; b: { id: string; name: string }; error: string }[];
+}
 
 /** Every `read` name — advertised to the hub as the tab's capabilities. */
 export const READ_NAMES = readQuerySchema.options.map((o) => o.shape.read.value);
@@ -934,9 +978,14 @@ export interface SceneSummary {
   gears?: {
     id: string;
     name: string;
+    /** Absent for a spur gear. */
+    gearType?: "internal" | "rack";
     teeth: number;
     module: number;
-    pitchDiameter: number;
+    /** A gear's (not a rack's). */
+    pitchDiameter?: number;
+    /** A rack's end-to-end length (mm), margins included. */
+    length?: number;
     pressureAngle: number;
     meshWith?: string;
   }[];

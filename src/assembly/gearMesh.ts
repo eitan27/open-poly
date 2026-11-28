@@ -9,10 +9,34 @@ import { bakeGear } from "../document/gear";
 import { resolveDocument } from "../document/document";
 import { featureIdOfPart } from "../document/parts";
 import type { Document } from "../document/types";
-import { add, alignTurn, cross, dot, scale, sub, turnAbout, unit, type GearGeom, type Vec3 } from "../geom/gearAlign";
+import {
+  add,
+  alignTurn,
+  cross,
+  dot,
+  rackFrame,
+  rackMesh,
+  scale,
+  sub,
+  turnAbout,
+  unit,
+  type GearGeom,
+  type Vec3,
+} from "../geom/gearAlign";
 import { applyPoint } from "./placement";
-import { formatValue, isDriven, type Solution } from "./solve";
+import { formatValue, isDriven, isRotation, type Solution } from "./solve";
 import type { AssemblyDoc, Dof, Mat4 } from "./types";
+import type { SourceState } from "./useAssemblySources";
+
+/** The gear (or rack) an instance of `a` is, read from its part document's
+ *  loaded source: null when its part isn't a Gear feature's, or isn't loaded. */
+export const gearOfIn =
+  (a: AssemblyDoc, sources: ReadonlyMap<string, SourceState>) =>
+  (instanceId: string): GearGeom | null => {
+    const inst = a.instances.find((i) => i.id === instanceId);
+    const src = inst ? sources.get(inst.source.docId) : undefined;
+    return src?.status === "ready" ? (src.parts.find((p) => p.partId === inst!.source.partId)?.gear ?? null) : null;
+  };
 
 /** The gear geometry of `partId` in `doc`, when a Gear feature made it:
  *  followed through any in-place Transforms after it, as the kernel applies
@@ -32,14 +56,29 @@ export function gearGeomOf(doc: Document, partId: string): GearGeom | { problem:
     const b = bakeGear(doc, g, resolved.scope, resolved.planeFrames);
     const { origin, uAxis, vAxis } = b.frame;
     const at = (u: number, v: number): Vec3 => add(add(origin, scale(uAxis, u)), scale(vAxis, v));
-    geom = {
-      teeth: b.spec.teeth,
-      module: b.spec.module,
-      internal: g.gearType === "internal",
-      center: at(b.center[0], b.center[1]),
-      axis: unit(cross(uAxis, vAxis)),
-      tooth: unit(add(scale(uAxis, Math.cos(b.rotation)), scale(vAxis, Math.sin(b.rotation)))),
-    };
+    const dir = (a: number) => unit(add(scale(uAxis, Math.cos(a)), scale(vAxis, Math.sin(a))));
+    if (g.gearType === "rack") {
+      // Its space 0 is at the −x end of its pitch line; teeth 90° CCW of its run.
+      const half = (b.spec.teeth * Math.PI * b.spec.module) / 2;
+      geom = {
+        teeth: b.spec.teeth,
+        module: b.spec.module,
+        internal: false,
+        center: at(b.center[0] - half * Math.cos(b.rotation), b.center[1] - half * Math.sin(b.rotation)),
+        axis: unit(cross(uAxis, vAxis)),
+        tooth: dir(b.rotation + Math.PI / 2),
+        rack: { run: dir(b.rotation) },
+      };
+    } else
+      geom = {
+        teeth: b.spec.teeth,
+        module: b.spec.module,
+        internal: g.gearType === "internal",
+        profileShift: b.spec.profileShift,
+        center: at(b.center[0], b.center[1]),
+        axis: unit(cross(uAxis, vAxis)),
+        tooth: dir(b.rotation),
+      };
   } catch (e) {
     return { problem: `${g.name} doesn't build: ${(e as Error).message}` };
   }
@@ -76,6 +115,7 @@ function transformGear(g: GearGeom, k: number, pivot: Vec3, o: Vec3, dir: Vec3, 
     center: point(g.center),
     axis: unit(turnV(g.axis)),
     tooth: unit(turnV(g.tooth)),
+    ...(g.rack ? { rack: { run: unit(turnV(g.rack.run)) } } : {}),
   };
 }
 
@@ -83,7 +123,13 @@ function transformGear(g: GearGeom, k: number, pivot: Vec3, o: Vec3, dir: Vec3, 
 export function placeGear(g: GearGeom, m: Mat4): GearGeom {
   const o = applyPoint(m, [0, 0, 0]);
   const dir = (d: Vec3) => unit(sub(applyPoint(m, d), o));
-  return { ...g, center: applyPoint(m, g.center), axis: dir(g.axis), tooth: dir(g.tooth) };
+  return {
+    ...g,
+    center: applyPoint(m, g.center),
+    axis: dir(g.axis),
+    tooth: dir(g.tooth),
+    ...(g.rack ? { rack: { run: dir(g.rack.run) } } : {}),
+  };
 }
 
 /** The ratio and direction a gear relation between two gears should have:
@@ -126,7 +172,7 @@ function withValue(a: AssemblyDoc, mateId: string, dof: Dof, value: number): Ass
   return {
     ...a,
     mates: a.mates.map((m) =>
-      m.id === mateId ? { ...m, values: { ...m.values, [dof]: formatValue(value, true) } } : m,
+      m.id === mateId ? { ...m, values: { ...m.values, [dof]: formatValue(value, isRotation(dof)) } } : m,
     ),
   };
 }
@@ -180,6 +226,7 @@ export function relationGears(
   if (!ends.driver || !ends.driven) return null;
   const driver = mateGear(a, ends.driver.mateId, gearOf);
   const driven = mateGear(a, ends.driven.mateId, gearOf);
+  if (driver?.geom.rack || driven?.geom.rack) return null; // a rack goes in a Rack relation
   return driver && driven && driver.instanceId !== driven.instanceId ? { driver, driven } : null;
 }
 
@@ -196,6 +243,7 @@ export function alignRelation(
   solveAt: (a: AssemblyDoc) => Solution,
 ): AssemblyDoc | string {
   const r = a.relations?.find((x) => x.id === relId);
+  if (r?.type === "rack" && !r.suppressed) return alignRackRelation(a, relId, gearOf, solveAt);
   if (!r || r.type !== "gear" || r.suppressed) return a;
   const pair = relationGears(a, r, gearOf);
   if (!pair) return "Align teeth needs a gear feature's part on both mates.";
@@ -214,4 +262,110 @@ export function alignRelation(
   return Math.abs(turn) < 1e-9 ? a : withPhase(phase + turn / perDegree);
 }
 
-export { alignTurn, turnAbout, type GearGeom };
+// ---- Rack and pinion ------------------------------------------------------
+
+type End = { mateId: string; dof: Dof };
+
+/** The pinion and the rack a rack relation's ends move: the end whose DOF
+ *  turns must turn a spur gear's part, the one that slides a rack's. Null
+ *  when they don't. */
+export function relationRack(
+  a: AssemblyDoc,
+  ends: { driver: End | null; driven: End | null },
+  gearOf: (instanceId: string) => GearGeom | null,
+): { pinion: PlacedEnd & { end: End }; rack: PlacedEnd & { end: End } } | null {
+  if (!ends.driver || !ends.driven) return null;
+  if (isRotation(ends.driver.dof) === isRotation(ends.driven.dof)) return null;
+  const [turnEnd, slideEnd] = isRotation(ends.driver.dof) ? [ends.driver, ends.driven] : [ends.driven, ends.driver];
+  const pinion = mateGear(a, turnEnd.mateId, gearOf);
+  const rack = mateGear(a, slideEnd.mateId, gearOf);
+  if (!pinion || !rack || pinion.geom.rack || pinion.geom.internal || !rack.geom.rack) return null;
+  if (pinion.instanceId === rack.instanceId) return null;
+  return { pinion: { ...pinion, end: turnEnd }, rack: { ...rack, end: slideEnd } };
+}
+
+/** Millimetres `g` moves along `dir` per unit added to `end`'s stored DOF. */
+function movePerUnit(
+  a: AssemblyDoc,
+  s0: Solution,
+  end: End,
+  g: PlacedEnd,
+  dir: Vec3,
+  solveAt: (a: AssemblyDoc) => Solution,
+): number {
+  const m = a.mates.find((x) => x.id === end.mateId);
+  if (!m) return 0;
+  const stored = isDriven(m, end.dof) ? (s0.values.get(m.id)?.[end.dof] ?? 0) : Number(m.values?.[end.dof] ?? 0);
+  const before = placed(s0, g);
+  const after = placed(solveAt(withValue(a, m.id, end.dof, stored + 1)), g);
+  if (!before || !after) return 0;
+  const v = dot(sub(after.center, before.center), dir);
+  return Math.abs(v) < 1e-6 ? 0 : v;
+}
+
+/** The radius and direction a rack relation between a pinion and a rack
+ *  should have: the pinion's pitch radius, and Reverse measured as for gears
+ *  — each mate nudged to see which way its part goes in the world. Null when
+ *  the ends aren't a pinion and a rack, or the nudge says nothing. */
+export function rackRelationValue(
+  a: AssemblyDoc,
+  ends: { driver: End | null; driven: End | null },
+  gearOf: (instanceId: string) => GearGeom | null,
+  solveAt: (a: AssemblyDoc) => Solution,
+): { value: string; reverse: boolean } | null {
+  const pair = relationRack(a, ends, gearOf);
+  if (!pair) return null;
+  const s0 = solveAt(a);
+  const p = placed(s0, pair.pinion);
+  const r = placed(s0, pair.rack);
+  if (!p || !r) return null;
+  const { t } = rackFrame(p, r);
+  const sTurn = turnPerDegree(a, s0, pair.pinion.end, pair.pinion, p.axis, solveAt);
+  const sMove = movePerUnit(a, s0, pair.rack.end, pair.rack, t, solveAt);
+  if (!sTurn || !sMove) return null;
+  // The rack moves r·θ along t as the pinion turns θ counter-clockwise; a
+  // rack relation's k is +r·π/180 unless reversed.
+  const radius = (p.module * p.teeth) / 2;
+  return { value: String(Number(radius.toFixed(6))), reverse: sTurn * sMove < 0 };
+}
+
+/** `a` with rack relation `relId`'s phase changed so the rack's teeth sit in
+ *  mesh with the pinion's where they are now — the driven end (the rack
+ *  sliding, or the pinion turning) moved the least way. A string when it
+ *  can't: why. */
+export function alignRackRelation(
+  a: AssemblyDoc,
+  relId: string,
+  gearOf: (instanceId: string) => GearGeom | null,
+  solveAt: (a: AssemblyDoc) => Solution,
+): AssemblyDoc | string {
+  const rel = a.relations?.find((x) => x.id === relId);
+  if (!rel || rel.type !== "rack" || rel.suppressed) return a;
+  const pair = relationRack(a, rel, gearOf);
+  if (!pair) return "Align teeth needs a gear's part on the turning mate and a rack's on the sliding one.";
+  const driven = a.mates.find((m) => m.id === rel.driven.mateId)!;
+  if (isDriven(driven, rel.driven.dof)) return "The driven value is an expression; align it by hand.";
+  const s0 = solveAt(a);
+  const p = placed(s0, pair.pinion);
+  const r = placed(s0, pair.rack);
+  if (!p || !r) return "The gear and the rack aren't placed yet.";
+  const mesh = rackMesh(p, r);
+  if (typeof mesh === "string") return mesh;
+  if (Math.abs(mesh.misfit) < 1e-9) return a;
+  const phase = Number(driven.values?.[rel.driven.dof] ?? 0);
+  let delta: number;
+  if (isRotation(rel.driven.dof)) {
+    // Turn the pinion +misfit/r about its axis.
+    const perDegree = turnPerDegree(a, s0, rel.driven, pair.pinion, p.axis, solveAt);
+    if (!perDegree) return "The gear doesn't turn with its mate's angle.";
+    delta = mesh.misfit / ((p.module * p.teeth) / 2) / perDegree;
+  } else {
+    // Slide the rack −misfit along t.
+    const perUnit = movePerUnit(a, s0, rel.driven, pair.rack, mesh.t, solveAt);
+    if (!perUnit) return "The rack doesn't move with its mate's slide.";
+    delta = -mesh.misfit / perUnit;
+  }
+  return withValue(a, driven.id, rel.driven.dof, phase + delta);
+}
+
+export { alignTurn, rackMesh, turnAbout, type GearGeom };

@@ -187,3 +187,24 @@ export function RelationIcon({ type, size = 14 }: { type: RelationType; size?: n
     </svg>
   );
 }
+
+/** Interference: two solids overlapping, the shared part filled. */
+export function InterferenceIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      className="mate-icon"
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.3}
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="1.5" y="3.5" width="8" height="8" />
+      <rect x="6.5" y="5.5" width="8" height="8" />
+      <rect x="6.5" y="5.5" width="3" height="6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

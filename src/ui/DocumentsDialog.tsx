@@ -303,27 +303,39 @@ export function DocumentsDialog({
                       title="Rename"
                       onClick={() => setRenaming({ id: m.id, draft: m.name })}
                     >
-                      {m.name}
+                      {/* The name truncates; its kind pill never does. */}
+                      <span className="docs-name-text">{m.name}</span>
                       {m.kind === "assembly" ? (
                         <span className="docs-kind">Assembly</span>
                       ) : (
                         <span className="docs-kind docs-kind-part">Part</span>
                       )}
-                      {active && <span className="docs-current"> · current</span>}
                     </button>
                   )}
                   <span className="docs-sub">
-                    edited {timeAgo(m.updatedAt)} ·{" "}
+                    {/* Each fact wraps whole ("1 part", never "1 / part"). */}
+                    <span>edited {timeAgo(m.updatedAt)}</span>
+                    {" · "}
                     {m.kind === "assembly" ? (
                       // "4 parts · 3 mates", as a part's reads "1 feature · 1 part".
                       <>
-                        {plural(m.instanceCount ?? 0, "part")}
-                        {m.mateCount !== undefined && ` · ${plural(m.mateCount, "mate")}`}
+                        <span>{plural(m.instanceCount ?? 0, "part")}</span>
+                        {m.mateCount !== undefined && (
+                          <>
+                            {" · "}
+                            <span>{plural(m.mateCount, "mate")}</span>
+                          </>
+                        )}
                       </>
                     ) : (
                       <>
-                        {plural(m.featureCount, "feature")}
-                        {!m.unbuilt && ` · ${plural(m.partCount, "part")}`}
+                        <span>{plural(m.featureCount, "feature")}</span>
+                        {!m.unbuilt && (
+                          <>
+                            {" · "}
+                            <span>{plural(m.partCount, "part")}</span>
+                          </>
+                        )}
                       </>
                     )}
                     {usedIn.length > 0 && (
@@ -342,7 +354,12 @@ export function DocumentsDialog({
                   </span>
                 </div>
                 <div className="docs-row-actions">
-                  {!active && (
+                  {/* The open document can't be opened: its slot says it's the
+                      current one instead (it used to trail the name, and was
+                      the first thing a long name cut off). */}
+                  {active ? (
+                    <span className="docs-current">Current</span>
+                  ) : (
                     <button className="text-btn" disabled={busy} onClick={() => void run(() => onOpen(m.id), true)}>
                       Open
                     </button>

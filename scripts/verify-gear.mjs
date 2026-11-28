@@ -226,6 +226,26 @@ check("edit applies", ring?.params?.teeth === "48", JSON.stringify(ring?.params)
 
 // The dev server proxies /api/drive to a Pages Function that isn't running
 // locally; its 502s are environment noise, not the gear's.
+// 6. No One side / Symmetric buttons: a Normal offset (Advanced) of
+// −thickness/2 centres the gear on its plane instead.
+await op.newDocument();
+await openGear();
+check("no One side / Symmetric buttons", !/One side|Symmetric/.test(await dialog.textContent()));
+check("Flip direction is still there", /Flip direction/.test(await dialog.textContent()));
+await dialog.locator(".gear-advanced-toggle").click();
+await fieldInput("Normal offset").fill("-4");
+await page.waitForTimeout(600);
+await dialog.locator(".ed-primary").click();
+await op.settle();
+{
+  const b = (await op.bodies())[0]?.bbox;
+  check(
+    "normal offset −4 centres an 8 mm gear on Top",
+    b && Math.abs(b.min[2] + 4) < 1e-3 && Math.abs(b.max[2] - 4) < 1e-3,
+    JSON.stringify(b),
+  );
+}
+
 const real = errors.filter((e) => !/502|Bad Gateway/.test(e));
 check("no page errors", real.length === 0, real.slice(0, 3).join(" | "));
 await close();

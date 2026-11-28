@@ -297,3 +297,67 @@
 .asm-relation .ed-field select {
   width: 134px;
 }
+
+/* The Interference panel: each overlap a row, its two parts and its volume. */
+.feature-dialog.asm-interference {
+  width: 280px;
+}
+/* The dialog's column gap spaces the lines; a <p>'s default 1em margins doubled it. */
+.asm-interference p {
+  margin: 0;
+}
+.asm-interference-clear {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.asm-interference-clear strong {
+  color: var(--ok);
+  font-weight: 600;
+}
+.asm-interference-check-mark {
+  flex: none;
+  color: var(--ok);
+  font-weight: 700;
+  font-size: 13px;
+}
+.asm-interference-all {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+.asm-interference-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.asm-interference-list button {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  text-align: left;
+  padding: 5px 8px;
+}
+.asm-interference-list button.active {
+  outline: 1px solid var(--danger);
+}
+.asm-interference-pair {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asm-interference-volume {
+  flex: 0 0 auto;
+  color: var(--danger-text);
+  font-variant-numeric: tabular-nums;
+}

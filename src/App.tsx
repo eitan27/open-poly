@@ -282,7 +282,8 @@ import { animatableDofs } from "./assembly/animate";
 import { renameInMates, removeInstances, updateInstance, updateMate } from "./assembly/assembly";
 import { MateDialog } from "./assembly/MateDialog";
 import { useAssemblyWorkspace } from "./assembly/useAssemblyWorkspace";
-import { MateIcon } from "./assembly/MateIcon";
+import { InterferenceIcon, MateIcon } from "./assembly/MateIcon";
+import { InterferenceDialog } from "./assembly/InterferenceDialog";
 import { MATE_TYPES } from "./assembly/mateTypes";
 import type { BuildDocument } from "./assembly/useAssemblySources";
 import type {
@@ -2127,6 +2128,8 @@ export default function App() {
     duplicate,
     relations: mateRelations,
     openRelation,
+    interference,
+    openInterference,
     assemblyMeshes,
     canMate,
     cancelInstanceMove,
@@ -2153,6 +2156,7 @@ export default function App() {
     buildDocument,
     onPainted: () => setPaintSeq((s) => s + 1),
     viewApi: viewApiRef,
+    kernel: kernelRef,
   });
   // The first-connect choice and auth outcomes need the user: bring the dialog
   // up for them. Later issues (conflicts…) only badge the button — they never
@@ -2938,6 +2942,12 @@ export default function App() {
       return null; // a half-typed size: nothing to light
     }
   }, [hole.dialog, holeRowHover, doc, resolved]);
+  // An assembly's ghosts: the Mate dialog's connector glyphs, and the
+  // Interference panel's overlaps.
+  const asmGhosts = useMemo<GhostMesh[]>(
+    () => (interference.ghosts.length ? [...mates.glyphs, ...interference.ghosts] : mates.glyphs),
+    [mates.glyphs, interference.ghosts],
+  );
   const ghostMeshes = useMemo<GhostMesh[]>(
     () => [
       // An extrude previews the swept TOOL, and in Remove mode that tool is the
@@ -3055,6 +3065,7 @@ export default function App() {
     readSource: (id) => readSource(id, buildDocument),
     settle: (before) => settleAssembly(agentAssemblyRef, before),
     frameOf: (c) => (assembly ? mates.frameFor(assembly)(c) : "No assembly is open."),
+    kernel: () => kernelRef.current,
   };
   agentDocApiRef.current = {
     info: () => ({ id: docIdRef.current!, name: docName, ...(isAssembly ? { kind: "assembly" as const } : {}) }),
@@ -3879,14 +3890,14 @@ export default function App() {
     return { radius: dia / 2, stub: Math.max(dia, 3) * (d.settings.flip ? 1 : -1) };
   })();
   // …and a gear's is its pitch circle, the stub its thickness the way it
-  // extrudes (none when symmetric about the face).
+  // extrudes.
   const gearCursor = (() => {
     const d = gear.dialog;
     if (!d?.locating) return null;
     try {
       const { module, teeth } = gearSizing(doc, { id: d.editId ?? d.draftId, ...d.settings }, resolved.scope);
       const t = evaluateExpression(d.settings.params.thickness, resolved.scope);
-      const stub = d.settings.extent === "symmetric" ? 0 : t * (d.settings.flip ? -1 : 1);
+      const stub = t * (d.settings.flip ? -1 : 1);
       return { radius: (module * teeth) / 2, stub };
     } catch {
       return null;
@@ -7226,6 +7237,16 @@ export default function App() {
       disabled: !canMate,
       onSelect: () => openMateDialog(t.type),
     })),
+    {
+      id: "interference",
+      icon: <InterferenceIcon />,
+      label: "Interference",
+      title:
+        "Interference: find the parts that overlap, and by how much — the selected parts against the rest, or all of them",
+      keywords: ["clash", "collision", "overlap", "intersect", "check"],
+      disabled: !assembly?.instances.length,
+      onSelect: openInterference,
+    },
   ];
 
   const modelTools: ToolbarItem[] = [
@@ -8069,7 +8090,7 @@ export default function App() {
               // shown as the whole-body highlight, and the gizmo moves the one
               // selected (see asmTransformEdit).
               meshes={isAssembly ? assemblyMeshes : viewportMeshes}
-              ghostMeshes={isAssembly ? mates.glyphs : ghostMeshes}
+              ghostMeshes={isAssembly ? asmGhosts : ghostMeshes}
               selection={isAssembly ? (mates.picks ?? asmFaces) : (dialogPicks ?? selection)}
               emphasize={constraintEmphasis}
               highlightBodyIds={isAssembly ? asmSelectedSet : litBodyIds}
@@ -8192,6 +8213,7 @@ export default function App() {
               />
             )}
             {isAssembly && mateRelations.dialog && <RelationDialog {...mateRelations.dialog} />}
+            {isAssembly && interference.dialog && <InterferenceDialog {...interference.dialog} />}
             {insertOpen && (
               <InsertDialog onClose={() => setInsertOpen(false)} onInsert={insertParts} build={buildDocument} />
             )}
@@ -9227,10 +9249,10 @@ export default function App() {
                     defaultLocation={d.defaultPlane}
                     locating={d.locating}
                     advanced={d.advanced}
-                    meshOptions={meshCandidates(doc, d.editId)}
+                    meshOptions={meshCandidates(doc, d.editId, d.settings.gearType)}
                     meshName={doc.features.find((f) => f.id === d.settings.meshWith)?.name}
                     readout={readout}
-                    error={error?.replace(/^gear: /, "") ?? null}
+                    error={error?.replace(/^(gear|rack): /, "") ?? null}
                     onArmLocation={gear.armLocation}
                     onChange={gear.update}
                     onSizeBy={gear.setSizeBy}

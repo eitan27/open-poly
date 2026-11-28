@@ -394,14 +394,30 @@
   text-align: left;
   padding: 0;
   cursor: text;
+  /* Name (truncating) then its kind pill (never truncated). */
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.docs-name-text {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.docs-name .docs-kind {
+  flex: 0 0 auto;
+}
+
+/* Where Open would be, on the open document's row. */
 .docs-current {
   color: var(--text-7);
   font-size: 11px;
+  padding: 3px 8px;
+  align-self: center;
 }
 
 .docs-name-input {
@@ -418,6 +434,10 @@
 .docs-sub {
   font-size: 11px;
   color: var(--text-7);
+}
+
+.docs-sub > span {
+  white-space: nowrap;
 }
 
 .docs-row-actions {

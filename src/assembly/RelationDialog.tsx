@@ -11,6 +11,8 @@ import { defaultDraft, endsFit, RELATION_TYPES, type RelationDraft } from "./rel
 import { isRotation, MATE_DOFS } from "./solve";
 import type { Dof, Mate } from "./types";
 
+const fmtMm = (n: number) => String(Math.round(n * 100) / 100);
+
 /** Every (mate, DOF) a relation can use, as "mateId:dof". */
 const option = (m: Mate, d: Dof) => `${m.id}:${d}`;
 const parse = (s: string): { mateId: string; dof: Dof } | null => {
@@ -38,7 +40,13 @@ export function RelationDialog({
   problem: string | null;
   /** When both ends turn gear parts: which, and why their teeth can't be
    *  lined up (if they can't). The ratio and Reverse are filled from them. */
-  gears?: { label: string | null; problem: string | null } | null;
+  gears?: {
+    label: string | null;
+    problem: string | null;
+    /** A pinion and a rack: how far the rack's pitch line is from where it
+     *  meshes (mm), or why it can't be moved there. */
+    rack?: { offBy: number | string | null };
+  } | null;
   onChange: (d: RelationDraft) => void;
   onConfirm: () => void;
   onCancel: () => void;
@@ -128,10 +136,16 @@ export function RelationDialog({
       )}
       {gears?.label && (
         <>
-          <p className="ed-hint asm-relation-gears">{gears.label}: ratio and direction from their teeth.</p>
+          <p className="ed-hint asm-relation-gears">
+            {gears.label}: {draft.type === "rack" ? "radius" : "ratio"} and direction from their teeth.
+          </p>
           <label
             className="ed-field ed-flip"
-            title="Turn the driven gear the least way that puts its teeth in the driver's spaces"
+            title={
+              draft.type === "rack"
+                ? "Move the driven part (the rack sliding, or the gear turning) the least way that puts the teeth in mesh"
+                : "Turn the driven gear the least way that puts its teeth in the driver's spaces"
+            }
           >
             <span>Align teeth</span>
             <input
@@ -142,6 +156,38 @@ export function RelationDialog({
             />
           </label>
           {draft.align && gears.problem && <p className="ed-hint">Can't align: {gears.problem}</p>}
+          {gears.rack && typeof gears.rack.offBy === "number" && Math.abs(gears.rack.offBy) >= 0.01 && (
+            <label
+              className="ed-field ed-flip"
+              title="Shift the rack's mate connector so the rack's pitch line touches the gear's pitch circle"
+            >
+              <span>
+                Move the rack to the gear ({fmtMm(Math.abs(gears.rack.offBy))} mm{" "}
+                {gears.rack.offBy > 0 ? "too far" : "too close"})
+              </span>
+              <input
+                type="checkbox"
+                className="asm-relation-place"
+                checked={!!draft.place}
+                onChange={(e) => onChange({ ...draft, place: e.target.checked })}
+              />
+            </label>
+          )}
+          {gears.rack && typeof gears.rack.offBy === "string" && <p className="ed-hint">{gears.rack.offBy}</p>}
+          {gears.rack && (
+            <label
+              className="ed-field ed-flip"
+              title="Limit the driver so the gear stays at least a tooth in from either end of the rack"
+            >
+              <span>Limit travel to the rack</span>
+              <input
+                type="checkbox"
+                className="asm-relation-limit"
+                checked={!!draft.limit}
+                onChange={(e) => onChange({ ...draft, limit: e.target.checked })}
+              />
+            </label>
+          )}
         </>
       )}
       <p className="ed-hint">{meta.title}</p>

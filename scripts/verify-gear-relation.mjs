@@ -69,11 +69,15 @@ await fieldSelect("Size by").selectOption({ label: "Gear 1" });
 // Placed by hand, not beside it: Place beside would mesh the teeth already,
 // leaving Align teeth nothing to do.
 await dialog.locator(".gear-place-beside").uncheck();
-await dialog.locator(".gear-advanced-toggle").click();
-await fieldInput("Center X").fill("36");
 await page.waitForTimeout(400);
 await dialog.locator(".ed-primary").click();
 await op.settle();
+// The dialog has no Center X (a location is picked in the view): move it 36 mm over.
+{
+  const g2 = (await op.features()).filter((f) => f.type === "gear")[1];
+  await op.apply({ op: "setParam", featureId: g2.id, name: "centerX", value: "36" });
+  await op.settle();
+}
 check("two gears build", (await op.bodyCount()) === 2 && (await op.featureErrors()).length === 0);
 
 // --- A plate ------------------------------------------------------------------------

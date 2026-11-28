@@ -21,7 +21,7 @@ import { roundWallOfMesh } from "../geom/roundWall";
 import { FOLDED_NAMES_NOTE, foldNames } from "./nameRanges";
 import { DEFAULT_HOLE_PARAMS, DEFAULT_HOLE_SETTINGS, defaultHolePoints } from "../document/hole";
 import { DEFAULT_SCREW_PARAMS, DEFAULT_SCREW_SETTINGS } from "../document/screw";
-import { DEFAULT_GEAR_PARAMS, DEFAULT_GEAR_SETTINGS, gearSizing } from "../document/gear";
+import { bakeGear, DEFAULT_GEAR_PARAMS, DEFAULT_GEAR_SETTINGS, gearSizing } from "../document/gear";
 import { METRIC_SIZES, isMetricSize } from "../geom/metricFasteners";
 import {
   addBoolean,
@@ -111,6 +111,8 @@ import {
 } from "./assemblyOps";
 import type { AssemblyDoc, Dof, Mat4, MateConnector } from "../assembly/types";
 import { animatableDofs, animator, defaultSpec } from "../assembly/animate";
+import { checkInterference } from "../assembly/interference";
+import type { Kernel } from "../kernel/types";
 import { multiply } from "../assembly/placement";
 import { evaluateVariables } from "../document/document";
 import { invertRigid, isRotation } from "../assembly/solve";
@@ -123,6 +125,7 @@ import {
   type Operation,
   type DocumentListing,
   type AnimationFrames,
+  type InterferenceFindings,
   type AssemblySummary,
   type OpResult,
   type PlaneRefSpec,
@@ -185,6 +188,9 @@ export interface AgentContext {
     /** A connector's frame in its part (or why it can't be found), for the
      *  open assembly: what the solver works from. */
     frameOf(c: MateConnector): Mat4 | string;
+    /** The kernel, for interference checks (null before it's up; absent in
+     *  tests that don't need it). */
+    kernel?: () => Pick<Kernel, "interfere"> | null;
   };
   /** The viewport API (camera + capturePNG), or null before it mounts. */
   getViewport(): {
@@ -725,10 +731,11 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
       break;
     }
     case "addRelation": {
-      const r = planAddRelation(state, op, genId);
+      const r = planAddRelation(state, op, genId, ctx.assemblyEdit.frameOf);
       if ("error" in r) throw new OpError("invalid_op", r.error);
       next = r.assembly;
       createdIds = [r.id];
+      if (r.note) note = r.note;
       break;
     }
     case "editMate": {
@@ -746,9 +753,10 @@ async function applyAssemblyOp(ctx: AgentContext, state: AssemblyAgentState, op:
       break;
     }
     case "editRelation": {
-      const r = planEditRelation(state, op);
+      const r = planEditRelation(state, op, ctx.assemblyEdit.frameOf);
       if ("error" in r) throw new OpError(/^No relation/.test(r.error) ? "not_found" : "invalid_op", r.error);
-      next = r;
+      next = r.assembly;
+      if (r.note) note = r.note;
       break;
     }
     case "setVariable": {
@@ -1307,6 +1315,8 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
         } else if (op.placeBeside) {
           throw new OpError("invalid_op", "addGear: placeBeside needs meshWith (the gear to sit beside).");
         }
+        if (op.gearType === "rack" && (op.sizeBy === "pitchDiameter" || op.params?.pitchDiameter !== undefined))
+          throw new OpError("invalid_op", "addGear: a rack has no pitch diameter — size it by params.module.");
         const unknown = Object.keys(op.params ?? {}).filter((k) => !(k in DEFAULT_GEAR_PARAMS));
         if (unknown.length) throw new OpError("invalid_op", `addGear: unknown params ${unknown.join(", ")}.`);
         // Giving only a pitch diameter means "size it by that".
@@ -1321,9 +1331,15 @@ export async function applyOperation(ctx: AgentContext, op: Operation): Promise<
           ...(op.meshWith ? { meshWith: op.meshWith } : {}),
           ...(op.meshWith && op.placeBeside ? { placeBeside: true } : {}),
           bore: op.bore ?? DEFAULT_GEAR_SETTINGS.bore,
-          extent: op.extent ?? DEFAULT_GEAR_SETTINGS.extent,
           flip: op.flip ?? false,
-          params: { ...DEFAULT_GEAR_PARAMS, ...op.params },
+          params: {
+            ...DEFAULT_GEAR_PARAMS,
+            // The old extent "symmetric": centred on the plane.
+            ...(op.extent === "symmetric" && op.params?.normalOffset === undefined
+              ? { normalOffset: `${op.flip ? "" : "-"}(${op.params?.thickness ?? DEFAULT_GEAR_PARAMS.thickness})/2` }
+              : {}),
+            ...op.params,
+          },
         });
         next = op.name ? renameFeature(r.doc, r.id, op.name) : r.doc;
         createdId = r.id;
@@ -1782,13 +1798,19 @@ export function getSceneSummary(ctx: AgentContext): SceneSummary {
     try {
       const s = gearSizing(doc, f, resolved.scope);
       const r6 = (n: number) => Number(n.toFixed(6));
+      let size: { pitchDiameter: number } | { length: number } = { pitchDiameter: r6(s.module * s.teeth) };
+      if (f.gearType === "rack") {
+        const b = bakeGear(doc, f, resolved.scope, resolved.planeFrames).outline;
+        size = { length: r6("rack" in b ? b.rack.length : 0) };
+      }
       return [
         {
           id: f.id,
           name: f.name,
+          ...(f.gearType !== "spur" ? { gearType: f.gearType } : {}),
           teeth: s.teeth,
           module: r6(s.module),
-          pitchDiameter: r6(s.module * s.teeth),
+          ...size,
           pressureAngle: r6(s.pressureAngle),
           ...(f.meshWith ? { meshWith: f.meshWith } : {}),
         },
@@ -1841,6 +1863,40 @@ export function screenshot(ctx: AgentContext, opts?: { view?: ViewName }): strin
   if (!vp) return null;
   if (opts?.view) vp.setView(opts.view);
   return vp.capturePNG();
+}
+
+/** Which parts overlap (the checkInterference read), where they are now:
+ *  `instanceIds` against the rest, or every pair. Volumes in mm³; parts that
+ *  only touch don't count. Throws with a reason. */
+export async function checkInterferenceRead(
+  ctx: AgentContext,
+  q: { instanceIds?: string[] },
+): Promise<InterferenceFindings> {
+  const state = ctx.getAssembly();
+  if (!state) throw new Error("check_interference works on an assembly; the open document is a part.");
+  const { assembly, solution, sources } = state;
+  if (!solution || !state.settled) throw new Error("The assembly is still loading; try again shortly.");
+  const kernel = ctx.assemblyEdit.kernel?.();
+  if (!kernel) throw new Error("The geometry kernel isn't ready yet; try again shortly.");
+  const name = (id: string) => assembly.instances.find((i) => i.id === id)?.name ?? id;
+  const part = (id: string) => ({ id, name: name(id) });
+  for (const id of q.instanceIds ?? [])
+    if (!assembly.instances.some((i) => i.id === id))
+      throw new Error(`No instance "${id}" — ids are in get_scene_summary's instances.`);
+  const r = await checkInterference(
+    kernel,
+    assembly,
+    sources,
+    solution.placements,
+    new Set(q.instanceIds ?? []),
+    false,
+  );
+  if (typeof r === "string") throw new Error(r);
+  return {
+    clashes: r.clashes.map((c) => ({ a: part(c.a), b: part(c.b), volume: Math.round(c.volume * 1000) / 1000 })),
+    pairsChecked: r.checked,
+    ...(r.errors.length ? { errors: r.errors.map((e) => ({ a: part(e.a), b: part(e.b), error: e.error })) } : {}),
+  };
 }
 
 /** Sweep a mate's DOF and screenshot it at evenly spaced values (the

@@ -14,7 +14,19 @@ import {
   updateRelation,
   type RelationDraft,
 } from "./relations";
-import { alignRelation, alignTurn, gearRelationValue, placeGear, relationGears, type GearGeom } from "./gearMesh";
+import {
+  alignRelation,
+  alignTurn,
+  gearOfIn,
+  gearRelationValue,
+  placeGear,
+  rackMesh,
+  rackRelationValue,
+  relationGears,
+  relationRack,
+  type GearGeom,
+} from "./gearMesh";
+import { placeRack, RACK_PLACED_TOL, rackOffBy, rackTravelLimits, withTravelLimits } from "./rackPlace";
 import { MATE_DOFS, solve } from "./solve";
 import type { SourceState } from "./useAssemblySources";
 import type { AssemblyDoc, Mat4, MateConnector, Relation } from "./types";
@@ -46,11 +58,7 @@ export function useRelations({
   // Gears: a part a Gear feature made knows its teeth, so a gear relation
   // between two of them can take its ratio and direction from them and line
   // their teeth up (gearMesh.ts).
-  const gearOf = (instanceId: string): GearGeom | null => {
-    const inst = assembly?.instances.find((i) => i.id === instanceId);
-    const src = inst ? sources.get(inst.source.docId) : undefined;
-    return src?.status === "ready" ? (src.parts.find((p) => p.partId === inst!.source.partId)?.gear ?? null) : null;
-  };
+  const gearOf = (instanceId: string): GearGeom | null => (assembly ? gearOfIn(assembly, sources)(instanceId) : null);
   const gearProblemOf = (instanceId: string): string | undefined => {
     const inst = assembly?.instances.find((i) => i.id === instanceId);
     const src = inst ? sources.get(inst.source.docId) : undefined;
@@ -63,15 +71,62 @@ export function useRelations({
    *  on, when its ends are two gears and just changed (or it's new). A typed
    *  ratio is left alone while the ends stay the same. */
   const suggest = (d: RelationDraft, prev?: RelationDraft): RelationDraft => {
-    if (!assembly || d.type !== "gear") return { ...d, align: undefined };
+    if (!assembly || d.type === "screw") return { ...d, align: undefined, place: undefined, limit: undefined };
     if (prev && prev.type === d.type && sameEnd(prev.driver, d.driver) && sameEnd(prev.driven, d.driven)) return d;
-    const g = gearRelationValue(assembly, d, gearOf, solveAt);
-    return g ? { ...d, value: g.value, reverse: g.reverse, align: true } : { ...d, align: undefined };
+    if (d.type === "gear") {
+      const g = gearRelationValue(assembly, d, gearOf, solveAt);
+      return g ? { ...d, value: g.value, reverse: g.reverse, align: true } : { ...d, align: undefined };
+    }
+    // A pinion and a rack: the radius and direction, Align teeth on, the rack
+    // moved to the pinion when it isn't there, and its travel limited unless
+    // the driver already has limits of its own.
+    const g = rackRelationValue(assembly, d, gearOf, solveAt);
+    if (!g) return { ...d, align: undefined, place: undefined, limit: undefined };
+    const off = rackOffBy(assembly, d, gearOf, solveAt);
+    const driverLimited = !!assembly.mates.find((m) => m.id === d.driver?.mateId)?.limits?.[d.driver!.dof];
+    return {
+      ...d,
+      value: g.value,
+      reverse: g.reverse,
+      align: true,
+      place: typeof off === "number" && Math.abs(off) >= RACK_PLACED_TOL,
+      limit: !driverLimited,
+    };
   };
   /** The gears the draft's ends turn, named, and why their teeth can't be
    *  lined up (if they can't) — for the dialog. */
   const gears = useMemo(() => {
-    if (!session || !assembly || session.draft.type !== "gear") return null;
+    if (!session || !assembly || session.draft.type === "screw") return null;
+    const instName = (id: string) => assembly.instances.find((i) => i.id === id)?.name ?? "?";
+    if (session.draft.type === "rack") {
+      const rp = relationRack(assembly, session.draft, gearOf);
+      if (!rp) return null;
+      let problem: string | null = null;
+      const offBy = rackOffBy(assembly, session.draft, gearOf, solveAt);
+      // Aligning happens after placing, so judge it on the placed rack.
+      let where = assembly;
+      if (session.draft.place) {
+        const placed = placeRack(assembly, session.draft, gearOf, solveAt);
+        if (typeof placed === "string") problem = placed;
+        else where = placed;
+      }
+      if (session.draft.align && !problem) {
+        const s = solveAt(where);
+        const at = (g: { instanceId: string; geom: GearGeom }) => {
+          const m = s.placements.get(g.instanceId);
+          return m ? placeGear(g.geom, m) : null;
+        };
+        const p = at(rp.pinion);
+        const r = at(rp.rack);
+        const mesh = p && r ? rackMesh(p, r) : "The gear and the rack aren't placed yet.";
+        problem = typeof mesh === "string" ? mesh : null;
+      }
+      return {
+        label: `${instName(rp.pinion.instanceId)} (${rp.pinion.geom.teeth} teeth) and ${instName(rp.rack.instanceId)} (rack)`,
+        problem,
+        rack: { offBy },
+      };
+    }
     const pair = relationGears(assembly, session.draft, gearOf);
     if (!pair) {
       // A gear part whose teeth can't be read: say why, rather than leave
@@ -84,7 +139,7 @@ export function useRelations({
       return why ? { label: null, problem: why } : null;
     }
     const name = (g: { instanceId: string; geom: GearGeom }) =>
-      `${assembly.instances.find((i) => i.id === g.instanceId)?.name ?? "?"} (${g.geom.teeth} teeth${g.geom.internal ? ", ring" : ""})`;
+      `${instName(g.instanceId)} (${g.geom.teeth} teeth${g.geom.internal ? ", ring" : ""})`;
     let problem: string | null = null;
     if (session.draft.align) {
       const s = solveAt(assembly);
@@ -151,23 +206,30 @@ export function useRelations({
       existing?.name ?? nextRelationName(assembly, session.draft.type),
     );
     if (!rel) return;
+    // A rack first moved to its pinion, when asked (and it can be).
+    let base = assembly;
+    if (session.draft.place && rel.type === "rack") {
+      const placed = placeRack(assembly, rel, gearOf, solveAt);
+      if (typeof placed !== "string") base = placed;
+    }
     let next: AssemblyDoc;
-    if (existing) next = updateRelation(assembly, { ...existing, ...rel, name: existing.name });
+    if (existing) next = updateRelation(base, { ...existing, ...rel, name: existing.name });
     else {
       // A new relation starts from the pose on screen: the driven part stays
       // put, and turns from there.
-      const values = solve(assembly, frameFor(assembly)).values;
-      next = phaseToCurrentPose(
-        addRelation(assembly, rel),
-        rel.id,
-        values,
-        evaluateVariables(assembly.variables).scope,
-      );
+      const values = solve(base, frameFor(base)).values;
+      next = phaseToCurrentPose(addRelation(base, rel), rel.id, values, evaluateVariables(base.variables).scope);
     }
-    // …then, for two gears, turned the least way that meshes their teeth.
-    if (session.draft.align && rel.type === "gear") {
+    // …then, for two gears (or a pinion and a rack), moved the least way
+    // that meshes their teeth.
+    if (session.draft.align && rel.type !== "screw") {
       const aligned = alignRelation(next, rel.id, gearOf, solveAt);
       if (typeof aligned !== "string") next = aligned;
+    }
+    // …and, for a rack, its driver limited to the rack's teeth.
+    if (session.draft.limit && rel.type === "rack") {
+      const lim = rackTravelLimits(next, rel.id, gearOf, solveAt);
+      if (typeof lim !== "string") next = withTravelLimits(next, lim);
     }
     commit(next);
     setSession(null);

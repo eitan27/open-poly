@@ -452,6 +452,31 @@ export interface RegenOutcome {
 export type ExportFormat = "step" | "stl";
 
 /** The contract implemented by the worker-backed client. Grows per phase. */
+/** One part document for an interference check: its features (resolved),
+ *  and a version (its saved time) — the worker keeps the built solids per
+ *  document, and rebuilds only when the version moves on. */
+export interface InterferenceDoc {
+  docId: string;
+  version: string;
+  features: ResolvedFeature[];
+}
+
+/** Two parts, each a body of a document, placed in the world (column-major
+ *  4×4, rigid). */
+export interface InterferencePair {
+  a: { docId: string; bodyId: string; transform: number[] };
+  b: { docId: string; bodyId: string; transform: number[] };
+}
+
+/** What two placed parts share: its volume (mm³; 0 when they only touch or
+ *  are apart) and, when asked for and there is some, its mesh in the world.
+ *  `error` when the kernel couldn't tell. */
+export interface InterferenceResult {
+  volume: number;
+  mesh?: ShapeMeshPayload;
+  error?: string;
+}
+
 export interface Kernel {
   /** Replay the feature list and tessellate the surviving bodies. `onProgress`,
    *  if given, fires once per body as it's meshed (for progressive painting);
@@ -464,5 +489,7 @@ export interface Kernel {
   /** Replays the feature list and exports the result body with `bodyId`.
    *  Geometry is authored in millimetres throughout, so STEP declares "mm". */
   exportBody(features: ResolvedFeature[], bodyId: string, format: ExportFormat): Promise<Blob>;
+  /** For each frame (a set of placed pairs), what each pair shares. */
+  interfere(docs: InterferenceDoc[], frames: InterferencePair[][], withMesh: boolean): Promise<InterferenceResult[][]>;
   dispose(): void;
 }

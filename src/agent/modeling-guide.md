@@ -87,7 +87,8 @@ quoted in the warning).
   `insert_instance` (`count` for several), `duplicate_instance`,
   `ground_instance`, `add_mate`, `edit_mate`,
   `set_mate_value`, `add_relation`, `edit_relation`, `set_suppressed`,
-  `set_variable`, `delete`, and the read `animate_mate`.
+  `set_variable`, `delete`, and the reads `animate_mate` and
+  `check_interference`.
 
 All mutations route through undo, so the human can revert anything you do.
 
@@ -182,7 +183,7 @@ DOFs with their current values.
 - **fastened** — nothing moves (glue two parts; with `turns` to orient).
 - **revolute** `rz` — turns about Z: a hinge, a wheel on an axle (round wall
   to round wall, or face to face for a turntable).
-- **slider** `tz` — slides along Z: a drawer, a piston.
+- **slider** `tz` — slides along Z: a drawer, a piston, a rack driven by a pinion (with a rack relation).
 - **cylindrical** `tz`, `rz` — slides and turns: a pin in a hole, a shaft in a
   bushing. Use the two round walls.
 - **planar** `tx`, `ty`, `rz` — slides and turns on the plane: a part on a
@@ -223,6 +224,17 @@ number. A value the linkage can't reach at all is refused with why.
 - **screw** — rotation ↔ translation, `value` = pitch (mm per turn). A
   cylindrical mate's own `rz` → `tz` is a lead screw or a bolt.
 
+**Between Gear feature parts** (two gears; a spur on the turning mate and a
+rack on the sliding one) leave `value` and `reverse` out: they come from the
+teeth, as the dialog's do. Then by default, as the dialog does, `alignTeeth`
+moves the driven end the least way that meshes the teeth, and for a rack
+`placeRack` first moves the rack to the pinion's pitch distance (by shifting
+its mate's connector offset — so mate the rack with a plain `slider` along it,
+anywhere beside the pinion) and `limitToRack` limits the driver so the pinion
+stays a tooth in from the rack's ends (skipped when the driver already has
+limits). Pass any of them `false` to skip it. The result's note says what each
+did, or why it couldn't. `edit_relation` takes the same three, off unless given.
+
 They chain (a gear train). The driven DOF's own value becomes a **phase** added
 on top (to line teeth up); its `free` entry shows `drivenBy`. `edit_relation`
 changes a relation's value, direction or ends in place. Setting a driven
@@ -256,6 +268,16 @@ its limits, else a full turn or 20 mm. Sweep a relation's **driver** and
 everything it drives moves too. Frames captioned with a problem show where the
 motion jams. A symmetric part can look the same half a turn apart, so pick a
 frame count that shows the motion you care about.
+
+### Checking for clashes
+
+`check_interference` (a read) intersects the solids exactly, where the parts
+are now: `instanceIds` against the rest, or every pair; each overlap comes with
+its volume (mm³). Parts that only touch (a face on a face, gear teeth flank to
+flank) don't count. For a mechanism, `set_mate_value` its driver to a few
+positions and check at each. A clash usually means a part is a little too big,
+mated a little off, or a gear needs a profile shift (a pinion under 17 teeth on
+a rack). The user sees the same in the Interference panel (toolbar).
 
 ### Worked example (pattern, not literal API)
 
@@ -314,8 +336,16 @@ frame count that shows the motion you care about.
   scene summary's `gears` shows the ones it uses), so changing the first
   gear's module resizes both. Deleting the first gear leaves the second where
   it is, with those values as its own. A pinion
-  inside a ring gear works the same way. To animate them, use an assembly and a
-  gear relation (value = driver teeth / driven teeth).
+  inside a ring gear works the same way. A RACK (`gearType: "rack"`) is a
+  straight toothed bar whose length is `params.teeth` tooth pitches (teeth × π
+  × module; `params.endMargin` adds plain bar at each end, `params.rackHeight`
+  is back face to pitch line): make the pinion (a spur), then the rack with
+  `meshWith: <pinion id>` and `placeBeside: true` — `params.placeAngle` picks
+  the side, `params.slide` slides it whole teeth along. To animate them, use
+  an assembly and a gear relation, or for a rack a rack relation between the
+  pinion's revolute and the rack's slider — with no value, so it reads the
+  teeth, aligns them, puts the rack at the pitch distance and limits travel
+  to the rack (see Relations).
 - **Screws:** `add_screw` makes metric screws as a new body (`head`: socket /
   button / flat (countersunk) / hex, or `set` — a headless set screw with a hex
   socket in its end — or `none` — just the threaded shank, a stud or threaded

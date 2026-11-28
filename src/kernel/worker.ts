@@ -48,6 +48,9 @@ import type {
   ThreadResolved,
   ResolvedFrame,
   ResolvedProfile,
+  InterferenceDoc,
+  InterferencePair,
+  InterferenceResult,
 } from "./types";
 import { DRESSUP_DELTA_IDS, dressUpDeltaBase } from "./types";
 import { builderKey, contentKey } from "./cache";
@@ -7047,6 +7050,122 @@ function exportBody(features: ResolvedFeature[], bodyId: string, format: ExportF
   }
 }
 
+// ---- Interference (assemblies) ---------------------------------------------
+// Each part document's solids, built once per version and kept: a check over
+// an animation runs many frames against the same parts.
+const interferenceSolids = new Map<string, { version: string; bodies: Map<string, Shape3D> }>();
+const INTERFERENCE_DOCS_KEPT = 24;
+/** Shared volume below this (mm³) is parts touching, not overlapping. */
+const INTERFERENCE_MIN_VOLUME = 1e-3;
+
+function interferenceBodies(d: InterferenceDoc): Map<string, Shape3D> {
+  const kept = interferenceSolids.get(d.docId);
+  if (kept && kept.version === d.version) {
+    // Most recently used last.
+    interferenceSolids.delete(d.docId);
+    interferenceSolids.set(d.docId, kept);
+    return kept.bodies;
+  }
+  if (kept) for (const s of kept.bodies.values()) s.delete();
+  interferenceSolids.delete(d.docId);
+  const { bodies, previews } = buildBodies(d.features);
+  for (const p of previews) p.shape.delete();
+  const map = new Map(bodies.map((b) => [b.id, b.shape]));
+  interferenceSolids.set(d.docId, { version: d.version, bodies: map });
+  while (interferenceSolids.size > INTERFERENCE_DOCS_KEPT) {
+    const [oldest, v] = interferenceSolids.entries().next().value!;
+    for (const s of v.bodies.values()) s.delete();
+    interferenceSolids.delete(oldest);
+  }
+  return map;
+}
+
+function movedBy(shape: Shape3D, m: number[]): Shape3D {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const trsf = new oc.gp_Trsf_1();
+  trsf.SetValues(m[0], m[4], m[8], m[12], m[1], m[5], m[9], m[13], m[2], m[6], m[10], m[14]);
+  const loc = new oc.TopLoc_Location_2(trsf);
+  const moved = cast(shape.wrapped.Moved(loc, false)) as Shape3D;
+  loc.delete();
+  trsf.delete();
+  return moved;
+}
+
+function solidVolume(shape: Shape3D): number {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const props = new oc.GProp_GProps_1();
+  oc.BRepGProp.VolumeProperties_1(shape.wrapped, props, false, false, false);
+  const v = Math.abs(props.Mass());
+  props.delete();
+  return v;
+}
+
+function interfere(docs: InterferenceDoc[], frames: InterferencePair[][], withMesh: boolean): InterferenceResult[][] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = getOC() as any;
+  const byDoc = new Map(docs.map((d) => [d.docId, d]));
+  const bodyOf = (docId: string, bodyId: string): Shape3D | string => {
+    const d = byDoc.get(docId);
+    if (!d) return "Its part wasn't sent.";
+    const b = interferenceBodies(d).get(bodyId);
+    return b ?? "Its part didn't build.";
+  };
+  return frames.map((pairs) =>
+    pairs.map((pair): InterferenceResult => {
+      const a = bodyOf(pair.a.docId, pair.a.bodyId);
+      const b = bodyOf(pair.b.docId, pair.b.bodyId);
+      if (typeof a === "string") return { volume: 0, error: a };
+      if (typeof b === "string") return { volume: 0, error: b };
+      const ma = movedBy(a, pair.a.transform);
+      const mb = movedBy(b, pair.b.transform);
+      const progress = new oc.Message_ProgressRange_1();
+      const builder = new oc.BRepAlgoAPI_Common_1();
+      const args = new oc.TopTools_ListOfShape_1();
+      args.Append_1(ma.wrapped);
+      const tools = new oc.TopTools_ListOfShape_1();
+      tools.Append_1(mb.wrapped);
+      builder.SetArguments(args);
+      builder.SetTools(tools);
+      builder.SetFuzzyValue(BOOL_FUZZY);
+      let common: Shape3D | null = null;
+      try {
+        builder.Build(progress);
+        if (builder.HasErrors()) return { volume: 0, error: "The kernel couldn't intersect them." };
+        common = cast(builder.Shape()) as Shape3D;
+        const volume = solidVolume(common);
+        if (volume < INTERFERENCE_MIN_VOLUME) return { volume: 0 };
+        if (!withMesh) return { volume };
+        const m = common.mesh(MESH_OPTS);
+        const edges = meshEdgesOf(common, MESH_OPTS);
+        return {
+          volume,
+          mesh: {
+            name: "interference",
+            faces: {
+              vertices: new Float32Array(m.vertices),
+              triangles: new Uint32Array(m.triangles),
+              ...(m.normals ? { normals: new Float32Array(m.normals) } : {}),
+            },
+            edges: { lines: new Float32Array(edges.lines) },
+          },
+        };
+      } catch (e) {
+        return { volume: 0, error: errorMessage(e) };
+      } finally {
+        common?.delete();
+        builder.delete();
+        args.delete();
+        tools.delete();
+        progress.delete();
+        ma.delete();
+        mb.delete();
+      }
+    }),
+  );
+}
+
 ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
   const req = event.data;
   try {
@@ -7073,6 +7192,15 @@ ctx.onmessage = async (event: MessageEvent<KernelRequest>) => {
       }
       case "export":
         res = { id: req.id, ok: true, op: "export", blob: exportBody(req.features, req.bodyId, req.format) };
+        break;
+      case "interfere":
+        if (
+          req.docs.some((d) =>
+            d.features.some((f) => f.type === "extrude" && f.profiles.some((p) => p.kind === "sketchText")),
+          )
+        )
+          await ensureFont();
+        res = { id: req.id, ok: true, op: "interfere", results: interfere(req.docs, req.frames, req.withMesh) };
         break;
       default:
         throw new Error(`Unknown kernel op: ${(req as { op: string }).op}`);

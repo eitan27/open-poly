@@ -25,6 +25,8 @@ import { saveBlob } from "../lib/download";
 import { useMateAnimation } from "./useMateAnimation";
 import { useMates } from "./useMates";
 import { useRelations } from "./useRelations";
+import { useInterference } from "./useInterference";
+import type { Kernel } from "../kernel/types";
 
 const sameMatrix = (a: number[], b: number[]) => a === b || a.every((v, i) => v === b[i]);
 
@@ -36,6 +38,7 @@ export function useAssemblyWorkspace({
   buildDocument,
   onPainted,
   viewApi,
+  kernel,
 }: {
   /** The open assembly, or null when the open document is a part. */
   assembly: AssemblyDoc | null;
@@ -49,6 +52,8 @@ export function useAssemblyWorkspace({
   onPainted: () => void;
   /** The viewport, which an animation poses parts through. */
   viewApi: { current: ViewportApi | null };
+  /** The kernel, for interference checks. */
+  kernel: { current: Pick<Kernel, "interfere"> | null };
 }) {
   const isAssembly = assembly !== null;
   // Called from an effect keyed on the sources, not on the callback.
@@ -80,6 +85,7 @@ export function useAssemblyWorkspace({
   const openRelation = (id?: string) => {
     mates.close();
     animation.close();
+    interference.close();
     setAsmSelected([]);
     setAsmFaces([]);
     if (id) relations.openEdit(id);
@@ -92,12 +98,29 @@ export function useAssemblyWorkspace({
   const openAnimation = (mateId: string) => {
     mates.close();
     relations.close();
+    interference.close();
     setAsmSelected([]);
     setAsmFaces([]);
     animation.open(mateId);
   };
   const [asmSelected, setAsmSelected] = useState<string[]>([]);
   const asmSelectedSet = useMemo(() => new Set(asmSelected), [asmSelected]);
+  const interference = useInterference({
+    assembly,
+    solution: mates.solution,
+    sources: asmSources,
+    kernel,
+    selected: asmSelected,
+    setSelected: setAsmSelected,
+  });
+  /** Open the Interference panel on the selection (or everything), closing
+   *  what would compete with it. */
+  const openInterference = () => {
+    mates.close();
+    relations.close();
+    animation.close();
+    interference.openPanel();
+  };
   // An assembly's variables (the part document's panel, reused). Collapsed
   // when an assembly opens: assemblies use them less than parts do.
   const [asmVariablesOpen, setAsmVariablesOpen] = useState(false);
@@ -452,6 +475,8 @@ export function useAssemblyWorkspace({
     openAnimation,
     relations,
     openRelation,
+    interference,
+    openInterference,
     assemblyMeshes,
     canMate,
     cancelInstanceMove,

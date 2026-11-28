@@ -674,7 +674,9 @@ export interface ImportFeature extends FeatureBase {
 
 /** Which gear a Gear feature makes. Both are a 2D involute outline extruded
  *  to a thickness, so they share every setting but the bore/rim. */
-export type GearType = "spur" | "internal";
+/** spur: external teeth; internal: a ring gear; rack: a straight toothed bar
+ *  (a gear of infinite radius) that meshes with a spur. */
+export type GearType = "spur" | "internal" | "rack";
 
 /** What's cut from the middle of an external gear. */
 export type GearBore = "none" | "round" | "dflat";
@@ -706,7 +708,9 @@ export interface GearParams {
   profileShift: string;
   /** Root fillet radius, as a multiple of the module (0.38 is standard). */
   rootFillet: string;
-  /** Degrees about the gear's centre, to phase the teeth against a partner. */
+  /** Degrees about the gear's centre, to phase the teeth against a partner.
+   *  A rack's: the direction it runs, from the plane's +u (its teeth point
+   *  90° counter-clockwise of that). */
   rotation: string;
   /** Centre offset within the plane (mm, along the plane's u / v axes). */
   centerX: string;
@@ -714,6 +718,16 @@ export interface GearParams {
   /** With placeBeside: the direction from the partner's centre to this
    *  gear's, degrees from the plane's +u. Absent on gears made before it. */
   placeAngle?: string;
+  /** How far the gear starts from its plane, along the plane's normal (mm).
+   *  −thickness/2 centres it on the plane. Absent on gears made before it: 0. */
+  normalOffset?: string;
+  /** Rack: from its back face to its pitch line (mm). */
+  rackHeight?: string;
+  /** Rack: plain bar past the teeth at each end (mm). */
+  endMargin?: string;
+  /** Rack placed beside its pinion: how many tooth pitches it's slid along
+   *  from centred on the pinion (whole numbers keep it in mesh). */
+  slide?: string;
 }
 
 /** A parametric involute gear on a plane. A body *producer*: it resolves to an
@@ -742,9 +756,9 @@ export interface GearFeature extends FeatureBase {
    *  partner's. */
   placeBeside?: boolean;
   bore: GearBore;
-  /** One side of the plane (along its normal, or against it when flipped), or
-   *  centred on it. */
-  extent: "blind" | "symmetric";
+  /** It grows from its plane (moved `params.normalOffset` along the normal)
+   *  along the normal, or against it when flipped. (Gears saved with
+   *  `extent: "symmetric"` are migrated to the matching offset.) */
   flip: boolean;
   params: GearParams;
   color: number;

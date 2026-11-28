@@ -410,3 +410,168 @@ const round = (n: number) => Math.round(n * 100) / 100;
 export function centerDistance(module: number, teethA: number, teethB: number, oneIsInternal = false): number {
   return oneIsInternal ? (module * Math.abs(teethA - teethB)) / 2 : (module * (teethA + teethB)) / 2;
 }
+
+// ---- Rack ----------------------------------------------------------------
+//
+// A rack is a gear of infinite radius: its involute flanks become straight
+// lines at the pressure angle (the "basic rack"). In the rack's own (x, y):
+// the pitch line is y = 0, the teeth point +y, and the rack runs along x,
+// centred on x = 0. Its length is a whole number of tooth pitches (teeth ×
+// π × module) and each end falls in the middle of a tooth space, so two racks
+// laid end to end keep the pitch across the joint. An end margin adds plain
+// root-height bar past the teeth at each end, for mounting.
+
+export interface RackDims {
+  /** Tooth pitch along the rack: π × module. */
+  pitch: number;
+  /** The toothed length, teeth × pitch. */
+  toothedLength: number;
+  /** End to end, with the margins. */
+  length: number;
+  /** Back face to the tooth tips. */
+  totalHeight: number;
+  /** Back face to the pitch line (as asked). */
+  height: number;
+}
+
+export interface RackShapeOptions {
+  /** Back face to pitch line (mm). */
+  height: number;
+  /** Plain bar past the teeth at each end (mm). */
+  endMargin?: number;
+  /** The direction the rack runs, radians from +u; the teeth point 90°
+   *  counter-clockwise of it. */
+  rotation?: number;
+}
+
+export interface RackOutline {
+  outline: Vec2[];
+  holes: Vec2[][];
+  /** The back face and the two ends are named (`back`, `end0` at −x,
+   *  `end1` at +x); the teeth aren't. */
+  edgeNames: { outline: (string | null)[]; holes: never[] };
+  rack: RackDims;
+  rootFillet: number;
+}
+
+export const RACK_MAX_TEETH = 2000;
+
+/** Check a rack's numbers before any geometry is made. Throws. */
+export function validateRackSpec(spec: GearToothSpec, opts: RackShapeOptions): void {
+  const { teeth, module: m, pressureAngle } = spec;
+  if (!Number.isFinite(teeth) || !Number.isInteger(teeth)) throw new Error("rack: teeth must be a whole number");
+  if (teeth < 1) throw new Error("rack: needs at least 1 tooth");
+  if (teeth > RACK_MAX_TEETH) throw new Error(`rack: at most ${RACK_MAX_TEETH} teeth`);
+  if (!(m > 0) || !Number.isFinite(m)) throw new Error("rack: module must be greater than 0");
+  if (!(pressureAngle >= 10 && pressureAngle <= 35))
+    throw new Error("rack: pressure angle must be between 10° and 35°");
+  if (!(spec.backlash >= 0) || !Number.isFinite(spec.backlash)) throw new Error("rack: backlash can't be negative");
+  if (!(spec.rootFillet >= 0) || !Number.isFinite(spec.rootFillet))
+    throw new Error("rack: root fillet can't be negative");
+  const hf = (spec.dedendum ?? 1.25) * m;
+  if (!Number.isFinite(opts.height) || opts.height <= hf + 1e-6)
+    throw new Error(`rack: height must be more than the tooth depth below the pitch line (${round(hf)} mm)`);
+  const margin = opts.endMargin ?? 0;
+  if (!(margin >= 0) || !Number.isFinite(margin)) throw new Error("rack: end margin can't be negative");
+}
+
+/** The rack's sizes, without building it. */
+export function rackDims(spec: GearToothSpec, opts: RackShapeOptions): RackDims {
+  const pitch = Math.PI * spec.module;
+  const toothedLength = spec.teeth * pitch;
+  return {
+    pitch,
+    toothedLength,
+    length: toothedLength + 2 * (opts.endMargin ?? 0),
+    totalHeight: opts.height + (spec.addendum ?? 1) * spec.module,
+    height: opts.height,
+  };
+}
+
+/** The rack's outline (CCW), centred on the middle of its pitch line. Throws
+ *  with a readable message when the numbers can't make one. */
+export function rackOutline(spec: GearToothSpec, opts: RackShapeOptions): RackOutline {
+  validateRackSpec(spec, opts);
+  const dims = rackDims(spec, opts);
+  const m = spec.module;
+  const alpha = deg(spec.pressureAngle);
+  const tanA = Math.tan(alpha);
+  const p = dims.pitch;
+  const yTip = (spec.addendum ?? 1) * m;
+  const yRoot = -(spec.dedendum ?? 1.25) * m;
+  const yBack = -opts.height;
+  // Half the tooth's thickness at the pitch line, minus this rack's half of
+  // the play; the flank's half-width at height y is h − y·tanα.
+  const h = (p / 2 - spec.backlash / 2) / 2;
+  const wTip = h - yTip * tanA;
+  const wRoot = h - yRoot * tanA;
+  if (wTip <= 1e-4) throw new Error("rack: the teeth come to a point — lower the pressure angle or the backlash");
+  const spaceAtRoot = p - 2 * wRoot;
+  if (spaceAtRoot <= 1e-4) throw new Error("rack: neighbouring teeth overlap at the root — lower the pressure angle");
+
+  // Root fillet: tangent to the root line and the flank, in the space. The
+  // space's corner there is 90° + α; clamp so the fillet stays within half
+  // the space and below the tip.
+  const corner = Math.PI / 2 + alpha;
+  const tHalf = Math.tan(corner / 2);
+  const flankLen = (yTip - yRoot) / Math.cos(alpha);
+  let rf = Math.min(spec.rootFillet, (spaceAtRoot / 2) * tHalf * 0.999, flankLen * 0.5 * tHalf);
+  if (rf < 1e-3) rf = 0;
+  const t = rf / tHalf; // tangent length from the corner along each line
+
+  /** Fillet points from the flank's tangent point to the root's (or the
+   *  reverse), corner Q, flank direction uf (up the flank), root direction ur
+   *  (away from the tooth). */
+  const fillet = (q: Vec2, uf: Vec2, ur: Vec2, fromFlank: boolean): Vec2[] => {
+    if (rf === 0) return [q];
+    const bis: Vec2 = [uf[0] + ur[0], uf[1] + ur[1]];
+    const bl = Math.hypot(bis[0], bis[1]);
+    const dc = rf / Math.sin(corner / 2);
+    const c: Vec2 = [q[0] + (bis[0] / bl) * dc, q[1] + (bis[1] / bl) * dc];
+    const pf: Vec2 = [q[0] + uf[0] * t, q[1] + uf[1] * t];
+    const pr: Vec2 = [q[0] + ur[0] * t, q[1] + ur[1] * t];
+    const [s, e] = fromFlank ? [pf, pr] : [pr, pf];
+    const a0 = Math.atan2(s[1] - c[1], s[0] - c[0]);
+    let a1 = Math.atan2(e[1] - c[1], e[0] - c[0]);
+    while (a1 - a0 > Math.PI) a1 -= 2 * Math.PI;
+    while (a0 - a1 > Math.PI) a1 += 2 * Math.PI;
+    return [s, ...arcPoints(c, rf, a0, a1, deg(25), 3)];
+  };
+
+  const L2 = dims.toothedLength / 2;
+  const margin = opts.endMargin ?? 0;
+  const X0 = -L2 - margin;
+  const X1 = L2 + margin;
+  const pts: Vec2[] = [
+    [X0, yBack],
+    [X1, yBack],
+    [X1, yRoot],
+  ];
+  const names: (string | null)[] = ["back", "end1"];
+  const sa = Math.sin(alpha);
+  const ca = Math.cos(alpha);
+  // Teeth right to left along the top (the outline runs CCW).
+  for (let k = spec.teeth - 1; k >= 0; k--) {
+    const xc = -L2 + (k + 0.5) * p;
+    const toothPts: Vec2[] = [
+      // Right foot: along the root from the right, up the right flank.
+      ...fillet([xc + wRoot, yRoot], [-sa, ca], [1, 0], false),
+      [xc + wTip, yTip],
+      [xc - wTip, yTip],
+      // Left foot: down the left flank, out along the root to the left.
+      ...fillet([xc - wRoot, yRoot], [sa, ca], [-1, 0], true),
+    ];
+    pts.push(...toothPts);
+  }
+  pts.push([X0, yRoot]);
+  // Every edge after `end1` up to the last is a tooth or root (unnamed); the
+  // last (closing) edge runs down the −x end.
+  while (names.length < pts.length - 1) names.push(null);
+  names.push("end0");
+
+  const rot = opts.rotation ?? 0;
+  const c = Math.cos(rot);
+  const s = Math.sin(rot);
+  const outline = pts.map(([x, y]) => [x * c - y * s, x * s + y * c] as Vec2);
+  return { outline, holes: [], edgeNames: { outline: names, holes: [] }, rack: dims, rootFillet: rf };
+}

@@ -182,15 +182,25 @@ order; each is its own commit:
    EXISTING cylindrical face (pick the face; needs axis recovery from a
    faceted cluster), an internal lead-in by clamping, a tapered (pipe) thread.
 
-**More gear types.** Gear has spur and ring (internal) only. In rough order of
+**More gear types.** Gear has spur, ring (internal) and rack. In rough order of
 usefulness:
 
-- **Rack** — a straight toothed bar with the same module/pressure angle as a
-  spur, for rack-and-pinion. The assembly already has a rack RELATION
-  (`relations`: gear/rack/screw) but no rack BODY to put it on, so today the
-  relation drives a plain box. Profile is the basic rack (straight flanks at
-  the pressure angle), so it's simpler than the involute; placement "beside"
-  a pinion is pitch line tangent to the pinion's pitch circle.
+- **Rack** — DONE (2026-11-23). `gearType: "rack"` in the same Gear feature:
+  basic-rack profile (straight flanks at the pressure angle, root fillets,
+  `geom/gearProfile.ts rackOutline`), length = teeth × π × module with the ends
+  mid-space (racks laid end to end keep the pitch) plus an `endMargin` of plain
+  bar; `rackHeight` = back face to pitch line; faces `back`, `end0`, `end1`
+  named. Meshes with a spur only (sized from it); Place beside puts its pitch
+  line on the pinion's pitch circle (+ the pinion's profile shift × m) toward
+  `placeAngle`, slid into phase (`gearAlign.ts rackMesh`), then `slide` whole
+  pitches. The dialog warns when the pinion has too few teeth for its shift
+  (rack tips meet its flanks below the base circle) and names the shift that
+  clears it. Assembly: a Rack relation between a pinion's revolute and a
+  rack's translation fills the radius, measures Reverse and Aligns teeth
+  (`gearMesh.ts rackRelationValue / alignRackRelation`). Agent: `addGear`
+  `gearType: "rack"`. Checked by `scripts/verify-rack.mjs` (kernel ∩ empty in
+  mesh, a body half a tooth off) and `scripts/verify-rack-relation.mjs`. Not
+  done: a spur choosing a rack as its partner (the rack picks its pinion).
 - **Helical** — spur with a helix angle (and hand). No twisted-extrude in the
   kernel: build as a loft through N rotated copies of the profile, or a sweep
   with an auxiliary twist. Meshing pair needs opposite hands; the normal module
