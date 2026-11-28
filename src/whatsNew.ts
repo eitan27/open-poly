@@ -12,14 +12,21 @@ export interface WhatsNewEntry {
   /** YYYY-MM-DD the entry was added. */
   date: string;
   items: string[];
-  /** Phrases to bold wherever they appear in this entry's items. */
+  /** How to try it, e.g. "Press G and pick Rack as the type". A page already
+   *  running the new build shows it as written; a tab still on the old one (the
+   *  update banner) shows "Refresh the page and press G …", the refresh a link.
+   *  Not part of the entry's key, and builds from before it ignore it. */
+  try?: string;
+  /** Phrases to bold wherever they appear in this entry's items (or try). */
   bold?: string[];
 }
 
-/** One line of the banner: its text and the phrases in it to bold. */
+/** One line of the banner: its text and the phrases in it to bold. `refresh`
+ *  puts a "Refresh the page and" link before it (a try line in a stale tab). */
 export interface WhatsNewItem {
   text: string;
   bold: string[];
+  refresh?: true;
 }
 
 /** Validate /whatsnew.json at build time: a malformed file fails the build
@@ -39,14 +46,20 @@ export function parseWhatsNew(raw: unknown): WhatsNewEntry[] {
       throw new Error(`whatsnew.json entry ${i}: "items" must be a non-empty list of text`);
     }
     const items = entry.items.map((t) => t.trim());
-    if (entry.bold === undefined) return { date: entry.date, items };
+    if (entry.try !== undefined && (typeof entry.try !== "string" || !entry.try.trim())) {
+      throw new Error(`whatsnew.json entry ${i}: "try" must be a line of text`);
+    }
+    const tryLine = entry.try?.trim();
+    const out: WhatsNewEntry = { date: entry.date, items, ...(tryLine ? { try: tryLine } : {}) };
+    if (entry.bold === undefined) return out;
+    const lines = tryLine ? [...items, tryLine] : items;
     if (
       !Array.isArray(entry.bold) ||
-      entry.bold.some((b) => typeof b !== "string" || !b.trim() || !items.some((t) => t.includes(b)))
+      entry.bold.some((b) => typeof b !== "string" || !b.trim() || !lines.some((t) => t.includes(b)))
     ) {
-      throw new Error(`whatsnew.json entry ${i}: each "bold" phrase must appear in one of its items`);
+      throw new Error(`whatsnew.json entry ${i}: each "bold" phrase must appear in one of its items or its try line`);
     }
-    return { date: entry.date, items, bold: entry.bold };
+    return { ...out, bold: entry.bold };
   });
 }
 
@@ -55,15 +68,33 @@ export function parseWhatsNew(raw: unknown): WhatsNewEntry[] {
 export const entryKey = (e: WhatsNewEntry) => `${e.date}|${e.items.join("|")}`;
 const key = entryKey;
 
-const itemsOf = (entries: WhatsNewEntry[]): WhatsNewItem[] =>
-  entries.flatMap((e) => e.items.map((text) => ({ text, bold: (e.bold ?? []).filter((b) => text.includes(b)) })));
+const lineOf = (text: string, bold: string[] = []): WhatsNewItem => ({
+  text,
+  bold: bold.filter((b) => text.includes(b)),
+});
+const lowerFirst = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
+
+/** An entry's lines. `stale`: this tab still runs the old build (the update
+ *  banner), so the try line follows "Refresh the page and" — its first letter
+ *  lowered, and a bold phrase that starts it with it. */
+const itemsOf = (entries: WhatsNewEntry[], stale = false): WhatsNewItem[] =>
+  entries.flatMap((e) => {
+    const lines = e.items.map((text) => lineOf(text, e.bold));
+    if (!e.try) return lines;
+    if (!stale) return [...lines, lineOf(e.try, e.bold)];
+    const bold = (e.bold ?? []).map((b) => (e.try!.startsWith(b) ? lowerFirst(b) : b));
+    return [...lines, { ...lineOf(lowerFirst(e.try), bold), refresh: true as const }];
+  });
 
 /** The items in `served` (the deployed list) that `known` (this tab's own
  *  bundle) didn't have, newest first. Empty when a deploy added no entry —
  *  the banner then reads as it always did. */
 export function newSince(served: WhatsNewEntry[], known: WhatsNewEntry[]): WhatsNewItem[] {
   const seen = new Set(known.map(key));
-  return itemsOf(served.filter((e) => !seen.has(key(e))));
+  return itemsOf(
+    served.filter((e) => !seen.has(key(e))),
+    true,
+  );
 }
 
 /** The day the since-last-visit record shipped (with the assemblies entry). */
