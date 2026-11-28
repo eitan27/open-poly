@@ -38,9 +38,9 @@ export function InterferenceDialog(p: InterferenceDialogProps) {
               </span>
               <span>
                 <strong>No interference.</strong>{" "}
-              {r.checked === 0
-                ? "No parts are close enough to touch."
-                : `${r.checked} ${r.checked === 1 ? "pair is" : "pairs are"} close, but only touch.`}
+                {r.checked === 0
+                  ? "No parts are close enough to touch."
+                  : `${r.checked} ${r.checked === 1 ? "pair is" : "pairs are"} close, but only touch.`}
               </span>
             </p>
           ) : (
